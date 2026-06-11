@@ -1,0 +1,13 @@
+# False-positive ledger for tools/phi_scan.py. Entries are matched lowercase.
+# Every entry needs a justification. Adding a real identifier here would be
+# a policy violation — entries must be provably public vocabulary.
+
+# Column names from Practice Fusion's OFFICIAL PUBLIC EHI export data
+# dictionary v9 (practicefusion.com/ehi-export-documentation, verified
+# 2026-06-11). They are >=24 chars, so the deny-list generator's
+# opaque-token pass hashed them out of the private predecessor's source;
+# they are public schema identifiers, not PHI.
+diagnosiscodeequivalents
+lastmodifiedbyproviderguid
+patientinsuranceplanguid
+transactiondisplaydatetimeutc
