@@ -25,3 +25,13 @@ transactiondisplaydatetimeutc
 1/2/1980
 11/2/1980
 
+# Synthetic DOBs for the L0-L6 delivery-verification tests
+# (tests/unit/test_verify_{levels,composite}.py). The synthetic patient
+# "Synthia Testpatient" has DOB 01/02/1990; the tests render that into a fake
+# chart header ("DOB mm/dd/yyyy") and assert L2/L3 match it. The other two are
+# the deliberate WRONG-patient DOBs the wrong-chart tests prove are rejected
+# (12/31/1965 on a right-name page; 03/04/1975 on a different-patient page).
+01/02/1990
+12/31/1965
+03/04/1975
+

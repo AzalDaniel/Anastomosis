@@ -39,7 +39,9 @@ __all__ = [
     "BannerCheck",
     "Destination",
     "DestinationPatient",
+    "DocumentReader",
     "ExistingDocsScanner",
+    "MetadataReader",
     "PatientResolver",
     "Session",
     "UploadDriver",
@@ -160,6 +162,47 @@ class UploadDriver(Protocol):
 
     def upload(self, item: UploadItem, patient: DestinationPatient) -> UploadReceipt:
         """Upload ``item`` into ``patient`` and return the destination receipt."""
+        ...
+
+
+@runtime_checkable
+class MetadataReader(Protocol):
+    """Optional capability: read a destination's own metadata for a filed doc.
+
+    A destination MAY implement this in addition to the core protocols. The
+    L5 verification layer (``deliver/verify``) uses it to cross-check the
+    destination's reported size and page count against the local PDF. When a
+    destination does NOT implement it, L5 is reported ``skip`` with an explicit
+    detail — never silently passed.
+
+    PHI rule: the returned values are destination-*generated* facts (byte
+    size, page count, an internal title id) — never patient-derived free
+    text. They are persisted and logged, so an honest reader cannot leak PHI.
+    """
+
+    def read_metadata(
+        self, patient: DestinationPatient, destination_doc_id: str
+    ) -> Mapping[str, str | int]:
+        """Return the destination's metadata for the uploaded document.
+
+        Keys are reader-defined; the verifier reads the optional ``size_bytes``
+        and ``page_count`` keys when present and ignores the rest.
+        """
+        ...
+
+
+@runtime_checkable
+class DocumentReader(Protocol):
+    """Optional capability: read an uploaded document's bytes back.
+
+    A destination MAY implement this. The L6 round-trip verification reads the
+    stored bytes back and re-hashes them (with a reprocessed-PDF fallback).
+    When a destination does NOT implement it, L6 is reported ``skip`` with an
+    explicit detail — never silently passed.
+    """
+
+    def read_back(self, patient: DestinationPatient, destination_doc_id: str) -> bytes:
+        """Return the uploaded document's bytes as the destination stores them."""
         ...
 
 
