@@ -195,8 +195,13 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
    stage, exit 1 on FAIL). Still open: PF pack checks (37 headings, 17
    labels, addenda, visual tokens, insurance) — land with the
    practice_fusion_soap pack (issue #4).
-8. `deliver/archive/` offline static site (vendored MiniSearch, CSP-pinned,
-   zero network; plain dirs+PDFs+JSON = 30-year durability) + `deliver/bundle/`.
+8. ✅ `deliver/archive/` + `deliver/bundle/`: static-site archive, CSP-self,
+   zero-network HTML, openable from ``file://``; dual format per patient
+   (FHIR R4 Bundle JSON + rendered PDFs + per-encounter HTML); ID-based folder
+   naming; per-patient bundles for record requests with sliced QA reports.
+   Search bootstrap is currently a small vanilla matcher (MIT MiniSearch
+   vendoring deferred until a pinned hash can be fetched from a trusted
+   source; the search index schema is forward-compatible).
 9. 🔶 CLI glue ✅: `anast pipeline run <dir> --out <dir>` (auto-detect,
    --pack/--pack-dir, --section flag overrides, --force; failures exit
    nonzero with exception types only); `anast info` lists sources/packs.

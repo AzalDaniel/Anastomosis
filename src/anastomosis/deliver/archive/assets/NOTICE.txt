@@ -1,0 +1,16 @@
+Anastomosis archive assets — third-party notices
+==================================================
+
+This directory contains the static assets copied into every emitted archive.
+
+* anast.css         — Anastomosis stylesheet. AGPL-3.0-or-later.
+* anast-index.js    — Anastomosis patient-search bootstrap. AGPL-3.0-or-later.
+                      Vanilla DOM, no third-party runtime dependencies.
+
+No third-party JavaScript libraries are bundled with v0.1 archives. Earlier
+plans referenced vendoring MiniSearch 7.2.0 (MIT); that is deferred until the
+exact build can be fetched and pinned by hash from a trusted release source
+(see issue tracking the deferred vendoring). The current search bootstrap is
+an intentionally small substring/token matcher — enough for browsing a single
+practice's archive offline, and replaceable in a future deliverable without
+touching the index.json schema.
