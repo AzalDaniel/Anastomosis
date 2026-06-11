@@ -60,7 +60,7 @@ def test_extensions_preserve_unmapped_fields_through_serialization() -> None:
 def test_encounter_sections_and_emptiness() -> None:
     enc = Encounter(
         patient_id="feedface-0000-0000-0000-000000000001",
-        date_of_service=datetime(2025, 6, 1, 14, 30, tzinfo=UTC),
+        date_of_service=date(2025, 6, 1),
         chief_complaint="Annual physical",
         sections=[
             NoteSection(kind=SectionKind.SUBJECTIVE, html="<p>Feels well.</p>", text="Feels well."),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
@@ -50,7 +50,11 @@ class Addendum(BaseModel):
 
 class Encounter(AnastBase):
     patient_id: str
-    date_of_service: datetime | None = None
+    # Calendar date, deliberately not a datetime: sources chart DOS as a
+    # date-only field, and a midnight-UTC datetime shifts to the previous
+    # day the moment it's rendered in a western timezone. Precise instants
+    # (signed, seen, modified) are datetimes below.
+    date_of_service: date | None = None
     chief_complaint: str | None = None
     encounter_type: str | None = None
     note_type: str | None = None  # LOINC document type lands here at to_fhir time

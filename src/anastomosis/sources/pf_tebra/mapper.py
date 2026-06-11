@@ -315,7 +315,7 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
     return Encounter(
         id=guid,
         patient_id=patient_guid,
-        date_of_service=_dt(row, "DateOfService"),
+        date_of_service=_d(row, "DateOfService"),  # DateField: calendar date
         chief_complaint=_s(row, "ChiefComplaint"),
         encounter_type="SOAP" if is_soap else "SIMPLE",
         note_type=_s(row, "ChartNoteType"),

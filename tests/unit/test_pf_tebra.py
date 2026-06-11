@@ -102,7 +102,7 @@ def test_same_day_encounters_exist_for_collision_handling(
 ) -> None:
     # The fixture must keep offering the same-day pair the renderer's
     # filename-collision logic is tested against.
-    dates = [e.date_of_service.date() for e in records[P1].encounters if e.date_of_service]
+    dates = [e.date_of_service for e in records[P1].encounters if e.date_of_service]
     assert dates.count(date(2023, 5, 10)) == 2
 
 

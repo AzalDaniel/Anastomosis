@@ -120,5 +120,11 @@ strict = true
 # New code is written strict from day one; ports tighten incrementally.
 warn_unreachable = true
 
+[[tool.mypy.overrides]]
+# Optional extras: typed when installed, but their absence (minimal installs)
+# must not fail type-checking of the core package.
+module = ["playwright.*"]
+ignore_missing_imports = true
+
 [tool.coverage.run]
 source = ["src/anastomosis"]

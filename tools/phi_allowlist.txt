@@ -11,3 +11,9 @@ diagnosiscodeequivalents
 lastmodifiedbyproviderguid
 patientinsuranceplanguid
 transactiondisplaydatetimeutc
+
+# Synthetic date of birth of fixture patient "Ada Fixture"
+# (tests/fixtures/pf_tebra_v9). Tests assert the rendered chart header
+# ("DOB 03/14/1985"), which legitimately puts the DOB marker next to it.
+03/14/1985
+
