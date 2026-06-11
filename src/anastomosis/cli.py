@@ -19,6 +19,7 @@ import typer
 from rich.console import Console
 
 import anastomosis
+import anastomosis.sources.ccda
 import anastomosis.sources.pf_tebra
 from anastomosis.sources import available_sources, detect_source, get_source
 
