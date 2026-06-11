@@ -423,6 +423,22 @@ def _oldest_evidence(entry: object) -> str:
     return min(dates).isoformat() if dates else "—"
 
 
+def _local_pack_status(name: str) -> str:
+    """Describe whether a discovered browser pack exists locally for ``name``.
+
+    Surfaced in `destination list`/`route` so the operator can see a pack is
+    present (and whether the wizard has been run) without it ever auto-affecting
+    routing — the registry overlay stays the single routing truth.
+    """
+    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+    try:
+        loaded = load_destination_pack(name)
+    except BrowserPackError:
+        return "—"
+    return "ready" if loaded.ready else "needs-discovery"
+
+
 @destination_app.command("list")
 def destination_list(
     registry: Annotated[
@@ -431,6 +447,7 @@ def destination_list(
     ] = None,
 ) -> None:
     """List registered destinations and their declared capabilities."""
+    from rich.console import Console
     from rich.table import Table
 
     from anastomosis.destinations.registry import DestinationEntry, DestinationRegistry
@@ -443,6 +460,7 @@ def destination_list(
     table.add_column("doc_write_api")
     table.add_column("ccda_import")
     table.add_column("browser")
+    table.add_column("pack")
     table.add_column("oldest evidence")
     for name in sorted(reg.entries):
         entry: DestinationEntry = reg.entries[name]
@@ -452,9 +470,13 @@ def destination_list(
             entry.doc_write_api.kind,
             entry.ccda_import.kind,
             entry.browser.kind,
+            _local_pack_status(entry.name),
             _oldest_evidence(entry),
         )
-    console.print(table)
+    # A wide, non-truncating console so the seven columns (and their cell text)
+    # survive intact regardless of the calling terminal width — the table is a
+    # data dump the operator scrolls, not a width-fit layout.
+    Console(width=200).print(table)
 
 
 @destination_app.command("route")
@@ -481,8 +503,181 @@ def destination_route(
         # pin both; scripts branch on them.
         raise typer.Exit(code=2) from None
     console.print(transit.render())
+    # Surface a locally present browser pack WITHOUT auto-flipping routing: the
+    # registry overlay remains the single routing truth, so we only note that a
+    # pack exists and how the operator declares it.
+    pack_status = _local_pack_status(name)
+    if pack_status != "—" and transit.options[-1].kind.value == "browser":
+        if not transit.options[-1].viable:
+            console.print(
+                f"note: browser pack present locally ({pack_status}) — declare it in your "
+                "registry overlay (kind: pack) to route through it"
+            )
+        else:
+            console.print(f"note: browser pack present locally ({pack_status})")
     if transit.chosen is None:
         raise typer.Exit(code=1)
+
+
+# --- anast destination init (the selector-discovery wizard) -----------------
+
+# The maximum re-entry attempts for a not-found selector under --validate before
+# the operator must either accept it unvalidated or give up.
+_VALIDATE_MAX_TRIES = 3
+
+
+def _make_validator(cdp_url: str) -> object:
+    """Build the live selector validator for ``--validate`` (the SEAM tests mock).
+
+    Attaches over CDP (loopback-only, validated) to the browser the operator
+    launched and logged into, wraps its first page in the
+    :class:`PlaywrightPageAdapter`, and returns a
+    :class:`~anastomosis.destinations.wizard.CdpSelectorValidator`. Tests
+    monkeypatch this whole function so the validation flow needs no browser.
+    Playwright is imported only here (lazily, via ``connect_over_cdp``).
+    """
+    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
+    from anastomosis.destinations.browserpack import PlaywrightPageAdapter
+    from anastomosis.destinations.wizard import CdpSelectorValidator
+
+    browser = connect_over_cdp(CdpEndpoint(cdp_url))
+    # The operator has their EHR open; drive its existing context/page.
+    context = browser.contexts[0]
+    page = context.pages[0]
+    return CdpSelectorValidator(PlaywrightPageAdapter(page))
+
+
+def _prompt_slot(
+    slot: str,
+    *,
+    required: bool,
+    guidance: str,
+    validator: object | None,
+) -> str:
+    """Prompt for one selector slot, optionally validating it against the page.
+
+    Optional slots accept an empty entry (= skip). With a ``validator``, a
+    selector matching zero elements may be re-entered up to
+    :data:`_VALIDATE_MAX_TRIES` times or accepted with an explicit confirmation
+    (the ``--allow-unvalidated`` consent at the slot level). Without one, the
+    selector is accepted as-is. PHI: prompts and prints carry slot names and
+    selectors only — never patient data.
+    """
+    from anastomosis.destinations.wizard import SelectorValidator
+
+    label = "required" if required else "optional, blank to skip"
+    for attempt in range(1, _VALIDATE_MAX_TRIES + 1):
+        raw: str = typer.prompt(f"  {slot} ({label}) — {guidance}", default="")
+        value = raw.strip()
+        if not value:
+            if not required:
+                return ""
+            console.print("    [yellow]a value is required[/yellow]")
+            continue
+        if validator is None:
+            return value
+        assert isinstance(validator, SelectorValidator)
+        count = validator.count(value)
+        if count >= 1:
+            console.print(f"    [green]found {count} element(s)[/green]")
+            return value
+        console.print(f"    [yellow]selector matched 0 elements[/yellow] (try {attempt})")
+        if attempt < _VALIDATE_MAX_TRIES:
+            continue
+        if typer.confirm("    accept this unvalidated selector anyway?", default=False):
+            return value
+    # Exhausted tries without acceptance: re-raise as an explicit operator abort.
+    console.print(f"[red]gave up discovering {slot!r} (no matching selector)[/red]")
+    raise typer.Exit(code=1)
+
+
+@destination_app.command("init")
+def destination_init(
+    name: Annotated[str, typer.Argument(help="Destination pack name, e.g. tebra.")],
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Where to write selectors.yaml (default: user dir)."),
+    ] = None,
+    validate: Annotated[
+        bool,
+        typer.Option("--validate", help="Check each selector against a live page (needs --cdp)."),
+    ] = False,
+    cdp: Annotated[
+        str | None,
+        typer.Option("--cdp", help="Loopback CDP endpoint, e.g. http://127.0.0.1:9222."),
+    ] = None,
+    pack_dir: Annotated[
+        list[Path] | None,
+        typer.Option("--pack-dir", help="Extra directories to find the pack scaffold in."),
+    ] = None,
+) -> None:
+    """Discover a browser pack's CSS selectors against your live EHR session.
+
+    Loads the pack scaffold, prompts for each selector slot (required first),
+    optionally validates each against your attached browser (``--validate
+    --cdp``), then writes ``selectors.yaml`` into your user directory. The
+    packaged registry is never modified — a paste-able overlay snippet is printed
+    so you declare the now-discovered pack in your own routing overlay.
+    """
+    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING
+    from anastomosis.destinations.browserpack import SelectorMap
+    from anastomosis.destinations.loader import (
+        BrowserPackError,
+        load_destination_pack,
+        user_destinations_dir,
+    )
+    from anastomosis.destinations.wizard import (
+        SLOT_GUIDANCE,
+        registry_overlay_snippet,
+        write_selectors,
+    )
+
+    try:
+        loaded = load_destination_pack(name, list(pack_dir or []))
+    except BrowserPackError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
+
+    validator: object | None = None
+    if validate:
+        if cdp is None:
+            console.print("[red]--validate requires --cdp (a loopback CDP endpoint)[/red]")
+            raise typer.Exit(code=2)
+        console.print(SHARED_MACHINE_WARNING)
+        try:
+            validator = _make_validator(cdp)
+        except Exception as exc:  # attach/launch failure — name the type, no PHI
+            console.print(f"[red]could not attach for validation ({type(exc).__name__})[/red]")
+            raise typer.Exit(code=2) from None
+    elif cdp is not None:
+        # --cdp without --validate: still warn (a debug port was named).
+        console.print(SHARED_MACHINE_WARNING)
+    else:
+        console.print(
+            "[yellow]selectors accepted as-is[/yellow] — preflight validates them at run time"
+        )
+
+    console.print(f"Discovering selectors for [cyan]{loaded.name}[/cyan]:")
+    discovered: dict[str, str] = {}
+    for slot in SelectorMap.required_slots():
+        discovered[slot] = _prompt_slot(
+            slot, required=True, guidance=SLOT_GUIDANCE.get(slot, ""), validator=validator
+        )
+    for slot in SelectorMap.optional_slots():
+        discovered[slot] = _prompt_slot(
+            slot, required=False, guidance=SLOT_GUIDANCE.get(slot, ""), validator=validator
+        )
+
+    target_root = out_dir or user_destinations_dir()
+    written = write_selectors(loaded.name, discovered, target_root)
+    console.print(f"[green]wrote[/green] {written}")
+    console.print(
+        "\nNext steps — declare this pack in your registry overlay (NOT the packaged one):"
+    )
+    console.print(registry_overlay_snippet(loaded.name))
+    console.print(
+        f"Then route it:  anast destination route {loaded.name} --registry <your-overlay>.yaml"
+    )
 
 
 if __name__ == "__main__":

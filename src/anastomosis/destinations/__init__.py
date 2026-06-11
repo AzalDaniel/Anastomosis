@@ -17,6 +17,20 @@ from .base import (
     UploadItem,
     UploadReceipt,
 )
+from .browserpack import (
+    BrowserPackConfig,
+    BrowserPackDestination,
+    PackNotReadyError,
+    PageLike,
+    PlaywrightPageAdapter,
+    SelectorMap,
+)
+from .loader import (
+    BrowserPackError,
+    LoadedBrowserPack,
+    load_destination_pack,
+    user_destinations_dir,
+)
 from .registry import (
     BrowserKind,
     Capability,
@@ -30,6 +44,9 @@ from .registry import (
 __all__ = [
     "BannerCheck",
     "BrowserKind",
+    "BrowserPackConfig",
+    "BrowserPackDestination",
+    "BrowserPackError",
     "Capability",
     "CcdaImportKind",
     "Destination",
@@ -39,9 +56,16 @@ __all__ = [
     "DocWriteKind",
     "Evidence",
     "ExistingDocsScanner",
+    "LoadedBrowserPack",
+    "PackNotReadyError",
+    "PageLike",
     "PatientResolver",
+    "PlaywrightPageAdapter",
+    "SelectorMap",
     "Session",
     "UploadDriver",
     "UploadItem",
     "UploadReceipt",
+    "load_destination_pack",
+    "user_destinations_dir",
 ]
