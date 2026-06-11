@@ -135,9 +135,14 @@ class TrackingDB:
         if conn is None:
             conn = sqlite3.connect(self._db_path, isolation_level=None)
             conn.row_factory = sqlite3.Row
+            # busy_timeout MUST be set before journal_mode: switching to (or
+            # re-verifying) WAL takes a file lock, and a new thread's
+            # connection doing it with the default zero timeout races any
+            # concurrent writer straight into "database is locked" (seen on
+            # Windows CI, where the wider file-op window exposes it).
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
-            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return conn
