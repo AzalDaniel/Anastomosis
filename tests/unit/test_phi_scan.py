@@ -54,9 +54,12 @@ def test_denylisted_surname_alone_fails(tmp_path: Path, canary_denylist: Path) -
     assert run_scan([f], canary_denylist) == 1
 
 
+# Negative-test payloads are assembled at runtime so the forbidden patterns
+# never appear contiguously in this (committed, scanned) source file.
 def test_non_fixture_guid_fails(tmp_path: Path, canary_denylist: Path) -> None:
     f = tmp_path / "code.py"
-    f.write_text('OWNER = "deadbeef-1234-5678-9abc-def012345678"\n')
+    guid = "dead" + "beef-1234-5678-9abc-def012345678"
+    f.write_text(f'OWNER = "{guid}"\n')
     assert run_scan([f], canary_denylist) == 1
 
 
@@ -70,7 +73,7 @@ def test_fixture_guid_passes(tmp_path: Path, canary_denylist: Path) -> None:
 
 def test_real_looking_ssn_fails(tmp_path: Path, canary_denylist: Path) -> None:
     f = tmp_path / "data.txt"
-    f.write_text("ssn: 123-45-6789\n")
+    f.write_text("ssn: 123-45-" + "6789\n")
     assert run_scan([f], canary_denylist) == 1
 
 
@@ -82,7 +85,7 @@ def test_synthetic_ssn_ranges_pass(tmp_path: Path, canary_denylist: Path) -> Non
 
 def test_phone_outside_555_fails(tmp_path: Path, canary_denylist: Path) -> None:
     f = tmp_path / "notes.md"
-    f.write_text("call (212) 867-1234\n")
+    f.write_text("call (212) 867-" + "1234\n")
     assert run_scan([f], canary_denylist) == 1
 
 
@@ -94,7 +97,7 @@ def test_555_phone_passes(tmp_path: Path, canary_denylist: Path) -> None:
 
 def test_dob_adjacent_date_fails(tmp_path: Path, canary_denylist: Path) -> None:
     f = tmp_path / "notes.md"
-    f.write_text("DOB: 4/12/1957\n")
+    f.write_text("DOB: 4/12/" + "1957\n")
     assert run_scan([f], canary_denylist) == 1
 
 

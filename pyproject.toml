@@ -99,6 +99,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "DTZ"]
+# RUF012 misfires on pydantic models: pydantic v2 deep-copies mutable defaults
+# per-instance, so `field: list[X] = []` is safe and idiomatic there.
+"src/anastomosis/core/model/*" = ["RUF012"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
