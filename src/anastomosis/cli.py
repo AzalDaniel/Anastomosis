@@ -100,6 +100,9 @@ def pipeline_run(
             help="Override a section flag, e.g. --section insurance=on --section addenda=off.",
         ),
     ] = None,
+    qa: Annotated[
+        bool, typer.Option("--qa/--no-qa", help="Verify every rendered document (default on).")
+    ] = True,
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
     from anastomosis.reconstruct import discover_packs
@@ -144,7 +147,8 @@ def pipeline_run(
         lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
         section_overrides=overrides,
     )
-    result = engine.run(adapter.load(export_dir), out, force=force)
+    records = list(adapter.load(export_dir))
+    result = engine.run(records, out, force=force)
     console.print(
         f"[green]{len(result.rendered)} rendered[/green], "
         f"{len(result.skipped)} skipped, "
@@ -155,6 +159,30 @@ def pipeline_run(
         for encounter_id, exc_type in result.failed:
             console.print(f"  [red]failed[/red] encounter {encounter_id} ({exc_type})")
         raise typer.Exit(code=1)
+
+    if qa and result.documents:
+        try:
+            from anastomosis.qa import Verdict, run_qa, write_report
+        except ImportError as exc:
+            if exc.name != "fitz":  # only the optional dependency may downgrade QA
+                raise
+            console.print("[yellow]QA skipped[/yellow]: install anastomosis[render] for PyMuPDF")
+            return
+        lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
+        report = run_qa(
+            ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
+            section_flags=engine.section_flags,
+            page_size=manifest.page.size,
+        )
+        report_path = write_report(report, out)
+        console.print(
+            f"QA: [green]{report.count(Verdict.PASS)} pass[/green], "
+            f"{report.count(Verdict.WARN)} warn, "
+            f"{'[red]' if not report.ok else ''}{report.count(Verdict.FAIL)} fail"
+            f"{'[/red]' if not report.ok else ''} → {report_path.name}"
+        )
+        if not report.ok:
+            raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

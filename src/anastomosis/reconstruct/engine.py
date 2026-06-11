@@ -34,7 +34,7 @@ from anastomosis.core.output import secure_output_dir
 
 from .packs import LoadedPack
 
-__all__ = ["ReconstructionEngine", "RenderResult", "Renderer"]
+__all__ = ["ReconstructionEngine", "RenderResult", "RenderedDoc", "Renderer"]
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +50,22 @@ class Renderer(Protocol):
 RendererFactory = Callable[[], Renderer]
 
 
+@dataclass(frozen=True)
+class RenderedDoc:
+    """What QA needs to verify a document against its source record."""
+
+    path: Path
+    encounter_id: str
+    patient_id: str
+
+
 @dataclass
 class RenderResult:
     rendered: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     # (encounter_id, exception type name) — never exception text.
     failed: list[tuple[str, str]] = field(default_factory=list)
+    documents: list[RenderedDoc] = field(default_factory=list)
 
 
 def _safe_name(value: str | None, fallback: str) -> str:
@@ -168,6 +178,9 @@ class ReconstructionEngine:
         )
         if target.exists() and not force:
             result.skipped.append(target)
+            # Skipped is not unverified: QA re-checks existing documents too,
+            # so a corrupted file never survives a re-run unnoticed.
+            result.documents.append(RenderedDoc(target, encounter.id, record.patient.id))
             return
         cfg = {
             "sections": self.section_flags,
@@ -179,6 +192,7 @@ class ReconstructionEngine:
             html = template.render(**context)
             self._render_pdf(html, target)
             result.rendered.append(target)
+            result.documents.append(RenderedDoc(target, encounter.id, record.patient.id))
         except Exception as exc:
             logger.error("render failed for encounter %s (%s)", encounter.id, exc_tag(exc))
             result.failed.append((encounter.id, exc_tag(exc)))

@@ -84,6 +84,9 @@ def test_rerun_is_idempotent(
     assert len(first.rendered) == 6
     assert len(second.rendered) == 0
     assert sorted(second.skipped) == sorted(first.rendered)
+    # Skipped is not unverified: the QA manifest still lists every document,
+    # so re-runs re-check files that already exist on disk.
+    assert len(second.documents) == 6
 
 
 def test_renderer_recycling(records: list[PatientRecord], pack: LoadedPack, tmp_path: Path) -> None:

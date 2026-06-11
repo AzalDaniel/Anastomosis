@@ -72,6 +72,15 @@ def test_html_to_text_collapses_source_whitespace() -> None:
     assert html_to_text(html) == "Line one\n\nLine two"
 
 
+def test_html_to_text_table_cells_never_fuse() -> None:
+    # Fused cells ("height64in") hide values from boundary-anchored QA.
+    html = (
+        "<table><tr><th>Measure</th><th>Value</th></tr>"
+        "<tr><td>Body height</td><td>64</td><td>in</td></tr></table>"
+    )
+    assert html_to_text(html) == "Measure Value\nBody height 64 in"
+
+
 def test_html_to_text_plain_text_passthrough() -> None:
     assert html_to_text("Just a plain sentence.") == "Just a plain sentence."
     assert html_to_text("") is None

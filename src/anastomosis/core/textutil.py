@@ -61,9 +61,12 @@ def format_phone(raw: str | None) -> str | None:
 
 
 # Paragraph-level tags separate with a blank line; remaining block tags
-# (list items, divs, table rows...) get a single line break.
+# (list items, divs, table rows...) get a single line break. Table cells get
+# a space so adjacent cells never fuse ("height64in" hides values from
+# boundary-anchored QA matching).
 _PARA_TAGS = frozenset({"p", "blockquote", "table", "h1", "h2", "h3", "h4", "h5", "h6"})
 _BLOCK_TAGS = _PARA_TAGS | frozenset({"div", "br", "hr", "li", "ul", "ol", "tr", "section"})
+_CELL_TAGS = frozenset({"td", "th"})
 
 
 class _TextExtractor(HTMLParser):
@@ -77,12 +80,16 @@ class _TextExtractor(HTMLParser):
             self._skip_depth += 1
         elif tag in _BLOCK_TAGS:
             self._parts.append("\n")
+        elif tag in _CELL_TAGS:
+            self._parts.append(" ")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style"):
             self._skip_depth = max(0, self._skip_depth - 1)
         elif tag in _PARA_TAGS:
             self._parts.append("\n")
+        elif tag in _CELL_TAGS:
+            self._parts.append(" ")
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # Self-closing tags (<br/>) are one boundary, not an open+close pair.
@@ -111,6 +118,6 @@ def html_to_text(html: str | None) -> str | None:
     extractor = _TextExtractor()
     extractor.feed(html)
     extractor.close()
-    lines = (line.strip() for line in extractor.text().split("\n"))
+    lines = (re.sub(r"[ \t]{2,}", " ", line.strip()) for line in extractor.text().split("\n"))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     return text or None

@@ -12,8 +12,16 @@ lastmodifiedbyproviderguid
 patientinsuranceplanguid
 transactiondisplaydatetimeutc
 
-# Synthetic date of birth of fixture patient "Ada Fixture"
-# (tests/fixtures/pf_tebra_v9). Tests assert the rendered chart header
-# ("DOB 03/14/1985"), which legitimately puts the DOB marker next to it.
+# Synthetic dates of birth of fixture patients "Ada Fixture"
+# (tests/fixtures/pf_tebra_v9) and "Synthia Probe" (tests/unit/test_qa.py).
+# Tests assert rendered chart headers ("DOB mm/dd/yyyy"), which legitimately
+# put the DOB marker next to the date.
 03/14/1985
+01/02/1980
+
+# Synthetic near-miss dates used by the QA boundary-matching regression
+# tests (tests/unit/test_qa.py): they prove a record DOB of 1/2/1980 does
+# NOT match a chart showing 11/2/1980.
+1/2/1980
+11/2/1980
 

@@ -38,6 +38,8 @@ dependencies = [
   "lxml>=5.2",
   "python-dateutil>=2.9",
   "pyyaml>=6.0",
+  # Windows has no system tz database; zoneinfo needs the PyPI one there.
+  "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -122,8 +124,9 @@ warn_unreachable = true
 
 [[tool.mypy.overrides]]
 # Optional extras: typed when installed, but their absence (minimal installs)
-# must not fail type-checking of the core package.
-module = ["playwright.*"]
+# must not fail type-checking of the core package. fitz (PyMuPDF) ships no
+# py.typed marker at all.
+module = ["playwright.*", "fitz", "fitz.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
