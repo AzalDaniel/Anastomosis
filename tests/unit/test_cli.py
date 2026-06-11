@@ -79,3 +79,48 @@ def test_pipeline_run_diagnoses_unknown_pack(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "unavailable" in result.output
+
+
+def test_destination_list_shows_tebra() -> None:
+    result = runner.invoke(app, ["destination", "list"])
+    assert result.exit_code == 0, result.output
+    assert "tebra" in result.output
+    assert "unverified" in result.output
+
+
+def test_destination_route_tebra_routes_via_ccda_import() -> None:
+    # The shipped registry: tebra has no write API (verified-none) but does
+    # have in-product C-CDA import, so a route exists.
+    result = runner.invoke(app, ["destination", "route", "tebra"])
+    assert result.exit_code == 0, result.output
+    assert "delivery routes for tebra" in result.output
+    assert "chosen: ccda_import" in result.output
+
+
+def test_destination_route_unroutable_exits_1_with_map(tmp_path: Path) -> None:
+    # An all-unverified destination (via --registry overlay) has no viable
+    # route; the operator must see that loudly (exit 1) with the full map.
+    overlay = tmp_path / "registry.yaml"
+    overlay.write_text(
+        "entries:\n"
+        "  nowhere:\n"
+        "    name: nowhere\n"
+        "    display: Nowhere EHR\n"
+        "    doc_write_api: {kind: unverified}\n"
+        "    ccda_import: {kind: unverified}\n"
+        "    browser: {kind: none}\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["destination", "route", "nowhere", "--registry", str(overlay)])
+    assert result.exit_code == 1, result.output
+    assert "delivery routes for nowhere" in result.output
+    assert "no viable route" in result.output
+
+
+def test_destination_route_unknown_is_clean_error() -> None:
+    result = runner.invoke(app, ["destination", "route", "ghost"])
+    assert result.exit_code == 2
+    assert "unknown destination" in result.output
+    assert "ghost" in result.output
+    # A clean error, not a traceback.
+    assert result.exception is None or isinstance(result.exception, SystemExit)

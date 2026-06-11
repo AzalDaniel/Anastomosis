@@ -1,0 +1,174 @@
+# Anastomosis destination capability registry.
+#
+# This file is DATA, not code: it tells the shortest-path delivery router
+# (deliver/router.py) what each destination EHR can actually receive, so PHI is
+# never routed to an endpoint that cannot accept it.
+#
+# THE CONTRACT (enforced by destinations/registry.py, not by reviewer goodwill):
+#   * Every capability whose `kind` is not `none`/`unverified` MUST carry
+#     `evidence` with a `source_url` (http/https — a vendor doc or dev portal)
+#     and a `verified` date (ISO YYYY-MM-DD). A claim without a citation FAILS
+#     validation loudly. This is the no-hallucination rule.
+#   * An entry you cannot cite yet MUST use `kind: unverified` — never guess a
+#     capability. `unverified` never routes (the router treats it as not viable).
+#   * A browser `pack` capability is exempt from the URL rule: its evidence is
+#     the destination pack's own canary fixtures, re-validated in preflight.
+#   * QUARTERLY RE-VERIFICATION RITUAL: capabilities decay (vendors deprecate
+#     APIs). Re-confirm each cited claim against its source_url every quarter
+#     and bump `verified`. Stale evidence is surfaced by `anast destination
+#     list` (oldest evidence date per entry).
+#
+# Provenance note for the 2026-06-11 entries: every cited vendor doc site
+# (fhir.epic.com, docs.athenahealth.com, app.drchrono.com,
+# docs.canvasmedical.com, helpme.tebra.com, practicefusion.com) blocks
+# unauthenticated automated fetches (HTTP 403); the cited URLs are the official
+# pages, with content confirmed through search-engine-indexed snippets of those
+# exact pages. Re-verify with authenticated/browser access before building a
+# production integration against any of them — and bump `verified` when you do.
+#
+# Adding an entry is mechanical — copy the shape below, fill the three
+# capability classes, attach evidence to every real claim:
+#
+#   acme:
+#     name: acme
+#     display: Acme EHR
+#     doc_write_api:
+#       kind: fhir_documentreference
+#       detail: "DocumentReference $document"
+#       evidence:
+#         source_url: https://example.com/acme/fhir/documentreference
+#         verified: 2026-06-11
+#         note: "optional human note"
+#     ccda_import: {kind: unverified}
+#     browser: {kind: none}
+#
+# doc_write_api.kind : fhir_documentreference | vendor_rest | none | unverified
+# ccda_import.kind   : api | in_product | none | unverified
+# browser.kind       : pack (detail = destination-pack name) | none
+
+entries:
+  epic:
+    name: epic
+    display: Epic
+    doc_write_api:
+      kind: fhir_documentreference
+      detail: >-
+        DocumentReference.Create (Clinical Notes), FHIR R4. Production use
+        requires Epic vendor-program registration and per-site activation;
+        created notes arrive in 'preliminary' status pending clinician
+        sign-off.
+      evidence:
+        source_url: https://fhir.epic.com/Specifications?api=1046
+        verified: 2026-06-11
+        note: official spec page; content via indexed snippet (direct fetch 403)
+    ccda_import:
+      kind: in_product
+      detail: Care Everywhere receives C-CDA from standards-compliant EHRs.
+      evidence:
+        source_url: https://open.epic.com/Home/CareEverywhereSupportedStandards
+        verified: 2026-06-11
+        note: official standards page; content via indexed snippet
+    browser: {kind: none}
+
+  athenahealth:
+    name: athenahealth
+    display: athenahealth (athenaOne)
+    doc_write_api:
+      kind: vendor_rest
+      detail: >-
+        POST /v1/{practiceid}/patients/{patientid}/documents/clinicaldocument
+        (base64 attachment; clinical-document subclasses). Developer-portal
+        approval required for production.
+      evidence:
+        source_url: https://docs.athenahealth.com/api/api-ref/document-type-clinical-document
+        verified: 2026-06-11
+        note: official API ref; content via indexed snippet (direct fetch 403)
+    ccda_import:
+      kind: api
+      detail: Dedicated CCDA Upload workflow + ccda-record API.
+      evidence:
+        source_url: https://docs.athenahealth.com/api/workflows/ccda-upload
+        verified: 2026-06-11
+    browser: {kind: none}
+
+  drchrono:
+    name: drchrono
+    display: DrChrono
+    doc_write_api:
+      kind: vendor_rest
+      detail: >-
+        POST /api/documents (multipart: doctor, patient, description, date,
+        file <= 100 MB; OAuth bearer token).
+      evidence:
+        source_url: https://app.drchrono.com/api-docs/tutorial/
+        verified: 2026-06-11
+        note: official API docs; content via indexed snippet (direct fetch 403)
+    ccda_import:
+      kind: in_product
+      detail: >-
+        UI-level C-CDA import + reconciliation only; no inbound C-CDA API
+        endpoint documented.
+      evidence:
+        source_url: https://support.drchrono.com/home/9118671179035-c-cda-importing-and-reconciling-patient-data
+        verified: 2026-06-11
+    browser: {kind: none}
+
+  canvas:
+    name: canvas
+    display: Canvas Medical
+    doc_write_api:
+      kind: fhir_documentreference
+      detail: >-
+        FHIR R4 DocumentReference create (fumage endpoint); accepts PDF;
+        Canvas-specific extensions required (clinical-date is mandatory).
+      evidence:
+        source_url: https://docs.canvasmedical.com/api/documentreference/
+        verified: 2026-06-11
+        note: official API docs; content via indexed snippet (direct fetch 403)
+    # No inbound C-CDA mechanism found in public docs — stays unverified
+    # rather than asserting none from absence-of-evidence alone.
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  tebra:
+    name: tebra
+    display: Tebra (Kareo + PatientPop)
+    doc_write_api:
+      kind: none
+      detail: >-
+        No document-upload or DocumentReference-create endpoint in the
+        published API surface (clinical REST swagger, FHIR PDF, SOAP PM API
+        all checked). Re-confirmed 2026-06-11.
+      evidence:
+        source_url: https://api.kareo.com/clinical/v1/swagger/
+        verified: 2026-06-11
+        note: negative claim; API index checked, no document-write operation
+    ccda_import:
+      kind: in_product
+      detail: >-
+        'Import Summary of Care' — manual UI import of .ccda XML into the
+        patient facesheet; not API-driven.
+      evidence:
+        source_url: https://helpme.tebra.com/Clinical/Patient_Management/Facesheet/Import_Summary_of_Care
+        verified: 2026-06-11
+    # The destinations/tebra browser pack lands in the next PR; do NOT
+    # pre-declare `kind: pack` until the pack is real.
+    browser: {kind: none}
+
+  practice_fusion:
+    name: practice_fusion
+    display: Practice Fusion
+    doc_write_api:
+      kind: none
+      detail: >-
+        FHIR API is explicitly read-only ("data flows only in one direction,
+        from Practice Fusion to the FHIR app"); no write surface for any
+        resource.
+      evidence:
+        source_url: https://www.practicefusion.com/fhir/api-specifications/
+        verified: 2026-06-11
+        note: negative claim; CapabilityStatement shows read/search-type only
+    # No inbound C-CDA API or documented in-product import found — unverified
+    # rather than asserted-none.
+    ccda_import: {kind: unverified}
+    browser: {kind: none}

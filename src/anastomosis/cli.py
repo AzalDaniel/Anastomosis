@@ -38,6 +38,8 @@ app = typer.Typer(
 )
 pipeline_app = typer.Typer(help="Run pipeline stages end to end.")
 app.add_typer(pipeline_app, name="pipeline")
+destination_app = typer.Typer(help="Inspect destinations and plan delivery routes.")
+app.add_typer(destination_app, name="destination")
 console = Console()
 
 
@@ -395,6 +397,92 @@ def _deliver_bundles(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) ->
         deliverer.deliver(record, pdfs, out, qa_report=pipeline.qa_report)
         written += 1
     console.print(f"Bundles: [green]{written} patients[/green] → {out}")
+
+
+# --- anast destination ------------------------------------------------------
+
+
+def _load_registry(registry: Path | None) -> object:
+    """Load the destination registry (overlay if given), raising loud on error."""
+    from anastomosis.destinations.registry import DestinationRegistry
+
+    if registry is not None:
+        return DestinationRegistry.merged(registry)
+    return DestinationRegistry.load()
+
+
+def _oldest_evidence(entry: object) -> str:
+    from anastomosis.destinations.registry import DestinationEntry
+
+    assert isinstance(entry, DestinationEntry)
+    dates = [
+        cap.evidence.verified
+        for cap in (entry.doc_write_api, entry.ccda_import, entry.browser)
+        if cap.evidence is not None
+    ]
+    return min(dates).isoformat() if dates else "—"
+
+
+@destination_app.command("list")
+def destination_list(
+    registry: Annotated[
+        Path | None,
+        typer.Option("--registry", help="Overlay registry file (replaces packaged entries)."),
+    ] = None,
+) -> None:
+    """List registered destinations and their declared capabilities."""
+    from rich.table import Table
+
+    from anastomosis.destinations.registry import DestinationEntry, DestinationRegistry
+
+    reg = _load_registry(registry)
+    assert isinstance(reg, DestinationRegistry)
+    table = Table(title="destinations")
+    table.add_column("name", style="cyan")
+    table.add_column("display")
+    table.add_column("doc_write_api")
+    table.add_column("ccda_import")
+    table.add_column("browser")
+    table.add_column("oldest evidence")
+    for name in sorted(reg.entries):
+        entry: DestinationEntry = reg.entries[name]
+        table.add_row(
+            entry.name,
+            entry.display,
+            entry.doc_write_api.kind,
+            entry.ccda_import.kind,
+            entry.browser.kind,
+            _oldest_evidence(entry),
+        )
+    console.print(table)
+
+
+@destination_app.command("route")
+def destination_route(
+    name: Annotated[str, typer.Argument(help="Destination name (see `anast destination list`).")],
+    registry: Annotated[
+        Path | None,
+        typer.Option("--registry", help="Overlay registry file (replaces packaged entries)."),
+    ] = None,
+) -> None:
+    """Print the shortest-path transit map; exit 1 if no viable route exists."""
+    from anastomosis.deliver.router import plan_route
+    from anastomosis.destinations.registry import DestinationRegistry
+
+    reg = _load_registry(registry)
+    assert isinstance(reg, DestinationRegistry)
+    try:
+        transit = plan_route(name, reg)
+    except KeyError as exc:
+        # KeyError carries the known-names list (no PHI) — show it, not a traceback.
+        console.print(f"[red]{exc.args[0] if exc.args else exc}[/red]")
+        # Exit-code contract: 2 = unknown destination NAME (operator typo),
+        # 1 = known destination with NO viable route (capability gap). Tests
+        # pin both; scripts branch on them.
+        raise typer.Exit(code=2) from None
+    console.print(transit.render())
+    if transit.chosen is None:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
