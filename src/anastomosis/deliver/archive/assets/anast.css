@@ -1,0 +1,52 @@
+/* Anastomosis offline archive — minimal stylesheet.
+ *
+ * Print-readable, screen-readable, no external fonts. The point is durability:
+ * a stylesheet that still renders sensibly when CSS evolves out from under us.
+ */
+
+* { box-sizing: border-box; }
+
+html { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+       font-size: 16px; line-height: 1.5; color: #222; background: #fafafa; }
+
+body { margin: 0; padding: 1.5rem; max-width: 70rem; margin-left: auto; margin-right: auto; }
+
+header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; margin-bottom: 1rem; }
+header h1 { margin: 0 0 .25rem 0; font-size: 1.5rem; }
+header .meta { color: #666; font-size: .875rem; }
+
+.phi-warning { background: #fff4e5; border: 1px solid #d88; border-left: 4px solid #b22;
+               padding: .75rem 1rem; margin: 1rem 0; border-radius: 4px; }
+.phi-warning strong { color: #b22; }
+
+table { width: 100%; border-collapse: collapse; margin: .75rem 0; }
+th, td { padding: .375rem .5rem; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
+th { background: #f1f1f1; font-weight: 600; }
+
+.patient-list { list-style: none; padding: 0; }
+.patient-list li { padding: .5rem 0; border-bottom: 1px solid #eee; }
+.patient-list a { text-decoration: none; color: #0a58a6; font-weight: 500; }
+.patient-list a:hover { text-decoration: underline; }
+.patient-list .dob { color: #666; font-size: .875rem; margin-left: .5rem; }
+.patient-list .count { color: #666; font-size: .875rem; float: right; }
+
+input[type="search"] { width: 100%; padding: .5rem .75rem; font-size: 1rem;
+                       border: 1px solid #ccc; border-radius: 4px; margin-bottom: 1rem; }
+
+.encounter-list { list-style: none; padding: 0; }
+.encounter-list li { padding: .5rem 0; border-bottom: 1px solid #eee; }
+
+.section { border: 1px solid #eee; border-radius: 4px; padding: .75rem 1rem; margin: .75rem 0; }
+.section h3 { margin-top: 0; font-size: 1rem; text-transform: uppercase; letter-spacing: .05em; color: #555; }
+
+a.button { display: inline-block; padding: .375rem .75rem; background: #0a58a6; color: #fff;
+           text-decoration: none; border-radius: 4px; font-size: .875rem; margin-right: .5rem; }
+a.button:hover { background: #084a8c; }
+
+footer { color: #888; font-size: .8125rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+
+@media print {
+  body { background: #fff; max-width: none; padding: 0; }
+  a.button { background: none; color: #000; border: 1px solid #000; }
+  .phi-warning { border-color: #000; background: #fff; }
+}

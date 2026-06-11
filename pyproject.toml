@@ -106,6 +106,10 @@ ignore = [
 # RUF012 misfires on pydantic models: pydantic v2 deep-copies mutable defaults
 # per-instance, so `field: list[X] = []` is safe and idiomatic there.
 "src/anastomosis/core/model/*" = ["RUF012"]
+# HTML templates: wrapping a `<li>` across lines would change the rendered
+# markup. Templates stay as the natural string literals; only this file is
+# allowed to exceed the 100-column limit.
+"src/anastomosis/deliver/archive/templates.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
