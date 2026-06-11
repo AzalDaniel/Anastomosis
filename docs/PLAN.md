@@ -128,7 +128,9 @@ Woven into milestones; tracked here:
 - [x] CI least-privilege permissions; gitleaks pre-commit
 - [ ] uv + committed `uv.lock` (hash-pinned deps) — M6
 - [ ] CodeQL + semgrep CI lanes — M6
-- [ ] PyPI Trusted Publishing + Sigstore attestations (SLSA L2) — at first release
+- [x] PyPI Trusted Publishing + Sigstore attestations (SLSA L2) — workflow
+      shipped (`release.yml`: OIDC, no tokens, PEP 740 attestations +
+      build provenance); first publish fires on the `v0.1.0` tag push
 - [ ] OpenSSF Scorecard action + badge — M6
 - [x] Log redaction (`core/logutil.py`): RedactionFilter scrubs
       SSN/phone/email/date shapes; `exc_tag()` on error paths — discipline

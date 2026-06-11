@@ -1,5 +1,13 @@
 # Disclaimer
 
+**Alpha software (v0.1.x).** Anastomosis is in alpha. It has been tested
+exclusively against synthetic data (Synthea-style fixtures and hand-built
+synthetic exports) — never against live patient records in this repository.
+Do not use it in production clinical workflows without validating its output
+against your own export, on your own machines, record by record, until you
+trust it. Interfaces and file layouts may change between minor versions
+until 1.0.0.
+
 **Not a medical device.** Anastomosis is data-plumbing software. It does not
 diagnose, treat, or provide clinical decision support, and it is not intended
 for use in making clinical decisions.

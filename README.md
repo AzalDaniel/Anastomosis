@@ -40,24 +40,55 @@ Your records never leave your machine.
 
 ## Status
 
-Early development — see [docs/PLAN.md](docs/PLAN.md) for the living roadmap.
+**v0.1.0 (alpha)** — the Archivist vertical slice works end to end. See
+[CHANGELOG.md](CHANGELOG.md) for what shipped and
+[docs/PLAN.md](docs/PLAN.md) for the living roadmap.
 
 | Milestone | State |
 |---|---|
 | M0 Bootstrap (CI, PHI guardrails, CLI skeleton) | ✅ |
-| M1 Archive vertical slice (ingest → reconstruct → QA → archive) | in progress |
-| M2 Migration mode (verified delivery engine, destination packs, router) | planned |
+| M1 Archive vertical slice (ingest → reconstruct → QA → archive) | ✅ v0.1.0[^1] |
+| M2 Migration mode (verified delivery engine, destination packs, router) | next |
 | M3 Pack-from-samples layout learner | planned |
 | M4 Desktop GUI (liquid-glass) | planned |
 
-## Quickstart (will stabilize at M1)
+[^1]: the Practice Fusion–faithful template pack ([#4]) and golden
+    rendering tests ([#5]) land post-release.
+
+[#4]: https://github.com/AzalDaniel/Anastomosis/issues/4
+[#5]: https://github.com/AzalDaniel/Anastomosis/issues/5
+
+## Install
+
+Once published to PyPI (coming with the v0.1.0 release), the recommended
+install is [pipx](https://pipx.pypa.io/):
 
 ```bash
-pipx install "anastomosis[render]"     # not yet on PyPI — for now: pip install -e ".[dev]"
-anast --version
-anast pipeline run --source pf-tebra ./my_ehi_export \
-      --pack practice_fusion_soap --deliver archive --out ./my_archive
+pipx install "anastomosis[render]"
 ```
+
+Until then — or for development — install from a clone:
+
+```bash
+git clone https://github.com/AzalDaniel/Anastomosis.git
+cd Anastomosis
+pip install -e ".[render]"        # add [dev] to run the test suite
+playwright install chromium      # one-time: the rendering engine's browser
+```
+
+## Quickstart
+
+One command takes a raw EHI export to verified chart PDFs and a searchable
+offline archive:
+
+```bash
+anast pipeline run ./my_ehi_export --out ./charts --archive ./my_archive
+```
+
+The source format is auto-detected (or pass `--source pf-tebra` / `--source
+ccda`); `--pack` selects the document template; every rendered document is
+QA-verified by default; `anast info` lists every available source adapter
+and template pack.
 
 ## Privacy & safety
 
