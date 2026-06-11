@@ -14,8 +14,8 @@ def test_redact_ssn_shape() -> None:
 
 
 def test_redact_phone_shapes() -> None:
-    assert "[REDACTED-PHONE]" in redact("call (555) 015-0123")
-    assert "[REDACTED-PHONE]" in redact("call 555-015-0123")
+    assert "[REDACTED-PHONE]" in redact("call (206) 555-0123")
+    assert "[REDACTED-PHONE]" in redact("call 206-555-0123")
 
 
 def test_redact_email() -> None:
@@ -23,7 +23,9 @@ def test_redact_email() -> None:
 
 
 def test_redact_date_shapes() -> None:
-    assert redact("dob 3/14/1990") == "dob [REDACTED-DATE]"
+    # The pattern is shape-based: any slash/ISO date in a message is treated
+    # as input-derived and scrubbed, no surrounding keyword needed.
+    assert redact("recorded 3/14/1990") == "recorded [REDACTED-DATE]"
     assert redact("dos 2019-03-14") == "dos [REDACTED-DATE]"
 
 

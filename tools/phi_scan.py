@@ -122,14 +122,18 @@ def scan_text(path: Path, text: str, deny: set[str], allow: set[str]) -> list[st
 def iter_target_files(args_paths: list[str]) -> list[Path]:
     if args_paths:
         return [Path(p) for p in args_paths if Path(p).is_file()]
+    # Tracked files PLUS untracked-but-not-ignored files: anything that could
+    # be committed must be scanned, or a "clean" run before `git add` would
+    # miss brand-new files entirely.
     out = subprocess.run(
-        ["git", "ls-files"],  # noqa: S607 — fixed argv, repo-local
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=True,
     )
-    return [REPO_ROOT / line for line in out.stdout.splitlines() if line]
+    files = [REPO_ROOT / line for line in out.stdout.splitlines() if line]
+    return [f for f in files if f.is_file()]
 
 
 def main(argv: list[str] | None = None) -> int:
