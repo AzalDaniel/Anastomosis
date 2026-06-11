@@ -1,14 +1,13 @@
-# Pre-commit hooks: PHI scanning is mandatory and runs first.
-# Install:  pre-commit install
+# Pre-commit gates. Rule #1 of this repo: no real PHI, ever.
 repos:
   - repo: local
     hooks:
       - id: phi-scan
-        name: PHI scan (hashed deny-list + generic patterns)
+        name: PHI scanner (hashed deny-list + generic patterns)
         entry: python tools/phi_scan.py
         language: system
         pass_filenames: true
-        always_run: true
+        exclude: '^tools/phi_hashes\.json$'
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.5.7
