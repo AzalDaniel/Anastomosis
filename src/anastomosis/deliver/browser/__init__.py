@@ -19,13 +19,21 @@ hours-long batch), so the design is built around resumability:
 * :mod:`.engine` — the sequential driver that walks each item through the
   state machine.
 * :mod:`.fake` — the reference in-memory destination test double.
+* :mod:`.manager` — session-lifecycle management (recycling + crash relaunch)
+  decorating one destination.
+* :mod:`.parallel` — the patient-partitioned parallel runner.
+* :mod:`.cdp` — loopback-only CDP attach configuration (no Playwright at
+  import time).
+* :mod:`.reports` — the run report (deterministic JSON) and the console
+  summary line.
 
-The batch scheduler, parallel workers, CDP attach, and reports land in the
-next PR.
+No Playwright import lives at module load anywhere in this package: importing
+it must work on a machine without the ``deliver-browser`` extra.
 """
 
 from __future__ import annotations
 
+from .cdp import SHARED_MACHINE_WARNING, CdpEndpoint, connect_over_cdp
 from .engine import EngineResult, UploadEngine
 from .errors import (
     DeliveryError,
@@ -35,7 +43,10 @@ from .errors import (
     WrongPatientError,
 )
 from .fake import FakeDestination
+from .manager import ManagedDestination
 from .manifest import build_manifest, is_skiplisted, load_skiplist
+from .parallel import ParallelResult, run_parallel
+from .reports import summary_line, write_run_report
 from .states import (
     CRASH_RECOVERY,
     LEGAL_TRANSITIONS,
@@ -49,12 +60,16 @@ from .verify import NullVerifier, Verifier
 __all__ = [
     "CRASH_RECOVERY",
     "LEGAL_TRANSITIONS",
+    "SHARED_MACHINE_WARNING",
     "TERMINAL_STATES",
+    "CdpEndpoint",
     "DeliveryError",
     "EngineResult",
     "FakeDestination",
     "IllegalTransitionError",
+    "ManagedDestination",
     "NullVerifier",
+    "ParallelResult",
     "PermanentDeliveryError",
     "TrackingDB",
     "TransientDeliveryError",
@@ -63,7 +78,11 @@ __all__ = [
     "Verifier",
     "WrongPatientError",
     "build_manifest",
+    "connect_over_cdp",
     "is_skiplisted",
     "load_skiplist",
+    "run_parallel",
+    "summary_line",
     "validate_transition",
+    "write_run_report",
 ]

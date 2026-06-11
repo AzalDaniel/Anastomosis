@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -115,6 +116,9 @@ class UploadEngine:
         run_id: str,
         *,
         skiplist: frozenset[str] = frozenset(),
+        stop: threading.Event | None = None,
+        manage_run: bool = True,
+        restrict_to_items: bool = False,
     ) -> EngineResult:
         """Enqueue ``items`` (idempotent) and drive each pending item to a terminal state.
 
@@ -124,19 +128,58 @@ class UploadEngine:
         ``patients`` maps canonical ``patient_id`` to :class:`Patient`; a
         missing entry raises :class:`KeyError` (a manifest/records mismatch is
         a defect, not a skip).
+
+        ``stop``, ``manage_run``, and ``restrict_to_items`` are the
+        parallel-runner seam (PLAN item 10, the parallel PR); all three default
+        to preserving the single-threaded behavior exactly:
+
+        * ``stop`` — an optional cooperative cancel flag. When set (by a sibling
+          worker hitting a wrong-patient abort), the loop stops between items,
+          leaving the rest of this worker's partition PENDING. It is checked
+          only at item boundaries, never mid-item, so an in-flight upload is
+          never half-abandoned. ``None`` (the default) means "never asked to
+          stop" — identical to the original behavior.
+        * ``manage_run`` — whether this engine owns the run's ``finish_run``.
+          ``True`` (the default) keeps the original behavior: on a wrong-patient
+          abort the engine stamps ``finish_run(aborted_reason=...)`` itself.
+          The parallel coordinator passes ``False`` so it can write a single
+          authoritative ``finish_run`` for the shared run after all workers
+          join — several workers stamping the same run row would race.
+        * ``restrict_to_items`` — whether to drive ONLY the items passed in this
+          call. ``False`` (the default) drives every pending item in the ledger
+          (the original behavior: a resumed sequential run picks up everything
+          still owing work). The parallel workers pass ``True`` so each drives
+          only its patient partition — a shared ledger means
+          :meth:`TrackingDB.pending_items` returns every worker's pending rows,
+          and a worker must never reach into a sibling's patient.
         """
         for item in items:
             self._tracking.enqueue(item)
 
+        scope: frozenset[str] | None = (
+            frozenset(item.item_key for item in items) if restrict_to_items else None
+        )
+
         aborted_reason: str | None = None
         processed = 0
         for item in self._tracking.pending_items():
+            if scope is not None and item.item_key not in scope:
+                continue
+            # Cooperative cancel: a sibling worker aborted for patient safety.
+            # Checked at the item boundary so nothing in flight is abandoned.
+            if stop is not None and stop.is_set():
+                logger.info("run stopped by external signal after %d item(s)", processed)
+                break
             patient = patients[item.patient_id]
             try:
                 self._process_one(item, patient, run_id, skiplist)
             except _AbortRun as abort:
                 aborted_reason = abort.reason
-                self._tracking.finish_run(run_id, aborted_reason=aborted_reason)
+                if manage_run:
+                    self._tracking.finish_run(run_id, aborted_reason=aborted_reason)
+                if stop is not None:
+                    # Tell sibling workers to stop at their next item boundary.
+                    stop.set()
                 logger.warning(
                     "run aborted for patient safety after %d item(s): %s",
                     processed,
