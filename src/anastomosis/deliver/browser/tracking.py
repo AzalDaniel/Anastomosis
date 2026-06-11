@@ -217,6 +217,22 @@ class TrackingDB:
         """Return the current state of ``item_key`` (raises ``KeyError``)."""
         return self._require_state(self._conn(), item_key)
 
+    def attempts_of(self, item_key: str) -> int:
+        """Return the retry-attempt count of ``item_key`` (raises ``KeyError``).
+
+        The count is bumped by the ledger itself on every RETRY_WAIT write,
+        so it stays durable across resumed runs — the engine's retry budget
+        survives a crash.
+        """
+        row = (
+            self._conn()
+            .execute("SELECT attempts FROM items WHERE item_key = ?", (item_key,))
+            .fetchone()
+        )
+        if row is None:
+            raise KeyError(item_key)
+        return int(row["attempts"])
+
     def transition(
         self,
         item_key: str,
