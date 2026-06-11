@@ -151,14 +151,14 @@ PHI guards, PHI scanner + 92-token hashed deny-list + canary self-tests, CI
 this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
 
 ### M1 — Archive vertical slice (the pipeline proof)
-1. Canonical model (`core/model/`): AnastBase{id, extensions, provenance} —
+1. ✅ Canonical model (`core/model/`): AnastBase{id, extensions, provenance} —
    every unmapped source column lands in `extensions` (lossless guarantee);
    Patient, Practitioner, Facility, Encounter (SOAP NoteSections + addenda),
    Observation (vitals + 17 social-history subcategories), Condition,
    AllergyIntolerance, MedicationStatement/Request (escript transactions),
    Coverage, FamilyMemberHistory, Immunization, AdvanceDirective,
    DocumentArtifact, PatientRecord.
-2. Core utility ports (`core/{timeutil,textutil,codes}.py`): sentinel cleaning
+2. ✅ Core utility ports (`core/{timeutil,textutil,codes}.py`): sentinel cleaning
    (`\N`,`-1`,`1/1/0001`), 7-format date parsing, `to_local(dt, tz)` via
    zoneinfo (DST-oracle tested against the predecessor's hand-rolled math),
    phone/age/HTML sanitizers, LOINC vital map + BMI auto-calc + pain LA codes.
