@@ -1,0 +1,133 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anastomosis"
+description = "Reconstruct, verify, and re-home clinical records. An open-source toolkit for EHR migration, archival, and record liberation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Azal Daniel" }]
+keywords = [
+  "ehr",
+  "ehi-export",
+  "healthcare",
+  "interoperability",
+  "fhir",
+  "ccda",
+  "medical-records",
+  "migration",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Healthcare Industry",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dynamic = ["version"]
+dependencies = [
+  "pydantic>=2.7",
+  "jinja2>=3.1",
+  "typer>=0.12",
+  "rich>=13.7",
+  "lxml>=5.2",
+  "python-dateutil>=2.9",
+  "pyyaml>=6.0",
+  # Windows has no system tz database; zoneinfo needs the PyPI one there.
+  "tzdata; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# Rendering + QA. PyMuPDF is AGPL-3.0 — license-aligned with this project.
+render = ["playwright>=1.46", "pymupdf>=1.24"]
+# FHIR canonical-model import/export (fhir.resources is pydantic-v2 based).
+fhir = ["fhir.resources>=8.1"]
+# Browser-automation delivery (destination packs).
+deliver-browser = ["playwright>=1.46"]
+# Desktop GUI.
+gui = ["pywebview>=5.0"]
+dev = [
+  "anastomosis[render,fhir,deliver-browser]",
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "types-PyYAML",
+  "pre-commit>=3.7",
+]
+
+[project.scripts]
+anast = "anastomosis.cli:app"
+anastomosis = "anastomosis.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/AzalDaniel/Anastomosis"
+Issues = "https://github.com/AzalDaniel/Anastomosis/issues"
+
+[project.entry-points."anastomosis.packs"]
+# Third-party packs register here. Built-in packs ship inside the package.
+
+[tool.hatch.version]
+path = "src/anastomosis/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anastomosis"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "S",   # bandit security rules
+  "C4",  # comprehensions
+  "DTZ", # naive-datetime traps (PHI timestamps must be tz-aware)
+  "RUF",
+]
+ignore = [
+  "S101", # assert is fine in this codebase (tests + invariants)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "DTZ"]
+# RUF012 misfires on pydantic models: pydantic v2 deep-copies mutable defaults
+# per-instance, so `field: list[X] = []` is safe and idiomatic there.
+"src/anastomosis/core/model/*" = ["RUF012"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+  "e2e: end-to-end pipeline tests (need playwright chromium)",
+  "slow: long-running tests, excluded from default CI lanes",
+]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["anastomosis"]
+mypy_path = "src"
+strict = true
+# New code is written strict from day one; ports tighten incrementally.
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# Optional extras: typed when installed, but their absence (minimal installs)
+# must not fail type-checking of the core package. fitz (PyMuPDF) ships no
+# py.typed marker at all.
+module = ["playwright.*", "fitz", "fitz.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/anastomosis"]

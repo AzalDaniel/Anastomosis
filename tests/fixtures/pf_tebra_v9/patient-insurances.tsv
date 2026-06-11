@@ -1,0 +1,4 @@
+PatientInsurancePlanGuid	PatientPracticeGuid	PayerName	InsurancePlanName	InsuranceCoverageType	RelationshipToInsured	MemberId	GroupId	OrderOfBenefits	EffectiveFromDate	EffectiveToDate	CopayFixedAmount	InsurancePlanIsActive	EmployerName	LastModifiedDateTimeUtc
+feedface-c0fe-0000-0000-000000000001	feedface-0000-0000-0000-000000000001	Cascadia Health	Cascadia Choice (PPO)	Medical	Self	CH900123456	GRP-4477	Primary	1/1/2023		25.00	true	Example Lumber Co.	6/2/2023 1:45:09 PM
+feedface-c0fe-0000-0000-000000000002	feedface-0000-0000-0000-000000000001	Evergreen Mutual	Evergreen Basic	Medical	Self	EM55012		Secondary	1/1/2023		\N	true		6/2/2023 1:45:09 PM
+feedface-c0fe-0000-0000-000000000003	feedface-0000-0000-0000-000000000002	Medicare	Medicare Part B	Medical	Self	9EG4TE5MK72		Primary	1/1/2020		20.00	true		6/2/2023 1:45:09 PM

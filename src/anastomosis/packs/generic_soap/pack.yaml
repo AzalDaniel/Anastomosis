@@ -1,0 +1,36 @@
+name: generic_soap
+version: "1.0"
+description: >
+  Vendor-neutral SOAP/visit-note pack. Renders any canonical encounter into
+  a clean, archival chart note: header (facility / patient / visit), note
+  sections, vitals table, addenda, and signature line.
+locale: en_US
+timezone: America/New_York
+page:
+  size: Letter
+  margin_top: 0.6in
+  margin_right: 0.6in
+  margin_bottom: 0.6in
+  margin_left: 0.6in
+filename:
+  pattern: "{family}_{given}_{dos}.pdf"
+  collision: guid_suffix
+sections:
+  vitals:
+    label: Vitals
+    default: true
+  addenda:
+    label: Addenda
+    default: true
+  insurance:
+    label: Insurance / payment information
+    default: false
+    description: Coverage details on the note footer
+  social_history:
+    label: Social history
+    default: false
+tokens:
+  heading_fill: "#f1f1f1"
+  body_font: "Georgia, 'Times New Roman', serif"
+  mono_font: "'Courier New', monospace"
+verify_header_fields: [patient_name, dob, dos]

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ patient_name }} — {{ dos }}</title>
+<style>
+  body { font-family: {{ tokens.get('body_font', 'serif') }}; font-size: 11pt;
+         color: #1a1a1a; margin: 0; }
+  header { border-bottom: 2px solid #1a1a1a; padding-bottom: 8px; margin-bottom: 14px; }
+  .facility { font-size: 13pt; font-weight: bold; }
+  .facility-meta, .patient-meta { font-size: 9.5pt; color: #333; }
+  h2.section { background: {{ tokens.get('heading_fill', '#f1f1f1') }};
+               font-size: 10.5pt; text-transform: uppercase; letter-spacing: .04em;
+               padding: 4px 8px; margin: 16px 0 6px; page-break-after: avoid; }
+  .section-body { padding: 0 8px; }
+  table.vitals { border-collapse: collapse; margin: 4px 8px; }
+  table.vitals td, table.vitals th { border: 1px solid #bbb; padding: 3px 8px;
+                                     font-size: 9.5pt; text-align: left; }
+  .addendum { border-left: 3px solid #888; margin: 8px; padding: 4px 10px;
+              font-size: 10pt; }
+  .addendum-meta { color: #555; font-size: 8.5pt; }
+  footer.sig { margin-top: 24px; border-top: 1px solid #1a1a1a; padding-top: 6px;
+               font-size: 10pt; page-break-inside: avoid; }
+  .unsigned { color: #8a5a00; font-weight: bold; }
+</style>
+</head>
+<body>
+<header>
+  {% if facility %}
+    <div class="facility">{{ facility.name }}</div>
+    <div class="facility-meta">
+      {{ facility.address_line1 }}{% if facility.address_line2 %}, {{ facility.address_line2 }}{% endif %},
+      {{ facility.city }}, {{ facility.state }} {{ facility.postal_code }}
+      {% if facility.phone %} · Tel {{ facility.phone }}{% endif %}
+      {% if facility.fax %} · Fax {{ facility.fax }}{% endif %}
+    </div>
+  {% endif %}
+  <div class="patient-meta">
+    <strong>{{ patient_name }}</strong>
+    {% if dob %} · DOB {{ dob }}{% endif %}
+    {% if age %} ({{ age }}){% endif %}
+    {% if patient.sex %} · {{ patient.sex }}{% endif %}
+    · Date of service: {{ dos }}
+    {% if encounter.note_type %} · {{ encounter.note_type }}{% endif %}
+  </div>
+  {% if encounter.chief_complaint %}
+    <div class="patient-meta">Chief complaint: {{ encounter.chief_complaint }}</div>
+  {% endif %}
+</header>
+
+{% for section in note_sections %}
+  <h2 class="section">{{ section.title or "Note" }}</h2>
+  {# Source note HTML is rendered as authored; print CSS cannot run scripts
+     and Chromium renders with no network access to leak to. #}
+  <div class="section-body">{{ section.html | safe if section.html else section.text }}</div>
+{% endfor %}
+
+{% if vitals %}
+  <h2 class="section">Vitals</h2>
+  <table class="vitals">
+    <tr><th>Measure</th><th>Value</th><th>Unit</th></tr>
+    {% for v in vitals %}
+      <tr><td>{{ v.display or v.code }}</td><td>{{ v.value }}</td><td>{{ v.unit or "" }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if social_history %}
+  <h2 class="section">Social history</h2>
+  <table class="vitals">
+    {% for o in social_history %}
+      <tr><td>{{ o.display }}</td><td>{{ o.value }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if coverages %}
+  <h2 class="section">Payment information</h2>
+  <table class="vitals">
+    <tr><th>Order</th><th>Payer</th><th>Plan</th><th>Type</th><th>Member ID</th></tr>
+    {% for c in coverages %}
+      <tr><td>{{ c.priority_label or "" }}</td><td>{{ c.payer or "" }}</td>
+          <td>{{ c.plan_name or "" }}</td><td>{{ c.plan_type or c.coverage_type or "" }}</td>
+          <td>{{ c.member_id or "" }}</td></tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if addenda %}
+  <h2 class="section">Addenda</h2>
+  {% for addendum in addenda %}
+    <div class="addendum">
+      {{ addendum.text }}
+      <div class="addendum-meta">
+        {{ addendum.status or "" }}{% if addendum.source %} · {{ addendum.source }}{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+
+<footer class="sig">
+  {% if signer and signed_at %}
+    Electronically signed by {{ signer.name }}{% if signer.credential %}, {{ signer.credential }}{% endif %}
+    on {{ signed_at }}
+  {% else %}
+    <span class="unsigned">UNSIGNED NOTE</span>
+    {% if provider %} · Seen by {{ provider.name }}{% endif %}
+  {% endif %}
+</footer>
+</body>
+</html>

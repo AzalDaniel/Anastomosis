@@ -1,0 +1,2 @@
+PatientPracticeGuid	DocumentGuid	DocumentName	DocumentType	Status	DocumentStorageGuid	OriginalFileExtension	FileSizeBytes	DocumentDate
+feedface-0000-0000-0000-000000000001	feedface-d0c0-0000-0000-000000000001	Cardiology referral letter	Referral	signed	feedface-d0c0-0000-0000-000000000001	.pdf	48213	8/22/2023

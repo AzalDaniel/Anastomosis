@@ -1,0 +1,3 @@
+PatientPracticeGuid	AllergyGuid	AllergenCategory	Substance	SubstanceSnomedCode	Severity	OnsetType	StartDate	StopDate	IsActive
+feedface-0000-0000-0000-000000000001	feedface-a11e-0000-0000-000000000001	Drug	Penicillin V	372722000	Severe	Childhood			true
+feedface-0000-0000-0000-000000000002	feedface-a11e-0000-0000-000000000002	Food	Peanut	256349002	Moderate		6/1/2010		true

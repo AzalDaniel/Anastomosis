@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+# Least-privilege default for every job.
+permissions:
+  contents: read
+
+jobs:
+  phi-scan:
+    name: PHI scan (full tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python tools/phi_scan.py
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      # pymupdf: the QA stage is core pipeline behavior and must be tested on
+      # every OS/Python combo (Chromium itself stays in the e2e lane).
+      - run: pip install -e . pytest pymupdf
+      - run: pytest -m "not e2e and not slow"
+
+  # Separate lane: installs the rendering stack (Playwright Chromium) and runs
+  # full-pipeline tests. Activates from milestone M1 onward; passes trivially
+  # while no e2e tests exist.
+  e2e:
+    name: End-to-end (pipeline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[render,fhir]" pytest
+      - run: playwright install chromium --with-deps
+      - run: pytest -m e2e || [ $? -eq 5 ]  # exit 5 = no tests collected, OK pre-M1
