@@ -8,7 +8,7 @@ instant we sweep — that proves the port changed the mechanism (IANA database
 instead of hand-rolled math) without changing a single rendered timestamp.
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -29,10 +29,24 @@ from anastomosis.core.timeutil import age_at, age_display, parse_date, parse_dt,
         ("2019-03-14", datetime(2019, 3, 14, tzinfo=UTC)),
         ("20190314135926", datetime(2019, 3, 14, 13, 59, 26, tzinfo=UTC)),
         ("20190314", datetime(2019, 3, 14, tzinfo=UTC)),
+        # C-CDA TS carrying its own UTC offset (the %z form) keeps it verbatim.
+        (
+            "20230510140000-0500",
+            datetime(2023, 5, 10, 14, 0, 0, tzinfo=timezone(timedelta(hours=-5))),
+        ),
     ],
 )
 def test_parse_dt_formats(raw: str, expected: datetime) -> None:
     assert parse_dt(raw) == expected
+
+
+def test_parse_dt_ccda_ts_offset_is_aware() -> None:
+    # The C-CDA TS "20230510140000-0500" must round to a -5h aware datetime;
+    # the bare-date C-CDA TS "20230510" must still parse as a calendar date.
+    parsed = parse_dt("20230510140000-0500")
+    assert parsed is not None
+    assert parsed.utcoffset() == timedelta(hours=-5)
+    assert parse_date("20230510") == date(2023, 5, 10)
 
 
 def test_parse_dt_keeps_explicit_offsets() -> None:

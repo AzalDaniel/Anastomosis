@@ -32,6 +32,7 @@ _FORMATS = (
     "%m/%d/%Y %H:%M:%S",  # 03/14/2019 13:59:26
     "%m/%d/%Y %H:%M",  # 3/14/2019 13:59
     "%m/%d/%Y",  # 3/14/2019              (DOB-style)
+    "%Y%m%d%H%M%S%z",  # 20190314135926-0500    (C-CDA TS with UTC offset)
     "%Y%m%d%H%M%S",  # 20190314135926         (C-CDA TS)
     "%Y%m%d",  # 20190314               (C-CDA date-only TS)
 )
