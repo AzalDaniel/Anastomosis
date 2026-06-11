@@ -32,15 +32,15 @@ def test_clean_numeric_keeps_real_values(raw: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "raw", ["5550150123", "555-015-0123", "(555) 015-0123", "1-555-015-0123", "+1 555 015 0123"]
+    "raw", ["2065550123", "206-555-0123", "(206) 555-0123", "1-206-555-0123", "+1 206 555 0123"]
 )
 def test_format_phone_normalizes_ten_digits(raw: str) -> None:
-    assert format_phone(raw) == "(555) 015-0123"
+    assert format_phone(raw) == "(206) 555-0123"
 
 
 def test_format_phone_preserves_partials() -> None:
     # Losing a partial number would violate the lossless guarantee.
-    assert format_phone("  015-0123 ") == "015-0123"
+    assert format_phone("  555-0123 ") == "555-0123"
     assert format_phone("") is None
     assert format_phone(None) is None
 
