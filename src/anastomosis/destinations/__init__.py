@@ -17,11 +17,27 @@ from .base import (
     UploadItem,
     UploadReceipt,
 )
+from .registry import (
+    BrowserKind,
+    Capability,
+    CcdaImportKind,
+    DestinationEntry,
+    DestinationRegistry,
+    DocWriteKind,
+    Evidence,
+)
 
 __all__ = [
     "BannerCheck",
+    "BrowserKind",
+    "Capability",
+    "CcdaImportKind",
     "Destination",
+    "DestinationEntry",
     "DestinationPatient",
+    "DestinationRegistry",
+    "DocWriteKind",
+    "Evidence",
     "ExistingDocsScanner",
     "PatientResolver",
     "Session",
