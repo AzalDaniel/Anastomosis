@@ -188,10 +188,13 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
    `generic_chart_summary`. NOTE for the PF pack port:
    `Encounter.date_of_service` is now a calendar date (DateField semantics —
    midnight-UTC datetimes shifted DOS a day west of UTC).
-7. `qa/` engine (registry replaces static list; engine checks: data_integrity,
-   layout_pagination, vitals_loinc, date_staleness) + PF pack checks (37
-   headings, 17 labels, addenda, visual tokens, insurance) + bad_pdfs
-   mutation corpus self-tests.
+7. 🔶 `qa/` engine ✅ (registry; engine checks: data_integrity,
+   layout_pagination, vitals_loinc, date_staleness; boundary-anchored
+   matching — substring matching is a proven false-PASS factory; skipped
+   docs re-verified on re-runs; mutation-corpus self-tests; CLI `--qa`
+   stage, exit 1 on FAIL). Still open: PF pack checks (37 headings, 17
+   labels, addenda, visual tokens, insurance) — land with the
+   practice_fusion_soap pack (issue #4).
 8. `deliver/archive/` offline static site (vendored MiniSearch, CSP-pinned,
    zero network; plain dirs+PDFs+JSON = 30-year durability) + `deliver/bundle/`.
 9. 🔶 CLI glue ✅: `anast pipeline run <dir> --out <dir>` (auto-detect,
