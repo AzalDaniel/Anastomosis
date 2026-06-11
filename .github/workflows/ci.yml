@@ -47,7 +47,8 @@ jobs:
           python-version: ${{ matrix.python }}
       # pymupdf: the QA stage is core pipeline behavior and must be tested on
       # every OS/Python combo (Chromium itself stays in the e2e lane).
-      - run: pip install -e . pytest pymupdf
+      # fhir.resources: the FHIR bundle schema-validation test must run here.
+      - run: pip install -e . pytest pymupdf "fhir.resources>=8.1"
       - run: pytest -m "not e2e and not slow"
 
   # Separate lane: installs the rendering stack (Playwright Chromium) and runs
