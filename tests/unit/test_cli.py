@@ -51,6 +51,7 @@ class _FakeChromium:
 
 
 def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(

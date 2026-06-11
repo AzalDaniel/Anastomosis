@@ -4,16 +4,24 @@ corpus trips exactly the check built to catch it."""
 from datetime import date
 from pathlib import Path
 
-import fitz
+import pytest
 
-from anastomosis.core.model import (
+fitz = pytest.importorskip("fitz", reason="QA tests need PyMuPDF (render extra)")
+
+from anastomosis.core.model import (  # noqa: E402
     Encounter,
     Observation,
     ObservationCategory,
     Patient,
     PatientRecord,
 )
-from anastomosis.qa import QAReport, Verdict, engine_checks, run_qa, write_report
+from anastomosis.qa import (  # noqa: E402
+    QAReport,
+    Verdict,
+    engine_checks,
+    run_qa,
+    write_report,
+)
 
 ENC = "feedface-e000-0000-0000-0000000000aa"
 
