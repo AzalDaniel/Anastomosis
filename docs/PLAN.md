@@ -162,12 +162,19 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
    (`\N`,`-1`,`1/1/0001`), 7-format date parsing, `to_local(dt, tz)` via
    zoneinfo (DST-oracle tested against the predecessor's hand-rolled math),
    phone/age/HTML sanitizers, LOINC vital map + BMI auto-calc + pain LA codes.
-3. Synthetic PF/Tebra TSV fixture (~20 tables, 3 patients/6 encounters, built
-   per the public PF EHI docs v6) covering sentinels, BMI trigger, insurance
-   PlanType fallback chain, same-day filename collision, addendum, all 17
-   social-history subcategories.
-4. `sources/practicefusion_tebra/` adapter (loader/mapper/escript/tables) —
-   port of the 30-table join graph; module-level execution killed.
+3. ✅ Synthetic PF/Tebra TSV fixture (29 tables, 3 patients/6 encounters,
+   built per the public PF EHI data dictionary **v9, 2026-01-12** — verified
+   live 2026-06-11; see fixture README for the VERIFIED/INFERRED ledger)
+   covering sentinels, BMI trigger, PlanType fallback chain, same-day
+   filename collision, addendum, SIMPLE notes, pediatric record. Note:
+   v9 has no MRN/PRN column and no dedicated vitals table (vitals are LOINC
+   rows in patient-encounter-observations); social history is split across
+   per-topic tables — remaining predecessor subcategories ride through
+   `extensions` until verified against a real export.
+4. ✅ `sources/pf_tebra/` adapter (loader/mapper/escript) — joins the v9
+   graph into PatientRecords; lossless extensions enforced per-table;
+   BMI auto-calc unit-aware (in/cm, lb/kg); escript status priority
+   resolution; no module-level execution (registry import only).
 5. `sources/ccda/` + `core/fhir/{export,ingest}.py` + Synthea fixtures.
 6. `reconstruct/` engine (browser recycling every 250 renders, crash relaunch,
    GUID-suffix collision handling, idempotent skip) + `packs/practice_fusion_soap`

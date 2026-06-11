@@ -65,7 +65,9 @@ class PrescriptionTransaction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: str  # e.g. "Order sent", "Cancellation", "Dispensed"
+    kind: str  # the status value, e.g. "Sent", "Verified", "Dispensed"
+    description: str | None = None  # source's transaction description text
+    note: str | None = None
     at: datetime | None = None
     destination_type: str | None = None
 
