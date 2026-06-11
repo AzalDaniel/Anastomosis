@@ -191,6 +191,20 @@ def test_unparsed_section_and_document_metadata_survive(record: PatientRecord) -
     assert "ccda:title" in ext
 
 
+# --- idempotency -------------------------------------------------------------
+
+
+def test_encounter_ids_are_deterministic_across_reparses() -> None:
+    # The engine's idempotent-skip relies on encounter.id being stable across
+    # re-runs (same-day collision suffixing keys off encounter.id[:8]). A
+    # plain uuid4 fallback would re-render every encounter on every pass.
+    from anastomosis.sources.ccda.parser import parse_document
+
+    first = parse_document(CCDA_FIXTURE / "feedface_ccd.xml")
+    second = parse_document(CCDA_FIXTURE / "feedface_ccd.xml")
+    assert [e.id for e in first.encounters] == [e.id for e in second.encounters]
+
+
 # --- cross-adapter FHIR round trip -------------------------------------------
 
 

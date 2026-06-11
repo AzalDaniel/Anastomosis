@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
@@ -93,9 +93,14 @@ _PHONE_USE = {
 # administrativeGenderCode @code → display (when @displayName is absent).
 _SEX_BY_CODE = {"F": "Female", "M": "Male", "UN": None}
 
-# A GUID shaped like the synthetic-fixture convention; only such ids are
-# trusted as canonical encounter ids (everything else gets a fresh uuid).
-_GUID_RE = re.compile(r"^(?:feedface-|00000000-)[0-9a-fA-F-]+$", re.IGNORECASE)
+# A GUID-shaped string: the synthetic-fixture prefix OR the canonical
+# 8-4-4-4-12 hex form a real EHR would emit. Either is trusted as an
+# already-stable id; everything else gets a deterministic uuid5.
+_GUID_RE = re.compile(
+    r"^(?:feedface-|00000000-)[0-9a-fA-F-]+$|"
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    re.IGNORECASE,
+)
 _WS_RE = re.compile(r"\s+")
 
 # --- small element helpers ---------------------------------------------------
@@ -480,13 +485,24 @@ def _social_history(section: _Element, patient_id: str, source_file: str) -> lis
 # --- encounters + notes ------------------------------------------------------
 
 
-def _encounter_id(root: str | None) -> str:
-    return root if root and _GUID_RE.match(root) else str(uuid4())
+def _encounter_id(root: str | None, source_file: str, index: int) -> str:
+    """Stable encounter id.
+
+    Prefers the source's id-root when it looks like a real GUID (the
+    synthetic-fixture shape, or any 8-4-4-4-12 hex pattern a vendor would
+    emit). Otherwise derives a deterministic UUID from the file name and
+    the encounter's positional index in the document — so re-parsing the
+    same CCD yields the same encounter ids, which is what the engine's
+    idempotent-skip invariant rides on.
+    """
+    if root and _GUID_RE.match(root):
+        return root
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:encounter:{index}"))
 
 
 def _encounters(section: _Element, patient_id: str, source_file: str) -> list[Encounter]:
     out: list[Encounter] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         enc = _find(entry, "v3:encounter")
         if enc is None:
             continue
@@ -494,7 +510,7 @@ def _encounters(section: _Element, patient_id: str, source_file: str) -> list[En
         encounter_type = _attr(code, "displayName")
         out.append(
             Encounter(
-                id=_encounter_id(_val_attr(enc, "v3:id", "root")),
+                id=_encounter_id(_val_attr(enc, "v3:id", "root"), source_file, index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(enc, "v3:effectiveTime")
                 or _ts_date(enc, "v3:effectiveTime/v3:low"),
@@ -508,14 +524,14 @@ def _encounters(section: _Element, patient_id: str, source_file: str) -> list[En
 
 def _note_encounters(section: _Element, patient_id: str, source_file: str) -> list[Encounter]:
     out: list[Encounter] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         act = _find(entry, "v3:act")
         if act is None:
             continue
         text = _text_content(_find(act, "v3:text"))
         out.append(
             Encounter(
-                id=_encounter_id(_val_attr(act, "v3:id", "root")),
+                id=_encounter_id(_val_attr(act, "v3:id", "root"), f"{source_file}:note", index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(act, "v3:author/v3:time"),
                 note_type=_val_attr(act, "v3:code", "displayName"),
