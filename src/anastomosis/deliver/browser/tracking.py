@@ -135,9 +135,14 @@ class TrackingDB:
         if conn is None:
             conn = sqlite3.connect(self._db_path, isolation_level=None)
             conn.row_factory = sqlite3.Row
+            # busy_timeout MUST be set before journal_mode: switching to (or
+            # re-verifying) WAL takes a file lock, and a new thread's
+            # connection doing it with the default zero timeout races any
+            # concurrent writer straight into "database is locked" (seen on
+            # Windows CI, where the wider file-op window exposes it).
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
-            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return conn
@@ -360,6 +365,66 @@ class TrackingDB:
             self._conn().execute("SELECT state, COUNT(*) AS n FROM items GROUP BY state").fetchall()
         )
         return {row["state"]: row["n"] for row in rows}
+
+    # --- read accessors (for reports — counts/ids/type names only) ---
+
+    def run_info(self, run_id: str) -> dict[str, str | None]:
+        """Return the ``runs`` row for ``run_id`` (raises ``KeyError`` if absent).
+
+        Exposes the run's destination, timestamps, and abort reason for the
+        report writer without reaching into the ledger's privates. Every value
+        is log-safe: a destination name, ISO timestamps, and an abort *type*
+        name (never a patient value).
+        """
+        row = (
+            self._conn()
+            .execute(
+                "SELECT destination, started_at, finished_at, aborted_reason "
+                "FROM runs WHERE run_id = ?",
+                (run_id,),
+            )
+            .fetchone()
+        )
+        if row is None:
+            raise KeyError(run_id)
+        return {
+            "destination": row["destination"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "aborted_reason": row["aborted_reason"],
+        }
+
+    def error_type_histogram(self, run_id: str) -> dict[str, int]:
+        """Count audit transitions by ``error_type`` for one run.
+
+        Reads the append-only ``transitions`` table and tallies the non-null
+        ``error_type`` values (exception *type* names only — the schema stores
+        nothing else there) for ``run_id``. Surfaces the failure-shape mix in
+        a run report without exposing any item detail.
+        """
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT error_type, COUNT(*) AS n FROM transitions "
+                "WHERE run_id = ? AND error_type IS NOT NULL GROUP BY error_type",
+                (run_id,),
+            )
+            .fetchall()
+        )
+        return {row["error_type"]: row["n"] for row in rows}
+
+    def attempts_histogram(self) -> dict[int, int]:
+        """Count items by their durable ``attempts`` value (counts only).
+
+        Keyed by attempt count, valued by how many items have it — a histogram
+        of how hard each item was to land, for the run report.
+        """
+        rows = (
+            self._conn()
+            .execute("SELECT attempts, COUNT(*) AS n FROM items GROUP BY attempts")
+            .fetchall()
+        )
+        return {int(row["attempts"]): row["n"] for row in rows}
 
     # --- internals ---
 
