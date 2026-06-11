@@ -55,6 +55,7 @@ dev = [
   "pytest-cov>=5.0",
   "ruff>=0.5",
   "mypy>=1.10",
+  "types-PyYAML",
   "pre-commit>=3.7",
 ]
 

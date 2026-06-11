@@ -59,10 +59,12 @@ def test_pack_dir_may_be_a_single_pack(tmp_path: Path) -> None:
 
 
 def test_broken_manifest_is_diagnosed_not_fatal(tmp_path: Path) -> None:
+    # An unparseable manifest is keyed by its directory name (the manifest
+    # name is unreadable); the healthy sibling still loads.
     make_pack(tmp_path, "broken", manifest="name: [unclosed")
     make_pack(tmp_path, "fine")
     statuses = discover_packs([tmp_path], allow_external=True)
-    assert statuses["fine"].available
+    assert statuses["demo_soap"].available
     broken = statuses["broken"]
     assert not broken.available
     assert broken.diagnosis is not None and "Error" in broken.diagnosis

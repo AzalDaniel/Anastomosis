@@ -33,7 +33,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import yaml
@@ -134,7 +134,7 @@ def _load_context_builder(path: Path) -> ContextBuilder:
     builder = getattr(module, "build_context", None)
     if not callable(builder):
         raise AttributeError("context.py defines no callable build_context")
-    return builder
+    return cast(ContextBuilder, builder)
 
 
 def _load_pack_dir(root: Path, origin: str) -> PackStatus:
