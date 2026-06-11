@@ -130,13 +130,16 @@ Woven into milestones; tracked here:
 - [ ] CodeQL + semgrep CI lanes — M6
 - [ ] PyPI Trusted Publishing + Sigstore attestations (SLSA L2) — at first release
 - [ ] OpenSSF Scorecard action + badge — M6
-- [ ] Log redaction: never log patient names/DOBs; structured logging with
-      redaction filter; error messages carry `type(e).__name__`, not `str(e)`
-      when input-derived — from M1
-- [ ] Output hygiene: archive/screenshot dirs created `0o700`; PHI warning
-      README dropped into every output dir; optional zip-AES/age encryption — M1/M2
-- [ ] Pack trust model: built-ins implicitly trusted; third-party packs require
-      explicit opt-in + hash pinning in user config; pack signing later — M2
+- [x] Log redaction (`core/logutil.py`): RedactionFilter scrubs
+      SSN/phone/email/date shapes; `exc_tag()` on error paths — discipline
+      stays "log counts and ids, never values"
+- [x] Output hygiene (`core/output.py`): output dirs `0o700` + PHI warning
+      README (optional zip-AES/age encryption still open — M2)
+- [x] Pack trust model v1: built-ins implicitly trusted; external packs need
+      explicit `--pack-dir`/allow_external opt-in (hash pinning + signing — M2)
+- [x] PHI scanner hardening: untracked-file blind spot closed; allowlist
+      ledger (`tools/phi_allowlist.txt`) with justification requirement;
+      `tools/check.sh` is the only sanctioned local gate (pipefail)
 - [ ] CDP attach: loopback-only, warn on shared machines, never store creds — M2
 - [ ] hypothesis property tests on parsers; mutmut on QA suite — M6
 - [ ] REUSE/SPDX headers incl. vendored MiniSearch; mkdocs-material; release-please — M6
@@ -176,20 +179,26 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
    BMI auto-calc unit-aware (in/cm, lb/kg); escript status priority
    resolution; no module-level execution (registry import only).
 5. `sources/ccda/` + `core/fhir/{export,ingest}.py` + Synthea fixtures.
-6. `reconstruct/` engine (browser recycling every 250 renders, crash relaunch,
-   GUID-suffix collision handling, idempotent skip) + `packs/practice_fusion_soap`
-   (template.html near-verbatim; PROVIDER credentials → user site_overrides;
-   logo → neutral placeholder asset, operator-replaceable) + `generic_soap` +
-   `generic_chart_summary`.
+6. 🔶 `reconstruct/` engine ✅ (renderer recycling, crash relaunch,
+   deterministic GUID-suffix collision allocation, idempotent skip, PHI-safe
+   failure reporting) + pack registry ✅ (defensive loading, section flags,
+   external-pack opt-in) + `generic_soap` built-in ✅. Still open:
+   `packs/practice_fusion_soap` (template.html near-verbatim; PROVIDER
+   credentials → user site_overrides; logo → neutral placeholder) +
+   `generic_chart_summary`. NOTE for the PF pack port:
+   `Encounter.date_of_service` is now a calendar date (DateField semantics —
+   midnight-UTC datetimes shifted DOS a day west of UTC).
 7. `qa/` engine (registry replaces static list; engine checks: data_integrity,
    layout_pagination, vitals_loinc, date_staleness) + PF pack checks (37
    headings, 17 labels, addenda, visual tokens, insurance) + bad_pdfs
    mutation corpus self-tests.
 8. `deliver/archive/` offline static site (vendored MiniSearch, CSP-pinned,
    zero network; plain dirs+PDFs+JSON = 30-year durability) + `deliver/bundle/`.
-9. CLI glue: `anast pipeline run --source pf-tebra <dir> --pack
-   practice_fusion_soap --out <dir>`; golden rendering tests (text+geometry
-   via PyMuPDF, Chromium pinned); Synthea e2e.
+9. 🔶 CLI glue ✅: `anast pipeline run <dir> --out <dir>` (auto-detect,
+   --pack/--pack-dir, --section flag overrides, --force; failures exit
+   nonzero with exception types only); `anast info` lists sources/packs.
+   Still open: golden rendering tests (text+geometry via PyMuPDF, Chromium
+   pinned); Synthea e2e.
 
 ### M2 — Migration mode
 10. `deliver/browser/` port (engine/tracking [WAL SQLite, 15-state machine,
