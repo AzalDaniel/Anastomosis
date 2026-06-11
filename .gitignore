@@ -1,0 +1,49 @@
+# --- PHI guardrails -------------------------------------------------------
+# Real EHR exports and generated charts must NEVER be committed.
+# Only synthetic fixtures under tests/fixtures/ are allowed.
+*.tsv
+!tests/fixtures/**/*.tsv
+*.pdf
+!tests/fixtures/**/*.pdf
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+work/
+archive_out/
+out/
+ehi_data/
+exports/
+screenshots/
+browser_state*/
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# --- Tooling ----------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- OS / editors -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Secrets / local config --------------------------------------------------
+.env
+*.pem
+*credentials*.json
+site_overrides.yaml

@@ -1,0 +1,32 @@
+# Pre-commit hooks: PHI scanning is mandatory and runs first.
+# Install:  pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: phi-scan
+        name: PHI scan (hashed deny-list + generic patterns)
+        entry: python tools/phi_scan.py
+        language: system
+        pass_filenames: true
+        always_run: true
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=600]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
