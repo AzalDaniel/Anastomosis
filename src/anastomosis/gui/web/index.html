@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Strict, self-only CSP. The GUI is served from disk by pywebview and must
+      make zero network requests (the archive's offline rule applies). Styles
+      and scripts are local files only; no inline script is permitted.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Anastomosis</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="glass header">
+        <div>
+          <h1>Anastomosis</h1>
+          <div class="tagline">Reconstruct, verify, and re-home clinical records.</div>
+        </div>
+        <div class="version" id="version">—</div>
+      </header>
+
+      <!-- Shown only when opened in a plain browser (no pywebview bridge). -->
+      <div class="no-api" id="no-api">
+        This dashboard runs inside the desktop app. Launch it with
+        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+      </div>
+
+      <div class="banner" id="banner"></div>
+
+      <section class="glass panel" aria-label="Pipeline run">
+        <h2>Run pipeline</h2>
+
+        <div class="field">
+          <label for="export-dir">Export directory</label>
+          <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
+        </div>
+
+        <div class="field">
+          <label for="out-dir">Output directory</label>
+          <input type="text" id="out-dir" placeholder="/path/to/output" />
+        </div>
+
+        <div class="field">
+          <label for="pack">Template pack</label>
+          <select id="pack"></select>
+        </div>
+
+        <div class="toggles">
+          <label class="toggle">
+            <input type="checkbox" id="qa" checked />
+            <span class="track"></span>
+            <span>QA</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="archive" />
+            <span class="track"></span>
+            <span>Archive</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="bundle" />
+            <span class="track"></span>
+            <span>Bundles</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ccda" />
+            <span class="track"></span>
+            <span>C-CDA</span>
+          </label>
+        </div>
+
+        <button class="run-btn" id="run-btn" type="button">Run pipeline</button>
+      </section>
+
+      <section class="rail" aria-label="Pipeline stages">
+        <div class="glass stage" id="stage-ingest">
+          <div class="name">Ingest</div>
+          <div class="counters"></div>
+        </div>
+        <div class="glass stage" id="stage-reconstruct">
+          <div class="name">Reconstruct</div>
+          <div class="counters"></div>
+        </div>
+        <div class="glass stage" id="stage-qa">
+          <div class="name">QA</div>
+          <div class="counters"></div>
+        </div>
+        <div class="glass stage" id="stage-deliver">
+          <div class="name">Deliver</div>
+          <div class="counters"></div>
+        </div>
+      </section>
+
+      <section class="glass log" id="log" aria-label="Event log"></section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

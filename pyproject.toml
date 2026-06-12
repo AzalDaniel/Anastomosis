@@ -136,8 +136,8 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 # Optional extras: typed when installed, but their absence (minimal installs)
 # must not fail type-checking of the core package. fitz (PyMuPDF) ships no
-# py.typed marker at all.
-module = ["playwright.*", "fitz", "fitz.*"]
+# py.typed marker at all; webview (pywebview) is the optional gui extra.
+module = ["playwright.*", "fitz", "fitz.*", "webview", "webview.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

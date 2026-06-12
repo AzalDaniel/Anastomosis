@@ -1,0 +1,300 @@
+/*
+ * Anastomosis GUI — dashboard layout + components.
+ * Reads ALL visual values from tokens.css (the single source of truth); this
+ * sheet only composes them into the dashboard. No network references.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background:
+    radial-gradient(120% 80% at 15% -10%, rgba(90, 209, 196, 0.10), transparent 60%),
+    radial-gradient(120% 80% at 110% 0%, rgba(255, 122, 138, 0.08), transparent 55%),
+    var(--bg-0);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* --- glass panel base ----------------------------------------------------- */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+}
+
+/* --- header --------------------------------------------------------------- */
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0.2px;
+}
+
+.header .version {
+  font-family: var(--font-mono);
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+}
+
+.tagline {
+  color: var(--ink-faint);
+  font-size: 0.82rem;
+  margin-top: var(--space-1);
+}
+
+/* --- run form ------------------------------------------------------------- */
+.panel {
+  padding: var(--space-5);
+}
+
+.panel h2 {
+  margin: 0 0 var(--space-4);
+  font-size: 1rem;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.field label {
+  font-size: 0.82rem;
+  color: var(--ink-dim);
+}
+
+.field input[type="text"],
+.field select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--glass-bg-raised);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-3);
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.field input[type="text"]:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--halo);
+}
+
+/* liquid toggles: a pill that slides, with an accent halo when on */
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.86rem;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle .track {
+  width: 42px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg-raised);
+  border: 1px solid var(--glass-border);
+  position: relative;
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.toggle .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--ink-dim);
+  transition: transform var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.toggle input:checked + .track {
+  background: var(--accent-strong);
+  box-shadow: var(--halo);
+}
+
+.toggle input:checked + .track::after {
+  transform: translateX(18px);
+  background: #ffffff;
+}
+
+/* --- the run button ------------------------------------------------------- */
+.run-btn {
+  font: inherit;
+  font-weight: 600;
+  color: #062018;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+  box-shadow: var(--halo);
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.run-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* --- stage rail ----------------------------------------------------------- */
+.rail {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+}
+
+.stage {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg-raised);
+  border: 1px solid var(--glass-border);
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.stage .name {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-dim);
+}
+
+.stage .counters {
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  min-height: 1.2em;
+}
+
+.stage[data-state="start"] {
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--halo);
+  transform: translateY(-1px);
+}
+
+.stage[data-state="done"] {
+  border-color: rgba(107, 228, 166, 0.4);
+  box-shadow: var(--halo-mint);
+}
+
+.stage[data-state="done"] .counters {
+  color: var(--ink);
+}
+
+.stage[data-state="error"] {
+  border-color: rgba(255, 122, 138, 0.5);
+  box-shadow: var(--halo-coral);
+}
+
+/* --- event log ------------------------------------------------------------ */
+.log {
+  padding: var(--space-4) var(--space-5);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.log .line {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.log .line:last-child {
+  border-bottom: none;
+}
+
+.log .line.error {
+  color: var(--coral);
+}
+
+.log .line.done {
+  color: var(--mint);
+}
+
+/* --- error banner --------------------------------------------------------- */
+.banner {
+  display: none;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: rgba(255, 122, 138, 0.12);
+  border: 1px solid rgba(255, 122, 138, 0.45);
+  box-shadow: var(--halo-coral);
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.banner.show {
+  display: block;
+}
+
+/* --- the plain-browser notice (hidden inside webview) --------------------- */
+.no-api {
+  display: none;
+  padding: var(--space-4) var(--space-5);
+  color: var(--amber);
+  font-size: 0.9rem;
+}
+
+.no-api.show {
+  display: block;
+}

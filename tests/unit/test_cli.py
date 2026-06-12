@@ -83,6 +83,26 @@ def test_pipeline_run_diagnoses_unknown_pack(tmp_path: Path) -> None:
     assert "unavailable" in result.output
 
 
+def test_gui_without_pywebview_shows_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate the gui extra not being installed: `import webview` fails inside
+    # the shell's launch(), which raises a RuntimeError naming anastomosis[gui];
+    # the CLI must surface that as a clean exit, never a traceback.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_webview(name: str, *args: object, **kwargs: object) -> object:
+        if name == "webview":
+            raise ImportError("No module named 'webview'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_webview)
+    result = runner.invoke(app, ["gui"])
+    assert result.exit_code == 1
+    assert "anastomosis[gui]" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 def test_destination_list_shows_tebra() -> None:
     result = runner.invoke(app, ["destination", "list"])
     assert result.exit_code == 0, result.output
@@ -316,3 +336,30 @@ def test_destination_init_unknown_pack_is_clean_error(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "no destination pack 'ghost'" in result.output
+
+
+def test_unknown_explicit_source_prints_message(tmp_path: Path) -> None:
+    """Regression: an unknown --source must exit 2 WITH its message — never
+    silently (the refactor's error reporter originally had no else branch)."""
+    result = runner.invoke(
+        app,
+        ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--source", "bogus"],
+    )
+    assert result.exit_code == 2
+    assert "unknown source" in result.output
+    assert "bogus" in result.output
+
+
+def test_explicit_source_does_not_print_detected_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: 'Detected source' announces auto-detection only — an
+    operator who typed --source already knows (the original behavior)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    result = runner.invoke(
+        app,
+        ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--source", "pf-tebra"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Detected source" not in result.output

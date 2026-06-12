@@ -15,7 +15,6 @@ Sub-commands appear as their pipeline stages are implemented:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -25,12 +24,11 @@ from rich.console import Console
 import anastomosis
 import anastomosis.sources.ccda
 import anastomosis.sources.pf_tebra
-from anastomosis.sources import available_sources, detect_source, get_source
+from anastomosis.sources import available_sources
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
-    from anastomosis.qa import QAReport
-    from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
+    from anastomosis.pipeline import PipelineResult
 
 app = typer.Typer(
     name="anast",
@@ -93,38 +91,38 @@ def info() -> None:
             console.print(f"  pack [red]{status.name}[/red]: {status.diagnosis}")
 
 
+@app.command("gui")
+def gui_cmd(
+    debug: Annotated[
+        bool, typer.Option("--debug", help="Open the webview with developer tools.")
+    ] = False,
+) -> None:
+    """Launch the desktop GUI (liquid-glass dashboard). Needs the gui extra."""
+    from rich.markup import escape
+
+    try:
+        from anastomosis.gui.shell import launch
+    except ImportError as exc:  # the shell module itself failed to import
+        console.print(
+            f"[red]GUI unavailable[/red] ({type(exc).__name__}) — "
+            f"install {escape('anastomosis[gui]')}"
+        )
+        raise typer.Exit(code=1) from None
+    try:
+        launch(debug=debug)
+    except RuntimeError as exc:
+        # The shell raises RuntimeError naming the extra when pywebview is absent.
+        # Escape so Rich renders the literal "anastomosis[gui]" (the [gui] is not
+        # a style tag) rather than swallowing the bracketed extra name.
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+
+
 # --- shared pipeline machinery ---------------------------------------------
-
-
-@dataclass
-class _PipelineResult:
-    """What a pipeline run yields the caller (the CLI commands)."""
-
-    records: list[PatientRecord]
-    render_result: RenderResult
-    engine: ReconstructionEngine
-    qa_report: QAReport | None
-    page_size: str
-
-
-def _resolve_source(export_dir: Path, source: str | None) -> object:
-    if source:
-        return get_source(source)
-    detected = detect_source(export_dir)
-    if detected is None:
-        known = ", ".join(a.name for a in available_sources())
-        console.print(f"[red]Could not identify the export format.[/red] Try --source ({known})")
-        raise typer.Exit(code=2)
-    console.print(f"Detected source: [cyan]{detected.name}[/cyan]")
-    return detected
-
-
-def _parse_section_overrides(section: list[str] | None) -> dict[str, bool]:
-    overrides: dict[str, bool] = {}
-    for item in section or []:
-        key, _, value = item.partition("=")
-        overrides[key.strip()] = value.strip().lower() in ("on", "true", "1", "yes")
-    return overrides
+#
+# The pipeline mechanics live in :mod:`anastomosis.pipeline` (frontend-free, so
+# the GUI drives the same code). This CLI wrapper consumes that core and keeps
+# every console message and exit code byte-identical to before the extraction.
 
 
 def _run_pipeline(
@@ -137,93 +135,98 @@ def _run_pipeline(
     force: bool,
     section: list[str] | None,
     qa: bool,
-) -> _PipelineResult:
-    """The full pipeline (ingest → reconstruct → optional QA).
+) -> PipelineResult:
+    """Run the shared pipeline core, rendering its events as the CLI always has.
 
-    Returns rich enough state that the caller can layer on archive/bundle
-    delivery without re-loading records or re-rendering charts.
+    The structured :class:`~anastomosis.pipeline.StageEvent`\\ s are translated
+    back into the exact Rich lines the CLI printed before the
+    :mod:`anastomosis.pipeline` extraction; :class:`PipelineError` becomes the
+    same ``console.print`` + ``typer.Exit`` it raised inline.
     """
-    from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.chromium import ChromiumRenderer
-    from anastomosis.reconstruct.engine import ReconstructionEngine
-
-    adapter = _resolve_source(export_dir, source)
-
-    statuses = discover_packs(list(pack_dirs or []), allow_external=bool(pack_dirs))
-    status = statuses.get(pack)
-    if status is None or status.pack is None:
-        diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
-        console.print(f"[red]Pack {pack!r} unavailable:[/red] {diagnosis}")
-        raise typer.Exit(code=2)
-
-    overrides = _parse_section_overrides(section)
-    manifest = status.pack.manifest
-    margins = {
-        "top": manifest.page.margin_top,
-        "right": manifest.page.margin_right,
-        "bottom": manifest.page.margin_bottom,
-        "left": manifest.page.margin_left,
-    }
-    engine = ReconstructionEngine(
-        status.pack,
-        lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
-        section_overrides=overrides,
+    from anastomosis.pipeline import (
+        STAGE_DETECT,
+        STAGE_QA,
+        STAGE_RECONSTRUCT,
+        PipelineError,
+        StageEvent,
     )
-    records = list(adapter.load(export_dir))  # type: ignore[attr-defined]
-    result = engine.run(records, out, force=force)
-    console.print(
-        f"[green]{len(result.rendered)} rendered[/green], "
-        f"{len(result.skipped)} skipped, "
-        f"{'[red]' if result.failed else ''}{len(result.failed)} failed"
-        f"{'[/red]' if result.failed else ''} → {out}"
-    )
-    if result.failed:
-        for encounter_id, exc_type in result.failed:
-            console.print(f"  [red]failed[/red] encounter {encounter_id} ({exc_type})")
-        raise typer.Exit(code=1)
+    from anastomosis.pipeline import run_pipeline as _run_core
 
-    qa_report = None
-    if qa and result.documents:
-        qa_report = _run_qa_stage(records, result, engine, out, manifest.page.size)
-    return _PipelineResult(
-        records=records,
-        render_result=result,
-        engine=engine,
-        qa_report=qa_report,
-        page_size=manifest.page.size,
-    )
+    def _print_event(event: StageEvent) -> None:
+        if event.stage == STAGE_DETECT:
+            # Announce only genuine auto-detection (the original behavior):
+            # an operator who typed --source already knows the source.
+            if source is None:
+                console.print(f"Detected source: [cyan]{event.detail}[/cyan]")
+        elif event.stage == STAGE_RECONSTRUCT:
+            failed = event.counts["failed"]
+            console.print(
+                f"[green]{event.counts['rendered']} rendered[/green], "
+                f"{event.counts['skipped']} skipped, "
+                f"{'[red]' if failed else ''}{failed} failed"
+                f"{'[/red]' if failed else ''} → {out}"
+            )
+        elif event.stage == STAGE_QA:
+            if event.detail:  # QA downgraded (no PyMuPDF)
+                console.print(f"[yellow]QA skipped[/yellow]: {event.detail.split(': ', 1)[-1]}")
+                return
+            fail = event.counts["fail"]
+            console.print(
+                f"QA: [green]{event.counts['pass']} pass[/green], "
+                f"{event.counts['warn']} warn, "
+                f"{'[red]' if fail else ''}{fail} fail"
+                f"{'[/red]' if fail else ''} → qa_report.json"
+            )
+        # The ingest stage prints no CLI line of its own (the original printed none).
 
-
-def _run_qa_stage(
-    records: list[PatientRecord],
-    result: RenderResult,
-    engine: ReconstructionEngine,
-    out: Path,
-    page_size: str,
-) -> QAReport | None:
     try:
-        from anastomosis.qa import Verdict, run_qa, write_report
-    except ImportError as exc:
-        if exc.name != "fitz":  # only the optional dependency may downgrade QA
-            raise
-        console.print("[yellow]QA skipped[/yellow]: install anastomosis[render] for PyMuPDF")
-        return None
-    lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
-    report = run_qa(
-        ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
-        section_flags=engine.section_flags,
-        page_size=page_size,
-    )
-    report_path = write_report(report, out)
-    console.print(
-        f"QA: [green]{report.count(Verdict.PASS)} pass[/green], "
-        f"{report.count(Verdict.WARN)} warn, "
-        f"{'[red]' if not report.ok else ''}{report.count(Verdict.FAIL)} fail"
-        f"{'[/red]' if not report.ok else ''} → {report_path.name}"
-    )
-    if not report.ok:
-        raise typer.Exit(code=1)
-    return report
+        return _run_core(
+            export_dir=export_dir,
+            out=out,
+            source=source,
+            pack=pack,
+            pack_dirs=pack_dirs,
+            force=force,
+            section=section,
+            qa=qa,
+            on_event=_print_event,
+        )
+    except PipelineError as exc:
+        _report_pipeline_error(exc, source=source, pack=pack)
+        raise typer.Exit(code=exc.exit_code) from None
+
+
+def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> None:
+    """Render a :class:`PipelineError` as the exact lines the CLI used to print.
+
+    Reproduces the original inline messages per failure kind so the existing
+    CLI tests (which pin "Could not identify", "unavailable", per-encounter
+    failure lines) keep passing byte-for-byte unchanged.
+    """
+    from anastomosis.pipeline import PipelineError
+
+    assert isinstance(exc, PipelineError)
+    message = str(exc)
+    if message.startswith("Could not identify"):
+        suffix = message[len("Could not identify the export format.") :]
+        console.print(f"[red]Could not identify the export format.[/red]{suffix}")
+    elif message.startswith(f"Pack {pack!r} unavailable:"):
+        diagnosis = message.split(": ", 1)[1]
+        console.print(f"[red]Pack {pack!r} unavailable:[/red] {diagnosis}")
+    elif exc.failed:
+        # The reconstruct summary line already printed (the RECONSTRUCT event);
+        # now the per-encounter (id, type) detail lines, exactly as before.
+        for encounter_id, exc_type in exc.failed:
+            console.print(f"  [red]failed[/red] encounter {encounter_id} ({exc_type})")
+    elif not message.startswith("QA failed"):
+        # Any other PipelineError (e.g. an unknown --source name) must never
+        # exit silently: print its PHI-safe message. Exit code 2 = operator
+        # input error, per the CLI's exit-code contract.
+        from rich.markup import escape as _escape
+
+        console.print(f"[red]{_escape(message)}[/red]")
+    # A QA failure printed only its summary line (the QA event) before exiting;
+    # no extra error line is emitted here — matching the original behavior.
 
 
 # --- pipeline run -----------------------------------------------------------
@@ -386,7 +389,7 @@ def bundle_cmd(
 # --- delivery wiring --------------------------------------------------------
 
 
-def _deliver_archive(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
+def _deliver_archive(pipeline: PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
     from anastomosis.deliver.archive import ArchiveDeliverer
 
     deliverer = ArchiveDeliverer()
@@ -397,7 +400,7 @@ def _deliver_archive(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) ->
     )
 
 
-def _deliver_bundles(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
+def _deliver_bundles(pipeline: PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
     from anastomosis.deliver.bundle import BundleDeliverer
 
     deliverer = BundleDeliverer()
@@ -409,7 +412,7 @@ def _deliver_bundles(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) ->
     console.print(f"Bundles: [green]{written} patients[/green] → {out}")
 
 
-def _deliver_ccda(pipeline: _PipelineResult, *, out: Path) -> None:
+def _deliver_ccda(pipeline: PipelineResult, *, out: Path) -> None:
     from anastomosis.deliver.ccda_export import deliver_ccda
 
     written = deliver_ccda(pipeline.records, out)

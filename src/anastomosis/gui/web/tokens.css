@@ -1,0 +1,113 @@
+/*
+ * Anastomosis liquid-glass design tokens — the single source of truth.
+ * ===========================================================================
+ *
+ * The predecessor's OKLCH token sheet was unavailable for this port, so this
+ * sheet is designed FRESH and documented here. Items 18/19 (Migration Wizard,
+ * Upload Console) reuse these custom properties verbatim — change a value here,
+ * change it everywhere.
+ *
+ * Design language — "liquid glass":
+ *   - Translucent layered panels: rgba fills over a blurred backdrop
+ *     (backdrop-filter: blur) so depth reads as frosted glass, not flat cards.
+ *   - Soft 1px inner borders (a hairline highlight) define panel edges without
+ *     hard lines.
+ *   - Large corner radii (16-20px) keep every surface pill-soft.
+ *   - Depth via layered shadows (a near ambient shadow + a far cast shadow).
+ *   - Accent halos: active/interactive elements gain a colored glow ring.
+ *   - Motion: 200-300ms ease transitions, never instant, never bouncy.
+ *   - System font stack (no bundled webfonts — the offline rule forbids
+ *     network fetches; a local font file is an item-19 enhancement).
+ *   - Dark-first, with a light fallback via prefers-color-scheme.
+ *
+ * No emoji, no Material iconography (the predecessor's anti-pattern locks).
+ */
+
+:root {
+  /* --- palette: dark-first ------------------------------------------------ */
+  --bg-0: #0b0f17;            /* the deepest backdrop the glass floats over */
+  --bg-1: #121826;            /* a raised backdrop band */
+  --ink: #e8edf6;            /* primary text on dark glass */
+  --ink-dim: #9aa6bd;        /* secondary text, labels */
+  --ink-faint: #6b7791;      /* tertiary, hints */
+
+  /* accent + status hues (coral / mint / amber lineage of the predecessor) */
+  --accent: #5ad1c4;          /* mint-teal: primary action + active halo */
+  --accent-strong: #2bb6a6;
+  --coral: #ff7a8a;           /* error / fail */
+  --amber: #ffce6b;           /* warn */
+  --mint: #6be4a6;            /* pass / success */
+
+  /* --- glass surfaces ----------------------------------------------------- */
+  --glass-bg: rgba(26, 34, 52, 0.55);        /* panel fill */
+  --glass-bg-raised: rgba(38, 48, 72, 0.62); /* a panel within a panel */
+  --glass-border: rgba(255, 255, 255, 0.10); /* the soft 1px inner hairline */
+  --glass-border-strong: rgba(255, 255, 255, 0.18);
+  --blur: 18px;                              /* backdrop-filter blur radius */
+  --blur-strong: 28px;
+
+  /* --- radii -------------------------------------------------------------- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  /* --- depth: layered shadows --------------------------------------------- */
+  --shadow-near: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-far: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --shadow-panel: var(--shadow-near), var(--shadow-far);
+
+  /* --- accent halos (glow rings on active elements) ----------------------- */
+  --halo: 0 0 0 1px rgba(90, 209, 196, 0.55), 0 0 22px rgba(90, 209, 196, 0.30);
+  --halo-coral: 0 0 0 1px rgba(255, 122, 138, 0.55), 0 0 22px rgba(255, 122, 138, 0.28);
+  --halo-amber: 0 0 0 1px rgba(255, 206, 107, 0.55), 0 0 22px rgba(255, 206, 107, 0.26);
+  --halo-mint: 0 0 0 1px rgba(107, 228, 166, 0.55), 0 0 22px rgba(107, 228, 166, 0.26);
+
+  /* --- motion ------------------------------------------------------------- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);   /* the "quart" feel, ported */
+  --dur: 240ms;
+  --dur-fast: 180ms;
+
+  /* --- type --------------------------------------------------------------- */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, monospace;
+
+  /* --- spacing scale ------------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
+
+/* Light fallback. Dark-first means these only apply when the OS asks for it. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-0: #eef1f7;
+    --bg-1: #e3e8f2;
+    --ink: #16202f;
+    --ink-dim: #46536b;
+    --ink-faint: #6b7791;
+
+    --glass-bg: rgba(255, 255, 255, 0.62);
+    --glass-bg-raised: rgba(255, 255, 255, 0.78);
+    --glass-border: rgba(20, 30, 50, 0.10);
+    --glass-border-strong: rgba(20, 30, 50, 0.18);
+
+    --shadow-near: 0 1px 2px rgba(30, 40, 60, 0.12);
+    --shadow-far: 0 18px 48px rgba(30, 40, 60, 0.16);
+
+    --accent-strong: #1d9a8c;
+  }
+}
+
+/* Respect reduced-motion: keep the glass, drop the long transitions. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+    --dur-fast: 0ms;
+  }
+}
