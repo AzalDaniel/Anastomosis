@@ -9,6 +9,92 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+Migration mode (M2), the pack-from-samples layout learner (M3), and the
+desktop GUI (M4), built on the v0.1.0 Archivist slice. PR numbers in
+parentheses.
+
+### Added
+
+- **Browser-delivery safety spine** (`deliver/browser/`) — the 15-state upload
+  state machine (`UploadState` + legal-transition graph) over a WAL-mode SQLite
+  ledger that survives a hard kill mid-upload, with a `FakeDestination` test
+  double and a kill-and-resume test. (#13)
+- **Upload engine** (`deliver/browser/engine.py`) — drives one item through the
+  state machine: patient resolve, duplicate scan, pre/post verification, upload,
+  bounded retry, and a skiplist; loud, PHI-safe permanent vs. transient failure
+  classes. (#14)
+- **Parallel workers, session manager, CDP attach, and run reports**
+  (`deliver/browser/{parallel,manager,cdp,reports}.py`) — bounded concurrency,
+  a session/manifest manager, loopback-only Chrome DevTools Protocol attach
+  (never stores credentials), and PHI-safe run reports. (#15)
+- **L0–L6 verification ladder** (`deliver/verify/`) — the wrong-patient
+  defense: L0 file integrity, L1 page/size, L2 identity fuzzy match (≥0.88) with
+  a date-of-birth hard-fail, L3 pack-driven header fields, L4 live patient-banner
+  readback, L5 destination metadata, L6 byte/identity round-trip; stacked behind
+  the engine's verifier seam. (#16)
+- **Capability registry + shortest-path router** (`destinations/registry.py`,
+  `destinations/registry.yaml`, `deliver/router.py`) — destinations declare
+  capabilities as cited data; the router picks vendor API → C-CDA import →
+  browser automation, and never routes an `unverified` capability. (#17)
+- **Browser destination packs + discovery wizard** (`destinations/browserpack.py`,
+  `destinations/wizard.py`, `destinations/tebra/`, `anast destination init`) —
+  the Tebra pack ships with DISCOVER-placeholder selectors discovered by the
+  operator against their own session; no vendor DOM is ever invented. (#18)
+- **FHIR R4 API pusher** (`deliver/fhir_api/`) — a stdlib-`urllib` FHIR R4 REST
+  client that files charts as `DocumentReference` resources (https, or http only
+  for loopback), validated against a HAPI/Medplum-style integration service. (#19)
+- **C-CDA export deliverer** (`deliver/ccda_export/`) — `PatientRecord` →
+  C-CDA R2.1 / CCD XML for destinations that import C-CDA, with this repo's own
+  C-CDA parser as the read-back contract; completes M2. (#20)
+- **Golden rendering tests + Synthea e2e lane** (M1.5) — text-and-geometry
+  golden tests pinning Chromium output, plus an end-to-end pipeline lane over a
+  vendored synthetic Synthea C-CDA sample. (#21)
+- **Layout-learner harvest + inference** (`packgen/extract.py`,
+  `packgen/infer.py`) — PyMuPDF-only, fully offline span/drawing harvest and
+  deterministic, explainable inference (type scale, column grids, design tokens,
+  section taxonomy, static-text intersection). (#22)
+- **Layout-learner draft-pack emitter + wizard** (`packgen/emit.py`,
+  `anast pack init --from-samples`) — writes a loadable draft template pack
+  (mirroring `generic_soap`) with a same-patient confirmation gate and a DRAFT
+  provenance note; completes M3. (#23)
+- **GUI shell + headless controller + pipeline dashboard** (`gui/`) — a
+  pywebview shell over a fully testable, never-raising controller and thin
+  vanilla-JS pages; the liquid-glass dashboard drives the *same* pipeline core
+  as the CLI with live ingest/reconstruct/QA counters. (#24)
+- **Migration wizard, section-selection matrix, upload console, and
+  pack-init UI** (`gui/web/`, `gui/controller.py`) — the transit map as the
+  wizard centerpiece, section-flag toggles on the run form, a read-only upload
+  console over the 15-state ledger (exception-TYPE histograms only, opaque item
+  keys in the Cmd+K palette), a vendor-change freshness toast, and the
+  pack-init page with the same-patient confirmation gate. (#25)
+- **Frontend-free pipeline core** (`pipeline.py`) — extracted from the CLI so
+  the CLI and GUI drive identical code, emitting PHI-safe `StageEvent`s. (#24)
+
+### Fixed
+
+- **Windows tracking race** — set the SQLite `busy_timeout` before switching to
+  WAL `journal_mode`, fixing a Windows CI race in the upload ledger. (#15)
+- **Tracking busy-timeout on slow CI** — raised the ledger busy timeout to 30s
+  because `synchronous=FULL` commits could starve the prior 5s window on CI. (#20)
+
+### Security
+
+- **CDP attach is loopback-only** — the DevTools Protocol attach refuses
+  non-loopback hosts, warns on shared machines, and never stores credentials. (#15)
+- **FHIR client URL guard** — the FHIR base URL must be https (or http only for
+  a loopback host); errors carry status codes and resource TYPE names, never
+  patient-derived values. (#19)
+- **No-hallucination capability registry** — any non-`none` destination
+  capability must carry a `source_url` and `verified` date or registry
+  validation fails loudly; `unverified` capabilities never route. (#17)
+- **No invented vendor DOM** — the Tebra browser pack ships only DISCOVER
+  placeholders; real selectors are operator-discovered per tenant via the
+  wizard and stored in a user overlay file. (#18)
+- **PHI-safe layout learner** — sample PDFs may be named after patients and
+  contain per-patient data, so `packgen` stores opaque sample indices, suppresses
+  single-sample static/per-patient inference, and restates the same-patient
+  caveat in the emitted `DRAFT.md`. (#22, #23)
+
 ## [0.1.0] — 2026-06-11
 
 First release: the complete **Archivist vertical slice** — one command from a
