@@ -12,11 +12,13 @@ translation table and provenance stays greppable.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterator
+from datetime import date
 from typing import Any
 
-from anastomosis.core.codes import VITALS, bmi_metric
+from anastomosis.core.codes import VITALS, bmi_metric, pain_display
 from anastomosis.core.model import (
     Addendum,
     Address,
@@ -47,17 +49,31 @@ from anastomosis.core.model import (
     Provenance,
     SectionKind,
 )
-from anastomosis.core.textutil import clean_cell, clean_numeric, format_phone, html_to_text
-from anastomosis.core.timeutil import parse_date, parse_dt
+from anastomosis.core.textutil import (
+    clean_cell,
+    clean_numeric,
+    format_phone,
+    html_to_text,
+    sanitize_soap_html,
+)
+from anastomosis.core.timeutil import age_at, parse_date, parse_dt
 
-from .escript import resolve_status, script_prefix
+from .escript import resolve_display_date, resolve_prefix, resolve_status
 from .loader import Export, Row
 
 __all__ = ["map_export"]
 
 SOURCE = "pf_tebra"
 
-_VITAL_BY_LOINC = {v.loinc: v for v in VITALS.values()}
+logger = logging.getLogger(__name__)
+
+# Map every LOINC — the predecessor's primary code AND its modern aliases — to
+# the vital, so an observation charted under either edition categorizes as a
+# vital (see codes.VitalCode.aliases).
+_VITAL_BY_LOINC = {
+    code: vital for vital in VITALS.values() for code in (vital.loinc, *vital.aliases)
+}
+_PAIN_LOINCS = frozenset({VITALS["pain_severity"].loinc, *VITALS["pain_severity"].aliases})
 _ICD10_RE = re.compile(r"\b([A-TV-Z][0-9]{2}(?:\.[0-9A-Z]{1,4})?)\b")
 _SNOMED_RE = re.compile(r"\b([0-9]{6,18})\b")
 
@@ -280,6 +296,22 @@ _SOAP_COLUMNS = (
 )
 
 
+def _note_section(kind: SectionKind, raw: str | None, title: str | None) -> NoteSection:
+    """One SOAP/narrative section: rich HTML for rendering, text shadow for QA.
+
+    ``html`` carries the predecessor's ``sanitize_soap_html`` output (the
+    rendering path, gpdfs:1258-1261); ``text`` keeps the flattened plain text
+    for search, QA, and plain-text consumers.
+    """
+    sanitized = sanitize_soap_html(raw)
+    return NoteSection(
+        kind=kind,
+        title=title,
+        html=sanitized or None,
+        text=html_to_text(raw),
+    )
+
+
 def _map_encounter(row: Row, export: Export) -> Encounter:
     guid = _s(row, "EncounterGuid")
     patient_guid = _s(row, "PatientPracticeGuid")
@@ -289,12 +321,10 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
     sections: list[NoteSection] = []
     if is_soap:
         for col, kind, title in _SOAP_COLUMNS:
-            html = _s(row, col)
-            sections.append(NoteSection(kind=kind, title=title, html=html, text=html_to_text(html)))
+            sections.append(_note_section(kind, _s(row, col), title))
     else:
         # SIMPLE encounters carry the whole narrative in Subjective.
-        html = _s(row, "Subjective")
-        sections.append(NoteSection(kind=SectionKind.NARRATIVE, html=html, text=html_to_text(html)))
+        sections.append(_note_section(SectionKind.NARRATIVE, _s(row, "Subjective"), None))
 
     addenda = [
         Addendum(
@@ -332,6 +362,26 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
     )
 
 
+_GROWTH_CHART_AGE = 18  # gpdfs:1508 — skip growth-chart CC for adults
+
+
+def _skip_reason(encounter: Encounter, birth_date: date | None) -> str | None:
+    """Why an encounter is excluded from rendering, or ``None`` if it renders.
+
+    Ports the predecessor's get_valid_encounters selection (gpdfs:1484-1510):
+      - empty SOAP: all four sections strip to nothing  -> "empty_soap"
+      - adult growth chart: CC contains "growth chart" and patient is >=18 at
+        DOS                                             -> "adult_growth_chart"
+    """
+    if not encounter.has_note_content:  # gpdfs:1491-1498 (post-strip text)
+        return "empty_soap"
+    cc = (encounter.chief_complaint or "").lower()
+    if "growth chart" in cc and birth_date and encounter.date_of_service:  # gpdfs:1500-1508
+        if age_at(birth_date, encounter.date_of_service) >= _GROWTH_CHART_AGE:
+            return "adult_growth_chart"
+    return None
+
+
 # --- observations (vitals + BMI auto-calc + social history) -------------------
 
 _OBSERVATION_MAPPED = frozenset(
@@ -351,13 +401,18 @@ _OBSERVATION_MAPPED = frozenset(
 def _map_observation(row: Row) -> Observation:
     code = _s(row, "ObservationCode")
     vital = _VITAL_BY_LOINC.get(code or "")
+    value = _s(row, "Value")
+    # Pain values arrive as an LA answer code or a raw number; convert to the
+    # 0-10 display value the predecessor showed (gpdfs:551 _pain_conv).
+    if code in _PAIN_LOINCS:
+        value = pain_display(value)
     return Observation(
         patient_id=_s(row, "PatientPracticeGuid") or "",
         encounter_id=_s(row, "EncounterGuid"),
         category=ObservationCategory.VITAL_SIGNS if vital else ObservationCategory.OTHER,
         code=code,
         display=vital.display if vital else None,
-        value=_s(row, "Value"),
+        value=value,
         unit=_s(row, "UnitOfObservation"),
         effective_at=_dt(row, "ObservationDateTimeUtc"),
         recorded_at=_dt(row, "LastModifiedDateTimeUtc"),
@@ -374,16 +429,28 @@ def _to_kg(value: float, unit: str | None) -> float:
     return value * 0.45359237 if (unit or "").lower().startswith("lb") else value
 
 
+def _find_vital(by_code: dict[str | None, Observation], kind: str) -> Observation | None:
+    """Find an encounter's vital by kind, accepting either the predecessor's
+    primary LOINC or any modern alias (codes.VitalCode.aliases)."""
+    vital = VITALS[kind]
+    for code in (vital.loinc, *vital.aliases):
+        if code in by_code:
+            return by_code[code]
+    return None
+
+
 def _auto_bmi(encounter_obs: list[Observation]) -> Observation | None:
     """The BMI trigger: synthesize 39156-5 when height+weight exist without it.
 
-    Unit-aware (in/cm, lb/kg); an explicitly charted BMI always wins.
+    Fires for either LOINC edition of weight (gpdfs:589 keyed on 3141-9; ours
+    also accepts the 29463-7 alias). Unit-aware (in/cm, lb/kg); an explicitly
+    charted BMI always wins.
     """
     by_code = {o.code: o for o in encounter_obs}
     if VITALS["bmi"].loinc in by_code:
         return None
-    height = by_code.get(VITALS["height"].loinc)
-    weight = by_code.get(VITALS["weight"].loinc)
+    height = _find_vital(by_code, "height")
+    weight = _find_vital(by_code, "weight")
     if height is None or weight is None or not height.value or not weight.value:
         return None
     try:
@@ -400,7 +467,7 @@ def _auto_bmi(encounter_obs: list[Observation]) -> Observation | None:
         category=ObservationCategory.VITAL_SIGNS,
         code=VITALS["bmi"].loinc,
         display=VITALS["bmi"].display,
-        value=f"{value:.1f}",
+        value=f"{value:.2f}",  # 2dp matches the predecessor (gpdfs:543,592)
         unit="kg/m2",
         effective_at=weight.effective_at,
         extensions={f"{SOURCE}:computed": "bmi_auto_calc"},
@@ -568,6 +635,7 @@ _PRESCRIPTION_MAPPED = frozenset(
         "Sig",
         "Quantity",
         "NumberOfRefills",
+        "Refills",
     }
 )
 
@@ -586,17 +654,24 @@ def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
         ),
         key=lambda t: (t.at is None, t.at),
     )
-    display_date = transactions[-1].at if transactions else None
+    prefix = resolve_prefix(transactions, _s(row, "DestinationTypeCode"))
+    # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS otherwise
+    # (gpdfs:408 resolve_script_display_date).
+    display_date = resolve_display_date(transactions, prefix, _dt(row, "DateOfService"))
+    # Refills: NumberOfRefills, falling back to Refills (gpdfs §5 fallback).
+    refills = clean_numeric(row.get("NumberOfRefills"))
+    if refills is None:
+        refills = clean_numeric(row.get("Refills"))  # -1 sentinel → None
     return Prescription(
         id=guid,
         patient_id=_s(row, "PatientPracticeGuid") or "",
         medication_id=_s(row, "MedicationGuid"),
         prescriber_id=_s(row, "PrescribingProviderGuid"),
-        prefix=script_prefix(_s(row, "DestinationTypeCode")),
+        prefix=prefix,
         status_label=resolve_status(transactions),
-        display_date=display_date or _dt(row, "DateOfService"),
+        display_date=display_date,
         sig=_s(row, "Sig"),
-        refills=clean_numeric(row.get("NumberOfRefills")),  # -1 sentinel → None
+        refills=refills,
         quantity=_s(row, "Quantity"),
         transactions=transactions,
         extensions=_ext(row, _PRESCRIPTION_MAPPED),
@@ -624,22 +699,59 @@ _INSURANCE_MAPPED = frozenset(
 )
 
 _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
-_BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2}
+# Quaternary→3, Other→99 mirror the predecessor's benefit ordering (gpdfs §7).
+_BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2, "quaternary": 3, "other": 99}
 
 
-def _map_coverage(row: Row) -> Coverage:
+class _PlanTypeLookup:
+    """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...) three-tier join.
+
+    Ported from generate_pdfs.py:245-279. PF displays the TYPE from
+    superbill-insurances.PlanType — NOT from patient-insurances, which only
+    carries the generic "Medical" coverage type. Resolve by
+    PatientInsurancePlanGuid first, then lowercased plan name, then payer name
+    (gpdfs:266-278). The plan-name "(PPO)" regex is the last-resort fallback
+    only (gpdfs treated it as the heuristic of last resort).
+    """
+
+    def __init__(self, superbill_rows: list[Row]) -> None:
+        self._by_pipg: dict[str, str] = {}
+        self._by_name: dict[str, str] = {}
+        for row in superbill_rows:  # gpdfs:254-261
+            pipg = _s(row, "PatientInsurancePlanGuid")
+            plan_type = _s(row, "PlanType")
+            name = (_s(row, "PlanName") or "").lower()
+            if pipg and plan_type and pipg not in self._by_pipg:
+                self._by_pipg[pipg] = plan_type
+            if name and plan_type and name not in self._by_name:
+                self._by_name[name] = plan_type
+
+    def resolve(self, ins_row: Row) -> str | None:
+        pipg = _s(ins_row, "PatientInsurancePlanGuid")  # gpdfs:270 — tier 1
+        if pipg and pipg in self._by_pipg:
+            return self._by_pipg[pipg]
+        name = (_s(ins_row, "InsurancePlanName") or "").lower()  # gpdfs:273 — tier 2
+        if name and name in self._by_name:
+            return self._by_name[name]
+        payer = (_s(ins_row, "PayerName") or "").lower()  # gpdfs:276 — tier 3
+        if payer and payer in self._by_name:
+            return self._by_name[payer]
+        # Last resort: the "(PPO)"-style suffix some practices embed in the plan
+        # name (the predecessor's heuristic of last resort; never guess from
+        # the payer name itself).
+        match = _PLAN_TYPE_RE.search(_s(ins_row, "InsurancePlanName") or "")
+        return match.group(1).upper() if match else None
+
+
+def _map_coverage(row: Row, plan_types: _PlanTypeLookup) -> Coverage:
     plan_name = _s(row, "InsurancePlanName")
-    # PlanType fallback chain: the export has no plan-type column, so derive
-    # from the "(PPO)"-style suffix practices embed in plan names; absent
-    # that, it stays None (never guess from payer name).
-    plan_type_match = _PLAN_TYPE_RE.search(plan_name or "")
     order_label = _s(row, "OrderOfBenefits")
     return Coverage(
         id=_s(row, "PatientInsurancePlanGuid") or "",
         patient_id=_s(row, "PatientPracticeGuid") or "",
         payer=_s(row, "PayerName"),
         plan_name=plan_name,
-        plan_type=plan_type_match.group(1).upper() if plan_type_match else None,
+        plan_type=plan_types.resolve(row),
         coverage_type=_s(row, "InsuranceCoverageType"),
         member_id=_s(row, "MemberId"),
         group_number=_s(row, "GroupId"),
@@ -759,6 +871,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     """Join the loaded tables into one PatientRecord per patient."""
     practitioners = _map_practitioners(export)
     facilities = _map_facilities(export)
+    plan_types = _PlanTypeLookup(export["superbill-insurances"])
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
     obs_by_patient = _by(export["patient-encounter-observations"], "PatientPracticeGuid")
@@ -779,7 +892,31 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             continue
         patient = _map_patient(demo_row, export)
 
-        encounters = [_map_encounter(row, export) for row in encounters_by_patient.get(guid, [])]
+        # Reproduce the predecessor's render SELECTION (gpdfs get_valid_encounters):
+        # empty-SOAP and adult-growth-chart encounters are excluded from the
+        # rendered set. Justified divergence from the old code: the predecessor
+        # DROPPED them entirely; we keep the old selection for `encounters` but
+        # stash the skipped ones in `extensions` so nothing vanishes (losslessness).
+        all_encounters = [
+            _map_encounter(row, export) for row in encounters_by_patient.get(guid, [])
+        ]
+        encounters: list[Encounter] = []
+        skipped: list[dict[str, Any]] = []
+        for encounter in all_encounters:
+            reason = _skip_reason(encounter, patient.birth_date)
+            if reason is None:
+                encounters.append(encounter)
+            else:
+                skipped.append({"reason": reason, "encounter": encounter.model_dump(mode="json")})
+        record_extensions: dict[str, Any] = {}
+        if skipped:
+            # Counts only — never log patient-derived values (PHI discipline).
+            logger.info(
+                "pf_tebra: excluded %d of %d encounter(s) from render for patient",
+                len(skipped),
+                len(all_encounters),
+            )
+            record_extensions[f"{SOURCE}:skipped_encounters"] = skipped
 
         observations = [_map_observation(row) for row in obs_by_patient.get(guid, [])]
         for encounter in encounters:
@@ -825,7 +962,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
                 )
                 for row in ad_by_patient.get(guid, [])
             ],
-            coverages=[_map_coverage(row) for row in ins_by_patient.get(guid, [])],
+            coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
                 DocumentArtifact(
                     id=_s(row, "DocumentGuid") or "",
@@ -842,5 +979,6 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             ],
             practitioners=practitioners,
             facilities=facilities,
+            extensions=record_extensions,
             provenance=Provenance(source_system=SOURCE, source_id=guid),
         )

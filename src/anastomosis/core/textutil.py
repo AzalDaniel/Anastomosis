@@ -1,6 +1,6 @@
 """Text cleaning for source export cells and note HTML.
 
-Two jobs:
+Three jobs:
 
 * **Cell hygiene** — TSV/CSV dumps encode "no value" several ways
   (``\\N`` MySQL null escapes, literal ``NULL``, ``-1`` in numeric columns).
@@ -9,15 +9,27 @@ Two jobs:
 * **Note HTML → text** — source note bodies arrive as HTML fragments.
   :func:`html_to_text` extracts readable text with paragraph structure
   preserved, using the stdlib parser (never regex-over-HTML), dropping
-  script/style content outright.
+  script/style content outright. This feeds plain-text consumers (search, QA,
+  addendum bodies).
+* **Note HTML → rich HTML** — :func:`sanitize_soap_html` is the rendering path:
+  it *preserves* the source's semantic HTML and only repairs it (TSV-exported
+  ``\\n`` → ``<br>``, empty-block strip, ``pf-rich-text`` wrap) so a chart
+  renders the way the source authored it.
 """
 
 from __future__ import annotations
 
+import html as html_mod
 import re
 from html.parser import HTMLParser
 
-__all__ = ["clean_cell", "clean_numeric", "format_phone", "html_to_text"]
+__all__ = [
+    "clean_cell",
+    "clean_numeric",
+    "format_phone",
+    "html_to_text",
+    "sanitize_soap_html",
+]
 
 # Literal cell values that mean "no value" in source dumps.
 _NULL_TOKENS = frozenset({r"\N", "NULL", "null"})
@@ -121,3 +133,45 @@ def html_to_text(html: str | None) -> str | None:
     lines = (re.sub(r"[ \t]{2,}", " ", line.strip()) for line in extractor.text().split("\n"))
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     return text or None
+
+
+# Empty filler blocks PF leaves behind — stripped so a blank <p></p> never
+# renders as a stray gap (generate_pdfs.py:151-154 empty_block_patterns).
+_EMPTY_BLOCK_PATTERNS = (
+    r"<p[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</p>",
+    r"<div[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</div>",
+    r"<h([1-6])[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</h\1>",
+)
+# A stray \n that is NOT immediately adjacent to a block tag boundary becomes a
+# <br> (generate_pdfs.py:150) — inline line breaks (e.g. numbered injection
+# sites) must survive into the rendered chart.
+_STRAY_NEWLINE_RE = re.compile(r"\n(?!</(p|div|ul|ol|li|h[1-6])>)(?!<(p|div|ul|ol|li|h[1-6])[ >])")
+
+
+def sanitize_soap_html(raw_html: str | None) -> str:
+    """Keep PF semantic HTML, removing only empty filler blocks.
+
+    Ported from the predecessor's ``sanitize_soap_html`` (generate_pdfs.py:137).
+    The EHI TSV export converts ``<br>`` to ``\\n`` — we restore them so line
+    breaks within inline content render correctly in the browser. Output is HTML
+    intended for ``autoescape=False`` rendering, wrapped in ``pf-rich-text``.
+
+    This is the *rendering* path; :func:`html_to_text` remains the plain-text
+    path for search/QA/addendum bodies.
+    """
+    if not raw_html:
+        return ""
+    text = str(raw_html).strip()
+    # Unescape TSV-exported newlines back to real newlines first (gpdfs:144).
+    text = text.replace("\\\\n", "\n").replace("\\n", "\n")
+    if "<" not in text:
+        # Plain text: escape, then turn newlines into <br> (gpdfs:146).
+        return html_mod.escape(text).replace("\n", "<br>").strip()
+    # Convert remaining \n inside HTML content to <br> so inline line breaks
+    # render correctly; only convert \n NOT between two block tags (gpdfs:150).
+    text = _STRAY_NEWLINE_RE.sub("<br>\n", text)
+    for pattern in _EMPTY_BLOCK_PATTERNS:  # gpdfs:156 — strip empty blocks
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    if "pf-rich-text" not in text:  # gpdfs:158 — wrap once
+        text = f'<div class="pf-rich-text">{text}</div>'
+    return text.strip()
