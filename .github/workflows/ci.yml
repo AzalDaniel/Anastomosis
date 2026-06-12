@@ -84,7 +84,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -e ".[fhir]" pytest
+      # pymupdf: importing anastomosis.deliver (the engine's parent package)
+      # eagerly loads the QA stage, which needs PyMuPDF at import time.
+      - run: pip install -e ".[fhir]" pymupdf pytest
       # Wait (loud) for HAPI to answer its CapabilityStatement before testing.
       - name: Wait for HAPI to be ready
         run: |
