@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Strict, self-only CSP — identical to index.html. Zero network requests
+      (the archive's offline rule). No inline script is permitted.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Anastomosis — Upload console</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="glass header">
+        <div>
+          <h1>Upload console</h1>
+          <div class="tagline">Browser-delivery operator surface (read-only).</div>
+        </div>
+        <div class="version" id="version">&mdash;</div>
+      </header>
+
+      <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link" href="wizard.html">Migration wizard</a>
+        <a class="nav-link" href="console.html" aria-current="page">Upload console</a>
+        <a class="nav-link" href="packgen.html">Pack from samples</a>
+      </nav>
+
+      <div class="no-api" id="no-api">
+        This console runs inside the desktop app. Launch it with
+        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+      </div>
+
+      <div class="banner" id="banner"></div>
+
+      <!-- This screen READS the tracking ledger. Live driving is deferred. -->
+      <div class="guidance">
+        This console inspects an existing upload ledger. Starting, pausing, and
+        driving real uploads from the GUI
+        <span class="deferred">live driving: later milestone</span>
+      </div>
+
+      <section class="glass panel" aria-label="Load ledger">
+        <h2>Tracking ledger</h2>
+        <div class="field">
+          <label for="db-path">Ledger database path (tracking.db)</label>
+          <input type="text" id="db-path" placeholder="/path/to/out/tracking.db" />
+        </div>
+        <div class="field">
+          <label for="out-dir">Reconstruction output (for manifest preview)</label>
+          <input type="text" id="out-dir" placeholder="/path/to/out" />
+        </div>
+        <button class="run-btn" id="load-btn" type="button">Inspect ledger</button>
+      </section>
+
+      <!-- Run row + state-machine grouped counters as glass cards -->
+      <section class="glass panel" id="run-panel" aria-label="Run" hidden>
+        <h2>Current run</h2>
+        <div class="guidance" id="run-info"></div>
+        <div class="group-row" id="group-cards"></div>
+        <div class="state-grid" id="state-grid"></div>
+        <div class="muted" id="manifest-preview"></div>
+        <div style="margin-top: var(--space-4)">
+          <button class="toast-dismiss" id="inspect-errors" type="button">
+            Error inspector
+          </button>
+          <span class="muted">&nbsp; Press <strong>Cmd/Ctrl+K</strong> for the patient command sheet (item keys only).</span>
+        </div>
+      </section>
+
+      <!-- Calendar HUD: month grid with halo dots on run-activity days -->
+      <section class="glass panel" id="calendar-panel" aria-label="Run calendar" hidden>
+        <h2>Run calendar</h2>
+        <div class="muted" id="calendar-month"></div>
+        <div class="calendar" id="calendar"></div>
+      </section>
+    </div>
+
+    <!-- Error-inspector flyout: TYPE histograms only, never values -->
+    <aside class="flyout" id="error-flyout" aria-label="Error inspector">
+      <h3>Error type histogram</h3>
+      <div class="muted">Exception TYPE names and counts only — never patient values.</div>
+      <div id="error-hist"></div>
+    </aside>
+
+    <!-- Command palette STUB (Cmd+K): lists item KEYS, never patient names -->
+    <div class="palette-backdrop" id="palette-backdrop">
+      <div class="palette" role="dialog" aria-label="Patient command sheet">
+        <input type="text" id="palette-filter" placeholder="Filter item keys…" />
+        <div class="hint">
+          Item keys only (encounter id + content hash) — never patient names.
+          Driving uploads from here
+          <span class="deferred">live driving: later milestone</span>
+        </div>
+        <div id="palette-list"></div>
+      </div>
+    </div>
+
+    <script src="console.js"></script>
+  </body>
+</html>

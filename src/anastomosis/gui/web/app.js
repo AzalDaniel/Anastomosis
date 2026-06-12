@@ -136,10 +136,50 @@ function finishRun() {
 }
 
 // --- form wiring ----------------------------------------------------------
+// The Section-Selection Matrix (item 18b). info().packs[].sections is
+// {key: {label, default}}; we cache it per pack name so switching packs
+// repaints the matrix without another round-trip.
+let SECTIONS_BY_PACK = {};
+
 function gatherSections() {
-  // The section matrix lands in items 18/19; the dashboard sends an empty
-  // matrix (pack defaults apply). Kept as a seam so the wizard can populate it.
-  return {};
+  // Read the live matrix into the {name: bool} shape run_pipeline expects.
+  // An empty matrix (no pack sections) sends {} and pack defaults apply.
+  const sections = {};
+  const boxes = el("section-matrix").querySelectorAll("input[type=checkbox]");
+  for (const box of boxes) {
+    sections[box.dataset.section] = box.checked;
+  }
+  return sections;
+}
+
+function renderSectionMatrix(packName) {
+  const matrix = el("section-matrix");
+  matrix.innerHTML = "";
+  const sections = SECTIONS_BY_PACK[packName] || {};
+  const keys = Object.keys(sections);
+  if (keys.length === 0) {
+    matrix.textContent = "This pack exposes no togglable sections.";
+    matrix.classList.add("empty");
+    return;
+  }
+  matrix.classList.remove("empty");
+  for (const key of keys) {
+    const flag = sections[key];
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.section = key;
+    input.checked = flag.default !== false;
+    const track = document.createElement("span");
+    track.className = "track";
+    const text = document.createElement("span");
+    text.textContent = flag.label || key;
+    label.appendChild(input);
+    label.appendChild(track);
+    label.appendChild(text);
+    matrix.appendChild(label);
+  }
 }
 
 async function populateHeader() {
@@ -154,19 +194,52 @@ async function populateHeader() {
       el("version").textContent = info.version;
       const select = el("pack");
       select.innerHTML = "";
+      SECTIONS_BY_PACK = {};
       for (const pack of info.packs) {
         if (!pack.available) {
           continue;
         }
+        SECTIONS_BY_PACK[pack.name] = pack.sections || {};
         const opt = document.createElement("option");
         opt.value = pack.name;
         opt.textContent = pack.name;
         select.appendChild(opt);
       }
+      renderSectionMatrix(select.value);
     }
   } catch (err) {
     showBanner(String(err));
   }
+  checkFreshness();
+}
+
+// --- vendor-change detection toast (pack_freshness) -----------------------
+async function checkFreshness() {
+  if (!hasApi()) {
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.pack_freshness();
+    if (!res || !res.ok || !Array.isArray(res.stale) || res.stale.length === 0) {
+      return;
+    }
+    const names = res.stale.map((s) => s.destination).join(", ");
+    const advice = res.stale[0].advice;
+    el("freshness-body").textContent =
+      "Local selectors may be stale (>" +
+      res.stale_after_days +
+      " days vs verified evidence): " +
+      names +
+      ". Re-validate: " +
+      advice;
+    el("freshness-toast").classList.add("show");
+  } catch (err) {
+    // A freshness probe is advisory; never block the dashboard on it.
+  }
+}
+
+function dismissFreshness() {
+  el("freshness-toast").classList.remove("show");
 }
 
 async function onRun() {
@@ -214,6 +287,14 @@ function init() {
   const btn = el("run-btn");
   if (btn) {
     btn.addEventListener("click", onRun);
+  }
+  const pack = el("pack");
+  if (pack) {
+    pack.addEventListener("change", () => renderSectionMatrix(pack.value));
+  }
+  const dismiss = el("freshness-dismiss");
+  if (dismiss) {
+    dismiss.addEventListener("click", dismissFreshness);
   }
   populateHeader();
 }

@@ -26,6 +26,21 @@
         <div class="version" id="version">—</div>
       </header>
 
+      <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="wizard.html">Migration wizard</a>
+        <a class="nav-link" href="console.html">Upload console</a>
+        <a class="nav-link" href="packgen.html">Pack from samples</a>
+      </nav>
+
+      <!-- Vendor-change detection toast (pack_freshness). Dismissible; hidden
+           until the dashboard finds a stale destination pack. -->
+      <div class="toast" id="freshness-toast" role="status">
+        <div class="toast-body" id="freshness-body"></div>
+        <button class="toast-dismiss" id="freshness-dismiss" type="button" aria-label="Dismiss">
+          Dismiss
+        </button>
+      </div>
+
       <!-- Shown only when opened in a plain browser (no pywebview bridge). -->
       <div class="no-api" id="no-api">
         This dashboard runs inside the desktop app. Launch it with
@@ -50,6 +65,13 @@
         <div class="field">
           <label for="pack">Template pack</label>
           <select id="pack"></select>
+        </div>
+
+        <!-- Section-Selection Matrix (item 18b): liquid toggles per pack section,
+             populated from info().packs[].sections; feeds gatherSections(). -->
+        <div class="field">
+          <label id="sections-label">Sections</label>
+          <div class="section-matrix" id="section-matrix" aria-labelledby="sections-label"></div>
         </div>
 
         <div class="toggles">

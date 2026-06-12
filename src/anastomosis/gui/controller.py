@@ -31,7 +31,9 @@ emits.
 from __future__ import annotations
 
 import logging
+import re
 import threading
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -45,6 +47,15 @@ __all__ = ["EventSink", "GuiController"]
 
 
 logger = logging.getLogger(__name__)
+
+# A pack name must be a lowercase manifest identifier (mirrors the CLI's
+# _PACK_NAME_RE — it is the pack name AND the directory name).
+_PACK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# Local destination selectors older than this (relative to the registry's
+# freshest evidence date) are flagged stale — the quarterly re-verification
+# window the registry documents. Surfaced as a dismissible dashboard toast.
+_STALE_DAYS = 90
 
 
 class EventSink(Protocol):
@@ -154,6 +165,255 @@ class GuiController:
             return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
         except Exception as exc:
             return self._fail("routes", exc)
+
+    def destination_status(self, name: str) -> dict[str, object]:
+        """The wizard's per-destination view: transit map + browser-pack readiness.
+
+        Combines the router's transit map (:func:`plan_route`) with the browser
+        pack's discovery status (:func:`load_destination_pack`) so the wizard can
+        tell a browser-route operator whether the pack is ``ready`` (selectors
+        discovered) or still ``needs-discovery`` (run ``anast destination init``).
+        ``pack`` is ``None`` for destinations with no browser pack at all (the
+        common case — most route by API or C-CDA). An unknown destination is a
+        clean ``{"ok": False, ...}``, never a traceback.
+
+        PHI rule: returns destination names, capability kinds, evidence dates,
+        pack names, and booleans only — nothing patient-derived.
+        """
+        try:
+            from anastomosis.deliver.router import plan_route
+            from anastomosis.destinations.registry import DestinationRegistry
+
+            registry = DestinationRegistry.load()
+            transit = plan_route(name, registry)  # KeyError lists known names
+            return {
+                "ok": True,
+                "transit": _transit_to_dict(transit),
+                "pack": self._pack_readiness(transit),
+            }
+        except KeyError as exc:
+            return {"ok": False, "error": str(exc.args[0] if exc.args else exc)}
+        except Exception as exc:
+            return self._fail("destination_status", exc)
+
+    def pack_freshness(self) -> dict[str, object]:
+        """Vendor-change detection: which destinations' local selectors are stale.
+
+        For every registry destination that has a discovered browser pack (a
+        user ``selectors.yaml`` exists), compare that file's modification date
+        against the registry entry's freshest evidence date. When the local
+        selectors predate the evidence by more than :data:`_STALE_DAYS` days,
+        they were validated against a now-superseded understanding of the
+        vendor's UI — the dashboard raises a dismissible toast advising
+        ``anast destination init --validate``.
+
+        Returns ``{"ok": True, "stale": [...], "checked": N}`` where each stale
+        entry carries the destination name, the selectors date, the evidence
+        date, and the gap in days — counts/dates/names only, never PHI. A
+        destination with no discovered pack is simply not checked (nothing to
+        compare); it never appears in either list.
+        """
+        try:
+            from anastomosis.destinations.loader import (
+                BrowserPackError,
+                load_destination_pack,
+            )
+            from anastomosis.destinations.registry import DestinationRegistry
+
+            registry = DestinationRegistry.load()
+            stale: list[dict[str, object]] = []
+            checked = 0
+            for dest_name in sorted(registry.entries):
+                evidence_date = _freshest_evidence(registry.entries[dest_name])
+                if evidence_date is None:
+                    continue
+                try:
+                    loaded = load_destination_pack(dest_name)
+                except BrowserPackError:
+                    continue  # no browser pack for this destination — nothing to age
+                selectors_date = _selectors_mtime_date(loaded)
+                if selectors_date is None:
+                    continue  # selectors undiscovered (built-in scaffold) — not aged
+                checked += 1
+                # Stale when the local selectors were generated more than the
+                # window BEFORE the latest verified evidence: a vendor change
+                # the evidence may already reflect but the local pack predates.
+                gap = (evidence_date - selectors_date).days
+                if gap > _STALE_DAYS:
+                    stale.append(
+                        {
+                            "destination": dest_name,
+                            "selectors_date": selectors_date.isoformat(),
+                            "evidence_date": evidence_date.isoformat(),
+                            "gap_days": gap,
+                            "advice": f"anast destination init {dest_name} --validate",
+                        }
+                    )
+            return {"ok": True, "stale": stale, "checked": checked, "stale_after_days": _STALE_DAYS}
+        except Exception as exc:
+            return self._fail("pack_freshness", exc)
+
+    # --- upload console (browser-delivery operator surface) -----------------
+
+    def upload_status(self, db_path: str) -> dict[str, object]:
+        """The upload console's read-only view of a tracking ledger.
+
+        Opens the WAL SQLite ledger at ``db_path`` read-only-in-spirit (no
+        writes, never resumed here — live driving is M6) and returns the
+        state-machine counters grouped into pending/active/terminal, the latest
+        run's info, and the attempts + error-TYPE histograms (from the same
+        :mod:`reports` accessors the run report uses). Every value is a count, a
+        state name, a destination/run id, an ISO timestamp, or an exception TYPE
+        name — never an item key, a path, or any patient-derived value.
+
+        A missing/garbage ledger file is a clean ``{"ok": False, ...}`` (the DB
+        is opened defensively); never a traceback.
+        """
+        tracking = None
+        try:
+            from anastomosis.deliver.browser.tracking import TrackingDB
+
+            path = Path(db_path)
+            if not path.is_file():
+                return {"ok": False, "error": "FileNotFoundError"}
+            tracking = TrackingDB(path)
+            counts = tracking.counts()
+            run = self._latest_run(tracking)
+            return {
+                "ok": True,
+                "counts": dict(counts),
+                "groups": _group_states(counts),
+                "total": sum(counts.values()),
+                "run": run,
+                "attempts_histogram": {str(k): v for k, v in tracking.attempts_histogram().items()},
+                "error_type_histogram": (
+                    dict(tracking.error_type_histogram(str(run["run_id"])))
+                    if run is not None
+                    else {}
+                ),
+            }
+        except Exception as exc:
+            return self._fail("upload_status", exc)
+        finally:
+            if tracking is not None:
+                tracking.close()
+
+    def upload_item_keys(self, db_path: str, limit: int = 200) -> dict[str, object]:
+        """The patient command sheet's payload: pending item KEYS only.
+
+        Returns the opaque ``item_key`` values (``encounter_id:sha256[:12]``) of
+        items still owing work, for the Cmd+K palette. These are ids by
+        construction — never a patient name, never a file path. The full
+        live-driving console (start/pause real uploads) is M6; this is the STUB
+        that lists what *would* be driven. Capped at ``limit`` so a huge ledger
+        cannot flood the palette.
+        """
+        tracking = None
+        try:
+            from anastomosis.deliver.browser.tracking import TrackingDB
+
+            path = Path(db_path)
+            if not path.is_file():
+                return {"ok": False, "error": "FileNotFoundError"}
+            tracking = TrackingDB(path)
+            keys = [item.item_key for item in tracking.pending_items(limit=limit)]
+            return {"ok": True, "item_keys": keys, "count": len(keys)}
+        except Exception as exc:
+            return self._fail("upload_item_keys", exc)
+        finally:
+            if tracking is not None:
+                tracking.close()
+
+    def upload_manifest_preview(self, out_dir: str) -> dict[str, object]:
+        """Count the renderable PDFs an upload run would carry, from ``out_dir``.
+
+        A thin, read-only preview over the reconstruction output directory: the
+        number of ``*.pdf`` files (the unit of upload work) and their total
+        bytes. No manifest is built and no hashing happens — that needs the
+        per-encounter ids the upload engine carries, not on-disk files — so this
+        is a count-and-size sketch only, by design. Counts and a byte total
+        only; never a filename. A missing directory is a clean error.
+        """
+        try:
+            path = Path(out_dir)
+            if not path.is_dir():
+                return {"ok": False, "error": "NotADirectoryError"}
+            pdfs = sorted(path.glob("*.pdf"))
+            total_bytes = sum(p.stat().st_size for p in pdfs)
+            return {"ok": True, "renderable": len(pdfs), "total_bytes": total_bytes}
+        except Exception as exc:
+            return self._fail("upload_manifest_preview", exc)
+
+    # --- the pack-from-samples wizard ---------------------------------------
+
+    def pack_init(
+        self,
+        samples_dir: str,
+        name: str,
+        display: str | None = None,
+        confirmed_distinct_patients: bool = False,
+        out_dir: str | None = None,
+    ) -> dict[str, object]:
+        """Learn a DRAFT template pack from sample PDFs (the wizard's backend).
+
+        Mirrors the CLI ``anast pack init`` flow headlessly: validate the pack
+        name, collect the sample PDFs, harvest + analyze them, render the
+        PHI-safe :meth:`PackAnalysis.summary_lines` digest, and — only with
+        ``confirmed_distinct_patients`` checked (the CLI's interactive
+        same-patient guard, ported as a required checkbox) — emit the draft and
+        return its path plus the ``DRAFT.md`` text for display.
+
+        Without the confirmation this REFUSES (``ok: False``, ``error:
+        ConfirmationRequired``) and writes nothing — the same guard the CLI
+        enforces with ``typer.confirm``. The single-sample text-suppression
+        behavior is inherited from ``summary_lines`` (the draft never echoes
+        per-patient text).
+
+        PHI rule: ``summary`` carries only static template text (recurring
+        across distinct samples) and counts; sample paths are never echoed (the
+        count is). Returns JSON-safe data; never raises.
+        """
+        try:
+            from anastomosis.packgen import analyze, extract_samples
+            from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT, emit_draft_pack
+
+            if not _PACK_NAME_RE.match(name):
+                return {"ok": False, "error": "InvalidPackName"}
+
+            pdfs = sorted(Path(samples_dir).glob("*.pdf")) if Path(samples_dir).is_dir() else []
+            if not pdfs:
+                return {"ok": False, "error": "NoSamplesFound"}
+
+            analysis = analyze(extract_samples(pdfs))
+            summary = list(analysis.summary_lines())
+
+            # The same-patient guard: ported from the CLI's typer.confirm. An
+            # unchecked confirmation refuses and writes nothing — but still
+            # returns the PHI-safe summary so the operator sees what they are
+            # being asked to confirm.
+            if not confirmed_distinct_patients:
+                return {
+                    "ok": False,
+                    "error": "ConfirmationRequired",
+                    "caveat": SAME_PATIENT_CAVEAT,
+                    "summary": summary,
+                    "sample_count": analysis.sample_count,
+                    "low_confidence": analysis.low_confidence,
+                }
+
+            target = Path(out_dir) if out_dir is not None else Path("packs")
+            pack_dir = emit_draft_pack(analysis, name=name, display=display or name, out_dir=target)
+            draft_md = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
+            return {
+                "ok": True,
+                "pack_dir": str(pack_dir),
+                "draft_md": draft_md,
+                "summary": summary,
+                "sample_count": analysis.sample_count,
+                "low_confidence": analysis.low_confidence,
+            }
+        except Exception as exc:
+            return self._fail("pack_init", exc)
 
     # --- the pipeline run ---------------------------------------------------
 
@@ -318,6 +578,55 @@ class GuiController:
             self._emit(progress_event("deliver", deliverer="ccda", patients=len(paths)))
         self._emit(stage_event("deliver", "done"))
 
+    def _pack_readiness(self, transit: object) -> dict[str, object] | None:
+        """Resolve the browser pack for a transit map, if it has one.
+
+        A destination whose browser route is viable names a pack in the
+        BROWSER option's ``requires``; we load it defensively to report
+        ``ready`` (selectors discovered) vs ``needs-discovery``. Destinations
+        with no browser pack return ``None`` — the wizard simply omits the
+        readiness chip. Loud failures from the loader are swallowed into a
+        diagnosis (type name), never raised.
+        """
+        from anastomosis.deliver.router import RouteKind
+        from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+        name = transit.destination  # type: ignore[attr-defined]
+        browser = next(
+            (opt for opt in transit.options if opt.kind == RouteKind.BROWSER),  # type: ignore[attr-defined]
+            None,
+        )
+        if browser is None or not browser.viable:
+            return None
+        try:
+            loaded = load_destination_pack(name)
+        except BrowserPackError as exc:
+            return {"name": name, "ready": False, "diagnosis": exc_tag(exc)}
+        return {
+            "name": loaded.name,
+            "ready": loaded.ready,
+            "builtin": loaded.builtin,
+        }
+
+    @staticmethod
+    def _latest_run(tracking: object) -> dict[str, object] | None:
+        """The most-recent run row (by started_at), as a JSON-safe dict, or None.
+
+        Reuses :meth:`TrackingDB.run_info` for the field shape but resolves the
+        latest ``run_id`` itself (the upload console shows one current run). All
+        values are log-safe: a run id, a destination name, ISO timestamps, and
+        an abort TYPE name — never a patient value.
+        """
+        conn = tracking._conn()  # type: ignore[attr-defined]
+        row = conn.execute(
+            "SELECT run_id FROM runs ORDER BY started_at DESC, run_id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        run_id = row["run_id"]
+        info = tracking.run_info(run_id)  # type: ignore[attr-defined]
+        return {"run_id": run_id, **info}
+
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
@@ -384,6 +693,83 @@ def _transit_to_dict(transit: object) -> dict[str, object]:
         "options": options,
         "chosen": chosen.kind.value if chosen is not None else None,
     }
+
+
+# State groupings for the upload console's glass cards (the 15 states bucketed
+# pending/active/terminal). PENDING is its own "pending" bucket; mid-flight work
+# is "active"; everything else is "terminal" (no work owed). Pure presentation
+# data — counts only flow through it.
+_STATE_GROUPS: dict[str, tuple[str, ...]] = {
+    "pending": ("pending",),
+    "active": (
+        "resolving_patient",
+        "verifying_pre",
+        "uploading",
+        "upload_interrupted",
+        "retry_wait",
+        "verifying_post",
+    ),
+    "terminal": (
+        "skipped_skiplist",
+        "preflight_failed",
+        "patient_not_found",
+        "duplicate_at_destination",
+        "pre_verify_failed",
+        "failed",
+        "post_verify_failed",
+        "completed",
+    ),
+}
+
+
+def _group_states(counts: dict[str, int]) -> dict[str, int]:
+    """Bucket per-state item counts into pending/active/terminal totals."""
+    return {
+        group: sum(counts.get(state, 0) for state in states)
+        for group, states in _STATE_GROUPS.items()
+    }
+
+
+def _freshest_evidence(entry: object) -> date | None:
+    """The newest ``verified`` date across an entry's cited capabilities, or None.
+
+    A destination's evidence ages at the rate of its freshest citation: re-
+    verifying any one capability resets the clock. Browser ``pack`` capabilities
+    carry no evidence (their proof is canary fixtures), so they do not count.
+    """
+    dates: list[date] = []
+    for cap in (
+        entry.doc_write_api,  # type: ignore[attr-defined]
+        entry.ccda_import,  # type: ignore[attr-defined]
+        entry.browser,  # type: ignore[attr-defined]
+    ):
+        evidence = getattr(cap, "evidence", None)
+        if evidence is not None:
+            dates.append(evidence.verified)
+    return max(dates) if dates else None
+
+
+def _selectors_mtime_date(loaded: object) -> date | None:
+    """The UTC modification date of a discovered ``selectors.yaml``, or None.
+
+    A ready pack's selectors came from a discovered overlay file
+    (``selectors_source``); a built-in scaffold with no overlay has no aged
+    artifact (its slots are still the DISCOVER placeholder), so it returns None
+    and is not freshness-checked.
+    """
+    if not getattr(loaded, "ready", False):
+        return None
+    source = getattr(loaded, "selectors_source", None)
+    if source is None:
+        return None
+    source_path = Path(source)
+    # The wizard writes selectors into a file named selectors.yaml; the built-in
+    # pack.yaml is not an aged selectors artifact even when it resolves.
+    if source_path.name != "selectors.yaml" or not source_path.is_file():
+        return None
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(source_path.stat().st_mtime, tz=UTC).date()
 
 
 def _failed_stage(message: str) -> str:

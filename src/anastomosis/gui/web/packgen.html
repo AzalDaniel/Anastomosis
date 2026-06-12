@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Strict, self-only CSP — identical to index.html. Zero network requests
+      (the archive's offline rule). No inline script is permitted.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Anastomosis — Pack from samples</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="glass header">
+        <div>
+          <h1>Pack from samples</h1>
+          <div class="tagline">Learn a draft template pack from sample PDFs.</div>
+        </div>
+        <div class="version" id="version">&mdash;</div>
+      </header>
+
+      <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link" href="wizard.html">Migration wizard</a>
+        <a class="nav-link" href="console.html">Upload console</a>
+        <a class="nav-link" href="packgen.html" aria-current="page">Pack from samples</a>
+      </nav>
+
+      <div class="no-api" id="no-api">
+        This wizard runs inside the desktop app. Launch it with
+        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+      </div>
+
+      <div class="banner" id="banner"></div>
+
+      <section class="glass panel" aria-label="Pack init form">
+        <h2>Sample PDFs</h2>
+        <div class="field">
+          <label for="samples-dir">Samples directory (contains *.pdf)</label>
+          <input type="text" id="samples-dir" placeholder="/path/to/samples" />
+        </div>
+        <div class="field">
+          <label for="pack-name">Pack name (lowercase identifier, e.g. acme_soap)</label>
+          <input type="text" id="pack-name" placeholder="acme_soap" />
+        </div>
+        <div class="field">
+          <label for="pack-display">Display name (optional)</label>
+          <input type="text" id="pack-display" placeholder="Acme SOAP note" />
+        </div>
+        <button class="run-btn" id="analyze-btn" type="button">Analyze samples</button>
+      </section>
+
+      <!-- PHI-safe summary + the required same-patient confirmation -->
+      <section class="glass panel" id="summary-panel" aria-label="Analysis" hidden>
+        <h2>Inferred design (PHI-safe summary)</h2>
+        <div class="summary-block" id="summary"></div>
+        <div class="guidance" id="caveat"></div>
+        <div class="confirm-row">
+          <label class="toggle">
+            <input type="checkbox" id="confirm-distinct" />
+            <span class="track"></span>
+            <span>These samples are from DIFFERENT patients/encounters.</span>
+          </label>
+        </div>
+        <button class="run-btn" id="emit-btn" type="button" disabled>
+          Write draft pack
+        </button>
+        <div class="muted">
+          The draft is a STARTING POINT, not a finished pack — fidelity is not
+          claimed. Review the rendered preview against an original sample.
+        </div>
+      </section>
+
+      <!-- The written draft: path + DRAFT.md text -->
+      <section class="glass panel" id="draft-panel" aria-label="Draft" hidden>
+        <h2>Draft pack written</h2>
+        <div class="guidance" id="draft-path"></div>
+        <div class="draft-block" id="draft-md"></div>
+      </section>
+    </div>
+
+    <script src="packgen.js"></script>
+  </body>
+</html>
