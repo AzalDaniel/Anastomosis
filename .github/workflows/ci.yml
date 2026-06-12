@@ -65,3 +65,42 @@ jobs:
       - run: pip install -e ".[render,fhir]" pytest
       - run: playwright install chromium --with-deps
       - run: pytest -m e2e || [ $? -eq 5 ]  # exit 5 = no tests collected, OK pre-M1
+
+  # Separate lane: stands up a live HAPI FHIR R4 server as a service container
+  # and runs the fhir_api destination against it. The fhir_integration tests
+  # skipif ANAST_FHIR_BASE_URL is unset, so they are inert in every other lane.
+  fhir-integration:
+    name: FHIR integration (HAPI)
+    runs-on: ubuntu-latest
+    services:
+      hapi:
+        image: hapiproject/hapi:v8.0.0
+        ports:
+          - 8080:8080
+    env:
+      ANAST_FHIR_BASE_URL: http://127.0.0.1:8080/fhir
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # pymupdf: importing anastomosis.deliver (the engine's parent package)
+      # eagerly loads the QA stage, which needs PyMuPDF at import time.
+      - run: pip install -e ".[fhir]" pymupdf pytest
+      # Wait (loud) for HAPI to answer its CapabilityStatement before testing.
+      - name: Wait for HAPI to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "$ANAST_FHIR_BASE_URL/metadata" >/dev/null; then
+              echo "HAPI is ready"
+              exit 0
+            fi
+            echo "waiting for HAPI ($i)…"
+            sleep 2
+          done
+          echo "HAPI did not become ready within 120s" >&2
+          exit 1
+      # Collection is scoped to tests/integration: a bare `-m` filter still
+      # IMPORTS every unit module first, and several need PyMuPDF, which this
+      # lane deliberately does not install.
+      - run: pytest tests/integration -m fhir_integration

@@ -117,6 +117,7 @@ addopts = "-q --strict-markers"
 markers = [
   "e2e: end-to-end pipeline tests (need playwright chromium)",
   "slow: long-running tests, excluded from default CI lanes",
+  "fhir_integration: live FHIR-server tests (need ANAST_FHIR_BASE_URL; CI service container)",
 ]
 
 [tool.mypy]
