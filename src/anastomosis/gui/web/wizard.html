@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Strict, self-only CSP — identical to index.html. The wizard is served
+      from disk by pywebview and must make zero network requests (the archive's
+      offline rule). No inline script is permitted.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Anastomosis — Migration wizard</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="glass header">
+        <div>
+          <h1>Migration wizard</h1>
+          <div class="tagline">Source &rarr; destination &rarr; the shortest viable route.</div>
+        </div>
+        <div class="version" id="version">&mdash;</div>
+      </header>
+
+      <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link" href="wizard.html" aria-current="page">Migration wizard</a>
+        <a class="nav-link" href="console.html">Upload console</a>
+        <a class="nav-link" href="packgen.html">Pack from samples</a>
+      </nav>
+
+      <div class="no-api" id="no-api">
+        This wizard runs inside the desktop app. Launch it with
+        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+      </div>
+
+      <div class="banner" id="banner"></div>
+
+      <div class="steps" aria-label="Wizard steps">
+        <span class="step-dot" id="step-1" data-active="true">1 &middot; Source</span>
+        <span class="step-dot" id="step-2">2 &middot; Destination</span>
+        <span class="step-dot" id="step-3">3 &middot; Action</span>
+      </div>
+
+      <!-- Step 1: source -->
+      <section class="glass panel" aria-label="Step 1 — source">
+        <h2>Step 1 &middot; Source export</h2>
+        <div class="field">
+          <label for="export-dir">Export directory</label>
+          <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
+        </div>
+        <button class="run-btn" id="detect-btn" type="button">Auto-detect source</button>
+        <div class="guidance" id="detect-result" hidden></div>
+      </section>
+
+      <!-- Step 2: destination + transit map (the centerpiece) -->
+      <section class="glass panel" aria-label="Step 2 — destination">
+        <h2>Step 2 &middot; Destination</h2>
+        <div class="field">
+          <label for="destination">Destination EHR</label>
+          <select id="destination"></select>
+        </div>
+        <div class="transit-map" id="transit-map" aria-label="Transit map"></div>
+        <div class="pack-chip" id="pack-chip" hidden></div>
+      </section>
+
+      <!-- Step 3: action guidance, chosen-route specific -->
+      <section class="glass panel" aria-label="Step 3 — action">
+        <h2>Step 3 &middot; Action</h2>
+        <div class="guidance" id="action-guidance">
+          Pick a destination above to see the recommended route and next step.
+        </div>
+      </section>
+    </div>
+
+    <script src="wizard.js"></script>
+  </body>
+</html>
