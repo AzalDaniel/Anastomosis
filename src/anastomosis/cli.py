@@ -259,6 +259,10 @@ def pipeline_run(
             "--bundle", help="Also emit one per-patient bundle subdirectory in this directory."
         ),
     ] = None,
+    ccda: Annotated[
+        Path | None,
+        typer.Option("--ccda", help="Also emit one C-CDA / CCD XML per patient in this directory."),
+    ] = None,
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
     pipeline = _run_pipeline(
@@ -275,6 +279,8 @@ def pipeline_run(
         _deliver_archive(pipeline, pdfs_dir=out, out=archive)
     if bundle is not None:
         _deliver_bundles(pipeline, pdfs_dir=out, out=bundle)
+    if ccda is not None:
+        _deliver_ccda(pipeline, out=ccda)
 
 
 # --- anast archive ----------------------------------------------------------
@@ -397,6 +403,13 @@ def _deliver_bundles(pipeline: _PipelineResult, *, pdfs_dir: Path, out: Path) ->
         deliverer.deliver(record, pdfs, out, qa_report=pipeline.qa_report)
         written += 1
     console.print(f"Bundles: [green]{written} patients[/green] → {out}")
+
+
+def _deliver_ccda(pipeline: _PipelineResult, *, out: Path) -> None:
+    from anastomosis.deliver.ccda_export import deliver_ccda
+
+    written = deliver_ccda(pipeline.records, out)
+    console.print(f"C-CDA: [green]{len(written)} patients[/green] → {out}")
 
 
 # --- anast destination ------------------------------------------------------
