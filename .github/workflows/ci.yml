@@ -62,9 +62,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install -e ".[render,fhir]" pytest
+      # playwright is PINNED to the version the rendering goldens were
+      # generated with (tests/e2e/goldens/*.json carries the exact browser
+      # in _meta) — golden text layers are only stable under the same
+      # Chromium build. Bump the pin and regenerate goldens TOGETHER
+      # (python tools/regen_goldens.py), reviewed via the JSON diff.
+      - run: pip install -e ".[render,fhir]" "playwright==1.56.0" pytest
       - run: playwright install chromium --with-deps
-      - run: pytest -m e2e || [ $? -eq 5 ]  # exit 5 = no tests collected, OK pre-M1
+      - run: pytest -m e2e
 
   # Separate lane: stands up a live HAPI FHIR R4 server as a service container
   # and runs the fhir_api destination against it. The fhir_integration tests
