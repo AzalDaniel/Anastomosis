@@ -81,7 +81,8 @@ and re-renders with new data. The PF pack took 5 manual forensic sprints;
 deterministic extraction can auto-derive ~60–70% of it:
 
 1. **Extraction pass** (PyMuPDF only — no torch, fully offline):
-   font histogram → type scale; x-position clustering (DBSCAN) → column
+   font histogram → type scale; x-position clustering (explainable greedy
+   bucketing — implemented; DBSCAN considered and rejected) → column
    grids (the demographics-table alignment that took hours by hand);
    `get_drawings()` fills → design tokens (the #f1f1f1 discovery, automated);
    repeated bold spans across samples → section-heading taxonomy;
@@ -210,41 +211,50 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
    Still open: golden rendering tests (text+geometry via PyMuPDF, Chromium
    pinned); Synthea e2e.
 
-### M2 — Migration mode
-10. `deliver/browser/` port (engine/tracking [WAL SQLite, 15-state machine,
+### M2 — Migration mode ✅
+10. ✅ `deliver/browser/` port (engine/tracking [WAL SQLite, 15-state machine,
     resumability]/batch/manager/cdp/parallel/errors/reports/manifest/skiplist)
     with FakeDestination test double; kill-and-resume test.
-11. `deliver/verify/` L0–L6 port (L2 fuzzy ≥0.88 + DOB hard-fail; L3 pack-driven
+11. ✅ `deliver/verify/` L0–L6 port (L2 fuzzy ≥0.88 + DOB hard-fail; L3 pack-driven
     header fields; L4 banner check = the wrong-patient defense).
-12. `destinations/tebra/` pack + `anast destination init` discovery wizard +
+12. ✅ `destinations/tebra/` pack + `anast destination init` discovery wizard +
     capability registry + **`deliver/router.py`** (shortest-path selection).
-13. `deliver/fhir_api/` pusher (HAPI/Medplum CI service container) +
+13. ✅ `deliver/fhir_api/` pusher (HAPI/Medplum CI service container) +
     `deliver/ccda_export/` (generate C-CDA for destinations that import it).
 
-### M3 — Pack-from-samples (the layout learner)
-14. `packgen/extract.py` (spans/drawings harvest), `packgen/infer.py`
+### M3 — Pack-from-samples (the layout learner) ✅
+14. ✅ `packgen/extract.py` (spans/drawings harvest), `packgen/infer.py`
     (type-scale, column grids, tokens, section taxonomy, page-break stats,
-    static-text intersection), `packgen/emit.py` (draft pack writer).
-15. `anast pack init --from-samples ./samples/*.pdf` + side-by-side review
-    rendering; validation: regenerate the PF pack from synthetic PF-style
-    samples and diff against the hand-built pack.
-16. Optional Ollama VLM hook (section naming), strictly optional.
+    static-text intersection — explainable greedy bucketing, not DBSCAN),
+    `packgen/emit.py` (draft pack writer).
+15. ✅ `anast pack init --from-samples ./samples/*.pdf` + side-by-side review
+    rendering; emits a loadable draft pack behind a same-patient confirmation
+    gate. NOTE: the "regenerate the PF pack and diff against the hand-built
+    pack" validation is still open — it is blocked on the PF-faithful pack
+    itself (M1.6, issue #4), which remains deferred.
+16. 🔶 Optional Ollama VLM hook (section naming) — DEFERRED, strictly optional.
+    Not required for M3 completion; revisit in M6 alongside the Granite-Docling
+    packgen upgrade evaluation. Section naming today comes from the deterministic
+    bold-span taxonomy with no VLM dependency.
 
-### M4 — GUI (liquid-glass, pre-submission)
-17. Port pywebview shell + controller + web assets; pipeline dashboard
+### M4 — GUI (liquid-glass, pre-submission) ✅
+17. ✅ Port pywebview shell + controller + web assets; pipeline dashboard
     (ingest→reconstruct→QA→archive with live counters).
-18. Migration Wizard (source → destination → transit-map route via router);
+18. ✅ Migration Wizard (source → destination → transit-map route via router);
     Section-Selection Matrix (checkbox grid → pack section flags).
-19. Upload console (patient command sheet Cmd+K, calendar HUD with halos,
+19. ✅ Upload console (patient command sheet Cmd+K, calendar HUD with halos,
     liquid toggles, error-inspector flyout, command palette) per the extracted
     token sheet; pack-from-samples wizard UI; vendor-change detection toasts.
 
-### M5 — CS50 packaging
-20. README final (video URL, file-by-file walkthrough, design rationale,
-    provenance: predecessor reconstructed 12,906 PDFs at 100% final QA);
-    demo storyboard (problem → EHI folder → one command → archive + faithful
-    PDF → GUI run → dry-run/blurred destination upload with verification log);
-    submit50/check50 dry-run.
+### M5 — CS50 packaging 🔶 (this PR — docs only)
+20. 🔶 README final (`**Demo video:**` URL is the user's remaining TODO,
+    file-by-file walkthrough, design rationale, provenance: predecessor
+    reconstructed 12,906 PDFs at 100% final QA); demo storyboard
+    (`docs/DEMO_STORYBOARD.md`: problem → EHI folder → one command → archive +
+    faithful PDF → GUI run → transit map → dry-run/blurred destination upload
+    with verification log); CS50 submission checklist (`docs/CS50_SUBMISSION.md`:
+    submit50 slug + the user records/uploads/submits — nothing in the repo
+    submits). Still open: the user records the ≤3-min video and runs `submit50`.
 
 ### M6 — Post-submission breadth & hardening (the FOSS life)
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
@@ -257,6 +267,18 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     PyPI release (`pipx install anastomosis[render]`); quarterly registry
     re-verification ritual; Granite-Docling packgen upgrade evaluation;
     OCR ingest for scanned-PDF-only practices; Tauri evaluation; i18n/EHDS.
+
+**Handoff NITs from M4b (PR #25 review — recorded, not blocking):**
+- The GUI's browser-pack readiness chip is live-unreachable until a destination
+  gains browser evidence: it is covered by tests but dormant by data, because
+  every `destinations/registry.yaml` entry currently declares `browser: {kind:
+  none}`. Re-confirm the chip's live path when a real `browser: {kind: pack}`
+  entry exists.
+- The vendor-change freshness trigger (`pack_freshness()`) only fires when
+  discovered selectors predate the registry's evidence by >90 days. Confirm that
+  semantic against real packs — i.e. that the >90-day-stale comparison behaves as
+  intended once an operator-discovered selector set and dated browser evidence
+  both exist.
 
 ## PHI scrub map (for porters)
 
