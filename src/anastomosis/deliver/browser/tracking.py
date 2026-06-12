@@ -133,14 +133,18 @@ class TrackingDB:
     def _conn(self) -> sqlite3.Connection:
         conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(self._db_path, isolation_level=None)
+            conn = sqlite3.connect(self._db_path, isolation_level=None, timeout=30.0)
             conn.row_factory = sqlite3.Row
-            # busy_timeout MUST be set before journal_mode: switching to (or
-            # re-verifying) WAL takes a file lock, and a new thread's
-            # connection doing it with the default zero timeout races any
-            # concurrent writer straight into "database is locked" (seen on
-            # Windows CI, where the wider file-op window exposes it).
-            conn.execute("PRAGMA busy_timeout=5000")
+            # busy_timeout is set FIRST (journal_mode takes a file lock) and
+            # sized for the worst case, not the average: with synchronous=FULL
+            # every commit fsyncs the WAL, and on a slow CI disk a burst of
+            # write transactions can keep one thread queued well past 5s
+            # (seen twice on windows-latest: 'database is locked' under a
+            # 4-thread hammer). Production writes are seconds apart, so a
+            # generous timeout costs nothing there and removes the starvation
+            # window entirely. The connect(timeout=) and the pragma are kept
+            # in agreement (driver-level and library-level handlers).
+            conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
             conn.execute("PRAGMA foreign_keys=ON")
