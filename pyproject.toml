@@ -110,6 +110,11 @@ ignore = [
 # markup. Templates stay as the natural string literals; only this file is
 # allowed to exceed the 100-column limit.
 "src/anastomosis/deliver/archive/templates.py" = ["E501"]
+# The draft-pack emitter generates a Jinja2 template.html as a string literal
+# that mirrors packs/generic_soap/template.html verbatim; wrapping its long
+# markup lines would change the emitted output, so E501 is relaxed here too
+# (same rationale as the archive templates above).
+"src/anastomosis/packgen/emit.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

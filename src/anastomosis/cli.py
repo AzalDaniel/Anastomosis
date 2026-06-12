@@ -9,10 +9,12 @@ Sub-commands appear as their pipeline stages are implemented:
     anast archive       full pipeline       ->  searchable offline archive
     anast bundle        full pipeline       ->  per-patient bundles
     anast pipeline run  one command, whole pipeline (charts + optional archive/bundle)
+    anast pack init     sample PDFs         ->  a draft template pack
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -40,6 +42,8 @@ pipeline_app = typer.Typer(help="Run pipeline stages end to end.")
 app.add_typer(pipeline_app, name="pipeline")
 destination_app = typer.Typer(help="Inspect destinations and plan delivery routes.")
 app.add_typer(destination_app, name="destination")
+pack_app = typer.Typer(help="Build and inspect template packs.")
+app.add_typer(pack_app, name="pack")
 console = Console()
 
 
@@ -690,6 +694,296 @@ def destination_init(
     console.print(registry_overlay_snippet(loaded.name))
     console.print(
         f"Then route it:  anast destination route {loaded.name} --registry <your-overlay>.yaml"
+    )
+
+
+# --- anast pack init (the pack-from-samples wizard) -------------------------
+
+# A pack name must be a safe directory + manifest identifier (it becomes the
+# pack's directory name and YAML `name:`). Mirrors the loader's expectations.
+_PACK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Below this many samples the static/per-patient split is statistically weak;
+# the wizard warns loudly (the learner still runs).
+_LOW_SAMPLE_FLOOR = 3
+
+
+def _collect_sample_pdfs(patterns: list[str]) -> list[Path]:
+    """Resolve dir-or-glob arguments into a sorted, de-duplicated PDF list.
+
+    A bare directory contributes its ``*.pdf`` children; a glob is expanded;
+    a direct path is taken as-is. Sorted for deterministic sample indices.
+    """
+    import glob as _glob
+
+    found: set[Path] = set()
+    for raw in patterns:
+        candidate = Path(raw)
+        if candidate.is_dir():
+            found.update(p for p in candidate.glob("*.pdf"))
+            continue
+        if candidate.is_file():
+            found.add(candidate)
+            continue
+        # Treat as a glob (supports ``./samples/*.pdf``).
+        found.update(Path(match) for match in _glob.glob(raw) if Path(match).is_file())
+    return sorted(found)
+
+
+def _synthetic_preview_record() -> PatientRecord:
+    """A tiny, fully-synthetic record for the side-by-side preview render.
+
+    feedface- ids, a 555-exchange phone, an example.com-free facility, and the
+    canonical synthetic patient (Testpatient, Synthia). Carries one signed SOAP
+    encounter with vitals so every template branch the draft renders has data.
+    """
+    import datetime
+
+    from anastomosis.core.model import (
+        Encounter,
+        Facility,
+        NoteSection,
+        Observation,
+        ObservationCategory,
+        Patient,
+        PatientRecord,
+        Practitioner,
+        SectionKind,
+    )
+
+    patient = Patient(
+        id="feedface-0000-0000-0000-0000000000aa",
+        given_name="Synthia",
+        family_name="Testpatient",
+        birth_date=datetime.date(1985, 3, 14),
+        sex="F",
+    )
+    facility = Facility(
+        id="feedface-fac0-0000-0000-0000000000aa",
+        name="Example Synthetic Clinic",
+        address_line1="100 Placeholder Way",
+        city="Springfield",
+        state="WA",
+        postal_code="98101",
+        phone="(206) 555-0100",
+    )
+    provider = Practitioner(
+        id="feedface-d0c0-0000-0000-0000000000aa",
+        given_name="Pat",
+        family_name="Provider",
+        display_name="Dr. Pat Provider",
+        credential="MD",
+    )
+    encounter = Encounter(
+        id="feedface-e000-0000-0000-0000000000aa",
+        patient_id=patient.id,
+        facility_id=facility.id,
+        provider_id=provider.id,
+        signed_by_id=provider.id,
+        date_of_service=datetime.date(2024, 1, 2),
+        note_type="Progress Note",
+        chief_complaint="Cough and congestion",
+        signed_at=datetime.datetime(2024, 1, 2, 17, 30, tzinfo=datetime.UTC),
+        sections=[
+            NoteSection(
+                kind=SectionKind.SUBJECTIVE,
+                title="Subjective",
+                text="Patient reports a productive cough for five days.",
+            ),
+            NoteSection(
+                kind=SectionKind.OBJECTIVE,
+                title="Objective",
+                text="Lungs clear to auscultation bilaterally.",
+            ),
+            NoteSection(
+                kind=SectionKind.ASSESSMENT,
+                title="Assessment",
+                text="Acute viral bronchitis.",
+            ),
+            NoteSection(
+                kind=SectionKind.PLAN,
+                title="Plan",
+                text="Supportive care; return if symptoms persist.",
+            ),
+        ],
+    )
+    vitals = [
+        Observation(
+            id="feedface-0b50-0000-0000-0000000000a1",
+            patient_id=patient.id,
+            encounter_id=encounter.id,
+            category=ObservationCategory.VITAL_SIGNS,
+            code="8867-4",
+            display="Heart rate",
+            value="72",
+            unit="bpm",
+        ),
+    ]
+    return PatientRecord(
+        id=patient.id,
+        patient=patient,
+        encounters=[encounter],
+        facilities=[facility],
+        practitioners=[provider],
+        observations=vitals,
+    )
+
+
+def _render_preview(pack_dir: Path) -> Path | None:
+    """Render one synthetic preview record through the draft pack.
+
+    Returns the preview PDF path on success, or ``None`` when the Chromium
+    renderer is unavailable (a draft still emitted — the operator can render
+    later). PHI-safe by construction: only the synthetic preview record is used.
+    """
+    from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.engine import ReconstructionEngine
+
+    try:
+        from anastomosis.reconstruct.chromium import ChromiumRenderer
+    except ImportError:
+        console.print("[yellow]preview skipped[/yellow]: install anastomosis[render] for Chromium")
+        return None
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            pw.chromium.launch().close()
+    except Exception as exc:  # browser not fetched / cannot launch
+        console.print(
+            f"[yellow]preview skipped[/yellow]: Chromium unavailable ({type(exc).__name__}); "
+            "run 'playwright install chromium'"
+        )
+        return None
+
+    status = discover_packs([pack_dir.parent], allow_external=True).get(pack_dir.name)
+    if status is None or status.pack is None:
+        diagnosis = status.diagnosis if status else "draft pack not discovered"
+        console.print(f"[red]preview failed:[/red] {diagnosis}")
+        raise typer.Exit(code=1)
+    manifest = status.pack.manifest
+    margins = {
+        "top": manifest.page.margin_top,
+        "right": manifest.page.margin_right,
+        "bottom": manifest.page.margin_bottom,
+        "left": manifest.page.margin_left,
+    }
+    engine = ReconstructionEngine(
+        status.pack,
+        lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
+    )
+    preview_dir = pack_dir / "preview"
+    result = engine.run([_synthetic_preview_record()], preview_dir)
+    if result.failed or not result.documents:
+        console.print(f"[red]preview render failed[/red] ({len(result.failed)} error(s))")
+        raise typer.Exit(code=1)
+    return result.documents[0].path
+
+
+@pack_app.command("init")
+def pack_init(
+    samples: Annotated[
+        list[str],
+        typer.Option(
+            "--from-samples",
+            help="Sample PDFs: a directory, a glob (./samples/*.pdf), or files.",
+        ),
+    ],
+    name: Annotated[
+        str, typer.Option("--name", help="Pack name (lowercase identifier, e.g. acme_soap).")
+    ],
+    out_dir: Annotated[
+        Path,
+        typer.Option("--out-dir", help="Directory to write the pack into (default: ./packs)."),
+    ] = Path("packs"),
+    render_preview: Annotated[
+        bool,
+        typer.Option(
+            "--render-preview/--no-render-preview",
+            help="Render one synthetic preview record through the draft (needs Chromium).",
+        ),
+    ] = False,
+    display: Annotated[
+        str | None,
+        typer.Option("--display", help="Human label for the source format (default: the name)."),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the interactive same-patient confirmation."),
+    ] = False,
+) -> None:
+    """Learn a draft template pack from sample PDFs of an EHR's note format.
+
+    Collects the samples, harvests + analyzes them (PHI-safe — only static
+    template text is summarized), echoes the same-patient caveat for explicit
+    confirmation, then writes a loadable DRAFT pack. The draft is a STARTING
+    POINT: review the rendered preview against an original sample, edit the
+    template, and re-render. Fidelity is not claimed.
+    """
+    from anastomosis.core.logutil import exc_tag
+    from anastomosis.packgen import analyze, extract_samples
+    from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT, emit_draft_pack
+
+    if not _PACK_NAME_RE.match(name):
+        console.print(
+            f"[red]invalid pack name {name!r}[/red] — use a lowercase identifier "
+            "(letters, digits, underscores; starting with a letter)"
+        )
+        raise typer.Exit(code=2)
+
+    pdfs = _collect_sample_pdfs(samples)
+    if not pdfs:
+        console.print(
+            "[red]no sample PDFs found[/red] — pass --from-samples <dir>, a glob, or files"
+        )
+        raise typer.Exit(code=2)
+    # PHI: log the COUNT only, never the sample paths (they may be named after
+    # patients — the extract module's contract).
+    console.print(f"Found [cyan]{len(pdfs)}[/cyan] sample PDF(s).")
+    if len(pdfs) < _LOW_SAMPLE_FLOOR:
+        console.print(
+            f"[yellow]warning: only {len(pdfs)} sample(s)[/yellow] — confidence is LOW. "
+            f"The static/per-patient text split needs >= {_LOW_SAMPLE_FLOOR} DISTINCT-patient "
+            "samples to be reliable."
+        )
+
+    try:
+        analysis = analyze(extract_samples(pdfs))
+    except Exception as exc:  # unreadable/encrypted sample — type only, no path/PHI
+        console.print(f"[red]analysis failed[/red] ({exc_tag(exc)})")
+        raise typer.Exit(code=1) from None
+
+    console.print("\n[bold]Inferred design[/bold] (PHI-safe summary):")
+    for line in analysis.summary_lines():
+        console.print(f"  {line}")
+
+    console.print(f"\n[yellow]Same-patient caveat:[/yellow] {SAME_PATIENT_CAVEAT}")
+    if not yes and not typer.confirm("Are these samples from DIFFERENT patients?", default=False):
+        console.print("Aborting — gather samples from distinct patients and re-run.")
+        raise typer.Exit(code=0)
+
+    try:
+        pack_dir = emit_draft_pack(analysis, name=name, display=display or name, out_dir=out_dir)
+    except Exception as exc:
+        console.print(f"[red]emit failed[/red] ({exc_tag(exc)})")
+        raise typer.Exit(code=1) from None
+    console.print(f"\n[green]wrote draft pack[/green] → {pack_dir}")
+
+    preview_path: Path | None = None
+    if render_preview:
+        preview_path = _render_preview(pack_dir)
+        if preview_path is not None:
+            console.print(f"[green]preview[/green] → {preview_path}")
+
+    console.print("\n[bold]Next steps[/bold] (see DRAFT.md):")
+    if preview_path is not None:
+        console.print(f"  1. Review {preview_path} against an original sample.")
+    else:
+        console.print("  1. Render a preview (--render-preview) and compare to an original sample.")
+    console.print(
+        f"  2. Edit {pack_dir / 'template.html'} (reposition unplaced static text, tokens)."
+    )
+    console.print(
+        f"  3. Re-render:  anast pipeline run <export> -o out --pack {name} --pack-dir {out_dir}"
     )
 
 
