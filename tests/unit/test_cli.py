@@ -1,3 +1,5 @@
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -124,3 +126,193 @@ def test_destination_route_unknown_is_clean_error() -> None:
     assert "ghost" in result.output
     # A clean error, not a traceback.
     assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_destination_list_shows_pack_column_needs_discovery() -> None:
+    # The shipped tebra pack is present but undiscovered: the pack column says so.
+    result = runner.invoke(app, ["destination", "list"])
+    assert result.exit_code == 0, result.output
+    assert "needs-discovery" in result.output
+
+
+# --- anast destination init (the selector-discovery wizard) -----------------
+
+import anastomosis.cli as cli  # noqa: E402
+import anastomosis.destinations.loader as dest_loader  # noqa: E402
+from anastomosis.destinations.browserpack import SelectorMap  # noqa: E402
+from anastomosis.destinations.loader import load_destination_pack  # noqa: E402
+
+# Eleven slots in canonical order: 9 required + 2 optional.
+_ALL_SLOTS = (*SelectorMap.required_slots(), *SelectorMap.optional_slots())
+
+
+def _good_selectors() -> dict[str, str]:
+    return {slot: f"#{slot}" for slot in _ALL_SLOTS}
+
+
+class _FakeValidator:
+    """A seam-injected validator: ``found`` selectors match 1, all else 0."""
+
+    def __init__(self, found: set[str]) -> None:
+        self._found = found
+
+    def count(self, selector: str) -> int:
+        return 1 if selector in self._found else 0
+
+
+def test_destination_init_writes_selectors_yaml(tmp_path: Path) -> None:
+    out_dir = tmp_path / "out"
+    # One line of stdin per prompt, in slot order.
+    answers = "\n".join(_good_selectors()[slot] for slot in _ALL_SLOTS) + "\n"
+    result = runner.invoke(
+        app,
+        ["destination", "init", "tebra", "--out-dir", str(out_dir)],
+        input=answers,
+    )
+    assert result.exit_code == 0, result.output
+    written = out_dir / "tebra" / "selectors.yaml"
+    assert written.is_file()
+    if os.name == "posix":
+        # The pack dir is operator-private (same hardening as output dirs).
+        assert stat.S_IMODE((out_dir / "tebra").stat().st_mode) == 0o700
+    text = written.read_text(encoding="utf-8")
+    # Header records generation provenance + re-run instructions.
+    assert "GENERATED" in text
+    assert "anast destination init tebra" in text
+    assert "pack: tebra" in text
+    # Parse it back and confirm every required slot landed.
+    import yaml
+
+    parsed = yaml.safe_load(text)["selectors"]
+    for slot in SelectorMap.required_slots():
+        assert parsed[slot] == f"#{slot}"
+    # The registry overlay snippet is printed (not applied to the packaged file).
+    assert "kind: pack" in result.output
+    assert "detail: destinations/tebra" in result.output
+    # Without --cdp, the as-is warning is printed.
+    assert "preflight validates" in result.output
+
+
+def test_destination_init_loaded_pack_is_then_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_dir = tmp_path / "out"
+    answers = "\n".join(_good_selectors()[slot] for slot in _ALL_SLOTS) + "\n"
+    runner.invoke(app, ["destination", "init", "tebra", "--out-dir", str(out_dir)], input=answers)
+    # Re-load with the user dir pointed at the wizard output -> ready.
+    monkeypatch.setattr(dest_loader, "user_destinations_dir", lambda: out_dir)
+    loaded = load_destination_pack("tebra")
+    assert loaded.ready is True
+
+
+def test_destination_init_validate_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_dir = tmp_path / "out"
+    validator = _FakeValidator(found={f"#{slot}" for slot in _ALL_SLOTS})
+    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    answers = "\n".join(_good_selectors()[slot] for slot in _ALL_SLOTS) + "\n"
+    result = runner.invoke(
+        app,
+        [
+            "destination",
+            "init",
+            "tebra",
+            "--out-dir",
+            str(out_dir),
+            "--validate",
+            "--cdp",
+            "http://127.0.0.1:9222",
+        ],
+        input=answers,
+    )
+    assert result.exit_code == 0, result.output
+    assert "found 1 element" in result.output
+    # --cdp surfaces the shared-machine warning.
+    assert "multi-user" in result.output.lower()
+    assert (out_dir / "tebra" / "selectors.yaml").is_file()
+
+
+def test_destination_init_validate_not_found_then_reentered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_dir = tmp_path / "out"
+    # Only the canonical selectors validate; a first wrong paste matches 0.
+    validator = _FakeValidator(found={f"#{slot}" for slot in _ALL_SLOTS})
+    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    # For the FIRST slot, paste a bad selector first, then the good one.
+    lines: list[str] = ["#WRONG", _good_selectors()[_ALL_SLOTS[0]]]
+    lines += [_good_selectors()[slot] for slot in _ALL_SLOTS[1:]]
+    result = runner.invoke(
+        app,
+        [
+            "destination",
+            "init",
+            "tebra",
+            "--out-dir",
+            str(out_dir),
+            "--validate",
+            "--cdp",
+            "http://127.0.0.1:9222",
+        ],
+        input="\n".join(lines) + "\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "matched 0 elements" in result.output
+    parsed = __import__("yaml").safe_load(
+        (out_dir / "tebra" / "selectors.yaml").read_text(encoding="utf-8")
+    )["selectors"]
+    assert parsed[_ALL_SLOTS[0]] == f"#{_ALL_SLOTS[0]}"
+
+
+def test_destination_init_validate_explicit_accept_unvalidated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_dir = tmp_path / "out"
+    # Nothing validates: every selector matches 0 elements.
+    validator = _FakeValidator(found=set())
+    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    # First slot: 3 wrong tries, then "y" to accept unvalidated. Remaining
+    # slots: 3 tries each + "y" accept. Optionals could be skipped (blank), but
+    # blanks short-circuit before validation, so leave them blank.
+    lines: list[str] = []
+    for slot in SelectorMap.required_slots():
+        lines += [f"#{slot}", f"#{slot}", f"#{slot}", "y"]  # 3 tries then accept
+    for _slot in SelectorMap.optional_slots():
+        lines += [""]  # blank skip (no validation on empty optional)
+    result = runner.invoke(
+        app,
+        [
+            "destination",
+            "init",
+            "tebra",
+            "--out-dir",
+            str(out_dir),
+            "--validate",
+            "--cdp",
+            "http://127.0.0.1:9222",
+        ],
+        input="\n".join(lines) + "\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "accept this unvalidated selector" in result.output
+    parsed = __import__("yaml").safe_load(
+        (out_dir / "tebra" / "selectors.yaml").read_text(encoding="utf-8")
+    )["selectors"]
+    # The explicitly-accepted (unvalidated) selectors are still written.
+    assert parsed["upload_submit"] == "#upload_submit"
+
+
+def test_destination_init_validate_without_cdp_errors(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["destination", "init", "tebra", "--out-dir", str(tmp_path), "--validate"],
+    )
+    assert result.exit_code == 2
+    assert "--validate requires --cdp" in result.output
+
+
+def test_destination_init_unknown_pack_is_clean_error(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["destination", "init", "ghost", "--out-dir", str(tmp_path)], input="\n"
+    )
+    assert result.exit_code == 2
+    assert "no destination pack 'ghost'" in result.output
