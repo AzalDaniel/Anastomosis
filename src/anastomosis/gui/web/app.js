@@ -3,8 +3,12 @@
  *
  * Talks to the headless controller (anastomosis.gui.controller.GuiController)
  * over pywebview's bridge: every call is `window.pywebview.api.<method>(...)`,
- * which returns a Promise of a JSON-safe dict. Progress arrives the other way,
+ * returning a Promise of a JSON-safe dict. Progress arrives the other way,
  * pushed by the shell as `window.anastEvent(<event>)`.
+ *
+ * The visual layer + interaction patterns (gooey segment toggle, command
+ * palette, log strip/drawer) are carried from the predecessor GUI via
+ * window.AnastShell. The controller seam is untouched.
  *
  * PHI discipline mirrors the controller: this UI renders counts, stage names,
  * ids, and exception type names. It never receives — and so cannot show —
@@ -15,8 +19,8 @@
  */
 "use strict";
 
-// The dashboard's four stage rails, in pipeline order.
 const RAIL = ["ingest", "reconstruct", "qa", "deliver"];
+const Shell = window.AnastShell;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
@@ -26,9 +30,7 @@ function el(id) {
   return document.getElementById(id);
 }
 
-// --- the event dispatcher the shell calls ---------------------------------
-// Defined on window so the shell's evaluate_js("window.anastEvent(...)") finds
-// it regardless of module scope.
+// --- the event dispatcher the shell (Python side) calls -------------------
 window.anastEvent = function anastEvent(e) {
   if (!e || typeof e !== "object") {
     return;
@@ -36,20 +38,20 @@ window.anastEvent = function anastEvent(e) {
   switch (e.type) {
     case "stage":
       markStage(e.stage, e.state);
-      logLine(`stage ${e.stage}: ${e.state}`);
+      Shell.logEvent({ kind: "info", msg: `stage ${e.stage}: ${e.state}` });
       break;
     case "progress":
       renderCounters(e);
-      logLine(`progress ${e.stage}: ${counterText(e)}`);
+      Shell.logEvent({ kind: "info", msg: `progress ${e.stage}: ${counterText(e)}` });
       break;
     case "done":
-      logLine(`done: ${counterText(e)}`, "done");
+      Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
       finishRun();
       break;
     case "error":
       markStage(e.stage, "error");
       showBanner(e.error);
-      logLine(`error ${e.stage}: ${e.error}`, "error");
+      Shell.logEvent({ kind: "error", msg: `error ${e.stage}: ${e.error}` });
       finishRun();
       break;
     default:
@@ -65,7 +67,6 @@ function markStage(stage, state) {
 }
 
 function counterText(e) {
-  // Render every integer-valued field except the discriminators as k=v.
   return Object.keys(e)
     .filter((k) => k !== "type" && k !== "stage" && k !== "state")
     .map((k) => `${k}=${e[k]}`)
@@ -81,18 +82,6 @@ function renderCounters(e) {
   if (counters) {
     counters.textContent = counterText(e);
   }
-}
-
-function logLine(text, cls) {
-  const log = el("log");
-  if (!log) {
-    return;
-  }
-  const line = document.createElement("div");
-  line.className = "line" + (cls ? " " + cls : "");
-  line.textContent = text;
-  log.appendChild(line);
-  log.scrollTop = log.scrollHeight;
 }
 
 function showBanner(message) {
@@ -114,7 +103,19 @@ function setBusy(busy) {
   const btn = el("run-btn");
   if (btn) {
     btn.disabled = busy;
-    btn.textContent = busy ? "Running…" : "Run pipeline";
+    btn.textContent = busy ? "running…" : "run pipeline";
+  }
+  const frame = document.querySelector(".progress-frame");
+  if (frame) {
+    frame.classList.toggle("is-running", busy);
+  }
+  setStatus(busy ? "running" : "ready");
+}
+
+function setStatus(text) {
+  const t = el("status-text");
+  if (t) {
+    t.textContent = text;
   }
 }
 
@@ -129,21 +130,26 @@ function resetRail() {
       }
     }
   }
+  const fill = el("progress-bar-fill");
+  if (fill) {
+    fill.style.width = "0%";
+  }
 }
 
 function finishRun() {
   setBusy(false);
+  const fill = el("progress-bar-fill");
+  if (fill) {
+    fill.style.width = "100%";
+  }
 }
 
-// --- form wiring ----------------------------------------------------------
-// The Section-Selection Matrix (item 18b). info().packs[].sections is
-// {key: {label, default}}; we cache it per pack name so switching packs
-// repaints the matrix without another round-trip.
+// --- the Section-Selection Matrix (item 18b) ------------------------------
+// info().packs[].sections is {key: {label, default}}; cache per pack name so
+// switching packs repaints the matrix without another round-trip.
 let SECTIONS_BY_PACK = {};
 
 function gatherSections() {
-  // Read the live matrix into the {name: bool} shape run_pipeline expects.
-  // An empty matrix (no pack sections) sends {} and pack defaults apply.
   const sections = {};
   const boxes = el("section-matrix").querySelectorAll("input[type=checkbox]");
   for (const box of boxes) {
@@ -186,6 +192,7 @@ async function populateHeader() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
     setBusy(true); // no controller to run against; keep the button inert
+    setStatus("offline");
     return;
   }
   try {
@@ -206,6 +213,7 @@ async function populateHeader() {
         select.appendChild(opt);
       }
       renderSectionMatrix(select.value);
+      setStatus("ready");
     }
   } catch (err) {
     showBanner(String(err));
@@ -249,16 +257,18 @@ async function onRun() {
   hideBanner();
   resetRail();
   setBusy(true);
+  Shell.logEvent({ kind: "info", msg: "run requested" });
+  const qa = Shell.segmentValue("qa", "on") === "on";
   const payload = {
     export_dir: el("export-dir").value,
     out_dir: el("out-dir").value,
     pack: el("pack").value,
     source: null,
     sections: gatherSections(),
-    qa: el("qa").checked,
-    archive: el("archive").checked,
-    bundle: el("bundle").checked,
-    ccda: el("ccda").checked,
+    qa: qa,
+    archive: gatherDeliver("archive"),
+    bundle: gatherDeliver("bundle"),
+    ccda: gatherDeliver("ccda"),
   };
   try {
     // Fire-and-forget on a worker thread; results stream back via anastEvent.
@@ -283,7 +293,13 @@ async function onRun() {
   }
 }
 
+function gatherDeliver(name) {
+  const box = el(`deliver-${name}`);
+  return !!(box && box.checked);
+}
+
 function init() {
+  // wallpaper title text already neutral; wire the controls.
   const btn = el("run-btn");
   if (btn) {
     btn.addEventListener("click", onRun);
@@ -296,7 +312,53 @@ function init() {
   if (dismiss) {
     dismiss.addEventListener("click", dismissFreshness);
   }
+
+  Shell.initSegmentToggles(document);
+  Shell.initLogStrip();
+
+  // Command palette: PHI-free dashboard actions only.
+  const palette = Shell.initCommandPalette([
+    { id: "run", label: "Run pipeline", hint: "run", action: () => onRun() },
+    { id: "qa-on", label: "Enable QA", hint: "toggle", action: () => setSegment("qa", "on") },
+    { id: "qa-off", label: "Disable QA", hint: "toggle", action: () => setSegment("qa", "off") },
+    { id: "archive", label: "Toggle archive output", hint: "deliver", action: () => toggleDeliver("archive") },
+    { id: "log", label: "Toggle activity log", hint: "view", action: () => Shell.toggleLogDrawer() },
+    { id: "wizard", label: "Open migration wizard", hint: "go", action: () => { window.location.href = "wizard.html"; } },
+    { id: "console", label: "Open upload console", hint: "go", action: () => { window.location.href = "console.html"; } },
+    { id: "packgen", label: "Open pack from samples", hint: "go", action: () => { window.location.href = "packgen.html"; } },
+  ]);
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      palette.toggle();
+    } else if (e.key === "l" || e.key === "L") {
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (tag !== "INPUT" && tag !== "TEXTAREA" && !palette.isOpen()) {
+        e.preventDefault();
+        Shell.toggleLogDrawer();
+      }
+    }
+  });
+
   populateHeader();
+}
+
+function setSegment(name, value) {
+  const host = document.querySelector(`.segment-toggle[data-name="${name}"]`);
+  if (!host) {
+    return;
+  }
+  const btn = host.querySelector(`.segment-option[data-value="${value}"]`);
+  if (btn) {
+    btn.click();
+  }
+}
+
+function toggleDeliver(name) {
+  const box = el(`deliver-${name}`);
+  if (box) {
+    box.checked = !box.checked;
+  }
 }
 
 if (document.readyState === "loading") {

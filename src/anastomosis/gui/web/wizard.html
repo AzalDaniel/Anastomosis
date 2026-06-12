@@ -2,29 +2,47 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
     <!--
       Strict, self-only CSP — identical to index.html. The wizard is served
       from disk by pywebview and must make zero network requests (the archive's
-      offline rule). No inline script is permitted.
+      offline rule). Fonts are local (font-src 'self'). No inline script.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Anastomosis — Migration wizard</title>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body>
-    <div class="app">
-      <header class="glass header">
+  <body class="theme-dark">
+    <svg class="gooey-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="gooey">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+          <feColorMatrix in="blur" mode="matrix"
+            values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="gooey" />
+          <feComposite in="SourceGraphic" in2="gooey" operator="atop" />
+        </filter>
+      </defs>
+    </svg>
+
+    <header class="title-bar" role="presentation">
+      <span class="title-text">Anastomosis — migration wizard</span>
+    </header>
+
+    <div class="wallpaper" aria-hidden="true"></div>
+    <div class="wallpaper-veil" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <div class="page-head">
         <div>
           <h1>Migration wizard</h1>
           <div class="tagline">Source &rarr; destination &rarr; the shortest viable route.</div>
         </div>
-        <div class="version" id="version">&mdash;</div>
-      </header>
+        <div class="version" id="version">—</div>
+      </div>
 
       <nav class="nav" aria-label="Workspaces">
         <a class="nav-link" href="index.html">Dashboard</a>
@@ -41,25 +59,25 @@
       <div class="banner" id="banner"></div>
 
       <div class="steps" aria-label="Wizard steps">
-        <span class="step-dot" id="step-1" data-active="true">1 &middot; Source</span>
-        <span class="step-dot" id="step-2">2 &middot; Destination</span>
-        <span class="step-dot" id="step-3">3 &middot; Action</span>
+        <span class="step-dot" id="step-1" data-active="true">1 · source</span>
+        <span class="step-dot" id="step-2">2 · destination</span>
+        <span class="step-dot" id="step-3">3 · action</span>
       </div>
 
       <!-- Step 1: source -->
-      <section class="glass panel" aria-label="Step 1 — source">
-        <h2>Step 1 &middot; Source export</h2>
+      <section class="panel glass-card" aria-label="Step 1 — source">
+        <h2>step 1 · source export</h2>
         <div class="field">
           <label for="export-dir">Export directory</label>
           <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
         </div>
-        <button class="run-btn" id="detect-btn" type="button">Auto-detect source</button>
+        <button class="run-btn" id="detect-btn" type="button">auto-detect source</button>
         <div class="guidance" id="detect-result" hidden></div>
       </section>
 
       <!-- Step 2: destination + transit map (the centerpiece) -->
-      <section class="glass panel" aria-label="Step 2 — destination">
-        <h2>Step 2 &middot; Destination</h2>
+      <section class="panel glass-card" aria-label="Step 2 — destination">
+        <h2>step 2 · destination</h2>
         <div class="field">
           <label for="destination">Destination EHR</label>
           <select id="destination"></select>
@@ -69,14 +87,35 @@
       </section>
 
       <!-- Step 3: action guidance, chosen-route specific -->
-      <section class="glass panel" aria-label="Step 3 — action">
-        <h2>Step 3 &middot; Action</h2>
+      <section class="panel glass-card" aria-label="Step 3 — action">
+        <h2>step 3 · action</h2>
         <div class="guidance" id="action-guidance">
-          Pick a destination above to see the recommended route and next step.
+          <div>Pick a destination above to see the recommended route and next step.</div>
         </div>
       </section>
+
+      <div class="shell-spacer"></div>
+    </main>
+
+    <!-- Command palette (Raycast-style ⌘K / Ctrl+K) — workspace navigation. -->
+    <div class="cmd-palette" id="cmd-palette" role="dialog" aria-label="Command palette" hidden>
+      <div class="cmd-palette-backdrop" data-cmd-dismiss="true"></div>
+      <div class="cmd-palette-box glass-card">
+        <div class="cmd-palette-input">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m14 14-3.5-3.5" /></svg>
+          <input type="text" id="cmd-palette-search" placeholder="type a command…" autocomplete="off" spellcheck="false" />
+          <kbd class="cmd-palette-hint">esc</kbd>
+        </div>
+        <ul class="cmd-palette-list" id="cmd-palette-list" role="listbox" aria-label="Commands"></ul>
+      </div>
     </div>
 
+    <footer class="status-bar" id="status-bar">
+      <span id="status-text">ready</span>
+      <span id="status-runid"></span>
+    </footer>
+
+    <script src="shell.js"></script>
     <script src="wizard.js"></script>
   </body>
 </html>
