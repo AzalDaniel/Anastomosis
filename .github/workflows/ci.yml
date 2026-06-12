@@ -98,4 +98,7 @@ jobs:
           done
           echo "HAPI did not become ready within 120s" >&2
           exit 1
-      - run: pytest -m fhir_integration
+      # Collection is scoped to tests/integration: a bare `-m` filter still
+      # IMPORTS every unit module first, and several need PyMuPDF, which this
+      # lane deliberately does not install.
+      - run: pytest tests/integration -m fhir_integration
