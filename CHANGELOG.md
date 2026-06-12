@@ -69,6 +69,15 @@ parentheses.
   pack-init page with the same-patient confirmation gate. (#25)
 - **Frontend-free pipeline core** (`pipeline.py`) — extracted from the CLI so
   the CLI and GUI drive identical code, emitting PHI-safe `StageEvent`s. (#24)
+- **Oracle Health / Cerner Millennium EHI adapter** (`sources/oracle_ehi/`) —
+  ingests the single-patient V500 export (`v500/{schema,activity,reference}`
+  MySQL dumps) via a dependency-free, tolerant `INSERT`-statement reader that
+  raises loudly on malformed SQL. Maps the PERSON/ENCOUNTER/CLINICAL_EVENT
+  spine plus the §4 notes pathway (CE_BLOB local text, CE_BLOB_RESULT remote
+  document *references* — never fetched), resolves `*_CD` through CODE_VALUE,
+  filters to current row versions, and routes every unconsumed column to
+  `oracle_ehi:` extensions. CE_BLOB compression (brief §8 could-not-determine)
+  is a loud `NotImplementedError`, not a guess; PHI-safe logging throughout.
 
 ### Fixed
 
