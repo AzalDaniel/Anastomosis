@@ -20,9 +20,9 @@ or locked in.
 
 Anastomosis is the missing last mile, free and open source:
 
-1. **Ingest** raw EHI exports (Practice Fusion/Tebra TSV, C-CDA/CCD, more
-   adapters coming) into a lossless canonical model — every unmapped field
-   preserved, nothing silently dropped.
+1. **Ingest** raw EHI exports (Practice Fusion/Tebra TSV, C-CDA/CCD, Oracle
+   Health/Cerner Millennium V500 dumps, more adapters coming) into a lossless
+   canonical model — every unmapped field preserved, nothing silently dropped.
 2. **Reconstruct** human-readable, pixel-faithful clinical documents
    (template packs; the Practice Fusion SOAP-note pack replicates the original
    to forensic standards — or *learn a new layout from your own sample PDFs*).
@@ -121,9 +121,15 @@ src/anastomosis/
 │   │                 (KNOWN_TABLES) export graph; the mapper declares consumed
 │   │                 columns and routes EVERY other column to `extensions` under a
 │   │                 `pf_tebra:` key; escript resolves status by transaction priority.
-│   └── ccda/         C-CDA R2.1 / CCD ingest. HARDENED XML (resolve_entities=False,
-│                     no_network=True, load_dtd=False, huge_tree=False); unmapped
-│                     sections preserved under `ccda:section:<loinc>` extension keys.
+│   ├── ccda/         C-CDA R2.1 / CCD ingest. HARDENED XML (resolve_entities=False,
+│   │                 no_network=True, load_dtd=False, huge_tree=False); unmapped
+│   │                 sections preserved under `ccda:section:<loinc>` extension keys.
+│   └── oracle_ehi/   Oracle Health/Cerner Millennium EHI adapter (V500 single-patient
+│                     export). Dependency-free MySQL INSERT-dump reader over
+│                     `v500/{schema,activity,reference}`; PERSON/ENCOUNTER/CLINICAL_EVENT
+│                     spine, CE_BLOB note text + CE_BLOB_RESULT remote refs (never
+│                     fetched); unmapped columns to `oracle_ehi:` extensions; undocumented
+│                     CE_BLOB compression (brief §8) raises loudly rather than guessing.
 ├── reconstruct/      Jinja2 + Chromium rendering engine + defensive pack registry.
 │                     Renderer recycling, crash relaunch, deterministic
 │                     collision-suffixing, idempotent skip; a broken pack is
