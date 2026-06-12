@@ -2,7 +2,13 @@
 
 import pytest
 
-from anastomosis.core.textutil import clean_cell, clean_numeric, format_phone, html_to_text
+from anastomosis.core.textutil import (
+    clean_cell,
+    clean_numeric,
+    format_phone,
+    html_to_text,
+    sanitize_soap_html,
+)
 
 # --- cell hygiene -----------------------------------------------------------
 
@@ -85,3 +91,41 @@ def test_html_to_text_plain_text_passthrough() -> None:
     assert html_to_text("Just a plain sentence.") == "Just a plain sentence."
     assert html_to_text("") is None
     assert html_to_text(None) is None
+
+
+# --- sanitize_soap_html (the rich-HTML rendering path) ----------------------
+
+
+def test_sanitize_soap_html_repairs_ragged_export() -> None:
+    # A crafted sample of every repair the predecessor's sanitize_soap_html
+    # makes (gpdfs:137): TSV-exported \n inside inline content → <br>, empty
+    # filler blocks stripped, wrapped once in pf-rich-text.
+    raw = "<p>Injection sites:\\n1. Left deltoid\\n2. Right deltoid</p><p>&nbsp;</p><div></div>"
+    out = sanitize_soap_html(raw)
+    assert out.startswith('<div class="pf-rich-text">')
+    assert out.endswith("</div>")
+    # The stray \n inside the <p> became <br> (inline line breaks survive).
+    assert "1. Left deltoid<br>" in out
+    assert "2. Right deltoid" in out
+    # Empty <p>&nbsp;</p> and empty <div></div> filler blocks are gone.
+    assert "&nbsp;" not in out
+    assert "<div></div>" not in out
+    # Wrapped exactly once.
+    assert out.count("pf-rich-text") == 1
+
+
+def test_sanitize_soap_html_plain_text_escapes_and_breaks() -> None:
+    # No tags (no "<"): escape entities, then turn newlines into <br> (gpdfs:146).
+    out = sanitize_soap_html("Tylenol & rest\\nRTC if worse")
+    assert out == "Tylenol &amp; rest<br>RTC if worse"
+
+
+def test_sanitize_soap_html_empty_inputs() -> None:
+    assert sanitize_soap_html(None) == ""
+    assert sanitize_soap_html("") == ""
+
+
+def test_sanitize_soap_html_idempotent_wrap() -> None:
+    # Already wrapped → not double-wrapped (gpdfs:158 guard).
+    wrapped = '<div class="pf-rich-text"><p>Note.</p></div>'
+    assert sanitize_soap_html(wrapped).count("pf-rich-text") == 1

@@ -1,5 +1,7 @@
 PrescriptionGuid	TransactionDescription	TransactionNote	Status	TransactionDisplayDateTimeUtc	ProviderGuid
-feedface-0e5c-0000-0000-000000000001	Order Sent	eRx transmitted to Example Pharmacy	Sent	5/10/2023 9:40:00 PM	feedface-aaaa-0000-0000-000000000001
-feedface-0e5c-0000-0000-000000000001	Pharmacy Verify		Verified	5/10/2023 9:41:02 PM	feedface-aaaa-0000-0000-000000000001
-feedface-0e5c-0000-0000-000000000001	Dispense Notification		Dispensed	5/11/2023 3:05:00 PM	feedface-aaaa-0000-0000-000000000001
-feedface-0e5c-0000-0000-000000000002	Printed	Handed to patient	Printed	9/15/2023 5:00:00 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000001	Order sent	eRx transmitted to Example Pharmacy	Sent	5/10/2023 9:40:00 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000001	Refill request approved		Verified	5/10/2023 9:41:02 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000001	Prescription dispensed		Dispensed	5/11/2023 3:05:00 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000002	Prescription printed	Handed to patient	Printed	9/15/2023 5:00:00 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000003	Order sent	eRx transmitted	Sent	8/22/2023 10:25:00 PM	feedface-aaaa-0000-0000-000000000001
+feedface-0e5c-0000-0000-000000000003	Refill request approved		Verified	9/01/2023 2:00:00 PM	feedface-aaaa-0000-0000-000000000001

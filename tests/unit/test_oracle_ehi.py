@@ -242,7 +242,9 @@ def test_two_vitals_on_one_encounter_become_two_observations(
     # Title matches a known vital → VITAL_SIGNS + the standard LOINC.
     assert bp.category is ObservationCategory.VITAL_SIGNS
     assert bp.code == "8480-6" and bp.display == "Systolic blood pressure"
-    assert weight.code == "29463-7"
+    # Body weight's canonical LOINC is the predecessor's 3141-9 (dual-map port);
+    # 29463-7 remains an accepted alias on the same VitalCode.
+    assert weight.code == "3141-9"
     # The numeric unit code rides through (no CODE_VALUE label exists for it).
     assert bp.unit == "9001" and weight.unit == "9002"
 

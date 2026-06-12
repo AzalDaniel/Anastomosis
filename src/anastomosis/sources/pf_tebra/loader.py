@@ -38,6 +38,7 @@ KNOWN_TABLES = (
     "patient-prescriptions",
     "prescription-transactions",
     "patient-insurances",
+    "superbill-insurances",
     "patient-guarantor",
     "patient-family-medical-history",
     "patient-family-history-diagnoses",
