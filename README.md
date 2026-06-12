@@ -40,7 +40,9 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.1.0 (alpha)** — the Archivist vertical slice works end to end. See
+**v0.1.0 (alpha)** — [released on PyPI](https://pypi.org/project/anastomosis/)
+and [GitHub](https://github.com/AzalDaniel/Anastomosis/releases/tag/v0.1.0);
+the Archivist vertical slice works end to end. See
 [CHANGELOG.md](CHANGELOG.md) for what shipped and
 [docs/PLAN.md](docs/PLAN.md) for the living roadmap.
 
@@ -64,14 +66,16 @@ Your records never leave your machine.
 
 ## Install
 
-Once published to PyPI (coming with the v0.1.0 release), the recommended
-install is [pipx](https://pipx.pypa.io/):
+Anastomosis is [live on PyPI](https://pypi.org/project/anastomosis/). The
+recommended install is [pipx](https://pipx.pypa.io/) (or plain pip):
 
 ```bash
-pipx install "anastomosis[render]"
+pipx install "anastomosis[render]"      # CLI + rendering
+pip install "anastomosis[render,gui]"   # … or with the desktop GUI
+playwright install chromium             # one-time: the rendering browser
 ```
 
-Until then — or for development — install from a clone:
+For development, install from a clone:
 
 ```bash
 git clone https://github.com/AzalDaniel/Anastomosis.git
