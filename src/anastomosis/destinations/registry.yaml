@@ -26,6 +26,12 @@
 # exact pages. Re-verify with authenticated/browser access before building a
 # production integration against any of them — and bump `verified` when you do.
 #
+# Provenance note for the 2026-06-12 batch (oracle_health, eclinicalworks,
+# nextgen, veradigm, advancedmd, modmed, greenway): from the 12-vendor EHI
+# survey in docs/EHR_FORMATS.md — same 403-but-indexed access pattern; only
+# capabilities with an official-source citation are asserted, everything
+# else is `unverified` and never routes.
+#
 # Adding an entry is mechanical — copy the shape below, fill the three
 # capability classes, attach evidence to every real claim:
 #
@@ -170,5 +176,85 @@ entries:
         note: negative claim; CapabilityStatement shows read/search-type only
     # No inbound C-CDA API or documented in-product import found — unverified
     # rather than asserted-none.
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  oracle_health:
+    name: oracle_health
+    display: Oracle Health (Cerner Millennium)
+    doc_write_api:
+      kind: fhir_documentreference
+      detail: >-
+        FHIR R4 DocumentReference POST (unstructured clinical notes;
+        documented operation on the Millennium platform APIs). Production
+        use requires Oracle developer-program access.
+      evidence:
+        source_url: https://docs.oracle.com/en/industries/health/millennium-platform-apis/mfrap/op-documentreference-post.html
+        verified: 2026-06-12
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  eclinicalworks:
+    name: eclinicalworks
+    display: eClinicalWorks
+    # Third-party integration guides claim a proprietary write API; official
+    # write scope is NOT publicly confirmed — stays unverified until cited.
+    doc_write_api: {kind: unverified}
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  nextgen:
+    name: nextgen
+    display: NextGen Healthcare
+    doc_write_api: {kind: unverified}
+    ccda_import:
+      kind: in_product
+      detail: >-
+        Data Share module imports C-CDA. CAVEAT for migrations: NextGen's
+        own C-CDA EXPORT excludes encounter notes (vendor-documented), so
+        notes arriving here must come from the source side of the route.
+      evidence:
+        source_url: https://docs.nextgen.com/en-US/nextgenc2ae-enterprise-ehr-help-3270157/data-share-module-369560
+        verified: 2026-06-12
+        note: official docs page; content via indexed snippet (direct fetch 403)
+    browser: {kind: none}
+
+  veradigm:
+    name: veradigm
+    display: Veradigm (Allscripts)
+    # FHIR API is read-only; the bidirectional Unity API exists behind a
+    # partnership agreement — not a publicly verifiable write path.
+    doc_write_api: {kind: unverified}
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  advancedmd:
+    name: advancedmd
+    display: AdvancedMD
+    # Connect APIs (CRUD, non-FHIR) exist at devportal.advancedmd.com but a
+    # document-write operation is not publicly confirmed; FHIR is read-only.
+    doc_write_api: {kind: unverified}
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  modmed:
+    name: modmed
+    display: ModMed (EMA)
+    doc_write_api:
+      kind: none
+      detail: >-
+        Certified FHIR API is read/search/bulk only — no write operations
+        per the vendor's July 2024 API documentation. Negative claim, cited.
+      evidence:
+        source_url: https://www.modmed.com/wp-content/uploads/2024/07/MMI-Certified-FHIR-API-Documentation-July-2024.pdf
+        verified: 2026-06-12
+        note: official PDF; content via indexed snippet (direct fetch 403)
+    ccda_import: {kind: unverified}
+    browser: {kind: none}
+
+  greenway:
+    name: greenway
+    display: Greenway Health (PrimeSuite / Intergy)
+    doc_write_api: {kind: unverified}
     ccda_import: {kind: unverified}
     browser: {kind: none}

@@ -66,6 +66,13 @@ def test_packaged_registry_loads_clean() -> None:
         "canvas",
         "tebra",
         "practice_fusion",
+        "oracle_health",
+        "eclinicalworks",
+        "nextgen",
+        "veradigm",
+        "advancedmd",
+        "modmed",
+        "greenway",
     }
     for entry in reg.entries.values():
         for cap in (entry.doc_write_api, entry.ccda_import):
@@ -80,6 +87,10 @@ def test_packaged_registry_loads_clean() -> None:
     # The positive headline claims.
     assert reg.get("epic").doc_write_api.kind == DocWriteKind.FHIR_DOCUMENTREFERENCE
     assert reg.get("athenahealth").ccda_import.kind == CcdaImportKind.API
+    assert reg.get("oracle_health").doc_write_api.kind == DocWriteKind.FHIR_DOCUMENTREFERENCE
+    # And the cited negatives from the 2026-06-12 survey.
+    assert reg.get("modmed").doc_write_api.kind == DocWriteKind.NONE
+    assert reg.get("modmed").doc_write_api.evidence is not None
 
 
 # --- the no-hallucination enforcement (headline) ----------------------------
