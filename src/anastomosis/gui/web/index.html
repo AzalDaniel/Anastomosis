@@ -2,31 +2,55 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
     <!--
       Strict, self-only CSP. The GUI is served from disk by pywebview and must
-      make zero network requests (the archive's offline rule applies). Styles
-      and scripts are local files only; no inline script is permitted.
+      make zero network requests (the archive's offline rule applies). Styles,
+      scripts, AND fonts are local files only (font-src 'self'); no inline
+      script is permitted.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Anastomosis</title>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body>
-    <div class="app">
-      <header class="glass header">
+  <body class="theme-dark">
+    <!-- SVG gooey filter: applied to .segment-toggle's .segment-goo so the coral
+         indicator blob stretches elastically between slots (iOS 26 style). -->
+    <svg class="gooey-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="gooey">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+          <feColorMatrix in="blur" mode="matrix"
+            values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="gooey" />
+          <feComposite in="SourceGraphic" in2="gooey" operator="atop" />
+        </filter>
+      </defs>
+    </svg>
+
+    <!-- frameless drag region with title -->
+    <header class="title-bar" role="presentation">
+      <span class="title-text">Anastomosis</span>
+    </header>
+
+    <!-- wallpaper layers (procedural gradient; sit behind everything) -->
+    <div class="wallpaper" aria-hidden="true"></div>
+    <div class="wallpaper-veil" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <div class="page-head">
         <div>
           <h1>Anastomosis</h1>
           <div class="tagline">Reconstruct, verify, and re-home clinical records.</div>
         </div>
         <div class="version" id="version">—</div>
-      </header>
+      </div>
 
       <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="index.html" aria-current="page">Dashboard</a>
         <a class="nav-link" href="wizard.html">Migration wizard</a>
         <a class="nav-link" href="console.html">Upload console</a>
         <a class="nav-link" href="packgen.html">Pack from samples</a>
@@ -35,9 +59,9 @@
       <!-- Vendor-change detection toast (pack_freshness). Dismissible; hidden
            until the dashboard finds a stale destination pack. -->
       <div class="toast" id="freshness-toast" role="status">
-        <div class="toast-body" id="freshness-body"></div>
+        <div id="freshness-body"></div>
         <button class="toast-dismiss" id="freshness-dismiss" type="button" aria-label="Dismiss">
-          Dismiss
+          dismiss
         </button>
       </div>
 
@@ -49,8 +73,8 @@
 
       <div class="banner" id="banner"></div>
 
-      <section class="glass panel" aria-label="Pipeline run">
-        <h2>Run pipeline</h2>
+      <section class="panel glass-card" aria-label="Pipeline run">
+        <h2>run pipeline</h2>
 
         <div class="field">
           <label for="export-dir">Export directory</label>
@@ -74,54 +98,115 @@
           <div class="section-matrix" id="section-matrix" aria-labelledby="sections-label"></div>
         </div>
 
+        <!-- QA as a gooey segment toggle; deliverers as liquid checkbox toggles. -->
+        <div class="filter-bar" style="padding: 0">
+          <span class="pill-label">qa</span>
+          <div class="segment-toggle" role="radiogroup" aria-label="QA"
+               data-name="qa" data-value="on" style="--segment-count: 2; --segment-index: 0">
+            <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
+            <button type="button" class="segment-option" data-value="on" aria-pressed="true">qa on</button>
+            <button type="button" class="segment-option" data-value="off" aria-pressed="false">qa off</button>
+          </div>
+        </div>
+
         <div class="toggles">
           <label class="toggle">
-            <input type="checkbox" id="qa" checked />
+            <input type="checkbox" id="deliver-archive" />
             <span class="track"></span>
-            <span>QA</span>
+            <span>archive</span>
           </label>
           <label class="toggle">
-            <input type="checkbox" id="archive" />
+            <input type="checkbox" id="deliver-bundle" />
             <span class="track"></span>
-            <span>Archive</span>
+            <span>bundles</span>
           </label>
           <label class="toggle">
-            <input type="checkbox" id="bundle" />
+            <input type="checkbox" id="deliver-ccda" />
             <span class="track"></span>
-            <span>Bundles</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="ccda" />
-            <span class="track"></span>
-            <span>C-CDA</span>
+            <span>c-cda</span>
           </label>
         </div>
 
-        <button class="run-btn" id="run-btn" type="button">Run pipeline</button>
+        <button class="run-btn btn btn-primary" id="run-btn" type="button">run pipeline</button>
+      </section>
+
+      <!-- Now-running progress frame with the dichroic shimmer fill. -->
+      <section class="progress-frame glass-card" aria-label="Pipeline progress">
+        <div class="progress-current" id="progress-current">— idle —</div>
+        <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
       </section>
 
       <section class="rail" aria-label="Pipeline stages">
-        <div class="glass stage" id="stage-ingest">
-          <div class="name">Ingest</div>
+        <div class="stage glass-card" id="stage-ingest">
+          <div class="name">ingest</div>
           <div class="counters"></div>
         </div>
-        <div class="glass stage" id="stage-reconstruct">
-          <div class="name">Reconstruct</div>
+        <div class="stage glass-card" id="stage-reconstruct">
+          <div class="name">reconstruct</div>
           <div class="counters"></div>
         </div>
-        <div class="glass stage" id="stage-qa">
-          <div class="name">QA</div>
+        <div class="stage glass-card" id="stage-qa">
+          <div class="name">qa</div>
           <div class="counters"></div>
         </div>
-        <div class="glass stage" id="stage-deliver">
-          <div class="name">Deliver</div>
+        <div class="stage glass-card" id="stage-deliver">
+          <div class="name">deliver</div>
           <div class="counters"></div>
         </div>
       </section>
 
-      <section class="glass log" id="log" aria-label="Event log"></section>
+      <div class="shell-spacer"></div>
+
+      <!-- Activity strip (collapsed log; expands into .log-drawer). -->
+      <button type="button" class="log-strip" id="log-strip"
+              aria-label="Activity log — click or press L to expand"
+              aria-expanded="false" aria-controls="log-drawer">
+        <span class="log-strip-ts" id="log-strip-ts">--:--:--</span>
+        <span class="log-strip-glyph" id="log-strip-glyph">·</span>
+        <span class="log-strip-msg" id="log-strip-msg">waiting for first event</span>
+        <span class="log-strip-hint" aria-hidden="true">L</span>
+      </button>
+    </main>
+
+    <!-- Activity drawer (full event history; hidden until the strip is clicked). -->
+    <div class="log-drawer glass-card" id="log-drawer" role="dialog"
+         aria-label="Activity log" aria-modal="false" hidden>
+      <header class="log-drawer-header">
+        <span class="log-drawer-title">activity</span>
+        <button type="button" class="log-drawer-close" id="log-drawer-close" aria-label="Close activity log">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </header>
+      <div class="log-rows" id="log-rows">
+        <div class="log-row log-row--info">
+          <span class="log-ts">--:--:--</span>
+          <span class="log-glyph">·</span>
+          <span class="log-msg">waiting for first event</span>
+        </div>
+      </div>
     </div>
 
+    <!-- Command palette (Raycast-style ⌘K / Ctrl+K overlay). -->
+    <div class="cmd-palette" id="cmd-palette" role="dialog" aria-label="Command palette" hidden>
+      <div class="cmd-palette-backdrop" data-cmd-dismiss="true"></div>
+      <div class="cmd-palette-box glass-card">
+        <div class="cmd-palette-input">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m14 14-3.5-3.5" /></svg>
+          <input type="text" id="cmd-palette-search" placeholder="type a command…" autocomplete="off" spellcheck="false" />
+          <kbd class="cmd-palette-hint">esc</kbd>
+        </div>
+        <ul class="cmd-palette-list" id="cmd-palette-list" role="listbox" aria-label="Commands"></ul>
+      </div>
+    </div>
+
+    <footer class="status-bar" id="status-bar">
+      <span id="status-text">ready</span>
+      <span id="status-runid"></span>
+    </footer>
+
+    <script src="shell.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

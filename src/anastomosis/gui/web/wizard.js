@@ -4,11 +4,14 @@
  * Talks to the headless controller over pywebview's bridge:
  *   - info()                 → version + the destination list (registry names)
  *   - detect(dir)            → step 1 auto-detect
+ *   - routes()               → the destination list for the picker
  *   - destination_status(n)  → the transit map, pack readiness, route choice
  *
  * The transit map is the centerpiece: three route cards (vendor API / C-CDA
  * import / browser) drawn from destination_status(); the chosen route is
- * highlighted with the halo accent. Step 3's guidance is route-specific.
+ * highlighted with the coral halo accent. Step 3's guidance is route-specific.
+ * The visual layer (glass cards, route cards, command palette) is carried from
+ * the predecessor via window.AnastShell. The controller seam is untouched.
  *
  * PHI discipline: every value rendered here is a destination name, a capability
  * kind, an evidence date, a pack name, or a boolean — never patient-derived.
@@ -16,12 +19,21 @@
  */
 "use strict";
 
+const Shell = window.AnastShell;
+
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
 }
 
 function el(id) {
   return document.getElementById(id);
+}
+
+function setStatus(text) {
+  const t = el("status-text");
+  if (t) {
+    t.textContent = text;
+  }
 }
 
 function showBanner(message) {
@@ -201,6 +213,7 @@ async function onDestinationChange() {
     renderPackChip(res.pack);
     renderAction(res.transit, res.pack);
     setStep(3);
+    setStatus("route: " + (res.transit.chosen || "none"));
   } catch (err) {
     showBanner(err);
   }
@@ -210,6 +223,7 @@ async function onDestinationChange() {
 async function populate() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
+    setStatus("offline");
     return;
   }
   try {
@@ -246,6 +260,20 @@ function init() {
   if (dest) {
     dest.addEventListener("change", onDestinationChange);
   }
+
+  const palette = Shell.initCommandPalette([
+    { id: "detect", label: "Auto-detect source", hint: "step 1", action: () => onDetect() },
+    { id: "dashboard", label: "Open dashboard", hint: "go", action: () => { window.location.href = "index.html"; } },
+    { id: "console", label: "Open upload console", hint: "go", action: () => { window.location.href = "console.html"; } },
+    { id: "packgen", label: "Open pack from samples", hint: "go", action: () => { window.location.href = "packgen.html"; } },
+  ]);
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      palette.toggle();
+    }
+  });
+
   populate();
 }
 

@@ -1,113 +1,121 @@
-/*
- * Anastomosis liquid-glass design tokens — the single source of truth.
- * ===========================================================================
- *
- * The predecessor's OKLCH token sheet was unavailable for this port, so this
- * sheet is designed FRESH and documented here. Items 18/19 (Migration Wizard,
- * Upload Console) reuse these custom properties verbatim — change a value here,
- * change it everywhere.
- *
- * Design language — "liquid glass":
- *   - Translucent layered panels: rgba fills over a blurred backdrop
- *     (backdrop-filter: blur) so depth reads as frosted glass, not flat cards.
- *   - Soft 1px inner borders (a hairline highlight) define panel edges without
- *     hard lines.
- *   - Large corner radii (16-20px) keep every surface pill-soft.
- *   - Depth via layered shadows (a near ambient shadow + a far cast shadow).
- *   - Accent halos: active/interactive elements gain a colored glow ring.
- *   - Motion: 200-300ms ease transitions, never instant, never bouncy.
- *   - System font stack (no bundled webfonts — the offline rule forbids
- *     network fetches; a local font file is an item-19 enhancement).
- *   - Dark-first, with a light fallback via prefers-color-scheme.
- *
- * No emoji, no Material iconography (the predecessor's anti-pattern locks).
- */
+/* ════════════════════════════════════════════════════════════════
+   Anastomosis — Liquid Glass design system (tokens)
+   ════════════════════════════════════════════════════════════════
+   The design-system fonts + token sheet, carried from the predecessor
+   GUI verbatim (the original section comments are the design rationale
+   and are kept intact). Single source of truth: every page links
+   tokens.css then app.css, so there is no per-page token drift.
+   No frameworks, no Tailwind, no @apply. Hand-written for full control.
+   ════════════════════════════════════════════════════════════════ */
 
+
+/* ─── 1. Fonts ────────────────────────────────────────────────── */
+/* MonaSansVF has wdth + wght + opsz + italic axes in ONE file — we use
+   `font-style: italic` on the same family for italics, not a second @font-face.
+   Both fonts ship locally under SIL OFL-1.1 (see fonts/README.md) so the
+   strict self-only CSP (font-src 'self') is satisfied with zero network. */
+@font-face {
+  font-family: "Mona Sans";
+  src: url("fonts/MonaSansVF.woff2") format("woff2-variations");
+  font-weight: 200 900;
+  font-stretch: 75% 125%;
+  font-style: normal italic;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMonoVF.woff2") format("woff2-variations");
+  font-weight: 100 800;
+  font-display: block;
+}
+
+
+/* ─── 2. Tokens ───────────────────────────────────────────────── */
 :root {
-  /* --- palette: dark-first ------------------------------------------------ */
-  --bg-0: #0b0f17;            /* the deepest backdrop the glass floats over */
-  --bg-1: #121826;            /* a raised backdrop band */
-  --ink: #e8edf6;            /* primary text on dark glass */
-  --ink-dim: #9aa6bd;        /* secondary text, labels */
-  --ink-faint: #6b7791;      /* tertiary, hints */
+  /* fonts */
+  --font-display: "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
+  --font-body:    "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
 
-  /* accent + status hues (coral / mint / amber lineage of the predecessor) */
-  --accent: #5ad1c4;          /* mint-teal: primary action + active halo */
-  --accent-strong: #2bb6a6;
-  --coral: #ff7a8a;           /* error / fail */
-  --amber: #ffce6b;           /* warn */
-  --mint: #6be4a6;            /* pass / success */
+  /* type scale */
+  --text-display-xl: 56px;
+  --text-display-lg: 32px;
+  --text-title:      20px;
+  --text-body:       14px;
+  --text-label:      12px;
+  --text-caption:    11px;
+  --text-mono:       13px;
 
-  /* --- glass surfaces ----------------------------------------------------- */
-  --glass-bg: rgba(26, 34, 52, 0.55);        /* panel fill */
-  --glass-bg-raised: rgba(38, 48, 72, 0.62); /* a panel within a panel */
-  --glass-border: rgba(255, 255, 255, 0.10); /* the soft 1px inner hairline */
-  --glass-border-strong: rgba(255, 255, 255, 0.18);
-  --blur: 18px;                              /* backdrop-filter blur radius */
-  --blur-strong: 28px;
+  /* surfaces */
+  --surface-veil:    rgba(245, 240, 232, 0.05);
+  --surface-card:    rgba(245, 240, 232, 0.08);
+  --surface-modal:   rgba(245, 240, 232, 0.13);
+  --surface-tile:    rgba(245, 240, 232, 0.10);
+  --surface-pressed: rgba(245, 240, 232, 0.16);
 
-  /* --- radii -------------------------------------------------------------- */
-  --radius-sm: 10px;
-  --radius-md: 16px;
-  --radius-lg: 20px;
-  --radius-pill: 999px;
+  /* ink */
+  --ink-primary:   oklch(0.97 0.01 80);
+  --ink-secondary: oklch(0.82 0.01 80);
+  --ink-muted:     oklch(0.62 0.01 80);
+  --ink-inverse:   oklch(0.18 0.01 240);
 
-  /* --- depth: layered shadows --------------------------------------------- */
-  --shadow-near: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-far: 0 18px 48px rgba(0, 0, 0, 0.45);
-  --shadow-panel: var(--shadow-near), var(--shadow-far);
+  /* dichroic accent (progress fill only) */
+  --accent-warm:   oklch(0.78 0.18 28);
+  --accent-mid:    oklch(0.85 0.10 60);
+  --accent-cool:   oklch(0.85 0.10 200);
+  --accent-fill:   linear-gradient(90deg,
+                       var(--accent-warm) 0%,
+                       var(--accent-mid)  50%,
+                       var(--accent-cool) 100%);
 
-  /* --- accent halos (glow rings on active elements) ----------------------- */
-  --halo: 0 0 0 1px rgba(90, 209, 196, 0.55), 0 0 22px rgba(90, 209, 196, 0.30);
-  --halo-coral: 0 0 0 1px rgba(255, 122, 138, 0.55), 0 0 22px rgba(255, 122, 138, 0.28);
-  --halo-amber: 0 0 0 1px rgba(255, 206, 107, 0.55), 0 0 22px rgba(255, 206, 107, 0.26);
-  --halo-mint: 0 0 0 1px rgba(107, 228, 166, 0.55), 0 0 22px rgba(107, 228, 166, 0.26);
+  /* solid primary */
+  --primary:        oklch(0.78 0.18 28);
+  --primary-press:  oklch(0.72 0.20 28);
+  --primary-glow:   oklch(0.78 0.18 28 / 0.40);
 
-  /* --- motion ------------------------------------------------------------- */
-  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);   /* the "quart" feel, ported */
-  --dur: 240ms;
-  --dur-fast: 180ms;
+  /* signals */
+  --signal-success: oklch(0.82 0.14 165);
+  --signal-warning: oklch(0.85 0.14 75);
+  --signal-error:   oklch(0.72 0.18 18);
+  --signal-info:    oklch(0.80 0.06 230);
 
-  /* --- type --------------------------------------------------------------- */
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
-    Menlo, Consolas, monospace;
+  /* glass elevations */
+  --glass-veil-blur:    saturate(130%) blur(24px);
+  --glass-card-blur:    saturate(150%) blur(32px);
+  --glass-modal-blur:   saturate(170%) blur(48px);
 
-  /* --- spacing scale ------------------------------------------------------ */
+  --glass-veil-bg:      var(--surface-veil);
+  --glass-card-bg:      var(--surface-card);
+  --glass-modal-bg:     var(--surface-modal);
+
+  --glass-veil-border:  1.5px solid rgba(255, 250, 240, 0.10);
+  --glass-card-border:  1.5px solid rgba(255, 250, 240, 0.18);
+  --glass-modal-border: 1.5px solid rgba(255, 250, 240, 0.24);
+
+  --glass-card-shadow:  0 8px 24px rgba(0, 0, 0, 0.18),
+                        inset 0 1px 0 rgba(255, 250, 240, 0.12);
+  --glass-modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.35),
+                        inset 0 1px 0 rgba(255, 250, 240, 0.20);
+
+  /* spacing */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
-}
 
-/* Light fallback. Dark-first means these only apply when the OS asks for it. */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg-0: #eef1f7;
-    --bg-1: #e3e8f2;
-    --ink: #16202f;
-    --ink-dim: #46536b;
-    --ink-faint: #6b7791;
+  /* radii */
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-pill: 999px;
 
-    --glass-bg: rgba(255, 255, 255, 0.62);
-    --glass-bg-raised: rgba(255, 255, 255, 0.78);
-    --glass-border: rgba(20, 30, 50, 0.10);
-    --glass-border-strong: rgba(20, 30, 50, 0.18);
-
-    --shadow-near: 0 1px 2px rgba(30, 40, 60, 0.12);
-    --shadow-far: 0 18px 48px rgba(30, 40, 60, 0.16);
-
-    --accent-strong: #1d9a8c;
-  }
-}
-
-/* Respect reduced-motion: keep the glass, drop the long transitions. */
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --dur: 0ms;
-    --dur-fast: 0ms;
-  }
+  /* motion */
+  --ease-quart:        cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-cubic-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
+  --dur-snap:    120ms;
+  --dur-std:     240ms;
+  --dur-soft:    480ms;
+  --dur-progress: 800ms;
 }

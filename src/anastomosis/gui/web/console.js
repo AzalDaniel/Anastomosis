@@ -5,7 +5,13 @@
  * controller:
  *   - upload_status(db)          → grouped state counters + run row + histograms
  *   - upload_manifest_preview(d) → count of renderable PDFs (no names)
- *   - upload_item_keys(db)       → pending item KEYS for the Cmd+K palette
+ *   - upload_item_keys(db)       → pending item KEYS for the Cmd/Ctrl+K palette
+ *
+ * The visual layer is carried from the predecessor (asymmetric counter grid,
+ * calendar HUD with halo cells, command palette, log strip/drawer) via
+ * window.AnastShell. The console mirrors the original app-shell most closely:
+ * the counter grid is wired to OUR ledger state groups; the calendar plots
+ * the run's start/finish days with the original halo treatment.
  *
  * No live driving here — starting/pausing real uploads is a later milestone and
  * is labeled as such in the UI. There are NO buttons that pretend to upload.
@@ -16,12 +22,24 @@
  */
 "use strict";
 
+const Shell = window.AnastShell;
+const CAL = { year: null, month: null, histogram: {} };
+let ITEM_KEYS = [];
+let PALETTE = null;
+
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
 }
 
 function el(id) {
   return document.getElementById(id);
+}
+
+function setStatus(text) {
+  const t = el("status-text");
+  if (t) {
+    t.textContent = text;
+  }
 }
 
 function showBanner(message) {
@@ -31,8 +49,6 @@ function showBanner(message) {
     banner.classList.add("show");
   }
 }
-
-let CURRENT_RUN = null; // the latest run row (for the error histogram + calendar)
 
 // --- inspect the ledger ---------------------------------------------------
 async function onLoad() {
@@ -44,14 +60,16 @@ async function onLoad() {
     const status = await window.pywebview.api.upload_status(dbPath);
     if (!status || !status.ok) {
       showBanner("Could not read ledger: " + (status ? status.error : "no response"));
+      Shell.logEvent({ kind: "error", msg: "ledger read failed" });
       return;
     }
     renderStatus(status);
     renderErrorHist(status.error_type_histogram || {});
-    renderCalendar(status.run);
-    CURRENT_RUN = status.run;
+    buildCalendarFromRun(status.run);
     el("run-panel").hidden = false;
+    el("detail-panel").hidden = false;
     el("calendar-panel").hidden = false;
+    Shell.logEvent({ kind: "ok", msg: "ledger inspected · total=" + (status.total || 0) });
   } catch (err) {
     showBanner(err);
   }
@@ -61,6 +79,7 @@ async function onLoad() {
     try {
       const preview = await window.pywebview.api.upload_manifest_preview(outDir);
       if (preview && preview.ok) {
+        el("counter-renderable").textContent = String(preview.renderable);
         el("manifest-preview").textContent =
           "Manifest preview: " +
           preview.renderable +
@@ -75,9 +94,19 @@ async function onLoad() {
 }
 
 function renderStatus(status) {
-  // Run row.
+  const groups = status.groups || {};
+  el("counter-terminal").textContent = String(groups.terminal || 0);
+  el("counter-pending").textContent = String(groups.pending || 0);
+  el("counter-active").textContent = String(groups.active || 0);
+  el("counter-total").textContent = String(status.total || 0);
+  const errorTypes = Object.keys(status.error_type_histogram || {}).length;
+  el("counter-errortypes").textContent = String(errorTypes);
+
   const run = status.run;
-  el("run-info").textContent = run
+  el("run-info").textContent = run ? "run " + run.run_id : "no runs";
+  el("run-detail").innerHTML = "";
+  const detail = document.createElement("div");
+  detail.textContent = run
     ? "run " +
       run.run_id +
       " · " +
@@ -87,25 +116,7 @@ function renderStatus(status) {
       (run.finished_at ? " · finished " + run.finished_at : " · in progress") +
       (run.aborted_reason ? " · aborted (" + run.aborted_reason + ")" : "")
     : "No runs recorded in this ledger.";
-
-  // Grouped glass cards (pending / active / terminal).
-  const groups = status.groups || {};
-  const cards = el("group-cards");
-  cards.innerHTML = "";
-  for (const group of ["pending", "active", "terminal"]) {
-    const card = document.createElement("div");
-    card.className = "count-card";
-    card.setAttribute("data-group", group);
-    const g = document.createElement("div");
-    g.className = "group";
-    g.textContent = group;
-    const n = document.createElement("div");
-    n.className = "n";
-    n.textContent = String(groups[group] || 0);
-    card.appendChild(g);
-    card.appendChild(n);
-    cards.appendChild(card);
-  }
+  el("run-detail").appendChild(detail);
 
   // Per-state breakdown (the 15 states, nonzero ones).
   const counts = status.counts || {};
@@ -155,45 +166,74 @@ function toggleFlyout() {
   el("error-flyout").classList.toggle("show");
 }
 
-// --- calendar HUD with halo dots ------------------------------------------
-function renderCalendar(run) {
-  const cal = el("calendar");
-  cal.innerHTML = "";
+// --- calendar HUD: halo cells over the run's start/finish days ------------
+// PHI-safe by construction: the only data plotted is the run's own ISO
+// timestamps and a single count per active day — never patient values.
+function buildCalendarFromRun(run) {
+  CAL.histogram = {};
   if (!run || !run.started_at) {
-    el("calendar-month").textContent = "No runs to plot.";
+    const now = new Date();
+    CAL.year = now.getFullYear();
+    CAL.month = now.getMonth();
+    drawCalendar();
     return;
   }
-  // started_at is an ISO timestamp; take its month and dot the active days.
   const started = run.started_at.slice(0, 10);
-  const [year, month] = started.split("-").map((s) => parseInt(s, 10));
-  el("calendar-month").textContent = year + "-" + String(month).padStart(2, "0");
-  const activeDays = new Set();
-  activeDays.add(parseInt(started.slice(8, 10), 10));
+  const [y, m] = started.split("-").map((s) => parseInt(s, 10));
+  CAL.year = y;
+  CAL.month = m - 1;
+  CAL.histogram[started] = { pending: 0, done: 1, errors: 0 };
+  if (run.aborted_reason) {
+    CAL.histogram[started] = { pending: 0, done: 0, errors: 1 };
+  }
   if (run.finished_at) {
     const fin = run.finished_at.slice(0, 10);
-    if (fin.slice(0, 7) === started.slice(0, 7)) {
-      activeDays.add(parseInt(fin.slice(8, 10), 10));
-    }
+    const cur = CAL.histogram[fin] || { pending: 0, done: 0, errors: 0 };
+    cur.done += 1;
+    CAL.histogram[fin] = cur;
   }
-  const days = new Date(year, month, 0).getDate();
-  for (let d = 1; d <= days; d++) {
-    const cell = document.createElement("div");
-    cell.className = "cal-cell";
-    cell.setAttribute("data-dot", String(activeDays.has(d)));
-    cell.textContent = String(d);
-    cal.appendChild(cell);
-  }
+  drawCalendar();
 }
 
-// --- command palette STUB (Cmd+K): item KEYS only -------------------------
-let ITEM_KEYS = [];
+function drawCalendar() {
+  Shell.renderCalendar({
+    gridEl: el("cal-grid"),
+    titleEl: el("cal-title"),
+    year: CAL.year,
+    month: CAL.month,
+    histogram: CAL.histogram,
+  });
+}
 
-async function openPalette() {
+function navigateMonth(delta) {
+  if (CAL.year === null) {
+    const now = new Date();
+    CAL.year = now.getFullYear();
+    CAL.month = now.getMonth();
+  }
+  CAL.month += delta;
+  while (CAL.month < 0) {
+    CAL.month += 12;
+    CAL.year -= 1;
+  }
+  while (CAL.month > 11) {
+    CAL.month -= 12;
+    CAL.year += 1;
+  }
+  drawCalendar();
+}
+
+// --- item-key command palette (Cmd/Ctrl+K): item KEYS only ----------------
+// Selecting a key is a no-op for now — live driving is a later milestone. The
+// palette only lets the operator SEE which opaque keys still owe work.
+async function refreshItemKeys() {
   if (!hasApi()) {
+    ITEM_KEYS = [];
     return;
   }
   const dbPath = el("db-path").value;
   if (!dbPath) {
+    ITEM_KEYS = [];
     return;
   }
   try {
@@ -202,45 +242,33 @@ async function openPalette() {
   } catch (err) {
     ITEM_KEYS = [];
   }
-  renderPaletteList("");
-  el("palette-backdrop").classList.add("show");
-  el("palette-filter").focus();
 }
 
-function closePalette() {
-  el("palette-backdrop").classList.remove("show");
+function itemKeyCommands() {
+  if (ITEM_KEYS.length === 0) {
+    return [{ id: "none", label: "no pending item keys", hint: "ids", action: () => {} }];
+  }
+  return ITEM_KEYS.map((key) => ({
+    id: key,
+    label: key,
+    hint: "id",
+    // Read-only: surfacing a key is the whole behaviour. Driving is deferred.
+    action: () => {},
+  }));
 }
 
-function renderPaletteList(filter) {
-  const list = el("palette-list");
-  list.innerHTML = "";
-  const needle = filter.toLowerCase();
-  const matches = ITEM_KEYS.filter((k) => k.toLowerCase().includes(needle));
-  if (matches.length === 0) {
-    list.textContent = "No matching item keys.";
-    return;
-  }
-  for (const key of matches) {
-    const row = document.createElement("div");
-    row.className = "palette-item";
-    row.textContent = key;
-    list.appendChild(row);
-  }
-}
-
-function onKeydown(e) {
-  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
-    e.preventDefault();
-    openPalette();
-  } else if (e.key === "Escape") {
-    closePalette();
-  }
+async function openItemKeyPalette() {
+  await refreshItemKeys();
+  // Rebuild the palette over the freshly fetched keys, then open it.
+  PALETTE = Shell.initCommandPalette(itemKeyCommands());
+  PALETTE.open();
 }
 
 // --- bootstrap ------------------------------------------------------------
 async function populate() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
+    setStatus("offline");
     return;
   }
   try {
@@ -262,19 +290,35 @@ function init() {
   if (inspect) {
     inspect.addEventListener("click", toggleFlyout);
   }
-  const filter = el("palette-filter");
-  if (filter) {
-    filter.addEventListener("input", () => renderPaletteList(filter.value));
+  const prev = el("cal-prev");
+  if (prev) {
+    prev.addEventListener("click", () => navigateMonth(-1));
   }
-  const backdrop = el("palette-backdrop");
-  if (backdrop) {
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) {
-        closePalette();
+  const next = el("cal-next");
+  if (next) {
+    next.addEventListener("click", () => navigateMonth(1));
+  }
+
+  Shell.initLogStrip();
+  PALETTE = Shell.initCommandPalette(itemKeyCommands());
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      if (PALETTE && PALETTE.isOpen()) {
+        PALETTE.close();
+      } else {
+        openItemKeyPalette();
       }
-    });
-  }
-  document.addEventListener("keydown", onKeydown);
+    } else if (e.key === "l" || e.key === "L") {
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (tag !== "INPUT" && tag !== "TEXTAREA" && !(PALETTE && PALETTE.isOpen())) {
+        e.preventDefault();
+        Shell.toggleLogDrawer();
+      }
+    }
+  });
+
   populate();
 }
 

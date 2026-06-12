@@ -2,28 +2,49 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
     <!--
       Strict, self-only CSP — identical to index.html. Zero network requests
-      (the archive's offline rule). No inline script is permitted.
+      (the archive's offline rule). Fonts are local (font-src 'self'). No
+      inline script is permitted.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Anastomosis — Upload console</title>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body>
-    <div class="app">
-      <header class="glass header">
+  <body class="theme-dark">
+    <!-- Gooey filter — present because the command palette + future toggles
+         live on this page (the upload console mirrors the original app-shell). -->
+    <svg class="gooey-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="gooey">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+          <feColorMatrix in="blur" mode="matrix"
+            values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="gooey" />
+          <feComposite in="SourceGraphic" in2="gooey" operator="atop" />
+        </filter>
+      </defs>
+    </svg>
+
+    <header class="title-bar" role="presentation">
+      <span class="title-text">Anastomosis — upload console</span>
+    </header>
+
+    <div class="wallpaper" aria-hidden="true"></div>
+    <div class="wallpaper-veil" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <div class="page-head">
         <div>
           <h1>Upload console</h1>
           <div class="tagline">Browser-delivery operator surface (read-only).</div>
         </div>
-        <div class="version" id="version">&mdash;</div>
-      </header>
+        <div class="version" id="version">—</div>
+      </div>
 
       <nav class="nav" aria-label="Workspaces">
         <a class="nav-link" href="index.html">Dashboard</a>
@@ -41,13 +62,19 @@
 
       <!-- This screen READS the tracking ledger. Live driving is deferred. -->
       <div class="guidance">
-        This console inspects an existing upload ledger. Starting, pausing, and
-        driving real uploads from the GUI
-        <span class="deferred">live driving: later milestone</span>
+        <div>
+          This console inspects an existing upload ledger. Starting, pausing, and
+          driving real uploads from the GUI
+          <span class="deferred">live driving: later milestone</span>
+        </div>
+        <div class="muted">
+          Press <strong>Cmd/Ctrl+K</strong> for the item-key palette (encounter id +
+          content hash — never patient names). Press <strong>L</strong> for the activity log.
+        </div>
       </div>
 
-      <section class="glass panel" aria-label="Load ledger">
-        <h2>Tracking ledger</h2>
+      <section class="panel glass-card" aria-label="Load ledger">
+        <h2>tracking ledger</h2>
         <div class="field">
           <label for="db-path">Ledger database path (tracking.db)</label>
           <input type="text" id="db-path" placeholder="/path/to/out/tracking.db" />
@@ -56,52 +83,131 @@
           <label for="out-dir">Reconstruction output (for manifest preview)</label>
           <input type="text" id="out-dir" placeholder="/path/to/out" />
         </div>
-        <button class="run-btn" id="load-btn" type="button">Inspect ledger</button>
+        <button class="run-btn" id="load-btn" type="button">inspect ledger</button>
       </section>
 
-      <!-- Run row + state-machine grouped counters as glass cards -->
-      <section class="glass panel" id="run-panel" aria-label="Run" hidden>
-        <h2>Current run</h2>
-        <div class="guidance" id="run-info"></div>
-        <div class="group-row" id="group-cards"></div>
-        <div class="state-grid" id="state-grid"></div>
-        <div class="muted" id="manifest-preview"></div>
-        <div style="margin-top: var(--space-4)">
-          <button class="toast-dismiss" id="inspect-errors" type="button">
-            Error inspector
-          </button>
-          <span class="muted">&nbsp; Press <strong>Cmd/Ctrl+K</strong> for the patient command sheet (item keys only).</span>
+      <!-- Asymmetric counter grid wired to the ledger's state groups. -->
+      <section class="counter-grid" id="run-panel" aria-label="Ledger counters" hidden>
+        <div class="counter-tile counter-tile--lg glass-card" data-counter="terminal">
+          <div class="counter-label">terminal</div>
+          <div class="counter-value" id="counter-terminal">0</div>
+          <div class="counter-sub" id="run-info"></div>
+        </div>
+        <div class="counter-tile counter-tile--lg glass-card" data-counter="pending">
+          <div class="counter-label">pending</div>
+          <div class="counter-value" id="counter-pending">0</div>
+        </div>
+        <div class="counter-tile counter-tile--md glass-card" data-counter="active">
+          <div class="counter-label">active</div>
+          <div class="counter-value" id="counter-active">0</div>
+        </div>
+        <div class="counter-tile counter-tile--md glass-card" data-counter="errors">
+          <div class="counter-label">error types</div>
+          <div class="counter-value" id="counter-errortypes">0</div>
+        </div>
+        <div class="counter-tile counter-tile--sm glass-card" data-counter="skipped">
+          <div class="counter-label">total</div>
+          <div class="counter-value" id="counter-total">0</div>
+        </div>
+        <div class="counter-tile counter-tile--sm glass-card" data-counter="ambiguous">
+          <div class="counter-label">renderable</div>
+          <div class="counter-value" id="counter-renderable">0</div>
         </div>
       </section>
 
-      <!-- Calendar HUD: month grid with halo dots on run-activity days -->
-      <section class="glass panel" id="calendar-panel" aria-label="Run calendar" hidden>
-        <h2>Run calendar</h2>
-        <div class="muted" id="calendar-month"></div>
-        <div class="calendar" id="calendar"></div>
+      <!-- Per-state breakdown + manifest preview + error inspector trigger. -->
+      <section class="panel glass-card" id="detail-panel" aria-label="Run detail" hidden>
+        <h2>current run</h2>
+        <div class="guidance" id="run-detail"></div>
+        <div class="state-grid" id="state-grid"></div>
+        <div class="muted" id="manifest-preview"></div>
+        <div>
+          <button class="btn btn-glass btn--xs" id="inspect-errors" type="button">error inspector</button>
+        </div>
       </section>
+
+      <!-- Calendar HUD: month grid with halo cells over run-activity days. -->
+      <section class="panel glass-card calendar-hud" id="calendar-panel" aria-label="Run calendar" hidden>
+        <div class="calendar-header">
+          <button type="button" class="calendar-nav" id="cal-prev" aria-label="Previous month">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 3l-5 5 5 5" /></svg>
+          </button>
+          <h3 class="calendar-title" id="cal-title">—</h3>
+          <button type="button" class="calendar-nav" id="cal-next" aria-label="Next month">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+          </button>
+        </div>
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span>
+        </div>
+        <div class="calendar-grid" id="cal-grid" role="grid"></div>
+        <footer class="calendar-footer">
+          <span class="calendar-legend" aria-hidden="true">
+            <i class="legend-dot legend-dot--pending"></i>pending
+            <i class="legend-dot legend-dot--done"></i>done
+            <i class="legend-dot legend-dot--errors"></i>errors
+          </span>
+        </footer>
+      </section>
+
+      <div class="shell-spacer"></div>
+
+      <button type="button" class="log-strip" id="log-strip"
+              aria-label="Activity log — click or press L to expand"
+              aria-expanded="false" aria-controls="log-drawer">
+        <span class="log-strip-ts" id="log-strip-ts">--:--:--</span>
+        <span class="log-strip-glyph" id="log-strip-glyph">·</span>
+        <span class="log-strip-msg" id="log-strip-msg">no ledger loaded</span>
+        <span class="log-strip-hint" aria-hidden="true">L</span>
+      </button>
+    </main>
+
+    <div class="log-drawer glass-card" id="log-drawer" role="dialog"
+         aria-label="Activity log" aria-modal="false" hidden>
+      <header class="log-drawer-header">
+        <span class="log-drawer-title">activity</span>
+        <button type="button" class="log-drawer-close" id="log-drawer-close" aria-label="Close activity log">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
+      </header>
+      <div class="log-rows" id="log-rows">
+        <div class="log-row log-row--info">
+          <span class="log-ts">--:--:--</span>
+          <span class="log-glyph">·</span>
+          <span class="log-msg">no ledger loaded</span>
+        </div>
+      </div>
     </div>
 
-    <!-- Error-inspector flyout: TYPE histograms only, never values -->
+    <!-- Error-inspector flyout: exception TYPE histogram only, never values. -->
     <aside class="flyout" id="error-flyout" aria-label="Error inspector">
-      <h3>Error type histogram</h3>
+      <h3>error type histogram</h3>
       <div class="muted">Exception TYPE names and counts only — never patient values.</div>
       <div id="error-hist"></div>
     </aside>
 
-    <!-- Command palette STUB (Cmd+K): lists item KEYS, never patient names -->
-    <div class="palette-backdrop" id="palette-backdrop">
-      <div class="palette" role="dialog" aria-label="Patient command sheet">
-        <input type="text" id="palette-filter" placeholder="Filter item keys…" />
-        <div class="hint">
-          Item keys only (encounter id + content hash) — never patient names.
-          Driving uploads from here
-          <span class="deferred">live driving: later milestone</span>
+    <!-- Item-key command palette (Cmd/Ctrl+K): lists item KEYS, never names.
+         Driving uploads from here
+         <span class="deferred">live driving: later milestone</span>. The
+         palette is read-only — selecting a key does nothing yet (deferred). -->
+    <div class="cmd-palette" id="cmd-palette" role="dialog" aria-label="Item-key palette" hidden>
+      <div class="cmd-palette-backdrop" data-cmd-dismiss="true"></div>
+      <div class="cmd-palette-box glass-card">
+        <div class="cmd-palette-input">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m14 14-3.5-3.5" /></svg>
+          <input type="text" id="cmd-palette-search" placeholder="filter item keys (ids only)…" autocomplete="off" spellcheck="false" />
+          <kbd class="cmd-palette-hint">esc</kbd>
         </div>
-        <div id="palette-list"></div>
+        <ul class="cmd-palette-list" id="cmd-palette-list" role="listbox" aria-label="Item keys"></ul>
       </div>
     </div>
 
+    <footer class="status-bar" id="status-bar">
+      <span id="status-text">ready</span>
+      <span id="status-runid"></span>
+    </footer>
+
+    <script src="shell.js"></script>
     <script src="console.js"></script>
   </body>
 </html>
