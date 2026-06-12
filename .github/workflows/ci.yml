@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+# Least-privilege default for every job.
+permissions:
+  contents: read
+
+jobs:
+  phi-scan:
+    name: PHI scan (full tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python tools/phi_scan.py
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      # pymupdf: the QA stage is core pipeline behavior and must be tested on
+      # every OS/Python combo (Chromium itself stays in the e2e lane).
+      # fhir.resources: the FHIR bundle schema-validation test must run here.
+      - run: pip install -e . pytest pymupdf "fhir.resources>=8.1"
+      - run: pytest -m "not e2e and not slow"
+
+  # Separate lane: installs the rendering stack (Playwright Chromium) and runs
+  # full-pipeline tests. Activates from milestone M1 onward; passes trivially
+  # while no e2e tests exist.
+  e2e:
+    name: End-to-end (pipeline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # playwright is PINNED to the version the rendering goldens were
+      # generated with (tests/e2e/goldens/*.json carries the exact browser
+      # in _meta) — golden text layers are only stable under the same
+      # Chromium build. Bump the pin and regenerate goldens TOGETHER
+      # (python tools/regen_goldens.py), reviewed via the JSON diff.
+      - run: pip install -e ".[render,fhir]" "playwright==1.56.0" pytest
+      - run: playwright install chromium --with-deps
+      - run: pytest -m e2e
+
+  # Separate lane: stands up a live HAPI FHIR R4 server as a service container
+  # and runs the fhir_api destination against it. The fhir_integration tests
+  # skipif ANAST_FHIR_BASE_URL is unset, so they are inert in every other lane.
+  fhir-integration:
+    name: FHIR integration (HAPI)
+    runs-on: ubuntu-latest
+    services:
+      hapi:
+        image: hapiproject/hapi:v8.0.0
+        ports:
+          - 8080:8080
+    env:
+      ANAST_FHIR_BASE_URL: http://127.0.0.1:8080/fhir
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # pymupdf: importing anastomosis.deliver (the engine's parent package)
+      # eagerly loads the QA stage, which needs PyMuPDF at import time.
+      - run: pip install -e ".[fhir]" pymupdf pytest
+      # Wait (loud) for HAPI to answer its CapabilityStatement before testing.
+      - name: Wait for HAPI to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "$ANAST_FHIR_BASE_URL/metadata" >/dev/null; then
+              echo "HAPI is ready"
+              exit 0
+            fi
+            echo "waiting for HAPI ($i)…"
+            sleep 2
+          done
+          echo "HAPI did not become ready within 120s" >&2
+          exit 1
+      # Collection is scoped to tests/integration: a bare `-m` filter still
+      # IMPORTS every unit module first, and several need PyMuPDF, which this
+      # lane deliberately does not install.
+      - run: pytest tests/integration -m fhir_integration

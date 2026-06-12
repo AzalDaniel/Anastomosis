@@ -1,0 +1,5 @@
+PatientPracticeGuid	DiagnosisGuid	Diagnosis	DiagnosisCodeEquivalents	DiagnosisAcuity	StartDate	StopDate	LastModifiedDateTimeUtc
+feedface-0000-0000-0000-000000000001	feedface-d000-0000-0000-000000000001	Essential hypertension	ICD10CM:I10|SNOMEDCT:59621000	Chronic	1/15/2019		6/2/2023 1:45:09 PM
+feedface-0000-0000-0000-000000000001	feedface-d000-0000-0000-000000000002	Allergic contact dermatitis	ICD10CM:L23.9|SNOMEDCT:238575004	Acute	5/10/2023	6/10/2023	6/10/2023 2:00:00 PM
+feedface-0000-0000-0000-000000000002	feedface-d000-0000-0000-000000000003	Type 2 diabetes mellitus	ICD10CM:E11.9|SNOMEDCT:44054006	Chronic	3/3/2020		6/2/2023 1:45:09 PM
+feedface-0000-0000-0000-000000000003	feedface-d000-0000-0000-000000000004	Encounter for routine child health examination	ICD10CM:Z00.129		4/18/2023		4/18/2023 5:20:30 PM
