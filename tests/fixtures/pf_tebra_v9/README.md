@@ -24,6 +24,10 @@ tolerantly — corrections from a real export only require fixing this fixture):
 * `providers.tsv`, `facilities.tsv` — name/address column spellings
 * `patient-guarantor.tsv`, `patient-education.tsv`,
   `patient-financial-resources.tsv` — all columns
+* `superbill-insurances.tsv` — columns mirror the predecessor's
+  `generate_pdfs.py` loader (`PatientInsurancePlanGuid` / `PlanName` /
+  `PayerName` / `PlanType`, the three-tier PF insurance-TYPE join); synthetic
+  values throughout
 * `patient-allergy-reactions.tsv` — link/`Reaction` columns
 * `patient-immunizations.tsv` — `DateAdministered`/`ExpirationDate`/`Comment`
 * `patient-family-history-diagnoses.tsv` — `Diagnosis` display column
@@ -51,10 +55,13 @@ vitals table** (vitals are LOINC-coded rows in
 | `\N` null escapes + empty cells | Boris Sample's demographics, encounter 6 chief complaint |
 | `-1` numeric sentinel | `NumberOfRefills` on the printed prescription |
 | Mixed date spellings | slash, 12-hour, and ISO forms across tables |
-| PlanType fallback chain | "(PPO)" parseable / not parseable / Medicare |
+| PlanType superbill join | Medicare via PIPG tier-1 join; Evergreen Basic via plan-name tier-2 join; Cascadia "(PPO)" via regex last-resort (`superbill-insurances.tsv`) |
 | Addendum on a signed note | Encounter 3, `AmendmentStatus=Accepted` |
 | SIMPLE (non-SOAP) note | Encounter 4, `IsSoapNote=false`, only Subjective filled |
-| Escript status resolution | Rx 1: Sent→Verified→Dispensed; Rx 2: Printed |
+| Escript status resolution | Rx 1: Order sent→Refill approved→Dispensed = DISPENSED |
+| Escript refill must NOT override VERIFIED | Rx 3: Order sent + Refill approved = VERIFIED (no dispense) |
+| Empty-SOAP encounter excluded from render | Encounter 7 (Boris): all four sections blank — skipped, preserved in record `extensions` |
+| Adult growth-chart encounter excluded | Encounter 8 (Boris, adult): CC "growth chart" — skipped, preserved in `extensions` |
 | Multi-race patient | Ada Fixture: White + Asian |
 | Pediatric record | Cleo Placeholder (DOB 12/1/2021): head circumference, months-old age |
 | Empty table with header | `tribal-affiliation.tsv` |
