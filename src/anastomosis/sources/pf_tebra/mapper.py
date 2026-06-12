@@ -231,17 +231,25 @@ def _map_patient(row: Row, export: Export) -> Patient:
     )
 
 
+# patient-guarantor.tsv columns as the predecessor consumed them
+# (gpdfs:940-961). NOTE the Billing* names and the bare City/State/Zip —
+# this table does NOT share patient-demographics' Address* column names.
 _GUARANTOR_MAPPED = frozenset(
     {
         "PatientPracticeGuid",
         "FirstName",
         "LastName",
-        "RelationshipToPatient",
+        "BillingPatientRelationshipOption",
+        "BillingPaymentType",
+        "DateOfBirth",
+        "BillingGenderOption",
+        "SSNumber",
         "Address1",
-        "AddressCity",
-        "AddressState",
-        "AddressZipCode",
-        "PhoneNumber",
+        "City",
+        "State",
+        "Zip",
+        "PrimaryPhoneNumber",
+        "SecondaryPhoneNumber",
     }
 )
 
@@ -250,19 +258,31 @@ def _map_guarantor(export: Export, guid: str) -> Guarantor | None:
     rows = _by(export["patient-guarantor"], "PatientPracticeGuid").get(guid, [])
     if not rows:
         return None
-    row = rows[0]
+    row = rows[-1]  # last row wins, matching the predecessor's dict-overwrite load (gpdfs:284-287)
     name = " ".join(p for p in (_s(row, "FirstName"), _s(row, "LastName")) if p)
-    phone = format_phone(_s(row, "PhoneNumber"))
+    phones = [
+        ContactPoint(kind=kind, value=phone)
+        for kind, col in (
+            (ContactKind.PHONE_HOME, "PrimaryPhoneNumber"),
+            (ContactKind.PHONE_OTHER, "SecondaryPhoneNumber"),
+        )
+        if (phone := format_phone(_s(row, col)))
+    ]
     return Guarantor(
         name=name or None,
-        relationship_to_patient=_s(row, "RelationshipToPatient"),
+        relationship_to_patient=_s(row, "BillingPatientRelationshipOption"),
+        payment_preference=_s(row, "BillingPaymentType"),
+        birth_date=_d(row, "DateOfBirth"),
+        sex=_s(row, "BillingGenderOption"),
+        ssn=_s(row, "SSNumber"),
         address=Address(
             line1=_s(row, "Address1"),
-            city=_s(row, "AddressCity"),
-            state=_s(row, "AddressState"),
-            postal_code=_s(row, "AddressZipCode"),
+            city=_s(row, "City"),
+            state=_s(row, "State"),
+            postal_code=_s(row, "Zip"),
         ),
-        phones=[ContactPoint(kind=ContactKind.PHONE_HOME, value=phone)] if phone else [],
+        phones=phones,
+        extensions=_ext(row, _GUARANTOR_MAPPED),
     )
 
 

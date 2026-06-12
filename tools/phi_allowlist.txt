@@ -11,6 +11,8 @@ diagnosiscodeequivalents
 lastmodifiedbyproviderguid
 patientinsuranceplanguid
 transactiondisplaydatetimeutc
+# patient-guarantor.tsv column (gpdfs:951 consumes it; same v9 dictionary).
+billingpatientrelationshipoption
 
 # Synthetic dates of birth of fixture patients "Ada Fixture", "Boris Sample"
 # and "Cleo Placeholder" (tests/fixtures/pf_tebra_v9) and "Synthia Probe"
@@ -18,10 +20,13 @@ transactiondisplaydatetimeutc
 # ("DOB mm/dd/yyyy"), which legitimately put the DOB marker next to the date;
 # the golden rendering snapshot (tests/e2e/goldens/) stores that same
 # synthetic chart text verbatim, so the fixture DOBs appear there too.
+# 03/15/1988 is the synthetic guarantor "Gus Placeholder" (payment section
+# DATE OF BIRTH cell, asserted by the PF-pack payment tests + golden).
 03/14/1985
 07/04/1952
 12/01/2021
 01/02/1980
+03/15/1988
 
 # Synthetic near-miss dates used by the QA boundary-matching regression
 # tests (tests/unit/test_qa.py): they prove a record DOB of 1/2/1980 does
