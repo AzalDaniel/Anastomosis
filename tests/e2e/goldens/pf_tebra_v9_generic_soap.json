@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "chromium": "141.0.7390.37",
+    "playwright": "1.56.0"
+  },
+  "feedface-e000-0000-0000-000000000001": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Ada Q Fixture \u00b7 DOB 03/14/1985 (38 yrs) \u00b7 Female \u00b7 Date of service: May 10, 2023 \u00b7 SOAP note Chief complaint: Follow-up of hypertension SUBJECTIVE Reports good medication adherence. No dizziness or headache. OBJECTIVE Well appearing. Heart RRR, no murmur. Lungs clear. ASSESSMENT Essential hypertension, controlled. PLAN Continue lisinopril 10 mg daily. Recheck in 3 months. VITALS Measure Value Unit Body height 64 in Body weight 150 lb Systolic blood pressure 118 mmHg Diastolic blood pressure 76 mmHg Heart rate 72 bpm Respiratory rate 16 br/min Body temperature 98.6 degF Oxygen saturation in Arterial blood by Pulse oximetry 98 % Pain severity - 0-10 verbal numeric rating [Score] 4 Body mass index (BMI) [Ratio] 25.7 kg/m2 Electronically signed by Paige Providerson on May 10, 2023 5:32 PM",
+    "width": 612
+  },
+  "feedface-e000-0000-0000-000000000002": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Ada Q Fixture \u00b7 DOB 03/14/1985 (38 yrs) \u00b7 Female \u00b7 Date of service: May 10, 2023 \u00b7 SOAP note Chief complaint: Rash after starting antibiotic SUBJECTIVE Called re: pruritic rash on forearms since yesterday. OBJECTIVE Photos reviewed: scattered urticarial plaques. ASSESSMENT Allergic contact dermatitis vs drug eruption. PLAN Stop amoxicillin. Start cetirizine 10 mg daily. RTC if worse. Electronically signed by Norm Notesigner on May 10, 2023 7:05 PM",
+    "width": 612
+  },
+  "feedface-e000-0000-0000-000000000003": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Ada Q Fixture \u00b7 DOB 03/14/1985 (38 yrs) \u00b7 Female \u00b7 Date of service: August 22, 2023 \u00b7 SOAP note Chief complaint: Annual exam SUBJECTIVE No new complaints. Family history reviewed. OBJECTIVE Complete exam unremarkable. ASSESSMENT Healthy adult; hypertension stable. PLAN Labs ordered: lipid panel, CMP. Continue current meds. ADDENDA Lab results reviewed: lipid panel within normal limits. Accepted \u00b7 Provider Electronically signed by Paige Providerson on Aug 22, 2023 2:12 PM",
+    "width": 612
+  },
+  "feedface-e000-0000-0000-000000000004": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Boris Sample Jr. \u00b7 DOB 07/04/1952 (70 yrs) \u00b7 Male \u00b7 Date of service: February 02, 2023 \u00b7 Simple note Chief complaint: BP check NOTE Nurse visit for blood pressure check. 132/84 today, asymptomatic. Electronically signed by Norm Notesigner on Feb 2, 2023 2:55 PM",
+    "width": 612
+  },
+  "feedface-e000-0000-0000-000000000005": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Boris Sample Jr. \u00b7 DOB 07/04/1952 (71 yrs) \u00b7 Male \u00b7 Date of service: September 15, 2023 \u00b7 SOAP note Chief complaint: Diabetes follow-up SUBJECTIVE Checks sugars most mornings, 120-150. No hypoglycemia. OBJECTIVE Mild peripheral neuropathy unchanged. Feet intact. ASSESSMENT Type 2 diabetes, fair control. PLAN Increase insulin glargine to 24 units. A1c in 3 months. VITALS Measure Value Unit Body height 69 in Body weight 203 lb Body mass index (BMI) [Ratio] 30.0 kg/m2 Systolic blood pressure 132 mmHg Diastolic blood pressure 84 mmHg Electronically signed by Paige Providerson on Sep 15, 2023 4:30 PM",
+    "width": 612
+  },
+  "feedface-e000-0000-0000-000000000006": {
+    "height": 792,
+    "pages": 1,
+    "text": "Example Family Medicine 100 Clinic Way, Suite 200, Springfield, WA 98101 \u00b7 Tel (206) 555-0199 \u00b7 Fax (206) 555-0198 Cleo Placeholder \u00b7 DOB 12/01/2021 (16 mos) \u00b7 Female \u00b7 Date of service: April 18, 2023 \u00b7 SOAP note SUBJECTIVE Well child visit. Parent reports normal development; eating well. OBJECTIVE Happy, interactive toddler. Exam appropriate for age. ASSESSMENT Healthy 16-month-old. PLAN Vaccines per schedule. Return at 18 months. VITALS Measure Value Unit Body height 32 in Body weight 24 lb Head Occipital-frontal circumference 18.5 in Body mass index (BMI) [Ratio] 16.5 kg/m2 UNSIGNED NOTE \u00b7 Seen by Paige Providerson",
+    "width": 612
+  }
+}

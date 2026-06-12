@@ -1,0 +1,2 @@
+PatientPracticeGuid	EncounterGuid	Addendum	AmendmentStatus	AmendmentSource	LastModifiedByProviderGuid	LastModifiedDateTimeUtc
+feedface-0000-0000-0000-000000000001	feedface-e000-0000-0000-000000000003	<p>Lab results reviewed: lipid panel within normal limits.</p>	Accepted	Provider	feedface-aaaa-0000-0000-000000000001	8/25/2023 4:10:00 PM
