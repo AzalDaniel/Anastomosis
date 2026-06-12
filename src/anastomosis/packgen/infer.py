@@ -573,6 +573,11 @@ class PackAnalysis:
         A value appearing in just one sample is per-patient by definition and
         is excluded from ``sections``/``static_text`` upstream, so it can never
         surface here. The tests assert exactly that property.
+
+        SINGLE-SAMPLE runs break that property at the source: with one sample
+        the recurrence threshold is 1, so per-patient values classify as
+        "static". In that case NO span text is printed at all — counts,
+        roles, and geometry only, with a loud warning line.
         """
         geom = self.page_geometry
         lines = [
@@ -588,11 +593,20 @@ class PackAnalysis:
             lines.append(
                 f"  {level.role}: {level.size:.1f}pt {level.font} ({weight}, {level.count} chars)"
             )
-        lines.append(f"section headings ({len(self.sections)}):")
-        lines.extend(
-            f"  [{c.role}] {c.text} (in {c.count}/{self.sample_count})" for c in self.sections
-        )
-        lines.append(f"static labels ({len(self.static_text)}): " + ", ".join(self.static_text))
+        if self.low_confidence:
+            # One sample: "static" is indistinguishable from per-patient data,
+            # so no span text may be echoed (PHI rule). Counts only.
+            lines.append(
+                f"section headings: {len(self.sections)} candidate(s) — text suppressed"
+                " (single sample: static vs per-patient indistinguishable)"
+            )
+            lines.append(f"static labels: {len(self.static_text)} — text suppressed")
+        else:
+            lines.append(f"section headings ({len(self.sections)}):")
+            lines.extend(
+                f"  [{c.role}] {c.text} (in {c.count}/{self.sample_count})" for c in self.sections
+            )
+            lines.append(f"static labels ({len(self.static_text)}): " + ", ".join(self.static_text))
         lines.append(
             f"columns: {len(self.column_grid.columns)}"
             f" at {[c.x0 for c in self.column_grid.columns]}"
