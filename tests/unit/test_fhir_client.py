@@ -126,6 +126,17 @@ def test_token_sent_only_in_authorization_header() -> None:
     assert headers["Accept"] == FHIR_JSON
 
 
+def test_requests_bypass_server_search_caches() -> None:
+    # HAPI reuses cached results for identical search URLs (~60s); a stale
+    # empty search right after a create cascades into duplicate patients.
+    # Every request must carry Cache-Control: no-cache (read-after-write).
+    opener = _RecordingOpener(FhirResponse(status=200, body={"resourceType": "Bundle"}))
+    client = _client(opener)
+    client.get("Patient", params={"identifier": "sys|val"})
+    _method, _url, headers, _body = opener.calls[-1]
+    assert headers["Cache-Control"] == "no-cache"
+
+
 # --- HTTP status -> error routing matrix --------------------------------------
 
 

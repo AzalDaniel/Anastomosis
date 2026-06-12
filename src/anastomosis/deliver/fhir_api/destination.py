@@ -144,6 +144,19 @@ class FhirApiDestination:
         returns ``None`` unless ``create_missing_patients`` is set, which POSTs
         a new Patient and returns its id.
         """
+        found = self._find(patient)
+        if found is not None:
+            return found
+        if self._create_missing_patients:
+            return self._create_patient(patient)
+        return None
+
+    def _find(self, patient: Patient) -> DestinationPatient | None:
+        """Search-only resolution: never creates (the banner check uses this).
+
+        A verification step must be side-effect free — a banner re-resolve
+        that could CREATE a patient would corrupt the very state it verifies.
+        """
         params, matched_on = self._search_params(patient)
         bundle = self._client.get("Patient", params)
         ids = _entry_ids(bundle)
@@ -154,8 +167,6 @@ class FhirApiDestination:
             )
         if len(ids) == 1:
             return DestinationPatient(destination_patient_id=ids[0], matched_on=matched_on)
-        if self._create_missing_patients:
-            return self._create_patient(patient)
         logger.info("no destination patient matched on %s", matched_on)
         return None
 
@@ -209,8 +220,11 @@ class FhirApiDestination:
         used) and checks family name (case-insensitive) AND birthDate. A
         missing birthDate on either side is a fail-closed ``False`` — the
         verification cannot be completed, so it is treated as a mismatch.
+
+        Uses the search-only ``_find`` (never the creating ``resolve``): a
+        verification step must not create the record it verifies.
         """
-        resolved = self.resolve(expected)
+        resolved = self._find(expected)
         if resolved is None:
             return False
         try:

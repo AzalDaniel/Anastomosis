@@ -304,6 +304,16 @@ def test_banner_fails_on_family_mismatch() -> None:
     assert dest.current_patient_matches(_patient()) is False
 
 
+def test_banner_never_creates_patients() -> None:
+    # A verification step must be side-effect free: even with
+    # create_missing_patients=True, an unresolvable banner check fails
+    # closed WITHOUT creating the record it was supposed to verify.
+    server = _FakeFhirServer()
+    dest = FhirApiDestination(_client(server), create_missing_patients=True)
+    assert dest.current_patient_matches(_patient()) is False
+    assert server.patients == {}, "banner check created a patient"
+
+
 def test_banner_fails_closed_on_missing_dob() -> None:
     server = _FakeFhirServer()
     # Server record has no birthDate -> cannot confirm -> fail closed.

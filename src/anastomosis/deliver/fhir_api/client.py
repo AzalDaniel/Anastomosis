@@ -194,7 +194,13 @@ class FhirClient:
         return url
 
     def _headers(self, *, with_content_type: bool) -> dict[str, str]:
-        headers = {"Accept": FHIR_JSON}
+        # Cache-Control: no-cache — HAPI (and other servers) reuse cached
+        # results for identical search URLs for up to a minute. The resolver's
+        # read-after-write semantics REQUIRE fresh reads: a stale empty search
+        # right after a Patient create cascades into one duplicate patient per
+        # resolve, with the chart filed under the last duplicate. Proven live
+        # on PR #19's HAPI lane.
+        headers = {"Accept": FHIR_JSON, "Cache-Control": "no-cache"}
         if with_content_type:
             headers["Content-Type"] = FHIR_JSON
         if self._endpoint.bearer_token:
