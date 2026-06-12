@@ -35,3 +35,37 @@ transactiondisplaydatetimeutc
 12/31/1965
 03/04/1975
 
+
+# Synthea sample C-CDA fixture (tests/fixtures/synthea/) — GUIDs generated
+# by the Synthea synthetic-patient simulator (MITRE, Apache-2.0). The data
+# is fully synthetic by the project's own statement ('No individual-level
+# data was used in creating it'); provenance + license in the fixture
+# README. These are Synthea's deterministic per-patient ids, not PHI.
+3da68fbe-0b08-2747-00ee-3c459e7d73b8
+3da68fbe-0b08-2747-26b9-7d220d57943f
+3da68fbe-0b08-2747-339a-0f93da593992
+3da68fbe-0b08-2747-4756-7828291dca5a
+3da68fbe-0b08-2747-4896-0a30f5636eba
+3da68fbe-0b08-2747-51af-09d2403be6d7
+3da68fbe-0b08-2747-597c-e0f6e75a4c68
+3da68fbe-0b08-2747-6361-641bcddd2868
+3da68fbe-0b08-2747-649a-06e4b36b4259
+3da68fbe-0b08-2747-7102-fa7f2e8464b0
+3da68fbe-0b08-2747-806a-e14daa1e0d66
+3da68fbe-0b08-2747-9349-fe12a0625649
+3da68fbe-0b08-2747-9f8d-113f65f61ae6
+3da68fbe-0b08-2747-a146-16c4459ba196
+3da68fbe-0b08-2747-ae2c-55cf62ffea38
+3da68fbe-0b08-2747-b50d-b062e56e914b
+3da68fbe-0b08-2747-b85d-2f7af9c1957e
+3da68fbe-0b08-2747-c114-ca24f5917d6a
+3da68fbe-0b08-2747-d23f-6aec7d98e0aa
+3da68fbe-0b08-2747-d49f-6c8bf3955adb
+3da68fbe-0b08-2747-d4b8-2807b7fa8d91
+3da68fbe-0b08-2747-dbbd-0b2f253fdfbc
+3da68fbe-0b08-2747-dc0e-437b9970c8cd
+3da68fbe-0b08-2747-dcd3-31aa2816d32b
+3da68fbe-0b08-2747-e0c9-6a693abacce8
+3da68fbe-0b08-2747-e7ab-dd9b19ac6cfc
+3da68fbe-0b08-2747-f0e4-d10398ebd4a7
+3da68fbe-0b08-2747-f7ef-2241eac48bfe
