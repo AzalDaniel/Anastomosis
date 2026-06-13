@@ -1,0 +1,347 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "feedface-0001-0000-0000-000000000001",
+        "extension": [
+          {
+            "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+            "extension": [
+              {"url": "ombCategory", "valueCoding": {"system": "urn:oid:2.16.840.1.113883.6.238", "code": "2106-3", "display": "White"}},
+              {"url": "text", "valueString": "White"}
+            ]
+          },
+          {
+            "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity",
+            "extension": [
+              {"url": "ombCategory", "valueCoding": {"system": "urn:oid:2.16.840.1.113883.6.238", "code": "2186-5", "display": "Not Hispanic or Latino"}},
+              {"url": "text", "valueString": "Not Hispanic or Latino"}
+            ]
+          }
+        ],
+        "identifier": [
+          {
+            "type": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v2-0203", "code": "MR"}]},
+            "system": "http://hospital.example.org/mrn",
+            "value": "MRN-000123",
+            "assigner": {"display": "Example Hospital"}
+          },
+          {"system": "http://hl7.org/fhir/sid/us-ssn", "value": "900-00-1234"}
+        ],
+        "name": [{"use": "official", "family": "Specimen", "given": ["Dexter", "Quill"], "suffix": ["Jr."]}],
+        "telecom": [
+          {"system": "phone", "value": "555-555-0123", "use": "home"},
+          {"system": "email", "value": "dexter.specimen@example.com"}
+        ],
+        "gender": "male",
+        "birthDate": "1978-02-15",
+        "address": [{"line": ["100 Test Street", "Apt 4"], "city": "Springfield", "state": "IL", "postalCode": "60000"}],
+        "maritalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-MaritalStatus", "code": "M"}], "text": "Married"},
+        "communication": [{"language": {"coding": [{"system": "urn:ietf:bcp:47", "code": "en-US"}], "text": "English"}, "preferred": true}],
+        "managingOrganization": {"reference": "Organization/feedface-000d-0000-0000-000000000001"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "feedface-0001-0000-0000-000000000002",
+        "name": [{"use": "official", "family": "Placeholder", "given": ["Wendell"]}],
+        "gender": "female",
+        "birthDate": "1990-11-30"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "feedface-000c-0000-0000-000000000001",
+        "identifier": [{"system": "http://hl7.org/fhir/sid/us-npi", "value": "1234567893"}],
+        "name": [{"family": "Healer", "given": ["Morgan"], "text": "Morgan Healer, MD"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Location",
+        "id": "feedface-000d-0000-0000-000000000002",
+        "name": "Example Family Clinic",
+        "telecom": [{"system": "phone", "value": "555-555-0100"}, {"system": "fax", "value": "555-555-0199"}],
+        "address": {"line": ["200 Clinic Way"], "city": "Springfield", "state": "IL", "postalCode": "60001"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "feedface-0002-0000-0000-000000000001",
+        "status": "finished",
+        "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB", "display": "ambulatory"},
+        "type": [{"coding": [{"system": "http://snomed.info/sct", "code": "185349003"}], "text": "Office Visit"}],
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "participant": [{"individual": {"reference": "Practitioner/feedface-000c-0000-0000-000000000001"}}],
+        "period": {"start": "2023-05-10T09:00:00Z", "end": "2023-05-10T09:30:00Z"},
+        "reasonCode": [{"text": "Cough"}],
+        "location": [{"location": {"reference": "Location/feedface-000d-0000-0000-000000000002"}}],
+        "diagnosis": [{"condition": {"reference": "Condition/feedface-0004-0000-0000-000000000001"}}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "feedface-0002-0000-0000-000000000002",
+        "status": "finished",
+        "class": {"code": "AMB"},
+        "type": [{"text": "Follow-up"}],
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "participant": [{"individual": {"reference": "Practitioner/feedface-000c-0000-0000-000000000001"}}],
+        "period": {"start": "2023-09-22T13:15:00Z"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "feedface-0002-0000-0000-000000000003",
+        "status": "finished",
+        "class": {"code": "AMB"},
+        "type": [{"text": "New Patient"}],
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000002"},
+        "period": {"start": "2024-01-08"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000001",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8302-2", "display": "Body height"}], "text": "Body height"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000001"},
+        "effectiveDateTime": "2023-05-10T09:05:00Z",
+        "valueQuantity": {"value": 70, "unit": "in", "system": "http://unitsofmeasure.org", "code": "[in_i]"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000002",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "29463-7", "display": "Body weight"}], "text": "Body weight"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000001"},
+        "effectiveDateTime": "2023-05-10T09:05:00Z",
+        "valueQuantity": {"value": 180, "unit": "lb", "system": "http://unitsofmeasure.org", "code": "[lb_av]"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000003",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "85354-9", "display": "Blood pressure panel"}], "text": "Blood pressure"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000001"},
+        "effectiveDateTime": "2023-05-10T09:05:00Z",
+        "component": [
+          {
+            "code": {"coding": [{"system": "http://loinc.org", "code": "8480-6", "display": "Systolic blood pressure"}]},
+            "valueQuantity": {"value": 128, "unit": "mmHg", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}
+          },
+          {
+            "code": {"coding": [{"system": "http://loinc.org", "code": "8462-4", "display": "Diastolic blood pressure"}]},
+            "valueQuantity": {"value": 82, "unit": "mmHg", "system": "http://unitsofmeasure.org", "code": "mm[Hg]"}
+          }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000004",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "laboratory"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "2339-0", "display": "Glucose"}], "text": "Glucose"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000001"},
+        "effectiveDateTime": "2023-05-10T09:40:00Z",
+        "valueQuantity": {"value": 99, "unit": "mg/dL", "system": "http://unitsofmeasure.org", "code": "mg/dL"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000005",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "social-history"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "72166-2", "display": "Tobacco smoking status"}], "text": "Tobacco smoking status"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000001"},
+        "effectiveDateTime": "2023-05-10T09:05:00Z",
+        "valueCodeableConcept": {"coding": [{"system": "http://snomed.info/sct", "code": "8517006", "display": "Former smoker"}], "text": "Former smoker"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-000000000006",
+        "status": "final",
+        "category": [{"coding": [{"system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs"}]}],
+        "code": {"coding": [{"system": "http://loinc.org", "code": "29463-7", "display": "Body weight"}], "text": "Body weight"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000002"},
+        "encounter": {"reference": "Encounter/feedface-0002-0000-0000-000000000003"},
+        "effectiveDateTime": "2024-01-08",
+        "valueQuantity": {"value": 145, "unit": "lb", "system": "http://unitsofmeasure.org", "code": "[lb_av]"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "feedface-0004-0000-0000-000000000001",
+        "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
+        "verificationStatus": {"coding": [{"code": "confirmed"}]},
+        "category": [{"coding": [{"code": "problem-list-item"}]}],
+        "code": {"coding": [{"system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "I10"}], "text": "Essential hypertension"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "onsetDateTime": "2019-03-01",
+        "recordedDate": "2019-03-01T10:00:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "feedface-0004-0000-0000-000000000002",
+        "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
+        "code": {"coding": [{"system": "http://snomed.info/sct", "code": "44054006", "display": "Type 2 diabetes mellitus"}], "text": "Type 2 diabetes mellitus"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "onsetDateTime": "2020-07-15"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "feedface-0004-0000-0000-000000000003",
+        "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]},
+        "code": {"coding": [{"system": "http://snomed.info/sct", "code": "195967001", "display": "Asthma"}], "text": "Asthma"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000002"},
+        "onsetDateTime": "2010-01-01"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "feedface-0005-0000-0000-000000000001",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "860975", "display": "Metformin hydrochloride 500 MG Oral Tablet"}], "text": "Metformin 500 MG Oral Tablet"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "requester": {"reference": "Practitioner/feedface-000c-0000-0000-000000000001"},
+        "authoredOn": "2023-05-10",
+        "dosageInstruction": [{"text": "Take 1 tablet by mouth twice daily with meals"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "feedface-0006-0000-0000-000000000001",
+        "clinicalStatus": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical", "code": "active"}]},
+        "category": ["medication"],
+        "criticality": "high",
+        "code": {"coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "7980", "display": "Penicillin G"}], "text": "Penicillin"},
+        "patient": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "onsetDateTime": "2005-06-01",
+        "reaction": [{"manifestation": [{"text": "Hives"}], "severity": "moderate"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Immunization",
+        "id": "feedface-0007-0000-0000-000000000001",
+        "status": "completed",
+        "vaccineCode": {"coding": [{"system": "http://hl7.org/fhir/sid/cvx", "code": "140", "display": "Influenza, seasonal, injectable"}], "text": "Influenza, seasonal"},
+        "patient": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "occurrenceDateTime": "2023-10-01",
+        "lotNumber": "LOT-SYNTH-01",
+        "expirationDate": "2024-06-30"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Coverage",
+        "id": "feedface-0008-0000-0000-000000000001",
+        "status": "active",
+        "subscriberId": "MEMBER-000999",
+        "beneficiary": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "payor": [{"display": "Acme Health Plan"}],
+        "order": 1,
+        "period": {"start": "2023-01-01", "end": "2023-12-31"},
+        "class": [{"type": {"coding": [{"code": "group"}]}, "value": "GRP-0001", "name": "Acme Standard PPO"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Procedure",
+        "id": "feedface-0009-0000-0000-000000000001",
+        "status": "completed",
+        "code": {"coding": [{"system": "http://snomed.info/sct", "code": "80146002", "display": "Appendectomy"}], "text": "Appendectomy"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "performedDateTime": "2012-08-20"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Goal",
+        "id": "feedface-000a-0000-0000-000000000001",
+        "lifecycleStatus": "active",
+        "description": {"text": "Lower blood pressure to below 130/80"},
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "startDate": "2023-05-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "FamilyMemberHistory",
+        "id": "feedface-000e-0000-0000-000000000001",
+        "status": "completed",
+        "patient": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "relationship": {"coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode", "code": "FTH"}], "text": "Father"},
+        "condition": [{"code": {"coding": [{"system": "http://snomed.info/sct", "code": "44054006"}], "text": "Type 2 diabetes mellitus"}, "onsetString": "age 55"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "feedface-000b-0000-0000-000000000001",
+        "status": "current",
+        "type": {"coding": [{"system": "http://loinc.org", "code": "11506-3", "display": "Progress note"}], "text": "Progress note"},
+        "category": [{"coding": [{"system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", "code": "clinical-note"}]}],
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "date": "2023-05-10T09:30:00Z",
+        "content": [{"attachment": {"contentType": "text/plain", "data": "UGF0aWVudCBwcmVzZW50cyB3aXRoIGNvdWdoIGZvciB0aHJlZSBkYXlzLiBMdW5ncyBjbGVhciB0byBhdXNjdWx0YXRpb24uIFBsYW46IHJlc3QsIGZsdWlkcywgZm9sbG93IHVwIGlmIHdvcnNlLg==", "title": "Progress note"}}],
+        "context": {"encounter": [{"reference": "Encounter/feedface-0002-0000-0000-000000000001"}]}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "DocumentReference",
+        "id": "feedface-000b-0000-0000-000000000002",
+        "status": "current",
+        "type": {"coding": [{"system": "http://loinc.org", "code": "11506-3", "display": "Progress note"}], "text": "Progress note"},
+        "category": [{"coding": [{"system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category", "code": "clinical-note"}]}],
+        "subject": {"reference": "Patient/feedface-0001-0000-0000-000000000001"},
+        "date": "2023-09-22T13:30:00Z",
+        "content": [{"attachment": {"contentType": "text/plain", "data": "Q291Z2ggcmVzb2x2ZWQuIEJsb29kIHByZXNzdXJlIGltcHJvdmVkIG9uIGN1cnJlbnQgcmVnaW1lbi4gQ29udGludWUgbWV0Zm9ybWluLiBSZWNoZWNrIGluIHRocmVlIG1vbnRocy4=", "title": "Progress note"}}],
+        "context": {"encounter": [{"reference": "Encounter/feedface-0002-0000-0000-000000000002"}]}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Organization",
+        "id": "feedface-000d-0000-0000-000000000001",
+        "name": "Example Health System",
+        "address": [{"line": ["1 Enterprise Plaza"], "city": "Springfield", "state": "IL", "postalCode": "60002"}]
+      }
+    }
+  ]
+}
