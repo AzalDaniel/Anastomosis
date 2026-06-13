@@ -113,7 +113,18 @@ def deliver_outputs(
     deliverer reads the rendered chart PDFs out of ``charts_dir`` and writes
     into its command's ``out_dir``.
     """
+    from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.pipeline import PipelineError
+
     ordered = sorted(deliveries, key=lambda d: _DELIVERY_ORDER[d.kind])
+    # Pre-flight every delivery directory before invoking any deliverer, so a
+    # path that is actually a file fails cleanly (exit 2) instead of raising a
+    # raw OSError from inside a deliverer.
+    for dc in ordered:
+        try:
+            validate_output_target(dc.out_dir)
+        except OutputPathError as exc:
+            raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
     outcomes: dict[str, DeliveryOutcome] = {}
     for dc in ordered:
         if dc.kind == "archive":
