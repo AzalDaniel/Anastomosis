@@ -84,6 +84,48 @@ def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord])
                 assert expected_prefix[1] == (record.patient.given_name or "")
 
 
+def test_bundle_deliver_records_matches_per_record(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """The O(pdfs + patients) batch path attributes each patient's PDFs
+    identically to the old per-record deliver(all_pdfs) loop."""
+    pdfs_dir = tmp_path / "charts"
+    pdfs = _fake_pdfs(records, pdfs_dir)
+
+    out_old = tmp_path / "old"
+    for record in records:
+        BundleDeliverer().deliver(record, pdfs, out_old)
+
+    out_new = tmp_path / "new"
+    results = BundleDeliverer().deliver_records(records, pdfs_dir, out_new)
+    assert len(results) == len(records)
+
+    def _pdf_names(root: Path, pid: str) -> list[str]:
+        slot = root / pid / "pdfs"
+        return sorted(p.name for p in slot.glob("*.pdf")) if slot.exists() else []
+
+    for record in records:
+        pid = record.patient.id
+        assert _pdf_names(out_new, pid) == _pdf_names(out_old, pid)
+
+
+def test_bundle_attributes_spaced_surname(tmp_path: Path, records: list[PatientRecord]) -> None:
+    """A surname with a space ("Van Buren") sanitizes to a multi-token prefix
+    ("Van_Buren_John_"). A naive {token0}_{token1}_ index keys the chart under
+    "Van_Buren_" and would silently drop it; longest-prefix bucketing keeps it.
+    """
+    record = records[0]
+    record.patient.family_name = "Van Buren"
+    record.patient.given_name = "John"
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    chart = pdfs_dir / "Van_Buren_John_01-01-2020_progress.pdf"
+    chart.write_bytes(b"%PDF-1.7 fake\n")
+
+    (result,) = BundleDeliverer().deliver_records([record], pdfs_dir, tmp_path / "bundles")
+    assert [p.name for p in result.pdf_paths] == ["Van_Buren_John_01-01-2020_progress.pdf"]
+
+
 def test_bundle_pdfs_never_cross_patient(tmp_path: Path, records: list[PatientRecord]) -> None:
     """A PDF for patient A must never appear inside patient B's pdfs/ dir."""
     pdfs_dir = tmp_path / "charts"

@@ -33,6 +33,7 @@ from anastomosis.core.fhir import to_bundle
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.deliver.pdfindex import patient_prefix
 from anastomosis.qa import QAReport, Verdict
 
 __all__ = ["BundleDeliverer", "BundleResult"]
@@ -90,6 +91,48 @@ class BundleDeliverer:
 
         self.generator = generator or f"anastomosis {anastomosis.__version__}"
 
+    def deliver_records(
+        self,
+        records: list[PatientRecord],
+        pdfs_dir: Path | None,
+        out_dir: str | Path,
+        *,
+        qa_report: QAReport | None = None,
+    ) -> list[BundleResult]:
+        """Deliver a bundle per record, attributing each patient's charts in a
+        single pass over the rendered PDFs.
+
+        Instead of re-filtering every rendered PDF for every patient (the old
+        O(patients x pdfs) loop), bucket each chart under the LONGEST patient
+        prefix it starts with, once, then hand each record its own bucket. The
+        longest-first, single-assignment rule is exactly equivalent to the old
+        per-patient ``startswith`` filter — patient prefixes end in ``_`` so a
+        chart matches at most one — and stays correct for multi-token names
+        (``Van_Buren_John_…``) that a naive ``{token0}_{token1}_`` index would
+        mis-bucket.
+        """
+        all_pdfs = sorted(pdfs_dir.glob("*.pdf")) if pdfs_dir and pdfs_dir.is_dir() else []
+        prefixes = sorted(
+            {p for record in records if (p := patient_prefix(record.patient))},
+            key=len,
+            reverse=True,
+        )
+        buckets: dict[str, list[Path]] = {p: [] for p in prefixes}
+        for pdf in all_pdfs:
+            for prefix in prefixes:
+                if pdf.name.startswith(prefix):
+                    buckets[prefix].append(pdf)
+                    break
+        return [
+            self.deliver(
+                record,
+                buckets.get(patient_prefix(record.patient), []),
+                out_dir,
+                qa_report=qa_report,
+            )
+            for record in records
+        ]
+
     def deliver(
         self,
         record: PatientRecord,
@@ -138,7 +181,7 @@ class BundleDeliverer:
     def _copy_pdfs(self, patient: Patient, pdfs: list[Path], patient_dir: Path) -> list[Path]:
         if not pdfs:
             return []
-        prefix = _patient_prefix(patient)
+        prefix = patient_prefix(patient)
         if not prefix:
             return []
         target_dir = patient_dir / "pdfs"
@@ -206,11 +249,3 @@ class BundleDeliverer:
             encoding="utf-8",
         )
         return target
-
-
-def _patient_prefix(patient: Patient) -> str:
-    family = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.family_name or "").strip()).strip("_")
-    given = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.given_name or "").strip()).strip("_")
-    if not (family and given):
-        return ""
-    return f"{family}_{given}_"
