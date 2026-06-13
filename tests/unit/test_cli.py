@@ -83,6 +83,83 @@ def test_pipeline_run_diagnoses_unknown_pack(tmp_path: Path) -> None:
     assert "unavailable" in result.output
 
 
+# --- operator-input boundary (clean exit 2, never a traceback) --------------
+
+
+def test_pipeline_run_out_is_a_file_is_clean_exit_2(tmp_path: Path) -> None:
+    """`--out` pointing at an existing FILE is a clean exit 2, not a
+    FileExistsError traceback from secure_output_dir()."""
+    not_a_dir = tmp_path / "not_a_dir"
+    not_a_dir.write_text("x")
+    result = runner.invoke(app, ["pipeline", "run", str(FIXTURE), "--out", str(not_a_dir)])
+    assert result.exit_code == 2, result.output
+    # Rich may wrap the long tmp path across lines, so normalize whitespace.
+    assert "is a file, not a directory" in " ".join(result.output.split())
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_archive_out_is_a_file_is_clean_exit_2(tmp_path: Path) -> None:
+    """`anast archive --out <file>` (which would create <file>/_charts) is a
+    clean exit 2, not a FileExistsError traceback."""
+    archive_file = tmp_path / "archive_file"
+    archive_file.write_text("x")
+    result = runner.invoke(app, ["archive", str(FIXTURE), "--out", str(archive_file)])
+    assert result.exit_code == 2, result.output
+    assert "is a file, not a directory" in " ".join(result.output.split())
+
+
+def test_destination_list_bad_registry_is_clean_exit_2(tmp_path: Path) -> None:
+    """A malformed `--registry` overlay is a clean exit 2, not a pydantic
+    ValidationError traceback."""
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("entries: [not-a-mapping]\n")
+    result = runner.invoke(app, ["destination", "list", "--registry", str(bad)])
+    assert result.exit_code == 2, result.output
+    assert "Invalid destination registry" in " ".join(result.output.split())
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_section_bad_value_is_clean_exit_2(tmp_path: Path) -> None:
+    """`--section insurance=maybe` is rejected (exit 2) rather than silently
+    coerced to off and quietly changing backend state."""
+    result = runner.invoke(
+        app,
+        [
+            "pipeline",
+            "run",
+            str(FIXTURE),
+            "--out",
+            str(tmp_path / "o"),
+            "--section",
+            "insurance=maybe",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "on/off" in " ".join(result.output.split())
+
+
+def test_section_missing_value_is_clean_exit_2(tmp_path: Path) -> None:
+    """A bare `--section insurance` (no =value) is rejected, not coerced to off."""
+    result = runner.invoke(
+        app,
+        ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--section", "insurance"],
+    )
+    assert result.exit_code == 2, result.output
+    assert "NAME=on" in " ".join(result.output.split())
+
+
+def test_section_unknown_name_is_clean_exit_2(tmp_path: Path) -> None:
+    """A typo'd / unknown section name is rejected against the pack's matrix
+    (exit 2), not silently ignored."""
+    result = runner.invoke(
+        app,
+        ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--section", "bogus=on"],
+    )
+    assert result.exit_code == 2, result.output
+    normalized = " ".join(result.output.split())
+    assert "Unknown --section" in normalized and "bogus" in normalized
+
+
 def test_gui_without_pywebview_shows_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     # Simulate the gui extra not being installed: `import webview` fails inside
     # the shell's launch(), which raises a RuntimeError naming anastomosis[gui];

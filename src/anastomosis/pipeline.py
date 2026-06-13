@@ -90,10 +90,20 @@ class PipelineError(Exception):
     """
 
     def __init__(
-        self, message: str, *, exit_code: int, failed: tuple[tuple[str, str], ...] = ()
+        self,
+        message: str,
+        *,
+        exit_code: int,
+        kind: str = "generic",
+        failed: tuple[tuple[str, str], ...] = (),
     ) -> None:
         super().__init__(message)
         self.exit_code = exit_code
+        # A stable, PHI-free discriminator the CLI switches on to choose its
+        # output line (replaces brittle message-prose matching). One of:
+        # no_source, bad_source, bad_pack, bad_section, bad_output,
+        # render_failed, qa_failed, generic.
+        self.kind = kind
         self.failed = failed
 
 
@@ -112,16 +122,41 @@ class PipelineResult:
 EventSink = Callable[[StageEvent], None]
 
 
+_SECTION_ON = frozenset({"on", "true", "1", "yes"})
+_SECTION_OFF = frozenset({"off", "false", "0", "no"})
+
+
 def parse_section_overrides(section: list[str] | None) -> dict[str, bool]:
     """Turn ``["insurance=on", "addenda=off"]`` into ``{"insurance": True, ...}``.
 
     Shared verbatim with the CLI (which previously owned this helper) so the
-    GUI and CLI interpret section toggles identically.
+    GUI and CLI interpret section toggles identically. Strict: a value outside
+    the on/off vocabulary, or an item with no ``=value``, raises
+    :class:`PipelineError` (exit 2) instead of silently coercing a typo to
+    ``False`` and quietly changing backend state. Section-NAME validation
+    (against the pack's manifest) happens later in :func:`run_pipeline`.
     """
     overrides: dict[str, bool] = {}
     for item in section or []:
-        key, _, value = item.partition("=")
-        overrides[key.strip()] = value.strip().lower() in ("on", "true", "1", "yes")
+        key, sep, value = item.partition("=")
+        key = key.strip()
+        value = value.strip().lower()
+        if not sep or not key or not value:
+            raise PipelineError(
+                f"--section {item!r} must be NAME=on or NAME=off.",
+                exit_code=2,
+                kind="bad_section",
+            )
+        if value in _SECTION_ON:
+            overrides[key] = True
+        elif value in _SECTION_OFF:
+            overrides[key] = False
+        else:
+            raise PipelineError(
+                f"--section {key}={value!r}: value must be on/off (got {value!r}).",
+                exit_code=2,
+                kind="bad_section",
+            )
     return overrides
 
 
@@ -137,12 +172,16 @@ def resolve_source(export_dir: Path, source: str | None) -> SourceAdapter:
         try:
             return get_source(source)
         except KeyError as exc:
-            raise PipelineError(str(exc.args[0] if exc.args else exc), exit_code=2) from None
+            raise PipelineError(
+                str(exc.args[0] if exc.args else exc), exit_code=2, kind="bad_source"
+            ) from None
     detected = detect_source(export_dir)
     if detected is None:
         known = ", ".join(a.name for a in available_sources())
         raise PipelineError(
-            f"Could not identify the export format. Try --source ({known})", exit_code=2
+            f"Could not identify the export format. Try --source ({known})",
+            exit_code=2,
+            kind="no_source",
         )
     return detected
 
@@ -166,11 +205,20 @@ def run_pipeline(
     delivery without re-loading records or re-rendering charts, and raises
     :class:`PipelineError` on any loud failure.
     """
+    from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.chromium import ChromiumRenderer
     from anastomosis.reconstruct.engine import ReconstructionEngine
 
     emit = on_event or (lambda _event: None)
+
+    # Pre-flight the output dir BEFORE any ingest/render work, so a path that is
+    # actually a file fails in milliseconds with a clean message rather than
+    # raising deep in the engine after a long run.
+    try:
+        validate_output_target(out)
+    except OutputPathError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
 
     adapter = resolve_source(export_dir, source)
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
@@ -179,10 +227,20 @@ def run_pipeline(
     status = statuses.get(pack)
     if status is None or status.pack is None:
         diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
-        raise PipelineError(f"Pack {pack!r} unavailable: {diagnosis}", exit_code=2)
+        raise PipelineError(f"Pack {pack!r} unavailable: {diagnosis}", exit_code=2, kind="bad_pack")
 
     overrides = parse_section_overrides(section)
     manifest = status.pack.manifest
+    # Section-NAME validation: a typo'd or unknown section silently changed
+    # backend state before. Reject it loudly against the pack's own matrix.
+    unknown = sorted(set(overrides) - set(manifest.sections))
+    if unknown:
+        known = ", ".join(sorted(manifest.sections)) or "(none)"
+        raise PipelineError(
+            f"Unknown --section {', '.join(unknown)} for pack {pack!r}. Known: {known}.",
+            exit_code=2,
+            kind="bad_section",
+        )
     margins = {
         "top": manifest.page.margin_top,
         "right": manifest.page.margin_right,
@@ -214,6 +272,7 @@ def run_pipeline(
         raise PipelineError(
             f"{len(result.failed)} encounter(s) failed to render",
             exit_code=1,
+            kind="render_failed",
             failed=tuple(result.failed),
         )
 
@@ -270,5 +329,7 @@ def _run_qa_stage(
         )
     )
     if not report.ok:
-        raise PipelineError(f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1)
+        raise PipelineError(
+            f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
+        )
     return report
