@@ -145,14 +145,13 @@ def deliver_outputs(
         elif dc.kind == "bundle":
             from anastomosis.deliver.bundle import BundleDeliverer
 
-            deliverer = BundleDeliverer()
-            pdfs = sorted(charts_dir.glob("*.pdf")) if charts_dir.is_dir() else []
-            written = 0
-            for record in result.records:
-                deliverer.deliver(record, pdfs, dc.out_dir, qa_report=result.qa_report)
-                written += 1
+            # Single-pass per-patient attribution (was an O(patients x pdfs)
+            # re-filter of every chart for every patient).
+            written = BundleDeliverer().deliver_records(
+                result.records, charts_dir, dc.out_dir, qa_report=result.qa_report
+            )
             outcomes["bundle"] = DeliveryOutcome(
-                kind="bundle", out_dir=dc.out_dir, counts={"patients": written}
+                kind="bundle", out_dir=dc.out_dir, counts={"patients": len(written)}
             )
         elif dc.kind == "ccda":
             from anastomosis.deliver.ccda_export import deliver_ccda

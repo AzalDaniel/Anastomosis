@@ -54,8 +54,9 @@ from pathlib import Path
 
 from anastomosis.core.fhir import to_bundle
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.model import Encounter, Patient, PatientRecord
+from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.deliver.pdfindex import patient_prefix
 from anastomosis.qa import QAReport
 
 from .templates import CSP_META_CONTENT, ENCOUNTER_HTML, INDEX_HTML, PATIENT_HTML, README_TEXT
@@ -226,7 +227,7 @@ class ArchiveDeliverer:
         attribute a PDF without coupling to the engine."""
         if not pdf_lookup:
             return {}
-        prefix = _patient_prefix(record.patient)
+        prefix = patient_prefix(record.patient)
         if not prefix:
             return {}
         candidates = pdf_lookup.get(prefix, [])
@@ -374,14 +375,6 @@ class ArchiveDeliverer:
 
 
 # --- helpers ----------------------------------------------------------------
-
-
-def _patient_prefix(patient: Patient) -> str:
-    family = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.family_name or "").strip()).strip("_")
-    given = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.given_name or "").strip()).strip("_")
-    if not (family and given):
-        return ""
-    return f"{family}_{given}_"
 
 
 def _index_pdfs(pdfs_dir: Path | None) -> dict[str, list[Path]]:
