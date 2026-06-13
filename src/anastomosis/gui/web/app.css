@@ -1734,3 +1734,32 @@ svg { display: block; }
 .run-btn:hover { background: var(--primary-press); box-shadow: 0 0 0 4px var(--primary-glow); }
 .run-btn:active { transform: scale(0.98); }
 .run-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+/* Per-patient summary table (last_run_summary): one row per patient, monospace
+   for tabular alignment. Hidden via the [hidden] attribute until a run lands. */
+.patients-panel[hidden] { display: none; }
+.patients-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--ink-secondary);
+  font-feature-settings: "tnum";
+}
+.patients-table th {
+  text-align: left;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  border-bottom: 1px solid rgba(255, 250, 240, 0.12);
+}
+.patients-table td {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid rgba(255, 250, 240, 0.06);
+}
+.patients-table td:nth-child(n + 3),
+.patients-table th:nth-child(n + 3) { text-align: right; }
+.patients-table tr:last-child td { border-bottom: none; }

@@ -20,6 +20,7 @@ from anastomosis.core.commands import (
     deliver_outputs,
     get_toolkit_info,
     run_pipeline_command,
+    summarize_patients,
 )
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
@@ -135,3 +136,31 @@ def test_deliver_outputs_no_deliveries_is_empty(
     )
     assert result.deliveries == {}
     assert deliver_outputs(result.pipeline, tmp_path / "charts", ()) == {}
+
+
+# --- summarize_patients --------------------------------------------------------
+
+
+def test_summarize_patients_joins_records_and_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-patient roll-up carries name, DOB, encounter and rendered-doc
+    counts, joined on the render result's patient attribution, in ingest order."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    result = run_pipeline_command(
+        PipelineCommand(export_dir=FIXTURE, charts_dir=tmp_path / "charts")
+    )
+    summaries = summarize_patients(result.pipeline)
+    assert [s.display_name for s in summaries] == [
+        "Ada Q Fixture",
+        "Boris Sample Jr.",
+        "Cleo Placeholder",
+    ]
+    by_name = {s.display_name: s for s in summaries}
+    assert by_name["Ada Q Fixture"].birth_date == "1985-03-14"
+    assert by_name["Ada Q Fixture"].encounters == 3
+    assert by_name["Ada Q Fixture"].documents == 3
+    assert by_name["Boris Sample Jr."].documents == 2
+    assert by_name["Cleo Placeholder"].documents == 1
+    assert sum(s.documents for s in summaries) == 6
