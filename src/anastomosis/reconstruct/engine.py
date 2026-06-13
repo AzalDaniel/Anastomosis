@@ -20,6 +20,7 @@ the run report never embeds patient-derived text.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -198,11 +199,20 @@ class ReconstructionEngine:
             result.failed.append((encounter.id, exc_tag(exc)))
 
     def _render_pdf(self, html: str, target: Path) -> None:
+        # Render to a sibling temp file, then atomically replace the target, so
+        # a crash mid-write (or a concurrent reader) never sees a partial PDF.
+        # os.replace is atomic within a directory on every platform.
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         try:
-            self._acquire_renderer().render(html, target)
-        except Exception as exc:
-            # Crash relaunch: one fresh renderer, one retry, then report.
-            logger.warning("renderer crashed (%s); relaunching once", exc_tag(exc))
-            self._retire_renderer()
-            self._acquire_renderer().render(html, target)
+            try:
+                self._acquire_renderer().render(html, tmp)
+            except Exception as exc:
+                # Crash relaunch: one fresh renderer, one retry, then report.
+                logger.warning("renderer crashed (%s); relaunching once", exc_tag(exc))
+                self._retire_renderer()
+                self._acquire_renderer().render(html, tmp)
+            os.replace(tmp, target)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # never leave a stray temp on failure
+            raise
         self._after_render()

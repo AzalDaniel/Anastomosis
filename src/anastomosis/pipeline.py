@@ -102,7 +102,7 @@ class PipelineError(Exception):
         # A stable, PHI-free discriminator the CLI switches on to choose its
         # output line (replaces brittle message-prose matching). One of:
         # no_source, bad_source, bad_pack, bad_section, bad_output,
-        # render_failed, qa_failed, generic.
+        # output_locked, render_failed, qa_failed, generic.
         self.kind = kind
         self.failed = failed
 

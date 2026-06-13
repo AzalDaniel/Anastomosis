@@ -99,6 +99,30 @@ def test_run_pipeline_command_delivers_all_three(
     assert (tmp_path / "arc" / "index.html").is_file()
     assert any((tmp_path / "bun").iterdir())
     assert list((tmp_path / "cda").glob("*.xml"))
+    # Atomic writes leave no stray temp files, and the output lock is released
+    # (the marker file persists, but the kernel lock is free to re-acquire).
+    from anastomosis.core.locking import output_lock
+
+    assert list(charts.glob("*.tmp")) == []
+    with output_lock(charts):
+        pass
+
+
+def test_run_pipeline_command_refuses_a_locked_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second run against an output dir a live run already holds fails fast
+    with a clean PipelineError (exit 2), before any rendering."""
+    from anastomosis.core.locking import output_lock
+    from anastomosis.pipeline import PipelineError
+
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    charts = tmp_path / "charts"
+    with output_lock(charts):  # simulate another live run holding the directory
+        with pytest.raises(PipelineError) as excinfo:
+            run_pipeline_command(PipelineCommand(export_dir=FIXTURE, charts_dir=charts))
+    assert excinfo.value.exit_code == 2
+    assert excinfo.value.kind == "output_locked"
 
 
 def test_deliver_outputs_no_deliveries_is_empty(

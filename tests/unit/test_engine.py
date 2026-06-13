@@ -151,7 +151,13 @@ def test_rendered_chart_content(
 ) -> None:
     factory = FakeFactory()
     _engine(pack, factory).run(records, tmp_path / "out")
-    by_file = {path.name: html for html, path in factory.log}
+
+    # The engine renders to a sibling temp ".{final}.{pid}.tmp" then atomically
+    # replaces the target, so recover the final name the renderer stood in for.
+    def _final(path: Path) -> str:
+        return path.name[1:].rsplit(".", 2)[0] if path.name.endswith(".tmp") else path.name
+
+    by_file = {_final(path): html for html, path in factory.log}
 
     ada_note = by_file["Fixture_Ada_05-10-2023.pdf"]
     assert "Ada Q Fixture" in ada_note

@@ -8,6 +8,7 @@ goes to a *logger* is verdict counts only.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -98,5 +99,9 @@ def write_report(report: QAReport, out_dir: Path) -> Path:
         ],
     }
     target = out_dir / REPORT_NAME
-    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Atomic write: a reader (or a concurrent run) never sees a half-written
+    # report. os.replace is atomic within the directory on every platform.
+    tmp = out_dir / f".{REPORT_NAME}.{os.getpid()}.tmp"
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, target)
     return target
