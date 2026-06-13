@@ -72,14 +72,26 @@ __all__ = [
 ]
 
 
+# The PF pack renders "Current Medications (as of <render-day>)" — a date that
+# is TODAY, by design (GOLD §5#9). Baking it into the golden would make the
+# snapshot expire the day after it was regenerated, so we neutralize just that
+# one render-day token (every other date — DOB, encounter, escript — is real
+# data and stays, so a genuine date regression is still caught).
+_RENDER_DAY_RE = re.compile(r"\(as of \d{1,2}/\d{1,2}/\d{4}\)")
+_RENDER_DAY_PLACEHOLDER = "(as of <render-day>)"
+
+
 def normalize_text(text: str) -> str:
-    """Collapse every run of whitespace to a single space and strip.
+    """Collapse every run of whitespace to a single space, strip, and neutralize
+    the render-day "(as of …)" date.
 
     Chromium's text layer carries layout-dependent newlines and runs of
     spaces; normalizing makes the golden robust to cosmetic reflow while still
-    catching any real change in the *words* that were rendered.
+    catching any real change in the *words* that were rendered. The render-day
+    date is replaced by a stable token so the golden does not expire daily.
     """
-    return re.sub(r"\s+", " ", text).strip()
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    return _RENDER_DAY_RE.sub(_RENDER_DAY_PLACEHOLDER, collapsed)
 
 
 class PdfProps(dict[str, object]):
