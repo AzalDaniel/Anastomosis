@@ -75,6 +75,9 @@ class PipelineCommand:
     pack: str = "generic_soap"
     pack_dirs: tuple[Path, ...] = ()
     force: bool = False
+    # Trust-on-first-use for --pack-dir packs: record (and trust) their current
+    # code hash. Required the first time and again after their code changes.
+    trust_new: bool = False
     sections: Mapping[str, bool] = field(default_factory=dict)
     qa: bool = True
     deliveries: tuple[DeliveryCommand, ...] = ()
@@ -190,6 +193,7 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
                 force=cmd.force,
                 section=section_args,
                 qa=cmd.qa,
+                trust_new=cmd.trust_new,
                 on_event=on_event,
             )
             deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
