@@ -196,6 +196,7 @@ def run_pipeline(
     force: bool,
     section: list[str] | None,
     qa: bool,
+    trust_new: bool = False,
     on_event: EventSink | None = None,
 ) -> PipelineResult:
     """The full pipeline (ingest -> reconstruct -> optional QA), frontend-free.
@@ -209,6 +210,7 @@ def run_pipeline(
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.chromium import ChromiumRenderer
     from anastomosis.reconstruct.engine import ReconstructionEngine
+    from anastomosis.reconstruct.packtrust import default_pack_trust
 
     emit = on_event or (lambda _event: None)
 
@@ -223,7 +225,16 @@ def run_pipeline(
     adapter = resolve_source(export_dir, source)
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
 
-    statuses = discover_packs(list(pack_dirs or []), allow_external=bool(pack_dirs))
+    dirs = list(pack_dirs or [])
+    # Enforce hash-pinned trust only for external packs (--pack-dir); builtins
+    # need no store. trust=None when there are no external dirs keeps the
+    # consent-only path unchanged.
+    statuses = discover_packs(
+        dirs,
+        allow_external=bool(dirs),
+        trust=default_pack_trust() if dirs else None,
+        trust_new=trust_new,
+    )
     status = statuses.get(pack)
     if status is None or status.pack is None:
         diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
