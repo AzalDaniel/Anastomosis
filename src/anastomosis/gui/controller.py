@@ -416,6 +416,8 @@ class GuiController:
         archive: bool = False,
         bundle: bool = False,
         ccda: bool = False,
+        force: bool = False,
+        pack_dirs: list[str] | None = None,
     ) -> dict[str, object]:
         """Drive the shared pipeline core, emitting stage/progress events.
 
@@ -423,9 +425,11 @@ class GuiController:
         failure becomes ``{"ok": False, "error": <type-or-diagnosis>}`` plus an
         ``error`` event. The ``busy`` guard rejects a second concurrent run.
 
-        Deliverer flags (``archive``/``bundle``/``ccda``) write into
-        sibling subdirectories of ``out_dir`` (``out_dir/archive`` etc.) since
-        the GUI has one output-dir field; each emits a per-deliverer count.
+        ``force`` re-renders documents that already exist; ``pack_dirs`` makes
+        extra (trusted) pack directories available — the same backend levers the
+        CLI exposes, no longer hard-coded off. Deliverer flags
+        (``archive``/``bundle``/``ccda``) write into sibling subdirectories of
+        ``out_dir`` since the GUI has one output-dir field.
         """
         if not self._acquire():
             return {"ok": False, "error": "Busy"}
@@ -440,23 +444,55 @@ class GuiController:
                 archive=archive,
                 bundle=bundle,
                 ccda=ccda,
+                force=force,
+                pack_dirs=pack_dirs,
             )
         finally:
             self._release()
 
-    def run_pipeline_async(self, *args: object, **kwargs: object) -> dict[str, object]:
-        """Run :meth:`run_pipeline` on a daemon thread (the GUI stays responsive).
+    def run_pipeline_async(
+        self,
+        export_dir: str,
+        out_dir: str,
+        pack: str = "generic_soap",
+        source: str | None = None,
+        sections: dict[str, bool] | None = None,
+        qa: bool = True,
+        archive: bool = False,
+        bundle: bool = False,
+        ccda: bool = False,
+        force: bool = False,
+        pack_dirs: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Run the pipeline on a daemon thread (the GUI stays responsive).
 
-        Returns immediately with ``{"ok": True, "started": True}`` (or
-        ``{"ok": False, "error": "Busy"}`` if a run is already in flight, so the
-        rejection is synchronous — the button stays disabled). The actual
-        result arrives as ``stage``/``progress``/``done``/``error`` events.
+        Acquires the busy flag SYNCHRONOUSLY before returning, so two quick
+        clicks can't both get ``{"started": True}`` (the worker then runs the
+        locked body and releases in ``finally``). Returns ``{"ok": True,
+        "started": True}`` on success or ``{"ok": False, "error": "Busy"}`` if a
+        run is already in flight. The result arrives as
+        ``stage``/``progress``/``done``/``error`` events.
         """
-        if self._busy:
+        if not self._acquire():
             return {"ok": False, "error": "Busy"}
 
         def _worker() -> None:
-            self.run_pipeline(*args, **kwargs)  # type: ignore[arg-type]
+            try:
+                self._run_pipeline_locked(
+                    export_dir=export_dir,
+                    out_dir=out_dir,
+                    pack=pack,
+                    source=source,
+                    sections=sections or {},
+                    qa=qa,
+                    archive=archive,
+                    bundle=bundle,
+                    ccda=ccda,
+                    force=force,
+                    pack_dirs=pack_dirs,
+                )
+            finally:
+                self._release()
 
         threading.Thread(target=_worker, name="anast-pipeline", daemon=True).start()
         return {"ok": True, "started": True}
@@ -475,6 +511,8 @@ class GuiController:
         archive: bool,
         bundle: bool,
         ccda: bool,
+        force: bool = False,
+        pack_dirs: list[str] | None = None,
     ) -> dict[str, object]:
         from anastomosis.core.commands import (
             DeliveryCommand,
@@ -513,6 +551,8 @@ class GuiController:
                     charts_dir=out,
                     source=source,
                     pack=pack,
+                    pack_dirs=tuple(Path(p) for p in pack_dirs or []),
+                    force=force,
                     sections=sections,
                     qa=qa,
                     deliveries=tuple(deliveries),
