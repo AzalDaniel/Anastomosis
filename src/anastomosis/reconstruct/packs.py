@@ -18,10 +18,15 @@ returned as unavailable *with a diagnosis*; it never raises out of
 discovery and never takes the other packs down. A vendor template rotting
 is a one-pack event.
 
-Trust model (security backlog): packs from ``--pack-dir`` and entry points
-execute Python (``context.py``), so external packs load only when the
-caller passes ``allow_external=True`` (the CLI flag is explicit consent);
-built-ins are implicitly trusted. Hash pinning lands in M2.
+Trust model: packs from ``--pack-dir`` and entry points execute Python
+(``context.py``), so external packs load only when the caller passes
+``allow_external=True`` (the CLI flag is explicit consent); built-ins are
+implicitly trusted. On top of that, an optional content-hash pin
+(``trust=``/``trust_new=``, see :mod:`anastomosis.reconstruct.packtrust`)
+gates external code on a trust-on-first-use basis: an external pack whose
+code changed since it was trusted is returned unavailable and is NOT
+exec'd. Enforcement is opt-in — ``trust=None`` preserves the consent-only
+behavior for bare programmatic callers.
 """
 
 from __future__ import annotations
@@ -38,6 +43,8 @@ from uuid import uuid4
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash
 
 __all__ = ["LoadedPack", "PackManifest", "PackStatus", "SectionFlag", "discover_packs"]
 
@@ -209,12 +216,28 @@ def _iter_candidate_dirs(pack_dirs: list[Path]) -> list[tuple[Path, str]]:
 
 
 def discover_packs(
-    pack_dirs: list[Path] | None = None, *, allow_external: bool = False
+    pack_dirs: list[Path] | None = None,
+    *,
+    allow_external: bool = False,
+    trust: PackTrust | None = None,
+    trust_new: bool = False,
 ) -> dict[str, PackStatus]:
     """Discover every reachable pack, loading each defensively.
 
     External packs (``--pack-dir``, entry points) execute code at load time
     and are skipped with a diagnosis unless ``allow_external`` is set.
+
+    Hash pinning is OPT-IN via ``trust``. When ``trust is None`` the behavior is
+    unchanged (consent-only). When a :class:`~anastomosis.reconstruct.packtrust.PackTrust`
+    is supplied, every external candidate that ``allow_external`` would otherwise
+    load is gated on its content hash BEFORE its ``context.py`` is exec'd:
+
+    * trusted at its current hash → load;
+    * else if ``trust_new`` → record the hash, then load (trust-on-first-use);
+    * else → returned unavailable with an untrusted diagnosis, never exec'd.
+
+    Built-ins are never hash-checked (implicitly trusted). The ``allow_external``
+    refusal takes precedence — trust only matters once external packs are allowed.
     """
     results: dict[str, PackStatus] = {}
     for root, origin in _iter_candidate_dirs(pack_dirs or []):
@@ -225,7 +248,35 @@ def discover_packs(
                 diagnosis="external pack not loaded (pass allow_external/--allow-external-packs)",
                 origin=origin,
             )
+        elif origin != "builtin" and trust is not None:
+            status = _load_trusted_external(root, origin, trust, trust_new=trust_new)
         else:
             status = _load_pack_dir(root, origin)
         results.setdefault(status.name, status)  # first definition wins
     return results
+
+
+def _load_trusted_external(
+    root: Path, origin: str, trust: PackTrust, *, trust_new: bool
+) -> PackStatus:
+    """Gate one external candidate on its content hash, then load it if allowed.
+
+    The hash is computed and checked BEFORE ``_load_pack_dir`` so an untrusted
+    pack's ``context.py`` is never exec'd. ``trust_new`` records the current hash
+    (trust-on-first-use) and proceeds.
+    """
+    content_hash = pack_content_hash(root)
+    if trust.is_trusted(root, content_hash):
+        return _load_pack_dir(root, origin)
+    if trust_new:
+        trust.record(root, content_hash)
+        return _load_pack_dir(root, origin)
+    return PackStatus(
+        name=root.name,
+        pack=None,
+        diagnosis=(
+            "untrusted external pack: its code is not trusted at its current hash; "
+            "re-run with --trust-pack to trust it"
+        ),
+        origin=origin,
+    )

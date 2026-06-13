@@ -6,5 +6,16 @@ slice.
 """
 
 from .packs import LoadedPack, PackManifest, PackStatus, SectionFlag, discover_packs
+from .packtrust import PackTrust, default_pack_trust, pack_content_hash, user_pack_trust_path
 
-__all__ = ["LoadedPack", "PackManifest", "PackStatus", "SectionFlag", "discover_packs"]
+__all__ = [
+    "LoadedPack",
+    "PackManifest",
+    "PackStatus",
+    "PackTrust",
+    "SectionFlag",
+    "default_pack_trust",
+    "discover_packs",
+    "pack_content_hash",
+    "user_pack_trust_path",
+]
