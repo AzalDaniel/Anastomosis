@@ -167,22 +167,35 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
     """Run a :class:`PipelineCommand`: ingest → reconstruct → optional QA →
     requested deliveries. Raises :class:`anastomosis.pipeline.PipelineError` on
     any loud failure (the adapter maps it to its exit code / error event)."""
-    from anastomosis.pipeline import run_pipeline
+    from anastomosis.core.locking import OutputLockedError, output_lock
+    from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.pipeline import PipelineError, run_pipeline
 
     section_args = [f"{k}={'on' if v else 'off'}" for k, v in sorted(cmd.sections.items())]
-    result = run_pipeline(
-        export_dir=cmd.export_dir,
-        out=cmd.charts_dir,
-        source=cmd.source,
-        pack=cmd.pack,
-        pack_dirs=list(cmd.pack_dirs) or None,
-        force=cmd.force,
-        section=section_args,
-        qa=cmd.qa,
-        on_event=on_event,
-    )
-    deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
-    return CommandResult(pipeline=result, deliveries=deliveries)
+    # Validate the output target BEFORE acquiring the lock (the lock creates the
+    # directory): a path that is actually a file stays a clean exit 2 rather
+    # than a raw OSError from the lock's mkdir.
+    try:
+        validate_output_target(cmd.charts_dir)
+    except OutputPathError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
+    try:
+        with output_lock(cmd.charts_dir):
+            result = run_pipeline(
+                export_dir=cmd.export_dir,
+                out=cmd.charts_dir,
+                source=cmd.source,
+                pack=cmd.pack,
+                pack_dirs=list(cmd.pack_dirs) or None,
+                force=cmd.force,
+                section=section_args,
+                qa=cmd.qa,
+                on_event=on_event,
+            )
+            deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
+            return CommandResult(pipeline=result, deliveries=deliveries)
+    except OutputLockedError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="output_locked") from None
 
 
 # --- toolkit info (shared by `anast info` and the GUI dashboard header) ---------
