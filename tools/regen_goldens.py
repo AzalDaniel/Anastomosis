@@ -43,9 +43,18 @@ if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "pf_tebra_v9"
-GOLDEN_PATH = _REPO_ROOT / "tests" / "e2e" / "goldens" / "pf_tebra_v9_generic_soap.json"
+_GOLDEN_DIR = _REPO_ROOT / "tests" / "e2e" / "goldens"
+GOLDEN_PATH = _GOLDEN_DIR / "pf_tebra_v9_generic_soap.json"
 PACK_NAME = "generic_soap"
 SOURCE_NAME = "pf-tebra"
+
+# Every pack the golden suite pins, keyed by pack name → its committed golden.
+# generic_soap stays the module-level default (backwards-compatible with the
+# existing callers/tests that reference GOLDEN_PATH / render_goldens()).
+GOLDENS: dict[str, Path] = {
+    "generic_soap": GOLDEN_PATH,
+    "practice_fusion_soap": _GOLDEN_DIR / "pf_tebra_v9_practice_fusion_soap.json",
+}
 
 # Exit code the e2e lane / CI reads as "rendering stack unavailable, not a
 # golden mismatch" — mirrors ``pytest`` collecting nothing (exit 5) being OK.
@@ -53,6 +62,7 @@ EXIT_NO_RENDERER = 2
 
 __all__ = [
     "EXIT_NO_RENDERER",
+    "GOLDENS",
     "GOLDEN_PATH",
     "PdfProps",
     "extract_pdf_props",
@@ -114,19 +124,19 @@ def meta_block() -> dict[str, str]:
     }
 
 
-def _load_pack() -> LoadedPack:
+def _load_pack(pack_name: str = PACK_NAME) -> LoadedPack:
     from anastomosis.reconstruct import discover_packs
 
-    status = discover_packs().get(PACK_NAME)
+    status = discover_packs().get(pack_name)
     if status is None or status.pack is None:
         diagnosis = status.diagnosis if status else "pack not discovered"
-        raise RuntimeError(f"pack {PACK_NAME!r} unavailable: {diagnosis}")
+        raise RuntimeError(f"pack {pack_name!r} unavailable: {diagnosis}")
     return status.pack
 
 
-def render_goldens() -> dict[str, object]:
+def render_goldens(pack_name: str = PACK_NAME) -> dict[str, object]:
     """Render every fixture encounter with the REAL Chromium renderer through
-    the ``generic_soap`` pack and return the golden mapping
+    ``pack_name`` and return the golden mapping
     ``{"_meta": {...}, "<encounter_id>": {pages, width, height, text}, ...}``.
 
     Mirrors the real pipeline wiring (``cli._run_pipeline``): pack page
@@ -137,7 +147,7 @@ def render_goldens() -> dict[str, object]:
     from anastomosis.reconstruct.engine import ReconstructionEngine
     from anastomosis.sources import get_source
 
-    pack = _load_pack()
+    pack = _load_pack(pack_name)
     manifest = pack.manifest
     margins = {
         "top": manifest.page.margin_top,
@@ -191,17 +201,21 @@ def main() -> int:
     if reason is not None:
         print(f"regen_goldens: cannot regenerate — {reason}", file=sys.stderr)
         return EXIT_NO_RENDERER
-    golden = render_goldens()
-    GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Deterministic key order (sort_keys) so the committed diff is reviewable;
-    # trailing newline so the file is POSIX-clean.
-    GOLDEN_PATH.write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    encounters = [k for k in golden if k != "_meta"]
-    print(
-        f"regen_goldens: wrote {len(encounters)} encounter snapshot(s) to "
-        f"{GOLDEN_PATH.relative_to(_REPO_ROOT)} "
-        f"(chromium {golden['_meta']['chromium']}, playwright {golden['_meta']['playwright']})"  # type: ignore[index]
-    )
+    # Regenerate every registered pack's golden (generic_soap + practice_fusion_soap).
+    for pack_name, golden_path in GOLDENS.items():
+        golden = render_goldens(pack_name)
+        golden_path.parent.mkdir(parents=True, exist_ok=True)
+        # Deterministic key order (sort_keys) so the committed diff is reviewable;
+        # trailing newline so the file is POSIX-clean.
+        golden_path.write_text(
+            json.dumps(golden, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        encounters = [k for k in golden if k != "_meta"]
+        print(
+            f"regen_goldens: wrote {len(encounters)} encounter snapshot(s) for "
+            f"{pack_name!r} to {golden_path.relative_to(_REPO_ROOT)} "
+            f"(chromium {golden['_meta']['chromium']}, playwright {golden['_meta']['playwright']})"  # type: ignore[index]
+        )
     return 0
 
 

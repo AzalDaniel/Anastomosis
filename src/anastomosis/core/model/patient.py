@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import AnastBase
 
@@ -75,6 +76,7 @@ class Guarantor(BaseModel):
     address: Address | None = None
     phones: list[ContactPoint] = []
     payment_preference: str | None = None
+    extensions: dict[str, Any] = Field(default_factory=dict)
 
 
 class Patient(AnastBase):

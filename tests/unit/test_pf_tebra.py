@@ -292,9 +292,21 @@ def test_family_history_immunizations_directives(
 
 def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     cleo = records[P3]
-    assert cleo.patient.guarantor is not None
-    assert cleo.patient.guarantor.name == "Gus Placeholder"
-    assert cleo.patient.guarantor.relationship_to_patient == "Parent"
+    guarantor = cleo.patient.guarantor
+    assert guarantor is not None
+    assert guarantor.name == "Gus Placeholder"
+    # The Billing* / bare City-State-Zip columns are this table's real names
+    # (gpdfs:940-961) — regression for the invented Address*/RelationshipTo
+    # names that silently mapped nothing.
+    assert guarantor.relationship_to_patient == "Parent"
+    assert guarantor.birth_date == date(1988, 3, 15)
+    assert guarantor.sex == "Male"
+    assert guarantor.ssn is None  # empty SSNumber cell stays None, never ""
+    assert guarantor.payment_preference is None  # empty BillingPaymentType
+    assert guarantor.address is not None and guarantor.address.city == "Springfield"
+    assert [(p.kind.value, p.value) for p in guarantor.phones] == [("phone_home", "(206) 555-0163")]
+    # Columns the mapping doesn't consume land in extensions (losslessness).
+    assert guarantor.extensions == {"pf_tebra:MiddleName": "Q"}
     record = records[P1]
     encounter = next(e for e in record.encounters if e.id == E1)
     provider = record.practitioner(encounter.provider_id)

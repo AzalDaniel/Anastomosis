@@ -55,10 +55,10 @@ the Archivist vertical slice works end to end. See
 | M4 Desktop GUI (liquid-glass) | ✅ |
 | M5 CS50 packaging (docs, demo, submission) | in progress |
 
-[^1]: the Practice Fusion–faithful template pack ([#4]) and golden
-    rendering tests remain post-release: golden rendering and the Synthea e2e
-    lane landed in M1.5 ([#21]), but the PF-faithful pack ([#4]) is still
-    deferred (blocked on a citable layout reference). The `generic_soap` pack
+[^1]: golden rendering and the Synthea e2e lane landed in M1.5 ([#21]); the
+    Practice Fusion–faithful template pack (`practice_fusion_soap`, [#4]) now
+    ships as a built-in — the 35-section forensic PF SOAP-note replica with its
+    own golden + packgen fixed-point e2e lanes. The `generic_soap` pack also
     ships and is exercised end to end.
 
 [#4]: https://github.com/AzalDaniel/Anastomosis/issues/4
