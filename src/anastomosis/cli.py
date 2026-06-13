@@ -190,37 +190,56 @@ def _print_delivery(outcome: DeliveryOutcome) -> None:
         console.print(f"C-CDA: [green]{counts['patients']} patients[/green] → {outcome.out_dir}")
 
 
+def _sections_or_exit(
+    section: list[str] | None, *, source: str | None, pack: str
+) -> dict[str, bool]:
+    """Parse ``--section`` overrides, converting a strict-parse failure (a bad
+    value or a missing ``=value``) to a clean exit 2 rather than a traceback.
+    Section-NAME validation happens later, against the resolved pack."""
+    from anastomosis.pipeline import PipelineError, parse_section_overrides
+
+    try:
+        return parse_section_overrides(section)
+    except PipelineError as exc:
+        _report_pipeline_error(exc, source=source, pack=pack)
+        raise typer.Exit(code=exc.exit_code) from None
+
+
 def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> None:
     """Render a :class:`PipelineError` as the exact lines the CLI used to print.
 
-    Reproduces the original inline messages per failure kind so the existing
-    CLI tests (which pin "Could not identify", "unavailable", per-encounter
-    failure lines) keep passing byte-for-byte unchanged.
+    Switches on the error's structured ``kind`` (not message prose) and
+    reproduces the original line per kind byte-for-byte, so the existing CLI
+    tests ("Could not identify", "unavailable", per-encounter failure lines)
+    keep passing unchanged. The newer operator-input kinds (``bad_output``,
+    ``bad_section``, ``bad_source``) print their PHI-safe message; ``qa_failed``
+    prints nothing extra (its summary already rode the QA event).
     """
+    from rich.markup import escape as _escape
+
     from anastomosis.pipeline import PipelineError
 
     assert isinstance(exc, PipelineError)
     message = str(exc)
-    if message.startswith("Could not identify"):
+    if exc.kind == "no_source":
         suffix = message[len("Could not identify the export format.") :]
         console.print(f"[red]Could not identify the export format.[/red]{suffix}")
-    elif message.startswith(f"Pack {pack!r} unavailable:"):
+    elif exc.kind == "bad_pack":
         diagnosis = message.split(": ", 1)[1]
         console.print(f"[red]Pack {pack!r} unavailable:[/red] {diagnosis}")
-    elif exc.failed:
+    elif exc.kind == "render_failed":
         # The reconstruct summary line already printed (the RECONSTRUCT event);
         # now the per-encounter (id, type) detail lines, exactly as before.
         for encounter_id, exc_type in exc.failed:
             console.print(f"  [red]failed[/red] encounter {encounter_id} ({exc_type})")
-    elif not message.startswith("QA failed"):
-        # Any other PipelineError (e.g. an unknown --source name) must never
-        # exit silently: print its PHI-safe message. Exit code 2 = operator
-        # input error, per the CLI's exit-code contract.
-        from rich.markup import escape as _escape
-
+    elif exc.kind == "qa_failed":
+        # A QA failure printed only its summary line (the QA event) before
+        # exiting; no extra error line is emitted here — matching the original.
+        return
+    else:
+        # bad_source / bad_output / bad_section / generic: print the PHI-safe
+        # message. Exit code 2 (operator input), per the CLI's exit-code contract.
         console.print(f"[red]{_escape(message)}[/red]")
-    # A QA failure printed only its summary line (the QA event) before exiting;
-    # no extra error line is emitted here — matching the original behavior.
 
 
 # --- pipeline run -----------------------------------------------------------
@@ -267,8 +286,8 @@ def pipeline_run(
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand
-    from anastomosis.pipeline import parse_section_overrides
 
+    sections = _sections_or_exit(section, source=source, pack=pack)
     deliveries: list[DeliveryCommand] = []
     if archive is not None:
         deliveries.append(DeliveryCommand("archive", archive))
@@ -284,7 +303,7 @@ def pipeline_run(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
-            sections=parse_section_overrides(section),
+            sections=sections,
             qa=qa,
             deliveries=tuple(deliveries),
         )
@@ -326,8 +345,8 @@ def archive_cmd(
 ) -> None:
     """Run the full pipeline and write a searchable offline archive."""
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand
-    from anastomosis.pipeline import parse_section_overrides
 
+    sections = _sections_or_exit(section, source=source, pack=pack)
     charts = charts_dir or (out / "_charts")
     _run_command(
         PipelineCommand(
@@ -337,7 +356,7 @@ def archive_cmd(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
-            sections=parse_section_overrides(section),
+            sections=sections,
             qa=qa,
             deliveries=(DeliveryCommand("archive", out),),
         )
@@ -379,8 +398,8 @@ def bundle_cmd(
 ) -> None:
     """Run the full pipeline and write one per-patient bundle directory each."""
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand
-    from anastomosis.pipeline import parse_section_overrides
 
+    sections = _sections_or_exit(section, source=source, pack=pack)
     charts = charts_dir or (out / "_charts")
     _run_command(
         PipelineCommand(
@@ -390,7 +409,7 @@ def bundle_cmd(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
-            sections=parse_section_overrides(section),
+            sections=sections,
             qa=qa,
             deliveries=(DeliveryCommand("bundle", out),),
         )
@@ -401,12 +420,31 @@ def bundle_cmd(
 
 
 def _load_registry(registry: Path | None) -> object:
-    """Load the destination registry (overlay if given), raising loud on error."""
+    """Load the destination registry (overlay if given).
+
+    A malformed overlay (bad YAML, a schema violation, or a missing file) is an
+    operator-input error: print a clean message and exit 2, never a pydantic or
+    PyYAML traceback. The packaged registry is validated in CI, so a failure
+    there would be a genuine bug — but the same clean exit still beats a
+    traceback.
+    """
+    from pydantic import ValidationError
+    from rich.markup import escape as _escape
+    from yaml import YAMLError
+
     from anastomosis.destinations.registry import DestinationRegistry
 
-    if registry is not None:
-        return DestinationRegistry.merged(registry)
-    return DestinationRegistry.load()
+    try:
+        if registry is not None:
+            return DestinationRegistry.merged(registry)
+        return DestinationRegistry.load()
+    except (ValidationError, YAMLError, OSError) as exc:
+        where = f" {registry}" if registry is not None else ""
+        console.print(
+            f"[red]Invalid destination registry{where}[/red] "
+            f"({_escape(type(exc).__name__)}) — check the file's YAML and schema."
+        )
+        raise typer.Exit(code=2) from None
 
 
 def _oldest_evidence(entry: object) -> str:

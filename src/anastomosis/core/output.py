@@ -16,7 +16,33 @@ import os
 import stat
 from pathlib import Path
 
-__all__ = ["secure_output_dir"]
+__all__ = ["OutputPathError", "secure_output_dir", "validate_output_target"]
+
+
+class OutputPathError(Exception):
+    """An output path cannot become a directory (it, or an ancestor, is a file).
+
+    Raised *before* any backend work so the operator gets a clean message
+    instead of a ``FileExistsError``/``NotADirectoryError`` traceback from deep
+    in the render/delivery code. Callers map it to a clean exit (code 2).
+    """
+
+
+def validate_output_target(path: str | Path) -> None:
+    """Raise :class:`OutputPathError` if ``path`` can't be created as a directory.
+
+    ``Path.mkdir(parents=True)`` fails with ``FileExistsError`` when the target
+    itself is a file, and ``NotADirectoryError`` when an ancestor is a file.
+    Both reduce to: the nearest *existing* path component must be a directory.
+    """
+    target = Path(path)
+    for component in (target, *target.parents):
+        if component.exists():
+            if not component.is_dir():
+                where = "" if component == target else f" (ancestor of {target})"
+                raise OutputPathError(f"Output path {component} is a file, not a directory{where}.")
+            return  # nearest existing component is a directory — mkdir will succeed
+
 
 _README_NAME = "_PHI_WARNING_README.txt"
 
@@ -46,6 +72,7 @@ def secure_output_dir(path: str | Path) -> Path:
     and the README still lands.
     """
     root = Path(path)
+    validate_output_target(root)  # clean OutputPathError instead of a raw OSError
     root.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         root.chmod(stat.S_IRWXU)  # 0o700 — owner only
