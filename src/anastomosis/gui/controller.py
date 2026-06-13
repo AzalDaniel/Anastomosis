@@ -42,6 +42,9 @@ from anastomosis.gui.events import done_event, error_event, progress_event, stag
 
 if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.deliver.browser.tracking import TrackingDB
+    from anastomosis.deliver.router import TransitMap
+    from anastomosis.destinations.registry import DestinationEntry
     from anastomosis.pipeline import StageEvent
 
 __all__ = ["EventSink", "GuiController"]
@@ -590,7 +593,7 @@ class GuiController:
             self._emit(progress_event("deliver", deliverer=kind, patients=patients))
         self._emit(stage_event("deliver", "done"))
 
-    def _pack_readiness(self, transit: object) -> dict[str, object] | None:
+    def _pack_readiness(self, transit: TransitMap) -> dict[str, object] | None:
         """Resolve the browser pack for a transit map, if it has one.
 
         A destination whose browser route is viable names a pack in the
@@ -603,9 +606,9 @@ class GuiController:
         from anastomosis.deliver.router import RouteKind
         from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
-        name = transit.destination  # type: ignore[attr-defined]
+        name = transit.destination
         browser = next(
-            (opt for opt in transit.options if opt.kind == RouteKind.BROWSER),  # type: ignore[attr-defined]
+            (opt for opt in transit.options if opt.kind == RouteKind.BROWSER),
             None,
         )
         if browser is None or not browser.viable:
@@ -621,23 +624,18 @@ class GuiController:
         }
 
     @staticmethod
-    def _latest_run(tracking: object) -> dict[str, object] | None:
+    def _latest_run(tracking: TrackingDB) -> dict[str, object] | None:
         """The most-recent run row (by started_at), as a JSON-safe dict, or None.
 
-        Reuses :meth:`TrackingDB.run_info` for the field shape but resolves the
-        latest ``run_id`` itself (the upload console shows one current run). All
-        values are log-safe: a run id, a destination name, ISO timestamps, and
-        an abort TYPE name — never a patient value.
+        Reuses :meth:`TrackingDB.latest_run_id` + :meth:`TrackingDB.run_info`
+        (the upload console shows one current run). All values are log-safe: a
+        run id, a destination name, ISO timestamps, and an abort TYPE name —
+        never a patient value.
         """
-        conn = tracking._conn()  # type: ignore[attr-defined]
-        row = conn.execute(
-            "SELECT run_id FROM runs ORDER BY started_at DESC, run_id DESC LIMIT 1"
-        ).fetchone()
-        if row is None:
+        run_id = tracking.latest_run_id()
+        if run_id is None:
             return None
-        run_id = row["run_id"]
-        info = tracking.run_info(run_id)  # type: ignore[attr-defined]
-        return {"run_id": run_id, **info}
+        return {"run_id": run_id, **tracking.run_info(run_id)}
 
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
@@ -665,7 +663,7 @@ _STAGE_MAP = {
 }
 
 
-def _transit_to_dict(transit: object) -> dict[str, object]:
+def _transit_to_dict(transit: TransitMap) -> dict[str, object]:
     """Serialize a :class:`TransitMap` to a JSON-safe dict for the GUI."""
     options = [
         {
@@ -674,11 +672,11 @@ def _transit_to_dict(transit: object) -> dict[str, object]:
             "why": opt.why,
             "requires": list(opt.requires),
         }
-        for opt in transit.options  # type: ignore[attr-defined]
+        for opt in transit.options
     ]
-    chosen = transit.chosen  # type: ignore[attr-defined]
+    chosen = transit.chosen
     return {
-        "destination": transit.destination,  # type: ignore[attr-defined]
+        "destination": transit.destination,
         "options": options,
         "chosen": chosen.kind.value if chosen is not None else None,
     }
@@ -719,7 +717,7 @@ def _group_states(counts: dict[str, int]) -> dict[str, int]:
     }
 
 
-def _freshest_evidence(entry: object) -> date | None:
+def _freshest_evidence(entry: DestinationEntry) -> date | None:
     """The newest ``verified`` date across an entry's cited capabilities, or None.
 
     A destination's evidence ages at the rate of its freshest citation: re-
@@ -728,9 +726,9 @@ def _freshest_evidence(entry: object) -> date | None:
     """
     dates: list[date] = []
     for cap in (
-        entry.doc_write_api,  # type: ignore[attr-defined]
-        entry.ccda_import,  # type: ignore[attr-defined]
-        entry.browser,  # type: ignore[attr-defined]
+        entry.doc_write_api,
+        entry.ccda_import,
+        entry.browser,
     ):
         evidence = getattr(cap, "evidence", None)
         if evidence is not None:

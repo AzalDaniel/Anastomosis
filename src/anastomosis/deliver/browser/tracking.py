@@ -372,6 +372,19 @@ class TrackingDB:
 
     # --- read accessors (for reports — counts/ids/type names only) ---
 
+    def latest_run_id(self) -> str | None:
+        """The most-recent run id (by ``started_at``), or None if there are none.
+
+        The upload console shows one current run; this resolves it without the
+        caller reaching into the ledger's connection. Log-safe (a run id only).
+        """
+        row = (
+            self._conn()
+            .execute("SELECT run_id FROM runs ORDER BY started_at DESC, run_id DESC LIMIT 1")
+            .fetchone()
+        )
+        return row["run_id"] if row is not None else None
+
     def run_info(self, run_id: str) -> dict[str, str | None]:
         """Return the ``runs`` row for ``run_id`` (raises ``KeyError`` if absent).
 

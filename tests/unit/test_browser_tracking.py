@@ -40,6 +40,13 @@ def db(tmp_path: Path) -> TrackingDB:
 # --- enqueue idempotence ---
 
 
+def test_latest_run_id_resolves_the_current_run(db: TrackingDB) -> None:
+    assert db.latest_run_id() is None  # no runs yet
+    run = db.begin_run("fake")
+    assert db.latest_run_id() == run  # the one run is the latest
+    assert db.run_info(run)["destination"] == "fake"
+
+
 def test_enqueue_new_item_returns_true_and_is_pending(db: TrackingDB) -> None:
     run = db.begin_run("fake")
     item = _item(1)
