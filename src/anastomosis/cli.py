@@ -258,6 +258,14 @@ def pipeline_run(
         list[Path] | None,
         typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
     ] = None,
+    trust_pack: Annotated[
+        bool,
+        typer.Option(
+            "--trust-pack",
+            help="Trust the --pack-dir packs at their current code hash (records the hash; "
+            "required the first time, and again after their code changes).",
+        ),
+    ] = False,
     force: Annotated[bool, typer.Option("--force", help="Re-render documents that exist.")] = False,
     section: Annotated[
         list[str] | None,
@@ -303,6 +311,7 @@ def pipeline_run(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
+            trust_new=trust_pack,
             sections=sections,
             qa=qa,
             deliveries=tuple(deliveries),
@@ -326,6 +335,14 @@ def archive_cmd(
         list[Path] | None,
         typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
     ] = None,
+    trust_pack: Annotated[
+        bool,
+        typer.Option(
+            "--trust-pack",
+            help="Trust the --pack-dir packs at their current code hash (records the hash; "
+            "required the first time, and again after their code changes).",
+        ),
+    ] = False,
     force: Annotated[bool, typer.Option("--force", help="Re-render documents that exist.")] = False,
     section: Annotated[
         list[str] | None,
@@ -356,6 +373,7 @@ def archive_cmd(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
+            trust_new=trust_pack,
             sections=sections,
             qa=qa,
             deliveries=(DeliveryCommand("archive", out),),
@@ -379,6 +397,14 @@ def bundle_cmd(
         list[Path] | None,
         typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
     ] = None,
+    trust_pack: Annotated[
+        bool,
+        typer.Option(
+            "--trust-pack",
+            help="Trust the --pack-dir packs at their current code hash (records the hash; "
+            "required the first time, and again after their code changes).",
+        ),
+    ] = False,
     force: Annotated[bool, typer.Option("--force", help="Re-render documents that exist.")] = False,
     section: Annotated[
         list[str] | None,
@@ -409,6 +435,7 @@ def bundle_cmd(
             pack=pack,
             pack_dirs=tuple(pack_dir or ()),
             force=force,
+            trust_new=trust_pack,
             sections=sections,
             qa=qa,
             deliveries=(DeliveryCommand("bundle", out),),
