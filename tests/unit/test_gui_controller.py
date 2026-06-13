@@ -232,6 +232,78 @@ def test_sections_flag_reaches_engine(tmp_path: Path, monkeypatch: pytest.Monkey
     assert captured["flags"]["addenda"] is False
 
 
+def test_force_and_pack_dirs_reach_the_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """force and pack_dirs are no longer hard-coded off — the GUI threads them
+    into the same command the CLI builds (review parity gap #1)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    import anastomosis.reconstruct.packtrust as packtrust
+
+    monkeypatch.setattr(packtrust, "user_pack_trust_path", lambda: tmp_path / "trust.json")
+
+    import anastomosis.pipeline as pipeline_mod
+
+    orig = pipeline_mod.run_pipeline
+    captured: dict[str, object] = {}
+
+    def _wrapped(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return orig(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pipeline_mod, "run_pipeline", _wrapped)
+
+    extra = tmp_path / "extra_packs"
+    extra.mkdir()
+    GuiController(_RecordingSink()).run_pipeline(
+        str(FIXTURE), str(tmp_path / "out"), force=True, pack_dirs=[str(extra)]
+    )
+    assert captured["force"] is True
+    assert captured["pack_dirs"] == [extra]
+
+
+def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The async race fix: the busy flag is acquired SYNCHRONOUSLY, so of two
+    CONCURRENT starts exactly one wins — never two ``started``.
+
+    The two calls must contend (a barrier releases them together); a sequential
+    pair would pass even against the old TOCTOU bug, so it would not pin the fix.
+    """
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+
+    barrier = threading.Barrier(2)
+    results: list[dict[str, object]] = []
+    results_lock = threading.Lock()
+
+    def _fire(out_name: str) -> None:
+        barrier.wait()  # release both threads at once so they truly contend
+        outcome = controller.run_pipeline_async(str(FIXTURE), str(tmp_path / out_name))
+        with results_lock:
+            results.append(outcome)
+
+    threads = [threading.Thread(target=_fire, args=(f"out{i}",)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Exactly one start wins; the other is rejected Busy (order is racy).
+    started = [r for r in results if r.get("started")]
+    busy = [r for r in results if r.get("error") == "Busy"]
+    assert len(started) == 1, results
+    assert len(busy) == 1, results
+
+    # Let the winner's worker finish so its daemon thread doesn't outlive the test.
+    deadline = time.time() + 10
+    while time.time() < deadline and (not sink.events or sink.events[-1]["type"] != "done"):
+        time.sleep(0.05)
+    assert sink.events[-1]["type"] == "done"
+
+
 # --- deliverers ------------------------------------------------------------
 
 
