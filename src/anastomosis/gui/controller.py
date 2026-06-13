@@ -41,6 +41,7 @@ from anastomosis.core.logutil import exc_tag
 from anastomosis.gui.events import done_event, error_event, progress_event, stage_event
 
 if TYPE_CHECKING:
+    from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.pipeline import StageEvent
 
 __all__ = ["EventSink", "GuiController"]
@@ -94,41 +95,28 @@ class GuiController:
     def info(self) -> dict[str, object]:
         """Toolkit status for the dashboard header and the run form.
 
-        Reuses :func:`available_sources` and :func:`discover_packs` (the same
-        data ``anast info`` shows) plus an extras-installed probe identical to
-        the CLI's. PHI-free by construction — versions, names, booleans.
+        Wraps the shared :func:`anastomosis.core.commands.get_toolkit_info` (the
+        same data ``anast info`` renders). PHI-free by construction — versions,
+        names, booleans.
         """
         try:
-            import anastomosis
-            import anastomosis.pipeline  # registers built-in source adapters at import
-            from anastomosis.reconstruct import discover_packs
-            from anastomosis.sources import available_sources
+            from anastomosis.core.commands import get_toolkit_info
 
-            extras = {
-                extra: _module_available(module)
-                for extra, module in (
-                    ("render", "playwright"),
-                    ("render-qa", "fitz"),
-                    ("fhir", "fhir.resources"),
-                    ("gui", "webview"),
-                )
-            }
-            sources = [{"name": a.name, "description": a.description} for a in available_sources()]
-            packs = [
-                {
-                    "name": status.name,
-                    "available": status.available,
-                    "origin": status.origin,
-                    "sections": _pack_sections(status),
-                }
-                for status in discover_packs().values()
-            ]
+            toolkit = get_toolkit_info()
             return {
                 "ok": True,
-                "version": anastomosis.__version__,
-                "extras": extras,
-                "sources": sources,
-                "packs": packs,
+                "version": toolkit.version,
+                "extras": dict(toolkit.extras),
+                "sources": [{"name": name, "description": desc} for name, desc in toolkit.sources],
+                "packs": [
+                    {
+                        "name": pack.name,
+                        "available": pack.available,
+                        "origin": pack.origin,
+                        "sections": pack.sections,
+                    }
+                    for pack in toolkit.packs
+                ],
             }
         except Exception as exc:  # defensive: info() must never raise into JS
             return self._fail("info", exc)
@@ -488,13 +476,14 @@ class GuiController:
         bundle: bool,
         ccda: bool,
     ) -> dict[str, object]:
-        from anastomosis.pipeline import PipelineError, run_pipeline
+        from anastomosis.core.commands import (
+            DeliveryCommand,
+            PipelineCommand,
+            run_pipeline_command,
+        )
+        from anastomosis.pipeline import PipelineError
 
         out = Path(out_dir)
-        # The pipeline core consumes ``--section`` strings; translate the GUI's
-        # ``{name: bool}`` matrix into that exact form so both frontends agree.
-        section = [f"{name}={'on' if value else 'off'}" for name, value in sections.items()]
-
         rollup: dict[str, int] = {}
 
         def _on_event(event: StageEvent) -> None:
@@ -506,16 +495,28 @@ class GuiController:
             self._emit(stage_event(stage, "done"))
             rollup.update(event.counts)
 
+        # GUI deliveries land in sibling subdirectories of the output dir (the
+        # GUI has one output-dir field), through the same command path the CLI
+        # uses with operator-chosen paths.
+        deliveries: list[DeliveryCommand] = []
+        if archive:
+            deliveries.append(DeliveryCommand("archive", out / "archive"))
+        if bundle:
+            deliveries.append(DeliveryCommand("bundle", out / "bundles"))
+        if ccda:
+            deliveries.append(DeliveryCommand("ccda", out / "ccda"))
+
         try:
-            result = run_pipeline(
-                export_dir=Path(export_dir),
-                out=out,
-                source=source,
-                pack=pack,
-                pack_dirs=None,
-                force=False,
-                section=section,
-                qa=qa,
+            result = run_pipeline_command(
+                PipelineCommand(
+                    export_dir=Path(export_dir),
+                    charts_dir=out,
+                    source=source,
+                    pack=pack,
+                    sections=sections,
+                    qa=qa,
+                    deliveries=tuple(deliveries),
+                ),
                 on_event=_on_event,
             )
         except PipelineError as exc:
@@ -524,58 +525,29 @@ class GuiController:
         except Exception as exc:  # any non-pipeline crash: type name only, no PHI
             return self._fail("run_pipeline", exc)
 
-        if archive or bundle or ccda:
-            self._deliver(result, out, archive=archive, bundle=bundle, ccda=ccda, rollup=rollup)
+        if result.deliveries:
+            self._present_deliveries(result.deliveries, rollup)
 
         self._emit(done_event(**rollup))
         return {"ok": True, **rollup}
 
-    def _deliver(
-        self,
-        result: object,
-        out: Path,
-        *,
-        archive: bool,
-        bundle: bool,
-        ccda: bool,
-        rollup: dict[str, int],
+    def _present_deliveries(
+        self, deliveries: dict[str, DeliveryOutcome], rollup: dict[str, int]
     ) -> None:
-        """Run the requested deliverers, emitting one progress event each.
+        """Emit the deliver-rail events from the completed delivery outcomes.
 
-        PHI rule: each event carries a COUNT of artifacts written, never the
-        rendered filenames. The output subdirectory the operator's choice
-        implies is not echoed into the event log (only counts are).
+        The deliverers themselves ran inside the shared command core; this only
+        presents the counts. PHI rule: each event carries a COUNT of artifacts
+        written, never the rendered filenames or the operator's chosen paths.
         """
-        from anastomosis.pipeline import PipelineResult
-
-        assert isinstance(result, PipelineResult)
         self._emit(stage_event("deliver", "start"))
-        if archive:
-            from anastomosis.deliver.archive import ArchiveDeliverer
-
-            arc = ArchiveDeliverer().deliver(
-                result.records, out, out / "archive", qa_report=result.qa_report
-            )
-            count = arc.patient_count
-            rollup["archive_patients"] = count
-            self._emit(progress_event("deliver", deliverer="archive", patients=count))
-        if bundle:
-            from anastomosis.deliver.bundle import BundleDeliverer
-
-            deliverer = BundleDeliverer()
-            pdfs = sorted(out.glob("*.pdf")) if out.is_dir() else []
-            written = 0
-            for record in result.records:
-                deliverer.deliver(record, pdfs, out / "bundles", qa_report=result.qa_report)
-                written += 1
-            rollup["bundle_patients"] = written
-            self._emit(progress_event("deliver", deliverer="bundle", patients=written))
-        if ccda:
-            from anastomosis.deliver.ccda_export import deliver_ccda
-
-            paths = deliver_ccda(result.records, out / "ccda")
-            rollup["ccda_patients"] = len(paths)
-            self._emit(progress_event("deliver", deliverer="ccda", patients=len(paths)))
+        for kind in ("archive", "bundle", "ccda"):
+            outcome = deliveries.get(kind)
+            if outcome is None:
+                continue
+            patients = outcome.counts["patients"]
+            rollup[f"{kind}_patients"] = patients
+            self._emit(progress_event("deliver", deliverer=kind, patients=patients))
         self._emit(stage_event("deliver", "done"))
 
     def _pack_readiness(self, transit: object) -> dict[str, object] | None:
@@ -651,29 +623,6 @@ _STAGE_MAP = {
     "reconstruct": "reconstruct",
     "qa": "qa",
 }
-
-
-def _module_available(module: str) -> bool:
-    try:
-        __import__(module)
-    except ImportError:
-        return False
-    return True
-
-
-def _pack_sections(status: object) -> dict[str, dict[str, object]]:
-    """The section-flag matrix for a pack (label + default), or empty if broken.
-
-    Items 18/19 (the section-selection matrix UI) consume this; the dashboard
-    surfaces only which packs exist. Pure data, no PHI.
-    """
-    pack = getattr(status, "pack", None)
-    if pack is None:
-        return {}
-    return {
-        key: {"label": flag.label, "default": flag.default}
-        for key, flag in pack.manifest.sections.items()
-    }
 
 
 def _transit_to_dict(transit: object) -> dict[str, object]:
