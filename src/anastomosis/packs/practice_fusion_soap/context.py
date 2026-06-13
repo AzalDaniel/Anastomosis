@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import datetime as _dt
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -176,8 +177,12 @@ def _escript_line(rx: Prescription, record: PatientRecord, tz: str) -> dict[str,
     }
 
 
-def _medication_view(med: MedicationStatement, record: PatientRecord, tz: str) -> dict[str, Any]:
-    rx_by_id = {p.id: p for p in record.prescriptions}
+def _medication_view(
+    med: MedicationStatement,
+    rx_by_id: dict[str, Prescription],
+    record: PatientRecord,
+    tz: str,
+) -> dict[str, Any]:
     escripts = [
         _escript_line(rx_by_id[pid], record, tz) for pid in med.prescription_ids if pid in rx_by_id
     ]
@@ -335,6 +340,106 @@ def _encounter_vital_rows(vitals: list[Observation]) -> list[dict[str, str]]:
     return rows
 
 
+@dataclass(frozen=True)
+class _RecordViewIndex:
+    """Record-level groupings, precomputed in one pass per collection.
+
+    ``build_context`` previously re-scanned each collection several times
+    (active/inactive splits, allergy-by-category, and — the only asymptotic
+    cost — a ``{id: rx}`` prescription map rebuilt inside the per-medication
+    loop, O(meds x prescriptions)). This computes each grouping once. Built per
+    call (the flowsheet and per-encounter vitals stay encounter-specific); the
+    splits preserve the source collection order, then coverages are sorted by
+    benefit order exactly as before.
+    """
+
+    active_coverages: list[Coverage]
+    inactive_coverages: list[Coverage]
+    active_conditions: list[Any]
+    historical_conditions: list[Any]
+    conditions_by_id: dict[str, Any]
+    active_medications: list[MedicationStatement]
+    historical_medications: list[MedicationStatement]
+    prescriptions_by_id: dict[str, Prescription]
+    allergies_by_category: dict[AllergyCategory, list[Any]]
+    active_concerns: list[Any]
+    inactive_concerns: list[Any]
+    active_goals: list[Any]
+    inactive_goals: list[Any]
+    smoking: Observation | None
+    sh_freetext: str | None
+
+    @classmethod
+    def build(cls, record: PatientRecord) -> _RecordViewIndex:
+        active_cov: list[Coverage] = []
+        inactive_cov: list[Coverage] = []
+        for cov in record.coverages:
+            (active_cov if cov.active else inactive_cov).append(cov)
+        active_cov.sort(key=_benefit_key)  # stable: ties keep source order (GOLD §7)
+        inactive_cov.sort(key=_benefit_key)
+
+        active_cond: list[Any] = []
+        historical_cond: list[Any] = []
+        conditions_by_id: dict[str, Any] = {}
+        for cond in record.conditions:
+            conditions_by_id[cond.id] = cond
+            (active_cond if cond.active else historical_cond).append(cond)
+
+        active_meds: list[MedicationStatement] = []
+        historical_meds: list[MedicationStatement] = []
+        for med in record.medications:
+            (active_meds if med.active else historical_meds).append(med)
+
+        allergies_by_category: dict[AllergyCategory, list[Any]] = {}
+        for allergy in record.allergies:
+            allergies_by_category.setdefault(allergy.category, []).append(allergy)
+
+        active_hc: list[Any] = []
+        inactive_hc: list[Any] = []
+        for concern in record.health_concerns:
+            (active_hc if concern.active else inactive_hc).append(concern)
+
+        active_goals: list[Any] = []
+        inactive_goals: list[Any] = []
+        for goal in record.goals:
+            (active_goals if goal.active else inactive_goals).append(goal)
+
+        smoking = next(
+            (
+                o
+                for o in record.observations
+                if o.category == ObservationCategory.SOCIAL_HISTORY
+                and (o.display or "").upper().startswith("TOBACCO")
+            ),
+            None,
+        )
+        sh_freetext = next(
+            (
+                p.text
+                for p in record.past_medical_history
+                if (p.kind or "").lower().startswith("social")
+            ),
+            None,
+        )
+        return cls(
+            active_coverages=active_cov,
+            inactive_coverages=inactive_cov,
+            active_conditions=active_cond,
+            historical_conditions=historical_cond,
+            conditions_by_id=conditions_by_id,
+            active_medications=active_meds,
+            historical_medications=historical_meds,
+            prescriptions_by_id={p.id: p for p in record.prescriptions},
+            allergies_by_category=allergies_by_category,
+            active_concerns=active_hc,
+            inactive_concerns=inactive_hc,
+            active_goals=active_goals,
+            inactive_goals=inactive_goals,
+            smoking=smoking,
+            sh_freetext=sh_freetext,
+        )
+
+
 def build_context(
     encounter: Encounter, record: PatientRecord, cfg: dict[str, Any]
 ) -> dict[str, Any]:
@@ -344,6 +449,7 @@ def build_context(
     pack_root: Path = Path(cfg.get("pack_root", Path(__file__).resolve().parent))
     patient = record.patient
     dos = encounter.date_of_service  # calendar date — never timezone-shifted
+    index = _RecordViewIndex.build(record)  # record-level groupings, one pass each
 
     # --- header: patient / facility / encounter --------------------------------
     age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
@@ -392,8 +498,8 @@ def build_context(
 
     # --- insurance -------------------------------------------------------------
     show_insurance = sections.get("insurance", True)
-    active_cov = sorted((c for c in record.coverages if c.active), key=_benefit_key)
-    inactive_cov = sorted((c for c in record.coverages if not c.active), key=_benefit_key)
+    active_cov = index.active_coverages
+    inactive_cov = index.inactive_coverages
 
     # --- payment / guarantor ---------------------------------------------------
     payment = _payment(patient.guarantor)
@@ -411,39 +517,27 @@ def build_context(
     flowsheet_columns, flowsheet_rows = _build_flowsheet(record, encounter, dos)
 
     # --- diagnoses -------------------------------------------------------------
-    current_dx = [_dx_view(c) for c in record.conditions if c.active]
-    historical_dx = [_dx_view(c) for c in record.conditions if not c.active]
-    encounter_dx = _encounter_diagnoses(record, encounter)
+    current_dx = [_dx_view(c) for c in index.active_conditions]
+    historical_dx = [_dx_view(c) for c in index.historical_conditions]
+    encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
 
     # --- allergies -------------------------------------------------------------
-    drug_allergies = _allergy_split(record, AllergyCategory.DRUG)
-    food_allergies = _allergy_split(record, AllergyCategory.FOOD)
-    env_allergies = _allergy_split(record, AllergyCategory.ENVIRONMENT)
+    drug_allergies = _allergy_views(index.allergies_by_category.get(AllergyCategory.DRUG, []))
+    food_allergies = _allergy_views(index.allergies_by_category.get(AllergyCategory.FOOD, []))
+    env_allergies = _allergy_views(index.allergies_by_category.get(AllergyCategory.ENVIRONMENT, []))
 
     # --- medications -----------------------------------------------------------
-    active_meds = [_medication_view(m, record, tz) for m in record.medications if m.active]
-    historical_meds = [_medication_view(m, record, tz) for m in record.medications if not m.active]
+    rx_by_id = index.prescriptions_by_id
+    active_meds = [_medication_view(m, rx_by_id, record, tz) for m in index.active_medications]
+    historical_meds = [
+        _medication_view(m, rx_by_id, record, tz) for m in index.historical_medications
+    ]
     # "as of" = render-day, NOT encounter date (GOLD §5#9).
     meds_as_of = _dt.date.today().strftime("%m/%d/%Y")  # noqa: DTZ011 — display-only render-day
 
     # --- social history (free-text + smoking; rest fall to template empty state)
-    smoking = next(
-        (
-            o
-            for o in record.observations
-            if o.category == ObservationCategory.SOCIAL_HISTORY
-            and (o.display or "").upper().startswith("TOBACCO")
-        ),
-        None,
-    )
-    sh_freetext = next(
-        (
-            p.text
-            for p in record.past_medical_history
-            if (p.kind or "").lower().startswith("social")
-        ),
-        None,
-    )
+    smoking = index.smoking
+    sh_freetext = index.sh_freetext
 
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
@@ -478,10 +572,10 @@ def build_context(
         for d in record.devices
         if d.description
     ]
-    active_hc = [_concern_view(h) for h in record.health_concerns if h.active]
-    inactive_hc = [_concern_view(h) for h in record.health_concerns if not h.active]
-    active_goals = [_concern_view(g) for g in record.goals if g.active]
-    inactive_goals = [_concern_view(g) for g in record.goals if not g.active]
+    active_hc = [_concern_view(h) for h in index.active_concerns]
+    inactive_hc = [_concern_view(h) for h in index.inactive_concerns]
+    active_goals = [_concern_view(g) for g in index.active_goals]
+    inactive_goals = [_concern_view(g) for g in index.inactive_goals]
 
     # --- orders ----------------------------------------------------------------
     lab_orders = [
@@ -628,9 +722,11 @@ def _dx_view(condition: Any) -> dict[str, str | None]:
     }
 
 
-def _encounter_diagnoses(record: PatientRecord, encounter: Encounter) -> list[dict[str, str]]:
+def _encounter_diagnoses(
+    conditions_by_id: dict[str, Any], encounter: Encounter
+) -> list[dict[str, str]]:
     """The "Diagnoses attached to this encounter" block (GOLD §9)."""
-    by_id = {c.id: c for c in record.conditions}
+    by_id = conditions_by_id
     out: list[dict[str, str]] = []
     for dx_id in encounter.diagnosis_ids:
         condition = by_id.get(dx_id)
@@ -646,9 +742,10 @@ def _encounter_diagnoses(record: PatientRecord, encounter: Encounter) -> list[di
     return out
 
 
-def _allergy_split(
-    record: PatientRecord, category: AllergyCategory
-) -> dict[str, list[dict[str, str | None]]]:
+def _allergy_views(items: list[Any]) -> dict[str, list[dict[str, str | None]]]:
+    """Split one allergy category's items into active/inactive view rows. The
+    caller passes the pre-grouped list from the record index (GOLD §6)."""
+
     def view(a: Any) -> dict[str, str | None]:
         reactions = ", ".join(a.reactions) if a.reactions else None
         severity_reactions = " / ".join(p for p in (a.severity, reactions) if p)
@@ -658,7 +755,6 @@ def _allergy_split(
             "onset": _fmt_date_short(a.onset) or "-",
         }
 
-    items = [a for a in record.allergies if a.category == category]
     return {
         "active": [view(a) for a in items if a.active],
         "inactive": [view(a) for a in items if not a.active],
