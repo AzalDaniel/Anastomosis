@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import anastomosis.sources.ccda
+import anastomosis.sources.fhir_r4
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra  # noqa: F401  registers the built-in adapters at import
 from anastomosis.sources import available_sources, detect_source, get_source
