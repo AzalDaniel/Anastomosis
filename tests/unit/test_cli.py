@@ -68,6 +68,35 @@ def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.Mon
     assert (out / "qa_report.json").exists()
 
 
+def test_pipeline_run_delivery_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the CLI's archive/bundle/ccda summary lines (3 patients in the
+    fixture), so a future change to the delivery output is caught."""
+    pytest.importorskip("fitz", reason="delivery e2e needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "charts"
+    result = runner.invoke(
+        app,
+        [
+            "pipeline",
+            "run",
+            str(FIXTURE),
+            "--out",
+            str(out),
+            "--archive",
+            str(tmp_path / "arc"),
+            "--bundle",
+            str(tmp_path / "bun"),
+            "--ccda",
+            str(tmp_path / "cda"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "Archive: 3 patients, 6 encounters, 6 pdfs" in normalized
+    assert "Bundles: 3 patients" in normalized
+    assert "C-CDA: 3 patients" in normalized
+
+
 def test_pipeline_run_rejects_unknown_dir(tmp_path: Path) -> None:
     result = runner.invoke(app, ["pipeline", "run", str(tmp_path), "--out", str(tmp_path / "o")])
     assert result.exit_code == 2

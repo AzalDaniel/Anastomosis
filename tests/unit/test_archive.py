@@ -18,7 +18,7 @@ import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapt
 from anastomosis.core.fhir import from_bundle
 from anastomosis.core.model import PatientRecord
 from anastomosis.deliver.archive import ArchiveDeliverer
-from anastomosis.deliver.archive.archive import _patient_prefix
+from anastomosis.deliver.pdfindex import patient_prefix as _patient_prefix
 from anastomosis.sources import get_source
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
