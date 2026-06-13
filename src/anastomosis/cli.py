@@ -25,11 +25,10 @@ import anastomosis
 import anastomosis.sources.ccda
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra
-from anastomosis.sources import available_sources
 
 if TYPE_CHECKING:
+    from anastomosis.core.commands import DeliveryOutcome, PipelineCommand
     from anastomosis.core.model import PatientRecord
-    from anastomosis.pipeline import PipelineResult
 
 app = typer.Typer(
     name="anast",
@@ -69,27 +68,22 @@ def main(
 @app.command()
 def info() -> None:
     """Show toolkit status: installed extras, sources, packs, environment."""
-    from anastomosis.reconstruct import discover_packs
+    from anastomosis.core.commands import get_toolkit_info
 
-    console.print(f"[bold]anastomosis[/bold] {anastomosis.__version__}")
-    for extra, module in (
-        ("render", "playwright"),
-        ("render-qa", "fitz"),
-        ("fhir", "fhir.resources"),
-        ("gui", "webview"),
-    ):
-        try:
-            __import__(module)
+    toolkit = get_toolkit_info()
+    console.print(f"[bold]anastomosis[/bold] {toolkit.version}")
+    for extra, available in toolkit.extras.items():
+        if available:
             console.print(f"  extra [green]{extra}[/green]: available")
-        except ImportError:
-            console.print(f"  extra [dim]{extra}[/dim]: not installed")
-    for adapter in available_sources():
-        console.print(f"  source [cyan]{adapter.name}[/cyan]: {adapter.description}")
-    for status in discover_packs().values():
-        if status.available:
-            console.print(f"  pack [cyan]{status.name}[/cyan]: available ({status.origin})")
         else:
-            console.print(f"  pack [red]{status.name}[/red]: {status.diagnosis}")
+            console.print(f"  extra [dim]{extra}[/dim]: not installed")
+    for name, description in toolkit.sources:
+        console.print(f"  source [cyan]{name}[/cyan]: {description}")
+    for pack in toolkit.packs:
+        if pack.available:
+            console.print(f"  pack [cyan]{pack.name}[/cyan]: available ({pack.origin})")
+        else:
+            console.print(f"  pack [red]{pack.name}[/red]: {pack.diagnosis}")
 
 
 @app.command("gui")
@@ -126,24 +120,16 @@ def gui_cmd(
 # every console message and exit code byte-identical to before the extraction.
 
 
-def _run_pipeline(
-    *,
-    export_dir: Path,
-    out: Path,
-    source: str | None,
-    pack: str,
-    pack_dirs: list[Path] | None,
-    force: bool,
-    section: list[str] | None,
-    qa: bool,
-) -> PipelineResult:
-    """Run the shared pipeline core, rendering its events as the CLI always has.
+def _run_command(cmd: PipelineCommand) -> None:
+    """Run a :class:`PipelineCommand`, rendering its events as the CLI always has.
 
     The structured :class:`~anastomosis.pipeline.StageEvent`\\ s are translated
     back into the exact Rich lines the CLI printed before the
-    :mod:`anastomosis.pipeline` extraction; :class:`PipelineError` becomes the
+    :mod:`anastomosis.pipeline` extraction, then the delivery outcomes are
+    printed in archive→bundle→ccda order; :class:`PipelineError` becomes the
     same ``console.print`` + ``typer.Exit`` it raised inline.
     """
+    from anastomosis.core.commands import run_pipeline_command
     from anastomosis.pipeline import (
         STAGE_DETECT,
         STAGE_QA,
@@ -151,13 +137,12 @@ def _run_pipeline(
         PipelineError,
         StageEvent,
     )
-    from anastomosis.pipeline import run_pipeline as _run_core
 
     def _print_event(event: StageEvent) -> None:
         if event.stage == STAGE_DETECT:
             # Announce only genuine auto-detection (the original behavior):
             # an operator who typed --source already knows the source.
-            if source is None:
+            if cmd.source is None:
                 console.print(f"Detected source: [cyan]{event.detail}[/cyan]")
         elif event.stage == STAGE_RECONSTRUCT:
             failed = event.counts["failed"]
@@ -165,7 +150,7 @@ def _run_pipeline(
                 f"[green]{event.counts['rendered']} rendered[/green], "
                 f"{event.counts['skipped']} skipped, "
                 f"{'[red]' if failed else ''}{failed} failed"
-                f"{'[/red]' if failed else ''} → {out}"
+                f"{'[/red]' if failed else ''} → {cmd.charts_dir}"
             )
         elif event.stage == STAGE_QA:
             if event.detail:  # QA downgraded (no PyMuPDF)
@@ -181,20 +166,28 @@ def _run_pipeline(
         # The ingest stage prints no CLI line of its own (the original printed none).
 
     try:
-        return _run_core(
-            export_dir=export_dir,
-            out=out,
-            source=source,
-            pack=pack,
-            pack_dirs=pack_dirs,
-            force=force,
-            section=section,
-            qa=qa,
-            on_event=_print_event,
-        )
+        result = run_pipeline_command(cmd, on_event=_print_event)
     except PipelineError as exc:
-        _report_pipeline_error(exc, source=source, pack=pack)
+        _report_pipeline_error(exc, source=cmd.source, pack=cmd.pack)
         raise typer.Exit(code=exc.exit_code) from None
+    for kind in ("archive", "bundle", "ccda"):
+        outcome = result.deliveries.get(kind)
+        if outcome is not None:
+            _print_delivery(outcome)
+
+
+def _print_delivery(outcome: DeliveryOutcome) -> None:
+    """Print one deliverer's outcome, byte-identical to the pre-extraction lines."""
+    counts = outcome.counts
+    if outcome.kind == "archive":
+        console.print(
+            f"Archive: [green]{counts['patients']} patients[/green], "
+            f"{counts['encounters']} encounters, {counts['pdfs']} pdfs → {outcome.out_dir}"
+        )
+    elif outcome.kind == "bundle":
+        console.print(f"Bundles: [green]{counts['patients']} patients[/green] → {outcome.out_dir}")
+    elif outcome.kind == "ccda":
+        console.print(f"C-CDA: [green]{counts['patients']} patients[/green] → {outcome.out_dir}")
 
 
 def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> None:
@@ -273,22 +266,29 @@ def pipeline_run(
     ] = None,
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
-    pipeline = _run_pipeline(
-        export_dir=export_dir,
-        out=out,
-        source=source,
-        pack=pack,
-        pack_dirs=pack_dir,
-        force=force,
-        section=section,
-        qa=qa,
-    )
+    from anastomosis.core.commands import DeliveryCommand, PipelineCommand
+    from anastomosis.pipeline import parse_section_overrides
+
+    deliveries: list[DeliveryCommand] = []
     if archive is not None:
-        _deliver_archive(pipeline, pdfs_dir=out, out=archive)
+        deliveries.append(DeliveryCommand("archive", archive))
     if bundle is not None:
-        _deliver_bundles(pipeline, pdfs_dir=out, out=bundle)
+        deliveries.append(DeliveryCommand("bundle", bundle))
     if ccda is not None:
-        _deliver_ccda(pipeline, out=ccda)
+        deliveries.append(DeliveryCommand("ccda", ccda))
+    _run_command(
+        PipelineCommand(
+            export_dir=export_dir,
+            charts_dir=out,
+            source=source,
+            pack=pack,
+            pack_dirs=tuple(pack_dir or ()),
+            force=force,
+            sections=parse_section_overrides(section),
+            qa=qa,
+            deliveries=tuple(deliveries),
+        )
+    )
 
 
 # --- anast archive ----------------------------------------------------------
@@ -325,18 +325,23 @@ def archive_cmd(
     ] = None,
 ) -> None:
     """Run the full pipeline and write a searchable offline archive."""
+    from anastomosis.core.commands import DeliveryCommand, PipelineCommand
+    from anastomosis.pipeline import parse_section_overrides
+
     charts = charts_dir or (out / "_charts")
-    pipeline = _run_pipeline(
-        export_dir=export_dir,
-        out=charts,
-        source=source,
-        pack=pack,
-        pack_dirs=pack_dir,
-        force=force,
-        section=section,
-        qa=qa,
+    _run_command(
+        PipelineCommand(
+            export_dir=export_dir,
+            charts_dir=charts,
+            source=source,
+            pack=pack,
+            pack_dirs=tuple(pack_dir or ()),
+            force=force,
+            sections=parse_section_overrides(section),
+            qa=qa,
+            deliveries=(DeliveryCommand("archive", out),),
+        )
     )
-    _deliver_archive(pipeline, pdfs_dir=charts, out=out)
 
 
 # --- anast bundle -----------------------------------------------------------
@@ -373,51 +378,23 @@ def bundle_cmd(
     ] = None,
 ) -> None:
     """Run the full pipeline and write one per-patient bundle directory each."""
+    from anastomosis.core.commands import DeliveryCommand, PipelineCommand
+    from anastomosis.pipeline import parse_section_overrides
+
     charts = charts_dir or (out / "_charts")
-    pipeline = _run_pipeline(
-        export_dir=export_dir,
-        out=charts,
-        source=source,
-        pack=pack,
-        pack_dirs=pack_dir,
-        force=force,
-        section=section,
-        qa=qa,
+    _run_command(
+        PipelineCommand(
+            export_dir=export_dir,
+            charts_dir=charts,
+            source=source,
+            pack=pack,
+            pack_dirs=tuple(pack_dir or ()),
+            force=force,
+            sections=parse_section_overrides(section),
+            qa=qa,
+            deliveries=(DeliveryCommand("bundle", out),),
+        )
     )
-    _deliver_bundles(pipeline, pdfs_dir=charts, out=out)
-
-
-# --- delivery wiring --------------------------------------------------------
-
-
-def _deliver_archive(pipeline: PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
-    from anastomosis.deliver.archive import ArchiveDeliverer
-
-    deliverer = ArchiveDeliverer()
-    result = deliverer.deliver(pipeline.records, pdfs_dir, out, qa_report=pipeline.qa_report)
-    console.print(
-        f"Archive: [green]{result.patient_count} patients[/green], "
-        f"{result.encounter_count} encounters, {result.pdf_count} pdfs → {result.out_dir}"
-    )
-
-
-def _deliver_bundles(pipeline: PipelineResult, *, pdfs_dir: Path, out: Path) -> None:
-    from anastomosis.deliver.bundle import BundleDeliverer
-
-    deliverer = BundleDeliverer()
-    pdfs = sorted(pdfs_dir.glob("*.pdf")) if pdfs_dir.is_dir() else []
-    written = 0
-    for record in pipeline.records:
-        deliverer.deliver(record, pdfs, out, qa_report=pipeline.qa_report)
-        written += 1
-    console.print(f"Bundles: [green]{written} patients[/green] → {out}")
-
-
-def _deliver_ccda(pipeline: PipelineResult, *, out: Path) -> None:
-    from anastomosis.deliver.ccda_export import deliver_ccda
-
-    written = deliver_ccda(pipeline.records, out)
-    console.print(f"C-CDA: [green]{len(written)} patients[/green] → {out}")
 
 
 # --- anast destination ------------------------------------------------------
