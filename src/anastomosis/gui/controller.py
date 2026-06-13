@@ -80,6 +80,11 @@ class GuiController:
         self._sink = sink
         self._lock = threading.Lock()
         self._busy = False
+        # The most recent run's per-patient detail (display name, DOB, note
+        # counts), held for the dashboard to fetch via last_run_summary() once
+        # the count-only `done` event lands. PHI: local display only, never
+        # logged or emitted. Empty until the first successful run.
+        self._last_patients: list[dict[str, object]] = []
 
     def _emit(self, event: dict[str, object]) -> None:
         """Emit through the sink, swallowing sink failures.
@@ -123,6 +128,20 @@ class GuiController:
             }
         except Exception as exc:  # defensive: info() must never raise into JS
             return self._fail("info", exc)
+
+    def last_run_summary(self) -> dict[str, object]:
+        """The most recent run's per-patient detail, for LOCAL dashboard display.
+
+        The async run path returns immediately with ``{"started": True}`` and
+        streams PHI-safe COUNTS back as events; the per-patient roll-up (display
+        name, DOB, #encounters, #notes) is held here for the dashboard to fetch
+        once the ``done`` event lands. These values are PHI by design — they are
+        returned for direct on-screen display on the operator's own machine and
+        are NEVER emitted as events or written to any log. Returns
+        ``{"ok": True, "patients": [...]}``; the list is empty before the first
+        successful run and after a failed run. Never raises.
+        """
+        return {"ok": True, "patients": list(self._last_patients)}
 
     def detect(self, export_dir: str) -> dict[str, object]:
         """Sniff ``export_dir`` for a known source format (the picker hint)."""
@@ -421,16 +440,21 @@ class GuiController:
         ccda: bool = False,
         force: bool = False,
         pack_dirs: list[str] | None = None,
+        trust_new: bool = False,
     ) -> dict[str, object]:
         """Drive the shared pipeline core, emitting stage/progress events.
 
-        Returns the final roll-up dict (also emitted as a ``done`` event). Any
-        failure becomes ``{"ok": False, "error": <type-or-diagnosis>}`` plus an
-        ``error`` event. The ``busy`` guard rejects a second concurrent run.
+        Returns the final roll-up dict (also emitted as a ``done`` event), with
+        a ``patients`` key carrying the per-patient detail for local display
+        (names/DOB/note counts — never emitted as events; see
+        :meth:`last_run_summary`). Any failure becomes ``{"ok": False, "error":
+        <type-or-diagnosis>}`` plus an ``error`` event. The ``busy`` guard
+        rejects a second concurrent run.
 
         ``force`` re-renders documents that already exist; ``pack_dirs`` makes
-        extra (trusted) pack directories available — the same backend levers the
-        CLI exposes, no longer hard-coded off. Deliverer flags
+        extra pack directories available and ``trust_new`` records (trusts)
+        their current code hash on first use — the same backend levers the CLI
+        exposes, no longer hard-coded off. Deliverer flags
         (``archive``/``bundle``/``ccda``) write into sibling subdirectories of
         ``out_dir`` since the GUI has one output-dir field.
         """
@@ -449,6 +473,7 @@ class GuiController:
                 ccda=ccda,
                 force=force,
                 pack_dirs=pack_dirs,
+                trust_new=trust_new,
             )
         finally:
             self._release()
@@ -466,6 +491,7 @@ class GuiController:
         ccda: bool = False,
         force: bool = False,
         pack_dirs: list[str] | None = None,
+        trust_new: bool = False,
     ) -> dict[str, object]:
         """Run the pipeline on a daemon thread (the GUI stays responsive).
 
@@ -474,7 +500,9 @@ class GuiController:
         locked body and releases in ``finally``). Returns ``{"ok": True,
         "started": True}`` on success or ``{"ok": False, "error": "Busy"}`` if a
         run is already in flight. The result arrives as
-        ``stage``/``progress``/``done``/``error`` events.
+        ``stage``/``progress``/``done``/``error`` events; the per-patient detail
+        is fetched after ``done`` via :meth:`last_run_summary` (the events stay
+        count-only).
         """
         if not self._acquire():
             return {"ok": False, "error": "Busy"}
@@ -493,6 +521,7 @@ class GuiController:
                     ccda=ccda,
                     force=force,
                     pack_dirs=pack_dirs,
+                    trust_new=trust_new,
                 )
             finally:
                 self._release()
@@ -516,16 +545,21 @@ class GuiController:
         ccda: bool,
         force: bool = False,
         pack_dirs: list[str] | None = None,
+        trust_new: bool = False,
     ) -> dict[str, object]:
         from anastomosis.core.commands import (
             DeliveryCommand,
             PipelineCommand,
             run_pipeline_command,
+            summarize_patients,
         )
         from anastomosis.pipeline import PipelineError
 
         out = Path(out_dir)
         rollup: dict[str, int] = {}
+        # Clear stale detail up front so a failed run never leaves the previous
+        # run's patients fetchable.
+        self._last_patients = []
 
         def _on_event(event: StageEvent) -> None:
             stage = _STAGE_MAP.get(event.stage)
@@ -556,6 +590,7 @@ class GuiController:
                     pack=pack,
                     pack_dirs=tuple(Path(p) for p in pack_dirs or []),
                     force=force,
+                    trust_new=trust_new,
                     sections=sections,
                     qa=qa,
                     deliveries=tuple(deliveries),
@@ -571,8 +606,23 @@ class GuiController:
         if result.deliveries:
             self._present_deliveries(result.deliveries, rollup)
 
+        # Per-patient detail rides the RETURN value (and last_run_summary), never
+        # an event: names/DOB are local display only, the event stream is counts.
+        # Store before emitting `done` so the dashboard's done handler can fetch
+        # it immediately.
+        patients: list[dict[str, object]] = [
+            {
+                "patient_id": s.patient_id,
+                "display_name": s.display_name,
+                "birth_date": s.birth_date,
+                "encounters": s.encounters,
+                "documents": s.documents,
+            }
+            for s in summarize_patients(result.pipeline)
+        ]
+        self._last_patients = patients
         self._emit(done_event(**rollup))
-        return {"ok": True, **rollup}
+        return {"ok": True, **rollup, "patients": patients}
 
     def _present_deliveries(
         self, deliveries: dict[str, DeliveryOutcome], rollup: dict[str, int]
