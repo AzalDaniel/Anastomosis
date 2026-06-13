@@ -1,0 +1,134 @@
+name: practice_fusion_soap
+version: "1.0"
+description: >
+  Forensic Practice Fusion SOAP-note replica. Ports the predecessor's
+  35-section PF chart layout (re-typed, identity synthesized): 3-column
+  PATIENT/FACILITY/ENCOUNTER header, the unified 6-column demographics table,
+  active/inactive insurance + payment, vitals + vitals flowsheet, diagnoses,
+  drug/food/environmental allergies, current/historical medications with the
+  ESCRIPT/SCRIPT prescription lines, immunizations, the 17 social-history
+  sub-categories, past medical / family health history, advance directive,
+  implantable devices, health concerns, goals, Subjective/Objective/Assessment/
+  Plan, orders, screenings, observations, quality of care, care plan, and the
+  conditional addenda table. CSS tokens, page geometry, and page-break rules
+  are carried exactly from the predecessor's forensic gold standard.
+
+# Practices charting on Practice Fusion are US/Eastern (GOLD_STANDARD §2).
+locale: en_US
+timezone: America/New_York
+
+# Page geometry — GOLD_STANDARD §1 "Page geometry (NEVER change)".
+# Letter 612x792pt; Playwright margins top .6 / right .38 / bottom .44 / left .39 in.
+# These are the forensically-verified margins; the @page rule in template.html
+# mirrors them. (engine -> ChromiumRenderer consumes these four values.)
+page:
+  size: Letter
+  margin_top: 0.6in
+  margin_right: 0.38in
+  margin_bottom: 0.44in
+  margin_left: 0.39in
+
+# Filename / output-path convention.
+#
+# The predecessor's full rule (GOLD_STANDARD §11) is:
+#   {OUTPUT_ROOT}/{First Last}/{MM-DD-YYYY}_{abbreviate_cc(ChiefComplaint)}.pdf
+# i.e. a per-patient SUBDIRECTORY plus a chief-complaint-abbreviated filename
+# (a 26-pattern abbreviation table + 50-char cap).
+#
+# The current LoadedPack/engine filename contract (reconstruct/packs.py
+# FilenameRules + engine._filename_for) exposes exactly four substitution
+# fields — {family} {given} {dos} {type} — applies core _safe_name() to each
+# (which strips the path separator), does NOT compute an abbreviated-CC token,
+# and does NOT create per-patient parent directories. Reproducing the §11 rule
+# faithfully therefore needs a backwards-compatible engine extension (a
+# context-supplied filename-field hook + parent-dir creation).
+#
+# DECISION (flagged): rather than hack the engine for one pack, this pack ships
+# the closest pattern the contract supports today and the §11 rule is recorded
+# as a follow-up (see RULES.md "Filename rule" + the issue #4 close-out note).
+# The same-day-collision guid_suffix defense is carried as-is.
+filename:
+  pattern: "{given}_{family}_{dos}_{type}.pdf"
+  collision: guid_suffix
+
+# User-togglable sections (the GUI section-selection matrix). The PF original
+# renders every section ALWAYS (even when empty); these flags let an operator
+# suppress the non-clinical / optional sections for a leaner archival note.
+# The four SOAP sections, the demographics header, diagnoses, and allergies are
+# structural and intentionally NOT togglable.
+sections:
+  insurance:
+    label: Insurance (active / inactive)
+    default: true
+    description: Active and inactive insurance coverage sections (page 2).
+  payment:
+    label: Payment information
+    default: true
+    description: Guarantor / payment-information table.
+  vitals:
+    label: Vitals for this encounter
+    default: true
+    description: The no-fill vitals table for this encounter.
+  vitals_flowsheet:
+    label: Vitals flowsheet
+    default: true
+    description: Prior-encounter vitals flowsheet (most recent 10 columns).
+  immunizations:
+    label: Immunizations
+    default: true
+  social_history:
+    label: Social history
+    default: true
+    description: The 17 social-history sub-categories.
+  past_medical_history:
+    label: Past medical history
+    default: true
+  family_history:
+    label: Family health history
+    default: true
+  advance_directives:
+    label: Advance directive
+    default: true
+  devices:
+    label: Implantable devices
+    default: true
+  health_concerns:
+    label: Health concerns (active / inactive)
+    default: true
+  goals:
+    label: Goals (active / inactive)
+    default: true
+  orders:
+    label: Orders (lab / imaging)
+    default: true
+  addenda:
+    label: Addenda
+    default: true
+    description: Conditional — renders only when the encounter has addendum rows.
+
+# Design tokens. The QA visual_tokens check asserts the heading band fill and the
+# forensic borders; the renderer / template read them. All forensically measured
+# from PF originals (GOLD_STANDARD §1 "Forensic design tokens").
+tokens:
+  heading_fill: "#f1f1f1"          # grey section/sub/th band (rgb 241,241,241) — NOT #f2f2f2
+  border: "#aaaaaa"                # rgb 170,170,170 — section borders, dividers (0.8pt)
+  border_light: "#c8c8c8"          # rgb 200,200,200
+  row_sep: "#e6e6e6"               # rgb 230,230,230 — data-table row bottoms (0.4pt)
+  muted_text: "#737373"            # rgb 115,115,115 — header labels, footer URL
+  strong_text: "#333333"           # rgb 51,51,51
+  body_font: "Arial, Helvetica, sans-serif"
+  # Logo: SYNTHETIC neutral placeholder (the vendor mark is NOT shipped — see
+  # RULES.md §logo). Operators replace assets/placeholder_logo.svg, or set
+  # logo_data_uri to their own facility logo data-URI.
+  logo_asset: "assets/placeholder_logo.svg"
+  logo_data_uri: ""                # operator override; empty = use logo_asset
+  # Footer URL: SYNTHETIC. The original carried a real PF tenant path
+  # (static.practicefusion.com/.../{practice-group-guid}/encounter/{guid}/...);
+  # that real path is REDACTED. This neutral placeholder is shown instead, and
+  # the GOLD_STANDARD §1 footer-flex truncation fix is honored in RULES.md.
+  footer_url: "https://example.com/encounter/soap-note"
+
+# Header fields the L3 delivery verification reads back off the rendered PDF
+# (the wrong-chart defense). These appear in the 3-column PATIENT/ENCOUNTER
+# header block.
+verify_header_fields: [patient_name, dob, dos]

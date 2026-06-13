@@ -78,9 +78,37 @@ parentheses.
   filters to current row versions, and routes every unconsumed column to
   `oracle_ehi:` extensions. CE_BLOB compression (brief §8 could-not-determine)
   is a loud `NotImplementedError`, not a guess; PHI-safe logging throughout.
+- **Practice Fusion SOAP-note template pack** (`packs/practice_fusion_soap/`) —
+  the 35-section forensic PF chart replica, re-typed from the predecessor's
+  gold standard: 3-column PATIENT/FACILITY/ENCOUNTER header, the unified 6-column
+  demographics table, active/inactive insurance + payment, vitals + vitals
+  flowsheet, diagnoses, drug/food/environmental allergies, current/historical
+  medications with the ESCRIPT/SCRIPT prescription lines, immunizations, the 17
+  social-history sub-categories, PMH, family/advance-directive/devices/health-
+  concerns/goals, SOAP, orders, screenings, observations, quality of care, care
+  plan, and the conditional addenda table. Honors the documented engine lessons
+  exactly (forensic `#f1f1f1` band, `print-color-adjust: exact`, the
+  border-collapse "3 lines not 4" rule, the `orphans/widows: 2` + page-break
+  rules, Letter geometry with the `.6/.38/.44/.39in` margins) with all real
+  clinic identity synthesized (neutral placeholder logo + footer URL, providers
+  from synthetic fixtures). Ships a PF golden lane and a packgen fixed-point
+  re-discovery e2e (the learner recovers the pack's section taxonomy + band fill
+  from its own renders). `RULES.md` records the forensics; `tools/regen_goldens.py`
+  now regenerates every pack's golden. (#4)
 
 ### Fixed
 
+- **Guarantor mapping read invented columns** — the `pf_tebra` adapter's
+  `patient-guarantor.tsv` mapping now reads the predecessor-verified column
+  set (`BillingPatientRelationshipOption`, `BillingPaymentType`,
+  `DateOfBirth`, `BillingGenderOption`, `SSNumber`, bare `City`/`State`/`Zip`,
+  `PrimaryPhoneNumber`/`SecondaryPhoneNumber`), so payment preference, DOB,
+  sex and SSN populate on a real export instead of silently coming up empty;
+  unmapped guarantor columns stash losslessly into the new
+  `Guarantor.extensions`. The PF pack's payment cells render the
+  predecessor's exact empty states (`-` everywhere, `Primary Insurance`
+  preference default) — a present-but-sparse guarantor previously printed
+  literal `None` into the PDF. (#4)
 - **Windows tracking race** — set the SQLite `busy_timeout` before switching to
   WAL `journal_mode`, fixing a Windows CI race in the upload ledger. (#15)
 - **Tracking busy-timeout on slow CI** — raised the ledger busy timeout to 30s
@@ -103,6 +131,10 @@ parentheses.
   contain per-patient data, so `packgen` stores opaque sample indices, suppresses
   single-sample static/per-patient inference, and restates the same-patient
   caveat in the emitted `DRAFT.md`. (#22, #23)
+- **Pack logo cannot reach the network or the filesystem at large** — the
+  PF pack's `tokens.logo_data_uri` override accepts only inline `data:` URIs
+  (an http/https/file URL would make Chromium fetch it while rendering PHI),
+  and `tokens.logo_asset` refuses paths that resolve outside the pack root. (#4)
 
 ## [0.1.0] — 2026-06-11
 

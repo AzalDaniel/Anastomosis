@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Neutral placeholder logo for the practice_fusion_soap pack.
+
+  The original Practice Fusion SOAP note carries the vendor's own logo mark
+  (bottom-right of the last page). That mark is the vendor's trademark and is
+  NOT reproduced here: this is a generic, synthetic placeholder so the pack
+  renders a logo-shaped element in the correct position without shipping any
+  real brand asset.
+
+  Operators may replace this file (or override `tokens.logo_data_uri` in a
+  site config / pack.yaml) with their own facility logo. See RULES.md §logo
+  and pack.yaml `tokens.logo_*`.
+
+  Dimensions follow the original logo footprint (~110pt x 13pt) so layout and
+  page-break behavior match the forensic geometry.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="221" height="26" viewBox="0 0 221 26">
+  <rect x="0.5" y="0.5" width="220" height="25" rx="3" fill="none" stroke="rgb(170,170,170)" stroke-width="1"/>
+  <text x="10" y="17" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="bold" fill="rgb(51,51,51)">clinic</text>
+  <text x="56" y="17" font-family="Arial, Helvetica, sans-serif" font-size="12" fill="rgb(115,115,115)">logo placeholder</text>
+</svg>
