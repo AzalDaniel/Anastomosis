@@ -141,6 +141,76 @@ def test_run_pipeline_progress_carries_counts(
     assert by_stage["qa"]["pass"] == 6
 
 
+# --- per-patient detail (GUI parity: names/DOB/note-counts, local display) --
+
+
+def test_run_pipeline_returns_per_patient_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run return value carries a per-patient roll-up (name, DOB, #notes)
+    for local dashboard display — while the event stream stays count-only."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    result = GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"))
+
+    assert result["ok"] is True
+    patients = result["patients"]
+    assert isinstance(patients, list) and len(patients) == 3
+    by_name = {p["display_name"]: p for p in patients}
+    # Exact names/DOBs/counts from the 3-patient / 6-encounter fixture.
+    assert by_name["Ada Q Fixture"]["birth_date"] == "1985-03-14"
+    assert by_name["Ada Q Fixture"]["encounters"] == 3
+    assert by_name["Ada Q Fixture"]["documents"] == 3
+    assert by_name["Boris Sample Jr."]["birth_date"] == "1952-07-04"
+    assert by_name["Boris Sample Jr."]["documents"] == 2
+    assert by_name["Cleo Placeholder"]["birth_date"] == "2021-12-01"
+    assert by_name["Cleo Placeholder"]["documents"] == 1
+    assert sum(p["documents"] for p in patients) == 6
+    # The names ride the RETURN value only — never the PHI-scanned event stream.
+    blob = repr(sink.events)
+    for name in FIXTURE_NAMES:
+        assert name not in blob, f"event log leaked patient name {name!r}"
+
+
+def test_last_run_summary_serves_async_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The async path returns started=True; the per-patient detail is fetched
+    after the `done` event via last_run_summary (the events carry no names)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.run_pipeline_async(str(FIXTURE), str(tmp_path / "out"))
+    assert started == {"ok": True, "started": True}
+
+    deadline = time.time() + 10
+    while time.time() < deadline and (not sink.events or sink.events[-1]["type"] != "done"):
+        time.sleep(0.05)
+    assert sink.events[-1]["type"] == "done"
+
+    summary = controller.last_run_summary()
+    assert summary["ok"] is True
+    patients = summary["patients"]
+    assert isinstance(patients, list) and len(patients) == 3
+    assert {p["display_name"] for p in patients} == {
+        "Ada Q Fixture",
+        "Boris Sample Jr.",
+        "Cleo Placeholder",
+    }
+
+
+def test_last_run_summary_empty_before_any_run() -> None:
+    assert GuiController(_RecordingSink()).last_run_summary() == {"ok": True, "patients": []}
+
+
+def test_last_run_summary_cleared_after_failed_run(tmp_path: Path) -> None:
+    """A failed run leaves no fetchable patient detail (no stale carry-over)."""
+    controller = GuiController(_RecordingSink())
+    result = controller.run_pipeline(str(tmp_path / "empty"), str(tmp_path / "out"))
+    assert result["ok"] is False
+    assert controller.last_run_summary() == {"ok": True, "patients": []}
+
+
 # --- busy guard ------------------------------------------------------------
 
 
@@ -257,10 +327,17 @@ def test_force_and_pack_dirs_reach_the_pipeline(
     extra = tmp_path / "extra_packs"
     extra.mkdir()
     GuiController(_RecordingSink()).run_pipeline(
-        str(FIXTURE), str(tmp_path / "out"), force=True, pack_dirs=[str(extra)]
+        str(FIXTURE),
+        str(tmp_path / "out"),
+        force=True,
+        pack_dirs=[str(extra)],
+        trust_new=True,
     )
     assert captured["force"] is True
     assert captured["pack_dirs"] == [extra]
+    # trust_new threads through too, so a GUI-supplied --pack-dir can be trusted
+    # on first use (the #40 hash-pin TOFU path) instead of failing untrusted.
+    assert captured["trust_new"] is True
 
 
 def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -81,6 +81,13 @@
           <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
         </div>
 
+        <!-- Source format: "auto-detect" (value "") lets the pipeline sniff the
+             export; the rest are the registered adapters from info().sources. -->
+        <div class="field">
+          <label for="source">Source format</label>
+          <select id="source"></select>
+        </div>
+
         <div class="field">
           <label for="out-dir">Output directory</label>
           <input type="text" id="out-dir" placeholder="/path/to/output" />
@@ -89,6 +96,15 @@
         <div class="field">
           <label for="pack">Template pack</label>
           <select id="pack"></select>
+        </div>
+
+        <!-- Extra pack directory (optional): a custom --pack-dir made selectable
+             above. "trust new pack code" is the #40 hash-pin TOFU consent —
+             required the first time a pack dir's code is seen (and after it
+             changes). -->
+        <div class="field">
+          <label for="pack-dir">Extra pack directory (optional)</label>
+          <input type="text" id="pack-dir" placeholder="/path/to/custom/packs" />
         </div>
 
         <!-- Section-Selection Matrix (item 18b): liquid toggles per pack section,
@@ -127,6 +143,21 @@
           </label>
         </div>
 
+        <!-- Run levers (parity with the CLI): force re-render, and trust the
+             extra pack dir's code on first use. -->
+        <div class="toggles">
+          <label class="toggle">
+            <input type="checkbox" id="force" />
+            <span class="track"></span>
+            <span>force re-render</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="trust-pack" />
+            <span class="track"></span>
+            <span>trust new pack code</span>
+          </label>
+        </div>
+
         <button class="run-btn btn btn-primary" id="run-btn" type="button">run pipeline</button>
       </section>
 
@@ -155,6 +186,16 @@
           <div class="name">deliver</div>
           <div class="counters"></div>
         </div>
+      </section>
+
+      <!-- Per-patient detail for the completed run: name, DOB, encounter and
+           note counts. Fetched via last_run_summary() after `done` — these are
+           PHI shown locally only, never carried on an event. Hidden until a run
+           produces patients. -->
+      <section class="panel glass-card patients-panel" id="patients-panel"
+               aria-label="Per-patient summary" hidden>
+        <h2>patients</h2>
+        <div class="patients-body" id="patients-body"></div>
       </section>
 
       <div class="shell-spacer"></div>

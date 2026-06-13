@@ -47,6 +47,7 @@ window.anastEvent = function anastEvent(e) {
     case "done":
       Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
       finishRun();
+      loadPatients();
       break;
     case "error":
       markStage(e.stage, "error");
@@ -213,12 +214,33 @@ async function populateHeader() {
         select.appendChild(opt);
       }
       renderSectionMatrix(select.value);
+      populateSources(info.sources || []);
       setStatus("ready");
     }
   } catch (err) {
     showBanner(String(err));
   }
   checkFreshness();
+}
+
+// Source picker: "auto-detect" (empty value → null → pipeline sniffs the
+// export) plus every registered adapter from info().sources.
+function populateSources(sources) {
+  const select = el("source");
+  if (!select) {
+    return;
+  }
+  select.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = "auto-detect";
+  select.appendChild(auto);
+  for (const src of sources) {
+    const opt = document.createElement("option");
+    opt.value = src.name;
+    opt.textContent = src.name;
+    select.appendChild(opt);
+  }
 }
 
 // --- vendor-change detection toast (pack_freshness) -----------------------
@@ -256,19 +278,26 @@ async function onRun() {
   }
   hideBanner();
   resetRail();
+  clearPatients();
   setBusy(true);
   Shell.logEvent({ kind: "info", msg: "run requested" });
   const qa = Shell.segmentValue("qa", "on") === "on";
+  const sourceValue = el("source") ? el("source").value : "";
+  const packDir = el("pack-dir") ? el("pack-dir").value.trim() : "";
   const payload = {
     export_dir: el("export-dir").value,
     out_dir: el("out-dir").value,
     pack: el("pack").value,
-    source: null,
+    // empty selection → auto-detect (the controller treats null as "sniff").
+    source: sourceValue || null,
     sections: gatherSections(),
     qa: qa,
     archive: gatherDeliver("archive"),
     bundle: gatherDeliver("bundle"),
     ccda: gatherDeliver("ccda"),
+    force: !!(el("force") && el("force").checked),
+    pack_dirs: packDir ? [packDir] : [],
+    trust_new: !!(el("trust-pack") && el("trust-pack").checked),
   };
   try {
     // Fire-and-forget on a worker thread; results stream back via anastEvent.
@@ -281,7 +310,10 @@ async function onRun() {
       payload.qa,
       payload.archive,
       payload.bundle,
-      payload.ccda
+      payload.ccda,
+      payload.force,
+      payload.pack_dirs,
+      payload.trust_new
     );
     if (started && started.ok === false) {
       showBanner(started.error);
@@ -296,6 +328,74 @@ async function onRun() {
 function gatherDeliver(name) {
   const box = el(`deliver-${name}`);
   return !!(box && box.checked);
+}
+
+// --- per-patient detail (local display; never on an event) ----------------
+// The `done` event carries counts only; the names/DOB/note-counts are fetched
+// here via last_run_summary() and rendered with textContent (PHI shown locally,
+// never logged). The strict CSP forbids inline anyway.
+async function loadPatients() {
+  if (!hasApi()) {
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.last_run_summary();
+    if (res && res.ok) {
+      renderPatients(res.patients || []);
+    }
+  } catch (err) {
+    // The summary is advisory; never block the run roll-up on it.
+  }
+}
+
+function clearPatients() {
+  const body = el("patients-body");
+  if (body) {
+    body.innerHTML = "";
+  }
+  const panel = el("patients-panel");
+  if (panel) {
+    panel.hidden = true;
+  }
+}
+
+function renderPatients(patients) {
+  const panel = el("patients-panel");
+  const body = el("patients-body");
+  if (!panel || !body) {
+    return;
+  }
+  body.innerHTML = "";
+  if (!patients.length) {
+    panel.hidden = true;
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "patients-table";
+  const head = document.createElement("tr");
+  for (const heading of ["patient", "dob", "encounters", "notes"]) {
+    const th = document.createElement("th");
+    th.textContent = heading;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  for (const p of patients) {
+    const tr = document.createElement("tr");
+    const cells = [
+      p.display_name || "—",
+      p.birth_date || "—",
+      String(p.encounters),
+      String(p.documents),
+    ];
+    for (const value of cells) {
+      const td = document.createElement("td");
+      td.textContent = value; // textContent: PHI rendered as text, never HTML
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  body.appendChild(table);
+  panel.hidden = false;
 }
 
 function init() {

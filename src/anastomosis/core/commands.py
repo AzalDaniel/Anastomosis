@@ -37,11 +37,13 @@ __all__ = [
     "DeliveryKind",
     "DeliveryOutcome",
     "PackInfo",
+    "PatientSummary",
     "PipelineCommand",
     "ToolkitInfo",
     "deliver_outputs",
     "get_toolkit_info",
     "run_pipeline_command",
+    "summarize_patients",
 ]
 
 DeliveryKind = Literal["archive", "bundle", "ccda"]
@@ -103,6 +105,55 @@ class CommandResult:
 
     pipeline: PipelineResult
     deliveries: dict[str, DeliveryOutcome]
+
+
+@dataclass(frozen=True)
+class PatientSummary:
+    """A per-patient roll-up of a completed run — for LOCAL display only.
+
+    Unlike :class:`DeliveryOutcome` (counts only), this carries
+    patient-identifying values — ``display_name`` and ``birth_date`` — so a
+    frontend can show the operator *which* patients a run produced and how many
+    notes each yielded. Those values are PHI: they ride the command layer's
+    return value for direct on-screen display and must NEVER be emitted as
+    progress events or written to any log (the event/log stream stays
+    count-only). ``documents`` is the number of chart PDFs the engine actually
+    rendered (or verified) for the patient; ``encounters`` is how many the
+    source carried.
+    """
+
+    patient_id: str
+    display_name: str
+    birth_date: str | None  # ISO-8601 date, or None when the source lacked one
+    encounters: int
+    documents: int
+
+
+def summarize_patients(result: PipelineResult) -> list[PatientSummary]:
+    """Per-patient roll-up (name, DOB, #encounters, #rendered docs), in ingest order.
+
+    Joins the canonical records with the render result's per-document
+    ``patient_id`` attribution, so a frontend can render which patients the run
+    processed without re-deriving anything. Pure data transformation; carries
+    PHI (names/DOB) for LOCAL display only — callers must never log it or put it
+    on an event. Order follows ``result.records`` (the stable ingest order).
+    """
+    docs_by_patient: dict[str, int] = {}
+    for doc in result.render_result.documents:
+        docs_by_patient[doc.patient_id] = docs_by_patient.get(doc.patient_id, 0) + 1
+    summaries: list[PatientSummary] = []
+    for record in result.records:
+        patient = record.patient
+        summaries.append(
+            PatientSummary(
+                patient_id=patient.id,
+                display_name=patient.display_name,
+                birth_date=patient.birth_date.isoformat() if patient.birth_date else None,
+                encounters=len(record.encounters),
+                documents=docs_by_patient.get(patient.id, 0),
+            )
+        )
+    return summaries
 
 
 def deliver_outputs(
