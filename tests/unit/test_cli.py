@@ -544,6 +544,52 @@ def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     assert list((out / "ccda").glob("*.xml"))
 
 
+def test_migrate_no_route_destination_produces_ccda_and_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A destination with no viable automated route still gets the importable
+    C-CDA written, but the gap is loud and the exit code is 1 (not a silent 0)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    _patch_migration_chromium(monkeypatch)
+    out = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        ["migrate", str(FIXTURE), "--from", "pf-tebra", "--to", "advancedmd", "--out", str(out)],
+    )
+    assert result.exit_code == 1, result.output
+    normalized = " ".join(result.output.split()).lower()
+    assert "chosen: none" in normalized  # the transit map shows no viable route
+    assert "no viable automated route" in normalized  # the actionable warning
+    # The structured C-CDA payload IS still written for manual import.
+    assert list((out / "ccda").glob("*.xml"))
+
+
+def test_pipeline_run_mismatched_source_is_empty_export(tmp_path: Path) -> None:
+    """An explicit --source that reads zero records from a non-matching export is
+    a loud empty_export (exit 2), never a silent 0-document success (the review's
+    --source ccda on a PF/Tebra export false-success)."""
+    result = runner.invoke(
+        app, ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--source", "ccda"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "No records loaded" in " ".join(result.output.split())
+
+
+def test_pipeline_run_malformed_export_is_bad_input(tmp_path: Path) -> None:
+    """A malformed export is a clean exit-2 bad_input, never a raw traceback."""
+    export = tmp_path / "exp"
+    export.mkdir()
+    # A file the FHIR adapter claims (markers present) but cannot parse.
+    (export / "bundle.json").write_text(
+        '{"resourceType": "Bundle", "entry": [ THIS IS NOT JSON', encoding="utf-8"
+    )
+    result = runner.invoke(
+        app, ["pipeline", "run", str(export), "--out", str(tmp_path / "o"), "--source", "fhir-r4"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "Could not read" in " ".join(result.output.split())
+
+
 def test_migrate_ccda_standard_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_migration_chromium(monkeypatch)
     out = tmp_path / "out"
