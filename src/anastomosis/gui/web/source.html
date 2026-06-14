@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+    <!--
+      Strict, self-only CSP — identical to the other pages. Zero network
+      requests (the archive's offline rule). No inline script is permitted.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Anastomosis — Learn a source</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body class="theme-dark">
+    <svg class="gooey-defs" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <filter id="gooey">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+          <feColorMatrix in="blur" mode="matrix"
+            values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="gooey" />
+          <feComposite in="SourceGraphic" in2="gooey" operator="atop" />
+        </filter>
+      </defs>
+    </svg>
+
+    <header class="title-bar" role="presentation">
+      <span class="title-text">Anastomosis — learn a source</span>
+    </header>
+
+    <div class="wallpaper" aria-hidden="true"></div>
+    <div class="wallpaper-veil" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <div class="page-head">
+        <div>
+          <h1>Learn a source</h1>
+          <div class="tagline">Teach a new flat export (CSV/TSV/JSON) from one example.</div>
+        </div>
+        <div class="version" id="version">—</div>
+      </div>
+
+      <nav class="nav" aria-label="Workspaces">
+        <a class="nav-link" href="index.html">Dashboard</a>
+        <a class="nav-link" href="wizard.html">Migration wizard</a>
+        <a class="nav-link" href="console.html">Upload console</a>
+        <a class="nav-link" href="packgen.html">Pack from samples</a>
+        <a class="nav-link" href="source.html" aria-current="page">Learn a source</a>
+      </nav>
+
+      <div class="no-api" id="no-api">
+        This wizard runs inside the desktop app. Launch it with
+        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+      </div>
+
+      <div class="banner" id="banner"></div>
+
+      <section class="panel glass-card" aria-label="Source example form">
+        <h2>example export</h2>
+        <div class="field">
+          <label for="example-path">Example file (.csv/.tsv/.json/.ndjson), or a dir holding one</label>
+          <input type="text" id="example-path" placeholder="/path/to/export.csv" />
+        </div>
+        <div class="field">
+          <label for="source-name">Mapping name (lowercase identifier, e.g. acme_csv)</label>
+          <input type="text" id="source-name" placeholder="acme_csv" />
+        </div>
+        <div class="field">
+          <label for="source-display">Display name (optional)</label>
+          <input type="text" id="source-display" placeholder="Acme clinic CSV" />
+        </div>
+        <button class="run-btn" id="analyze-btn" type="button">analyze example</button>
+      </section>
+
+      <!-- PHI-safe proposed mapping + the review confirmation -->
+      <section class="panel glass-card" id="proposal-panel" aria-label="Proposed mapping" hidden>
+        <h2>proposed mapping (phi-safe — no values shown)</h2>
+        <div class="guidance" id="grouping"></div>
+        <div class="suggestions-table" id="suggestions"></div>
+        <details class="summary-details">
+          <summary>column analysis</summary>
+          <div class="summary-block" id="summary"></div>
+        </details>
+        <div class="confirm-row">
+          <label class="toggle">
+            <input type="checkbox" id="confirm-review" />
+            <span class="track"></span>
+            <span>I reviewed this mapping. Unmapped columns are preserved in extensions.</span>
+          </label>
+        </div>
+        <button class="run-btn" id="save-btn" type="button" disabled>save mapping</button>
+        <div class="muted">
+          Saving proves the mapping drops no column (round-trip), then writes it
+          owner-only. Refine the saved <code>mapping.json</code> and re-analyze to
+          re-verify.
+        </div>
+      </section>
+
+      <!-- The saved mapping: path + MAPPING.md text -->
+      <section class="panel glass-card" id="result-panel" aria-label="Saved mapping" hidden>
+        <h2>learned source saved</h2>
+        <div class="guidance" id="result-path"></div>
+        <div class="draft-block" id="mapping-md"></div>
+      </section>
+
+      <div class="shell-spacer"></div>
+    </main>
+
+    <footer class="status-bar" id="status-bar">
+      <span id="status-text">ready</span>
+      <span id="status-runid"></span>
+    </footer>
+
+    <script src="shell.js"></script>
+    <script src="source.js"></script>
+  </body>
+</html>
