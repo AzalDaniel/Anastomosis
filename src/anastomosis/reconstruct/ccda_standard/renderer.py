@@ -47,7 +47,12 @@ if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
     from anastomosis.reconstruct.engine import Renderer
 
-__all__ = ["CCDARenderResult", "render_ccda_html", "render_ccda_standard"]
+__all__ = [
+    "CCDARenderResult",
+    "ccda_standard_doc_path",
+    "render_ccda_html",
+    "render_ccda_standard",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +138,17 @@ def _allocate(out_dir: Path, record: PatientRecord) -> Path:
     family = _safe(patient.family_name, "Unknown")
     given = _safe(patient.given_name, "Unknown")
     return out_dir / f"{family}_{given}_{digest}_ccda.pdf"
+
+
+def ccda_standard_doc_path(out_dir: str | Path, record: PatientRecord) -> Path:
+    """The deterministic per-patient PDF path this view renders for ``record``.
+
+    Public alias of the internal allocator so a caller (e.g. the migration's
+    upload-manifest writer) can recover the path:patient association from the
+    records WITHOUT re-implementing the naming rule — the whole-patient view has
+    no :class:`~anastomosis.reconstruct.engine.RenderedDoc` list of its own.
+    """
+    return _allocate(Path(out_dir), record)
 
 
 def _write_pdf(renderer: Renderer, html: str, target: Path) -> None:

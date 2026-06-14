@@ -45,6 +45,11 @@ if TYPE_CHECKING:
     from anastomosis.sources.base import SourceAdapter
 
 __all__ = [
+    "STAGE_DETECT",
+    "STAGE_INGEST",
+    "STAGE_MANIFEST",
+    "STAGE_QA",
+    "STAGE_RECONSTRUCT",
     "PipelineError",
     "PipelineResult",
     "StageEvent",
@@ -58,6 +63,9 @@ STAGE_DETECT = "detect"
 STAGE_INGEST = "ingest"
 STAGE_RECONSTRUCT = "reconstruct"
 STAGE_QA = "qa"
+# The opt-in upload-manifest stage (emitted only when a command requests the
+# manifest write, so a manifest-off run is byte-identical to before).
+STAGE_MANIFEST = "manifest"
 
 
 @dataclass(frozen=True)
