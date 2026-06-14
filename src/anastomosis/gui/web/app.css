@@ -1771,6 +1771,31 @@ svg { display: block; }
 .run-btn:active { transform: scale(0.98); }
 .run-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
 
+/* The shared-machine attach warning on the upload console — prominently styled
+   so the operator cannot miss it before driving a real upload. The text is
+   populated from upload_safety_notice() (the single source of truth); this is
+   pure presentation. */
+.safety-warning {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--signal-error);
+  background: color-mix(in oklab, var(--signal-error) 14%, transparent);
+  color: var(--ink-primary);
+  font-size: var(--text-body);
+  line-height: 1.45;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--signal-error) 16%, transparent);
+}
+.safety-warning:empty { display: none; }
+
+/* The start/stop pair on the drive-an-upload panel. */
+.drive-actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
 /* Per-patient summary table (last_run_summary): one row per patient, monospace
    for tabular alignment. Hidden via the [hidden] attribute until a run lands. */
 .patients-panel[hidden] { display: none; }
