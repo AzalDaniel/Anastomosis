@@ -110,6 +110,41 @@
           <label for="out-dir">Output directory</label>
           <input type="text" id="out-dir" placeholder="/path/to/output" />
         </div>
+
+        <!-- Run levers — parity with the CLI's migrate (--pack-dir / --trust-pack
+             / --force / --section / --qa). The section matrix reflects the chosen
+             Jinja render pack (neutral = generic_soap); the ccda-standard view
+             exposes no togglable sections. -->
+        <div class="field">
+          <label for="pack-dir">Extra pack directory (optional)</label>
+          <input type="text" id="pack-dir" placeholder="/path/to/custom/packs" />
+        </div>
+        <div class="field">
+          <label id="sections-label">Sections (render pack)</label>
+          <div class="section-matrix" id="section-matrix" aria-labelledby="sections-label"></div>
+        </div>
+        <div class="filter-bar" style="padding: 0">
+          <span class="pill-label">qa</span>
+          <div class="segment-toggle" role="radiogroup" aria-label="QA"
+               data-name="qa" data-value="on" style="--segment-count: 2; --segment-index: 0">
+            <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
+            <button type="button" class="segment-option" data-value="on" aria-pressed="true">qa on</button>
+            <button type="button" class="segment-option" data-value="off" aria-pressed="false">qa off</button>
+          </div>
+        </div>
+        <div class="toggles">
+          <label class="toggle">
+            <input type="checkbox" id="force" />
+            <span class="track"></span>
+            <span>force re-render</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="trust-pack" />
+            <span class="track"></span>
+            <span>trust new pack code</span>
+          </label>
+        </div>
+
         <button class="run-btn" id="run-migration-btn" type="button">run migration</button>
         <div class="guidance" id="migration-result" hidden></div>
         <div class="patients-panel" id="patients-panel" hidden>
