@@ -251,10 +251,10 @@ def test_console_lists_item_keys_never_names() -> None:
 @pytest.mark.parametrize(
     ("page", "needle"),
     [
-        # The wizard labels the deferred live API push.
+        # The wizard labels the deferred live API push. (The console's live
+        # driving is no longer deferred — it is wired in W5/PR-6b, asserted by
+        # test_console_drives_uploads_only_through_controller below.)
         ("wizard.js", "later milestone"),
-        # The console labels deferred live driving in BOTH the page and JS.
-        ("console.html", "later milestone"),
     ],
 )
 def test_deferred_functionality_is_labeled(page: str, needle: str) -> None:
@@ -262,17 +262,28 @@ def test_deferred_functionality_is_labeled(page: str, needle: str) -> None:
     assert needle in text, f"{page} must loudly label deferred functionality"
 
 
-def test_console_has_no_fake_live_upload_controls() -> None:
-    """No button must pretend to start/pause/drive real uploads (deferred to M6)."""
+def test_console_drives_uploads_only_through_controller() -> None:
+    """The console drives real uploads, but ONLY through the controller seam.
+
+    W5/PR-6b wired live driving: the JS must call the controller's drive methods
+    (upload_start / upload_stop) and surface the shared-machine safety warning.
+    Driving is SAFE because the JS goes only through the controller — it must
+    never reach into the ledger's write surface (no transition/begin_run/recover
+    from the browser), so the controller stays the single owner of every write.
+    """
     html = (WEB / "console.html").read_text(encoding="utf-8")
     js = (WEB / "console.js").read_text(encoding="utf-8")
-    # The console is read-only: it must not call any write/drive controller
-    # method. The only controller methods it may invoke are the read accessors.
-    forbidden_calls = ("run_pipeline", "transition", "begin_run", "recover", "upload_start")
+    # Real driving is wired (no fakery): the JS calls the controller seam.
+    assert "upload_start" in js, "console.js must drive uploads via upload_start"
+    assert "upload_stop" in js, "console.js must offer a cooperative stop via upload_stop"
+    # The shared-machine safety warning is surfaced before any attach is possible.
+    assert "upload_safety_notice" in js, "console.js must fetch the safety warning"
+    assert 'id="safety-warning"' in html, "console.html must host the safety warning element"
+    # But the JS NEVER touches the ledger's write surface — every write goes
+    # through the controller, never directly from the browser.
+    forbidden_calls = ("run_pipeline", "transition", "begin_run", "recover")
     for call in forbidden_calls:
-        assert call not in js, f"console.js must not invoke {call!r} (read-only surface)"
-    # The deferred label must appear so the deferral is loud, not silent.
-    assert "deferred" in html
+        assert call not in js, f"console.js must not invoke {call!r} (controller owns writes)"
 
 
 def test_packgen_requires_confirmation_checkbox() -> None:

@@ -68,6 +68,22 @@ _LEARNABLE_SUFFIXES = (".csv", ".tsv", ".json", ".ndjson", ".jsonl")
 _STALE_DAYS = 90
 
 
+def _attach_destination(cdp_url: str, loaded: object) -> object:
+    """Build the live browser destination for an upload run (the Playwright seam).
+
+    Lazily delegates to the CLI's proven :func:`anastomosis.cli._make_destination`
+    — the ONE place a CDP attach over Playwright happens. The caller has already
+    validated the loopback gate. This is kept a SEPARATE module-level function so
+    the GUI tests can ``monkeypatch.setattr(controller, "_attach_destination",
+    lambda cdp, loaded: FakeDestination(...))`` and drive the whole upload flow
+    with no browser. The import is lazy so the controller loads cleanly without
+    the ``deliver-browser`` extra.
+    """
+    from anastomosis.cli import _make_destination
+
+    return _make_destination(cdp_url, loaded)
+
+
 class EventSink(Protocol):
     """Where the controller posts events; the shell adapts this to the window.
 
@@ -96,6 +112,11 @@ class GuiController:
         # PHI-safe (static template text, counts, pack config); empty until the
         # first async pack-init run.
         self._last_pack: dict[str, object] = {}
+        # The cooperative stop flag for the in-flight upload run, if any. Set by
+        # upload_stop() and checked by the engine at item boundaries; None when
+        # no upload is in flight. (The busy guard ensures at most one run at a
+        # time, so a single flag is sufficient.)
+        self._upload_stop: threading.Event | None = None
 
     def _emit(self, event: dict[str, object]) -> None:
         """Emit through the sink, swallowing sink failures.
@@ -364,6 +385,197 @@ class GuiController:
             return {"ok": True, "renderable": len(pdfs), "total_bytes": total_bytes}
         except Exception as exc:
             return self._fail("upload_manifest_preview", exc)
+
+    # --- upload console (live driving — W5/PR-6b) ---------------------------
+
+    def upload_safety_notice(self) -> dict[str, object]:
+        """The shared-machine warning the console must surface before any attach.
+
+        The SINGLE source of truth for the warning text the JS displays in
+        ``#safety-warning`` — the exact :data:`SHARED_MACHINE_WARNING` the CLI
+        prints. The console fetches this on load and renders it via
+        ``textContent``; there is no second copy of the wording in the assets.
+        PHI-free by construction (a fixed security advisory). Never raises.
+        """
+        from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING
+
+        return {"ok": True, "warning": SHARED_MACHINE_WARNING}
+
+    def upload_start(
+        self,
+        out_dir: str,
+        cdp_url: str,
+        pack_name: str,
+        pack_dirs: list[str] | None = None,
+        max_attempts: int = 4,
+    ) -> dict[str, object]:
+        """Drive the resumable browser upload engine over a CDP attach (async).
+
+        The GUI equivalent of ``anast upload``: it mirrors that command's proven
+        flow EXACTLY — validate the loopback CDP gate, read the manifest, gate on
+        pack readiness, then (only on a clean pre-flight) acquire the busy guard,
+        spawn a daemon worker, and drive ``begin_run`` → ``recover`` →
+        ``UploadEngine.run`` → ``finish_run``. Returns immediately with
+        ``{"ok": True, "started": True}``; the result arrives as ``upload``
+        stage/error events and the live counts come from the JS polling
+        :meth:`upload_status` against the ledger.
+
+        Safety model (never weakened — the engine enforces it; this only drives):
+
+        * **Loopback only.** The CDP endpoint is validated through
+          :class:`CdpEndpoint`; any non-loopback host is a hard
+          ``{"ok": False, "error": "BadCdpEndpoint"}`` BEFORE the busy guard is
+          taken or any worker spawns — the operator's authenticated EHR session
+          is never exposed to the network.
+        * **Never closes the browser.** The operator launched and logged into the
+          browser by hand; the worker attaches over CDP and, on finish, closes
+          ONLY our own ledger handle. ``ManagedDestination.close`` is never
+          called — see the comment in the worker's ``finally``.
+        * **Cooperative stop.** :meth:`upload_stop` sets a flag the engine checks
+          at item boundaries; an in-flight upload is never abandoned mid-item.
+        * **Resume.** A re-start naturally resumes a prior run — ``recover``
+          rewinds any mid-flight items, and already-terminal items are not
+          re-driven (the ledger's resumability guarantee).
+        * **PHI-safe.** Events carry stage/state/abort-TYPE names only; the
+          manifest, ledger, and run state all live inside the 0700 ``out_dir``.
+
+        Pre-flight failures return a clean enumerated error and DO NOT acquire
+        the busy guard or spawn a worker: ``BadCdpEndpoint`` (non-loopback),
+        ``BadManifest`` (missing/malformed manifest), ``PackNotReady`` (selectors
+        undiscovered — run ``anast destination init``), an :func:`exc_tag` type
+        name for a pack load error, or ``Busy`` (a run already in flight).
+        """
+        # The deliver-browser imports are lazy so this module loads without the
+        # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
+        from anastomosis.deliver.browser.cdp import CdpEndpoint
+        from anastomosis.deliver.browser.persist import (
+            MANIFEST_NAME,
+            ManifestError,
+            read_upload_manifest,
+        )
+        from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+        # Pre-flight, wrapped so it NEVER raises (the controller contract): a
+        # non-string out_dir/pack_dirs or any other surprise becomes the
+        # no-traceback error dict, like every sibling method. The enumerated
+        # codes below return before this catch.
+        try:
+            # 1. Loopback gate — a hard ValueError, never weakened to a warning.
+            try:
+                CdpEndpoint(cdp_url)
+            except ValueError:
+                return {"ok": False, "error": "BadCdpEndpoint"}
+
+            # 2. Read the manifest (cheap, pre-attach), trying <dir> then
+            #    <dir>/charts (the migrate layout) — the SAME resolution the CLI
+            #    uses, so a migrate output dir works in either frontend. Loud on
+            #    missing/malformed.
+            out = Path(out_dir)
+            manifest_root = out if (out / MANIFEST_NAME).is_file() else out / "charts"
+            try:
+                items, patients = read_upload_manifest(manifest_root)
+            except (ManifestError, OSError):
+                return {"ok": False, "error": "BadManifest"}
+
+            # 3. Load the destination pack and gate on readiness (selectors found).
+            try:
+                loaded = load_destination_pack(pack_name, [Path(p) for p in pack_dirs or []])
+            except BrowserPackError as exc:
+                return {"ok": False, "error": exc_tag(exc)}
+            if not loaded.ready:
+                return {"ok": False, "error": "PackNotReady"}
+        except Exception as exc:  # never-raise: a malformed argument, etc.
+            return self._fail("upload", exc)
+
+        # 4. Only now take the busy guard (a clean pre-flight never blocks it).
+        if not self._acquire():
+            return {"ok": False, "error": "Busy"}
+
+        # The cooperative cancel flag upload_stop() sets; stored on self so the
+        # stop request reaches the engine's item-boundary check.
+        stop = threading.Event()
+        self._upload_stop = stop
+        self._emit(stage_event("upload", "start"))
+
+        def _worker() -> None:
+            from anastomosis.core.locking import OutputLockedError, output_lock
+            from anastomosis.core.output import secure_output_dir
+            from anastomosis.deliver.browser.engine import UploadEngine
+            from anastomosis.deliver.browser.manager import ManagedDestination
+            from anastomosis.deliver.browser.tracking import TrackingDB
+            from anastomosis.destinations.base import Destination
+
+            tracking: TrackingDB | None = None
+            try:
+                # Harden the dir to 0700, then take the cross-process output lock —
+                # the SAME fence the CLI holds. A CLI or GUI run already driving
+                # this dir is refused (OutputLocked) rather than racing it into the
+                # one ledger (the ledger does not fence same-item access; this
+                # does — a patient-safety boundary against double-filing).
+                secure_output_dir(out)
+                with output_lock(out):
+                    # The ONLY Playwright touch, behind the monkeypatchable seam;
+                    # narrow to the Destination protocol exactly as the CLI does
+                    # before wrapping (a non-Destination seam is a defect).
+                    destination = _attach_destination(cdp_url, loaded)
+                    assert isinstance(destination, Destination)
+                    managed = ManagedDestination(destination)
+                    # The SAME ledger filename the CLI `anast upload` uses, so a
+                    # run started by either frontend resumes/monitors from the other.
+                    tracking = TrackingDB(out / "upload_ledger.sqlite")
+                    run_id = tracking.begin_run(managed.name)
+                    # The engine contract: the CALLER recovers any mid-flight items
+                    # from a prior killed run before driving (a re-start resumes).
+                    tracking.recover(run_id)
+                    result = UploadEngine(managed, tracking, max_attempts=max_attempts).run(
+                        items, patients, run_id, stop=stop
+                    )
+                    # On a clean finish stamp the run done; an abort already stamped
+                    # its own finish_run inside the engine (manage_run defaults True).
+                    if result.aborted_reason is None:
+                        tracking.finish_run(run_id)
+                        self._emit(stage_event("upload", "done"))
+                    else:
+                        # A wrong-patient abort (or other safety stop) surfaces as
+                        # an error event carrying the abort TYPE name — never a value.
+                        self._emit(error_event("upload", result.aborted_reason))
+            except OutputLockedError:
+                # A CLI or GUI run already holds this output dir — refuse cleanly.
+                self._emit(error_event("upload", "OutputLocked"))
+            except Exception as exc:  # never-raise: type name only, no PHI
+                self._emit(error_event("upload", exc_tag(exc)))
+            finally:
+                # Close ONLY our own ledger handle. NEVER call managed.close()
+                # or otherwise close the operator's browser — they launched it,
+                # logged in by hand, and own its lifecycle; the CDP attach ends
+                # when THEY close it.
+                if tracking is not None:
+                    try:
+                        tracking.close()
+                    except Exception as exc:
+                        logger.warning("tracking close failed (%s)", exc_tag(exc))
+                self._upload_stop = None
+                self._release()
+
+        threading.Thread(target=_worker, name="anast-upload", daemon=True).start()
+        return {"ok": True, "started": True}
+
+    def upload_stop(self) -> dict[str, object]:
+        """Request the in-flight upload stop after the current document.
+
+        Cooperative cancel: sets the flag the engine checks at item boundaries,
+        so the current document finishes cleanly and later items stay PENDING (a
+        later :meth:`upload_start` resumes them). A mid-item cancel is NOT safe
+        and is deliberately not offered — the engine never abandons an in-flight
+        upload. Returns ``{"ok": True, "stopping": True}`` when a run was asked
+        to stop, or ``{"ok": False, "error": "NoRun"}`` when none is in flight.
+        Never raises.
+        """
+        stop = self._upload_stop
+        if stop is not None:
+            stop.set()
+            return {"ok": True, "stopping": True}
+        return {"ok": False, "error": "NoRun"}
 
     # --- the pack-from-samples wizard ---------------------------------------
 
