@@ -31,7 +31,9 @@ if TYPE_CHECKING:
 
     from anastomosis.core.commands import DeliveryOutcome, PipelineCommand
     from anastomosis.core.migrate import MigrationCommand
-    from anastomosis.core.model import PatientRecord
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver.browser.manager import ManagedDestination
+    from anastomosis.destinations.base import UploadItem
     from anastomosis.pipeline import StageEvent
 
 app = typer.Typer(
@@ -136,6 +138,7 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
     """
     from anastomosis.pipeline import (
         STAGE_DETECT,
+        STAGE_MANIFEST,
         STAGE_QA,
         STAGE_RECONSTRUCT,
     )
@@ -164,6 +167,11 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 f"{event.counts['warn']} warn, "
                 f"{'[red]' if fail else ''}{fail} fail"
                 f"{'[/red]' if fail else ''} → qa_report.json"
+            )
+        elif event.stage == STAGE_MANIFEST:
+            # Additive line — emitted only when an upload manifest was requested.
+            console.print(
+                f"manifest: [green]{event.counts['items']} item(s)[/green] → upload_manifest.json"
             )
         # The ingest stage prints no CLI line of its own (the original printed none).
 
@@ -311,6 +319,13 @@ def pipeline_run(
         Path | None,
         typer.Option("--ccda", help="Also emit one C-CDA / CCD XML per patient in this directory."),
     ] = None,
+    upload_manifest: Annotated[
+        bool,
+        typer.Option(
+            "--upload-manifest",
+            help="Also write upload_manifest.json (items + demographics) for `anast upload`.",
+        ),
+    ] = False,
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand
@@ -335,6 +350,7 @@ def pipeline_run(
             sections=sections,
             qa=qa,
             deliveries=tuple(deliveries),
+            write_manifest=upload_manifest,
         )
     )
 
@@ -552,6 +568,223 @@ def migrate_cmd(
         ),
         save_profile,
     )
+
+
+# --- anast upload (drive the resumable browser engine over a CDP attach) ----
+
+# Terminal states that count as a clean landing (an item reached a safe end).
+# Anything else terminal — FAILED, PRE/POST_VERIFY_FAILED, PATIENT_NOT_FOUND,
+# PREFLIGHT_FAILED — is a non-clean outcome that makes `anast upload` exit 1.
+_CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
+    {"completed", "skipped_skiplist", "duplicate_at_destination"}
+)
+
+
+def _make_destination(cdp_url: str, loaded: object) -> object:
+    """Build the live browser destination for ``anast upload`` (the SEAM tests mock).
+
+    Attaches over CDP (loopback-only, already validated by the caller) to the
+    browser the operator launched and logged into, drives its first
+    context/page through the :class:`PlaywrightPageAdapter`, and wraps the
+    discovered pack's selectors + config into a
+    :class:`~anastomosis.destinations.browserpack.BrowserPackDestination`. This
+    is the ONLY Playwright touch in the upload path; the import is lazy (via
+    ``connect_over_cdp``) so the command and its tests load without the
+    ``deliver-browser`` extra. Tests monkeypatch this whole function so the run
+    flow drives a :class:`FakeDestination` with no browser.
+    """
+    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
+    from anastomosis.destinations.browserpack import (
+        BrowserPackDestination,
+        PlaywrightPageAdapter,
+    )
+    from anastomosis.destinations.loader import LoadedBrowserPack
+
+    assert isinstance(loaded, LoadedBrowserPack)
+    browser = connect_over_cdp(CdpEndpoint(cdp_url))
+    # The operator has their EHR open; drive its existing context/page.
+    page = browser.contexts[0].pages[0]
+    return BrowserPackDestination(
+        loaded.require_selectors(), PlaywrightPageAdapter(page), loaded.config
+    )
+
+
+def _upload_exit_code(counts: dict[str, int], aborted_reason: str | None) -> int:
+    """The process exit code for a finished run: 1 on abort/any non-clean terminal."""
+    if aborted_reason is not None:
+        return 1
+    for state, n in counts.items():
+        if n and state not in _CLEAN_UPLOAD_STATES:
+            # A non-clean state still carrying items (a non-terminal leftover or a
+            # failure terminal) is a non-clean run — exit 1 so scripts branch on it.
+            return 1
+    return 0
+
+
+@app.command("upload")
+def upload_cmd(
+    out_dir: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            file_okay=False,
+            readable=True,
+            help="A render/migrate output dir holding upload_manifest.json.",
+        ),
+    ],
+    to: Annotated[str, typer.Option("--to", "-t", help="Destination pack name (e.g. tebra).")],
+    cdp: Annotated[
+        str,
+        typer.Option("--cdp", help="Loopback CDP endpoint, e.g. http://127.0.0.1:9222."),
+    ],
+    skiplist: Annotated[
+        Path | None,
+        typer.Option("--skiplist", help="File of item_key/encounter_id lines to exclude."),
+    ] = None,
+    max_attempts: Annotated[
+        int, typer.Option("--max-attempts", help="Retry budget per item before FAILED.")
+    ] = 3,
+    pack_dir: Annotated[
+        list[Path] | None,
+        typer.Option("--pack-dir", help="Extra directories to find the destination pack in."),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the shared-machine attach confirmation."),
+    ] = False,
+) -> None:
+    """File reconstructed charts into a destination EHR through its web UI.
+
+    Reads the upload manifest written by `anast pipeline run --upload-manifest`
+    or `anast migrate`, then drives the crash-resumable upload engine against a
+    browser YOU launched with a remote debug port and logged into yourself.
+
+    SAFETY: the CDP attach is loopback-only and refuses any other host; the
+    shared-machine warning is shown (and confirmed unless --yes) before any
+    browser is touched. Anastomosis NEVER stores your EHR credentials and NEVER
+    closes your browser — you log in by hand and the attach ends when you close
+    it. The manifest, ledger, and run report all stay inside the 0700 output dir.
+    """
+    from rich.markup import escape as _escape
+
+    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
+    from anastomosis.deliver.browser.manager import ManagedDestination
+    from anastomosis.deliver.browser.manifest import load_skiplist
+    from anastomosis.deliver.browser.persist import (
+        MANIFEST_NAME,
+        ManifestError,
+        read_upload_manifest,
+    )
+    from anastomosis.destinations.base import Destination
+    from anastomosis.destinations.browserpack import PackNotReadyError
+    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+    # 1. Resolve + read the manifest FIRST (cheap, pre-attach). Try the dir
+    #    itself, then a <dir>/charts subdir (migrate's layout). Loud on missing.
+    manifest_root = out_dir if (out_dir / MANIFEST_NAME).is_file() else out_dir / "charts"
+    try:
+        items, patients = read_upload_manifest(manifest_root)
+    except ManifestError as exc:
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+
+    # 2. The loopback gate — BEFORE any browser touch.
+    try:
+        CdpEndpoint(cdp)
+    except ValueError as exc:
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+
+    # 3. Surface the shared-machine warning and confirm (unless --yes). --yes
+    #    still PRINTS the warning — the operator is told what they accepted.
+    console.print(SHARED_MACHINE_WARNING)
+    if not yes and not typer.confirm("Attach to this browser debug port?", default=False):
+        console.print("aborted")
+        raise typer.Exit(code=0)
+
+    # 4. Load the destination pack and gate on readiness (selectors discovered).
+    try:
+        loaded = load_destination_pack(to, list(pack_dir or []))
+    except BrowserPackError as exc:
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+    if not loaded.ready:
+        try:
+            loaded.require_selectors()
+        except PackNotReadyError as exc:
+            console.print(f"[red]{_escape(str(exc))}[/red]")
+            raise typer.Exit(code=2) from None
+
+    # 5. Load the operator skiplist if given (a missing file raises -> exit 2).
+    skiplist_set: frozenset[str] = frozenset()
+    if skiplist is not None:
+        try:
+            skiplist_set = load_skiplist(skiplist)
+        except OSError as exc:
+            console.print(f"[red]could not read skiplist ({type(exc).__name__})[/red]")
+            raise typer.Exit(code=2) from None
+
+    # 6. Attach (the only Playwright touch — the injectable seam). A failure here
+    #    is named by type only (no PHI, no traceback). Wrap in ManagedDestination.
+    try:
+        destination = _make_destination(cdp, loaded)
+    except Exception as exc:
+        console.print(f"[red]could not attach ({type(exc).__name__})[/red]")
+        raise typer.Exit(code=2) from None
+    assert isinstance(destination, Destination)
+    managed = ManagedDestination(destination)
+
+    # 7-9. Hold the lock, recover any prior run, drive the engine, report. The
+    #      ledger + report live inside the 0700 dir; we never close the operator's
+    #      browser (ManagedDestination's session close is a no-op in CDP mode).
+    code = _run_upload(managed, items, patients, out_dir, skiplist_set, max_attempts)
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
+def _run_upload(
+    managed: ManagedDestination,
+    items: list[UploadItem],
+    patients: dict[str, Patient],
+    out_dir: Path,
+    skiplist_set: frozenset[str],
+    max_attempts: int,
+) -> int:
+    """Drive the engine under the output lock and write the report; return exit code.
+
+    Split out of :func:`upload_cmd` so the long with-block stays readable. Every
+    line it prints is counts/ids/state names — never a patient value or a path
+    under the hardened dir (the summary line and report writer enforce that).
+    """
+    from anastomosis.core.locking import output_lock
+    from anastomosis.core.output import secure_output_dir
+    from anastomosis.deliver.browser.engine import UploadEngine
+    from anastomosis.deliver.browser.reports import summary_line, write_run_report
+    from anastomosis.deliver.browser.tracking import TrackingDB
+
+    secure_output_dir(out_dir)
+    with output_lock(out_dir):
+        tracking = TrackingDB(out_dir / "upload_ledger.sqlite")
+        try:
+            run_id = tracking.begin_run(managed.name)
+            # The engine contract: the CALLER recovers any mid-flight items from
+            # a prior killed run before driving (rewinds them to a safe state).
+            tracking.recover(run_id)
+            result = UploadEngine(managed, tracking, max_attempts=max_attempts).run(
+                items, patients, run_id, skiplist=skiplist_set
+            )
+            # On a clean finish stamp the run done; an abort already stamped its
+            # own finish_run inside the engine (manage_run defaults True).
+            if result.aborted_reason is None:
+                tracking.finish_run(run_id)
+            report_path = write_run_report(tracking, run_id, out_dir)
+            counts = dict(tracking.counts())
+        finally:
+            # NEVER close the operator's browser — only our own ledger handle.
+            tracking.close()
+    console.print(summary_line(counts))
+    console.print(f"run report → {report_path}")
+    return _upload_exit_code(counts, result.aborted_reason)
 
 
 # --- anast archive ----------------------------------------------------------

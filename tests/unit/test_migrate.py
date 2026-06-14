@@ -61,6 +61,17 @@ def _patch_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _FakeChromium())
 
 
+def _assert_manifest(charts_dir: Path, *, expected_items: int) -> None:
+    """The default-on upload manifest is present, readable, and the right size."""
+    from anastomosis.deliver.browser.persist import MANIFEST_NAME, read_upload_manifest
+
+    assert (charts_dir / MANIFEST_NAME).is_file()
+    items, patients = read_upload_manifest(charts_dir)
+    assert len(items) == expected_items
+    # Every item's patient is carried (the resolver searches by name + DOB).
+    assert {item.patient_id for item in items} <= set(patients)
+
+
 # --- the three render modes -------------------------------------------------
 
 
@@ -82,6 +93,8 @@ def test_migrate_neutral_uses_generic_soap_and_emits_both(
     assert len(list((out / "charts").glob("*.pdf"))) == 6  # per-encounter charts
     assert list((out / "ccda").glob("*.xml"))  # structured C-CDA payload
     assert result.ccda_export.counts["patients"] == 3
+    # A migration writes the upload manifest by default (into <out>/charts).
+    _assert_manifest(out / "charts", expected_items=6)
 
 
 def test_migrate_pack_render_uses_named_pack(
@@ -133,6 +146,9 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
     # Still emits the structured payload for the destination to import.
     assert result.ccda_export.counts["patients"] == 3
     assert list((out / "ccda").glob("*.xml"))
+    # The upload manifest is written in ccda-standard mode too — one item per
+    # patient (the whole-patient view has no per-encounter documents).
+    _assert_manifest(out / "charts", expected_items=3)
 
 
 # --- the transit map (the route a migration would take) ---------------------
