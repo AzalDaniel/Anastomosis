@@ -1,0 +1,17 @@
+Anastomosis bundles the HL7 CDA R2 stylesheet ("CDA.xsl") and its two runtime
+companion files to render Consolidated CDA (C-CDA) documents into a neutral,
+human-readable view.
+
+  CDA R2 Stylesheet (CDA.xsl, cda_l10n.xml, cda_narrativeblock.xml)
+  Copyright HL7 Structured Documents Work Group and contributors
+    - HL7 Germany and Finland (Tyylitieto) — foundational work
+    - Calvin Beebe, HL7 US — foundational work
+    - Tony Schaller, medshare GmbH — presentation approach (IHIC 2009)
+    - Lantana Group (US) and Nictiz (NL) — subsequent maintenance
+  Licensed under the Apache License, Version 2.0.
+  Source: https://github.com/HL7/cda-core-xsl
+
+These three files are unmodified upstream artifacts (see PINNED.md for the exact
+tag and verified checksums). The Apache-2.0 license header is retained within
+CDA.xsl itself. The remainder of Anastomosis is licensed separately; see the
+repository's top-level license.
