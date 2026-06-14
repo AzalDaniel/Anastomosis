@@ -38,6 +38,9 @@ dependencies = [
   "lxml>=5.2",
   "python-dateutil>=2.9",
   "pyyaml>=6.0",
+  # Deterministic column-name similarity for learning a new source format from
+  # an example (anast source init). ~1 MB, no transitive deps; lazy-imported.
+  "rapidfuzz>=3.9",
   # Windows has no system tz database; zoneinfo needs the PyPI one there.
   "tzdata; sys_platform == 'win32'",
 ]
