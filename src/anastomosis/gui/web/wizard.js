@@ -2,19 +2,24 @@
  * Anastomosis Migration Wizard — vanilla JS, no frameworks, no build step.
  *
  * Talks to the headless controller over pywebview's bridge:
- *   - info()                 → version + the destination list (registry names)
+ *   - info()                 → version + sources + packs (the from/render pickers)
  *   - detect(dir)            → step 1 auto-detect
  *   - routes()               → the destination list for the picker
  *   - destination_status(n)  → the transit map, pack readiness, route choice
+ *   - run_migration_async(…) → run the migration (charts + structured C-CDA)
+ *   - last_run_summary()     → the per-patient roll-up, fetched after `done`
  *
  * The transit map is the centerpiece: three route cards (vendor API / C-CDA
  * import / browser) drawn from destination_status(); the chosen route is
  * highlighted with the coral halo accent. Step 3's guidance is route-specific.
- * The visual layer (glass cards, route cards, command palette) is carried from
- * the predecessor via window.AnastShell. The controller seam is untouched.
+ * The run flow (step 3b) issues run_migration_async and streams progress back
+ * via window.anastEvent, then fetches last_run_summary on `done`. The visual
+ * layer (glass cards, route cards, command palette) is carried from the
+ * predecessor via window.AnastShell. The controller seam is untouched.
  *
- * PHI discipline: every value rendered here is a destination name, a capability
- * kind, an evidence date, a pack name, or a boolean — never patient-derived.
+ * PHI discipline: events carry counts/stage names only; the per-patient detail
+ * (names/DOB) is fetched via last_run_summary and rendered with textContent —
+ * shown locally, never logged, never put on an event (the controller's rule).
  * Guarded so opening in a plain browser shows the "launch via anast gui" notice.
  */
 "use strict";
@@ -65,6 +70,12 @@ async function onDetect() {
     const res = await window.pywebview.api.detect(dir);
     if (res && res.ok && res.source) {
       result.textContent = "Detected source format: " + res.source;
+      // Pre-select the detected source in the migrate FROM picker (the operator
+      // can still override it — a migration's source is always explicit).
+      const sel = el("source");
+      if (sel) {
+        sel.value = res.source;
+      }
       setStep(2);
     } else if (res && res.ok) {
       result.textContent = "No known source format detected in that directory.";
@@ -219,7 +230,200 @@ async function onDestinationChange() {
   }
 }
 
+// --- step 3b: run the migration -------------------------------------------
+// The event dispatcher the shell (Python side) calls during an async run.
+window.anastEvent = function anastEvent(e) {
+  if (!e || typeof e !== "object") {
+    return;
+  }
+  switch (e.type) {
+    case "stage":
+      setStatus("stage " + e.stage + ": " + e.state);
+      break;
+    case "progress":
+      setStatus("progress " + e.stage);
+      break;
+    case "done":
+      setRunBusy(false);
+      showMigrationResult("migration complete — charts + C-CDA payload written.");
+      loadPatients();
+      break;
+    case "error":
+      setRunBusy(false);
+      showBanner("Run failed: " + e.error);
+      break;
+    default:
+      break;
+  }
+};
+
+function setRunBusy(busy) {
+  const btn = el("run-migration-btn");
+  if (btn) {
+    btn.disabled = busy;
+    btn.textContent = busy ? "running…" : "run migration";
+  }
+  setStatus(busy ? "running" : "ready");
+}
+
+function showMigrationResult(text) {
+  const box = el("migration-result");
+  if (box) {
+    box.hidden = false;
+    box.textContent = text;
+  }
+}
+
+async function onRunMigration() {
+  if (!hasApi()) {
+    return;
+  }
+  const source = el("source") ? el("source").value : "";
+  const destination = el("destination") ? el("destination").value : "";
+  const render = el("render") ? el("render").value : "neutral";
+  const exportDir = el("export-dir") ? el("export-dir").value : "";
+  const outDir = el("out-dir") ? el("out-dir").value : "";
+  if (!source) {
+    showBanner("Pick a source EHR (migrate FROM) first.");
+    return;
+  }
+  if (!destination) {
+    showBanner("Pick a destination EHR (migrate TO) first.");
+    return;
+  }
+  clearPatients();
+  setRunBusy(true);
+  showMigrationResult("running…");
+  try {
+    const started = await window.pywebview.api.run_migration_async(
+      exportDir,
+      outDir,
+      source,
+      destination,
+      render
+    );
+    if (started && started.ok === false) {
+      showBanner(started.error);
+      setRunBusy(false);
+    }
+  } catch (err) {
+    showBanner(err);
+    setRunBusy(false);
+  }
+}
+
+// --- per-patient detail (local display; never on an event) ----------------
+async function loadPatients() {
+  if (!hasApi()) {
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.last_run_summary();
+    if (res && res.ok) {
+      renderPatients(res.patients || []);
+    }
+  } catch (err) {
+    // The summary is advisory; never block the run roll-up on it.
+  }
+}
+
+function clearPatients() {
+  const body = el("patients-body");
+  if (body) {
+    body.innerHTML = "";
+  }
+  const panel = el("patients-panel");
+  if (panel) {
+    panel.hidden = true;
+  }
+}
+
+function renderPatients(patients) {
+  const panel = el("patients-panel");
+  const body = el("patients-body");
+  if (!panel || !body) {
+    return;
+  }
+  body.innerHTML = "";
+  if (!patients.length) {
+    panel.hidden = true;
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "patients-table";
+  const head = document.createElement("tr");
+  for (const heading of ["patient", "dob", "encounters", "notes"]) {
+    const th = document.createElement("th");
+    th.textContent = heading;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  for (const p of patients) {
+    const tr = document.createElement("tr");
+    const cells = [
+      p.display_name || "—",
+      p.birth_date || "—",
+      String(p.encounters),
+      String(p.documents),
+    ];
+    for (const value of cells) {
+      const td = document.createElement("td");
+      td.textContent = value; // textContent: PHI rendered as text, never HTML
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  body.appendChild(table);
+  panel.hidden = false;
+}
+
 // --- bootstrap ------------------------------------------------------------
+function populateSources(sources) {
+  const select = el("source");
+  if (!select) {
+    return;
+  }
+  select.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Select a source…";
+  select.appendChild(blank);
+  for (const src of sources) {
+    const opt = document.createElement("option");
+    opt.value = src.name;
+    opt.textContent = src.name;
+    select.appendChild(opt);
+  }
+}
+
+// The render picker: the two named modes plus every available pack.
+function populateRender(packs) {
+  const select = el("render");
+  if (!select) {
+    return;
+  }
+  select.innerHTML = "";
+  const named = [
+    ["neutral", "neutral (generic SOAP)"],
+    ["ccda-standard", "ccda-standard (HL7 view)"],
+  ];
+  for (const [value, label] of named) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    select.appendChild(opt);
+  }
+  for (const pack of packs || []) {
+    if (!pack.available) {
+      continue;
+    }
+    const opt = document.createElement("option");
+    opt.value = pack.name;
+    opt.textContent = "pack: " + pack.name;
+    select.appendChild(opt);
+  }
+}
+
 async function populate() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
@@ -230,6 +434,8 @@ async function populate() {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
       el("version").textContent = info.version;
+      populateSources(info.sources || []);
+      populateRender(info.packs || []);
     }
     const routes = await window.pywebview.api.routes();
     if (routes && routes.ok) {
@@ -260,9 +466,14 @@ function init() {
   if (dest) {
     dest.addEventListener("change", onDestinationChange);
   }
+  const runBtn = el("run-migration-btn");
+  if (runBtn) {
+    runBtn.addEventListener("click", onRunMigration);
+  }
 
   const palette = Shell.initCommandPalette([
     { id: "detect", label: "Auto-detect source", hint: "step 1", action: () => onDetect() },
+    { id: "run-migration", label: "Run migration", hint: "run", action: () => onRunMigration() },
     { id: "dashboard", label: "Open dashboard", hint: "go", action: () => { window.location.href = "index.html"; } },
     { id: "console", label: "Open upload console", hint: "go", action: () => { window.location.href = "console.html"; } },
     { id: "packgen", label: "Open pack from samples", hint: "go", action: () => { window.location.href = "packgen.html"; } },
