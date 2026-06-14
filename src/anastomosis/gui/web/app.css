@@ -1625,6 +1625,42 @@ svg { display: block; }
   background: rgba(0, 0, 0, 0.20);
 }
 
+/* the learn-a-source proposed-mapping table (column → canonical field) */
+.suggestions-table {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid rgba(255, 250, 240, 0.10);
+}
+.suggestion-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.6fr 0.9fr 0.5fr;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--ink-secondary);
+  background: rgba(0, 0, 0, 0.20);
+}
+.suggestion-row span:last-child { text-align: right; }
+.suggestion-head {
+  color: var(--ink-muted);
+  background: rgba(0, 0, 0, 0.32);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--text-caption);
+}
+.summary-details { margin: var(--space-2) 0; }
+.summary-details > summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: var(--text-label);
+  padding: var(--space-1) 0;
+}
+
 /* the plain-browser notice + failure banner */
 .no-api {
   display: none;
