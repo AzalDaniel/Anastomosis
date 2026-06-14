@@ -975,6 +975,88 @@ def test_pack_init_no_samples_is_clean_error(tmp_path: Path) -> None:
     assert result["error"] == "NoSamplesFound"
 
 
+# --- pack_init_async (W3-1: the async wizard backend) ----------------------
+
+
+def test_pack_init_async_writes_draft(tmp_path: Path) -> None:
+    """The async path returns started=True; the draft result is fetchable via
+    last_pack_result once the packgen done event lands."""
+    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    samples = _packgen_samples(tmp_path)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.pack_init_async(
+        str(samples),
+        name="acme_soap",
+        display="Acme SOAP",
+        confirmed_distinct_patients=True,
+        out_dir=str(tmp_path / "packs"),
+    )
+    assert started == {"ok": True, "started": True}
+
+    # Poll until the packgen done/error stage event lands (or ~10s).
+    deadline = time.time() + 10
+    while time.time() < deadline and not any(
+        e.get("type") in ("stage", "error")
+        and (e.get("state") == "done" or e.get("type") == "error")
+        for e in sink.events
+    ):
+        time.sleep(0.05)
+
+    result = controller.last_pack_result()
+    assert result["ok"] is True, result.get("error")
+    pack_dir = Path(str(result["pack_dir"]))
+    assert pack_dir.is_dir()
+    assert (pack_dir / "DRAFT.md").is_file()
+
+
+def test_pack_init_async_busy_guard(tmp_path: Path) -> None:
+    """A second async run while the first holds the busy flag is rejected.
+
+    Acquire the busy flag directly (deterministic), then assert a second
+    pack_init_async returns Busy without spawning a worker; release after.
+    """
+    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    samples = _packgen_samples(tmp_path)
+    controller = GuiController(_RecordingSink())
+    assert controller._acquire() is True  # simulate an in-flight run
+    try:
+        second = controller.pack_init_async(
+            str(samples), name="acme_soap", confirmed_distinct_patients=True
+        )
+        assert second == {"ok": False, "error": "Busy"}
+    finally:
+        controller._release()
+
+
+def test_last_pack_result_empty_before_any_run() -> None:
+    assert GuiController(_RecordingSink()).last_pack_result() == {"ok": False, "error": "NoResult"}
+
+
+def test_pack_init_async_failure_emits_single_packgen_error(tmp_path: Path) -> None:
+    """An emit failure on the async path emits exactly ONE error event, on the
+    packgen channel — not a doubled, stage-mismatched pair."""
+    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    samples = _packgen_samples(tmp_path)
+    out_file = tmp_path / "not_a_dir"
+    out_file.write_text("x", encoding="utf-8")  # out_dir is a FILE → emit fails
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.pack_init_async(
+        str(samples), name="acme_soap", confirmed_distinct_patients=True, out_dir=str(out_file)
+    )
+    assert started == {"ok": True, "started": True}
+
+    deadline = time.time() + 10
+    while time.time() < deadline and not any(e.get("type") == "error" for e in sink.events):
+        time.sleep(0.05)
+
+    errors = [e for e in sink.events if e.get("type") == "error"]
+    assert len(errors) == 1  # not a doubled pack_init + packgen pair
+    assert errors[0]["stage"] == "packgen"
+    assert controller.last_pack_result()["ok"] is False
+
+
 # --- JSON-safety of every new method ---------------------------------------
 
 
