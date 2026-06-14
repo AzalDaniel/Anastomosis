@@ -67,3 +67,18 @@ class PatientRecord(AnastBase):
 
     def observations_for(self, encounter_id: str) -> list[Observation]:
         return [o for o in self.observations if o.encounter_id == encounter_id]
+
+    def observations_by_encounter(self) -> dict[str | None, list[Observation]]:
+        """Group observations by encounter id in a single pass — the indexed
+        form of repeated :meth:`observations_for` calls (used by the render
+        contexts, which would otherwise re-scan all observations per encounter).
+
+        Order within each group matches ``observations``, so
+        ``observations_by_encounter().get(eid, [])`` equals
+        ``observations_for(eid)`` exactly (patient-level observations with no
+        encounter id group under ``None`` and are excluded from any real id).
+        """
+        grouped: dict[str | None, list[Observation]] = {}
+        for observation in self.observations:
+            grouped.setdefault(observation.encounter_id, []).append(observation)
+        return grouped

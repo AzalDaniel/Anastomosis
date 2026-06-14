@@ -449,7 +449,17 @@ def build_context(
     pack_root: Path = Path(cfg.get("pack_root", Path(__file__).resolve().parent))
     patient = record.patient
     dos = encounter.date_of_service  # calendar date — never timezone-shifted
-    index = _RecordViewIndex.build(record)  # record-level groupings, one pass each
+    # Record-level groupings, built ONCE per record and memoized in the engine's
+    # per-record cache (so a 30-encounter chart builds them once, not 30 times).
+    # CONTRACT: record_cache is per-record — the engine allocates a fresh dict
+    # for each record. A caller must not share one cache across DIFFERENT records
+    # (that would mis-render the second). Absent a cache, it builds locally.
+    cache = cfg.get("record_cache")
+    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+    index = record_cache.get("pf_view_index")
+    if index is None:
+        index = _RecordViewIndex.build(record)  # record-level groupings, one pass each
+        record_cache["pf_view_index"] = index
 
     # --- header: patient / facility / encounter --------------------------------
     age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
@@ -505,9 +515,15 @@ def build_context(
     payment = _payment(patient.guarantor)
 
     # --- vitals ----------------------------------------------------------------
+    # observations grouped by encounter once per record (the indexed form of
+    # observations_for); .get(id, []) == observations_for(id) exactly.
+    obs_by_encounter = record_cache.get("obs_by_encounter")
+    if obs_by_encounter is None:
+        obs_by_encounter = record.observations_by_encounter()
+        record_cache["obs_by_encounter"] = obs_by_encounter
     enc_vitals = [
         o
-        for o in record.observations_for(encounter.id)
+        for o in obs_by_encounter.get(encounter.id, [])
         if o.category == ObservationCategory.VITAL_SIGNS
     ]
     enc_vital_rows = _encounter_vital_rows(enc_vitals)
