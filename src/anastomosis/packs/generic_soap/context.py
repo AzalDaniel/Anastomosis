@@ -23,9 +23,20 @@ def build_context(
     patient = record.patient
 
     dos = encounter.date_of_service  # calendar date — never timezone-shifted
+    # observations grouped by encounter once per record and memoized in the
+    # engine's per-record cache (built once per record, not per encounter);
+    # .get(id, []) == observations_for(id) exactly. CONTRACT: record_cache is
+    # per-record (the engine allocates a fresh dict per record) — do not share
+    # one across DIFFERENT records. Falls back to a local build when absent.
+    cache = cfg.get("record_cache")
+    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+    obs_by_encounter = record_cache.get("obs_by_encounter")
+    if obs_by_encounter is None:
+        obs_by_encounter = record.observations_by_encounter()
+        record_cache["obs_by_encounter"] = obs_by_encounter
     vitals = [
         observation
-        for observation in record.observations_for(encounter.id)
+        for observation in obs_by_encounter.get(encounter.id, [])
         if observation.category == ObservationCategory.VITAL_SIGNS
     ]
     age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
