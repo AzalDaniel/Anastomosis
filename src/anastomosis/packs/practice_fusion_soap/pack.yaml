@@ -1,3 +1,8 @@
+# Practice Fusion is an OPT-IN render skin, not a privileged default. The neutral
+# default is `generic_soap`; cross-EHR migrations render the standard C-CDA view
+# (reconstruct/ccda_standard) or generic_soap. This pack renders only when the
+# operator explicitly selects it (--pack practice_fusion_soap) — e.g. a PF→Tebra
+# run that wants the source-faithful PF layout. See docs/the README output model.
 name: practice_fusion_soap
 version: "1.0"
 description: >
