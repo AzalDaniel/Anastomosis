@@ -83,6 +83,11 @@ class PipelineCommand:
     sections: Mapping[str, bool] = field(default_factory=dict)
     qa: bool = True
     deliveries: tuple[DeliveryCommand, ...] = ()
+    # Opt-in: after a successful render (and QA), write the upload manifest
+    # (<charts_dir>/upload_manifest.json) so a later `anast upload` can drive the
+    # browser engine without re-running the pipeline. Off by default, so an
+    # existing manifest-off run is byte-identical (the event/line is additive).
+    write_manifest: bool = False
 
 
 @dataclass(frozen=True)
@@ -219,8 +224,9 @@ def deliver_outputs(
 
 def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None) -> CommandResult:
     """Run a :class:`PipelineCommand`: ingest → reconstruct → optional QA →
-    requested deliveries. Raises :class:`anastomosis.pipeline.PipelineError` on
-    any loud failure (the adapter maps it to its exit code / error event)."""
+    optional upload-manifest → requested deliveries. Raises
+    :class:`anastomosis.pipeline.PipelineError` on any loud failure (the adapter
+    maps it to its exit code / error event)."""
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.pipeline import PipelineError, run_pipeline
@@ -247,10 +253,32 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
                 trust_new=cmd.trust_new,
                 on_event=on_event,
             )
+            # Opt-in upload manifest: written after a successful render (and QA),
+            # before deliveries, so `anast upload` can drive the browser engine
+            # later. Additive — the event fires ONLY when requested.
+            if cmd.write_manifest:
+                _write_pipeline_manifest(result, cmd.charts_dir, on_event)
             deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
             return CommandResult(pipeline=result, deliveries=deliveries)
     except OutputLockedError as exc:
         raise PipelineError(str(exc), exit_code=2, kind="output_locked") from None
+
+
+def _write_pipeline_manifest(
+    result: PipelineResult, charts_dir: Path, on_event: EventSink | None
+) -> None:
+    """Write the upload manifest and emit the PHI-safe ``manifest`` stage event.
+
+    The manifest carries demographics, so it lands ONLY in the hardened
+    ``charts_dir`` (the writer enforces that); the emitted event carries the item
+    COUNT only — never a name, DOB, or path.
+    """
+    from anastomosis.deliver.browser.persist import write_upload_manifest
+    from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
+
+    write_upload_manifest(result.render_result.documents, result.records, charts_dir)
+    if on_event is not None:
+        on_event(StageEvent(STAGE_MANIFEST, counts={"items": len(result.render_result.documents)}))
 
 
 # --- toolkit info (shared by `anast info` and the GUI dashboard header) ---------

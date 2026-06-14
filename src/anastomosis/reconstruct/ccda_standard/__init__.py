@@ -8,6 +8,16 @@ for the pinned, checksum-verified stylesheet.
 
 from __future__ import annotations
 
-from .renderer import CCDARenderResult, render_ccda_html, render_ccda_standard
+from .renderer import (
+    CCDARenderResult,
+    ccda_standard_doc_path,
+    render_ccda_html,
+    render_ccda_standard,
+)
 
-__all__ = ["CCDARenderResult", "render_ccda_html", "render_ccda_standard"]
+__all__ = [
+    "CCDARenderResult",
+    "ccda_standard_doc_path",
+    "render_ccda_html",
+    "render_ccda_standard",
+]
