@@ -36,6 +36,7 @@ import anastomosis.sources.ccda
 import anastomosis.sources.fhir_r4
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra  # noqa: F401  registers the built-in adapters at import
+from anastomosis.core.logutil import exc_tag
 from anastomosis.sources import available_sources, detect_source, get_source
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ __all__ = [
     "PipelineError",
     "PipelineResult",
     "StageEvent",
+    "load_records",
     "parse_section_overrides",
     "run_pipeline",
 ]
@@ -195,6 +197,41 @@ def resolve_source(export_dir: Path, source: str | None) -> SourceAdapter:
     return detected
 
 
+def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord]:
+    """Load an export into records, turning two failure modes into clean,
+    PHI-safe :class:`PipelineError`\\ s (exit 2) instead of a raw traceback or a
+    silent false-success:
+
+    * a malformed export (a bad XML/JSON/value the adapter chokes on) → a
+      ``bad_input`` error naming only the source and the exception TYPE (never
+      the offending value, which can be PHI);
+    * a load that yields ZERO records → an ``empty_export`` error. A source that
+      reads nothing from a non-empty directory is a defect — most often a
+      ``--from``/``--source`` that does not match the export — never a 0-document
+      "success" that writes empty output and exits 0.
+
+    A :class:`PipelineError` an adapter raises itself (e.g. the FHIR adapter's
+    no-Patient guard) passes through unchanged.
+    """
+    try:
+        records = list(adapter.load(export_dir))
+    except PipelineError:
+        raise
+    except Exception as exc:
+        raise PipelineError(
+            f"Could not read the {adapter.name} export ({exc_tag(exc)}).",
+            exit_code=2,
+            kind="bad_input",
+        ) from None
+    if not records:
+        raise PipelineError(
+            f"No records loaded from the {adapter.name} export — is this a {adapter.name} export?",
+            exit_code=2,
+            kind="empty_export",
+        )
+    return records
+
+
 def run_pipeline(
     *,
     export_dir: Path,
@@ -272,7 +309,7 @@ def run_pipeline(
         lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
         section_overrides=overrides,
     )
-    records = list(adapter.load(export_dir))
+    records = load_records(adapter, export_dir)
     emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
 
     result = engine.run(records, out, force=force)

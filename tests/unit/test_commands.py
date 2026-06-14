@@ -126,6 +126,50 @@ def test_run_pipeline_command_refuses_a_locked_output(
     assert excinfo.value.kind == "output_locked"
 
 
+def test_run_pipeline_command_aliased_charts_and_delivery_dir_no_self_deadlock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One physical dir used as BOTH charts and a delivery dir, spelled two ways,
+    must lock once — not self-deadlock the run (the lock set dedups on resolve())."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    shared = tmp_path / "both"
+    alias = tmp_path / "sub" / ".." / "both"  # same physical dir, different spelling
+    result = run_pipeline_command(
+        PipelineCommand(
+            export_dir=FIXTURE,
+            charts_dir=shared,
+            deliveries=(DeliveryCommand("ccda", alias),),
+        )
+    )
+    # The run completed (no self-inflicted output_locked) and produced the C-CDA.
+    assert result.deliveries["ccda"].counts["patients"] == 3
+    assert list(shared.glob("*.xml"))
+
+
+def test_run_pipeline_command_refuses_a_locked_delivery_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delivery dir is now locked too (not just charts): a second run sharing a
+    --ccda dir with a live run fails fast (output_locked) instead of racing it."""
+    from anastomosis.core.locking import output_lock
+    from anastomosis.pipeline import PipelineError
+
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    ccda = tmp_path / "shared_ccda"
+    with output_lock(ccda):  # another run holds the DELIVERY dir, not charts
+        with pytest.raises(PipelineError) as excinfo:
+            run_pipeline_command(
+                PipelineCommand(
+                    export_dir=FIXTURE,
+                    charts_dir=tmp_path / "charts",  # a free charts dir
+                    deliveries=(DeliveryCommand("ccda", ccda),),
+                )
+            )
+    assert excinfo.value.exit_code == 2
+    assert excinfo.value.kind == "output_locked"
+
+
 def test_deliver_outputs_no_deliveries_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

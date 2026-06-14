@@ -206,6 +206,8 @@ def _run_ccda_standard(
     collision) and the charts dir is held under the same advisory lock
     :func:`run_pipeline_command` uses.
     """
+    from contextlib import ExitStack
+
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.core.output import OutputPathError, validate_output_target
@@ -217,6 +219,7 @@ def _run_ccda_standard(
         STAGE_MANIFEST,
         PipelineError,
         StageEvent,
+        load_records,
         resolve_source,
     )
     from anastomosis.reconstruct.ccda_standard import (
@@ -243,8 +246,14 @@ def _run_ccda_standard(
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
 
     try:
-        with output_lock(charts):
-            records = list(adapter.load(cmd.export_dir))
+        # Lock BOTH output dirs (deadlock-free sorted order), so a concurrent
+        # run sharing either the charts or the ccda dir cannot interleave writes.
+        with ExitStack() as stack:
+            # Dedup on the resolved path (defensive; charts/ccda are distinct
+            # subdirs here, but match run_pipeline_command's no-self-deadlock rule).
+            for target in sorted({charts.resolve(), ccda.resolve()}):
+                stack.enter_context(output_lock(target))
+            records = load_records(adapter, cmd.export_dir)
             emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
 
             view = render_ccda_standard(records, charts, force=cmd.force)
