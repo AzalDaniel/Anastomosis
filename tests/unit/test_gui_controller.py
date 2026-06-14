@@ -1023,3 +1023,83 @@ def test_broken_sink_never_raises_and_releases_busy(tmp_path: Path) -> None:
         pack="generic_soap",
     )
     assert second["ok"] is False
+
+
+# --- source_init (learn-a-source wizard backend) -------------------------------
+
+LEARNED_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "learned" / "clinic_visits.csv"
+
+
+def test_source_init_refuses_without_confirmation(tmp_path: Path) -> None:
+    """confirmed=False returns the PHI-safe proposed mapping and writes nothing."""
+    result = GuiController(_RecordingSink()).source_init(
+        str(LEARNED_FIXTURE),
+        name="clinic_csv",
+        confirmed=False,
+        out_dir=str(tmp_path),
+    )
+    assert result["ok"] is False
+    assert result["error"] == "ConfirmationRequired"
+    assert result["patient_key"] == "PatientID"
+    assert isinstance(result["suggestions"], list) and result["suggestions"]
+    # PHI probe: the proposed mapping carries column names/types only.
+    blob = repr(result)
+    for leak in (*FIXTURE_NAMES, "900-12-3456", "ada@example.com"):
+        assert leak not in blob
+    assert not (tmp_path / "clinic_csv").exists()  # no write
+
+
+def test_source_init_happy_saves_and_round_trips(tmp_path: Path) -> None:
+    """confirmed=True builds, round-trips, and saves the learned mapping."""
+    result = GuiController(_RecordingSink()).source_init(
+        str(LEARNED_FIXTURE),
+        name="clinic_csv",
+        display="Clinic CSV",
+        confirmed=True,
+        out_dir=str(tmp_path),
+    )
+    assert result["ok"] is True, result
+    assert Path(str(result["mapping_dir"])).is_dir()
+    assert (tmp_path / "clinic_csv" / "mapping.json").is_file()
+    assert result["record_count"] == 3
+    assert "Learned source" in str(result["mapping_md"])
+
+
+def test_source_init_rejects_bad_name(tmp_path: Path) -> None:
+    result = GuiController(_RecordingSink()).source_init(
+        str(LEARNED_FIXTURE), name="Bad-Name", confirmed=True, out_dir=str(tmp_path)
+    )
+    assert result == {"ok": False, "error": "InvalidSourceName"}
+
+
+def test_source_init_no_example_file(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = GuiController(_RecordingSink()).source_init(
+        str(empty), name="x", confirmed=False, out_dir=str(tmp_path)
+    )
+    assert result == {"ok": False, "error": "NoExampleFile"}
+
+
+def test_source_init_load_failure_is_distinct_from_dropped(tmp_path: Path) -> None:
+    """A mapped column whose transform chokes is a fixable mapping mistake
+    (MappingLoadFailed), NOT an unexplained empty-list 'WouldDropColumns'."""
+    bad = tmp_path / "bad.csv"
+    bad.write_text("PID,DOB\np1,garbage-not-a-date\n", encoding="utf-8")  # DOB→parse_date fails
+    result = GuiController(_RecordingSink()).source_init(
+        str(bad), name="bad_src", confirmed=True, out_dir=str(tmp_path)
+    )
+    assert result["ok"] is False
+    assert result["error"] == "MappingLoadFailed"
+    assert "DOB" in str(result["detail"])  # names the column (PHI-safe)
+    assert "garbage-not-a-date" not in repr(result)  # the value never leaks
+    assert not (tmp_path / "bad_src").exists()  # nothing written
+
+
+def test_source_init_unanalyzable_returns_enumerated_code(tmp_path: Path) -> None:
+    headerless = tmp_path / "blank.csv"
+    headerless.write_text("", encoding="utf-8")
+    result = GuiController(_RecordingSink()).source_init(
+        str(headerless), name="blank", confirmed=False, out_dir=str(tmp_path)
+    )
+    assert result == {"ok": False, "error": "CannotAnalyze"}
