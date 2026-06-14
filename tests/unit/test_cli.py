@@ -68,6 +68,41 @@ def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.Mon
     assert (out / "qa_report.json").exists()
 
 
+def test_pipeline_run_no_upload_manifest_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: without --upload-manifest, no manifest line and no file (the
+    flag is additive — a default run is unchanged)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "charts"
+    result = runner.invoke(app, ["pipeline", "run", str(FIXTURE), "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    assert "manifest:" not in result.output
+    assert not (out / "upload_manifest.json").exists()
+
+
+def test_pipeline_run_upload_manifest_writes_file_and_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--upload-manifest writes upload_manifest.json and prints the additive line."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "charts"
+    result = runner.invoke(
+        app, ["pipeline", "run", str(FIXTURE), "--out", str(out), "--upload-manifest"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "manifest: 6 item(s) → upload_manifest.json" in " ".join(result.output.split())
+    assert (out / "upload_manifest.json").is_file()
+    # The manifest is readable and carries the 6 rendered items + their patients.
+    from anastomosis.deliver.browser.persist import read_upload_manifest
+
+    items, patients = read_upload_manifest(out)
+    assert len(items) == 6
+    assert {item.patient_id for item in items} <= set(patients)
+
+
 def test_pipeline_run_delivery_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the CLI's archive/bundle/ccda summary lines (3 patients in the
     fixture), so a future change to the delivery output is caught."""
@@ -501,6 +536,9 @@ def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     # The reconstruct + structured-payload outcome lines printed.
     assert "rendered" in normalized
     assert "C-CDA: 3 patients" in normalized
+    # A migration writes the upload manifest by default; the additive line fires.
+    assert "manifest: 6 item(s)" in normalized
+    assert (out / "charts" / "upload_manifest.json").is_file()
     # BOTH artifacts on disk.
     assert len(list((out / "charts").glob("*.pdf"))) == 6
     assert list((out / "ccda").glob("*.xml"))

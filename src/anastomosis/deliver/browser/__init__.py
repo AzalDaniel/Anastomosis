@@ -14,6 +14,8 @@ hours-long batch), so the design is built around resumability:
   stopped without double-filing any chart.
 * :mod:`.manifest` — build the upload manifest from rendered documents and
   parse the operator skiplist.
+* :mod:`.persist` — write/read the on-disk upload manifest (items + patient
+  demographics) that bridges a render run to a later ``anast upload``.
 * :mod:`.verify` — the pre/post verification seam (the L0-L6 ladder lands in
   a later PR).
 * :mod:`.engine` — the sequential driver that walks each item through the
@@ -46,6 +48,13 @@ from .fake import FakeDestination
 from .manager import ManagedDestination
 from .manifest import build_manifest, is_skiplisted, load_skiplist
 from .parallel import ParallelResult, run_parallel
+from .persist import (
+    MANIFEST_NAME,
+    MANIFEST_VERSION,
+    ManifestError,
+    read_upload_manifest,
+    write_upload_manifest,
+)
 from .reports import summary_line, write_run_report
 from .states import (
     CRASH_RECOVERY,
@@ -60,6 +69,8 @@ from .verify import NullVerifier, Verifier
 __all__ = [
     "CRASH_RECOVERY",
     "LEGAL_TRANSITIONS",
+    "MANIFEST_NAME",
+    "MANIFEST_VERSION",
     "SHARED_MACHINE_WARNING",
     "TERMINAL_STATES",
     "CdpEndpoint",
@@ -68,6 +79,7 @@ __all__ = [
     "FakeDestination",
     "IllegalTransitionError",
     "ManagedDestination",
+    "ManifestError",
     "NullVerifier",
     "ParallelResult",
     "PermanentDeliveryError",
@@ -81,8 +93,10 @@ __all__ = [
     "connect_over_cdp",
     "is_skiplisted",
     "load_skiplist",
+    "read_upload_manifest",
     "run_parallel",
     "summary_line",
     "validate_transition",
     "write_run_report",
+    "write_upload_manifest",
 ]

@@ -176,6 +176,9 @@ def _run_pack_mode(
             sections=cmd.sections,
             qa=cmd.qa,
             deliveries=(DeliveryCommand("ccda", _ccda_dir(out)),),
+            # A migration intends to deliver, so the upload manifest is written
+            # by default (it lands in <out>/charts alongside the chart PDFs).
+            write_manifest=True,
         ),
         on_event=on_event,
     )
@@ -206,15 +209,21 @@ def _run_ccda_standard(
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.deliver.ccda_export import deliver_ccda
     from anastomosis.pipeline import (
         STAGE_DETECT,
         STAGE_INGEST,
+        STAGE_MANIFEST,
         PipelineError,
         StageEvent,
         resolve_source,
     )
-    from anastomosis.reconstruct.ccda_standard import render_ccda_standard
+    from anastomosis.reconstruct.ccda_standard import (
+        ccda_standard_doc_path,
+        render_ccda_standard,
+    )
+    from anastomosis.reconstruct.engine import RenderedDoc
 
     emit = on_event or (lambda _event: None)
     out = cmd.out_dir
@@ -248,6 +257,22 @@ def _run_ccda_standard(
                     kind="render_failed",
                     failed=tuple(view.failed),
                 )
+
+            # Write the upload manifest by default (a migration intends to
+            # deliver). The whole-patient view has no RenderedDoc list, so the
+            # path:patient association is recovered from the records via the
+            # renderer's public allocator; the per-patient view has no encounter,
+            # so the patient id stands in for the item_key's encounter slot.
+            manifest_docs = [
+                RenderedDoc(
+                    path=ccda_standard_doc_path(charts, record),
+                    encounter_id=record.patient.id,
+                    patient_id=record.patient.id,
+                )
+                for record in records
+            ]
+            write_upload_manifest(manifest_docs, records, charts)
+            emit(StageEvent(STAGE_MANIFEST, counts={"items": len(manifest_docs)}))
 
             paths = deliver_ccda(records, ccda)
     except OutputLockedError as exc:
