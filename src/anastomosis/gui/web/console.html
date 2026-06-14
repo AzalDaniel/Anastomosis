@@ -41,7 +41,7 @@
       <div class="page-head">
         <div>
           <h1>Upload console</h1>
-          <div class="tagline">Browser-delivery operator surface (read-only).</div>
+          <div class="tagline">Browser-delivery operator surface — inspect a ledger and drive uploads.</div>
         </div>
         <div class="version" id="version">—</div>
       </div>
@@ -61,18 +61,46 @@
 
       <div class="banner" id="banner"></div>
 
-      <!-- This screen READS the tracking ledger. Live driving is deferred. -->
+      <!-- This screen INSPECTS the tracking ledger AND drives the resumable
+           upload engine through the controller (W5/PR-6b). Every drive call
+           goes through window.pywebview.api.upload_start / upload_stop — the JS
+           never touches the ledger's write surface (no transition/begin_run/
+           recover from the browser). -->
       <div class="guidance">
         <div>
-          This console inspects an existing upload ledger. Starting, pausing, and
-          driving real uploads from the GUI
-          <span class="deferred">live driving: later milestone</span>
+          This console inspects an existing upload ledger and can drive the
+          resumable upload engine against a browser YOU launched and logged into.
         </div>
         <div class="muted">
           Press <strong>Cmd/Ctrl+K</strong> for the item-key palette (encounter id +
           content hash — never patient names). Press <strong>L</strong> for the activity log.
         </div>
       </div>
+
+      <!-- Drive an upload. SECURITY: the CDP attach is loopback-only (the
+           controller hard-gates non-loopback hosts) and Anastomosis NEVER stores
+           your EHR credentials or closes your browser. The warning below is the
+           single source of truth from upload_safety_notice(). -->
+      <section class="panel glass-card" aria-label="Drive an upload">
+        <h2>drive an upload</h2>
+        <div class="safety-warning" id="safety-warning" role="alert"></div>
+        <div class="field">
+          <label for="cdp-url">CDP endpoint (loopback only, e.g. 127.0.0.1:9222 with an http scheme)</label>
+          <input type="text" id="cdp-url" placeholder="127.0.0.1:9222" />
+        </div>
+        <div class="field">
+          <label for="pack-name">Destination pack name</label>
+          <input type="text" id="pack-name" placeholder="tebra" />
+        </div>
+        <div class="muted">
+          The output directory above (manifest + ledger) is the upload source.
+          A re-start resumes a prior run; already-filed items are not re-driven.
+        </div>
+        <div class="drive-actions">
+          <button class="run-btn" id="start-upload-btn" type="button">start upload</button>
+          <button class="btn btn-glass" id="stop-upload-btn" type="button">stop</button>
+        </div>
+      </section>
 
       <section class="panel glass-card" aria-label="Load ledger">
         <h2>tracking ledger</h2>
@@ -81,7 +109,7 @@
           <input type="text" id="db-path" placeholder="/path/to/out/tracking.db" />
         </div>
         <div class="field">
-          <label for="out-dir">Reconstruction output (for manifest preview)</label>
+          <label for="out-dir">Output directory (manifest + ledger, for preview &amp; upload)</label>
           <input type="text" id="out-dir" placeholder="/path/to/out" />
         </div>
         <button class="run-btn" id="load-btn" type="button">inspect ledger</button>
@@ -188,9 +216,9 @@
     </aside>
 
     <!-- Item-key command palette (Cmd/Ctrl+K): lists item KEYS, never names.
-         Driving uploads from here
-         <span class="deferred">live driving: later milestone</span>. The
-         palette is read-only — selecting a key does nothing yet (deferred). -->
+         The palette is a read-only VIEW of which opaque keys still owe work;
+         driving happens through the "drive an upload" panel (upload_start),
+         never by selecting a key here — so no per-key drive call exists. -->
     <div class="cmd-palette" id="cmd-palette" role="dialog" aria-label="Item-key palette" hidden>
       <div class="cmd-palette-backdrop" data-cmd-dismiss="true"></div>
       <div class="cmd-palette-box glass-card">

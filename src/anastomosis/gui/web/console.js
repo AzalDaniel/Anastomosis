@@ -1,20 +1,28 @@
 /*
  * Anastomosis Upload Console — vanilla JS, no frameworks, no build step.
  *
- * READ-ONLY surface over an existing tracking ledger. Talks to the headless
- * controller:
+ * Inspects an existing tracking ledger AND drives the resumable upload engine
+ * through the headless controller. Talks to the controller only:
  *   - upload_status(db)          → grouped state counters + run row + histograms
  *   - upload_manifest_preview(d) → count of renderable PDFs (no names)
  *   - upload_item_keys(db)       → pending item KEYS for the Cmd/Ctrl+K palette
+ *   - upload_safety_notice()     → the shared-machine warning (single source)
+ *   - upload_start(out,cdp,pack) → drive the engine over a loopback CDP attach
+ *   - upload_stop()              → cooperative stop after the current document
+ *
+ * SECURITY: driving goes through upload_start / upload_stop ONLY. The JS never
+ * touches the ledger's write surface — every ledger write (enqueue, state
+ * changes, run bookkeeping) is owned by the controller, never issued from the
+ * browser. The CDP attach is loopback-only (the controller hard-gates it) and
+ * the browser is never closed by the GUI. While a run is in flight the live
+ * counts come from POLLING upload_status against the ledger — the events carry
+ * no counts, only stage/state/abort-TYPE names.
  *
  * The visual layer is carried from the predecessor (asymmetric counter grid,
  * calendar HUD with halo cells, command palette, log strip/drawer) via
  * window.AnastShell. The console mirrors the original app-shell most closely:
  * the counter grid is wired to OUR ledger state groups; the calendar plots
  * the run's start/finish days with the original halo treatment.
- *
- * No live driving here — starting/pausing real uploads is a later milestone and
- * is labeled as such in the UI. There are NO buttons that pretend to upload.
  *
  * PHI discipline: every value rendered is a count, a state name, a run/
  * destination id, an ISO timestamp, an exception TYPE name, or an opaque item
@@ -26,6 +34,11 @@ const Shell = window.AnastShell;
 const CAL = { year: null, month: null, histogram: {} };
 let ITEM_KEYS = [];
 let PALETTE = null;
+// The setInterval handle for the live-counter poll while an upload runs; null
+// when no poll is active. The poll re-fetches upload_status against the ledger
+// (counts come from the ledger, never from events).
+let POLL_TIMER = null;
+const POLL_INTERVAL_MS = 1500;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
@@ -139,6 +152,152 @@ function renderStatus(status) {
     grid.appendChild(cell);
   }
 }
+
+// --- drive an upload (W5/PR-6b) -------------------------------------------
+// Driving goes through the controller only. The JS never writes the ledger;
+// the live counts come from polling upload_status (never from events).
+
+// The ledger path the controller writes into: <out_dir>/upload_ledger.sqlite
+// (the same file the CLI `anast upload` uses). The out-dir input is the single
+// source dir (manifest + ledger).
+function ledgerPath(outDir) {
+  return outDir.replace(/\/+$/, "") + "/upload_ledger.sqlite";
+}
+
+// Render the shared-machine warning (the single source of truth from the
+// controller) into the prominent #safety-warning element via textContent.
+async function loadSafetyNotice() {
+  if (!hasApi()) {
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.upload_safety_notice();
+    if (res && res.ok) {
+      el("safety-warning").textContent = res.warning;
+    }
+  } catch (err) {
+    // Advisory; never block the console on it.
+  }
+}
+
+// Refresh the counter grid once from the ledger (reuses renderStatus).
+async function refreshStatusOnce(dbPath) {
+  if (!hasApi() || !dbPath) {
+    return;
+  }
+  try {
+    const status = await window.pywebview.api.upload_status(dbPath);
+    if (status && status.ok) {
+      renderStatus(status);
+      renderErrorHist(status.error_type_histogram || {});
+      el("run-panel").hidden = false;
+      el("detail-panel").hidden = false;
+    }
+  } catch (err) {
+    // Polling is advisory; a transient read failure must not break the run.
+  }
+}
+
+function startPolling(dbPath) {
+  stopPolling();
+  POLL_TIMER = window.setInterval(() => {
+    refreshStatusOnce(dbPath);
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (POLL_TIMER !== null) {
+    window.clearInterval(POLL_TIMER);
+    POLL_TIMER = null;
+  }
+}
+
+async function onStartUpload() {
+  if (!hasApi()) {
+    return;
+  }
+  const outDir = el("out-dir").value;
+  const cdpUrl = el("cdp-url").value;
+  const packName = el("pack-name").value;
+  if (!outDir || !cdpUrl || !packName) {
+    showBanner("Provide an output directory, a loopback CDP endpoint, and a pack name.");
+    return;
+  }
+  setStatus("starting upload…");
+  try {
+    const res = await window.pywebview.api.upload_start(outDir, cdpUrl, packName);
+    if (!res || !res.ok) {
+      showBanner("Could not start upload: " + (res ? res.error : "no response"));
+      setStatus("not started");
+      Shell.logEvent({ kind: "error", msg: "upload start refused: " + (res ? res.error : "?") });
+      return;
+    }
+    setStatus("uploading…");
+    Shell.logEvent({ kind: "ok", msg: "upload started" });
+    // The events carry stage/state names only; the live counts come from
+    // polling the ledger while the run is in flight.
+    startPolling(ledgerPath(outDir));
+  } catch (err) {
+    showBanner(err);
+    setStatus("not started");
+  }
+}
+
+async function onStopUpload() {
+  if (!hasApi()) {
+    return;
+  }
+  try {
+    const res = await window.pywebview.api.upload_stop();
+    if (res && res.ok) {
+      setStatus("stopping after the current document…");
+      Shell.logEvent({ kind: "info", msg: "stop requested (after current document)" });
+    } else {
+      setStatus("no run in flight");
+    }
+  } catch (err) {
+    showBanner(err);
+  }
+}
+
+// A terminal upload event (done or error): stop polling, do one final refresh
+// against the ledger, and set the closing status.
+function onUploadTerminal(finalStatus) {
+  stopPolling();
+  const outDir = el("out-dir").value;
+  if (outDir) {
+    refreshStatusOnce(ledgerPath(outDir));
+  }
+  setStatus(finalStatus);
+}
+
+// The event channel the shell pushes controller events into. Counts never ride
+// events — only stage/state names and (on abort/failure) the exception TYPE.
+window.anastEvent = function anastEvent(e) {
+  if (!e || typeof e !== "object") {
+    return;
+  }
+  switch (e.type) {
+    case "stage":
+      if (e.stage === "upload" && e.state === "done") {
+        onUploadTerminal("upload complete");
+        Shell.logEvent({ kind: "ok", msg: "upload complete" });
+      } else if (e.stage === "upload") {
+        setStatus("stage upload: " + e.state);
+      }
+      break;
+    case "error":
+      if (e.stage === "upload") {
+        // A wrong-patient abort reason (or any failure TYPE) surfaces here.
+        onUploadTerminal("upload stopped: " + e.error);
+        showBanner("Upload stopped: " + e.error);
+        Shell.logEvent({ kind: "error", msg: "upload stopped: " + e.error });
+      }
+      break;
+    default:
+      break;
+  }
+};
 
 // --- error inspector flyout (TYPE histograms only) ------------------------
 function renderErrorHist(hist) {
@@ -279,6 +438,8 @@ async function populate() {
   } catch (err) {
     showBanner(err);
   }
+  // Surface the shared-machine warning before any attach is possible.
+  await loadSafetyNotice();
 }
 
 function init() {
@@ -289,6 +450,14 @@ function init() {
   const inspect = el("inspect-errors");
   if (inspect) {
     inspect.addEventListener("click", toggleFlyout);
+  }
+  const startBtn = el("start-upload-btn");
+  if (startBtn) {
+    startBtn.addEventListener("click", onStartUpload);
+  }
+  const stopBtn = el("stop-upload-btn");
+  if (stopBtn) {
+    stopBtn.addEventListener("click", onStopUpload);
   }
   const prev = el("cal-prev");
   if (prev) {
