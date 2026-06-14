@@ -26,6 +26,10 @@
 
 const Shell = window.AnastShell;
 
+// Per-pack section matrices (name -> {section: {label, default}}), from
+// info().packs — the same data the dashboard uses to build its section toggles.
+let SECTIONS_BY_PACK = {};
+
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
 }
@@ -274,6 +278,69 @@ function showMigrationResult(text) {
   }
 }
 
+// Read the section toggles into the {section: bool} map run_migration expects.
+function gatherSections() {
+  const matrix = el("section-matrix");
+  const sections = {};
+  if (matrix) {
+    // Scope to the section checkboxes (each carries data-section) so a future
+    // non-section checkbox in this container can never pollute the map.
+    for (const box of matrix.querySelectorAll("input[data-section]")) {
+      sections[box.dataset.section] = box.checked;
+    }
+  }
+  return sections;
+}
+
+// The render mode that determines which pack's sections apply: "neutral" renders
+// through generic_soap, "ccda-standard" is the HL7 view (no Jinja sections), and
+// anything else is a Jinja pack name — mirrors core.migrate's mapping.
+function renderPackFor(renderValue) {
+  if (renderValue === "ccda-standard") {
+    return null;
+  }
+  return renderValue === "neutral" ? "generic_soap" : renderValue;
+}
+
+// Rebuild the section matrix for the chosen render pack (the dashboard's
+// renderSectionMatrix pattern). The ccda-standard view exposes none.
+function renderSectionMatrix(renderValue) {
+  const matrix = el("section-matrix");
+  if (!matrix) {
+    return;
+  }
+  matrix.innerHTML = "";
+  const packName = renderPackFor(renderValue);
+  const sections = (packName && SECTIONS_BY_PACK[packName]) || {};
+  const keys = Object.keys(sections);
+  if (keys.length === 0) {
+    matrix.textContent =
+      packName === null
+        ? "The ccda-standard view renders no togglable sections."
+        : "This pack exposes no togglable sections.";
+    matrix.classList.add("empty");
+    return;
+  }
+  matrix.classList.remove("empty");
+  for (const key of keys) {
+    const flag = sections[key];
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.section = key;
+    input.checked = flag.default !== false;
+    const track = document.createElement("span");
+    track.className = "track";
+    const text = document.createElement("span");
+    text.textContent = flag.label || key;
+    label.appendChild(input);
+    label.appendChild(track);
+    label.appendChild(text);
+    matrix.appendChild(label);
+  }
+}
+
 async function onRunMigration() {
   if (!hasApi()) {
     return;
@@ -291,6 +358,14 @@ async function onRunMigration() {
     showBanner("Pick a destination EHR (migrate TO) first.");
     return;
   }
+  const packDir = el("pack-dir") ? el("pack-dir").value.trim() : "";
+  const payload = {
+    sections: gatherSections(),
+    qa: Shell.segmentValue("qa", "on") === "on",
+    force: !!(el("force") && el("force").checked),
+    pack_dirs: packDir ? [packDir] : [],
+    trust_new: !!(el("trust-pack") && el("trust-pack").checked),
+  };
   clearPatients();
   setRunBusy(true);
   showMigrationResult("running…");
@@ -300,7 +375,12 @@ async function onRunMigration() {
       outDir,
       source,
       destination,
-      render
+      render,
+      payload.sections,
+      payload.qa,
+      payload.force,
+      payload.pack_dirs,
+      payload.trust_new
     );
     if (started && started.ok === false) {
       showBanner(started.error);
@@ -436,6 +516,14 @@ async function populate() {
       el("version").textContent = info.version;
       populateSources(info.sources || []);
       populateRender(info.packs || []);
+      SECTIONS_BY_PACK = {};
+      for (const pack of info.packs || []) {
+        if (pack.available) {
+          SECTIONS_BY_PACK[pack.name] = pack.sections || {};
+        }
+      }
+      // Build the matrix for the default render mode ("neutral" → generic_soap).
+      renderSectionMatrix(el("render") ? el("render").value : "neutral");
     }
     const routes = await window.pywebview.api.routes();
     if (routes && routes.ok) {
@@ -469,6 +557,14 @@ function init() {
   const runBtn = el("run-migration-btn");
   if (runBtn) {
     runBtn.addEventListener("click", onRunMigration);
+  }
+  const renderSelect = el("render");
+  if (renderSelect) {
+    renderSelect.addEventListener("change", () => renderSectionMatrix(renderSelect.value));
+  }
+  // The QA segment toggle (gooey iOS-style) — same control as the dashboard.
+  if (Shell && Shell.initSegmentToggles) {
+    Shell.initSegmentToggles(document);
   }
 
   const palette = Shell.initCommandPalette([
