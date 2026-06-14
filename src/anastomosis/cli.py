@@ -14,7 +14,6 @@ Sub-commands appear as their pipeline stages are implemented:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -1233,35 +1232,13 @@ def destination_init(
 
 
 # --- anast pack init (the pack-from-samples wizard) -------------------------
-
-# A pack name must be a safe directory + manifest identifier (it becomes the
-# pack's directory name and YAML `name:`). Mirrors the loader's expectations.
-_PACK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-# Below this many samples the static/per-patient split is statistically weak;
-# the wizard warns loudly (the learner still runs).
-_LOW_SAMPLE_FLOOR = 3
-
-
-def _collect_sample_pdfs(patterns: list[str]) -> list[Path]:
-    """Resolve dir-or-glob arguments into a sorted, de-duplicated PDF list.
-
-    A bare directory contributes its ``*.pdf`` children; a glob is expanded;
-    a direct path is taken as-is. Sorted for deterministic sample indices.
-    """
-    import glob as _glob
-
-    found: set[Path] = set()
-    for raw in patterns:
-        candidate = Path(raw)
-        if candidate.is_dir():
-            found.update(p for p in candidate.glob("*.pdf"))
-            continue
-        if candidate.is_file():
-            found.add(candidate)
-            continue
-        # Treat as a glob (supports ``./samples/*.pdf``).
-        found.update(Path(match) for match in _glob.glob(raw) if Path(match).is_file())
-    return sorted(found)
+#
+# The pack-init flow (analyze → confirm → emit), its pack-name rule, its
+# low-sample floor, and the sample-PDF collector all live in the shared command
+# core (:mod:`anastomosis.core.packinit`) so the CLI and the GUI run ONE flow.
+# This command is a thin adapter over :func:`run_pack_init`, keeping the CLI's
+# Rich UX (the count line, the low-confidence warning, the summary, the
+# interactive same-patient confirm, the next-steps block).
 
 
 def _synthetic_preview_record() -> PatientRecord:
@@ -1454,53 +1431,66 @@ def pack_init(
     POINT: review the rendered preview against an original sample, edit the
     template, and re-render. Fidelity is not claimed.
     """
-    from anastomosis.core.logutil import exc_tag
-    from anastomosis.packgen import analyze, extract_samples
-    from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT, emit_draft_pack
+    from anastomosis.core.packinit import (
+        LOW_SAMPLE_FLOOR,
+        PackInitCommand,
+        run_pack_init,
+    )
 
-    if not _PACK_NAME_RE.match(name):
+    # Analyze step (confirmed=False): validate the name, collect + harvest the
+    # samples, and produce the PHI-safe summary. The shared core does the work;
+    # this command presents it and runs the interactive confirm.
+    analysis_result = run_pack_init(
+        PackInitCommand(
+            samples=samples, name=name, display=display, out_dir=out_dir, confirmed=False
+        )
+    )
+    if analysis_result.error == "InvalidPackName":
         console.print(
             f"[red]invalid pack name {name!r}[/red] — use a lowercase identifier "
             "(letters, digits, underscores; starting with a letter)"
         )
         raise typer.Exit(code=2)
-
-    pdfs = _collect_sample_pdfs(samples)
-    if not pdfs:
+    if analysis_result.error == "NoSamplesFound":
         console.print(
             "[red]no sample PDFs found[/red] — pass --from-samples <dir>, a glob, or files"
         )
         raise typer.Exit(code=2)
-    # PHI: log the COUNT only, never the sample paths (they may be named after
-    # patients — the extract module's contract).
-    console.print(f"Found [cyan]{len(pdfs)}[/cyan] sample PDF(s).")
-    if len(pdfs) < _LOW_SAMPLE_FLOOR:
-        console.print(
-            f"[yellow]warning: only {len(pdfs)} sample(s)[/yellow] — confidence is LOW. "
-            f"The static/per-patient text split needs >= {_LOW_SAMPLE_FLOOR} DISTINCT-patient "
-            "samples to be reliable."
-        )
-
-    try:
-        analysis = analyze(extract_samples(pdfs))
-    except Exception as exc:  # unreadable/encrypted sample — type only, no path/PHI
-        console.print(f"[red]analysis failed[/red] ({exc_tag(exc)})")
+    if analysis_result.error != "ConfirmationRequired":
+        # An analysis failure (unreadable/encrypted sample) — type name only.
+        console.print(f"[red]analysis failed[/red] ({analysis_result.error})")
         raise typer.Exit(code=1) from None
 
+    # PHI: log the COUNT only, never the sample paths (they may be named after
+    # patients — the extract module's contract).
+    console.print(f"Found [cyan]{analysis_result.sample_count}[/cyan] sample PDF(s).")
+    if analysis_result.low_confidence or analysis_result.sample_count < LOW_SAMPLE_FLOOR:
+        console.print(
+            f"[yellow]warning: only {analysis_result.sample_count} sample(s)[/yellow] — "
+            f"confidence is LOW. The static/per-patient text split needs >= {LOW_SAMPLE_FLOOR} "
+            "DISTINCT-patient samples to be reliable."
+        )
+
     console.print("\n[bold]Inferred design[/bold] (PHI-safe summary):")
-    for line in analysis.summary_lines():
+    for line in analysis_result.summary:
         console.print(f"  {line}")
 
-    console.print(f"\n[yellow]Same-patient caveat:[/yellow] {SAME_PATIENT_CAVEAT}")
+    console.print(f"\n[yellow]Same-patient caveat:[/yellow] {analysis_result.caveat}")
     if not yes and not typer.confirm("Are these samples from DIFFERENT patients?", default=False):
         console.print("Aborting — gather samples from distinct patients and re-run.")
         raise typer.Exit(code=0)
 
-    try:
-        pack_dir = emit_draft_pack(analysis, name=name, display=display or name, out_dir=out_dir)
-    except Exception as exc:
-        console.print(f"[red]emit failed[/red] ({exc_tag(exc)})")
+    # Emit step (confirmed=True): the shared core writes the draft pack.
+    emit_result = run_pack_init(
+        PackInitCommand(
+            samples=samples, name=name, display=display, out_dir=out_dir, confirmed=True
+        )
+    )
+    if not emit_result.ok:
+        console.print(f"[red]emit failed[/red] ({emit_result.error})")
         raise typer.Exit(code=1) from None
+    pack_dir = emit_result.pack_dir
+    assert pack_dir is not None  # ok=True guarantees a pack_dir
     console.print(f"\n[green]wrote draft pack[/green] → {pack_dir}")
 
     preview_path: Path | None = None
@@ -1584,11 +1574,12 @@ def source_init(
     built-in source. Refine the saved ``mapping.json`` and re-run to re-verify.
     """
     from anastomosis.core.logutil import exc_tag
+    from anastomosis.core.packinit import PACK_NAME_RE
     from anastomosis.core.sourcelearn import analyze_source, build_mapping, round_trip, save_mapping
     from anastomosis.sources.learned import user_sources_dir
     from anastomosis.sources.learned.spec import MappingError
 
-    if not _PACK_NAME_RE.match(name):
+    if not PACK_NAME_RE.match(name):
         console.print(
             f"[red]invalid mapping name {name!r}[/red] — use a lowercase identifier "
             "(letters, digits, underscores; starting with a letter)"
