@@ -495,3 +495,46 @@ def test_renders_only_synthetic_identity(pack: LoadedPack, records: list[Any]) -
     # The synthetic logo placeholder is used, and the real vendor host is absent.
     assert "data:image/svg+xml;base64," in blob
     assert "practicefusion" not in lower  # synthetic footer URL only
+
+
+# --- W4 perf hoist (output-preserving; the e2e goldens prove byte-identity) -----
+
+
+def test_observations_by_encounter_matches_observations_for(records: list[Any]) -> None:
+    """The indexed grouping equals the per-encounter linear scan exactly — same
+    members, same order — so swapping the render contexts to it cannot change
+    output."""
+    for record in records:
+        grouped = record.observations_by_encounter()
+        for encounter in record.encounters:
+            assert grouped.get(encounter.id, []) == record.observations_for(encounter.id)
+        # Patient-level observations (no encounter id) group under None and are
+        # excluded from any real encounter id.
+        assert all(o.encounter_id is None for o in grouped.get(None, []))
+
+
+def test_record_view_index_built_once_per_record(pack: LoadedPack, records: list[Any]) -> None:
+    """With the engine's shared per-record cache, the record-level index and the
+    observations grouping are built ONCE per record and reused across its
+    encounters (the W4 hoist) — proven by object identity in the cache (the pack
+    loads under a dynamic module name, so a monkeypatch of the class would miss)."""
+    record = max(records, key=lambda r: len(r.encounters))
+    assert len(record.encounters) >= 2  # a record where per-record vs per-encounter differ
+
+    cache: dict[str, Any] = {}
+    cfg = {**_cfg(pack), "record_cache": cache}
+    pack.build_context(record.encounters[0], record, cfg)
+    index_first = cache["pf_view_index"]
+    obs_first = cache["obs_by_encounter"]
+    pack.build_context(record.encounters[1], record, cfg)
+    # The cached objects PERSIST across encounters — built once, not rebuilt.
+    assert cache["pf_view_index"] is index_first
+    assert cache["obs_by_encounter"] is obs_first
+
+
+def test_build_context_without_cache_still_builds(pack: LoadedPack, records: list[Any]) -> None:
+    """A direct caller that passes no record_cache still works (the fallback
+    builds locally) — engine and direct-call paths both render correctly."""
+    record = next(r for r in records if r.encounters)
+    ctx = pack.build_context(record.encounters[0], record, _cfg(pack))  # no record_cache
+    assert ctx and "payment" in ctx  # built locally via the fallback, render-ready
