@@ -438,6 +438,135 @@ def test_routes_unknown_is_clean_error() -> None:
     assert "ghost" in str(result["error"])
 
 
+# --- run_migration (EHR-to-EHR; the wizard's run flow) ---------------------
+
+
+def test_run_migration_returns_route_and_per_patient_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A migration returns ok, the resolved route, and a per-patient summary —
+    while the event stream stays count-only (PHI probe holds)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    result = controller.run_migration(
+        str(FIXTURE), str(tmp_path / "out"), source="pf-tebra", destination="tebra"
+    )
+    assert result["ok"] is True
+    # The chosen route (pf→tebra → C-CDA import) rides the return value.
+    route = result["route"]
+    assert route["destination"] == "tebra"  # type: ignore[index]
+    assert route["chosen"] == "ccda_import"  # type: ignore[index]
+    # The structured-payload count rolled up.
+    assert result["ccda_patients"] == 3
+    # Per-patient summary present (neutral mode → full names via the pipeline).
+    patients = result["patients"]
+    assert isinstance(patients, list) and len(patients) == 3
+    by_name = {p["display_name"]: p for p in patients}
+    assert by_name["Ada Q Fixture"]["documents"] == 3
+    # Names ride the RETURN value only — never the event stream.
+    blob = repr(sink.events)
+    for name in FIXTURE_NAMES:
+        assert name not in blob, f"event log leaked patient name {name!r}"
+    # The done event landed last.
+    assert sink.events[-1]["type"] == "done"
+
+
+def test_run_migration_ccda_standard_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ccda-standard mode carries the SAME per-patient detail as pack mode —
+    names/DOB/encounter counts (from the retained records), one C-CDA-view doc
+    per patient — while the event stream stays count-only."""
+    import anastomosis.reconstruct.ccda_standard.renderer as ccda_renderer
+
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _FakeChromium())
+    sink = _RecordingSink()
+    result = GuiController(sink).run_migration(
+        str(FIXTURE),
+        str(tmp_path / "out"),
+        source="pf-tebra",
+        destination="tebra",
+        render="ccda-standard",
+    )
+    assert result["ok"] is True
+    assert result["route"]["chosen"] == "ccda_import"  # type: ignore[index]
+    patients = result["patients"]
+    assert isinstance(patients, list) and len(patients) == 3
+    assert all(p["documents"] == 1 for p in patients)
+    assert result["ccda_patients"] == 3
+    # Names/DOB/encounter counts are present (the GUI maps them in every mode).
+    by_name = {p["display_name"]: p for p in patients}
+    assert by_name["Ada Q Fixture"]["birth_date"] == "1985-03-14"
+    assert by_name["Ada Q Fixture"]["encounters"] == 3
+    assert {"Boris Sample Jr.", "Cleo Placeholder"} <= set(by_name)
+    # ...but the names ride the return value only — never the PHI-scanned events.
+    blob = repr(sink.events)
+    for name in FIXTURE_NAMES:
+        assert name not in blob, f"event log leaked patient name {name!r}"
+
+
+def test_run_migration_unknown_destination_is_clean_error(tmp_path: Path) -> None:
+    sink = _RecordingSink()
+    result = GuiController(sink).run_migration(
+        str(FIXTURE), str(tmp_path / "out"), source="pf-tebra", destination="ghost"
+    )
+    assert result["ok"] is False
+    assert "ghost" in str(result["error"])
+    assert "error" in sink.types()
+    assert "done" not in sink.types()
+
+
+def test_run_migration_busy_guard_rejects_concurrent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
+    controller = GuiController(_RecordingSink())
+
+    first_result: dict[str, object] = {}
+
+    def _first() -> None:
+        first_result.update(
+            controller.run_migration(
+                str(FIXTURE), str(tmp_path / "out"), source="pf-tebra", destination="tebra"
+            )
+        )
+
+    worker = threading.Thread(target=_first)
+    worker.start()
+    time.sleep(0.1)  # let the first run enter the busy section
+    second = controller.run_migration(
+        str(FIXTURE), str(tmp_path / "out2"), source="pf-tebra", destination="tebra"
+    )
+    worker.join()
+    assert second == {"ok": False, "error": "Busy"}
+    assert first_result["ok"] is True
+
+
+def test_run_migration_async_started_then_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.run_migration_async(
+        str(FIXTURE), str(tmp_path / "out"), source="pf-tebra", destination="tebra"
+    )
+    assert started == {"ok": True, "started": True}
+    deadline = time.time() + 10
+    while time.time() < deadline and (not sink.events or sink.events[-1]["type"] != "done"):
+        time.sleep(0.05)
+    assert sink.events[-1]["type"] == "done"
+    # The per-patient detail is fetchable after done (names there, not in events).
+    summary = controller.last_run_summary()
+    assert summary["ok"] is True
+    assert len(summary["patients"]) == 3  # type: ignore[arg-type]
+
+
 # --- PHI probe -------------------------------------------------------------
 
 

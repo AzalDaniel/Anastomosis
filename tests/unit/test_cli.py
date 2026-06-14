@@ -469,3 +469,145 @@ def test_explicit_source_does_not_print_detected_line(
     )
     assert result.exit_code == 0, result.output
     assert "Detected source" not in result.output
+
+
+# --- anast migrate (EHR-to-EHR migration: PF→Tebra is one instance) ---------
+
+import anastomosis.reconstruct.ccda_standard.renderer as ccda_renderer  # noqa: E402
+
+
+def _patch_migration_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _FakeChromium())
+
+
+def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    _patch_migration_chromium(monkeypatch)
+    out = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        ["migrate", str(FIXTURE), "--from", "pf-tebra", "--to", "tebra", "--out", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    # The transit map (the route headline) printed first.
+    assert "delivery routes for tebra" in normalized
+    assert "chosen: ccda_import" in normalized
+    # An explicit --from suppresses the auto-detect "Detected source" line.
+    assert "Detected source" not in result.output
+    # The reconstruct + structured-payload outcome lines printed.
+    assert "rendered" in normalized
+    assert "C-CDA: 3 patients" in normalized
+    # BOTH artifacts on disk.
+    assert len(list((out / "charts").glob("*.pdf"))) == 6
+    assert list((out / "ccda").glob("*.xml"))
+
+
+def test_migrate_ccda_standard_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_migration_chromium(monkeypatch)
+    out = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        [
+            "migrate",
+            str(FIXTURE),
+            "--from",
+            "pf-tebra",
+            "--to",
+            "tebra",
+            "--out",
+            str(out),
+            "--render",
+            "ccda-standard",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "chosen: ccda_import" in normalized
+    assert "C-CDA: 3 patients" in normalized
+    # One standard-view PDF per patient.
+    assert len(list((out / "charts").glob("*_ccda.pdf"))) == 3
+
+
+def test_migrate_unknown_destination_exits_2(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "migrate",
+            str(FIXTURE),
+            "--from",
+            "pf-tebra",
+            "--to",
+            "ghost",
+            "--out",
+            str(tmp_path / "o"),
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "ghost" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_migrate_missing_from_exits_2(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["migrate", str(FIXTURE), "--to", "tebra", "--out", str(tmp_path / "o")]
+    )
+    assert result.exit_code == 2, result.output
+    assert "--from is required" in result.output
+
+
+def test_migrate_save_then_load_profile_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--save-profile` then `--profile NAME` reuses the saved source/to/render."""
+    import anastomosis.core.migrate as migrate_mod
+
+    _patch_migration_chromium(monkeypatch)
+    store = tmp_path / "migrations.json"
+    monkeypatch.setattr(migrate_mod, "user_migrations_path", lambda: store)
+
+    # Save a profile on a successful run.
+    saved = runner.invoke(
+        app,
+        [
+            "migrate",
+            str(FIXTURE),
+            "--from",
+            "pf-tebra",
+            "--to",
+            "tebra",
+            "--out",
+            str(tmp_path / "out1"),
+            "--render",
+            "ccda-standard",
+            "--save-profile",
+            "pf2tebra",
+        ],
+    )
+    assert saved.exit_code == 0, saved.output
+    assert "saved migration profile" in saved.output
+    assert store.is_file()
+
+    # Re-run by profile name only (no --from/--to/--render); it resolves them.
+    loaded = runner.invoke(
+        app,
+        ["migrate", str(FIXTURE), "--out", str(tmp_path / "out2"), "--profile", "pf2tebra"],
+    )
+    assert loaded.exit_code == 0, loaded.output
+    assert "chosen: ccda_import" in " ".join(loaded.output.split())
+    # The render came from the profile → one standard-view PDF per patient.
+    assert len(list((tmp_path / "out2" / "charts").glob("*_ccda.pdf"))) == 3
+
+
+def test_migrate_unknown_profile_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import anastomosis.core.migrate as migrate_mod
+
+    monkeypatch.setattr(migrate_mod, "user_migrations_path", lambda: tmp_path / "migrations.json")
+    result = runner.invoke(
+        app, ["migrate", str(FIXTURE), "--out", str(tmp_path / "o"), "--profile", "nope"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "no saved migration profile" in result.output
