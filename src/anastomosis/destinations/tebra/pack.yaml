@@ -1,0 +1,51 @@
+# Tebra (Kareo) browser destination pack — a FLOW SHAPE, not real selectors.
+#
+# WHY EVERY SELECTOR IS A PLACEHOLDER:
+#   Tebra publishes no document-write API (see destinations/registry.yaml), so a
+#   reconstructed chart is filed by driving Tebra's web UI. But Anastomosis has
+#   NO access to a live Tebra instance, and the no-hallucination rule forbids
+#   inventing a vendor's DOM: a single real CSS selector or URL path in this file
+#   would be a defect. So every selector slot ships at the DISCOVER placeholder.
+#
+#   The selectors are OPERATOR-DERIVED, per practice: Tebra's UI markup varies by
+#   tenant/version and changes over time, so each operator discovers their own
+#   selectors against their own logged-in session via the wizard:
+#
+#       anast destination init tebra --cdp http://127.0.0.1:9222 --validate
+#
+#   The wizard writes the discovered selectors to a USER file
+#   (~/.anastomosis/destinations/tebra/selectors.yaml) that overlays this
+#   pristine scaffold — this file is never edited by discovery. A Tebra UI change
+#   is then a one-pack event: re-run the wizard, nothing else moves.
+#
+# Loading this pack before discovery is deliberately a LOUD, actionable failure:
+# SelectorMap.from_yaml_dict raises PackNotReadyError naming the undiscovered
+# slots and the wizard command — the pack refuses to run on guessed DOM.
+
+name: tebra
+display: Tebra (Kareo)
+
+config:
+  # Operator navigates to the patient list themselves before the run: Tebra has
+  # no stable deep link we can cite, so we do not invent one (null = manual nav).
+  patient_search_url: null
+  search_by: both
+  result_match: exact_name_dob
+  dob_format: "%m/%d/%Y"
+
+# EVERY value below is the DISCOVER placeholder — filled by the wizard, never
+# shipped with a real selector. Anything here resembling a real selector is a bug.
+selectors:
+  # required
+  patient_search_input: "DISCOVER — run: anast destination init tebra"
+  patient_search_submit: "DISCOVER — run: anast destination init tebra"
+  patient_result_row: "DISCOVER — run: anast destination init tebra"
+  patient_banner_name: "DISCOVER — run: anast destination init tebra"
+  patient_banner_dob: "DISCOVER — run: anast destination init tebra"
+  documents_list_item: "DISCOVER — run: anast destination init tebra"
+  upload_file_input: "DISCOVER — run: anast destination init tebra"
+  upload_submit: "DISCOVER — run: anast destination init tebra"
+  upload_success_marker: "DISCOVER — run: anast destination init tebra"
+  # optional
+  documents_tab: "DISCOVER — run: anast destination init tebra"
+  upload_open_button: "DISCOVER — run: anast destination init tebra"

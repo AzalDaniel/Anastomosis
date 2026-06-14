@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/AzalDaniel/Anastomosis/sources/learned/mapping.schema.json",
+  "title": "Anastomosis learned-source mapping",
+  "description": "Declarative mapping from one flat export format to the canonical PatientRecord. This file is the shareable, human-readable contract; the toolkit validates a mapping with the pydantic MappingSpec model (the runtime authority). Mappings are DATA only -- they contain no executable code; every transform is a name from the closed verb table.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mapping_id", "spec_version", "created_at", "display", "source_format", "grouping"],
+  "properties": {
+    "mapping_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Lowercase identifier; equals the containing directory name."
+    },
+    "spec_version": {"const": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "human_reviewed": {
+      "type": "boolean",
+      "description": "Hard gate: discovery never builds an adapter from an unreviewed mapping."
+    },
+    "display": {"type": "string"},
+    "target_model": {"const": "PatientRecord"},
+    "source_format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "header_fingerprint", "columns"],
+      "properties": {
+        "type": {"enum": ["csv", "tsv", "json", "ndjson"]},
+        "delimiter": {"type": ["string", "null"]},
+        "encoding": {"type": "string"},
+        "header_fingerprint": {
+          "type": "string",
+          "description": "sha256 over the sorted, normalized column-name set; the auto-detect key."
+        },
+        "columns": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "grouping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patient_key"],
+      "properties": {
+        "patient_key": {"type": "string"},
+        "encounter_key": {"type": ["string", "null"]},
+        "row_scope": {"enum": ["patient", "encounter"]}
+      }
+    },
+    "field_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_path", "target_path"],
+        "properties": {
+          "source_path": {"type": "string"},
+          "target_path": {
+            "type": "string",
+            "description": "Must be a member of canonical_target_paths() (core/model_paths.py)."
+          },
+          "transform": {
+            "type": "string",
+            "description": "A verb from the closed transform table: identity, strip, upper, lower, parse_date[:FMT], parse_datetime[:FMT], phone, numeric, split:DELIM:INDEX, const:VALUE."
+          },
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "human_confirmed": {"type": "boolean"}
+        }
+      }
+    },
+    "value_translations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_path", "table"],
+        "properties": {
+          "source_path": {"type": "string"},
+          "table": {"type": "object", "additionalProperties": {"type": "string"}}
+        }
+      }
+    },
+    "unmapped_source_fields": {"type": "array", "items": {"type": "string"}}
+  }
+}
