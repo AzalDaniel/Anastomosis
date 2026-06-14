@@ -519,6 +519,43 @@ def test_run_migration_unknown_destination_is_clean_error(tmp_path: Path) -> Non
     assert "done" not in sink.types()
 
 
+def test_run_migration_forwards_all_levers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The controller threads render/sections/qa/force/pack_dirs/trust_new into the
+    MigrationCommand — the levers the GUI migrate wizard now exposes (parity gap
+    P1-4). Capture the command at the core boundary (a fake stops the run early)."""
+    import anastomosis.core.migrate as migrate_mod
+    from anastomosis.pipeline import PipelineError
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_migration(cmd: object, on_event: object = None) -> object:
+        captured["cmd"] = cmd
+        raise PipelineError("stop after capture", exit_code=2, kind="bad_source")
+
+    monkeypatch.setattr(migrate_mod, "run_migration", _fake_run_migration)
+    result = GuiController(_RecordingSink()).run_migration(
+        str(FIXTURE),
+        str(tmp_path / "out"),
+        source="pf-tebra",
+        destination="tebra",
+        render="practice_fusion_soap",
+        sections={"insurance": False, "addenda": True},
+        qa=False,
+        force=True,
+        pack_dirs=["/custom/packs"],
+        trust_new=True,
+    )
+    assert result["ok"] is False  # the fake stopped the run after capturing
+    cmd = captured["cmd"]
+    assert cmd.render == "practice_fusion_soap"  # type: ignore[attr-defined]
+    assert cmd.sections == {"insurance": False, "addenda": True}  # type: ignore[attr-defined]
+    assert cmd.qa is False  # type: ignore[attr-defined]
+    assert cmd.force is True  # type: ignore[attr-defined]
+    assert cmd.trust_new is True  # type: ignore[attr-defined]
+    # Compare Path-to-Path (str(Path) is OS-dependent: backslashes on Windows).
+    assert list(cmd.pack_dirs) == [Path("/custom/packs")]  # type: ignore[attr-defined]
+
+
 def test_run_migration_busy_guard_rejects_concurrent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
