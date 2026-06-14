@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ patient_name }} — {{ dos }}</title>
+<style>
+/* Page geometry — GOLD_STANDARD §1 "Page geometry (NEVER change)".
+   Letter 612x792pt; margins top .6 / right .38 / bottom .44 / left .39 in.
+   The engine's ChromiumRenderer also receives these via pack.yaml `page`. */
+@page {
+  size: letter;
+  margin: 0.6in 0.38in 0.44in 0.39in;
+}
+
+/* Forensic design tokens (GOLD_STANDARD §1, measured from PF get_drawings fills).
+   Parameterized off pack tokens with the forensic defaults baked in so the
+   pack renders identically whether or not a token is overridden. */
+:root {
+  --pf-fill: {{ tokens.get('heading_fill', '#f1f1f1') }};        /* grey band rgb(241,241,241) — NOT #f2f2f2 */
+  --pf-border: {{ tokens.get('border', '#aaaaaa') }};            /* rgb(170,170,170) 0.8pt */
+  --pf-border-light: {{ tokens.get('border_light', '#c8c8c8') }};/* rgb(200,200,200) */
+  --pf-row-sep: {{ tokens.get('row_sep', '#e6e6e6') }};          /* rgb(230,230,230) 0.4pt */
+  --pf-muted: {{ tokens.get('muted_text', '#737373') }};         /* rgb(115,115,115) */
+  --pf-strong: {{ tokens.get('strong_text', '#333333') }};       /* rgb(51,51,51) */
+}
+
+/* print-color-adjust: exact — GOLD_STANDARD §1 "Print-color preservation (CRITICAL)".
+   Without this Chromium strips every background-color on PDF export and the grey
+   section bands render white. This was a 2-sprint bug; the rule is non-negotiable. */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+body {
+  font-family: {{ tokens.get('body_font', 'Arial, Helvetica, sans-serif') }};
+  font-size: 9pt;
+  line-height: 1.45;
+  color: #000;
+}
+
+/* --- HEADER (3-column: PATIENT / FACILITY / ENCOUNTER) ---
+   PF forensic widths: PATIENT 34% / FACILITY 35% / ENCOUNTER 31% (GOLD §3 page 1). */
+.header-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.header-table td { vertical-align: top; padding: 0 4px; }
+.header-table td:first-child { width: 34%; }
+.header-table td:nth-child(2) { width: 35%; }
+.header-table td:nth-child(3) { width: 31%; }
+.header-label { font-weight: bold; font-size: 8pt; text-transform: uppercase; margin-bottom: 1px; color: var(--pf-muted); }
+.header-value { font-weight: bold; font-size: 9.5pt; margin-bottom: 1px; }
+.header-sub { font-size: 8.5pt; line-height: 1.3; }
+.header-sub .lbl { font-weight: bold; display: inline-block; min-width: 55px; }
+.header-enc { font-size: 8.5pt; line-height: 1.3; }
+.header-enc .lbl { font-weight: bold; display: inline-block; min-width: 95px; }
+
+/* --- SECTION HEADERS (grey fill + top/bottom borders) ---
+   MAIN HEADINGS: bold 9.5pt, grey fill, top+bottom 0.8pt borders, never orphaned
+   at page bottom (page-break-after: avoid). GOLD §4 heading taxonomy. */
+.section-header {
+  background: var(--pf-fill);
+  border-top: 0.8pt solid var(--pf-border);
+  border-bottom: 0.8pt solid var(--pf-border);
+  padding: 5px 5px 4px 5px;
+  font-weight: bold;
+  font-size: 9.5pt;
+  margin-top: 11px;
+  margin-bottom: 0;
+  page-break-after: avoid;
+}
+/* A section-header at the top of a fresh page (after page-break-before) sits ~4pt
+   below the top margin in PF — margin-top:0 makes it start flush. */
+.section-header.page-break-before { margin-top: 0; }
+
+/* NO-FILL SECTION HEADER — "Vitals for this encounter" is the ONLY bold main
+   heading WITHOUT a grey fill (GOLD §4 SPECIAL MAIN HEADING). */
+.section-header-nofill {
+  border-top: 0.8pt solid var(--pf-border);
+  border-bottom: 0.8pt solid var(--pf-border);
+  padding: 5px 5px 4px 5px;
+  font-weight: bold;
+  font-size: 9.5pt;
+  margin-top: 11px;
+  margin-bottom: 0;
+  page-break-after: avoid;
+  background: transparent;
+}
+
+/* SUB-HEADINGS: REGULAR weight 8pt, grey fill, top+bottom borders (GOLD §4). */
+.sub-header {
+  background: var(--pf-fill);
+  padding: 3px 5px 2px 5px;
+  font-weight: normal;
+  font-size: 8pt;
+  text-transform: uppercase;
+  border-top: 0.8pt solid var(--pf-border);
+  border-bottom: 0.8pt solid var(--pf-border);
+  margin-top: 0;
+  page-break-after: avoid;
+}
+/* Border-collapse rule (GOLD §4 "3 lines not 4"): when a sub-header immediately
+   follows a section-header, drop the sub-header's top border so the shared edge
+   reads as ONE line. Do NOT use a negative margin (sprint-2 regression hid the
+   section-header bottom border under the sub-header fill -> zero visible lines). */
+.section-header + .sub-header { border-top: none; }
+
+/* Chief complaint: NO grey fill, NO borders — just a bold heading tight to text. */
+.cc-header { font-weight: bold; font-size: 9.5pt; padding: 8px 0 2px 0; margin-top: 10px; }
+.cc-body { padding: 2px 5px 10px 5px; font-size: 8.5pt; line-height: 1.3; }
+
+.section-text-body { padding: 3px 5px 4px 5px; font-size: 8.5pt; line-height: 1.3; }
+.notes-body { padding: 2px 5px 3px 5px; font-size: 8.5pt; line-height: 1.3; }
+.end-divider { border-bottom: 0.8pt solid var(--pf-border); margin-bottom: 0; }
+.simple-row { padding: 2px 8px; font-size: 8.5pt; line-height: 1.4; }
+.orders-block.with-bottom-divider { border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 1px; }
+.quality-row { padding: 3px 8px 3px 8px; font-size: 8.5pt; line-height: 1.35; }
+.quality-row + .quality-row { border-top: 0.4pt solid var(--pf-border); }
+.quality-row.last { border-top: 0.4pt solid var(--pf-border); padding-left: 16px; }
+.encounter-dx-title { padding: 4px 0 4px 0; font-size: 8.5pt; font-weight: normal; }
+.encounter-dx-list { padding: 0 0 8px 8px; font-size: 8.5pt; line-height: 1.4; font-weight: normal; }
+
+/* --- UNIFIED DEMOGRAPHICS/CONTACT/FAMILY TABLE ---
+   ONE 6-column table so every column aligns perfectly across the demographics,
+   CONTACT INFORMATION, FAMILY INFORMATION and PATIENT NOTES sub-sections. PF
+   forensic colgroup widths: 19.3 / 15.1 / 15.5 / 17.5 / 12.6 / 20 (GOLD §3).
+   This is the column alignment the predecessor's user fought for. */
+.unified-table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+.unified-table td { padding: 1.5px 4px; font-size: 8.5pt; vertical-align: top; line-height: 1.35; }
+.unified-table .lbl { font-weight: bold; text-transform: uppercase; font-size: 8pt; white-space: nowrap; }
+.unified-table .subhdr {
+  background: var(--pf-fill); font-weight: bold; font-size: 8pt; text-transform: uppercase;
+  padding: 3px 5px 2px 5px; border-top: 0.8pt solid var(--pf-border); border-bottom: 0.8pt solid var(--pf-border);
+}
+.unified-table .spacer { height: 10px; padding: 0; border: none; }
+.unified-table .divider { border-bottom: 0.8pt solid var(--pf-border); padding: 0; height: 0; }
+
+/* --- VITALS TABLE ---
+   Full grid: 0.5pt outer border + 0.4pt inner row/column separators (GOLD §8).
+   Header row (date/time): grey fill, regular weight, uppercase. Label column
+   left-aligned, value columns center-aligned. border-collapse so the inner grid
+   reads as single lines, not doubled. */
+.vitals-table {
+  width: 100%; border-collapse: collapse; margin-bottom: 0;
+  page-break-inside: avoid; border: 0.5pt solid var(--pf-border);
+}
+.vitals-table th, .vitals-table td { padding: 3px 6px; font-size: 8.5pt; border: 0.4pt solid var(--pf-border); }
+.vitals-table td:first-child { text-align: left; font-weight: normal; }
+.vitals-table th:first-child { text-align: left; }
+.vitals-table td:not(:first-child), .vitals-table th:not(:first-child) { text-align: center; }
+.vitals-table th {
+  background: var(--pf-fill); font-weight: normal; font-size: 8pt; text-transform: uppercase;
+  border-top: 0.5pt solid var(--pf-border); border-bottom: 0.5pt solid var(--pf-border);
+}
+.vitals-table .vitals-date { font-weight: normal; }
+.vitals-table.with-bottom-divider tbody tr:last-child td { border-bottom: 0.4pt solid var(--pf-border); }
+/* Merged "Vitals" label row in the flowsheet — single cell spanning all columns,
+   NO internal vertical separators (separate cells made spurious dividers — GOLD §8 sprint-4 bug). */
+.vitals-table .vitals-merged-row { text-align: left; font-weight: normal; border: 0.4pt solid var(--pf-border); }
+
+/* --- DATA TABLES (diagnoses, allergies, immunizations, family hx, etc.) ---
+   Column headers: REGULAR weight 8pt all-caps, grey fill, top+bottom 0.8pt borders.
+   Data rows separated by a thin 0.4pt row-sep; the last row of a with-bottom-divider
+   table gets a strong 0.8pt section-end line. */
+.data-table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+.data-table th {
+  background: var(--pf-fill); text-align: left; padding: 3px 8px; font-size: 8pt;
+  font-weight: normal; text-transform: uppercase;
+  border-top: 0.8pt solid var(--pf-border); border-bottom: 0.8pt solid var(--pf-border);
+}
+.data-table td { padding: 4px 8px; font-size: 8.5pt; border-bottom: 0.4pt solid var(--pf-row-sep); }
+.data-table.with-bottom-divider tbody tr:last-child td { border-bottom: 0.8pt solid var(--pf-border); }
+
+/* --- SOAP SECTIONS ---
+   SOAP headings (Subjective/Objective/Assessment/Plan) are MAIN section headings
+   (.section-header). Body is 9pt normal weight; the source rich text is wrapped in
+   .pf-rich-text by sanitize_soap_html (GOLD §9). */
+.soap-content { padding: 4px 5px 8px 5px; font-size: 9pt; font-weight: normal; line-height: 1.4; }
+.soap-content .pf-rich-text { margin: 0; padding: 0; font-weight: normal; }
+.soap-content .pf-rich-text > :first-child { margin-top: 0 !important; }
+.soap-content .pf-rich-text > :last-child { margin-bottom: 0 !important; }
+.soap-content p { margin: 0 0 10px 0; font-weight: normal; }
+.soap-content strong, .soap-content b { font-weight: bold; }
+.soap-content em, .soap-content i { font-style: italic; }
+.soap-content ul, .soap-content ol { margin: 4px 0 7px 18px; padding-left: 16px; list-style-position: outside; }
+.soap-content ul ul, .soap-content ul ol, .soap-content ol ul, .soap-content ol ol { margin-top: 2px; margin-bottom: 2px; }
+.soap-content li { margin: 0 0 4px 0; padding-left: 2px; font-weight: normal; }
+.soap-content li > p { margin: 0; }
+.soap-content h1, .soap-content h2, .soap-content h3,
+.soap-content h4, .soap-content h5, .soap-content h6,
+.soap-content .header4semibold {
+  display: block; font-size: 9pt; font-weight: bold; line-height: 1.3; margin: 8px 0 3px 0;
+}
+.soap-content h1 { font-size: 9.5pt; }
+
+/* --- INSURANCE / PAYMENT ---
+   Identical 4-column 25/25/25/25 fixed grid so labels and values line up across
+   the insurance and payment-information tables (GOLD §7). */
+.ins-table, .payment-table { width: 100%; border-collapse: collapse; margin-bottom: 0; table-layout: fixed; }
+.ins-table td, .payment-table td { padding: 2px 5px 2px 5px; font-size: 8.5pt; vertical-align: top; line-height: 1.35; }
+.ins-table .label, .payment-table .label { font-weight: bold; text-transform: uppercase; font-size: 8pt; }
+.ins-table.with-bottom-divider tr:last-child td,
+.payment-table.with-bottom-divider tr:last-child td { border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 4px; }
+
+.no-record { font-size: 8.5pt; padding: 3px 8px; color: var(--pf-strong); line-height: 1.35; }
+.diag-item { padding: 2px 8px; font-size: 9pt; border-bottom: 1px solid var(--pf-row-sep); }
+
+/* --- ADDENDA TABLE (GOLD §10) ---
+   4-column grey-header table ADDENDUM | STATUS | SOURCE | DATE/TIME; body and
+   status preserve newlines so multi-line PHQ/GAD/SBIRT scores stack. */
+.addenda-table { width: 100%; border-collapse: collapse; margin: 0 0 6px 0; table-layout: fixed; font-size: 8.5pt; }
+.addenda-table th {
+  background: var(--pf-fill); text-align: left; padding: 3px 8px; font-size: 8pt;
+  font-weight: normal; text-transform: uppercase;
+  border-top: 0.8pt solid var(--pf-border); border-bottom: 0.8pt solid var(--pf-border);
+}
+.addenda-table td { padding: 5px 8px 5px 8px; vertical-align: top; line-height: 1.35; white-space: pre-line; }
+.addenda-table tr + tr td { border-top: 0.4pt solid var(--pf-row-sep); }
+.addenda-body, .addenda-status, .addenda-source, .addenda-datetime { font-weight: normal; }
+.addenda-status { white-space: pre-line; }
+
+/* --- MEDICATIONS SECTION (GOLD §5) ---
+   .meds-col-header  — 4-column grey-fill column-header row
+   .meds-drug-block  — one per drug
+     .meds-drug-row    — 4-col tabular row (name / SIG / START-STOP / ASSOC DX)
+     .meds-hyphen      — short bold 6pt x 1.1pt black bar ABOVE each escript line
+     .meds-escript-line— full-width prose: PREFIX (STATUS): date  PRESCRIBER  SIG  REFILLS  QUANTITY
+     .meds-drug-sep    — full-width horizontal divider after all escripts */
+.meds-recon { padding: 4px 5px 6px 5px; font-size: 8.5pt; line-height: 1.35; }
+.meds-col-header { width: 100%; border-collapse: collapse; margin: 0; table-layout: fixed; }
+.meds-col-header th {
+  background: var(--pf-fill); text-align: left; padding: 3px 8px; font-size: 8pt;
+  font-weight: normal; text-transform: uppercase;
+  border-top: 0.8pt solid var(--pf-border); border-bottom: 0.8pt solid var(--pf-border);
+}
+.meds-drug-block { page-break-inside: auto; break-inside: auto; }
+.meds-drug-row { width: 100%; border-collapse: collapse; margin: 0; table-layout: fixed; }
+.meds-drug-row td { padding: 5px 8px 4px 8px; font-size: 8.5pt; vertical-align: top; line-height: 1.35; }
+.meds-hyphen { display: block; width: 6pt; height: 1.1pt; background: #000; margin: 4px 0 0 6px; padding: 0; }
+.meds-escript-line {
+  padding: 1px 8px 2px 6px; font-size: 8.5pt; line-height: 1.35; text-align: left;
+  text-indent: 0; padding-left: 6px; word-wrap: break-word; overflow-wrap: break-word;
+}
+.meds-drug-sep { height: 0; border-bottom: 0.5pt solid var(--pf-border); margin: 6px 0 0 0; padding: 0; }
+.meds-empty { padding: 6px 8px 6px 8px; font-size: 8.5pt; color: var(--pf-strong); }
+
+/* --- SOCIAL HISTORY TABLE (GOLD §6) ---
+   The category labels AND the right-aligned "RECORDED" label are BOLD in grey
+   bands — the documented exception to the regular-weight sub-header rule. */
+.sh-table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+.sh-table td { padding: 3px 8px; font-size: 8.5pt; vertical-align: top; line-height: 1.4; }
+.sh-table .sh-label, .sh-table .sh-recorded {
+  font-weight: bold; text-transform: uppercase; font-size: 8pt; background: var(--pf-fill);
+  border-top: 0.8pt solid var(--pf-border); border-bottom: 0.8pt solid var(--pf-border); padding: 2px 8px;
+}
+.sh-table .sh-recorded { text-align: right; }
+
+/* --- LOGO (synthetic placeholder; the vendor mark is NOT shipped — see RULES.md) ---
+   Right-aligned below Care plan, ~110pt wide to match the original footprint. */
+.pf-logo-wrap { display: block; text-align: right; margin-top: 16px; padding: 4px 2px 0 0; }
+.pf-logo-wrap img { width: 110pt; height: auto; display: inline-block; }
+
+/* --- PAGE-BREAK RULES (GOLD §3, derived from the 43-PDF audit) --- */
+.page-break-before { page-break-before: always; }
+.pb-before { page-break-before: always; }
+.pb-avoid { page-break-inside: avoid; }
+/* keep-together: short sections that must not strand a header on page N with its
+   rows on page N+1 (Advance Directive / Implantable / Screenings / Observations /
+   Quality of care / Care plan / Addenda / PMH subsections). */
+.keep-together { page-break-inside: avoid; break-inside: avoid; }
+/* orphans/widows: 2 — prevents single-line orphans without Chromium shoving whole
+   paragraphs to the next page (GOLD §3, tuned at 2 not 3+). */
+.soap-content, .pmh-subsection, .section-text-body, .notes-body { orphans: 2; widows: 2; }
+/* A section header never orphans alone at the bottom of a page. */
+.section-header, .section-header-nofill { break-after: avoid-page; }
+</style>
+</head>
+<body>
+
+<!-- 3-COLUMN HEADER: PATIENT / FACILITY / ENCOUNTER -->
+<table class="header-table">
+  <tr>
+    <td>
+      <div class="header-label">PATIENT</div>
+      <div class="header-value">{{ patient_name }}</div>
+      <div class="header-sub"><span class="lbl">DOB</span> {{ dob or '-' }}</div>
+      <div class="header-sub"><span class="lbl">AGE</span> {{ age or '-' }}</div>
+      <div class="header-sub"><span class="lbl">SEX</span> {{ sex or '-' }}</div>
+      <div class="header-sub"><span class="lbl">PRN</span> {{ prn or '-' }}</div>
+    </td>
+    <td>
+      <div class="header-label">FACILITY</div>
+      <div class="header-value">{{ fac_name or '-' }}</div>
+      <div class="header-sub">T &nbsp; {{ fac_phone or '-' }}</div>
+      <div class="header-sub">F &nbsp; {{ fac_fax or '-' }}</div>
+      {% if fac_addr1 %}<div class="header-sub">{{ fac_addr1 }}</div>{% endif %}
+      {% if fac_addr2 %}<div class="header-sub">{{ fac_addr2 }}</div>{% endif %}
+      {% if fac_city_state_zip %}<div class="header-sub">{{ fac_city_state_zip }}</div>{% endif %}
+    </td>
+    <td>
+      <div class="header-label">ENCOUNTER</div>
+      <div class="header-value">{{ encounter_type or '-' }}</div>
+      <div class="header-sub header-enc"><span class="lbl">NOTE TYPE</span> {{ note_type or '-' }}</div>
+      <div class="header-sub header-enc"><span class="lbl">SEEN BY</span> {{ seen_by_name or '-' }}</div>
+      {% if seen_by_credential %}<div class="header-sub header-enc" style="padding-left: 110px;">{{ seen_by_credential }}</div>{% endif %}
+      <div class="header-sub header-enc"><span class="lbl">DATE</span> {{ dos }}</div>
+      <div class="header-sub header-enc"><span class="lbl">AGE AT DOS</span> {{ age_at_dos or '-' }}</div>
+      {% if signed_by_name %}
+      <div class="header-sub" style="margin-top:4px; font-size: 8pt;">
+        Electronically signed by {{ signed_by_name }}{% if signed_by_credential %}<br>{{ signed_by_credential }}{% endif %} at<br>
+        {{ signed_at }}
+      </div>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+
+<!-- CHIEF COMPLAINT — no borders, no grey fill -->
+<div class="cc-header">Chief complaint</div>
+<div class="cc-body">{{ cc_text or '-' }}</div>
+
+<!-- UNIFIED DEMOGRAPHICS + CONTACT + FAMILY + PATIENT NOTES (single 6-col table) -->
+<div class="section-header">Patient identifying details and demographics</div>
+<table class="unified-table">
+  <colgroup>
+    <col style="width:19.3%"><col style="width:15.1%">
+    <col style="width:15.5%"><col style="width:17.5%">
+    <col style="width:12.6%"><col style="width:20%">
+  </colgroup>
+  <tr>
+    <td class="lbl">FIRST NAME</td><td>{{ demo.first_name or '-' }}</td>
+    <td class="lbl">SEX</td><td>{{ demo.sex or '-' }}</td>
+    <td class="lbl">RACE</td><td>{{ demo.race or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">MIDDLE NAME</td><td>{{ demo.middle_name or '-' }}</td>
+    <td class="lbl">DATE OF BIRTH</td><td>{{ demo.dob or '-' }}</td>
+    <td class="lbl">ETHNICITY</td><td>{{ demo.ethnicity or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">LAST NAME</td><td>{{ demo.last_name or '-' }}</td>
+    <td class="lbl">DATE OF DEATH</td><td>{{ demo.death_date or '-' }}</td>
+    <td class="lbl">PREF. LANGUAGE</td><td>{{ demo.language or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">SSN</td><td>{{ demo.ssn or '-' }}</td>
+    <td class="lbl">PRN</td><td>{{ prn or '-' }}</td>
+    <td class="lbl">STATUS</td><td>{{ demo.status or '-' }}</td>
+  </tr>
+  <tr><td colspan="6" class="spacer"></td></tr>
+  <tr><td colspan="6" class="subhdr">CONTACT INFORMATION</td></tr>
+  <tr>
+    <td class="lbl">ADDRESS LINE 1</td><td>{{ demo.address1 or '-' }}</td>
+    <td class="lbl">CONTACT BY</td><td colspan="3">{{ demo.contact_by or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">ADDRESS LINE 2</td><td>{{ demo.address2 or '-' }}</td>
+    <td class="lbl">EMAIL</td><td colspan="3">{{ demo.email or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">CITY</td><td>{{ demo.city or '-' }}</td>
+    <td class="lbl">HOME PHONE</td><td colspan="3">{{ demo.phone_home or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">STATE</td><td>{{ demo.state or '-' }}</td>
+    <td class="lbl">MOBILE PHONE</td><td colspan="3">{{ demo.phone_mobile or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">ZIP CODE</td><td>{{ demo.zip or '-' }}</td>
+    <td class="lbl">OFFICE PHONE</td><td colspan="3">{{ demo.phone_office or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl"></td><td></td>
+    <td class="lbl">OFFICE EXTENSION</td><td colspan="3">{{ demo.office_ext or '-' }}</td>
+  </tr>
+  <tr><td colspan="6" class="spacer"></td></tr>
+  <tr><td colspan="6" class="subhdr">FAMILY INFORMATION</td></tr>
+  <tr>
+    <td class="lbl">NEXT OF KIN</td><td colspan="2">{{ demo.next_of_kin or '-' }}</td>
+    <td class="lbl" colspan="2">PATIENT'S MOTHER'S MAIDEN<br>NAME</td>
+    <td>{{ demo.mothers_maiden_name or '-' }}</td>
+  </tr>
+  <tr>
+    <td class="lbl">RELATION TO PATIENT</td><td>{{ demo.kin_relation or '-' }}</td>
+    <td colspan="4"></td>
+  </tr>
+  <tr>
+    <td class="lbl">PHONE</td><td>{{ demo.kin_phone or '-' }}</td>
+    <td colspan="4"></td>
+  </tr>
+  <tr>
+    <td class="lbl">ADDRESS</td><td>{{ demo.kin_address or '-' }}</td>
+    <td colspan="4"></td>
+  </tr>
+  {% if patient_notes %}
+  <tr><td colspan="6" class="spacer"></td></tr>
+  <tr><td colspan="6" class="subhdr">PATIENT NOTES</td></tr>
+  <tr><td colspan="6" class="notes-body">{{ patient_notes | replace('\n', ' ') | replace('\r', ' ') }}</td></tr>
+  <tr><td colspan="6" class="divider"></td></tr>
+  {% endif %}
+</table>
+
+{% if show_insurance %}
+<!-- ACTIVE INSURANCE (forces page 2; GOLD §3 page-break-before). Always-heading. -->
+<div class="section-header page-break-before">Active insurance</div>
+{% if active_insurance %}
+  {% for ins in active_insurance %}
+  <div class="sub-header">{{ ins.sub_header }}</div>
+  <table class="ins-table with-bottom-divider">
+    <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
+    <tbody>
+    <tr><td class="label">PAYER</td><td>{{ ins.payer }}</td><td class="label">INSURED ID NUMBER</td><td>{{ ins.member_id }}</td></tr>
+    <tr><td class="label">PRIORITY</td><td>{{ ins.priority }}</td><td class="label">GROUP NUMBER</td><td>{{ ins.group_number }}</td></tr>
+    <tr><td class="label">TYPE</td><td>{{ ins.type }}</td><td class="label">EMPLOYER NAME</td><td>{{ ins.employer_name }}</td></tr>
+    <tr><td class="label">RELATIONSHIP TO INSURED</td><td>{{ ins.relationship }}</td><td class="label">INSURANCE PAYMENT TYPE</td><td>{{ ins.ins_payment_type }}</td></tr>
+    <tr><td class="label">START DATE</td><td>{{ ins.start_date }}</td><td class="label">PAYMENT TYPE</td><td>{{ ins.payment_type }}</td></tr>
+    <tr><td class="label">END DATE</td><td>{{ ins.end_date }}</td><td class="label">COPAY AMOUNT</td><td>{{ ins.copay }}</td></tr>
+    <tr><td class="label"></td><td></td><td class="label">STATUS</td><td>{{ ins.status }}</td></tr>
+    </tbody>
+  </table>
+  {% endfor %}
+{% endif %}
+
+<!-- INACTIVE INSURANCE (heading ALWAYS rendered, even when empty). -->
+<div class="section-header">Inactive insurance</div>
+{% if inactive_insurance %}
+  {% for ins in inactive_insurance %}
+  <div class="sub-header">{{ ins.sub_header }}</div>
+  <table class="ins-table with-bottom-divider">
+    <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
+    <tbody>
+    <tr><td class="label">PAYER</td><td>{{ ins.payer }}</td><td class="label">INSURED ID NUMBER</td><td>{{ ins.member_id }}</td></tr>
+    <tr><td class="label">PRIORITY</td><td>{{ ins.priority }}</td><td class="label">GROUP NUMBER</td><td>{{ ins.group_number }}</td></tr>
+    <tr><td class="label">TYPE</td><td>{{ ins.type }}</td><td class="label">EMPLOYER NAME</td><td>{{ ins.employer_name }}</td></tr>
+    <tr><td class="label">RELATIONSHIP TO INSURED</td><td>{{ ins.relationship }}</td><td class="label">INSURANCE PAYMENT TYPE</td><td>{{ ins.ins_payment_type }}</td></tr>
+    <tr><td class="label">START DATE</td><td>{{ ins.start_date }}</td><td class="label">PAYMENT TYPE</td><td>{{ ins.payment_type }}</td></tr>
+    <tr><td class="label">END DATE</td><td>{{ ins.end_date }}</td><td class="label">COPAY AMOUNT</td><td>{{ ins.copay }}</td></tr>
+    <tr><td class="label"></td><td></td><td class="label">STATUS</td><td>{{ ins.status }}</td></tr>
+    </tbody>
+  </table>
+  {% endfor %}
+{% endif %}
+{% endif %}
+
+{% if show_payment %}
+<!-- PAYMENT INFORMATION (same 4-col grid as insurance). -->
+<div class="section-header">Payment information</div>
+<table class="payment-table with-bottom-divider">
+  <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
+  <tbody>
+    <tr><td class="label">PAYMENT PREFERENCE</td><td>{{ payment.preference }}</td><td class="label">DATE OF BIRTH</td><td>{{ payment.dob }}</td></tr>
+    <tr><td class="label">PATIENT'S RELATIONSHIP TO</td><td>{{ payment.relationship }}</td><td class="label">SEX</td><td>{{ payment.sex }}</td></tr>
+    <tr><td class="label">GUARANTOR</td><td></td><td class="label">SOCIAL SECURITY NUMBER</td><td>{{ payment.ssn }}</td></tr>
+    <tr><td class="label">GUARANTOR NAME</td><td>{{ payment.guarantor_name }}</td><td class="label">PRIMARY PHONE NUMBER</td><td>{{ payment.primary_phone }}</td></tr>
+    <tr><td class="label">GUARANTOR ADDRESS</td><td>{{ payment.guarantor_addr }}</td><td class="label">SECONDARY PHONE NUMBER</td><td>{{ payment.secondary_phone }}</td></tr>
+  </tbody>
+</table>
+{% endif %}
+
+{% if show_vitals %}
+<!-- VITALS FOR THIS ENCOUNTER — the ONE main heading with NO grey fill. -->
+<div class="section-header-nofill">Vitals for this encounter</div>
+{% if enc_vitals_rows %}
+<table class="vitals-table with-bottom-divider">
+  <thead>
+    <tr>
+      <th style="width:55%;"></th>
+      <th class="vitals-date">{{ vitals_date }}{% if vitals_time %}<br>{{ vitals_time }}{% endif %}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for v in enc_vitals_rows %}
+    <tr><td>{{ v.name }}</td><td>{{ v.value }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="no-record" style="border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 4px;">No vitals recorded</div>
+{% endif %}
+{% endif %}
+
+{% if show_vitals_flowsheet %}
+<!-- VITALS FLOWSHEET — prior encounters only, most-recent 10 columns. -->
+<div class="section-header">Vitals flowsheet - {{ flowsheet_patient_name }}</div>
+{% if flowsheet_columns %}
+<table class="vitals-table with-bottom-divider" style="font-size: 8pt;">
+  <thead>
+    <tr>
+      <th style="width:20%;"></th>
+      {% for col in flowsheet_columns %}
+      <th class="vitals-date">{{ col.date }}{% if col.time %}<br>{{ col.time }}{% endif %}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% if flowsheet_vitals_label %}
+    <tr><td class="vitals-merged-row" colspan="{{ flowsheet_columns|length + 1 }}">Vitals</td></tr>
+    {% endif %}
+    {% for row in flowsheet_rows %}
+    <tr>
+      <td>{{ row.name }}</td>
+      {% for val in row.vals %}
+      <td>{{ val or '' }}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="no-record" style="padding-left: 12px;">No events recorded for Vitals.</div>
+{% endif %}
+{% endif %}
+
+<!-- DIAGNOSES (forces a fresh page). Current + Historical. -->
+<div class="section-header page-break-before">Diagnoses</div>
+{% if diag_recon_text %}
+<div class="quality-row">Was diagnosis reconciliation completed?<br>{{ diag_recon_text }}</div>
+{% endif %}
+<table class="data-table with-bottom-divider">
+  <thead>
+    <tr><th style="width:55%">Current</th><th style="width:15%">ACUITY</th><th style="width:15%">START</th><th style="width:15%">STOP</th></tr>
+  </thead>
+  <tbody>
+    {% if current_diagnoses %}
+      {% for d in current_diagnoses %}
+      <tr><td>{{ d.description }}</td><td>{{ d.acuity }}</td><td>{{ d.start }}</td><td>{{ d.stop }}</td></tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="4" class="no-record">No current diagnoses</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+<table class="data-table with-bottom-divider">
+  <thead>
+    <tr><th style="width:55%">Historical</th><th style="width:15%">ACUITY</th><th style="width:15%">START</th><th style="width:15%">STOP</th></tr>
+  </thead>
+  <tbody>
+    {% if historical_diagnoses %}
+      {% for d in historical_diagnoses %}
+      <tr><td>{{ d.description }}</td><td>{{ d.acuity }}</td><td>{{ d.start }}</td><td>{{ d.stop }}</td></tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="4" class="no-record">No historical diagnoses</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+
+<!-- DRUG / FOOD / ENVIRONMENTAL ALLERGIES (each Active + Inactive). -->
+<div class="section-header">Drug Allergies</div>
+{% if allergy_recon_text %}
+<div class="quality-row">Was medication allergy reconciliation completed?<br><strong>{{ allergy_recon_text }}</strong></div>
+{% endif %}
+{% for status_key, status_label in [('active','Active'), ('inactive','Inactive')] %}
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:55%">{{ status_label }}</th><th style="width:25%">SEVERITY/REACTIONS</th><th style="width:20%">ONSET</th></tr></thead>
+  <tbody>
+    {% set items = drug_allergies[status_key] %}
+    {% if items %}{% for a in items %}<tr><td>{{ a.name }}</td><td>{{ a.severity_reactions }}</td><td>{{ a.onset }}</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="3" class="no-record">No {{ status_label }} drug allergies recorded</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endfor %}
+
+<div class="section-header">Food Allergies</div>
+{% for status_key, status_label in [('active','Active'), ('inactive','Inactive')] %}
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:55%">{{ status_label }}</th><th style="width:25%">SEVERITY/REACTIONS</th><th style="width:20%">ONSET</th></tr></thead>
+  <tbody>
+    {% set items = food_allergies[status_key] %}
+    {% if items %}{% for a in items %}<tr><td>{{ a.name }}</td><td>{{ a.severity_reactions }}</td><td>{{ a.onset }}</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="3" class="no-record">No {{ status_label }} food allergies recorded</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endfor %}
+
+<div class="section-header">Environmental Allergies</div>
+{% for status_key, status_label in [('active','Active'), ('inactive','Inactive')] %}
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:55%">{{ status_label }}</th><th style="width:25%">SEVERITY/REACTIONS</th><th style="width:20%">ONSET</th></tr></thead>
+  <tbody>
+    {% set items = env_allergies[status_key] %}
+    {% if items %}{% for a in items %}<tr><td>{{ a.name }}</td><td>{{ a.severity_reactions }}</td><td>{{ a.onset }}</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="3" class="no-record">No {{ status_label }} environmental allergies recorded</td></tr>{% endif %}
+  </tbody>
+</table>
+{% endfor %}
+
+<!-- CURRENT MEDICATIONS (as of render-day). Active + Historical drug blocks. -->
+<div class="section-header">Current Medications (as of {{ meds_as_of }})</div>
+<div class="meds-recon">Was medication reconciliation completed?<br>{{ med_recon_text }}</div>
+
+<table class="meds-col-header"><colgroup>
+  <col style="width:35%"><col style="width:27%"><col style="width:18%"><col style="width:20%">
+</colgroup><tr><th>Active</th><th>SIG</th><th>START/STOP</th><th>ASSOCIATED DX</th></tr></table>
+{% if active_medications %}
+  {% for m in active_medications %}
+  <div class="meds-drug-block">
+    <table class="meds-drug-row"><colgroup>
+      <col style="width:35%"><col style="width:27%"><col style="width:18%"><col style="width:20%">
+    </colgroup><tr>
+      <td>{{ m.name }}</td><td>{{ m.sig or '-' }}</td><td>{{ m.start_stop or '-' }}</td><td>{{ m.assoc_dx or '-' }}</td>
+    </tr></table>
+    {% for rx in m.escripts %}
+    <div class="meds-hyphen"></div>
+    <div class="meds-escript-line">{{ rx.prefix }} ({{ rx.status }}): {{ rx.date }}&nbsp; PRESCRIBER: {{ rx.prescriber }}&nbsp; SIG: {{ rx.sig }}&nbsp; REFILLS: {{ rx.refills }}&nbsp; QUANTITY: {{ rx.quantity }}</div>
+    {% endfor %}
+    <div class="meds-drug-sep"></div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="meds-empty">No active medications recorded</div>
+  <div class="meds-drug-sep"></div>
+{% endif %}
+
+<table class="meds-col-header"><colgroup>
+  <col style="width:35%"><col style="width:27%"><col style="width:18%"><col style="width:20%">
+</colgroup><tr><th>Historical</th><th>SIG</th><th>START/STOP</th><th>ASSOCIATED DX</th></tr></table>
+{% if historical_medications %}
+  {% for m in historical_medications %}
+  <div class="meds-drug-block">
+    <table class="meds-drug-row"><colgroup>
+      <col style="width:35%"><col style="width:27%"><col style="width:18%"><col style="width:20%">
+    </colgroup><tr>
+      <td>{{ m.name }}</td><td>{{ m.sig or '-' }}</td><td>{{ m.start_stop or '-' }}</td><td>{{ m.assoc_dx or '-' }}</td>
+    </tr></table>
+    {% for rx in m.escripts %}
+    <div class="meds-hyphen"></div>
+    <div class="meds-escript-line">{{ rx.prefix }} ({{ rx.status }}): {{ rx.date }}&nbsp; PRESCRIBER: {{ rx.prescriber }}&nbsp; SIG: {{ rx.sig }}&nbsp; REFILLS: {{ rx.refills }}&nbsp; QUANTITY: {{ rx.quantity }}</div>
+    {% endfor %}
+    <div class="meds-drug-sep"></div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="meds-empty">No historical medications recorded</div>
+  <div class="meds-drug-sep"></div>
+{% endif %}
+
+{% if show_immunizations %}
+<!-- IMMUNIZATIONS (intentionally NOT keep-together; flows with meds). -->
+<div class="section-header">Immunizations</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th>DATE</th><th>VACCINE</th><th>SOURCE</th><th>LOT NUMBER</th><th>EXPIRES</th><th>COMMENT</th></tr></thead>
+  <tbody>
+    {% if immunizations %}
+      {% for imm in immunizations %}
+      <tr><td>{{ imm.date }}</td><td>{{ imm.vaccine }}</td><td>{{ imm.source }}</td><td>{{ imm.lot }}</td><td>{{ imm.expires }}</td><td>{{ imm.comment }}</td></tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="6" class="no-record">No immunizations recorded for this patient.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if show_social_history %}
+<!-- SOCIAL HISTORY (forced new page) — all 17 sub-categories always render. -->
+<div class="section-header page-break-before">Social history</div>
+<table class="sh-table">
+  <tr><td class="sh-label">TOBACCO USE</td><td class="sh-recorded">RECORDED</td></tr>
+  {% if smoking_status %}
+  <tr><td colspan="2" class="simple-row">Current tobacco use<br><strong>{{ smoking_status }}</strong></td></tr>
+  {% if smoking_date %}<tr><td></td><td class="simple-row" style="text-align:right;">{{ smoking_date }}</td></tr>{% endif %}
+  {% else %}
+  <tr><td colspan="2" class="no-record">No tobacco use history available for this patient</td></tr>
+  {% endif %}
+
+  <tr><td class="sh-label">ALCOHOL USE</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_alcohol or 'No alcohol use history available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">SOCIAL HISTORY (FREE-TEXT)</td><td class="sh-recorded"></td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_freetext or 'No social history (free-text) recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">FINANCIAL RESOURCES</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_financial or 'No financial resources recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">EDUCATION</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_education or 'No education recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">PHYSICAL ACTIVITY</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_physical or 'No physical activity available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">NUTRITION HISTORY</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_nutrition or 'No nutrition history available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">STRESS</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_stress or 'No stress available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">SOCIAL ISOLATION AND CONNECTION</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_isolation or 'No social isolation and connection available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">EXPOSURE TO VIOLENCE</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_violence or 'No exposure to violence history available for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">GENDER IDENTITY</td><td class="sh-recorded"></td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_gender_identity or 'No gender identity recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">SEXUAL ORIENTATION</td><td class="sh-recorded"></td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_sexual_orientation or 'No sexual orientation recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">PREGNANCY STATUS</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_pregnancy_status or 'No pregnancy status recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">PREGNANCY INTENT</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_pregnancy_intent or 'No pregnancy intent recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">TRIBAL AFFILIATION</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_tribal or 'No tribal affiliation recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">OCCUPATIONS</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_occupations or 'No occupations recorded for this patient' }}</td></tr>
+
+  <tr><td class="sh-label">FOOD INSECURITY RISK - HVS</td><td class="sh-recorded">RECORDED</td></tr>
+  <tr><td colspan="2" class="no-record">{{ sh_food_insecurity or 'No food insecurity risk - hvs recorded for this patient' }}</td></tr>
+</table>
+{% endif %}
+
+{% if show_past_medical_history %}
+<!-- PAST MEDICAL HISTORY (same page as Social history). -->
+<div class="section-header">Past medical history</div>
+{% if pmh_sections %}
+  {% for section in pmh_sections %}
+  <div class="pmh-subsection" style="page-break-inside: avoid;">
+    <div class="sub-header">{{ section.type }}</div>
+    <div class="notes-body" style="white-space: pre-line;">{{ section.text }}</div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="no-record">No past medical history available for this patient.</div>
+{% endif %}
+{% endif %}
+
+{% if show_family_history %}
+<!-- FAMILY HEALTH HISTORY (forced new page). FREE TEXT sub-header always rendered. -->
+<div class="section-header page-break-before">Family health history</div>
+<table class="data-table">
+  <thead><tr><th style="width:70%">DIAGNOSIS</th><th style="width:30%">ONSET DATE</th></tr></thead>
+  <tbody>
+    {% if family_history %}
+      {% for f in family_history %}<tr><td>{{ f.diagnosis }}</td><td>{{ f.onset or '-' }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No family health history recorded</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+<div class="sub-header">FAMILY HEALTH HISTORY (FREE TEXT)</div>
+<div class="notes-body" style="white-space: pre-line; border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 4px;">{{ family_history_freetext or 'No family health history (free text) available for this patient.' }}</div>
+{% endif %}
+
+{% if show_advance_directives %}
+<!-- ADVANCE DIRECTIVE (keep-together). -->
+<div class="keep-together">
+<div class="section-header">Advance Directive</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:70%">DIRECTIVE</th><th style="width:30%">RECORDED</th></tr></thead>
+  <tbody>
+    {% if advance_directives %}
+      {% for d in advance_directives %}<tr><td>{{ d.directive }}</td><td>{{ d.recorded }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No advance directives recorded for this patient.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if show_devices %}
+<!-- IMPLANTABLE DEVICES (keep-together). -->
+<div class="keep-together">
+<div class="section-header">Implantable devices</div>
+{% if implantable_devices %}
+  {% for dev in implantable_devices %}
+  <div class="simple-row">{{ dev.name }}{% if dev.date %} (Implanted: {{ dev.date }}){% endif %}</div>
+  {% endfor %}
+{% else %}
+  <div class="no-record">No implantable devices recorded</div>
+{% endif %}
+</div>
+{% endif %}
+
+{% if show_health_concerns %}
+<!-- ACTIVE / INACTIVE HEALTH CONCERNS. -->
+<div class="section-header">Active health concerns</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
+  <tbody>
+    {% if active_concerns %}
+      {% for hc in active_concerns %}<tr><td>{{ hc.description }}</td><td>{{ hc.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No active health concerns recorded.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+<div class="section-header">Inactive health concerns</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
+  <tbody>
+    {% if inactive_concerns %}
+      {% for hc in inactive_concerns %}<tr><td>{{ hc.description }}</td><td>{{ hc.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No inactive health concerns recorded</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if show_goals %}
+<!-- ACTIVE / INACTIVE GOALS. -->
+<div class="section-header">Active Goals</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
+  <tbody>
+    {% if active_goals %}
+      {% for g in active_goals %}<tr><td>{{ g.description }}</td><td>{{ g.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No active goals recorded</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+<div class="section-header">Inactive Goals</div>
+<table class="data-table with-bottom-divider">
+  <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
+  <tbody>
+    {% if inactive_goals %}
+      {% for g in inactive_goals %}<tr><td>{{ g.description }}</td><td>{{ g.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No inactive goals recorded</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endif %}
+
+<!-- SUBJECTIVE / OBJECTIVE / ASSESSMENT / PLAN — MAIN section headings.
+     SOAP html is sanitize_soap_html output from ingest; marked safe to render. -->
+<div class="section-header">Subjective</div>
+<div class="soap-content">{% if subjective_html %}{{ subjective_html | safe }}{% else %}-{% endif %}</div>
+
+<div class="section-header">Objective</div>
+<div class="soap-content">{% if objective_html %}{{ objective_html | safe }}{% else %}-{% endif %}</div>
+
+<div class="section-header">Assessment</div>
+<div class="soap-content">{% if assessment_html %}{{ assessment_html | safe }}{% else %}-{% endif %}</div>
+
+{% if encounter_diagnoses %}
+<div class="encounter-dx-title">Diagnoses attached to this encounter:</div>
+<div class="encounter-dx-list">
+  {% for ed in encounter_diagnoses %}
+  <div>{{ ed.description }}, {{ ed.full_codes }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="section-header">Plan</div>
+<div class="soap-content">{% if plan_html %}{{ plan_html | safe }}{% else %}-{% endif %}</div>
+
+{% if show_orders %}
+<!-- ORDERS — flows naturally after Plan, NO forced break (GOLD §3 sprint-3 fix). -->
+<div class="section-header">Orders</div>
+<div class="sub-header">LAB ORDERS</div>
+<div class="orders-block with-bottom-divider">
+{% if lab_orders %}
+  {% for order in lab_orders %}
+    {% if order.test_items %}
+      {% for item in order.test_items %}<div class="simple-row">{{ item.display }}</div>{% endfor %}
+    {% else %}
+      <div class="no-record">No orders attached to this encounter.</div>
+    {% endif %}
+  {% endfor %}
+{% else %}
+  <div class="no-record">No orders attached to this encounter.</div>
+{% endif %}
+</div>
+<div class="sub-header">IMAGING ORDERS</div>
+<div class="orders-block with-bottom-divider">
+<div class="no-record">No orders attached to this encounter.</div>
+</div>
+{% endif %}
+
+<!-- SCREENINGS / INTERVENTIONS / ASSESSMENTS (keep-together, no bottom divider). -->
+<div class="keep-together">
+<div class="section-header">Screenings/ Interventions/ Assessments</div>
+{% if screening_events %}
+  {% for ev in screening_events %}
+  <div class="simple-row">{{ ev.name }}{% if ev.result %}: {{ ev.result }}{% endif %}{% if ev.comments %} - {{ ev.comments }}{% endif %}</div>
+  {% endfor %}
+{% else %}
+  <div class="no-record">No screenings/interventions/assessments recorded.</div>
+{% endif %}
+</div>
+
+<!-- OBSERVATIONS (keep-together, no bottom divider). -->
+<div class="keep-together">
+<div class="section-header">Observations</div>
+<div class="no-record">No observations recorded.</div>
+</div>
+
+<!-- QUALITY OF CARE (keep-together) — bold answers, "No selection made" default. -->
+<div class="keep-together">
+<div class="section-header">Quality of care</div>
+<div class="quality-row">Was diagnosis reconciliation completed?<br><strong>{{ diag_recon_text or 'No selection made' }}</strong></div>
+<div class="quality-row">Was medication allergy reconciliation completed?<br><strong>{{ allergy_recon_text or 'No selection made' }}</strong></div>
+<div class="quality-row">Was medication reconciliation completed?<br><strong>{{ med_recon_text or 'No selection made' }}</strong></div>
+<div class="quality-row last">No quality of care events recorded.</div>
+</div>
+
+<!-- CARE PLAN (keep-together). -->
+<div class="keep-together">
+<div class="section-header">Care plan</div>
+<div class="no-record">No care plan recorded.</div>
+</div>
+
+{% if show_addenda and addendums %}
+<!-- ADDENDA (conditional — only when addendum rows exist). After Care plan, before logo. -->
+<div class="keep-together">
+<div class="section-header">Addenda</div>
+<table class="addenda-table">
+  <colgroup><col style="width:32%"><col style="width:32%"><col style="width:12%"><col style="width:24%"></colgroup>
+  <thead><tr><th>ADDENDUM</th><th>STATUS</th><th>SOURCE</th><th>DATE/TIME</th></tr></thead>
+  <tbody>
+    {% for ad in addendums %}
+    <tr>
+      <td class="addenda-body">{{ ad.text }}</td>
+      <td class="addenda-status">{{ ad.status }}</td>
+      <td class="addenda-source">{{ ad.source }}</td>
+      <td class="addenda-datetime">{{ ad.datetime }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<!-- LOGO — SYNTHETIC placeholder (the vendor mark is NOT shipped; see RULES.md). -->
+{% if logo_data_uri %}
+<div class="pf-logo-wrap">
+  <img src="{{ logo_data_uri }}" alt="clinic logo placeholder" />
+</div>
+{% endif %}
+
+</body>
+</html>

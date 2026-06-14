@@ -1,0 +1,121 @@
+/* ════════════════════════════════════════════════════════════════
+   Anastomosis — Liquid Glass design system (tokens)
+   ════════════════════════════════════════════════════════════════
+   The design-system fonts + token sheet, carried from the predecessor
+   GUI verbatim (the original section comments are the design rationale
+   and are kept intact). Single source of truth: every page links
+   tokens.css then app.css, so there is no per-page token drift.
+   No frameworks, no Tailwind, no @apply. Hand-written for full control.
+   ════════════════════════════════════════════════════════════════ */
+
+
+/* ─── 1. Fonts ────────────────────────────────────────────────── */
+/* MonaSansVF has wdth + wght + opsz + italic axes in ONE file — we use
+   `font-style: italic` on the same family for italics, not a second @font-face.
+   Both fonts ship locally under SIL OFL-1.1 (see fonts/README.md) so the
+   strict self-only CSP (font-src 'self') is satisfied with zero network. */
+@font-face {
+  font-family: "Mona Sans";
+  src: url("fonts/MonaSansVF.woff2") format("woff2-variations");
+  font-weight: 200 900;
+  font-stretch: 75% 125%;
+  font-style: normal italic;
+  font-display: block;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMonoVF.woff2") format("woff2-variations");
+  font-weight: 100 800;
+  font-display: block;
+}
+
+
+/* ─── 2. Tokens ───────────────────────────────────────────────── */
+:root {
+  /* fonts */
+  --font-display: "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
+  --font-body:    "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /* type scale */
+  --text-display-xl: 56px;
+  --text-display-lg: 32px;
+  --text-title:      20px;
+  --text-body:       14px;
+  --text-label:      12px;
+  --text-caption:    11px;
+  --text-mono:       13px;
+
+  /* surfaces */
+  --surface-veil:    rgba(245, 240, 232, 0.05);
+  --surface-card:    rgba(245, 240, 232, 0.08);
+  --surface-modal:   rgba(245, 240, 232, 0.13);
+  --surface-tile:    rgba(245, 240, 232, 0.10);
+  --surface-pressed: rgba(245, 240, 232, 0.16);
+
+  /* ink */
+  --ink-primary:   oklch(0.97 0.01 80);
+  --ink-secondary: oklch(0.82 0.01 80);
+  --ink-muted:     oklch(0.62 0.01 80);
+  --ink-inverse:   oklch(0.18 0.01 240);
+
+  /* dichroic accent (progress fill only) */
+  --accent-warm:   oklch(0.78 0.18 28);
+  --accent-mid:    oklch(0.85 0.10 60);
+  --accent-cool:   oklch(0.85 0.10 200);
+  --accent-fill:   linear-gradient(90deg,
+                       var(--accent-warm) 0%,
+                       var(--accent-mid)  50%,
+                       var(--accent-cool) 100%);
+
+  /* solid primary */
+  --primary:        oklch(0.78 0.18 28);
+  --primary-press:  oklch(0.72 0.20 28);
+  --primary-glow:   oklch(0.78 0.18 28 / 0.40);
+
+  /* signals */
+  --signal-success: oklch(0.82 0.14 165);
+  --signal-warning: oklch(0.85 0.14 75);
+  --signal-error:   oklch(0.72 0.18 18);
+  --signal-info:    oklch(0.80 0.06 230);
+
+  /* glass elevations */
+  --glass-veil-blur:    saturate(130%) blur(24px);
+  --glass-card-blur:    saturate(150%) blur(32px);
+  --glass-modal-blur:   saturate(170%) blur(48px);
+
+  --glass-veil-bg:      var(--surface-veil);
+  --glass-card-bg:      var(--surface-card);
+  --glass-modal-bg:     var(--surface-modal);
+
+  --glass-veil-border:  1.5px solid rgba(255, 250, 240, 0.10);
+  --glass-card-border:  1.5px solid rgba(255, 250, 240, 0.18);
+  --glass-modal-border: 1.5px solid rgba(255, 250, 240, 0.24);
+
+  --glass-card-shadow:  0 8px 24px rgba(0, 0, 0, 0.18),
+                        inset 0 1px 0 rgba(255, 250, 240, 0.12);
+  --glass-modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.35),
+                        inset 0 1px 0 rgba(255, 250, 240, 0.20);
+
+  /* spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* radii */
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-pill: 999px;
+
+  /* motion */
+  --ease-quart:        cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-cubic-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
+  --dur-snap:    120ms;
+  --dur-std:     240ms;
+  --dur-soft:    480ms;
+  --dur-progress: 800ms;
+}
