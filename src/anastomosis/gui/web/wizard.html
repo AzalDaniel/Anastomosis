@@ -71,6 +71,10 @@
           <label for="export-dir">Export directory</label>
           <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
         </div>
+        <div class="field">
+          <label for="source">Source EHR (migrate FROM)</label>
+          <select id="source"></select>
+        </div>
         <button class="run-btn" id="detect-btn" type="button">auto-detect source</button>
         <div class="guidance" id="detect-result" hidden></div>
       </section>
@@ -91,6 +95,25 @@
         <h2>step 3 · action</h2>
         <div class="guidance" id="action-guidance">
           <div>Pick a destination above to see the recommended route and next step.</div>
+        </div>
+      </section>
+
+      <!-- Step 3b: run the migration (emits charts + the structured C-CDA payload) -->
+      <section class="panel glass-card" aria-label="Run migration">
+        <h2>run migration</h2>
+        <div class="field">
+          <label for="render">Chart representation (--render)</label>
+          <select id="render"></select>
+        </div>
+        <div class="field">
+          <label for="out-dir">Output directory</label>
+          <input type="text" id="out-dir" placeholder="/path/to/output" />
+        </div>
+        <button class="run-btn" id="run-migration-btn" type="button">run migration</button>
+        <div class="guidance" id="migration-result" hidden></div>
+        <div class="patients-panel" id="patients-panel" hidden>
+          <h3>patients in this run</h3>
+          <div id="patients-body"></div>
         </div>
       </section>
 

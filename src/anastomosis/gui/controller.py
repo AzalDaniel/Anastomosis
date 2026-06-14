@@ -529,7 +529,209 @@ class GuiController:
         threading.Thread(target=_worker, name="anast-pipeline", daemon=True).start()
         return {"ok": True, "started": True}
 
+    # --- the migration run (EHR-to-EHR; PF→Tebra is one instance) -----------
+
+    def run_migration(
+        self,
+        export_dir: str,
+        out_dir: str,
+        source: str,
+        destination: str,
+        render: str = "neutral",
+        sections: dict[str, bool] | None = None,
+        qa: bool = True,
+        force: bool = False,
+        pack_dirs: list[str] | None = None,
+        trust_new: bool = False,
+    ) -> dict[str, object]:
+        """Drive the shared migration core, emitting stage/progress events.
+
+        Mirrors :meth:`run_pipeline` exactly for the contract: never raises (a
+        failure is ``{"ok": False, "error": <type-or-diagnosis>}`` plus an
+        ``error`` event), busy-guarded, PHI-safe events only, and the per-patient
+        roll-up stored for :meth:`last_run_summary`. The resolved transit map
+        rides the return value (``route``) so the wizard can draw the chosen
+        route the migration would take. Returns ``{"ok": True, **rollup,
+        "route": {...}, "patients": [...]}``.
+        """
+        if not self._acquire():
+            return {"ok": False, "error": "Busy"}
+        try:
+            return self._run_migration_locked(
+                export_dir=export_dir,
+                out_dir=out_dir,
+                source=source,
+                destination=destination,
+                render=render,
+                sections=sections or {},
+                qa=qa,
+                force=force,
+                pack_dirs=pack_dirs,
+                trust_new=trust_new,
+            )
+        finally:
+            self._release()
+
+    def run_migration_async(
+        self,
+        export_dir: str,
+        out_dir: str,
+        source: str,
+        destination: str,
+        render: str = "neutral",
+        sections: dict[str, bool] | None = None,
+        qa: bool = True,
+        force: bool = False,
+        pack_dirs: list[str] | None = None,
+        trust_new: bool = False,
+    ) -> dict[str, object]:
+        """Run the migration on a daemon thread (the GUI stays responsive).
+
+        Mirrors :meth:`run_pipeline_async`: acquires the busy flag SYNCHRONOUSLY
+        so two quick clicks can't both start, returns ``{"ok": True, "started":
+        True}`` (or ``{"ok": False, "error": "Busy"}``), and streams the result
+        as ``stage``/``progress``/``done``/``error`` events. The per-patient
+        detail and the route are fetched after ``done`` via
+        :meth:`last_run_summary` (the route also rides the synchronous return of
+        :meth:`run_migration`; the async path's done event carries counts only).
+        """
+        if not self._acquire():
+            return {"ok": False, "error": "Busy"}
+
+        def _worker() -> None:
+            try:
+                self._run_migration_locked(
+                    export_dir=export_dir,
+                    out_dir=out_dir,
+                    source=source,
+                    destination=destination,
+                    render=render,
+                    sections=sections or {},
+                    qa=qa,
+                    force=force,
+                    pack_dirs=pack_dirs,
+                    trust_new=trust_new,
+                )
+            finally:
+                self._release()
+
+        threading.Thread(target=_worker, name="anast-migration", daemon=True).start()
+        return {"ok": True, "started": True}
+
     # --- internals ----------------------------------------------------------
+
+    def _run_migration_locked(
+        self,
+        *,
+        export_dir: str,
+        out_dir: str,
+        source: str,
+        destination: str,
+        render: str,
+        sections: dict[str, bool],
+        qa: bool,
+        force: bool,
+        pack_dirs: list[str] | None,
+        trust_new: bool,
+    ) -> dict[str, object]:
+        from anastomosis.core.commands import summarize_patients
+        from anastomosis.core.migrate import (
+            RENDER_CCDA_STANDARD,
+            MigrationCommand,
+            run_migration,
+        )
+        from anastomosis.pipeline import PipelineError
+
+        rollup: dict[str, int] = {}
+        # Clear stale detail up front so a failed run never leaves the previous
+        # run's patients fetchable.
+        self._last_patients = []
+
+        def _on_event(event: StageEvent) -> None:
+            stage = _STAGE_MAP.get(event.stage)
+            if stage is None:
+                return  # the detect stage has no rail of its own
+            self._emit(stage_event(stage, "start"))
+            self._emit(progress_event(stage, **event.counts))
+            self._emit(stage_event(stage, "done"))
+            rollup.update(event.counts)
+
+        try:
+            result = run_migration(
+                MigrationCommand(
+                    export_dir=Path(export_dir),
+                    out_dir=Path(out_dir),
+                    source=source,
+                    destination=destination,
+                    render=render,
+                    pack_dirs=tuple(Path(p) for p in pack_dirs or []),
+                    trust_new=trust_new,
+                    force=force,
+                    sections=sections,
+                    qa=qa,
+                ),
+                on_event=_on_event,
+            )
+        except PipelineError as exc:
+            self._emit(error_event(_failed_stage(str(exc)), str(exc)))
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # any non-migration crash: type name only, no PHI
+            return self._fail("run_migration", exc)
+
+        # The structured C-CDA payload count rides the roll-up (the headline of a
+        # migration: how many patients' charts moved as importable C-CDA).
+        rollup["ccda_patients"] = result.ccda_export.counts["patients"]
+
+        # Per-patient detail rides the RETURN value (and last_run_summary), never
+        # an event. In neutral/pack mode the pipeline result yields it; in
+        # ccda-standard mode (no pipeline) it is derived from the loaded records
+        # and the per-patient view (one document per patient).
+        if result.render_mode == RENDER_CCDA_STANDARD:
+            patients = self._ccda_standard_patients(result)
+        else:
+            assert result.pipeline is not None  # pack mode always carries a pipeline
+            patients = [
+                {
+                    "patient_id": s.patient_id,
+                    "display_name": s.display_name,
+                    "birth_date": s.birth_date,
+                    "encounters": s.encounters,
+                    "documents": s.documents,
+                }
+                for s in summarize_patients(result.pipeline)
+            ]
+        self._last_patients = patients
+        route = _transit_to_dict(result.transit)
+        self._emit(done_event(**rollup))
+        return {"ok": True, **rollup, "route": route, "patients": patients}
+
+    @staticmethod
+    def _ccda_standard_patients(result: object) -> list[dict[str, object]]:
+        """Per-patient roll-up for ccda-standard mode (no pipeline result).
+
+        The standard-view render has no Jinja pack and thus no
+        :class:`PipelineResult` to feed :func:`summarize_patients`, but the
+        migration retains the canonical records, so the same per-patient detail
+        is available here as in pack mode: display name, DOB, encounter count,
+        and one C-CDA-view document per patient (this mode renders exactly one
+        whole-patient PDF each). PHI: LOCAL display only — these values ride the
+        return value / :meth:`last_run_summary`, never an event or a log.
+        """
+        from anastomosis.core.migrate import MigrationResult
+
+        assert isinstance(result, MigrationResult)
+        return [
+            {
+                "patient_id": record.patient.id,
+                "display_name": record.patient.display_name,
+                "birth_date": (
+                    record.patient.birth_date.isoformat() if record.patient.birth_date else None
+                ),
+                "encounters": len(record.encounters),
+                "documents": 1,  # ccda-standard renders one whole-patient PDF
+            }
+            for record in result.records
+        ]
 
     def _run_pipeline_locked(
         self,
