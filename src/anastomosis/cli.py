@@ -48,6 +48,8 @@ destination_app = typer.Typer(help="Inspect destinations and plan delivery route
 app.add_typer(destination_app, name="destination")
 pack_app = typer.Typer(help="Build and inspect template packs.")
 app.add_typer(pack_app, name="pack")
+source_app = typer.Typer(help="Teach the toolkit a new structured export format.")
+app.add_typer(source_app, name="source")
 console = Console()
 
 
@@ -252,6 +254,12 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
     if exc.kind == "no_source":
         suffix = message[len("Could not identify the export format.") :]
         console.print(f"[red]Could not identify the export format.[/red]{suffix}")
+        # Additive guidance (the failure and exit code are unchanged): a format
+        # the toolkit has never seen can be taught once from an example.
+        console.print(
+            "If this is a new format, teach it once: "
+            "[cyan]anast source init <example-file> --name <label>[/cyan]"
+        )
     elif exc.kind == "bad_pack":
         diagnosis = message.split(": ", 1)[1]
         console.print(f"[red]Pack {pack!r} unavailable:[/red] {diagnosis}")
@@ -1512,6 +1520,134 @@ def pack_init(
     console.print(
         f"  3. Re-render:  anast pipeline run <export> -o out --pack {name} --pack-dir {out_dir}"
     )
+
+
+# --- source init (learn a structured export format from an example) ----------
+
+_LEARNABLE_SUFFIXES = (".csv", ".tsv", ".json", ".ndjson", ".jsonl")
+
+
+def _resolve_example(example: Path) -> Path:
+    """Resolve the example to a single structured file (or fail with guidance)."""
+    if example.is_file():
+        return example
+    candidates = sorted(
+        p for p in example.iterdir() if p.is_file() and p.suffix.lower() in _LEARNABLE_SUFFIXES
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        console.print(
+            f"[red]no csv/tsv/json/ndjson file found in {example}[/red] — "
+            "point --example at the file itself"
+        )
+        raise typer.Exit(code=2)
+    console.print(
+        f"[red]{len(candidates)} candidate files in {example}[/red] — "
+        "point at one structured file, not the directory"
+    )
+    raise typer.Exit(code=2)
+
+
+@source_app.command("init")
+def source_init(
+    example: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            readable=True,
+            help="Example export: a csv/tsv/json/ndjson FILE (or a dir holding one).",
+        ),
+    ],
+    name: Annotated[
+        str, typer.Option("--name", help="Mapping id (lowercase identifier, e.g. acme_csv).")
+    ],
+    display: Annotated[
+        str | None,
+        typer.Option("--display", help="Human label for the format (default: the name)."),
+    ] = None,
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Where to save (default: ~/.anastomosis/sources)."),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Accept the suggested mapping without confirmation."),
+    ] = False,
+) -> None:
+    """Teach the toolkit a new flat export format from one example file.
+
+    Analyzes the example LOCALLY (no value ever leaves the machine — the summary
+    shows column names, inferred types, counts, and digit/letter-masked shapes
+    only), proposes a mapping to the canonical model, proves the mapping drops no
+    column, and saves it. After saving, that format auto-detects like any
+    built-in source. Refine the saved ``mapping.json`` and re-run to re-verify.
+    """
+    from anastomosis.core.logutil import exc_tag
+    from anastomosis.core.sourcelearn import analyze_source, build_mapping, round_trip, save_mapping
+    from anastomosis.sources.learned import user_sources_dir
+    from anastomosis.sources.learned.spec import MappingError
+
+    if not _PACK_NAME_RE.match(name):
+        console.print(
+            f"[red]invalid mapping name {name!r}[/red] — use a lowercase identifier "
+            "(letters, digits, underscores; starting with a letter)"
+        )
+        raise typer.Exit(code=2)
+
+    source_file = _resolve_example(example)
+    try:
+        analysis = analyze_source(source_file)
+    except Exception as exc:  # unreadable/garbled example — type only, no PHI
+        console.print(f"[red]could not analyze the example[/red] ({exc_tag(exc)})")
+        raise typer.Exit(code=1) from None
+
+    console.print("\n[bold]Analysis[/bold] (PHI-safe — no values shown):")
+    for line in analysis.summary_lines():
+        console.print(f"  {line}")
+    mapped = sum(1 for s in analysis.suggestions if s.target_path is not None)
+    console.print(
+        f"\n[cyan]{mapped}[/cyan] column(s) map to canonical fields; the rest are preserved "
+        "in [cyan]extensions[/cyan] (nothing is dropped)."
+    )
+
+    if not yes and not typer.confirm("Save this mapping?", default=False):
+        console.print("Aborting — refine with --display/--name or edit the example, then re-run.")
+        raise typer.Exit(code=0)
+
+    try:
+        spec = build_mapping(analysis, mapping_id=name, display=display or name)
+    except MappingError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from None
+
+    report = round_trip(spec, source_file)
+    if not report.ok:
+        if report.error is not None:
+            console.print(f"[red]the mapping failed to load the example[/red] ({report.error})")
+        else:
+            # PHI-safe: column NAMES only.
+            console.print(
+                "[red]refusing to save — these columns would be dropped:[/red] "
+                + ", ".join(report.dropped_columns)
+            )
+        raise typer.Exit(code=1)
+
+    base_dir = out_dir if out_dir is not None else user_sources_dir()
+    try:
+        mapping_dir = save_mapping(spec, base_dir)
+    except (MappingError, OSError) as exc:
+        console.print(f"[red]could not save the mapping[/red] ({exc_tag(exc)})")
+        raise typer.Exit(code=1) from None
+
+    console.print(
+        f"\n[green]learned source[/green] {name!r} → {mapping_dir} "
+        f"({report.record_count} record(s) round-tripped)"
+    )
+    console.print(
+        f"  Review {mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
+    )
+    console.print(f"  Run it:  anast pipeline run <export-dir> --source {name} -o out")
 
 
 if __name__ == "__main__":

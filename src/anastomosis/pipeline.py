@@ -38,6 +38,11 @@ import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra  # noqa: F401  registers the built-in adapters at import
 from anastomosis.core.logutil import exc_tag
 from anastomosis.sources import available_sources, detect_source, get_source
+from anastomosis.sources.learned import register_learned_sources
+
+# Register any formats the operator has taught from an example (the user-dir
+# scan is defensive — a broken mapping is skipped, never crashes import).
+register_learned_sources()
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
