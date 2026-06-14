@@ -158,8 +158,15 @@ class ReconstructionEngine:
         claimed: set[Path] = set()
         try:
             for record in records:
+                # One cache dict per record, shared across that record's
+                # encounters: a pack memoizes its record-level groupings here so
+                # they are built ONCE per record, not once per encounter. The
+                # content is pack-specific; the seam is not. Output is unchanged.
+                record_cache: dict[str, Any] = {}
                 for encounter in record.encounters:
-                    self._render_one(encounter, record, template, out, force, claimed, result)
+                    self._render_one(
+                        encounter, record, template, out, force, claimed, result, record_cache
+                    )
         finally:
             self._retire_renderer()
         return result
@@ -173,6 +180,7 @@ class ReconstructionEngine:
         force: bool,
         claimed: set[Path],
         result: RenderResult,
+        record_cache: dict[str, Any],
     ) -> None:
         target = self._allocate_target(
             out, self._filename_for(encounter, record), encounter, claimed
@@ -187,6 +195,7 @@ class ReconstructionEngine:
             "sections": self.section_flags,
             "timezone": self._pack.manifest.timezone,
             "tokens": self._pack.manifest.tokens,
+            "record_cache": record_cache,
         }
         try:
             context = self._pack.build_context(encounter, record, cfg)
