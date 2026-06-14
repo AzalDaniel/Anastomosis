@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
 from anastomosis.gui.controller import GuiController
 
@@ -1222,3 +1223,248 @@ def test_source_init_unanalyzable_returns_enumerated_code(tmp_path: Path) -> Non
         str(headerless), name="blank", confirmed=False, out_dir=str(tmp_path)
     )
     assert result == {"ok": False, "error": "CannotAnalyze"}
+
+
+# --- upload_start / upload_stop (W5/PR-6b: live driving, no browser) -------
+#
+# Mirrors tests/unit/test_cli_upload.py exactly: a manifest written into out_dir,
+# a ready destination pack dir, and the destination SEAM monkeypatched to a
+# FakeDestination so the whole flow drives with no Playwright/Chromium. The seam
+# here is the controller module's _attach_destination (not the CLI's).
+
+_LOOPBACK = "http://127.0.0.1:9222"
+_UPLOAD_DEST = "testdest"
+# Three distinct synthetic patients (feedface- GUIDs), one chart each.
+_UPLOAD_PATS = [f"feedface-0000-0000-0000-00000000020{i}" for i in range(3)]
+
+
+def _upload_pack_dir(tmp_path: Path) -> Path:
+    """A ready destination pack dir (real selectors, no DISCOVER placeholders)."""
+    from anastomosis.destinations.browserpack import SelectorMap
+
+    root = tmp_path / "packs"
+    pack = root / _UPLOAD_DEST
+    pack.mkdir(parents=True)
+    selectors = {slot: f"#{slot}" for slot in SelectorMap.required_slots()}
+    lines = [f"name: {_UPLOAD_DEST}", "display: Test Destination", "selectors:"]
+    lines += [f"  {slot}: '{sel}'" for slot, sel in selectors.items()]
+    (pack / "pack.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return root
+
+
+def _write_upload_manifest(tmp_path: Path, n: int = 3) -> Path:
+    """Write a manifest of ``n`` charts into out_dir; return out_dir.
+
+    The chart PDFs land INTO out_dir (where a real render puts them) because the
+    manifest stores basenames re-absolutized against the manifest root, so the
+    engine's preflight (existence + re-hash) resolves them there.
+    """
+    import datetime
+
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver.browser.persist import write_upload_manifest
+    from anastomosis.reconstruct.engine import RenderedDoc
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    docs: list[RenderedDoc] = []
+    records: list[PatientRecord] = []
+    for i in range(n):
+        pid = _UPLOAD_PATS[i]
+        path = out_dir / f"note-{i}.pdf"
+        path.write_bytes(f"chart-{i}".encode())
+        docs.append(RenderedDoc(path=path, encounter_id=f"enc-{i}", patient_id=pid))
+        patient = Patient(
+            id=pid,
+            family_name="Family",
+            given_name="Given",
+            birth_date=datetime.date(1980, 1, 1 + i),
+        )
+        records.append(PatientRecord(id=pid, patient=patient))
+    write_upload_manifest(docs, records, out_dir)
+    return out_dir
+
+
+def _upload_known(n: int = 3) -> dict[str, str]:
+    return {_UPLOAD_PATS[i]: f"dest-{i}" for i in range(n)}
+
+
+def _ledger_counts(out_dir: Path) -> dict[str, int]:
+    """The controller writes its ledger to <out_dir>/upload_ledger.sqlite — the
+    SAME file the CLI uses, so a run resumes/monitors across both frontends."""
+    from anastomosis.deliver.browser.tracking import TrackingDB
+
+    tracking = TrackingDB(out_dir / "upload_ledger.sqlite")
+    try:
+        return dict(tracking.counts())
+    finally:
+        tracking.close()
+
+
+def _wait_for_terminal_upload(
+    sink: _RecordingSink, *, deadline_s: float = 10.0
+) -> dict[str, object]:
+    """Poll until a terminal upload event lands (stage done OR error); return it.
+
+    Time-bounded like test_last_run_summary_serves_async_run. A terminal event is
+    a ``stage`` event with ``stage==upload`` and ``state==done`` OR an ``error``
+    event with ``stage==upload``.
+    """
+
+    def _terminal(e: dict[str, object]) -> bool:
+        if e.get("type") == "stage" and e.get("stage") == "upload" and e.get("state") == "done":
+            return True
+        return e.get("type") == "error" and e.get("stage") == "upload"
+
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        for e in list(sink.events):
+            if _terminal(e):
+                return e
+        time.sleep(0.05)
+    raise AssertionError(f"no terminal upload event landed; events={sink.events!r}")
+
+
+def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole drive flow runs with no browser: the seam yields a FakeDestination,
+    the engine drives every item to COMPLETED, and a terminal `done` event lands.
+    The PHI probe holds — no patient name appears in any event."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+    from anastomosis.deliver.browser.states import UploadState
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+    )
+    assert started == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_upload(sink)
+    assert terminal["type"] == "stage", f"expected a clean done, got {terminal!r}"
+    assert terminal["state"] == "done"
+
+    # The ledger reached all-COMPLETED (read via the shared ledger path).
+    counts = _ledger_counts(out_dir)
+    assert counts.get(UploadState.COMPLETED.value) == 3
+    assert sum(counts.values()) == 3
+
+    # upload_status agrees the terminal bucket is full.
+    status = controller.upload_status(str(out_dir / "upload_ledger.sqlite"))
+    assert status["ok"] is True
+    assert status["groups"]["terminal"] == 3  # type: ignore[index]
+
+    # PHI probe: no patient name rides any event (events are stage/state names).
+    blob = repr(sink.events)
+    for name in ("Family", "Given", *FIXTURE_NAMES):
+        assert name not in blob, f"event log leaked patient value {name!r}"
+
+
+def test_upload_start_rejects_non_loopback_cdp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-loopback CDP host is a hard refusal BEFORE the busy guard is taken —
+    a subsequent start is not 'Busy' (the guard was never held)."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    seam_calls = {"n": 0}
+
+    def _spy(cdp: str, loaded: object) -> object:
+        seam_calls["n"] += 1
+        return FakeDestination(_upload_known())
+
+    monkeypatch.setattr(controller_module, "_attach_destination", _spy)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    result = controller.upload_start(
+        str(out_dir), "http://evil.example.com:9222", _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+    )
+    assert result == {"ok": False, "error": "BadCdpEndpoint"}
+    assert seam_calls["n"] == 0  # the seam is never reached past the loopback gate
+    # The busy guard was never held — a clean loopback start now succeeds.
+    second = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+    )
+    assert second == {"ok": True, "started": True}
+    # Drain the spawned worker so its daemon thread does not outlive the test.
+    _wait_for_terminal_upload(sink)
+
+
+def test_upload_start_bad_manifest(tmp_path: Path) -> None:
+    """An out_dir with no manifest is a clean BadManifest (no busy guard, no spawn)."""
+    out_dir = tmp_path / "empty"
+    out_dir.mkdir()
+    result = GuiController(_RecordingSink()).upload_start(str(out_dir), _LOOPBACK, _UPLOAD_DEST)
+    assert result == {"ok": False, "error": "BadManifest"}
+
+
+def test_upload_stop_without_run() -> None:
+    """A stop with no run in flight is a clean NoRun (never raises)."""
+    assert GuiController(_RecordingSink()).upload_stop() == {"ok": False, "error": "NoRun"}
+
+
+def test_upload_start_busy_guard(tmp_path: Path) -> None:
+    """A start while the busy flag is held is rejected Busy (deterministic).
+
+    Acquire the busy flag directly, then assert upload_start returns Busy. The
+    pre-flight is clean (real manifest + ready pack) so the only block is Busy;
+    release after.
+    """
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    controller = GuiController(_RecordingSink())
+    assert controller._acquire() is True  # simulate an in-flight run
+    try:
+        result = controller.upload_start(
+            str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+        )
+        assert result == {"ok": False, "error": "Busy"}
+    finally:
+        controller._release()
+
+
+def test_upload_start_never_raises_on_bad_args() -> None:
+    """The never-raise contract holds for a non-string out_dir — a returned
+    error dict, not a propagated TypeError, and the busy guard stays free."""
+    controller = GuiController(_RecordingSink())
+    result = controller.upload_start(None, _LOOPBACK, _UPLOAD_DEST)  # type: ignore[arg-type]
+    assert result["ok"] is False  # a dict, never a raised TypeError
+    # The pre-flight failure never took the busy guard (a later start is not Busy).
+    assert controller._acquire() is True
+    controller._release()
+
+
+def test_upload_start_refuses_when_output_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run already holding the output dir is refused (OutputLocked), not raced
+    into the shared ledger — the GUI honors the CLI's output lock."""
+    from anastomosis.core.locking import output_lock
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    with output_lock(out_dir):  # another run (CLI or GUI) holds the dir
+        started = controller.upload_start(
+            str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+        )
+        assert started == {"ok": True, "started": True}
+        terminal = _wait_for_terminal_upload(sink)
+    assert terminal["type"] == "error"
+    assert terminal["error"] == "OutputLocked"  # refused, never drove the engine
