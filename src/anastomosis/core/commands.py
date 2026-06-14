@@ -227,20 +227,33 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
     optional upload-manifest → requested deliveries. Raises
     :class:`anastomosis.pipeline.PipelineError` on any loud failure (the adapter
     maps it to its exit code / error event)."""
+    from contextlib import ExitStack
+
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.pipeline import PipelineError, run_pipeline
 
     section_args = [f"{k}={'on' if v else 'off'}" for k, v in sorted(cmd.sections.items())]
-    # Validate the output target BEFORE acquiring the lock (the lock creates the
-    # directory): a path that is actually a file stays a clean exit 2 rather
-    # than a raw OSError from the lock's mkdir.
+    # Validate EVERY output target (charts + each delivery dir) BEFORE acquiring
+    # any lock (the lock creates the directory): a path that is actually a file
+    # stays a clean exit 2 rather than a raw OSError from the lock's mkdir.
+    targets = [cmd.charts_dir, *(dc.out_dir for dc in cmd.deliveries)]
+    for target in targets:
+        try:
+            validate_output_target(target)
+        except OutputPathError as exc:
+            raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
     try:
-        validate_output_target(cmd.charts_dir)
-    except OutputPathError as exc:
-        raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
-    try:
-        with output_lock(cmd.charts_dir):
+        # Lock charts AND every delivery dir (deadlock-free sorted order), so two
+        # concurrent runs sharing any output dir (e.g. the same --ccda dir) cannot
+        # interleave writes — only charts_dir was held before.
+        with ExitStack() as stack:
+            # Dedup on the RESOLVED path so one physical dir addressed two ways
+            # (charts_dir == a delivery dir via relative-vs-absolute or a symlink)
+            # locks ONCE — locking the same lock file twice would self-deadlock a
+            # single run. Writes still use the raw paths; validation already ran.
+            for target in sorted({t.resolve() for t in targets}):
+                stack.enter_context(output_lock(target))
             result = run_pipeline(
                 export_dir=cmd.export_dir,
                 out=cmd.charts_dir,
