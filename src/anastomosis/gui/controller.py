@@ -300,8 +300,9 @@ class GuiController:
     def upload_status(self, db_path: str) -> dict[str, object]:
         """The upload console's read-only view of a tracking ledger.
 
-        Opens the WAL SQLite ledger at ``db_path`` read-only-in-spirit (no
-        writes, never resumed here — live driving is M6) and returns the
+        Opens the WAL SQLite ledger at ``db_path`` read-only (this method never
+        writes; live driving is :meth:`upload_start`/:meth:`upload_stop`) and
+        returns the
         state-machine counters grouped into pending/active/terminal, the latest
         run's info, and the attempts + error-TYPE histograms (from the same
         :mod:`reports` accessors the run report uses). Every value is a count, a
@@ -345,10 +346,10 @@ class GuiController:
 
         Returns the opaque ``item_key`` values (``encounter_id:sha256[:12]``) of
         items still owing work, for the Cmd+K palette. These are ids by
-        construction — never a patient name, never a file path. The full
-        live-driving console (start/pause real uploads) is M6; this is the STUB
-        that lists what *would* be driven. Capped at ``limit`` so a huge ledger
-        cannot flood the palette.
+        construction — never a patient name, never a file path. This is a
+        read-only visibility accessor; a run is driven by
+        :meth:`upload_start`/:meth:`upload_stop`. Capped at ``limit`` so a huge
+        ledger cannot flood the palette.
         """
         tracking = None
         try:

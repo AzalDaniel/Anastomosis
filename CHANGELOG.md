@@ -9,12 +9,49 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
-Migration mode (M2), the pack-from-samples layout learner (M3), and the
-desktop GUI (M4), built on the v0.1.0 Archivist slice. PR numbers in
-parentheses.
+## [0.2.0] — 2026-06-15
+
+The second alpha. Generalizes ingest and output so a migration is "from any EHR
+to any EHR": a FHIR R4 source adapter, a standard HL7 C-CDA render view, an
+`anast migrate` from→to command, and — when the toolkit meets a structured export
+it has never seen — the ability to learn that format from a single example. Adds
+the browser-upload delivery engine (a CLI and a GUI console that drives it), a
+cited destination-capability registry with a shortest-path router, the
+pack-from-samples layout learner, and the desktop GUI, all on the v0.1.0
+foundational pipeline. PR numbers in parentheses.
 
 ### Added
 
+- **Learn a new source format from one example** (`anast source init`,
+  `sources/learned/`, `core/sourcelearn.py`, `core/model_paths.py`) — when a flat
+  CSV/TSV/JSON/NDJSON export is not recognized, teach it once: a local, PHI-safe
+  analysis profiles each column (counts, inferred types, digit/letter-masked
+  shapes — never a raw value) and a deterministic matcher (column-name similarity
+  via `rapidfuzz` + a shipped synonym table + value-type affinity) proposes a
+  mapping to the canonical model, which the operator confirms. The mapping is
+  saved as declarative DATA — a validated `MappingSpec` with a closed transform
+  verb table, no executable code — auto-detected thereafter by a column
+  fingerprint and shareable by copying its directory. Unmapped columns are
+  preserved losslessly in `extensions`, and a round-trip proves no column is
+  dropped before the mapping is saved. A matching GUI wizard ships too. (#49, #50)
+- **`anast migrate --from <source> --to <destination>`** (`core/migrate.py`) —
+  the from→to composition: ingest any source, plan the delivery route, and emit
+  BOTH the human-readable charts AND the structured C-CDA payload the target
+  imports. Re-runnable migration profiles persist in `~/.anastomosis`. PF→Tebra
+  becomes the special case `--from pf-tebra --to tebra`. (#46)
+- **FHIR R4 / US Core source adapter** (`sources/fhir_r4/`) — ingests a FHIR R4
+  Bundle or a Bulk-Data `$export` NDJSON directory into canonical records,
+  deterministically and source-traced; unmapped fields → `extensions`. (#44)
+- **Standard C-CDA render mode** (`reconstruct/ccda_standard/`,
+  `anast migrate --render ccda-standard`) — renders the structured C-CDA payload
+  through HL7's own vendored `CDA.xsl` stylesheet to a neutral, vendor-agnostic
+  per-patient PDF with no network egress, so a migration is never dressed in
+  another vendor's house style. (#45)
+- **`anast upload` + a GUI upload console that drives it** (`cli.py`,
+  `gui/web/console.{html,js}`) — file reconstructed charts into a destination EHR
+  through its web UI over a loopback-only DevTools attach, resumable across a hard
+  kill; the GUI console starts/stops/monitors a run against the same ledger and
+  never closes the operator's browser. (#47, #54)
 - **Browser-delivery safety spine** (`deliver/browser/`) — the 15-state upload
   state machine (`UploadState` + legal-transition graph) over a WAL-mode SQLite
   ledger that survives a hard kill mid-upload, with a `FakeDestination` test
@@ -45,8 +82,8 @@ parentheses.
   for loopback), validated against a HAPI/Medplum-style integration service. (#19)
 - **C-CDA export deliverer** (`deliver/ccda_export/`) — `PatientRecord` →
   C-CDA R2.1 / CCD XML for destinations that import C-CDA, with this repo's own
-  C-CDA parser as the read-back contract; completes M2. (#20)
-- **Golden rendering tests + Synthea e2e lane** (M1.5) — text-and-geometry
+  C-CDA parser as the read-back contract. (#20)
+- **Golden rendering tests + Synthea e2e lane** — text-and-geometry
   golden tests pinning Chromium output, plus an end-to-end pipeline lane over a
   vendored synthetic Synthea C-CDA sample. (#21)
 - **Layout-learner harvest + inference** (`packgen/extract.py`,
@@ -56,14 +93,14 @@ parentheses.
 - **Layout-learner draft-pack emitter + wizard** (`packgen/emit.py`,
   `anast pack init --from-samples`) — writes a loadable draft template pack
   (mirroring `generic_soap`) with a same-patient confirmation gate and a DRAFT
-  provenance note; completes M3. (#23)
+  provenance note. (#23)
 - **GUI shell + headless controller + pipeline dashboard** (`gui/`) — a
   pywebview shell over a fully testable, never-raising controller and thin
   vanilla-JS pages; the liquid-glass dashboard drives the *same* pipeline core
   as the CLI with live ingest/reconstruct/QA counters. (#24)
 - **Migration wizard, section-selection matrix, upload console, and
   pack-init UI** (`gui/web/`, `gui/controller.py`) — the transit map as the
-  wizard centerpiece, section-flag toggles on the run form, a read-only upload
+  wizard centerpiece, section-flag toggles on the run form, an upload
   console over the 15-state ledger (exception-TYPE histograms only, opaque item
   keys in the Cmd+K palette), a vendor-change freshness toast, and the
   pack-init page with the same-patient confirmation gate. (#25)
@@ -96,8 +133,26 @@ parentheses.
   from its own renders). `RULES.md` records the forensics; `tools/regen_goldens.py`
   now regenerates every pack's golden. (#4)
 
+### Changed
+
+- **Shared pack-init command core** (`core/packinit.py`) — `anast pack init` and
+  the GUI now run one analyze→confirm→emit flow; the GUI variant runs off the
+  bridge thread so the window stays responsive. (#51)
+- **GUI migrate-wizard parity** — the wizard exposes the same pack-dir / trust /
+  force / section / QA levers the CLI's `migrate` does, threaded through to the
+  same migration core. (#52)
+- **Per-record render index built once per record**, not once per encounter — a
+  pure-performance change; rendered output stays byte-identical (the e2e goldens
+  prove it). (#53)
+
 ### Fixed
 
+- **Clean errors on bad / empty / no-route input** — a malformed or empty export
+  now fails with a clean exit 2 (PHI-safe, exception-TYPE name only) instead of a
+  raw traceback or a silent zero-document "success"; an `anast migrate` to a
+  destination with no viable automated route still writes the importable C-CDA
+  but exits 1 loudly; and a run locks every output directory, not just the charts
+  dir. (#48)
 - **Guarantor mapping read invented columns** — the `pf_tebra` adapter's
   `patient-guarantor.tsv` mapping now reads the predecessor-verified column
   set (`BillingPatientRelationshipOption`, `BillingPaymentType`,
@@ -138,9 +193,9 @@ parentheses.
 
 ## [0.1.0] — 2026-06-11
 
-First release: the complete **Archivist vertical slice** — one command from a
-raw EHI export to verified, human-readable chart documents and a searchable
-offline archive. Everything below shipped across PRs
+First release: the complete foundational pipeline — one command from a raw EHI
+export to verified, human-readable chart documents and a searchable offline
+archive. Everything below shipped across PRs
 [#1](https://github.com/AzalDaniel/Anastomosis/pull/1),
 [#8](https://github.com/AzalDaniel/Anastomosis/pull/8),
 [#9](https://github.com/AzalDaniel/Anastomosis/pull/9), and
@@ -215,5 +270,6 @@ offline archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AzalDaniel/Anastomosis/releases/tag/v0.1.0
