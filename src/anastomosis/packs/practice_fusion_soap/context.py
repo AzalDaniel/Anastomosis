@@ -39,6 +39,7 @@ from anastomosis.core.model import (
     MedicationStatement,
     Observation,
     ObservationCategory,
+    Patient,
     PatientRecord,
     Prescription,
     SectionKind,
@@ -440,6 +441,91 @@ class _RecordViewIndex:
         )
 
 
+def _demographics(patient: Patient) -> dict[str, Any]:
+    """The unified 6-column demographics table (a self-contained slice of the
+    context, a pure function of the patient)."""
+    home_addr = patient.addresses[0] if patient.addresses else None
+    kin = patient.contacts[0] if patient.contacts else None
+    telecom = {cp.kind: cp.value for cp in patient.telecom}
+    return {
+        "first_name": patient.given_name,
+        "middle_name": patient.middle_name,
+        "last_name": patient.family_name,
+        "sex": patient.sex,
+        "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
+        "death_date": _ext(patient, "DateOfDeath"),
+        "race": ", ".join(patient.race) or None,
+        "ethnicity": ", ".join(patient.ethnicity) or None,
+        "language": patient.language,
+        "status": patient.status,
+        "ssn": patient.identifier(IdentifierKind.SSN),
+        "address1": home_addr.line1 if home_addr else None,
+        "address2": home_addr.line2 if home_addr else None,
+        "city": home_addr.city if home_addr else None,
+        "state": home_addr.state if home_addr else None,
+        "zip": home_addr.postal_code if home_addr else None,
+        "contact_by": patient.contact_preference,
+        "email": telecom.get(ContactKind.EMAIL),
+        "phone_home": telecom.get(ContactKind.PHONE_HOME),
+        "phone_mobile": telecom.get(ContactKind.PHONE_MOBILE),
+        "phone_office": telecom.get(ContactKind.PHONE_WORK),
+        "office_ext": _ext(patient, "OfficePhoneExtension"),
+        "next_of_kin": kin.name if kin else None,
+        "kin_relation": kin.relationship if kin else None,
+        "kin_phone": kin.phone if kin else None,
+        "kin_address": (kin.address.line1 if kin and kin.address else None),
+        "mothers_maiden_name": patient.mothers_maiden_name,
+    }
+
+
+def _section_flags(sections: dict[str, bool]) -> dict[str, bool]:
+    """The per-section show/hide flags the template gates on (all default ON)."""
+    return {
+        "show_insurance": sections.get("insurance", True),
+        "show_payment": sections.get("payment", True),
+        "show_vitals": sections.get("vitals", True),
+        "show_vitals_flowsheet": sections.get("vitals_flowsheet", True),
+        "show_immunizations": sections.get("immunizations", True),
+        "show_social_history": sections.get("social_history", True),
+        "show_past_medical_history": sections.get("past_medical_history", True),
+        "show_family_history": sections.get("family_history", True),
+        "show_advance_directives": sections.get("advance_directives", True),
+        "show_devices": sections.get("devices", True),
+        "show_health_concerns": sections.get("health_concerns", True),
+        "show_goals": sections.get("goals", True),
+        "show_orders": sections.get("orders", True),
+        "show_addenda": sections.get("addenda", True),
+    }
+
+
+def _social_history_context(patient: Patient, index: _RecordViewIndex) -> dict[str, Any]:
+    """Social-history block: smoking + free-text come from the record; the rest
+    fall to the template's per-subcategory empty state (not modeled in EHI)."""
+    smoking = index.smoking
+    return {
+        "smoking_status": smoking.value if smoking else None,
+        "smoking_date": (
+            _fmt_date_short(smoking.recorded_at.date()) if smoking and smoking.recorded_at else None
+        ),
+        "sh_freetext": index.sh_freetext,
+        "sh_alcohol": None,
+        "sh_financial": None,
+        "sh_education": None,
+        "sh_physical": None,
+        "sh_nutrition": None,
+        "sh_stress": None,
+        "sh_isolation": None,
+        "sh_violence": None,
+        "sh_gender_identity": patient.gender_identity,
+        "sh_sexual_orientation": patient.sexual_orientation,
+        "sh_pregnancy_status": None,
+        "sh_pregnancy_intent": None,
+        "sh_tribal": None,
+        "sh_occupations": None,
+        "sh_food_insecurity": None,
+    }
+
+
 def build_context(
     encounter: Encounter, record: PatientRecord, cfg: dict[str, Any]
 ) -> dict[str, Any]:
@@ -473,41 +559,9 @@ def build_context(
         city_state_zip = " ".join(p for p in bits if p) or None
 
     # --- demographics (the unified 6-col table) --------------------------------
-    home_addr = patient.addresses[0] if patient.addresses else None
-    kin = patient.contacts[0] if patient.contacts else None
-    telecom = {cp.kind: cp.value for cp in patient.telecom}
-    demo = {
-        "first_name": patient.given_name,
-        "middle_name": patient.middle_name,
-        "last_name": patient.family_name,
-        "sex": patient.sex,
-        "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
-        "death_date": _ext(patient, "DateOfDeath"),
-        "race": ", ".join(patient.race) or None,
-        "ethnicity": ", ".join(patient.ethnicity) or None,
-        "language": patient.language,
-        "status": patient.status,
-        "ssn": patient.identifier(IdentifierKind.SSN),
-        "address1": home_addr.line1 if home_addr else None,
-        "address2": home_addr.line2 if home_addr else None,
-        "city": home_addr.city if home_addr else None,
-        "state": home_addr.state if home_addr else None,
-        "zip": home_addr.postal_code if home_addr else None,
-        "contact_by": patient.contact_preference,
-        "email": telecom.get(ContactKind.EMAIL),
-        "phone_home": telecom.get(ContactKind.PHONE_HOME),
-        "phone_mobile": telecom.get(ContactKind.PHONE_MOBILE),
-        "phone_office": telecom.get(ContactKind.PHONE_WORK),
-        "office_ext": _ext(patient, "OfficePhoneExtension"),
-        "next_of_kin": kin.name if kin else None,
-        "kin_relation": kin.relationship if kin else None,
-        "kin_phone": kin.phone if kin else None,
-        "kin_address": (kin.address.line1 if kin and kin.address else None),
-        "mothers_maiden_name": patient.mothers_maiden_name,
-    }
+    demo = _demographics(patient)
 
     # --- insurance -------------------------------------------------------------
-    show_insurance = sections.get("insurance", True)
     active_cov = index.active_coverages
     inactive_cov = index.inactive_coverages
 
@@ -552,10 +606,6 @@ def build_context(
     ]
     # "as of" = render-day, NOT encounter date (GOLD §5#9).
     meds_as_of = _dt.date.today().strftime("%m/%d/%Y")  # noqa: DTZ011 — display-only render-day
-
-    # --- social history (free-text + smoking; rest fall to template empty state)
-    smoking = index.smoking
-    sh_freetext = index.sh_freetext
 
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
@@ -640,20 +690,7 @@ def build_context(
         "demo": demo,
         "patient_notes": patient.notes,
         # section flags
-        "show_insurance": show_insurance,
-        "show_payment": sections.get("payment", True),
-        "show_vitals": sections.get("vitals", True),
-        "show_vitals_flowsheet": sections.get("vitals_flowsheet", True),
-        "show_immunizations": sections.get("immunizations", True),
-        "show_social_history": sections.get("social_history", True),
-        "show_past_medical_history": sections.get("past_medical_history", True),
-        "show_family_history": sections.get("family_history", True),
-        "show_advance_directives": sections.get("advance_directives", True),
-        "show_devices": sections.get("devices", True),
-        "show_health_concerns": sections.get("health_concerns", True),
-        "show_goals": sections.get("goals", True),
-        "show_orders": sections.get("orders", True),
-        "show_addenda": sections.get("addenda", True),
+        **_section_flags(sections),
         # insurance / payment
         "active_insurance": [_coverage_view(c) for c in active_cov],
         "inactive_insurance": [_coverage_view(c) for c in inactive_cov],
@@ -683,26 +720,7 @@ def build_context(
         # immunizations
         "immunizations": [_immunization_view(i, tz) for i in record.immunizations],
         # social history
-        "smoking_status": smoking.value if smoking else None,
-        "smoking_date": (
-            _fmt_date_short(smoking.recorded_at.date()) if smoking and smoking.recorded_at else None
-        ),
-        "sh_freetext": sh_freetext,
-        "sh_alcohol": None,
-        "sh_financial": None,
-        "sh_education": None,
-        "sh_physical": None,
-        "sh_nutrition": None,
-        "sh_stress": None,
-        "sh_isolation": None,
-        "sh_violence": None,
-        "sh_gender_identity": patient.gender_identity,
-        "sh_sexual_orientation": patient.sexual_orientation,
-        "sh_pregnancy_status": None,
-        "sh_pregnancy_intent": None,
-        "sh_tribal": None,
-        "sh_occupations": None,
-        "sh_food_insecurity": None,
+        **_social_history_context(patient, index),
         # SOAP
         "subjective_html": subjective.html if subjective else None,
         "objective_html": objective.html if objective else None,
