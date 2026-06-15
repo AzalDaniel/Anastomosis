@@ -1258,6 +1258,113 @@ def test_source_init_unanalyzable_returns_enumerated_code(tmp_path: Path) -> Non
     assert result == {"ok": False, "error": "CannotAnalyze"}
 
 
+# --- source_init_async (the responsive wizard path: daemon worker + events) ----
+
+
+def _wait_for_terminal_source(
+    sink: _RecordingSink, *, deadline_s: float = 10.0
+) -> dict[str, object]:
+    """Poll until a terminal `source` event lands (stage done OR error); return it."""
+
+    def _terminal(e: dict[str, object]) -> bool:
+        if e.get("type") == "stage" and e.get("stage") == "source" and e.get("state") == "done":
+            return True
+        return e.get("type") == "error" and e.get("stage") == "source"
+
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        for e in list(sink.events):
+            if _terminal(e):
+                return e
+        time.sleep(0.05)
+    raise AssertionError(f"no terminal source event landed; events={sink.events!r}")
+
+
+def test_source_init_async_saves_and_is_fetchable(tmp_path: Path) -> None:
+    """The async path returns started=True; the saved mapping is fetchable via
+    last_source_result once the `source` done event lands."""
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.source_init_async(
+        str(LEARNED_FIXTURE),
+        name="clinic_csv",
+        display="Clinic CSV",
+        confirmed=True,
+        out_dir=str(tmp_path),
+    )
+    assert started == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_source(sink)
+    assert terminal["type"] == "stage" and terminal["state"] == "done"
+    result = controller.last_source_result()
+    assert result["ok"] is True, result
+    assert (tmp_path / "clinic_csv" / "mapping.json").is_file()
+    assert result["record_count"] == 3
+
+
+def test_source_init_async_analyze_checkpoint_is_done_not_error(tmp_path: Path) -> None:
+    """confirmed=False is the EXPECTED analyze checkpoint: a `source` done event
+    (not error) carrying the PHI-safe proposal, and nothing written."""
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.source_init_async(
+        str(LEARNED_FIXTURE), name="clinic_csv", confirmed=False, out_dir=str(tmp_path)
+    )
+    assert started == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_source(sink)
+    assert terminal["type"] == "stage" and terminal["state"] == "done"
+    result = controller.last_source_result()
+    assert result["error"] == "ConfirmationRequired"
+    assert result["patient_key"] == "PatientID"
+    assert not (tmp_path / "clinic_csv").exists()  # no write
+    # PHI: the events carry stage/state only — never a patient value.
+    blob = repr(sink.events)
+    for leak in (*FIXTURE_NAMES, "900-12-3456", "ada@example.com"):
+        assert leak not in blob
+
+
+def test_source_init_async_busy_guard(tmp_path: Path) -> None:
+    controller = GuiController(_RecordingSink())
+    assert controller._acquire() is True  # simulate an in-flight run
+    try:
+        second = controller.source_init_async(
+            str(LEARNED_FIXTURE), name="clinic_csv", confirmed=False, out_dir=str(tmp_path)
+        )
+        assert second == {"ok": False, "error": "Busy"}
+    finally:
+        controller._release()
+
+
+def test_last_source_result_empty_before_any_run() -> None:
+    assert GuiController(_RecordingSink()).last_source_result() == {
+        "ok": False,
+        "error": "NoResult",
+    }
+
+
+def test_source_init_async_failure_emits_single_source_error(tmp_path: Path) -> None:
+    """A save failure on the async path emits exactly ONE error event, on the
+    `source` channel — not a doubled, stage-mismatched pair."""
+    not_a_dir = tmp_path / "afile"
+    not_a_dir.write_text("x", encoding="utf-8")  # out_dir is a FILE → save fails
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.source_init_async(
+        str(LEARNED_FIXTURE), name="clinic_csv", confirmed=True, out_dir=str(not_a_dir)
+    )
+    assert started == {"ok": True, "started": True}
+
+    deadline = time.time() + 10
+    while time.time() < deadline and not any(e.get("type") == "error" for e in sink.events):
+        time.sleep(0.05)
+
+    errors = [e for e in sink.events if e.get("type") == "error"]
+    assert len(errors) == 1  # a single source error, not a doubled pair
+    assert errors[0]["stage"] == "source"
+    assert controller.last_source_result()["ok"] is False
+
+
 # --- upload_start / upload_stop (W5/PR-6b: live driving, no browser) -------
 #
 # Mirrors tests/unit/test_cli_upload.py exactly: a manifest written into out_dir,
