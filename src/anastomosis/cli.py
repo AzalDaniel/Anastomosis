@@ -460,6 +460,7 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     ``typer.Exit``; on success, ``--save-profile`` persists the resolved config.
     """
     from anastomosis.core.migrate import default_migration_profiles, run_migration
+    from anastomosis.core.migration_status import classify_migration, manual_import_notice
     from anastomosis.pipeline import PipelineError
 
     # Resolve and SURFACE the route before running — a migration is a route move.
@@ -508,14 +509,12 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     # capabilities offer none). The structured C-CDA + charts ARE written (the
     # C-CDA is the universal manual-import format), but make the gap loud and
     # exit 1 — consistent with `destination route`, never a silent exit-0 — and
-    # point at the discovery wizard for a browser route.
-    if result.transit.chosen is None:
-        console.print(
-            f"[yellow]no viable automated route to {cmd.destination!r}[/yellow] — "
-            f"import the C-CDA at {cmd.out_dir / 'ccda'} manually, or run "
-            f"'anast destination init {cmd.destination}' to teach a browser route."
-        )
-        raise typer.Exit(code=1)
+    # point at the discovery wizard for a browser route. The verdict comes from
+    # the SAME shared classifier the GUI consumes, so the frontends never drift.
+    status = classify_migration(result)
+    if status.needs_manual_import:
+        console.print(f"[yellow]{manual_import_notice(status)}[/yellow]")
+        raise typer.Exit(code=status.exit_code)
 
 
 @app.command("migrate")
