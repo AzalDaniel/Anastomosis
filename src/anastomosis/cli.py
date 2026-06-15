@@ -1497,30 +1497,6 @@ def pack_init(
 
 # --- source init (learn a structured export format from an example) ----------
 
-_LEARNABLE_SUFFIXES = (".csv", ".tsv", ".json", ".ndjson", ".jsonl")
-
-
-def _resolve_example(example: Path) -> Path:
-    """Resolve the example to a single structured file (or fail with guidance)."""
-    if example.is_file():
-        return example
-    candidates = sorted(
-        p for p in example.iterdir() if p.is_file() and p.suffix.lower() in _LEARNABLE_SUFFIXES
-    )
-    if len(candidates) == 1:
-        return candidates[0]
-    if not candidates:
-        console.print(
-            f"[red]no csv/tsv/json/ndjson file found in {example}[/red] — "
-            "point --example at the file itself"
-        )
-        raise typer.Exit(code=2)
-    console.print(
-        f"[red]{len(candidates)} candidate files in {example}[/red] — "
-        "point at one structured file, not the directory"
-    )
-    raise typer.Exit(code=2)
-
 
 @source_app.command("init")
 def source_init(
@@ -1556,70 +1532,86 @@ def source_init(
     column, and saves it. After saving, that format auto-detects like any
     built-in source. Refine the saved ``mapping.json`` and re-run to re-verify.
     """
-    from anastomosis.core.logutil import exc_tag
-    from anastomosis.core.packinit import PACK_NAME_RE
-    from anastomosis.core.sourcelearn import analyze_source, build_mapping, round_trip, save_mapping
-    from anastomosis.sources.learned import user_sources_dir
-    from anastomosis.sources.learned.spec import MappingError
+    from anastomosis.core.source_init_command import SourceInitCommand, run_source_init_command
 
-    if not PACK_NAME_RE.match(name):
+    # Analyze step (confirmed=False): validate the name, resolve + analyze the
+    # example, and produce the PHI-safe proposal via the SHARED core (the same
+    # flow the GUI source wizard runs); this command presents it and confirms.
+    analysis = run_source_init_command(
+        SourceInitCommand(
+            example=example, name=name, display=display, out_dir=out_dir, confirmed=False
+        )
+    )
+    if analysis.error == "InvalidSourceName":
         console.print(
             f"[red]invalid mapping name {name!r}[/red] — use a lowercase identifier "
             "(letters, digits, underscores; starting with a letter)"
         )
         raise typer.Exit(code=2)
-
-    source_file = _resolve_example(example)
-    try:
-        analysis = analyze_source(source_file)
-    except Exception as exc:  # unreadable/garbled example — type only, no PHI
-        console.print(f"[red]could not analyze the example[/red] ({exc_tag(exc)})")
-        raise typer.Exit(code=1) from None
+    if analysis.error == "NoExampleFile":
+        console.print(
+            f"[red]no csv/tsv/json/ndjson file found in {example}[/red] — "
+            "point the example at the file itself"
+        )
+        raise typer.Exit(code=2)
+    if analysis.error == "AmbiguousExample":
+        console.print(
+            f"[red]multiple csv/tsv/json/ndjson files in {example}[/red] — "
+            "point at one structured file, not the directory"
+        )
+        raise typer.Exit(code=2)
+    if analysis.error == "CannotAnalyze":
+        console.print(f"[red]could not analyze the example[/red] ({analysis.detail})")
+        raise typer.Exit(code=1)
+    # The only remaining pre-confirm outcome is the expected analyze checkpoint.
+    assert analysis.error == "ConfirmationRequired"
 
     console.print("\n[bold]Analysis[/bold] (PHI-safe — no values shown):")
-    for line in analysis.summary_lines():
+    for line in analysis.summary:
         console.print(f"  {line}")
-    mapped = sum(1 for s in analysis.suggestions if s.target_path is not None)
     console.print(
-        f"\n[cyan]{mapped}[/cyan] column(s) map to canonical fields; the rest are preserved "
-        "in [cyan]extensions[/cyan] (nothing is dropped)."
+        f"\n[cyan]{analysis.mapped}[/cyan] column(s) map to canonical fields; the rest are "
+        "preserved in [cyan]extensions[/cyan] (nothing is dropped)."
     )
 
     if not yes and not typer.confirm("Save this mapping?", default=False):
         console.print("Aborting — refine with --display/--name or edit the example, then re-run.")
         raise typer.Exit(code=0)
 
-    try:
-        spec = build_mapping(analysis, mapping_id=name, display=display or name)
-    except MappingError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=2) from None
-
-    report = round_trip(spec, source_file)
-    if not report.ok:
-        if report.error is not None:
-            console.print(f"[red]the mapping failed to load the example[/red] ({report.error})")
-        else:
-            # PHI-safe: column NAMES only.
-            console.print(
-                "[red]refusing to save — these columns would be dropped:[/red] "
-                + ", ".join(report.dropped_columns)
-            )
+    # Save step (confirmed=True): build the mapping, prove it drops no column via
+    # a round-trip, and save it owner-only — all in the shared core.
+    saved = run_source_init_command(
+        SourceInitCommand(
+            example=example, name=name, display=display, out_dir=out_dir, confirmed=True
+        )
+    )
+    if saved.error == "CannotBuildMapping":
+        console.print(f"[red]{saved.detail}[/red]")
+        raise typer.Exit(code=2)
+    if saved.error == "MappingLoadFailed":
+        console.print(f"[red]the mapping failed to load the example[/red] ({saved.detail})")
+        raise typer.Exit(code=1)
+    if saved.error == "WouldDropColumns":
+        # PHI-safe: column NAMES only.
+        console.print(
+            "[red]refusing to save — these columns would be dropped:[/red] "
+            + ", ".join(saved.dropped_columns)
+        )
+        raise typer.Exit(code=1)
+    if saved.error == "SaveFailed":
+        console.print(f"[red]could not save the mapping[/red] ({saved.detail})")
+        raise typer.Exit(code=1)
+    if not saved.ok:  # defensive: any other unexpected non-ok outcome
+        console.print(f"[red]could not save the mapping[/red] ({saved.error})")
         raise typer.Exit(code=1)
 
-    base_dir = out_dir if out_dir is not None else user_sources_dir()
-    try:
-        mapping_dir = save_mapping(spec, base_dir)
-    except (MappingError, OSError) as exc:
-        console.print(f"[red]could not save the mapping[/red] ({exc_tag(exc)})")
-        raise typer.Exit(code=1) from None
-
+    assert saved.mapping_dir is not None  # ok=True guarantees a mapping_dir
     console.print(
-        f"\n[green]learned source[/green] {name!r} {_glyphs().arrow} {mapping_dir} "
-        f"({report.record_count} record(s) round-tripped)"
+        f"\n[green]learned source[/green] {name!r} {_glyphs().arrow} {saved.mapping_dir} "
+        f"({saved.record_count} record(s) round-tripped)"
     )
     console.print(
-        f"  Review {mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
+        f"  Review {saved.mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
     )
     console.print(f"  Run it:  anast pipeline run <export-dir> --source {name} -o out")
 
