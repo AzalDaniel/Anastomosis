@@ -109,21 +109,39 @@ def test_run_upload_command_honors_skiplist(tmp_path: Path) -> None:
     assert not any(k.startswith("enc-1:") for k in uploaded)
 
 
-def test_run_upload_command_locks_before_reading_or_attaching(tmp_path: Path) -> None:
+def test_run_upload_command_locks_before_reading_or_attaching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Lock-then-read: when another run holds the output lock, the command refuses
-    BEFORE the manifest is read or the browser is attached (codex P1-4 TOCTOU)."""
+    BEFORE the manifest is read AND before the browser is attached (codex P1-4
+    TOCTOU). Instrumenting BOTH sides proves the ordering — a regression that
+    moved ONLY the manifest read above the lock would raise OutputLockedError with
+    the attach untouched, and would survive an attach-only assertion."""
+    import anastomosis.deliver.browser.persist as persist
+
     out = _write_manifest(tmp_path / "out")
-    attach_calls = {"n": 0}
+    calls = {"read": 0, "attach": 0}
+
+    real_read = persist.read_upload_manifest
+
+    def _counting_read(root: Path) -> object:
+        calls["read"] += 1
+        return real_read(root)
+
+    # run_upload_command imports read_upload_manifest lazily FROM persist, so the
+    # patch must live on persist (the source), not on upload_command's namespace.
+    monkeypatch.setattr(persist, "read_upload_manifest", _counting_read)
 
     def _attach() -> FakeDestination:
-        attach_calls["n"] += 1
+        calls["attach"] += 1
         return FakeDestination(_known())
 
     with output_lock(out):  # a sibling run holds the dir
         with pytest.raises(OutputLockedError):
             run_upload_command(UploadCommand(out_dir=out), _attach)
-    # The attach seam was never reached — it lives INSIDE the lock, after the read.
-    assert attach_calls["n"] == 0
+    # NEITHER the manifest read NOR the attach was reached — both live INSIDE the
+    # lock, so a locked dir refuses before touching the manifest or the browser.
+    assert calls == {"read": 0, "attach": 0}
     # No ledger run was begun either (nothing drove past the lock).
     assert not (out / LEDGER_NAME).exists() or sum(_counts(out).values()) == 0
 
