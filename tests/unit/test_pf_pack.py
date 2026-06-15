@@ -194,6 +194,36 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
     assert idx.conditions_by_id["c1"].active is False
 
 
+def test_flowsheet_index_cached_once_and_cutoff_applied_per_encounter(
+    records: list[Any],
+) -> None:
+    """The vital-by-encounter scan is built ONCE per record (memoized in
+    record_cache) and the strictly-prior-DOS cutoff is still applied per
+    encounter — so the earliest encounter sees no prior columns while a later one
+    reuses the SAME cached index. (The rendered flowsheet's byte-identity is
+    pinned by the e2e practice_fusion_soap golden.)"""
+    from anastomosis.packs.practice_fusion_soap.context import _build_flowsheet
+
+    record = next(r for r in records if len([e for e in r.encounters if e.date_of_service]) >= 2)
+    dated = sorted(
+        (e for e in record.encounters if e.date_of_service is not None),
+        key=lambda e: e.date_of_service,
+    )
+    cache: dict[str, Any] = {}
+
+    # The latest encounter sees the most strictly-prior columns; this populates
+    # the per-record cache.
+    _build_flowsheet(record, dated[-1].date_of_service, cache)
+    assert "flowsheet_index" in cache, "the per-record vital scan must be memoized"
+    first_index = cache["flowsheet_index"]
+
+    # The earliest encounter has NO strictly-prior encounter → empty flowsheet,
+    # and it must REUSE the cached index (built once, not rescanned per encounter).
+    cols_early, rows_early = _build_flowsheet(record, dated[0].date_of_service, cache)
+    assert cache["flowsheet_index"] is first_index, "the index must be reused, not rebuilt"
+    assert cols_early == [] and rows_early == []  # the per-encounter cutoff still applies
+
+
 def _env(pack: LoadedPack) -> Environment:
     # Mirror the engine's Jinja environment (autoescape on; SOAP html | safe).
     return Environment(
