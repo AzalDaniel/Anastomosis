@@ -56,19 +56,29 @@ def test_ascii_fallback_survives_cp1252_but_unicode_does_not() -> None:
             glyph.encode("cp1252")
 
 
-def test_transit_map_renders_ascii_for_cp1252_console() -> None:
+def test_transit_map_markers_survive_print_to_cp1252_console() -> None:
     transit = plan_route("tebra", DestinationRegistry.load())
-    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="")
-    console = Console(file=stream)
+    buf = io.BytesIO()
+    console = Console(file=io.TextIOWrapper(buf, encoding="cp1252", newline=""))
 
-    rendered = transit.render(terminal_glyphs(console.file))
+    glyphs = terminal_glyphs(console.file)
+    assert glyphs is ASCII_GLYPHS
+    rendered = transit.render(glyphs)
 
-    assert "✓" not in rendered and "✗" not in rendered
-    assert "[ok]" in rendered or "[x]" in rendered  # at least one route marker present
-    # End-to-end proof: printing through Rich to the CP-1252 stream never raises.
+    # End-to-end through Rich: print to the CP-1252 stream and read back the
+    # operator-visible bytes. The markers must SURVIVE markup parsing — a
+    # bracketed marker like "[ok]" would be eaten by rich.console.print.
     console.print(rendered)
     console.file.flush()
-    rendered.encode("cp1252")  # and the text itself is CP-1252-clean
+    printed = buf.getvalue().decode("cp1252")
+
+    # Target the marker COLUMN ("  <mark> <kind>") so an incidental '+'/'x' in
+    # route text cannot mask a dropped marker. tebra has both a viable route
+    # (ccda_import) and unviable ones (vendor_api, browser), so both appear.
+    lines = printed.splitlines()
+    assert any(ln.startswith(f"  {ASCII_GLYPHS.ok} ") for ln in lines), printed
+    assert any(ln.startswith(f"  {ASCII_GLYPHS.fail} ") for ln in lines), printed
+    assert "✓" not in printed and "✗" not in printed  # no crash glyph leaked through
 
 
 def test_unicode_render_would_crash_a_cp1252_console() -> None:

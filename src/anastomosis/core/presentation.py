@@ -27,14 +27,18 @@ class Glyphs:
 
 #: The pretty glyphs, used when the target stream is UTF-8.
 UNICODE_GLYPHS = Glyphs(ok="✓", fail="✗", arrow="→")
-#: The portable fallback, used on a non-UTF-8 (e.g. CP-1252) console.
-ASCII_GLYPHS = Glyphs(ok="[ok]", fail="[x]", arrow="->")
+#: The portable fallback, used on a non-UTF-8 (e.g. CP-1252) console. The
+#: markers are deliberately bracket-free: the CLI prints the transit map through
+#: ``rich.Console.print``, which would parse ``[ok]``/``[x]`` as style tags and
+#: strip them — so a viable/unviable marker must contain no square brackets.
+ASCII_GLYPHS = Glyphs(ok="+", fail="x", arrow="->")
 
 # Encodings (normalized: lowercased, separators stripped) that can render the
-# Unicode glyphs as a console code page. UTF-16/32 also could, but no real
-# console uses them as its code page; UTF-8 covers modern terminals (including
-# Windows Terminal and a chcp 65001 console). Everything else — a CP-1252
-# console, a stream with no declared encoding — gets the ASCII fallback.
+# Unicode glyphs. Modern terminals — Windows Terminal, a UTF-8 code page — report
+# a UTF-8 encoding and so get the pretty glyphs. Everything else gets the ASCII
+# fallback: a CP-1252 console, a stream with no declared encoding, and even a
+# UTF-16/32 or ``cp65001`` stream (all UTF-capable, but rare as a console code
+# page) — the fallback is always safe, only occasionally plainer than necessary.
 _UTF8_ALIASES = frozenset({"utf8", "utf8sig"})
 
 
