@@ -1363,6 +1363,11 @@ def test_source_init_async_failure_emits_single_source_error(tmp_path: Path) -> 
     assert len(errors) == 1  # a single source error, not a doubled pair
     assert errors[0]["stage"] == "source"
     assert controller.last_source_result()["ok"] is False
+    # PHI: the failure event carries the enumerated code only — no patient value,
+    # no example path, no column detail (those ride last_source_result, not events).
+    blob = repr(sink.events)
+    for leak in (*FIXTURE_NAMES, "900-12-3456", "ada@example.com"):
+        assert leak not in blob
 
 
 # --- upload_start / upload_stop (W5/PR-6b: live driving, no browser) -------
