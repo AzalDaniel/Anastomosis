@@ -224,6 +224,36 @@ def test_flowsheet_index_cached_once_and_cutoff_applied_per_encounter(
     assert cols_early == [] and rows_early == []  # the per-encounter cutoff still applies
 
 
+def test_section_flags_default_on_and_honor_overrides() -> None:
+    """The extracted section-flag builder defaults every section ON and honors an
+    explicit False (the levers the dashboard/migrate wizards toggle)."""
+    from anastomosis.packs.practice_fusion_soap.context import _section_flags
+
+    all_on = _section_flags({})
+    assert all(v is True for v in all_on.values())
+    # The complete flag set (so a dropped middle flag fails here, not only in the
+    # e2e golden) — every section the template gates on.
+    assert set(all_on) == {
+        "show_insurance",
+        "show_payment",
+        "show_vitals",
+        "show_vitals_flowsheet",
+        "show_immunizations",
+        "show_social_history",
+        "show_past_medical_history",
+        "show_family_history",
+        "show_advance_directives",
+        "show_devices",
+        "show_health_concerns",
+        "show_goals",
+        "show_orders",
+        "show_addenda",
+    }
+    off = _section_flags({"insurance": False, "addenda": False})
+    assert off["show_insurance"] is False and off["show_addenda"] is False
+    assert off["show_vitals"] is True  # an unspecified section stays on
+
+
 def _env(pack: LoadedPack) -> Environment:
     # Mirror the engine's Jinja environment (autoescape on; SOAP html | safe).
     return Environment(
