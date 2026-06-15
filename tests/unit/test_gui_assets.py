@@ -238,7 +238,7 @@ def test_new_script_uses_pywebview_bridge_with_guard(name: str) -> None:
 
 
 def test_console_lists_item_keys_never_names() -> None:
-    """The patient command sheet is a STUB that lists item KEYS, not names."""
+    """The item-key command palette lists opaque item KEYS, never patient names."""
     html = (WEB / "console.html").read_text(encoding="utf-8")
     js = (WEB / "console.js").read_text(encoding="utf-8")
     assert "Cmd/Ctrl+K" in html or "Ctrl+K" in html
