@@ -224,6 +224,19 @@ def test_flowsheet_index_cached_once_and_cutoff_applied_per_encounter(
     assert cols_early == [] and rows_early == []  # the per-encounter cutoff still applies
 
 
+def test_section_flags_default_on_and_honor_overrides() -> None:
+    """The extracted section-flag builder defaults every section ON and honors an
+    explicit False (the levers the dashboard/migrate wizards toggle)."""
+    from anastomosis.packs.practice_fusion_soap.context import _section_flags
+
+    all_on = _section_flags({})
+    assert all_on and all(v is True for v in all_on.values())
+    assert "show_insurance" in all_on and "show_addenda" in all_on  # spans the range
+    off = _section_flags({"insurance": False, "addenda": False})
+    assert off["show_insurance"] is False and off["show_addenda"] is False
+    assert off["show_vitals"] is True  # an unspecified section stays on
+
+
 def _env(pack: LoadedPack) -> Environment:
     # Mirror the engine's Jinja environment (autoescape on; SOAP html | safe).
     return Environment(
