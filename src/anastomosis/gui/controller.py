@@ -1096,6 +1096,7 @@ class GuiController:
             MigrationCommand,
             run_migration,
         )
+        from anastomosis.core.migration_status import classify_migration, manual_import_notice
         from anastomosis.pipeline import PipelineError
 
         rollup: dict[str, int] = {}
@@ -1158,6 +1159,24 @@ class GuiController:
             ]
         self._last_patients = patients
         route = _transit_to_dict(result.transit)
+
+        # The SAME shared verdict the CLI uses. A migration with no viable
+        # automated route still WROTE its artifacts (the C-CDA + charts), but the
+        # operator must import them by hand — so surface it as a manual-import
+        # (error) event, never a silent `done`, exactly as the CLI exits 1 with a
+        # loud notice. This is the CLI/GUI parity fix (codex P0-2).
+        status = classify_migration(result)
+        if status.needs_manual_import:
+            notice = manual_import_notice(status)
+            self._emit(error_event("deliver", notice))
+            return {
+                "ok": False,
+                "error": notice,
+                "manual_import": True,
+                **rollup,
+                "route": route,
+                "patients": patients,
+            }
         self._emit(done_event(**rollup))
         return {"ok": True, **rollup, "route": route, "patients": patients}
 
