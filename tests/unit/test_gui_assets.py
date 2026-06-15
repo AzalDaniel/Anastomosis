@@ -34,18 +34,20 @@ ASSETS = (
     "console.js",
     "packgen.html",
     "packgen.js",
+    "source.html",
+    "source.js",
 )
 
 # The bundled SIL OFL variable fonts (carried verbatim from the predecessor).
 FONT_FILES = ("MonaSansVF.woff2", "JetBrainsMonoVF.woff2")
 
-# Every page (index + the three workspaces).
-ALL_PAGES = ("index.html", "wizard.html", "console.html", "packgen.html")
-# The three item-18/19 pages (html + their page JS).
-NEW_PAGES = ("wizard.html", "console.html", "packgen.html")
-NEW_SCRIPTS = ("wizard.js", "console.js", "packgen.js")
+# Every page (index + the four workspaces).
+ALL_PAGES = ("index.html", "wizard.html", "console.html", "packgen.html", "source.html")
+# The workspace pages (html + their page JS).
+NEW_PAGES = ("wizard.html", "console.html", "packgen.html", "source.html")
+NEW_SCRIPTS = ("wizard.js", "console.js", "packgen.js", "source.js")
 # Pages that host a segment toggle and therefore must define the gooey filter.
-GOOEY_PAGES = ("index.html", "console.html", "wizard.html", "packgen.html")
+GOOEY_PAGES = ("index.html", "console.html", "wizard.html", "packgen.html", "source.html")
 
 # The exact forbidden-substring set the archive's offline scan uses. Fonts are
 # local, so no network reference may appear in ANY asset.
@@ -295,6 +297,24 @@ def test_packgen_requires_confirmation_checkbox() -> None:
     assert "disabled" in html
     assert "confirmed_distinct_patients" in js or "true)" in js
     assert "pack_init" in js
+
+
+def test_source_wizard_drives_via_controller_async() -> None:
+    """The learn-a-source wizard drives the responsive async path through the
+    controller seam only — source_init_async + last_source_result — and never the
+    synchronous source_init nor any pipeline/engine-write method."""
+    html = (WEB / "source.html").read_text(encoding="utf-8")
+    js = (WEB / "source.js").read_text(encoding="utf-8")
+    assert "api.source_init_async(" in js, "source.js must drive via source_init_async"
+    assert "api.last_source_result(" in js, "source.js must fetch via last_source_result"
+    # The synchronous source_init is NOT called from the wizard (it stays a tested
+    # backend, but the GUI uses the responsive async variant).
+    assert "api.source_init(" not in js, "the wizard must use the async variant"
+    # The two-step review checkpoint: a required confirmation gates the save.
+    assert 'id="confirm-review"' in html
+    # The JS never reaches a pipeline/engine write surface (the controller owns it).
+    for call in ("run_pipeline", "begin_run", "transition", "recover"):
+        assert call not in js, f"source.js must not invoke {call!r} (controller owns writes)"
 
 
 def test_dashboard_links_to_new_pages() -> None:
