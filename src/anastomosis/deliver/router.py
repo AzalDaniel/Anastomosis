@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from anastomosis.core.presentation import UNICODE_GLYPHS, Glyphs
 from anastomosis.destinations.registry import (
     BrowserKind,
     CcdaImportKind,
@@ -74,15 +75,17 @@ class TransitMap:
     options: tuple[RouteOption, ...]
     chosen: RouteOption | None
 
-    def render(self) -> str:
+    def render(self, glyphs: Glyphs = UNICODE_GLYPHS) -> str:
         """A small fixed-width text transit map for the CLI.
 
         Deterministic: no timestamps, no ordering churn — the same registry
-        renders byte-identical output every time.
+        renders byte-identical output every time. ``glyphs`` selects the
+        viable/unviable markers; the CLI passes a stream-appropriate set so a
+        non-UTF-8 console gets ASCII rather than a :class:`UnicodeEncodeError`.
         """
         lines = [f"delivery routes for {self.destination}:"]
         for opt in self.options:
-            mark = "✓" if opt.viable else "✗"  # ✓ / ✗ (dingbats, not emoji)
+            mark = glyphs.ok if opt.viable else glyphs.fail
             lines.append(f"  {mark} {opt.kind.value:<12} {opt.why}")
             for req in opt.requires:
                 lines.append(f"         requires {req}")

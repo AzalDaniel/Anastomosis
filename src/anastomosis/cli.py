@@ -24,6 +24,7 @@ import anastomosis
 import anastomosis.sources.ccda
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra
+from anastomosis.core.presentation import Glyphs, terminal_glyphs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +51,16 @@ app.add_typer(pack_app, name="pack")
 source_app = typer.Typer(help="Teach the toolkit a new structured export format.")
 app.add_typer(source_app, name="source")
 console = Console()
+
+
+def _glyphs() -> Glyphs:
+    """Status glyphs safe for the live console (ASCII on a non-UTF-8 stream).
+
+    Resolved per call against ``console.file`` (lazily ``sys.stdout``) so it
+    reflects the actual terminal — a CP-1252 Windows console gets ASCII instead
+    of a :class:`UnicodeEncodeError` mid-output.
+    """
+    return terminal_glyphs(console.file)
 
 
 def _version_callback(value: bool) -> None:
@@ -144,6 +155,8 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
         STAGE_RECONSTRUCT,
     )
 
+    arrow = _glyphs().arrow
+
     def _print_event(event: StageEvent) -> None:
         if event.stage == STAGE_DETECT:
             # Announce only genuine auto-detection (the original behavior):
@@ -156,7 +169,7 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 f"[green]{event.counts['rendered']} rendered[/green], "
                 f"{event.counts['skipped']} skipped, "
                 f"{'[red]' if failed else ''}{failed} failed"
-                f"{'[/red]' if failed else ''} → {charts_dir}"
+                f"{'[/red]' if failed else ''} {arrow} {charts_dir}"
             )
         elif event.stage == STAGE_QA:
             if event.detail:  # QA downgraded (no PyMuPDF)
@@ -167,12 +180,13 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 f"QA: [green]{event.counts['pass']} pass[/green], "
                 f"{event.counts['warn']} warn, "
                 f"{'[red]' if fail else ''}{fail} fail"
-                f"{'[/red]' if fail else ''} → qa_report.json"
+                f"{'[/red]' if fail else ''} {arrow} qa_report.json"
             )
         elif event.stage == STAGE_MANIFEST:
             # Additive line — emitted only when an upload manifest was requested.
             console.print(
-                f"manifest: [green]{event.counts['items']} item(s)[/green] → upload_manifest.json"
+                f"manifest: [green]{event.counts['items']} item(s)[/green] "
+                f"{arrow} upload_manifest.json"
             )
         # The ingest stage prints no CLI line of its own (the original printed none).
 
@@ -207,15 +221,20 @@ def _run_command(cmd: PipelineCommand) -> None:
 def _print_delivery(outcome: DeliveryOutcome) -> None:
     """Print one deliverer's outcome, byte-identical to the pre-extraction lines."""
     counts = outcome.counts
+    arrow = _glyphs().arrow
     if outcome.kind == "archive":
         console.print(
             f"Archive: [green]{counts['patients']} patients[/green], "
-            f"{counts['encounters']} encounters, {counts['pdfs']} pdfs → {outcome.out_dir}"
+            f"{counts['encounters']} encounters, {counts['pdfs']} pdfs {arrow} {outcome.out_dir}"
         )
     elif outcome.kind == "bundle":
-        console.print(f"Bundles: [green]{counts['patients']} patients[/green] → {outcome.out_dir}")
+        console.print(
+            f"Bundles: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
+        )
     elif outcome.kind == "ccda":
-        console.print(f"C-CDA: [green]{counts['patients']} patients[/green] → {outcome.out_dir}")
+        console.print(
+            f"C-CDA: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
+        )
 
 
 def _sections_or_exit(
@@ -452,7 +471,7 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     except KeyError as exc:
         console.print(f"[red]{exc.args[0] if exc.args else exc}[/red]")
         raise typer.Exit(code=2) from None
-    console.print(transit.render())
+    console.print(transit.render(_glyphs()))
 
     charts_dir = cmd.out_dir / "charts"
     _print_event = _make_event_printer(source=cmd.source, charts_dir=charts_dir)
@@ -468,7 +487,7 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
         view = result.ccda_view
         console.print(
             f"[green]{len(view.documents)} rendered[/green], "
-            f"{len(view.skipped)} skipped, 0 failed → {charts_dir}"
+            f"{len(view.skipped)} skipped, 0 failed {_glyphs().arrow} {charts_dir}"
         )
     _print_delivery(result.ccda_export)
 
@@ -803,7 +822,7 @@ def _run_upload(
             # NEVER close the operator's browser — only our own ledger handle.
             tracking.close()
     console.print(summary_line(counts))
-    console.print(f"run report → {report_path}")
+    console.print(f"run report {_glyphs().arrow} {report_path}")
     return _upload_exit_code(counts, result.aborted_reason)
 
 
@@ -1053,7 +1072,7 @@ def destination_route(
         # 1 = known destination with NO viable route (capability gap). Tests
         # pin both; scripts branch on them.
         raise typer.Exit(code=2) from None
-    console.print(transit.render())
+    console.print(transit.render(_glyphs()))
     # Surface a locally present browser pack WITHOUT auto-flipping routing: the
     # registry overlay remains the single routing truth, so we only note that a
     # pack exists and how the operator declares it.
@@ -1491,13 +1510,13 @@ def pack_init(
         raise typer.Exit(code=1) from None
     pack_dir = emit_result.pack_dir
     assert pack_dir is not None  # ok=True guarantees a pack_dir
-    console.print(f"\n[green]wrote draft pack[/green] → {pack_dir}")
+    console.print(f"\n[green]wrote draft pack[/green] {_glyphs().arrow} {pack_dir}")
 
     preview_path: Path | None = None
     if render_preview:
         preview_path = _render_preview(pack_dir)
         if preview_path is not None:
-            console.print(f"[green]preview[/green] → {preview_path}")
+            console.print(f"[green]preview[/green] {_glyphs().arrow} {preview_path}")
 
     console.print("\n[bold]Next steps[/bold] (see DRAFT.md):")
     if preview_path is not None:
@@ -1632,7 +1651,7 @@ def source_init(
         raise typer.Exit(code=1) from None
 
     console.print(
-        f"\n[green]learned source[/green] {name!r} → {mapping_dir} "
+        f"\n[green]learned source[/green] {name!r} {_glyphs().arrow} {mapping_dir} "
         f"({report.record_count} record(s) round-tripped)"
     )
     console.print(
