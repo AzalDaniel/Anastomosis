@@ -230,8 +230,25 @@ def test_section_flags_default_on_and_honor_overrides() -> None:
     from anastomosis.packs.practice_fusion_soap.context import _section_flags
 
     all_on = _section_flags({})
-    assert all_on and all(v is True for v in all_on.values())
-    assert "show_insurance" in all_on and "show_addenda" in all_on  # spans the range
+    assert all(v is True for v in all_on.values())
+    # The complete flag set (so a dropped middle flag fails here, not only in the
+    # e2e golden) — every section the template gates on.
+    assert set(all_on) == {
+        "show_insurance",
+        "show_payment",
+        "show_vitals",
+        "show_vitals_flowsheet",
+        "show_immunizations",
+        "show_social_history",
+        "show_past_medical_history",
+        "show_family_history",
+        "show_advance_directives",
+        "show_devices",
+        "show_health_concerns",
+        "show_goals",
+        "show_orders",
+        "show_addenda",
+    }
     off = _section_flags({"insurance": False, "addenda": False})
     assert off["show_insurance"] is False and off["show_addenda"] is False
     assert off["show_vitals"] is True  # an unspecified section stays on
