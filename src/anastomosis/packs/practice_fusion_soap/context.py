@@ -529,8 +529,10 @@ def build_context(
     enc_vital_rows = _encounter_vital_rows(enc_vitals)
     vitals_obs_dt = next((o.effective_at for o in enc_vitals if o.effective_at), None)
 
-    # vitals flowsheet — prior encounters only, most-recent 10 columns (GOLD §8)
-    flowsheet_columns, flowsheet_rows = _build_flowsheet(record, encounter, dos)
+    # vitals flowsheet — prior encounters only, most-recent 10 columns (GOLD §8).
+    # The vital-by-encounter scan is built ONCE per record (memoized in
+    # record_cache); only the per-encounter DOS cutoff is applied here.
+    flowsheet_columns, flowsheet_rows = _build_flowsheet(record, dos, record_cache)
 
     # --- diagnoses -------------------------------------------------------------
     current_dx = [_dx_view(c) for c in index.active_conditions]
@@ -809,16 +811,19 @@ def _addendum_datetime(value: _dt.datetime | None, tz: str) -> str:
     return local.strftime("%m/%d/%Y %I:%M %p").replace("AM", "am").replace("PM", "pm")
 
 
-def _build_flowsheet(
-    record: PatientRecord, encounter: Encounter, dos: _dt.date | None
-) -> tuple[list[dict[str, str | None]], list[dict[str, Any]]]:
-    """Vitals flowsheet: prior encounters only (strictly < current DOS), most
-    recent ``_FLOWSHEET_MAX_COLUMNS`` columns, all 11 vital rows shown (GOLD §8).
+def _flowsheet_record_index(
+    record: PatientRecord,
+) -> tuple[dict[str, dict[str, str]], dict[str, _dt.date]]:
+    """The vital-by-encounter grouping for the whole record (one pass, no DOS cut).
+
+    Built ONCE per record and memoized in ``record_cache`` (the per-encounter
+    flowsheet only applies the DOS cutoff to this). Returns ``(cols, col_dates)``:
+    ``cols[encounter_id]`` is ``{vital label: str(value)}`` (last value wins, in
+    ``record.observations`` order) and ``col_dates[encounter_id]`` is that
+    encounter's date of service — for every encounter with at least one non-null
+    vital observation.
     """
-    if dos is None:
-        return [], []
     enc_by_id = {e.id: e for e in record.encounters}
-    # gather vital observations grouped by their encounter, prior to this DOS
     cols: dict[str, dict[str, str]] = {}
     col_dates: dict[str, _dt.date] = {}
     for obs in record.observations:
@@ -827,21 +832,43 @@ def _build_flowsheet(
         enc = enc_by_id.get(obs.encounter_id)
         if enc is None or enc.date_of_service is None:
             continue
-        if enc.date_of_service >= dos:  # strictly prior encounters only
-            continue
         label = _LOINC_TO_LABEL.get(obs.code or "", obs.display or "")
         if obs.value is None:
             continue
         cols.setdefault(enc.id, {})[label] = str(obs.value)
         col_dates[enc.id] = enc.date_of_service
-    if not cols:
+    return cols, col_dates
+
+
+def _build_flowsheet(
+    record: PatientRecord, dos: _dt.date | None, record_cache: dict[str, Any]
+) -> tuple[list[dict[str, str | None]], list[dict[str, Any]]]:
+    """Vitals flowsheet: prior encounters only (strictly < current DOS), most
+    recent ``_FLOWSHEET_MAX_COLUMNS`` columns, all 11 vital rows shown (GOLD §8).
+
+    The record-wide vital-by-encounter scan is computed once
+    (:func:`_flowsheet_record_index`) and cached; only the DOS cutoff, ordering,
+    column cap, and row assembly run per encounter. Output is byte-identical to
+    the prior per-encounter scan (the cutoff merely moved out of the loop).
+    """
+    if dos is None:
+        return [], []
+    cached = record_cache.get("flowsheet_index")
+    if cached is None:
+        cached = _flowsheet_record_index(record)
+        record_cache["flowsheet_index"] = cached
+    all_cols, all_col_dates = cached
+    # Strictly prior encounters only (the per-encounter DOS cutoff), preserving
+    # the record-order of the cached scan so the stable sort tie-breaks identically.
+    col_dates = {eid: d for eid, d in all_col_dates.items() if d < dos}
+    if not col_dates:
         return [], []
     ordered = sorted(col_dates, key=lambda eid: col_dates[eid], reverse=True)
     ordered = ordered[:_FLOWSHEET_MAX_COLUMNS]
     columns = [{"date": _fmt_date_short(col_dates[eid]), "time": None} for eid in ordered]
     rows: list[dict[str, Any]] = []
     for label in _VITAL_ORDER:
-        vals = [cols[eid].get(label, "") for eid in ordered]
+        vals = [all_cols[eid].get(label, "") for eid in ordered]
         if any(vals):
             rows.append({"name": label, "vals": vals})
     return columns, rows
