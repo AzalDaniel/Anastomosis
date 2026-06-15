@@ -31,7 +31,6 @@ emits.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from copy import deepcopy
 from datetime import date
@@ -45,6 +44,7 @@ from anastomosis.gui.events import done_event, error_event, progress_event, stag
 if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.packinit import PackInitResult
+    from anastomosis.core.source_init_command import SourceInitResult
     from anastomosis.deliver.browser.tracking import TrackingDB
     from anastomosis.deliver.router import TransitMap
     from anastomosis.destinations.registry import DestinationEntry
@@ -54,14 +54,6 @@ __all__ = ["EventSink", "GuiController"]
 
 
 logger = logging.getLogger(__name__)
-
-# A pack name must be a lowercase manifest identifier (mirrors the CLI's
-# _PACK_NAME_RE — it is the pack name AND the directory name). The same rule
-# governs a learned-source mapping id.
-_PACK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-
-# Structured-export file types the source-learning wizard can read.
-_LEARNABLE_SUFFIXES = (".csv", ".tsv", ".json", ".ndjson", ".jsonl")
 
 # Local destination selectors older than this (relative to the registry's
 # freshest evidence date) are flagged stale — the quarterly re-verification
@@ -83,6 +75,55 @@ def _attach_destination(cdp_url: str, loaded: object) -> object:
     from anastomosis.cli import _make_destination
 
     return _make_destination(cdp_url, loaded)
+
+
+def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
+    """Marshal a :class:`SourceInitResult` into the learn-a-source wizard's dict.
+
+    Preserves the wizard's JSON contract exactly: a pre-analyze failure
+    (``InvalidSourceName`` / ``NoExampleFile`` / ``AmbiguousExample`` /
+    ``CannotAnalyze``) is the bare ``{"ok": False, "error": <code>}``; once
+    analysis succeeded the PHI-safe proposal rides along (column names, type
+    labels, counts, masked shapes — never a cell value), plus the
+    outcome-specific keys (``dropped`` / ``detail`` / the saved-mapping fields).
+    """
+    out: dict[str, object] = {"ok": result.ok, "error": result.error}
+    if result.fmt_type is None:
+        return out  # a pre-analyze failure carries no proposal
+    out.update(
+        {
+            "format": result.fmt_type,
+            "columns": result.columns,
+            "patient_key": result.patient_key,
+            "encounter_key": result.encounter_key,
+            "row_scope": result.row_scope,
+            "summary": list(result.summary),
+            "suggestions": [
+                {
+                    "source": s.source,
+                    "target": s.target,
+                    "transform": s.transform,
+                    "confidence": s.confidence,
+                }
+                for s in result.suggestions
+            ],
+            "mapped": result.mapped,
+        }
+    )
+    if result.ok:
+        out.update(
+            {
+                "mapping_dir": str(result.mapping_dir),
+                "mapping_md": result.mapping_md,
+                "record_count": result.record_count,
+                "unmapped": result.unmapped,
+            }
+        )
+    elif result.error == "WouldDropColumns":
+        out["dropped"] = list(result.dropped_columns)
+    elif result.error == "MappingLoadFailed":
+        out["detail"] = result.detail
+    return out
 
 
 class EventSink(Protocol):
@@ -764,111 +805,30 @@ class GuiController:
         labels, counts, and digit/letter-masked shapes only — never a cell value;
         the example path the operator typed is not echoed back. Returns JSON-safe
         data; never raises.
+
+        The analyze -> build -> round-trip -> save flow lives in the SHARED
+        :func:`anastomosis.core.source_init_command.run_source_init_command` core
+        (the same one ``anast source init`` runs), so the two frontends cannot
+        diverge; this method only marshals its result into the wizard's dict.
         """
         try:
-            from anastomosis.core.sourcelearn import (
-                analyze_source,
-                build_mapping,
-                round_trip,
-                save_mapping,
+            from anastomosis.core.source_init_command import (
+                SourceInitCommand,
+                run_source_init_command,
             )
-            from anastomosis.sources.learned import user_sources_dir
-            from anastomosis.sources.learned.spec import MappingError
 
-            if not isinstance(name, str) or not _PACK_NAME_RE.match(name):
-                return {"ok": False, "error": "InvalidSourceName"}
-
-            resolved, resolve_error = self._resolve_example(Path(example_path))
-            if resolved is None:
-                return {"ok": False, "error": resolve_error}
-
-            try:
-                analysis = analyze_source(resolved)
-            except MappingError:
-                # An unreadable / header-less / column-less example. Surface an
-                # enumerated code (not a raw type name); the underlying message
-                # may embed the example path, so it is not echoed.
-                return {"ok": False, "error": "CannotAnalyze"}
-            proposal: dict[str, object] = {
-                "format": analysis.fmt.type,
-                "columns": len(analysis.fmt.columns),
-                "patient_key": analysis.patient_key,
-                "encounter_key": analysis.encounter_key,
-                "row_scope": analysis.row_scope,
-                "summary": list(analysis.summary_lines()),
-                "suggestions": [
-                    {
-                        "source": s.source_path,
-                        "target": s.target_path,
-                        "transform": s.transform,
-                        "confidence": round(s.confidence, 2),
-                    }
-                    for s in analysis.suggestions
-                ],
-                "mapped": sum(1 for s in analysis.suggestions if s.target_path is not None),
-            }
-
-            if not confirmed:
-                return {"ok": False, "error": "ConfirmationRequired", **proposal}
-
-            try:
-                spec = build_mapping(analysis, mapping_id=name, display=display or name)
-            except MappingError:
-                return {"ok": False, "error": "CannotBuildMapping", **proposal}
-
-            report = round_trip(spec, resolved)
-            if not report.ok:
-                # Mirror the CLI: a LOAD failure (a mapped column's transform
-                # choked) is a fixable mapping mistake, distinct from a column
-                # that would be dropped. report.error names columns/targets only
-                # (no cell value), so it is safe to surface.
-                if report.error is not None:
-                    return {
-                        "ok": False,
-                        "error": "MappingLoadFailed",
-                        "detail": report.error,
-                        **proposal,
-                    }
-                return {
-                    "ok": False,
-                    "error": "WouldDropColumns",
-                    "dropped": report.dropped_columns,
-                    **proposal,
-                }
-
-            try:
-                base = Path(out_dir) if out_dir is not None else user_sources_dir()
-                mapping_dir = save_mapping(spec, base)
-            except (MappingError, OSError):
-                return {"ok": False, "error": "SaveFailed", **proposal}
-            return {
-                "ok": True,
-                "mapping_dir": str(mapping_dir),
-                "mapping_md": (mapping_dir / "MAPPING.md").read_text(encoding="utf-8"),
-                "record_count": report.record_count,
-                "unmapped": len(spec.unmapped_source_fields),
-                **proposal,
-            }
+            result = run_source_init_command(
+                SourceInitCommand(
+                    example=Path(example_path),
+                    name=name,
+                    display=display,
+                    out_dir=Path(out_dir) if out_dir is not None else None,
+                    confirmed=confirmed,
+                )
+            )
+            return _source_result_dict(result)
         except Exception as exc:
             return self._fail("source_init", exc)
-
-    def _resolve_example(self, example: Path) -> tuple[Path | None, str]:
-        """Resolve an example path to one structured file (mirrors the CLI helper).
-
-        Returns ``(file, "")`` on success, else ``(None, code)`` where code is
-        ``NoExampleFile`` (nothing of a learnable type) or ``AmbiguousExample`` (a
-        directory holding more than one) — never raises.
-        """
-        if example.is_file():
-            return example, ""
-        if not example.is_dir():
-            return None, "NoExampleFile"
-        candidates = sorted(
-            p for p in example.iterdir() if p.is_file() and p.suffix.lower() in _LEARNABLE_SUFFIXES
-        )
-        if len(candidates) == 1:
-            return candidates[0], ""
-        return (None, "NoExampleFile") if not candidates else (None, "AmbiguousExample")
 
     # --- the pipeline run ---------------------------------------------------
 
