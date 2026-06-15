@@ -5,8 +5,6 @@
 **anastomosis** *(n., medicine)* — a surgical connection between two structures.
 This toolkit is that connection for electronic health records.
 
-**Demo video:** _(link coming with the CS50 submission)_
-
 ## The problem
 
 Every certified US EHR is legally required to export a practice's full
@@ -20,49 +18,47 @@ or locked in.
 
 Anastomosis is the missing last mile, free and open source:
 
-1. **Ingest** raw EHI exports (Practice Fusion/Tebra TSV, C-CDA/CCD, Oracle
-   Health/Cerner Millennium V500 dumps, more adapters coming) into a lossless
-   canonical model — every unmapped field preserved, nothing silently dropped.
-2. **Reconstruct** human-readable, pixel-faithful clinical documents
-   (template packs; the Practice Fusion SOAP-note pack replicates the original
-   to forensic standards — or *learn a new layout from your own sample PDFs*).
-3. **Verify** with a multi-layer QA engine (data-integrity, layout, identity
-   checks) descended from a production system that reconstructed **12,906
-   SOAP notes at a 100% final QA pass rate**.
-4. **Deliver** by the shortest available path: vendor API where one exists,
-   C-CDA import where supported, verified browser automation (with a
-   six-layer wrong-patient defense) where neither does — or build a
-   **searchable offline archive** that replaces paid legacy-archive
-   subscriptions with plain folders, PDFs, and JSON readable for decades.
+1. **Ingest** raw EHI exports — Practice Fusion/Tebra TSV, C-CDA/CCD, FHIR R4
+   (Bundle or Bulk-Data NDJSON), Oracle Health/Cerner Millennium V500 dumps —
+   into a lossless canonical model, every unmapped field preserved. Meet an
+   export it doesn't recognize? **Teach it that format from a single example**,
+   and it maps to the canonical model from then on.
+2. **Reconstruct** human-readable clinical documents from template packs: a
+   neutral SOAP layout, a standard HL7 C-CDA stylesheet view, or a
+   sample-learned vendor replica (the Practice Fusion pack reproduces that
+   chart's layout and typography — or learn a new layout from your own sample
+   PDFs).
+3. **Verify** every rendered document with a multi-layer QA engine
+   (data-integrity, layout, and identity checks), and every upload with a
+   six-layer wrong-patient defense.
+4. **Deliver** by the shortest available path: a vendor API where one exists,
+   C-CDA import where supported, or verified browser automation where neither
+   does. A cross-EHR migration moves the **structured C-CDA/FHIR payload** the
+   destination imports natively; the rendered PDF is the human-readable archive
+   and upload fallback, never a forgery of another vendor's house style. Or
+   build a **searchable offline archive** — plain folders, PDFs, and JSON
+   readable for decades — in place of a paid legacy-archive subscription.
 
 Local-first by design: **the core pipeline makes zero network calls.**
 Your records never leave your machine.
 
 ## Status
 
-**v0.1.0 (alpha)** — [released on PyPI](https://pypi.org/project/anastomosis/)
-and [GitHub](https://github.com/AzalDaniel/Anastomosis/releases/tag/v0.1.0);
-the Archivist vertical slice works end to end. See
-[CHANGELOG.md](CHANGELOG.md) for what shipped and
-[docs/PLAN.md](docs/PLAN.md) for the living roadmap.
+**v0.2.0 (alpha)** — on [PyPI](https://pypi.org/project/anastomosis/) and
+[GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
+[CHANGELOG.md](CHANGELOG.md) for what shipped and [docs/PLAN.md](docs/PLAN.md)
+for the roadmap.
 
-| Milestone | State |
+| Capability | State |
 |---|---|
-| M0 Bootstrap (CI, PHI guardrails, CLI skeleton) | ✅ |
-| M1 Archive vertical slice (ingest → reconstruct → QA → archive) | ✅ v0.1.0[^1] |
-| M2 Migration mode (verified delivery engine, destination packs, router) | ✅ |
-| M3 Pack-from-samples layout learner | ✅ |
-| M4 Desktop GUI (liquid-glass) | ✅ |
-| M5 CS50 packaging (docs, demo, submission) | in progress |
+| Foundational pipeline — ingest → reconstruct → QA → searchable archive | ✅ v0.1.0 |
+| Migration mode — `migrate` from→to, verified delivery engine, destination registry + router | ✅ v0.2.0 |
+| Learn a source format from one example; FHIR R4 ingest; standard C-CDA render | ✅ v0.2.0 |
+| Pack-from-samples layout learner | ✅ v0.2.0 |
+| Desktop GUI — pipeline dashboard, migration wizard, upload console | ✅ v0.2.0 |
 
-[^1]: golden rendering and the Synthea e2e lane landed in M1.5 ([#21]); the
-    Practice Fusion–faithful template pack (`practice_fusion_soap`, [#4]) now
-    ships as a built-in — the 35-section forensic PF SOAP-note replica with its
-    own golden + packgen fixed-point e2e lanes. The `generic_soap` pack also
-    ships and is exercised end to end.
-
-[#4]: https://github.com/AzalDaniel/Anastomosis/issues/4
-[#21]: https://github.com/AzalDaniel/Anastomosis/pull/21
+Built and tested entirely against synthetic data; see
+[docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
 
 ## Install
 
@@ -93,10 +89,24 @@ offline archive:
 anast pipeline run ./my_ehi_export --out ./charts --archive ./my_archive
 ```
 
-The source format is auto-detected (or pass `--source pf-tebra` / `--source
-ccda`); `--pack` selects the document template; every rendered document is
-QA-verified by default; `anast info` lists every available source adapter
-and template pack.
+The source format is auto-detected (or pass `--source pf-tebra`/`ccda`/`fhir-r4`/
+`oracle-ehi`); `--pack` selects the document template; every rendered document is
+QA-verified by default; `anast info` lists every available source adapter and
+template pack.
+
+Migrate from one EHR to another — emitting both the structured C-CDA payload the
+target imports and human-readable charts:
+
+```bash
+anast migrate ./my_ehi_export --from pf-tebra --to tebra --out ./migration
+```
+
+Meet an export format it doesn't recognize? Teach it once from a single example,
+then ingest that format like any built-in source:
+
+```bash
+anast source init ./example_export.csv --name acme_clinic
+```
 
 ## How it works — file-by-file
 
@@ -128,17 +138,26 @@ src/anastomosis/
 │   ├── ccda/         C-CDA R2.1 / CCD ingest. HARDENED XML (resolve_entities=False,
 │   │                 no_network=True, load_dtd=False, huge_tree=False); unmapped
 │   │                 sections preserved under `ccda:section:<loinc>` extension keys.
-│   └── oracle_ehi/   Oracle Health/Cerner Millennium EHI adapter (V500 single-patient
-│                     export). Dependency-free MySQL INSERT-dump reader over
-│                     `v500/{schema,activity,reference}`; PERSON/ENCOUNTER/CLINICAL_EVENT
-│                     spine, CE_BLOB note text + CE_BLOB_RESULT remote refs (never
-│                     fetched); unmapped columns to `oracle_ehi:` extensions; undocumented
-│                     CE_BLOB compression (brief §8) raises loudly rather than guessing.
+│   ├── oracle_ehi/   Oracle Health/Cerner Millennium EHI adapter (V500 single-patient
+│   │                 export). Dependency-free MySQL INSERT-dump reader over
+│   │                 `v500/{schema,activity,reference}`; PERSON/ENCOUNTER/CLINICAL_EVENT
+│   │                 spine, CE_BLOB note text + CE_BLOB_RESULT remote refs (never
+│   │                 fetched); unmapped columns to `oracle_ehi:` extensions; undocumented
+│   │                 CE_BLOB compression (brief §8) raises loudly rather than guessing.
+│   ├── fhir_r4/      FHIR R4 / US Core ingest — a Bundle or a Bulk-Data `$export`
+│   │                 NDJSON directory → canonical records; unmapped fields → `extensions`.
+│   └── learned/      LEARN-A-SOURCE: a single generic adapter that runs a saved,
+│                     validated mapping (DATA, no code) for a structured export taught
+│                     from one example via `anast source init`; auto-detected by a
+│                     column fingerprint; unmapped columns → `extensions`.
 ├── reconstruct/      Jinja2 + Chromium rendering engine + defensive pack registry.
 │                     Renderer recycling, crash relaunch, deterministic
 │                     collision-suffixing, idempotent skip; a broken pack is
 │                     diagnosed and disabled WITHOUT taking the system down;
 │                     `generic_soap` built-in with user-togglable section flags.
+│                     `ccda_standard/` renders the structured C-CDA through HL7's
+│                     vendored CDA.xsl to a neutral per-patient PDF — no network egress —
+│                     for the `migrate --render ccda-standard` mode.
 ├── packgen/          pack-from-samples LAYOUT LEARNER. PyMuPDF-only, fully offline,
 │                     no torch: font histogram → type scale, x-position bucketing →
 │                     column grids (deliberately explainable greedy clustering, not a
@@ -176,14 +195,15 @@ src/anastomosis/
 │                     with DISCOVER placeholder selectors (operator-derived via the
 │                     wizard) so no vendor DOM is ever invented.
 ├── gui/              pywebview shell over a headless, fully testable controller and
-│                     thin vanilla-JS pages: pipeline dashboard with live counters,
-│                     migration wizard with the transit map, section-selection matrix,
-│                     and an upload console reading the 15-state ledger read-only.
+│                     thin vanilla-JS pages: pipeline dashboard with live counters, a
+│                     migration wizard (transit map + the full CLI lever set), a
+│                     learn-a-source wizard, and an upload console that DRIVES the engine
+│                     over the 15-state ledger (loopback-only; never closes your browser).
 ├── pipeline.py       the frontend-free pipeline core: emits PHI-safe StageEvents
 │                     (detect → ingest → reconstruct → QA); CLI and GUI drive the SAME code.
 └── cli.py            the `anast` (and `anastomosis`) CLI: `pipeline run`, `info`,
-                      `gui`, `archive`, `bundle`, `destination {list,route,init}`,
-                      `pack init`.
+                      `gui`, `migrate`, `upload`, `archive`, `bundle`,
+                      `destination {list,route,init}`, `pack init`, `source init`.
 ```
 
 ## Design rationale
@@ -227,22 +247,16 @@ relicensing permanently impossible.
 
 ## The desktop GUI
 
-`anast gui` opens the liquid-glass desktop app (the `gui` extra): a pipeline
-dashboard with live ingest/reconstruct/QA/deliver counters, a migration wizard
-that shows the destination transit map, a section-selection matrix, and a
-read-only upload console over the delivery ledger.
-
-_(GUI screenshots coming with the CS50 submission.)_
+`anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
+live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
+destination transit map and the full set of run levers, a learn-a-source wizard,
+and an upload console that drives the delivery engine over its ledger.
 
 ## Provenance
 
-Anastomosis generalizes a private production system, built by the same author,
-that reconstructed 12,906 encounter documents from one clinic's vendor EHI
-export at a 100% final QA pass rate and uploaded them into the destination EHR
-with zero wrong-patient events — collapsing an estimated five months of manual
-re-entry into hours. This project exists so the next practice doesn't have to
-build it again. (Self-reported provenance from the author's predecessor
-system; this open-source release has been tested only against synthetic data —
-see [docs/DISCLAIMER.md](docs/DISCLAIMER.md).)
-
-*Built as a Harvard CS50x final project — and built to outlive it.*
+Anastomosis generalizes a private production system, by the same author, that
+migrated a clinic's full EHI export — reconstructing its encounter documents and
+filing them into the destination EHR with no wrong-patient events. Those results
+are self-reported and specific to that deployment; this open-source release has
+been built and tested only against synthetic data (see
+[docs/DISCLAIMER.md](docs/DISCLAIMER.md)).
