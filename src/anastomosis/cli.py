@@ -764,9 +764,10 @@ def upload_cmd(
     # 6. Drive the engine through the SHARED upload command: it harden-locks the
     #    output dir, reads the manifest UNDER the lock (lock-then-read), then
     #    attaches the browser (the only Playwright touch — the injectable seam) and
-    #    drives recover -> run -> finish -> report. A locked dir or a manifest that
-    #    vanished after the pre-flight is named by type only (no PHI, no traceback);
-    #    a process-kill BaseException sails through to resume on the next run.
+    #    drives recover -> run -> finish -> report. A locked dir, a manifest that
+    #    vanished after the pre-flight, or any other unexpected drive failure is a
+    #    clean exit 2 named by exception TYPE only (no PHI, no traceback); a
+    #    process-kill BaseException sails through to resume on the next run.
     from anastomosis.core.locking import OutputLockedError
     from anastomosis.deliver.browser.reports import summary_line
 
