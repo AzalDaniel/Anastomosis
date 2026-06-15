@@ -104,9 +104,9 @@ license-restricted); Granite-Docling-258M (Apache-2.0) is the v2 upgrade path.
 1. **License: AGPL-3.0**, no CLA (relicensing impossible — a trust feature),
    DCO sign-off. AGPL's network clause prevents closed-SaaS wrapping, which is
    exactly the protection wanted; PyMuPDF (AGPL) is license-aligned.
-2. **CS50 submission = everything**: pipeline + migration engine + GUI.
-   CLI satisfies submit50/check50; GUI carries the clinical-user impact.
-   Demo on Synthea synthetic data; destination upload shown dry-run/blurred.
+2. **Scope**: the full toolkit — pipeline + migration engine + GUI. The CLI is
+   the automatable surface; the GUI carries the clinical-user impact. All demos
+   and tests run on synthetic data only.
 3. **CLI**: `anast` (+ `anastomosis` alias). Package `anastomosis`, src layout.
 4. **PHI rule (non-negotiable)**: no real PHI ever enters this repo. Never
    copy files from the private predecessor — every port is a re-typed
@@ -246,17 +246,21 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     liquid toggles, error-inspector flyout, command palette) per the extracted
     token sheet; pack-from-samples wizard UI; vendor-change detection toasts.
 
-### M5 — CS50 packaging 🔶 (this PR — docs only)
-20. 🔶 README final (`**Demo video:**` URL is the user's remaining TODO,
-    file-by-file walkthrough, design rationale, provenance: predecessor
-    reconstructed 12,906 PDFs at 100% final QA); demo storyboard
-    (`docs/DEMO_STORYBOARD.md`: problem → EHI folder → one command → archive +
-    faithful PDF → GUI run → transit map → dry-run/blurred destination upload
-    with verification log); CS50 submission checklist (`docs/CS50_SUBMISSION.md`:
-    submit50 slug + the user records/uploads/submits — nothing in the repo
-    submits). Still open: the user records the ≤3-min video and runs `submit50`.
+### M5 — Second alpha (0.2.0): generalize ingest + output, learn-a-source ✅
+20. ✅ Generalized the toolkit so a migration is "from any EHR to any EHR": a
+    FHIR R4 / US Core source adapter; a standard HL7 C-CDA render mode (vendored
+    `CDA.xsl`); the `anast migrate --from … --to …` from→to command (charts +
+    the structured C-CDA the target imports). **Learn-a-source** — teach a new
+    flat export format (CSV/TSV/JSON/NDJSON) from one example, saved as a
+    validated data-only mapping, deterministically matched, human-confirmed,
+    lossless, and shareable. Pipeline correctness (clean exit-2 on bad/empty
+    input; no-route `migrate` still writes the C-CDA and exits 1; every output
+    dir locked). GUI parity (migrate-wizard levers, learn-a-source + upload
+    consoles) and a shared pack-init command core. Per-record render-index perf
+    hoist (goldens byte-identical). Release hardening: 0.2.0 cut + README/docs
+    professionalization audit.
 
-### M6 — Post-submission breadth & hardening (the FOSS life)
+### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
     (NDJSON), `sources/generic_tabular/` YAML mapping DSL (DrChrono CSV,
     ModMed pipe-CSV, Veradigm TSV).
