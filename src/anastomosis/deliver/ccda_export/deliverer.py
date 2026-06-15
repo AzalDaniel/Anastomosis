@@ -63,5 +63,5 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
             logger.warning("ccda export failed for patient %s (%s)", pid, exc_tag(exc))
             continue
         written.append(target)
-    logger.info("ccda delivered: %d of %d records → %s", len(written), len(records), out)
+    logger.info("ccda delivered: %d of %d records -> %s", len(written), len(records), out)
     return written
