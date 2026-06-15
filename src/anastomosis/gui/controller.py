@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from anastomosis.core.logutil import exc_tag
+from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.events import done_event, error_event, progress_event, stage_event
 
 if TYPE_CHECKING:
@@ -408,18 +409,26 @@ class GuiController:
         cdp_url: str,
         pack_name: str,
         pack_dirs: list[str] | None = None,
-        max_attempts: int = 4,
+        skiplist: list[str] | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     ) -> dict[str, object]:
         """Drive the resumable browser upload engine over a CDP attach (async).
 
         The GUI equivalent of ``anast upload``: it mirrors that command's proven
-        flow EXACTLY — validate the loopback CDP gate, read the manifest, gate on
-        pack readiness, then (only on a clean pre-flight) acquire the busy guard,
-        spawn a daemon worker, and drive ``begin_run`` → ``recover`` →
-        ``UploadEngine.run`` → ``finish_run``. Returns immediately with
-        ``{"ok": True, "started": True}``; the result arrives as ``upload``
-        stage/error events and the live counts come from the JS polling
-        :meth:`upload_status` against the ledger.
+        flow EXACTLY by driving the SAME shared core
+        (:func:`anastomosis.core.upload_command.run_upload_command`) — validate
+        the loopback CDP gate, validate the manifest, gate on pack readiness,
+        then (only on a clean pre-flight) acquire the busy guard, spawn a daemon
+        worker, and lock -> read-manifest -> attach -> recover -> run -> finish ->
+        report. Returns immediately with ``{"ok": True, "started": True}``; the
+        result arrives as ``upload`` stage/error events and the live counts come
+        from the JS polling :meth:`upload_status` against the ledger.
+
+        ``skiplist`` is an optional list of ``item_key``/``encounter_id`` lines to
+        exclude (the GUI parity for the CLI's ``--skiplist``); blanks and ``#``
+        comments are ignored. ``max_attempts`` is the per-item retry budget,
+        defaulting to the SHARED :data:`~anastomosis.core.upload_command.DEFAULT_MAX_ATTEMPTS`
+        both frontends now use (they previously diverged).
 
         Safety model (never weakened — the engine enforces it; this only drives):
 
@@ -448,12 +457,9 @@ class GuiController:
         """
         # The deliver-browser imports are lazy so this module loads without the
         # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
+        from anastomosis.core.upload_command import resolve_manifest_root
         from anastomosis.deliver.browser.cdp import CdpEndpoint
-        from anastomosis.deliver.browser.persist import (
-            MANIFEST_NAME,
-            ManifestError,
-            read_upload_manifest,
-        )
+        from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
         from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
         # Pre-flight, wrapped so it NEVER raises (the controller contract): a
@@ -467,14 +473,15 @@ class GuiController:
             except ValueError:
                 return {"ok": False, "error": "BadCdpEndpoint"}
 
-            # 2. Read the manifest (cheap, pre-attach), trying <dir> then
+            # 2. Validate the manifest (cheap, pre-attach), trying <dir> then
             #    <dir>/charts (the migrate layout) — the SAME resolution the CLI
             #    uses, so a migrate output dir works in either frontend. Loud on
-            #    missing/malformed.
+            #    missing/malformed. The AUTHORITATIVE read happens inside
+            #    run_upload_command under the output lock (lock-then-read), so this
+            #    early copy is validation only.
             out = Path(out_dir)
-            manifest_root = out if (out / MANIFEST_NAME).is_file() else out / "charts"
             try:
-                items, patients = read_upload_manifest(manifest_root)
+                read_upload_manifest(resolve_manifest_root(out))
             except (ManifestError, OSError):
                 return {"ok": False, "error": "BadManifest"}
 
@@ -485,10 +492,19 @@ class GuiController:
                 return {"ok": False, "error": exc_tag(exc)}
             if not loaded.ready:
                 return {"ok": False, "error": "PackNotReady"}
+
+            # 4. Normalize the operator skiplist (GUI parity for the CLI's
+            #    --skiplist): one item_key/encounter_id per entry; blanks and
+            #    "#" comments ignored, matching deliver.browser.manifest.load_skiplist.
+            skiplist_set = frozenset(
+                entry.strip()
+                for entry in (skiplist or [])
+                if entry.strip() and not entry.strip().startswith("#")
+            )
         except Exception as exc:  # never-raise: a malformed argument, etc.
             return self._fail("upload", exc)
 
-        # 4. Only now take the busy guard (a clean pre-flight never blocks it).
+        # 5. Only now take the busy guard (a clean pre-flight never blocks it).
         if not self._acquire():
             return {"ok": False, "error": "Busy"}
 
@@ -499,62 +515,35 @@ class GuiController:
         self._emit(stage_event("upload", "start"))
 
         def _worker() -> None:
-            from anastomosis.core.locking import OutputLockedError, output_lock
-            from anastomosis.core.output import secure_output_dir
-            from anastomosis.deliver.browser.engine import UploadEngine
-            from anastomosis.deliver.browser.manager import ManagedDestination
-            from anastomosis.deliver.browser.tracking import TrackingDB
-            from anastomosis.destinations.base import Destination
+            # Drive the SAME shared core the CLI's `anast upload` drives, so the
+            # two frontends cannot diverge: it harden-locks the output dir, reads
+            # the manifest UNDER the lock (lock-then-read — closes the TOCTOU the
+            # pre-flight copy would otherwise leave), attaches the browser behind
+            # the monkeypatchable seam, and drives recover -> run -> finish ->
+            # report. It closes ONLY our own ledger handle — never the operator's
+            # browser. The terminal `done`/`error` event is emitted here from the
+            # returned outcome.
+            from anastomosis.core.locking import OutputLockedError
+            from anastomosis.core.upload_command import UploadCommand, run_upload_command
 
-            tracking: TrackingDB | None = None
             try:
-                # Harden the dir to 0700, then take the cross-process output lock —
-                # the SAME fence the CLI holds. A CLI or GUI run already driving
-                # this dir is refused (OutputLocked) rather than racing it into the
-                # one ledger (the ledger does not fence same-item access; this
-                # does — a patient-safety boundary against double-filing).
-                secure_output_dir(out)
-                with output_lock(out):
-                    # The ONLY Playwright touch, behind the monkeypatchable seam;
-                    # narrow to the Destination protocol exactly as the CLI does
-                    # before wrapping (a non-Destination seam is a defect).
-                    destination = _attach_destination(cdp_url, loaded)
-                    assert isinstance(destination, Destination)
-                    managed = ManagedDestination(destination)
-                    # The SAME ledger filename the CLI `anast upload` uses, so a
-                    # run started by either frontend resumes/monitors from the other.
-                    tracking = TrackingDB(out / "upload_ledger.sqlite")
-                    run_id = tracking.begin_run(managed.name)
-                    # The engine contract: the CALLER recovers any mid-flight items
-                    # from a prior killed run before driving (a re-start resumes).
-                    tracking.recover(run_id)
-                    result = UploadEngine(managed, tracking, max_attempts=max_attempts).run(
-                        items, patients, run_id, stop=stop
-                    )
-                    # On a clean finish stamp the run done; an abort already stamped
-                    # its own finish_run inside the engine (manage_run defaults True).
-                    if result.aborted_reason is None:
-                        tracking.finish_run(run_id)
-                        self._emit(stage_event("upload", "done"))
-                    else:
-                        # A wrong-patient abort (or other safety stop) surfaces as
-                        # an error event carrying the abort TYPE name — never a value.
-                        self._emit(error_event("upload", result.aborted_reason))
+                result = run_upload_command(
+                    UploadCommand(out_dir=out, skiplist=skiplist_set, max_attempts=max_attempts),
+                    lambda: _attach_destination(cdp_url, loaded),
+                    stop=stop,
+                )
+                if result.aborted_reason is None:
+                    self._emit(stage_event("upload", "done"))
+                else:
+                    # A wrong-patient abort (or other safety stop) surfaces as an
+                    # error event carrying the abort TYPE name — never a value.
+                    self._emit(error_event("upload", result.aborted_reason))
             except OutputLockedError:
                 # A CLI or GUI run already holds this output dir — refuse cleanly.
                 self._emit(error_event("upload", "OutputLocked"))
             except Exception as exc:  # never-raise: type name only, no PHI
                 self._emit(error_event("upload", exc_tag(exc)))
             finally:
-                # Close ONLY our own ledger handle. NEVER call managed.close()
-                # or otherwise close the operator's browser — they launched it,
-                # logged in by hand, and own its lifecycle; the CDP attach ends
-                # when THEY close it.
-                if tracking is not None:
-                    try:
-                        tracking.close()
-                    except Exception as exc:
-                        logger.warning("tracking close failed (%s)", exc_tag(exc))
                 self._upload_stop = None
                 self._release()
 
