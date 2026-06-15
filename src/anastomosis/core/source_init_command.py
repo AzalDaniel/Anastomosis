@@ -217,8 +217,10 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
         base = cmd.out_dir if cmd.out_dir is not None else user_sources_dir()
         mapping_dir = save_mapping(spec, base)
         mapping_md = (mapping_dir / "MAPPING.md").read_text(encoding="utf-8")
-    except (MappingError, OSError):
-        return replace(proposal, error="SaveFailed")
+    except (MappingError, OSError) as exc:
+        # TYPE name only (a save path could embed an operator label) — preserves
+        # the CLI's "(OSError)"-style detail without echoing the path.
+        return replace(proposal, error="SaveFailed", detail=exc_tag(exc))
 
     return replace(
         proposal,

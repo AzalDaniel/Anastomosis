@@ -1598,7 +1598,10 @@ def source_init(
             + ", ".join(saved.dropped_columns)
         )
         raise typer.Exit(code=1)
-    if not saved.ok:
+    if saved.error == "SaveFailed":
+        console.print(f"[red]could not save the mapping[/red] ({saved.detail})")
+        raise typer.Exit(code=1)
+    if not saved.ok:  # defensive: any other unexpected non-ok outcome
         console.print(f"[red]could not save the mapping[/red] ({saved.error})")
         raise typer.Exit(code=1)
 

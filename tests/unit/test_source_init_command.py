@@ -95,6 +95,19 @@ def test_cannot_analyze_carries_a_phi_safe_type_detail(tmp_path: Path) -> None:
     assert result.fmt_type is None
 
 
+def test_save_failure_carries_a_phi_safe_type_detail(tmp_path: Path) -> None:
+    # out_dir is a FILE, so save_mapping's mkdir beneath it raises OSError. The
+    # result names the exception TYPE (the CLI prints it), never the save path.
+    not_a_dir = tmp_path / "afile"
+    not_a_dir.write_text("x", encoding="utf-8")
+    result = run_source_init_command(
+        SourceInitCommand(example=FIXTURE, name="clinic_csv", out_dir=not_a_dir, confirmed=True)
+    )
+    assert result.ok is False
+    assert result.error == "SaveFailed"
+    assert result.detail  # a PHI-safe exception type name
+
+
 def test_mapping_load_failure_is_distinct_from_dropped(tmp_path: Path) -> None:
     # A mapped column whose transform chokes (DOB -> parse_date over a non-date)
     # is a fixable MappingLoadFailed, NOT an unexplained WouldDropColumns.
