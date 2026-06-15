@@ -1400,6 +1400,38 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
         assert name not in blob, f"event log leaked patient value {name!r}"
 
 
+def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GUI gained --skiplist parity (codex P1-4): a skiplist (with blank/`#`
+    lines, which are ignored) excludes its encounter from the drive."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+    from anastomosis.deliver.browser.states import UploadState
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    dest = FakeDestination(_upload_known())
+    monkeypatch.setattr(controller_module, "_attach_destination", lambda cdp, loaded: dest)
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir),
+        _LOOPBACK,
+        _UPLOAD_DEST,
+        pack_dirs=[str(pack_root)],
+        skiplist=["enc-1", "# a comment", "  "],  # blank + comment are dropped
+    )
+    assert started == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_upload(sink)
+    assert terminal["type"] == "stage" and terminal["state"] == "done"
+    counts = _ledger_counts(out_dir)
+    assert counts.get(UploadState.SKIPPED_SKIPLIST.value) == 1
+    assert counts.get(UploadState.COMPLETED.value) == 2
+    # The skiplisted encounter was never physically uploaded.
+    uploaded = {k for (k, _d) in dest.uploads}
+    assert not any(k.startswith("enc-1:") for k in uploaded)
+
+
 def test_upload_start_rejects_non_loopback_cdp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

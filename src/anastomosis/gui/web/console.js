@@ -223,9 +223,21 @@ async function onStartUpload() {
     showBanner("Provide an output directory, a loopback CDP endpoint, and a pack name.");
     return;
   }
+  // Optional skiplist: one item key / encounter id per line (controller drops
+  // blanks and "#" comments). Empty textarea -> no skiplist (null).
+  const skiplistEl = el("skiplist");
+  const skiplist = skiplistEl
+    ? skiplistEl.value.split("\n").map((s) => s.trim()).filter((s) => s.length > 0)
+    : [];
   setStatus("starting upload…");
   try {
-    const res = await window.pywebview.api.upload_start(outDir, cdpUrl, packName);
+    const res = await window.pywebview.api.upload_start(
+      outDir,
+      cdpUrl,
+      packName,
+      null,
+      skiplist.length ? skiplist : null,
+    );
     if (!res || !res.ok) {
       showBanner("Could not start upload: " + (res ? res.error : "no response"));
       setStatus("not started");

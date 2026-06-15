@@ -31,9 +31,7 @@ if TYPE_CHECKING:
 
     from anastomosis.core.commands import DeliveryOutcome, PipelineCommand
     from anastomosis.core.migrate import MigrationCommand
-    from anastomosis.core.model import Patient, PatientRecord
-    from anastomosis.deliver.browser.manager import ManagedDestination
-    from anastomosis.destinations.base import UploadItem
+    from anastomosis.core.model import PatientRecord
     from anastomosis.pipeline import StageEvent
 
 app = typer.Typer(
@@ -705,23 +703,24 @@ def upload_cmd(
     """
     from rich.markup import escape as _escape
 
-    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
-    from anastomosis.deliver.browser.manager import ManagedDestination
-    from anastomosis.deliver.browser.manifest import load_skiplist
-    from anastomosis.deliver.browser.persist import (
-        MANIFEST_NAME,
-        ManifestError,
-        read_upload_manifest,
+    from anastomosis.core.upload_command import (
+        UploadCommand,
+        resolve_manifest_root,
+        run_upload_command,
     )
-    from anastomosis.destinations.base import Destination
+    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
+    from anastomosis.deliver.browser.manifest import load_skiplist
+    from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
     from anastomosis.destinations.browserpack import PackNotReadyError
     from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
-    # 1. Resolve + read the manifest FIRST (cheap, pre-attach). Try the dir
-    #    itself, then a <dir>/charts subdir (migrate's layout). Loud on missing.
-    manifest_root = out_dir if (out_dir / MANIFEST_NAME).is_file() else out_dir / "charts"
+    # 1. Validate the manifest FIRST (cheap, pre-attach), so a missing/malformed
+    #    one fails fast (exit 2) BEFORE the operator confirms the attach. Try the
+    #    dir itself, then a <dir>/charts subdir (migrate's layout). The
+    #    AUTHORITATIVE read happens inside run_upload_command under the output
+    #    lock (lock-then-read), so this early copy is validation only.
     try:
-        items, patients = read_upload_manifest(manifest_root)
+        read_upload_manifest(resolve_manifest_root(out_dir))
     except ManifestError as exc:
         console.print(f"[red]{_escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from None
@@ -762,67 +761,32 @@ def upload_cmd(
             console.print(f"[red]could not read skiplist ({type(exc).__name__})[/red]")
             raise typer.Exit(code=2) from None
 
-    # 6. Attach (the only Playwright touch — the injectable seam). A failure here
-    #    is named by type only (no PHI, no traceback). Wrap in ManagedDestination.
-    try:
-        destination = _make_destination(cdp, loaded)
-    except Exception as exc:
-        console.print(f"[red]could not attach ({type(exc).__name__})[/red]")
-        raise typer.Exit(code=2) from None
-    assert isinstance(destination, Destination)
-    managed = ManagedDestination(destination)
+    # 6. Drive the engine through the SHARED upload command: it harden-locks the
+    #    output dir, reads the manifest UNDER the lock (lock-then-read), then
+    #    attaches the browser (the only Playwright touch — the injectable seam) and
+    #    drives recover -> run -> finish -> report. A locked dir or a manifest that
+    #    vanished after the pre-flight is named by type only (no PHI, no traceback);
+    #    a process-kill BaseException sails through to resume on the next run.
+    from anastomosis.core.locking import OutputLockedError
+    from anastomosis.deliver.browser.reports import summary_line
 
-    # 7-9. Hold the lock, recover any prior run, drive the engine, report. The
-    #      ledger + report live inside the 0700 dir; we never close the operator's
-    #      browser (ManagedDestination's session close is a no-op in CDP mode).
-    code = _run_upload(managed, items, patients, out_dir, skiplist_set, max_attempts)
+    cmd = UploadCommand(out_dir=out_dir, skiplist=skiplist_set, max_attempts=max_attempts)
+    try:
+        result = run_upload_command(cmd, lambda: _make_destination(cdp, loaded))
+    except OutputLockedError as exc:
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+    except ManifestError as exc:
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+    except Exception as exc:
+        console.print(f"[red]could not attach or drive the upload ({type(exc).__name__})[/red]")
+        raise typer.Exit(code=2) from None
+    console.print(summary_line(result.counts))
+    console.print(f"run report {_glyphs().arrow} {result.report_path}")
+    code = _upload_exit_code(result.counts, result.aborted_reason)
     if code != 0:
         raise typer.Exit(code=code)
-
-
-def _run_upload(
-    managed: ManagedDestination,
-    items: list[UploadItem],
-    patients: dict[str, Patient],
-    out_dir: Path,
-    skiplist_set: frozenset[str],
-    max_attempts: int,
-) -> int:
-    """Drive the engine under the output lock and write the report; return exit code.
-
-    Split out of :func:`upload_cmd` so the long with-block stays readable. Every
-    line it prints is counts/ids/state names — never a patient value or a path
-    under the hardened dir (the summary line and report writer enforce that).
-    """
-    from anastomosis.core.locking import output_lock
-    from anastomosis.core.output import secure_output_dir
-    from anastomosis.deliver.browser.engine import UploadEngine
-    from anastomosis.deliver.browser.reports import summary_line, write_run_report
-    from anastomosis.deliver.browser.tracking import TrackingDB
-
-    secure_output_dir(out_dir)
-    with output_lock(out_dir):
-        tracking = TrackingDB(out_dir / "upload_ledger.sqlite")
-        try:
-            run_id = tracking.begin_run(managed.name)
-            # The engine contract: the CALLER recovers any mid-flight items from
-            # a prior killed run before driving (rewinds them to a safe state).
-            tracking.recover(run_id)
-            result = UploadEngine(managed, tracking, max_attempts=max_attempts).run(
-                items, patients, run_id, skiplist=skiplist_set
-            )
-            # On a clean finish stamp the run done; an abort already stamped its
-            # own finish_run inside the engine (manage_run defaults True).
-            if result.aborted_reason is None:
-                tracking.finish_run(run_id)
-            report_path = write_run_report(tracking, run_id, out_dir)
-            counts = dict(tracking.counts())
-        finally:
-            # NEVER close the operator's browser — only our own ledger handle.
-            tracking.close()
-    console.print(summary_line(counts))
-    console.print(f"run report {_glyphs().arrow} {report_path}")
-    return _upload_exit_code(counts, result.aborted_reason)
 
 
 # --- anast archive ----------------------------------------------------------
