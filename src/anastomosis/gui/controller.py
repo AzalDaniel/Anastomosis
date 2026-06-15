@@ -154,6 +154,11 @@ class GuiController:
         # PHI-safe (static template text, counts, pack config); empty until the
         # first async pack-init run.
         self._last_pack: dict[str, object] = {}
+        # The most recent source_init_async run's result dict, held for the source
+        # wizard to fetch via last_source_result() once the `source` done/error
+        # event lands. PHI-safe (column names, type labels, counts, masked shapes,
+        # mapping config); empty until the first async learn-a-source run.
+        self._last_source: dict[str, object] = {}
         # The cooperative stop flag for the in-flight upload run, if any. Set by
         # upload_stop() and checked by the engine at item boundaries; None when
         # no upload is in flight. (The busy guard ensures at most one run at a
@@ -829,6 +834,89 @@ class GuiController:
             return _source_result_dict(result)
         except Exception as exc:
             return self._fail("source_init", exc)
+
+    def source_init_async(
+        self,
+        example_path: str,
+        name: str,
+        display: str | None = None,
+        confirmed: bool = False,
+        out_dir: str | None = None,
+    ) -> dict[str, object]:
+        """Run :meth:`source_init` on a daemon thread (the GUI stays responsive).
+
+        Mirrors :meth:`pack_init_async`: acquires the busy flag SYNCHRONOUSLY
+        before returning, emits a ``source`` ``start`` stage event, and runs the
+        SAME shared
+        :func:`anastomosis.core.source_init_command.run_source_init_command` flow
+        on a daemon worker. Returns ``{"ok": True, "started": True}`` immediately,
+        or ``{"ok": False, "error": "Busy"}`` if a run is already in flight. The
+        result dict is stashed for :meth:`last_source_result` and a terminal event
+        lands: a ``source`` ``done`` stage event for a saved mapping OR for the
+        expected ``ConfirmationRequired`` analyze checkpoint (which carries the
+        proposal the wizard renders), and a ``source`` ``error`` event for any
+        other outcome (a bad name, an unanalyzable example, a would-drop-columns
+        refusal, a save failure). The JS fetches :meth:`last_source_result` on
+        BOTH so it can render the outcome-specific detail (dropped columns, the
+        load-failure diagnosis), never raises.
+        """
+        if not self._acquire():
+            return {"ok": False, "error": "Busy"}
+
+        self._emit(stage_event("source", "start"))
+
+        def _worker() -> None:
+            try:
+                from anastomosis.core.source_init_command import (
+                    SourceInitCommand,
+                    run_source_init_command,
+                )
+
+                result_dict = _source_result_dict(
+                    run_source_init_command(
+                        SourceInitCommand(
+                            example=Path(example_path),
+                            name=name,
+                            display=display,
+                            out_dir=Path(out_dir) if out_dir is not None else None,
+                            confirmed=confirmed,
+                        )
+                    )
+                )
+                self._last_source = result_dict
+                # A saved mapping OR the expected ConfirmationRequired checkpoint
+                # are both `done` (the wizard fetches last_source_result and routes
+                # the proposal vs the saved result). Every other outcome is an
+                # `error`; the JS still fetches the stashed result for its detail.
+                if result_dict.get("ok") or result_dict.get("error") == "ConfirmationRequired":
+                    self._emit(stage_event("source", "done"))
+                else:
+                    self._emit(error_event("source", str(result_dict.get("error"))))
+            except Exception as exc:  # never-raise: stash + emit, swallow nothing else
+                tag = exc_tag(exc)
+                self._last_source = {"ok": False, "error": tag}
+                self._emit(error_event("source", tag))
+            finally:
+                self._release()
+
+        threading.Thread(target=_worker, name="anast-source", daemon=True).start()
+        return {"ok": True, "started": True}
+
+    def last_source_result(self) -> dict[str, object]:
+        """The most recent :meth:`source_init_async` result, for the wizard to fetch.
+
+        The async path returns immediately with ``{"started": True}`` and streams
+        PHI-safe ``source`` stage/error events back; the full result dict (the
+        proposal for ``ConfirmationRequired``, the path + ``MAPPING.md`` for a
+        saved mapping, or the dropped columns / load diagnosis for a refusal) is
+        held here for the wizard to fetch once the terminal event lands. PHI-safe
+        (column names, type labels, counts, masked shapes, mapping config).
+        Returns ``{"ok": False, "error": "NoResult"}`` before the first async run.
+        Never raises.
+        """
+        return (
+            deepcopy(self._last_source) if self._last_source else {"ok": False, "error": "NoResult"}
+        )
 
     # --- the pipeline run ---------------------------------------------------
 
