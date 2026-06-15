@@ -383,8 +383,9 @@ function navigateMonth(delta) {
 }
 
 // --- item-key command palette (Cmd/Ctrl+K): item KEYS only ----------------
-// Selecting a key is a no-op for now — live driving is a later milestone. The
-// palette only lets the operator SEE which opaque keys still owe work.
+// The palette is a read-only visibility surface: it lets the operator SEE which
+// opaque keys still owe work. Selecting a key surfaces it; a run is driven by
+// the start/stop buttons above (upload_start / upload_stop), not from here.
 async function refreshItemKeys() {
   if (!hasApi()) {
     ITEM_KEYS = [];
@@ -411,7 +412,8 @@ function itemKeyCommands() {
     id: key,
     label: key,
     hint: "id",
-    // Read-only: surfacing a key is the whole behaviour. Driving is deferred.
+    // The palette only surfaces a key for visibility; the run is driven by the
+    // start/stop buttons, so selecting a key is intentionally inert.
     action: () => {},
   }));
 }
