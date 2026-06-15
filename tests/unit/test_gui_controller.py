@@ -520,6 +520,39 @@ def test_run_migration_unknown_destination_is_clean_error(tmp_path: Path) -> Non
     assert "done" not in sink.types()
 
 
+def test_run_migration_no_route_surfaces_manual_import_not_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A KNOWN destination with no viable automated route writes the C-CDA but
+    must surface a manual-import (error) event, never a silent `done` — CLI/GUI
+    parity with `migrate` exiting 1 (codex P0-2)."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    out = tmp_path / "out"
+    result = GuiController(sink).run_migration(
+        str(FIXTURE), str(out), source="pf-tebra", destination="advancedmd"
+    )
+    # Not a silent success: ok is False and the manual-import flag is set.
+    assert result["ok"] is False
+    assert result["manual_import"] is True
+    assert result["route"]["chosen"] is None  # type: ignore[index]
+    assert result["route"]["destination"] == "advancedmd"  # type: ignore[index]
+    assert "no viable automated route" in str(result["error"])
+    # The terminal event is `error`, NOT `done`.
+    assert sink.events[-1]["type"] == "error"
+    assert "done" not in sink.types()
+    # ...but the artifacts WERE written (the C-CDA is importable) and the
+    # per-patient detail still rides the return value.
+    assert list((out / "ccda").glob("*.xml"))
+    patients = result["patients"]
+    assert isinstance(patients, list) and len(patients) == 3
+    # PHI: the manual-import notice (on the event) carries no patient name.
+    blob = repr(sink.events)
+    for name in FIXTURE_NAMES:
+        assert name not in blob, f"event log leaked patient name {name!r}"
+
+
 def test_run_migration_forwards_all_levers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The controller threads render/sections/qa/force/pack_dirs/trust_new into the
     MigrationCommand — the levers the GUI migrate wizard now exposes (parity gap
