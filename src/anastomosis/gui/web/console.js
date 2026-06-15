@@ -7,7 +7,7 @@
  *   - upload_manifest_preview(d) → count of renderable PDFs (no names)
  *   - upload_item_keys(db)       → pending item KEYS for the Cmd/Ctrl+K palette
  *   - upload_safety_notice()     → the shared-machine warning (single source)
- *   - upload_start(out,cdp,pack) → drive the engine over a loopback CDP attach
+ *   - upload_start(out,cdp,pack,packDirs,skiplist) → drive the engine over a loopback CDP attach
  *   - upload_stop()              → cooperative stop after the current document
  *
  * SECURITY: driving goes through upload_start / upload_stop ONLY. The JS never
