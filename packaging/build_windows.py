@@ -43,6 +43,25 @@ def _version() -> str:
     return ".".join(p if p.isdigit() else "0" for p in parts)
 
 
+_BUILTIN_PACKS = ("generic_soap", "practice_fusion_soap")
+
+
+def _pack_data_flags() -> list[str]:
+    """Ship each built-in pack's ``context.py`` as a DATA file.
+
+    ``discover_packs()`` loads a pack by exec'ing its ``context.py`` from a file
+    path (``spec_from_file_location``), and ``--include-package-data`` ships only
+    NON-``.py`` data (the pack's ``pack.yaml``/``template.html`` make it, but the
+    ``.py`` is compiled into the binary, not left on disk) — so without these the
+    built-in packs are undiscoverable in the frozen app.
+    """
+    flags = []
+    for pack in _BUILTIN_PACKS:
+        src = _ROOT / "src" / "anastomosis" / "packs" / pack / "context.py"
+        flags.append(f"--include-data-files={src}=anastomosis/packs/{pack}/context.py")
+    return flags
+
+
 def _common_flags(version: str) -> list[str]:
     return [
         sys.executable,
@@ -61,6 +80,7 @@ def _common_flags(version: str) -> list[str]:
         "--product-name=Anastomosis",
         f"--product-version={version}",
         f"--file-version={version}",
+        *_pack_data_flags(),
     ]
 
 
