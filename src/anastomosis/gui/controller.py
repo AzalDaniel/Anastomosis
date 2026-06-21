@@ -214,8 +214,11 @@ class GuiController:
         Wraps the SAME shared core
         (:func:`anastomosis.core.selfcheck.check_bundled_assets`) the CLI's
         ``anast doctor`` runs, so the two frontends report identical install
-        health. Returns ``{"ok": bool, "checks": [{name, ok, detail}, ...]}``;
-        PHI-free (asset names + counts / type-name details only). Never raises.
+        health. On success returns ``{"ok": bool, "checks": [{name, ok, detail},
+        ...]}``; on the never-raise failure path returns ``{"ok": False, "error":
+        <type>}`` (no ``checks`` key), so a caller must branch on ``ok`` before
+        reading ``checks``. PHI-free (asset names + counts / type-name details
+        only). Never raises.
         """
         try:
             from anastomosis.core.selfcheck import check_bundled_assets

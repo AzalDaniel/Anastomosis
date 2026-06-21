@@ -124,6 +124,13 @@ def _check_gui_web() -> AssetCheck:
             "source.html",
             "app.js",
             "shell.js",
+            # The per-page scripts each workspace HTML loads — a freezer that drops
+            # one while keeping its .html leaves that page non-functional, so check
+            # them too (not just the shared app.js/shell.js).
+            "wizard.js",
+            "console.js",
+            "packgen.js",
+            "source.js",
             "app.css",
             "tokens.css",
         )
