@@ -129,6 +129,31 @@ def gui_cmd(
         raise typer.Exit(code=1) from None
 
 
+@app.command("doctor")
+def doctor_cmd() -> None:
+    """Verify every bundled data asset is present and readable (install health).
+
+    Resolves the destinations registry, the built-in template packs, the vendored
+    HL7 C-CDA stylesheet, the GUI web tree + fonts, the learned-source synonyms,
+    the archive assets, and — in a packaged build — the bundled Chromium, each
+    through the same accessor the app uses at runtime. Exits non-zero if any
+    required asset is missing, so the Windows packaging CI can run it against the
+    frozen executable to prove the installer bundle is complete.
+    """
+    from anastomosis.core.selfcheck import check_bundled_assets
+
+    glyphs = _glyphs()
+    result = check_bundled_assets()
+    for check in result.checks:
+        mark = glyphs.ok if check.ok else glyphs.fail
+        console.print(f"  {mark} {check.name}: {check.detail}")
+    if not result.ok:
+        failed = sum(1 for c in result.checks if not c.ok)
+        console.print(f"[red]{failed} asset check(s) failed[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[green]all {len(result.checks)} asset checks passed[/green]")
+
+
 # --- shared pipeline machinery ---------------------------------------------
 #
 # The pipeline mechanics live in :mod:`anastomosis.pipeline` (frontend-free, so

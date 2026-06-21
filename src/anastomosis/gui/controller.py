@@ -208,6 +208,26 @@ class GuiController:
         except Exception as exc:  # defensive: info() must never raise into JS
             return self._fail("info", exc)
 
+    def doctor(self) -> dict[str, object]:
+        """Bundled-asset self-check for the dashboard (install health).
+
+        Wraps the SAME shared core
+        (:func:`anastomosis.core.selfcheck.check_bundled_assets`) the CLI's
+        ``anast doctor`` runs, so the two frontends report identical install
+        health. Returns ``{"ok": bool, "checks": [{name, ok, detail}, ...]}``;
+        PHI-free (asset names + counts / type-name details only). Never raises.
+        """
+        try:
+            from anastomosis.core.selfcheck import check_bundled_assets
+
+            result = check_bundled_assets()
+            return {
+                "ok": result.ok,
+                "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail} for c in result.checks],
+            }
+        except Exception as exc:
+            return self._fail("doctor", exc)
+
     def last_run_summary(self) -> dict[str, object]:
         """The most recent run's per-patient detail, for LOCAL dashboard display.
 
