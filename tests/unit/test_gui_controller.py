@@ -90,6 +90,18 @@ def test_info_lists_sources_and_packs() -> None:
     assert "extras" in info and "gui" in info["extras"]  # type: ignore[operator]
 
 
+def test_doctor_reports_asset_health() -> None:
+    """The GUI doctor wraps the SAME shared self-check the CLI's `anast doctor`
+    runs (CLI/GUI parity), returning a JSON-safe per-asset verdict."""
+    result = GuiController(_RecordingSink()).doctor()
+    assert result["ok"] is True
+    checks = result["checks"]
+    assert isinstance(checks, list) and checks
+    by_name = {c["name"]: c for c in checks}  # type: ignore[index]
+    for name in ("destinations registry", "built-in packs", "GUI web assets", "GUI fonts"):
+        assert by_name[name]["ok"] is True  # type: ignore[index]
+
+
 def test_detect_identifies_fixture() -> None:
     controller = GuiController(_RecordingSink())
     assert controller.detect(str(FIXTURE)) == {"ok": True, "source": "pf-tebra"}
@@ -1138,6 +1150,7 @@ def test_new_methods_return_json_safe_dicts(tmp_path: Path) -> None:
     controller = GuiController(_RecordingSink())
     out = tmp_path / "out"  # the ledger's parent (has no pdfs but is a dir)
     payloads = [
+        controller.doctor(),
         controller.destination_status("epic"),
         controller.destination_status("ghost"),
         controller.pack_freshness(),
