@@ -20,6 +20,27 @@ def test_version() -> None:
     assert anastomosis.__version__ in result.output
 
 
+def test_doctor_reports_all_assets_ok() -> None:
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "asset checks passed" in result.output
+
+
+def test_doctor_exits_1_on_a_missing_asset(monkeypatch: pytest.MonkeyPatch) -> None:
+    import anastomosis.core.selfcheck as selfcheck
+
+    def _one_failure() -> selfcheck.SelfCheckResult:
+        return selfcheck.SelfCheckResult(
+            checks=[selfcheck.AssetCheck("destinations registry", False, "missing")]
+        )
+
+    # The command imports check_bundled_assets from the module at call time.
+    monkeypatch.setattr(selfcheck, "check_bundled_assets", _one_failure)
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "failed" in result.output.lower()
+
+
 def test_info_lists_sources_and_packs() -> None:
     result = runner.invoke(app, ["info"])
     assert result.exit_code == 0
