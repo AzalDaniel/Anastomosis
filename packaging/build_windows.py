@@ -51,7 +51,11 @@ def _common_flags(version: str) -> list[str]:
         "--mode=standalone",
         "--assume-yes-for-downloads",  # non-interactive on CI
         "--enable-plugins=playwright,pywebview",
-        "--playwright-include-browser=chromium",  # bundle Chromium offline (build-time)
+        # "all" = every browser `playwright install` placed on disk (here: just
+        # the chromium family + ffmpeg/winldd helpers, since CI installs only
+        # chromium). Version-agnostic: the plugin keys browsers by their
+        # version-suffixed dir name (chromium-NNNN), so a bare "chromium" misses.
+        "--playwright-include-browser=all",  # bundle Chromium offline (build-time)
         "--include-package-data=anastomosis",  # the registry/packs/fonts/web/CDA.xsl/etc.
         "--company-name=Anastomosis",
         "--product-name=Anastomosis",
@@ -87,15 +91,16 @@ def main() -> None:
     version = _version()
     print(f"building Anastomosis {version} (Nuitka standalone)", flush=True)
 
+    packaging = Path(__file__).resolve().parent
     gui_dist = _build(
-        _ROOT / "src" / "anastomosis" / "gui" / "__main__.py",
+        packaging / "gui_entry.py",
         out_subdir="gui",
         exe_name="Anastomosis.exe",
         console="disable",  # windowed: no console window for the desktop app
         version=version,
     )
     cli_dist = _build(
-        _ROOT / "src" / "anastomosis" / "cli.py",
+        packaging / "cli_entry.py",
         out_subdir="cli",
         exe_name="anast.exe",
         console="force",  # console: the CLI writes to the terminal it ran from
