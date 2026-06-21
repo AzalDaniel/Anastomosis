@@ -69,6 +69,10 @@ dev = [
 anast = "anastomosis.cli:app"
 anastomosis = "anastomosis.cli:app"
 
+[project.gui-scripts]
+# The desktop GUI launcher (windowed; the packaged app's Start-menu target).
+anastomosis-gui = "anastomosis.gui.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/AzalDaniel/Anastomosis"
 Issues = "https://github.com/AzalDaniel/Anastomosis/issues"
