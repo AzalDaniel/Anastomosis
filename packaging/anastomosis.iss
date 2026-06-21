@@ -28,6 +28,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2/max
 SolidCompression=yes
+; Resolve relative [Files] sources + OutputDir from the REPO ROOT (this script
+; lives in packaging/, but build_windows.py writes dist/ and the workflow writes
+; build/ at the repo root). Inno resolves a relative SourceDir from the script's
+; own directory, so ".." is the repo root.
+SourceDir=..
 OutputDir=dist\installer
 OutputBaseFilename=Anastomosis-Setup-{#AppVersion}
 WizardStyle=modern
