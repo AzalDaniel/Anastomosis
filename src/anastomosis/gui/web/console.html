@@ -96,6 +96,17 @@
           <label for="skiplist">Skiplist (optional) — one item key or encounter id per line; "#" comments ignored</label>
           <textarea id="skiplist" rows="3" placeholder="enc-1234&#10;# a comment&#10;item-key-abcd" spellcheck="false"></textarea>
         </div>
+        <div class="confirm-row">
+          <label class="toggle">
+            <input type="checkbox" id="verify-uploads" />
+            <span class="track"></span>
+            <span>Verify uploads (L0–L6)</span>
+          </label>
+        </div>
+        <div class="muted">
+          Run the verification ladder around each upload (needs the render extra).
+          The wrong-patient banner check is always on, verified or not.
+        </div>
         <div class="muted">
           The output directory above (manifest + ledger) is the upload source.
           A re-start resumes a prior run; already-filed items are not re-driven.

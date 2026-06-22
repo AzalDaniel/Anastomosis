@@ -1,11 +1,19 @@
 """The verifier seam the upload engine calls before and after each upload.
 
-This module is the *seam only*. The real verification ladder — the L0-L6
-checks, of which L4 (the banner readback) is the wrong-patient defense — is a
-separate plan item (PLAN item 11) and lands in its own PR. The engine depends
-on this small protocol so it can be wired and tested today against a verifier
-that always passes, and have the L0-L6 implementation slotted in later
-without touching the engine.
+This module is the *seam* plus the default pass-through implementation. The real
+verification ladder — the L0-L6 checks, of which L4 (the banner readback) is the
+wrong-patient defense — IS implemented, in :mod:`anastomosis.deliver.verify`
+(``composite.py`` + ``levels.py``), behind exactly this protocol. The engine
+itself is untouched: it calls this small protocol, so the verifier can be the
+default :class:`NullVerifier` (pass-through, used when verification is not
+requested) or the real :class:`~anastomosis.deliver.verify.LayeredVerifier`,
+which is wired OPT-IN through :class:`~anastomosis.core.upload_command.UploadCommand`'s
+``verify`` flag (``anast upload --verify`` / the GUI's "Verify uploads"
+checkbox).
+
+The engine's banner wrong-patient abort runs BEFORE the verifier and regardless
+of which verifier is in place — it is the engine's own safety gate, not a
+verifier level.
 
 Contract for an implementer of :class:`Verifier`:
 
@@ -43,11 +51,15 @@ class Verifier(Protocol):
 
 
 class NullVerifier:
-    """A verifier that passes everything.
+    """A verifier that passes everything — the DEFAULT pass-through.
 
-    Placeholder until the L0-L6 verification ladder (PLAN item 11) is ported;
-    it lets the engine be wired and tested now and have real checks slotted in
-    later without an engine change.
+    Used when verification is not requested (``UploadCommand.verify`` is
+    ``False``, the default). The real L0-L6 ladder is
+    :class:`anastomosis.deliver.verify.LayeredVerifier`, wired opt-in via
+    ``UploadCommand.verify`` / ``anast upload --verify``; with verify off the
+    engine falls back to this, and the ``render`` extra the ladder needs is
+    never imported. The engine's banner wrong-patient abort runs regardless of
+    which verifier is in place.
     """
 
     def verify_pre(self, item: UploadItem, patient: Patient) -> None:

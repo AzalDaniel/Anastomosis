@@ -364,6 +364,60 @@ def test_malformed_manifest_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 # --- manifest discovered under <out>/charts (migrate layout) ----------------
 
 
+# --- (11) the --verify lever threads into the UploadCommand -----------------
+
+
+def _capture_cmd(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Patch the shared run_upload_command to capture the UploadCommand it gets.
+
+    The CLI imports run_upload_command lazily FROM anastomosis.core.upload_command,
+    so the patch lives on that module (the source), not on cli's namespace — the
+    same lock-then-read patch discipline test_upload_command.py uses for persist.
+    """
+    import anastomosis.core.upload_command as upload_command
+    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+
+    captured: dict[str, object] = {}
+
+    def _fake(cmd: UploadCommand, attach: object, **kwargs: object) -> UploadCommandResult:
+        captured["cmd"] = cmd
+        # A clean, all-completed result so the CLI exits 0 without a browser.
+        return UploadCommandResult(
+            counts={UploadState.COMPLETED.value: 1},
+            aborted_reason=None,
+            report_path=cmd.out_dir / "run-report-x.json",
+        )
+
+    monkeypatch.setattr(upload_command, "run_upload_command", _fake)
+    return captured
+
+
+def test_verify_flag_threads_into_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_dir = _write_manifest(tmp_path)
+    pack_root = _pack_dir(tmp_path)
+    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    captured = _capture_cmd(monkeypatch)
+
+    result = _invoke(out_dir, pack_root, "--verify")
+
+    assert result.exit_code == 0, result.output
+    cmd = captured["cmd"]
+    assert cmd.verify is True  # type: ignore[union-attr]
+
+
+def test_verify_defaults_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_dir = _write_manifest(tmp_path)
+    pack_root = _pack_dir(tmp_path)
+    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    captured = _capture_cmd(monkeypatch)
+
+    result = _invoke(out_dir, pack_root)  # no --verify
+
+    assert result.exit_code == 0, result.output
+    cmd = captured["cmd"]
+    assert cmd.verify is False  # type: ignore[union-attr]
+
+
 def test_manifest_found_under_charts_subdir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

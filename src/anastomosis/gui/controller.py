@@ -480,6 +480,7 @@ class GuiController:
         pack_dirs: list[str] | None = None,
         skiplist: list[str] | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        verify: bool = False,
     ) -> dict[str, object]:
         """Drive the resumable browser upload engine over a CDP attach (async).
 
@@ -497,7 +498,10 @@ class GuiController:
         exclude (the GUI parity for the CLI's ``--skiplist``); blanks and ``#``
         comments are ignored. ``max_attempts`` is the per-item retry budget,
         defaulting to the SHARED :data:`~anastomosis.core.upload_command.DEFAULT_MAX_ATTEMPTS`
-        both frontends now use (they previously diverged).
+        both frontends now use (they previously diverged). ``verify`` (default
+        ``False``, the GUI parity for the CLI's ``--verify``) opts into the
+        L0-L6 verification ladder around each upload; the engine's wrong-patient
+        banner abort runs regardless.
 
         Safety model (never weakened — the engine enforces it; this only drives):
 
@@ -597,7 +601,12 @@ class GuiController:
 
             try:
                 result = run_upload_command(
-                    UploadCommand(out_dir=out, skiplist=skiplist_set, max_attempts=max_attempts),
+                    UploadCommand(
+                        out_dir=out,
+                        skiplist=skiplist_set,
+                        max_attempts=max_attempts,
+                        verify=verify,
+                    ),
                     lambda: _attach_destination(cdp_url, loaded),
                     stop=stop,
                 )
@@ -616,7 +625,17 @@ class GuiController:
                 self._upload_stop = None
                 self._release()
 
-        threading.Thread(target=_worker, name="anast-upload", daemon=True).start()
+        try:
+            threading.Thread(target=_worker, name="anast-upload", daemon=True).start()
+        except Exception as exc:
+            # Thread.start() can raise (e.g. RuntimeError under thread
+            # exhaustion). The worker never runs, so its finally never fires:
+            # release the busy guard AND clear the stop flag here (else a later
+            # upload_stop() would falsely report stopping), then return the same
+            # no-traceback error shape the pre-flight uses.
+            self._upload_stop = None
+            self._release()
+            return self._fail("upload", exc)
         return {"ok": True, "started": True}
 
     def upload_stop(self) -> dict[str, object]:
@@ -792,7 +811,16 @@ class GuiController:
             finally:
                 self._release()
 
-        threading.Thread(target=_worker, name="anast-packgen", daemon=True).start()
+        try:
+            threading.Thread(target=_worker, name="anast-packgen", daemon=True).start()
+        except Exception as exc:
+            # Thread.start() can raise (e.g. RuntimeError under thread
+            # exhaustion). The worker never runs, so its finally never releases
+            # the busy guard — release it here and return the same no-traceback
+            # error shape (_fail emits a packgen error event too, matching the
+            # method's terminal-event contract).
+            self._release()
+            return self._fail("packgen", exc)
         return {"ok": True, "started": True}
 
     def last_pack_result(self) -> dict[str, object]:
@@ -922,7 +950,16 @@ class GuiController:
             finally:
                 self._release()
 
-        threading.Thread(target=_worker, name="anast-source", daemon=True).start()
+        try:
+            threading.Thread(target=_worker, name="anast-source", daemon=True).start()
+        except Exception as exc:
+            # Thread.start() can raise (e.g. RuntimeError under thread
+            # exhaustion). The worker never runs, so its finally never releases
+            # the busy guard — release it here and return the same no-traceback
+            # error shape (_fail emits a source error event too, matching the
+            # method's terminal-event contract).
+            self._release()
+            return self._fail("source", exc)
         return {"ok": True, "started": True}
 
     def last_source_result(self) -> dict[str, object]:
@@ -1042,7 +1079,16 @@ class GuiController:
             finally:
                 self._release()
 
-        threading.Thread(target=_worker, name="anast-pipeline", daemon=True).start()
+        try:
+            threading.Thread(target=_worker, name="anast-pipeline", daemon=True).start()
+        except Exception as exc:
+            # Thread.start() can raise (e.g. RuntimeError under thread
+            # exhaustion). The worker never runs, so its finally never releases
+            # the busy guard — release it here and return the same no-traceback
+            # error shape the locked body's non-pipeline crash path uses. (No
+            # start event was emitted before the spawn, so none is leaked.)
+            self._release()
+            return self._fail("run_pipeline", exc)
         return {"ok": True, "started": True}
 
     # --- the migration run (EHR-to-EHR; PF→Tebra is one instance) -----------
