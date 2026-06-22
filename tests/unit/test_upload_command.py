@@ -186,3 +186,96 @@ def test_run_upload_command_passes_the_stop_flag(tmp_path: Path) -> None:
     counts = _counts(out)
     assert counts.get(UploadState.COMPLETED.value, 0) == 0
     assert counts.get(UploadState.PENDING.value, 0) == 3
+
+
+# --- opt-in L0-L6 verification (the verify lever) ---------------------------
+#
+# These prove UploadCommand.verify actually drives the LayeredVerifier through
+# the shared upload path: a verifiable PDF + manifest + readable FakeDestination
+# (the test_verify_composite.py / test_fhir_destination.py fixture pattern) so
+# the ladder runs for real, with no browser. The render extra gates them
+# per-test (NOT module-level — the fitz-free tests above must still run on a
+# machine without the render extra).
+
+# One verifiable patient — synthetic name + DOB the PDF must carry for L2.
+_V_PID = "feedface-0000-0000-0000-0000000000aa"
+_V_DEST = "dest-aa"
+_V_DOB = datetime.date(1990, 1, 2)
+_V_NAME = "Synthia Testpatient"  # = the patient's display_name below
+_FILLER = [f"Clinical note body line {i} for archival padding." for i in range(20)]
+_GOOD_LINES = [_V_NAME, "DOB 01/02/1990", "Date of service: May 10, 2023", *_FILLER]
+# A wrong-identity page: a different name AND a different DOB, so L2 fails the
+# DOB hard-gate (and the name ratio) — the wrong-chart catch.
+_BAD_LINES = ["Wrongname Otherpatient", "DOB 12/31/1965", *_FILLER]
+
+
+def _verifiable_patient() -> Patient:
+    return Patient(id=_V_PID, given_name="Synthia", family_name="Testpatient", birth_date=_V_DOB)
+
+
+def _write_verifiable_manifest(root: Path, lines: list[str]) -> Path:
+    """Write a manifest of ONE real PDF carrying ``lines`` into ``root``.
+
+    The PDF is a genuine (PyMuPDF-rendered) chart so L0/L1 pass and L2 reads its
+    page-1 text; the patient demographics ride the manifest so the verifier sees
+    the same canonical patient the engine resolves.
+    """
+    import fitz
+
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "note.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    doc.save(str(path))
+    doc.close()
+    docs = [RenderedDoc(path=path, encounter_id="enc-aa", patient_id=_V_PID)]
+    records = [PatientRecord(id=_V_PID, patient=_verifiable_patient())]
+    write_upload_manifest(docs, records, root)
+    return root
+
+
+def _readable_dest() -> FakeDestination:
+    """A readable FakeDestination so the post-upload L5/L6 read-back levels run.
+
+    ``page_counts`` keys on the doc id the fake hands back (``doc-<item_key>``);
+    every L0-L6 level passes for a good chart against this destination.
+    """
+    return FakeDestination({_V_PID: _V_DEST}, readable=True, page_counts={})
+
+
+def test_run_upload_command_verify_true_drives_the_layered_verifier(tmp_path: Path) -> None:
+    """verify=True wires the real LayeredVerifier: a good chart passes L0-L6 and
+    COMPLETES through the shared upload path (no browser, no engine change)."""
+    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES)
+    result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: _readable_dest())
+    assert result.aborted_reason is None
+    assert result.counts.get(UploadState.COMPLETED.value) == 1
+    assert sum(result.counts.values()) == 1
+
+
+def test_verify_lever_is_live_wrong_identity_only_fails_when_verifying(tmp_path: Path) -> None:
+    """The lever is genuinely live: the SAME wrong-identity chart COMPLETES with
+    verify=False (NullVerifier passes everything) but routes to PRE_VERIFY_FAILED
+    with verify=True (L2's DOB/name catch fires). Proves verify=True actually
+    swaps in the LayeredVerifier rather than the default pass-through."""
+    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    # (a) Default (verify off): the wrong-identity chart still COMPLETES — the
+    #     ladder is not consulted, only the engine's banner gate (which the
+    #     FakeDestination passes for this patient).
+    out_off = _write_verifiable_manifest(tmp_path / "off", _BAD_LINES)
+    off = run_upload_command(UploadCommand(out_dir=out_off), lambda: _readable_dest())
+    assert off.aborted_reason is None
+    assert off.counts.get(UploadState.COMPLETED.value) == 1
+
+    # (b) verify on: the SAME wrong-identity chart is caught at L2 and routed to
+    #     PRE_VERIFY_FAILED before any bytes are sent.
+    out_on = _write_verifiable_manifest(tmp_path / "on", _BAD_LINES)
+    dest_on = _readable_dest()
+    on = run_upload_command(UploadCommand(out_dir=out_on, verify=True), lambda: dest_on)
+    assert on.aborted_reason is None
+    assert on.counts.get(UploadState.PRE_VERIFY_FAILED.value) == 1
+    assert on.counts.get(UploadState.COMPLETED.value, 0) == 0
+    # Caught before any upload happened — nothing was filed at the destination.
+    assert dest_on.uploads == []

@@ -14,6 +14,13 @@ PHI rule: this layer moves counts/ids/state-names through the ledger and report;
 it prints/logs nothing patient-derived, and the ledger + report stay inside the
 0700 output dir. The operator's browser is NEVER closed — only our own ledger
 handle is.
+
+Verification is OPT-IN: ``UploadCommand.verify`` (default ``False``) decides
+whether the engine runs behind the L0-L6 :class:`LayeredVerifier` or the
+default pass-through :class:`NullVerifier`. With verify off this path never
+imports PyMuPDF (the ``render`` extra the verifier needs); the engine's banner
+wrong-patient abort runs in BOTH cases — it is the engine's own guard, not a
+verifier level.
 """
 
 from __future__ import annotations
@@ -51,6 +58,12 @@ class UploadCommand:
     out_dir: Path
     skiplist: frozenset[str] = field(default_factory=frozenset)
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    # Opt-in: run the L0-L6 verification ladder (:class:`LayeredVerifier`)
+    # around each upload. Default OFF — the engine falls back to the
+    # pass-through :class:`NullVerifier`, and PyMuPDF (the ``render`` extra the
+    # ladder reads PDFs with) is never imported. The engine's banner
+    # wrong-patient abort runs regardless of this flag.
+    verify: bool = False
 
 
 @dataclass
@@ -99,6 +112,12 @@ def run_upload_command(
     cleanly, so a locked dir or a missing/malformed manifest never touches the
     browser. ``stop`` is the cooperative cancel flag the engine checks at item
     boundaries (the GUI's ``upload_stop``); the CLI passes ``None``.
+
+    When ``cmd.verify`` is set the engine is wired with a
+    :class:`~anastomosis.deliver.verify.LayeredVerifier` (lazily imported so the
+    ``render`` extra it needs stays off the default path); otherwise the engine
+    falls back to its pass-through :class:`NullVerifier` and behavior is
+    unchanged.
     """
     from anastomosis.core.locking import output_lock
     from anastomosis.core.output import secure_output_dir
@@ -117,14 +136,27 @@ def run_upload_command(
         assert isinstance(destination, Destination)  # the seam must honor the protocol
         managed = ManagedDestination(destination)
         tracking = TrackingDB(cmd.out_dir / LEDGER_NAME)
+        # Opt-in L0-L6 ladder. The LayeredVerifier import (and thus PyMuPDF) is
+        # lazy so verify=False never pulls in the render extra. The verifier
+        # reads the destination directly for its banner/metadata/round-trip
+        # access (L4/L5/L6) — so it takes the UNwrapped Destination, while the
+        # engine takes the ManagedDestination. There is no pack/records/
+        # expected_pages in the upload path, so L3 SKIPs here (correctly): the
+        # active levels are L0/L1/L2/L4 (+ L5/L6 when the destination supports
+        # read-back).
+        verifier = None
+        if cmd.verify:
+            from anastomosis.deliver.verify import LayeredVerifier
+
+            verifier = LayeredVerifier(destination=destination)
         try:
             run_id = tracking.begin_run(managed.name)
             # The engine contract: the CALLER recovers any mid-flight items from a
             # prior killed run before driving (a re-start resumes cleanly).
             tracking.recover(run_id)
-            result = UploadEngine(managed, tracking, max_attempts=cmd.max_attempts).run(
-                items, patients, run_id, skiplist=cmd.skiplist, stop=stop
-            )
+            result = UploadEngine(
+                managed, tracking, verifier=verifier, max_attempts=cmd.max_attempts
+            ).run(items, patients, run_id, skiplist=cmd.skiplist, stop=stop)
             # On a clean finish stamp the run done; an abort already stamped its
             # own finish_run inside the engine (manage_run defaults True).
             if result.aborted_reason is None:
