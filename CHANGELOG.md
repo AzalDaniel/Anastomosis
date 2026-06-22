@@ -15,10 +15,10 @@ The third alpha. Packages the toolkit as a downloadable Windows application — 
 normal installer that bundles its own Python runtime and Chromium (with no
 separate `pip`/`playwright` step) and installs the Edge WebView2 runtime when it
 is absent — and clears the last CLI/GUI disparities so the backend CLI and the
-desktop GUI drive
-identical shared command cores rather than parallel implementations. The
-packaging build, the installer, and a silent install-and-self-check are produced
-and validated on Windows CI. PR numbers in parentheses.
+desktop GUI drive identical shared command cores rather than parallel
+implementations. The packaging build, the installer, and a silent
+install-and-self-check are produced and validated on Windows CI. PR numbers in
+parentheses.
 
 ### Added
 
@@ -41,6 +41,14 @@ and validated on Windows CI. PR numbers in parentheses.
   instead of reaching an operator. (#63)
 - A standalone GUI entry point (`anastomosis.gui.__main__` plus a `gui-scripts`
   console entry) that the installed Start-menu shortcut targets. (#63)
+- **Opt-in L0–L6 verification ladder around uploads** (`anast upload --verify`
+  and a GUI "Verify uploads" toggle) — the implemented `LayeredVerifier`
+  (`deliver/verify/`) is now reachable from both frontends through the shared
+  upload command: L0 file integrity, L1 page/size, L2 document identity
+  (fuzzy name ≥0.88 + DOB hard-fail), and, after upload, L5 metadata and L6
+  round-trip read-back. Default off (so the `render` extra stays off the default
+  path); the engine's live wrong-patient banner abort runs on every upload
+  regardless.
 
 ### Changed
 
@@ -68,6 +76,16 @@ and validated on Windows CI. PR numbers in parentheses.
 - Upload `max_attempts` is unified to 3 across the CLI and GUI, the GUI gains a
   `--skiplist`, and the GUI now acquires the busy-guard and output lock BEFORE
   reading the upload manifest, closing a lock-then-read race. (#58)
+- The four GUI async methods (`run_pipeline_async`, `pack_init_async`,
+  `source_init_async`, `upload_start`) now guard the worker-thread spawn: if
+  `Thread.start()` fails, they release the busy flag and return a clean error
+  dict instead of propagating to the bridge and wedging the GUI in "Busy".
+- **Windows installer "add to PATH" correctness:** the optional task now writes
+  the MACHINE `Path` (the install is per-machine/elevated, so the per-user HKCU
+  hive would have been the elevating admin's, not the user's); the entry is
+  stripped on uninstall (delimiter-anchored, so a sibling dir is never mangled);
+  and `ChangesEnvironment=yes` broadcasts the change so a new shell sees `anast`
+  without a logout.
 
 ## [0.2.0] — 2026-06-15
 
