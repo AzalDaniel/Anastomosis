@@ -44,7 +44,7 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.2.0 (alpha)** — on [PyPI](https://pypi.org/project/anastomosis/) and
+**v0.3.0 (alpha)** — on [PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
 [CHANGELOG.md](CHANGELOG.md) for what shipped and [docs/PLAN.md](docs/PLAN.md)
 for the roadmap.
@@ -56,6 +56,7 @@ for the roadmap.
 | Learn a source format from one example; FHIR R4 ingest; standard C-CDA render | ✅ v0.2.0 |
 | Pack-from-samples layout learner | ✅ v0.2.0 |
 | Desktop GUI — pipeline dashboard, migration wizard, upload console | ✅ v0.2.0 |
+| Windows desktop installer — self-contained (bundles Chromium + WebView2), with an installed self-check | ✅ v0.3.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -79,6 +80,22 @@ cd Anastomosis
 pip install -e ".[render]"        # add [dev] to run the test suite
 playwright install chromium      # one-time: the rendering engine's browser
 ```
+
+### Windows app (no Python required)
+
+Prefer a normal installer? Download `Anastomosis-Setup-<version>.exe` from the
+[Releases page](https://github.com/AzalDaniel/Anastomosis/releases) and run it.
+It bundles its own Python runtime and the Chromium render engine, so there is no
+separate `pip` or `playwright` step. The GUI renders through the Edge WebView2
+runtime; if your machine lacks it the installer fetches and installs it silently
+(most Windows 10/11 machines already have it). It installs the desktop GUI (a
+Start-menu shortcut) and the `anast` command-line tool (an optional "add to
+PATH" task), and registers a normal uninstaller.
+
+The alpha installer is **not yet code-signed**, so Windows SmartScreen will show
+a "Windows protected your PC" warning. To proceed, click **More info → Run
+anyway**. (Code signing is planned for the general-availability release.) After
+installing, you can verify the install is intact with `anast doctor`.
 
 ## Quickstart
 
@@ -202,7 +219,7 @@ src/anastomosis/
 ├── pipeline.py       the frontend-free pipeline core: emits PHI-safe StageEvents
 │                     (detect → ingest → reconstruct → QA); CLI and GUI drive the SAME code.
 └── cli.py            the `anast` (and `anastomosis`) CLI: `pipeline run`, `info`,
-                      `gui`, `migrate`, `upload`, `archive`, `bundle`,
+                      `doctor`, `gui`, `migrate`, `upload`, `archive`, `bundle`,
                       `destination {list,route,init}`, `pack init`, `source init`.
 ```
 

@@ -260,6 +260,19 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     hoist (goldens byte-identical). Release hardening: 0.2.0 cut + README/docs
     professionalization audit.
 
+### M5.5 — Third alpha (0.3.0): installable Windows app + CLI/GUI parity ✅
+20b. ✅ Addressed the objective code review and removed the last CLI/GUI
+    disparities by routing both frontends through one shared command core per
+    flow (migration-status, upload, source-init), plus non-UTF-8 Windows console
+    safety (`core/presentation.py`), a GUI no-route surfacing fix, and an
+    output-preserving `build_context` decomposition. Packaged the toolkit as a
+    downloadable, self-contained Windows application: two Nuitka standalone exes
+    (GUI + `anast` CLI) bundling Chromium and all data assets, an Inno Setup
+    installer (Start-menu shortcut, uninstaller, optional PATH, silent WebView2),
+    and an `anast doctor` bundled-asset self-check. The build, installer, and a
+    silent install-and-self-check are produced and validated on Windows CI; the
+    installer attaches to the GitHub release on a version tag.
+
 ### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
     (NDJSON), `sources/generic_tabular/` YAML mapping DSL (DrChrono CSV,
