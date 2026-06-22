@@ -78,3 +78,10 @@ billingpatientrelationshipoption
 3da68fbe-0b08-2747-e7ab-dd9b19ac6cfc
 3da68fbe-0b08-2747-f0e4-d10398ebd4a7
 3da68fbe-0b08-2747-f7ef-2241eac48bfe
+
+# The Microsoft Edge WebView2 Runtime's EdgeUpdate "Clients" GUID — a fixed,
+# PUBLIC Microsoft product identifier the Windows installer (packaging/
+# anastomosis.iss) reads to detect whether WebView2 is present
+# (learn.microsoft.com/microsoft-edge/webview2/concepts/distribution). A vendor
+# constant, not PHI.
+f3017226-fe2a-4295-8bdf-00c3a9a7e4c5

@@ -208,15 +208,17 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
 9. 🔶 CLI glue ✅: `anast pipeline run <dir> --out <dir>` (auto-detect,
    --pack/--pack-dir, --section flag overrides, --force; failures exit
    nonzero with exception types only); `anast info` lists sources/packs.
-   Still open: golden rendering tests (text+geometry via PyMuPDF, Chromium
-   pinned); Synthea e2e.
+   Golden rendering tests (text+geometry via PyMuPDF, Chromium-pinned) and the
+   Synthea e2e ship in `tests/e2e/`.
 
 ### M2 — Migration mode ✅
 10. ✅ `deliver/browser/` port (engine/tracking [WAL SQLite, 15-state machine,
     resumability]/batch/manager/cdp/parallel/errors/reports/manifest/skiplist)
     with FakeDestination test double; kill-and-resume test.
-11. ✅ `deliver/verify/` L0–L6 port (L2 fuzzy ≥0.88 + DOB hard-fail; L3 pack-driven
-    header fields; L4 banner check = the wrong-patient defense).
+11. ✅ `deliver/verify/` L0–L6 ladder (L2 fuzzy ≥0.88 + DOB hard-fail; L3 pack-driven
+    header fields; L4 banner check = the wrong-patient defense). Wired opt-in into
+    the upload path via `anast upload --verify` / the GUI verify toggle (0.3.0); the
+    engine's banner wrong-patient abort runs on every upload regardless.
 12. ✅ `destinations/tebra/` pack + `anast destination init` discovery wizard +
     capability registry + **`deliver/router.py`** (shortest-path selection).
 13. ✅ `deliver/fhir_api/` pusher (HAPI/Medplum CI service container) +
@@ -260,6 +262,19 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     hoist (goldens byte-identical). Release hardening: 0.2.0 cut + README/docs
     professionalization audit.
 
+### M5.5 — Third alpha (0.3.0): installable Windows app + CLI/GUI parity ✅
+20b. ✅ Addressed the objective code review and removed the last CLI/GUI
+    disparities by routing both frontends through one shared command core per
+    flow (migration-status, upload, source-init), plus non-UTF-8 Windows console
+    safety (`core/presentation.py`), a GUI no-route surfacing fix, and an
+    output-preserving `build_context` decomposition. Packaged the toolkit as a
+    downloadable, self-contained Windows application: two Nuitka standalone exes
+    (GUI + `anast` CLI) bundling Chromium and all data assets, an Inno Setup
+    installer (Start-menu shortcut, uninstaller, optional PATH, silent WebView2),
+    and an `anast doctor` bundled-asset self-check. The build, installer, and a
+    silent install-and-self-check are produced and validated on Windows CI; the
+    installer attaches to the GitHub release on a version tag.
+
 ### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
     (NDJSON), `sources/generic_tabular/` YAML mapping DSL (DrChrono CSV,
@@ -297,7 +312,7 @@ owner GUIDs) become user-config files with synthetic examples.
 
 - `pytest` (unit), `pytest -m e2e` (pipeline), `python tools/phi_scan.py`
   (full tree), `ruff check . && ruff format --check .`, `mypy`.
-- Golden rendering tests pin Chromium; `anast dev regolden` regenerates with
-  human-reviewed diff.
+- Golden rendering tests pin Chromium; `python tools/regen_goldens.py` regenerates
+  with a human-reviewed diff.
 - Each destination pack ships canary fixtures; preflight validates selectors
   before any run (vendor-change detection).

@@ -709,6 +709,16 @@ def upload_cmd(
         list[Path] | None,
         typer.Option("--pack-dir", help="Extra directories to find the destination pack in."),
     ] = None,
+    verify: Annotated[
+        bool,
+        typer.Option(
+            "--verify/--no-verify",
+            help=(
+                "Run the L0-L6 verification ladder around each upload (needs the "
+                "render extra). The engine's wrong-patient banner check is always on."
+            ),
+        ),
+    ] = False,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Skip the shared-machine attach confirmation."),
@@ -796,7 +806,9 @@ def upload_cmd(
     from anastomosis.core.locking import OutputLockedError
     from anastomosis.deliver.browser.reports import summary_line
 
-    cmd = UploadCommand(out_dir=out_dir, skiplist=skiplist_set, max_attempts=max_attempts)
+    cmd = UploadCommand(
+        out_dir=out_dir, skiplist=skiplist_set, max_attempts=max_attempts, verify=verify
+    )
     try:
         result = run_upload_command(cmd, lambda: _make_destination(cdp, loaded))
     except OutputLockedError as exc:

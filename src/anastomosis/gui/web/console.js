@@ -7,7 +7,7 @@
  *   - upload_manifest_preview(d) → count of renderable PDFs (no names)
  *   - upload_item_keys(db)       → pending item KEYS for the Cmd/Ctrl+K palette
  *   - upload_safety_notice()     → the shared-machine warning (single source)
- *   - upload_start(out,cdp,pack,packDirs,skiplist) → drive the engine over a loopback CDP attach
+ *   - upload_start(out,cdp,pack,packDirs,skiplist,maxAttempts,verify) → drive the engine over a loopback CDP attach
  *   - upload_stop()              → cooperative stop after the current document
  *
  * SECURITY: driving goes through upload_start / upload_stop ONLY. The JS never
@@ -39,6 +39,10 @@ let PALETTE = null;
 // (counts come from the ledger, never from events).
 let POLL_TIMER = null;
 const POLL_INTERVAL_MS = 1500;
+// The shared per-item retry budget both frontends use (mirrors the controller's
+// DEFAULT_MAX_ATTEMPTS). Passed explicitly so the trailing `verify` argument
+// reaches upload_start positionally without overriding the budget.
+const DEFAULT_MAX_ATTEMPTS = 3;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
@@ -229,6 +233,10 @@ async function onStartUpload() {
   const skiplist = skiplistEl
     ? skiplistEl.value.split("\n").map((s) => s.trim()).filter((s) => s.length > 0)
     : [];
+  // Opt-in L0-L6 verification ladder (off by default). The wrong-patient banner
+  // check runs regardless; this only adds the file/identity/round-trip levels.
+  const verifyEl = el("verify-uploads");
+  const verify = !!(verifyEl && verifyEl.checked);
   setStatus("starting upload…");
   try {
     const res = await window.pywebview.api.upload_start(
@@ -237,6 +245,8 @@ async function onStartUpload() {
       packName,
       null,
       skiplist.length ? skiplist : null,
+      DEFAULT_MAX_ATTEMPTS,
+      verify,
     );
     if (!res || !res.ok) {
       showBanner("Could not start upload: " + (res ? res.error : "no response"));

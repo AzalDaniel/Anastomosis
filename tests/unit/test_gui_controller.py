@@ -1658,3 +1658,187 @@ def test_upload_start_refuses_when_output_locked(
         terminal = _wait_for_terminal_upload(sink)
     assert terminal["type"] == "error"
     assert terminal["error"] == "OutputLocked"  # refused, never drove the engine
+
+
+# --- spawn-failure guard (Thread.start() raising must not wedge "Busy") ----
+#
+# Each async method acquires the busy flag BEFORE spawning its daemon worker,
+# whose `finally` is the only thing that releases the flag. If Thread.start()
+# itself raises (e.g. RuntimeError "can't start new thread" under thread
+# exhaustion), the worker never runs, so its finally never fires: without a
+# guard the exception escapes to the bridge (violating never-raise) AND the
+# busy flag leaks, wedging the GUI in "Busy". These pin the fix: a returned
+# error dict (never a raised exception) and a released busy guard afterward.
+
+
+class _ExplodingThread:
+    """A threading.Thread stand-in whose start() raises (thread exhaustion)."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def start(self) -> None:
+        raise RuntimeError("can't start new thread")
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs", "stage"),
+    [
+        pytest.param(
+            "run_pipeline_async",
+            {"export_dir": str(FIXTURE), "out_dir": "out"},
+            "run_pipeline",  # _fail("run_pipeline", ...) emits on the run_pipeline channel
+            id="run_pipeline_async",
+        ),
+        pytest.param(
+            "pack_init_async",
+            {"samples_dir": str(FIXTURE), "name": "acme_soap"},
+            "packgen",
+            id="pack_init_async",
+        ),
+        pytest.param(
+            "source_init_async",
+            {"example_path": str(LEARNED_FIXTURE), "name": "clinic_csv"},
+            "source",
+            id="source_init_async",
+        ),
+    ],
+)
+def test_async_spawn_failure_is_clean_error_and_releases_busy(
+    method: str,
+    kwargs: dict[str, object],
+    stage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing Thread.start() returns the no-traceback error dict (never
+    raises) and releases the busy guard so the GUI is not wedged in 'Busy'."""
+    monkeypatch.setattr(controller_module.threading, "Thread", _ExplodingThread)
+    if "out_dir" in kwargs:
+        kwargs["out_dir"] = str(tmp_path / str(kwargs["out_dir"]))
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+
+    result = getattr(controller, method)(**kwargs)
+
+    # (1) A returned error dict in the controller's error contract — never raised.
+    assert result["ok"] is False
+    assert isinstance(result["error"], str) and result["error"]
+    assert result["error"] != "Busy"  # the guard was taken, then the spawn failed
+    assert "Traceback" not in str(result["error"])  # PHI-safe type-name diagnosis
+    # The error event landed on the method's own channel (the spawn never started
+    # a worker, so no `done` could have followed).
+    assert "error" in sink.types()
+    assert "done" not in sink.types()
+    assert any(e.get("type") == "error" and e.get("stage") == stage for e in sink.events)
+
+    # (2) The busy flag was released — a subsequent acquire is not blocked.
+    assert controller._acquire() is True
+    controller._release()
+
+
+def _capture_upload_command(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Patch the shared run_upload_command to capture the UploadCommand it gets.
+
+    The controller's worker imports run_upload_command lazily FROM
+    anastomosis.core.upload_command, so the patch lives on that module (the
+    source). The worker runs on a daemon thread, so the caller waits for a
+    terminal event before reading the capture.
+    """
+    import anastomosis.core.upload_command as upload_command
+    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+
+    captured: dict[str, object] = {}
+
+    def _fake(cmd: UploadCommand, attach: object, **kwargs: object) -> UploadCommandResult:
+        captured["cmd"] = cmd
+        return UploadCommandResult(
+            counts={}, aborted_reason=None, report_path=cmd.out_dir / "r.json"
+        )
+
+    monkeypatch.setattr(upload_command, "run_upload_command", _fake)
+    return captured
+
+
+def test_upload_start_threads_verify_true(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """upload_start(..., verify=True) threads verify into the UploadCommand."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+    captured = _capture_upload_command(monkeypatch)
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=True
+    )
+    assert started == {"ok": True, "started": True}
+    _wait_for_terminal_upload(sink)
+    assert captured["cmd"].verify is True  # type: ignore[union-attr]
+
+
+def test_upload_start_verify_defaults_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The verify lever defaults OFF — no verify arg means an unchanged drive."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+    captured = _capture_upload_command(monkeypatch)
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+    )
+    assert started == {"ok": True, "started": True}
+    _wait_for_terminal_upload(sink)
+    assert captured["cmd"].verify is False  # type: ignore[union-attr]
+
+
+def test_upload_start_spawn_failure_releases_busy_and_clears_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """upload_start's spawn guard ALSO clears self._upload_stop: a failed spawn
+    must not leave a stop flag that a later upload_stop() falsely reports."""
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+    monkeypatch.setattr(controller_module.threading, "Thread", _ExplodingThread)
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    result = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+    )
+
+    # (1) The no-traceback error dict (matches the pre-flight _fail("upload") shape).
+    assert result["ok"] is False
+    assert isinstance(result["error"], str) and result["error"] != "Busy"
+    assert "Traceback" not in str(result["error"])
+    assert any(e.get("type") == "error" and e.get("stage") == "upload" for e in sink.events)
+
+    # (2) The busy flag was released — a subsequent acquire is not blocked.
+    assert controller._acquire() is True
+    controller._release()
+
+    # (3) self._upload_stop was reset, so upload_stop() reports NoRun (not a
+    #     false 'stopping' against a stale flag).
+    assert controller._upload_stop is None
+    assert controller.upload_stop() == {"ok": False, "error": "NoRun"}
