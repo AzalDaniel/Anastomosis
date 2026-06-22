@@ -12,13 +12,15 @@ name: Windows package
 # On a version tag the installer is attached to the GitHub release by a separate,
 # write-scoped job, so users can download and run it like a normal Windows app.
 #
-# Triggers: manual; pushes to the dev branch that touch the app/packaging (so
-# pipeline changes are validated); and version tags (release builds).
+# Triggers: manual; pushes to main (or the active dev branch) that touch the
+# app/packaging (so pipeline changes are validated); and version tags (release
+# builds). Path filters gate branch pushes only — GitHub ignores them for tags,
+# so a tag always builds and the release job runs.
 
 on:
   workflow_dispatch:
   push:
-    branches: [claude/practical-mendel-torkk3]
+    branches: [main, claude/practical-mendel-torkk3]
     paths:
       - "packaging/**"
       - ".github/workflows/windows-package.yml"
@@ -34,9 +36,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
