@@ -2,9 +2,15 @@ name: Windows package
 
 # Builds the downloadable Windows installer: two Nuitka --mode=standalone exes
 # (the windowed GUI app + the console CLI), each bundling Chromium + all data
-# assets, packaged by Inno Setup. The frozen `anast doctor` self-check is run
-# against the built CLI exe BEFORE packaging, so a mis-bundled asset or an
-# un-bundled Chromium fails the build instead of shipping broken.
+# assets, packaged by Inno Setup. Two self-checks gate it: the frozen
+# `anast doctor` runs against the built CLI exe BEFORE packaging (a mis-bundled
+# asset or an un-bundled Chromium fails the build), and AFTER packaging the
+# installer is installed SILENTLY and `anast doctor` runs again against the
+# INSTALLED exe (a file the installer fails to lay down, or a broken install
+# layout, fails the build) — so a broken package fails CI instead of shipping.
+#
+# On a version tag the installer is attached to the GitHub release by a separate,
+# write-scoped job, so users can download and run it like a normal Windows app.
 #
 # Triggers: manual; pushes to the dev branch that touch the app/packaging (so
 # pipeline changes are validated); and version tags (release builds).
@@ -82,9 +88,73 @@ jobs:
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.ver.outputs.version }} packaging\anastomosis.iss
 
+      - name: Smoke-test the installer (silent install + installed self-check)
+        # The second anti-assumption gate. Install the just-built installer the
+        # way a user would (silent, default Program Files location), then prove
+        # the INSTALLED app is whole: the GUI + CLI exes are laid down and the
+        # installed `anast doctor` passes (every bundled asset + Chromium copied
+        # through the install). A UAC/elevation hang is bounded by WaitForExit.
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist\installer\*.exe | Select-Object -First 1
+          if (-not $installer) { throw "no installer was produced" }
+          Write-Host "installing $($installer.Name) silently..."
+          $log = "$env:RUNNER_TEMP\anastomosis-install.log"
+          $p = Start-Process -FilePath $installer.FullName `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/LOG=$log" `
+            -PassThru
+          if (-not $p.WaitForExit(300000)) {
+            try { $p.Kill() } catch {}
+            if (Test-Path $log) { Get-Content $log }
+            throw "installer did not finish within 5 min (an elevation prompt may be blocking)"
+          }
+          if ($p.ExitCode -ne 0) {
+            if (Test-Path $log) { Get-Content $log }
+            throw "installer exited with code $($p.ExitCode)"
+          }
+          $app = Join-Path $env:ProgramFiles 'Anastomosis'
+          $cli = Join-Path $app 'cli\anast.exe'
+          $gui = Join-Path $app 'gui\Anastomosis.exe'
+          foreach ($f in @($cli, $gui)) {
+            if (-not (Test-Path $f)) { throw "installed layout is missing: $f" }
+            Write-Host "present: $f"
+          }
+          Write-Host "running the INSTALLED 'anast doctor'..."
+          & $cli doctor
+          if ($LASTEXITCODE -ne 0) { throw "installed 'anast doctor' failed (exit $LASTEXITCODE)" }
+          Write-Host "installed self-check passed."
+
       - name: Upload the installer
+        # !cancelled() so the installer is available for download even when the
+        # smoke-test above fails — the surest way to debug a Windows-only install
+        # issue is the installer itself.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: anastomosis-windows-installer
           path: dist/installer/*.exe
           if-no-files-found: error
+
+  release:
+    # On a version tag only, attach the installer to the GitHub release so it is
+    # downloadable from the Releases page (the CI artifact above is login-gated,
+    # zipped, and expires). Write-scoped and isolated from the build job, which
+    # stays read-only for the ordinary branch-push validation runs.
+    name: Attach the installer to the GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built installer
+        uses: actions/download-artifact@v4
+        with:
+          name: anastomosis-windows-installer
+          path: installer
+
+      - name: Attach it to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/*.exe
+          fail_on_unmatched_files: true
