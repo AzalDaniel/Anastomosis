@@ -9,6 +9,84 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-22
+
+The third alpha. Packages the toolkit as a downloadable Windows application — a
+normal installer that bundles its own Python runtime and Chromium (with no
+separate `pip`/`playwright` step) and installs the Edge WebView2 runtime when it
+is absent — and clears the last CLI/GUI disparities so the backend CLI and the
+desktop GUI drive identical shared command cores rather than parallel
+implementations. The packaging build, the installer, and a silent
+install-and-self-check are produced and validated on Windows CI. PR numbers in
+parentheses.
+
+### Added
+
+- **Downloadable Windows application** (`packaging/`,
+  `.github/workflows/windows-package.yml`) — two Nuitka `--mode=standalone`
+  executables (the windowed GUI app and the `anast` console CLI), each bundling
+  the Python runtime, Chromium, and every data asset, packaged by Inno Setup
+  into a single installer with a Start-menu shortcut, an uninstaller, an optional
+  "add `anast` to PATH" task, and a silent Edge WebView2 install when the runtime
+  is absent. No separate `pip install` or `playwright install` step. Built and
+  self-checked on Windows CI — installed silently and re-checked end to end — and
+  attached to the GitHub release on a version tag.
+- **`anast doctor`** (`core/selfcheck.py`) — a bundled-asset self-check that
+  resolves and reads every shipped asset (the destination registry and tebra
+  pack, both built-in template packs, the GUI web pages and fonts, the HL7
+  `CDA.xsl` and its siblings, the learned-source synonym and schema files, the
+  archive assets) and, in a frozen build, confirms the bundled Chromium is
+  present. CI runs it against the FROZEN executable before packaging and again
+  against the INSTALLED executable after, so a mis-bundled asset fails the build
+  instead of reaching an operator. (#63)
+- A standalone GUI entry point (`anastomosis.gui.__main__` plus a `gui-scripts`
+  console entry) that the installed Start-menu shortcut targets. (#63)
+- **Opt-in L0–L6 verification ladder around uploads** (`anast upload --verify`
+  and a GUI "Verify uploads" toggle) — the implemented `LayeredVerifier`
+  (`deliver/verify/`) is now reachable from both frontends through the shared
+  upload command: L0 file integrity, L1 page/size, L2 document identity
+  (fuzzy name ≥0.88 + DOB hard-fail), and, after upload, L5 metadata and L6
+  round-trip read-back. Default off (so the `render` extra stays off the default
+  path); the engine's live wrong-patient banner abort runs on every upload
+  regardless.
+
+### Changed
+
+- **One shared command core per flow, consumed by both the CLI and the GUI**, so
+  the two frontends cannot diverge: migration-status classification
+  (`core/migration_status.py`, #57), the upload command (`core/upload_command.py`,
+  #58), and the source-init command (`core/source_init_command.py`, #59). The GUI
+  learn-a-source wizard now runs asynchronously, like the pipeline, migrate, and
+  pack flows. (#59, #60)
+- The Practice Fusion pack's `build_context` is decomposed into focused,
+  output-preserving helpers, and the flowsheet's vital-by-encounter scan is built
+  once per record instead of once per encounter. Rendered output is byte-identical.
+  (#61, #62)
+
+### Fixed
+
+- **The CLI no longer crashes on a non-UTF-8 (e.g. CP-1252) Windows console.** A
+  new `core/presentation.py` resolves Unicode versus ASCII glyphs from the output
+  stream's encoding; the transit map and every arrow-printing line use it, and
+  the ASCII markers are bracket-free so Rich does not strip them. UTF-8 output is
+  unchanged. (#56)
+- The GUI surfaces a no-automated-route migration as an error and manual-import
+  path instead of a silent success, matching the CLI (which already writes the
+  C-CDA payload and exits non-zero). (#57)
+- Upload `max_attempts` is unified to 3 across the CLI and GUI, the GUI gains a
+  `--skiplist`, and the GUI now acquires the busy-guard and output lock BEFORE
+  reading the upload manifest, closing a lock-then-read race. (#58)
+- The four GUI async methods (`run_pipeline_async`, `pack_init_async`,
+  `source_init_async`, `upload_start`) now guard the worker-thread spawn: if
+  `Thread.start()` fails, they release the busy flag and return a clean error
+  dict instead of propagating to the bridge and wedging the GUI in "Busy".
+- **Windows installer "add to PATH" correctness:** the optional task now writes
+  the MACHINE `Path` (the install is per-machine/elevated, so the per-user HKCU
+  hive would have been the elevating admin's, not the user's); the entry is
+  stripped on uninstall (delimiter-anchored, so a sibling dir is never mangled);
+  and `ChangesEnvironment=yes` broadcasts the change so a new shell sees `anast`
+  without a logout.
+
 ## [0.2.0] — 2026-06-15
 
 The second alpha. Generalizes ingest and output so a migration is "from any EHR
@@ -270,6 +348,7 @@ archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AzalDaniel/Anastomosis/releases/tag/v0.1.0
