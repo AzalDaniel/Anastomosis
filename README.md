@@ -29,8 +29,9 @@ Anastomosis is the missing last mile, free and open source:
    chart's layout and typography — or learn a new layout from your own sample
    PDFs).
 3. **Verify** every rendered document with a multi-layer QA engine
-   (data-integrity, layout, and identity checks), and every upload with a
-   six-layer wrong-patient defense.
+   (data-integrity, layout, and identity checks), and guard every upload with a
+   live wrong-patient banner check — with a full L0–L6 verification ladder
+   available (`anast upload --verify`).
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. A cross-EHR migration moves the **structured C-CDA/FHIR payload** the
@@ -56,7 +57,7 @@ for the roadmap.
 | Learn a source format from one example; FHIR R4 ingest; standard C-CDA render | ✅ v0.2.0 |
 | Pack-from-samples layout learner | ✅ v0.2.0 |
 | Desktop GUI — pipeline dashboard, migration wizard, upload console | ✅ v0.2.0 |
-| Windows desktop installer — self-contained (bundles Chromium + WebView2), with an installed self-check | ✅ v0.3.0 |
+| Windows desktop installer — bundles Chromium offline, installs WebView2 if absent, with an installed self-check | ✅ v0.3.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -91,6 +92,12 @@ runtime; if your machine lacks it the installer fetches and installs it silently
 (most Windows 10/11 machines already have it). It installs the desktop GUI (a
 Start-menu shortcut) and the `anast` command-line tool (an optional "add to
 PATH" task), and registers a normal uninstaller.
+
+> **Offline/air-gapped machines:** the WebView2 step downloads from Microsoft, so
+> on a machine without internet *and* without WebView2 already present, install
+> the [Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+> (the Evergreen Standalone Installer) separately first. The `anast` CLI does not
+> need WebView2; only the desktop GUI does.
 
 The alpha installer is **not yet code-signed**, so Windows SmartScreen will show
 a "Windows protected your PC" warning. To proceed, click **More info → Run
@@ -233,8 +240,9 @@ src/anastomosis/
   (sources + destinations).
 - **Verification is the core product, not a test.** A migration that puts the
   right notes in the wrong chart is worse than no migration. So the QA engine
-  verifies every rendered document, and the delivery path runs the L0–L6
-  ladder around every upload — boundary-anchored and identity-based, because
+  verifies every rendered document, the delivery path guards every upload with
+  a live wrong-patient banner check, and the full L0–L6 ladder is available
+  (`anast upload --verify`) — boundary-anchored and identity-based, because
   the naive matches (substring, whole-page similarity) demonstrably false-pass
   the exact failures these checks exist to catch.
 - **Packs and registries make a vendor change a one-module event.** Source

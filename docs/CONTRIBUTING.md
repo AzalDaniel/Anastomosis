@@ -44,7 +44,8 @@ takes many hands.
   break another (the registry loads defensively; keep it that way).
 - The core pipeline makes no network calls. Anything that talks to the
   outside world lives in `deliver/` or an explicitly-named `live` module.
-- Preserve the engine lessons in `docs/rendering-engine.md` — they were paid
-  for with weeks of production debugging.
+- Preserve the hard-won rendering-engine lessons captured in the `reconstruct/`
+  and `qa/` module docstrings — they were paid for with weeks of production
+  debugging.
 - New code is `mypy --strict` clean and carries tests; parsers should get
   property-based tests where practical.
