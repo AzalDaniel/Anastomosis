@@ -36,6 +36,14 @@ SourceDir=..
 OutputDir=dist\installer
 OutputBaseFilename=Anastomosis-Setup-{#AppVersion}
 WizardStyle=modern
+; A per-machine install under Program Files (the "normal Windows app" layout):
+; elevation is required, and the optional CLI-on-PATH task therefore writes the
+; MACHINE PATH (see [Registry]) — writing the per-user HKCU PATH under elevation
+; would target the elevating admin's hive, not the running user's.
+PrivilegesRequired=admin
+; We mutate the machine PATH (optional task), so broadcast WM_SETTINGCHANGE on
+; finish; without this a new shell would not see `anast` until the next logon.
+ChangesEnvironment=yes
 ; Signing seam: a no-op unless ISCC is invoked with /DSignTool=<configured tool>.
 #ifdef SignTool
 SignTool={#SignTool}
@@ -63,11 +71,14 @@ Name: "{group}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"
 Name: "{group}\Uninstall Anastomosis"; Filename: "{uninstallexe}"
 
 [Registry]
-; Append the CLI directory to the per-user PATH (idempotent; only if the task is
-; checked). Per-user keeps the install non-elevating; the canonical NeedsAddPath
-; check avoids duplicate entries.
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
-  ValueData: "{olddata};{app}\cli"; Tasks: addtopath; Check: NeedsAddPath('{app}\cli')
+; Append the CLI directory to the MACHINE PATH (idempotent; only if the task is
+; checked). This is a per-machine install (elevated), so the machine PATH — not
+; HKCU — is the correct target: under elevation HKCU is the elevating admin's
+; hive, not the user who will run `anast`. The NeedsAddPath check avoids a
+; duplicate segment; CurUninstallStepChanged strips it on uninstall.
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
+  ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\cli"; \
+  Tasks: addtopath; Check: NeedsAddPath('{app}\cli')
 
 [Run]
 ; Install the Edge WebView2 Runtime only when it is not already present (the GUI
@@ -80,6 +91,11 @@ Filename: "{app}\gui\Anastomosis.exe"; Description: "Launch Anastomosis"; \
   Flags: nowait postinstall skipifsilent
 
 [Code]
+// The machine PATH lives here (REG_EXPAND_SZ); the optional task appends to it,
+// and CurUninstallStepChanged strips it back out.
+const
+  EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
 function WebView2Installed(): Boolean;
 var
   pv: string;
@@ -104,11 +120,38 @@ function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
-  if not RegQueryStringValue(HKCU, 'Environment', 'Path', OrigPath) then
+  if not RegQueryStringValue(HKLM, EnvKey, 'Path', OrigPath) then
   begin
     Result := True;
     exit;
   end;
   // Idempotent: only add if the dir is not already a PATH segment.
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Cur, Seg: string;
+  P: Integer;
+begin
+  // Strip the CLI directory we may have appended to the machine PATH. Without
+  // this an "add to PATH" install would leave a dead segment behind forever.
+  // Match the segment delimiter-anchored (';<dir>;' inside ';<PATH>;'), exactly
+  // as NeedsAddPath does on the way in, so a sibling like '...\cli2' can never
+  // be partially matched and a correct PATH is never mangled.
+  if CurUninstallStep <> usUninstall then
+    exit;
+  if not RegQueryStringValue(HKLM, EnvKey, 'Path', Cur) then
+    exit;
+  Seg := ExpandConstant('{app}\cli');
+  // Position of ';<dir>;' within the synthetic ';<PATH>;' (1 = at the very
+  // start; >1 = a real separator precedes it).
+  P := Pos(';' + Uppercase(Seg) + ';', ';' + Uppercase(Cur) + ';');
+  if P = 0 then
+    exit;
+  if P = 1 then
+    Delete(Cur, 1, Length(Seg) + 1)       // "<dir>;..." -> drop the leading entry + its separator
+  else
+    Delete(Cur, P - 1, Length(Seg) + 1);  // "...;<dir>..." -> drop the separator + entry
+  RegWriteExpandStringValue(HKLM, EnvKey, 'Path', Cur);
 end;
