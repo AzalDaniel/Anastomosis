@@ -84,15 +84,21 @@ jobs:
       - name: Self-check the FROZEN GUI bundle (Anastomosis.exe --self-check)
         # The GUI bundle is the Start-menu target and carries its OWN copy of
         # every data asset + Chromium, so it must be self-checked too — the CLI
-        # `anast doctor` above only proves the CLI bundle. The GUI exe runs with
-        # console mode "disable" (no console window), but `--self-check` still
-        # returns an exit code the shell reads via $LASTEXITCODE, so a
-        # mis-bundled GUI build fails here instead of shipping a broken app.
+        # `anast doctor` above only proves the CLI bundle. The GUI exe is built
+        # with console mode "disable" (GUI subsystem), and PowerShell's `&` does
+        # NOT wait for / capture the exit code of a GUI-subsystem process (it
+        # returns immediately, leaving $LASTEXITCODE empty). Start-Process -Wait
+        # -PassThru reliably waits and reads .ExitCode regardless of subsystem;
+        # stdout is redirected to a file so the per-check lines still show.
         shell: pwsh
         run: |
-          & dist\Anastomosis\Anastomosis.exe --self-check
-          if ($LASTEXITCODE -ne 0) {
-            throw "GUI bundle self-check failed (exit $LASTEXITCODE)"
+          $out = "$env:RUNNER_TEMP\gui-selfcheck.out"
+          $p = Start-Process -FilePath dist\Anastomosis\Anastomosis.exe `
+            -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $out
+          if (Test-Path $out) { Get-Content $out }
+          if ($p.ExitCode -ne 0) {
+            throw "GUI bundle self-check failed (exit $($p.ExitCode))"
           }
 
       - name: Download the WebView2 bootstrapper
