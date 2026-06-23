@@ -10,6 +10,7 @@ no browser. Synthetic data only (``feedface-`` ids, neutral file names).
 from __future__ import annotations
 
 import datetime
+import sys
 import threading
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from anastomosis.core.upload_command import (
     DEFAULT_MAX_ATTEMPTS,
     LEDGER_NAME,
     UploadCommand,
+    VerificationUnavailableError,
     resolve_manifest_root,
     run_upload_command,
 )
@@ -87,7 +89,9 @@ def test_resolve_manifest_root_prefers_out_dir_then_charts(tmp_path: Path) -> No
 
 def test_run_upload_command_drives_to_completed(tmp_path: Path) -> None:
     out = _write_manifest(tmp_path / "out")
-    result = run_upload_command(UploadCommand(out_dir=out), lambda: FakeDestination(_known()))
+    result = run_upload_command(
+        UploadCommand(out_dir=out, verify=False), lambda: FakeDestination(_known())
+    )
     assert result.aborted_reason is None
     assert result.counts.get(UploadState.COMPLETED.value) == 3
     assert sum(result.counts.values()) == 3
@@ -99,7 +103,7 @@ def test_run_upload_command_honors_skiplist(tmp_path: Path) -> None:
     out = _write_manifest(tmp_path / "out")
     dest = FakeDestination(_known())
     result = run_upload_command(
-        UploadCommand(out_dir=out, skiplist=frozenset({"enc-1"})),
+        UploadCommand(out_dir=out, skiplist=frozenset({"enc-1"}), verify=False),
         lambda: dest,
     )
     assert result.counts.get(UploadState.SKIPPED_SKIPLIST.value) == 1
@@ -138,12 +142,28 @@ def test_run_upload_command_locks_before_reading_or_attaching(
 
     with output_lock(out):  # a sibling run holds the dir
         with pytest.raises(OutputLockedError):
-            run_upload_command(UploadCommand(out_dir=out), _attach)
+            run_upload_command(UploadCommand(out_dir=out, verify=False), _attach)
     # NEITHER the manifest read NOR the attach was reached — both live INSIDE the
     # lock, so a locked dir refuses before touching the manifest or the browser.
     assert calls == {"read": 0, "attach": 0}
     # No ledger run was begun either (nothing drove past the lock).
     assert not (out / LEDGER_NAME).exists() or sum(_counts(out).values()) == 0
+
+
+def test_run_upload_command_locks_the_charts_manifest_dir_too(tmp_path: Path) -> None:
+    """Migrate-layout fencing (codex P1-3): when the manifest lives under
+    <out>/charts (a `migrate` output), the upload must lock <out>/charts — the
+    producer's lock dir — not only <out>. Holding the REAL charts lock makes
+    run_upload_command(out_dir=<out>) refuse, proving both dirs are locked."""
+    out = tmp_path / "out"
+    out.mkdir()
+    _write_manifest(out / "charts")  # migrate layout: manifest under <out>/charts
+    assert resolve_manifest_root(out) == out / "charts"
+    # The producer (a concurrent `migrate`/`render`) holds the charts lock.
+    with output_lock(out / "charts"), pytest.raises(OutputLockedError):
+        run_upload_command(
+            UploadCommand(out_dir=out, verify=False), lambda: FakeDestination(_known())
+        )
 
 
 def test_run_upload_command_resumes_after_a_crash(tmp_path: Path) -> None:
@@ -155,13 +175,13 @@ def test_run_upload_command_resumes_after_a_crash(tmp_path: Path) -> None:
     # — a KeyboardInterrupt subclass — so it sails out exactly like a process kill).
     with pytest.raises(FakeCrash):
         run_upload_command(
-            UploadCommand(out_dir=out),
+            UploadCommand(out_dir=out, verify=False),
             lambda: FakeDestination(_known(), existing=shared, crash_after=1),
         )
 
     # Second run resumes against the SAME ledger + destination store.
     result = run_upload_command(
-        UploadCommand(out_dir=out),
+        UploadCommand(out_dir=out, verify=False),
         lambda: FakeDestination(_known(), existing=shared),
     )
     assert result.aborted_reason is None
@@ -179,7 +199,7 @@ def test_run_upload_command_passes_the_stop_flag(tmp_path: Path) -> None:
     stop = threading.Event()
     stop.set()  # already requested -> nothing should be driven
     result = run_upload_command(
-        UploadCommand(out_dir=out), lambda: FakeDestination(_known()), stop=stop
+        UploadCommand(out_dir=out, verify=False), lambda: FakeDestination(_known()), stop=stop
     )
     assert result.aborted_reason is None
     # Everything stays PENDING (no item was driven past the boundary check).
@@ -255,27 +275,45 @@ def test_run_upload_command_verify_true_drives_the_layered_verifier(tmp_path: Pa
     assert sum(result.counts.values()) == 1
 
 
-def test_verify_lever_is_live_wrong_identity_only_fails_when_verifying(tmp_path: Path) -> None:
-    """The lever is genuinely live: the SAME wrong-identity chart COMPLETES with
-    verify=False (NullVerifier passes everything) but routes to PRE_VERIFY_FAILED
-    with verify=True (L2's DOB/name catch fires). Proves verify=True actually
-    swaps in the LayeredVerifier rather than the default pass-through."""
+def test_verify_is_the_safe_default_and_no_verify_is_an_explicit_opt_out(tmp_path: Path) -> None:
+    """Verification is ON by default: the SAME wrong-identity chart is caught at
+    L2 and routed to PRE_VERIFY_FAILED with the DEFAULT command (no verify arg),
+    and only COMPLETES when the operator EXPLICITLY opts out with verify=False.
+    Proves the default swaps in the LayeredVerifier (not the pass-through) and
+    that --no-verify is a live escape hatch."""
     pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
-    # (a) Default (verify off): the wrong-identity chart still COMPLETES — the
-    #     ladder is not consulted, only the engine's banner gate (which the
-    #     FakeDestination passes for this patient).
-    out_off = _write_verifiable_manifest(tmp_path / "off", _BAD_LINES)
-    off = run_upload_command(UploadCommand(out_dir=out_off), lambda: _readable_dest())
-    assert off.aborted_reason is None
-    assert off.counts.get(UploadState.COMPLETED.value) == 1
-
-    # (b) verify on: the SAME wrong-identity chart is caught at L2 and routed to
-    #     PRE_VERIFY_FAILED before any bytes are sent.
+    # (a) DEFAULT (verify on): the wrong-identity chart is caught at L2 and routed
+    #     to PRE_VERIFY_FAILED before any bytes are sent — nothing is filed.
     out_on = _write_verifiable_manifest(tmp_path / "on", _BAD_LINES)
     dest_on = _readable_dest()
-    on = run_upload_command(UploadCommand(out_dir=out_on, verify=True), lambda: dest_on)
+    on = run_upload_command(UploadCommand(out_dir=out_on), lambda: dest_on)
     assert on.aborted_reason is None
     assert on.counts.get(UploadState.PRE_VERIFY_FAILED.value) == 1
     assert on.counts.get(UploadState.COMPLETED.value, 0) == 0
-    # Caught before any upload happened — nothing was filed at the destination.
     assert dest_on.uploads == []
+
+    # (b) Explicit opt-out (--no-verify): the operator accepts an unverified
+    #     upload, so the ladder is not consulted and the chart COMPLETES (only the
+    #     engine's banner gate runs, which the FakeDestination passes here).
+    out_off = _write_verifiable_manifest(tmp_path / "off", _BAD_LINES)
+    off = run_upload_command(UploadCommand(out_dir=out_off, verify=False), lambda: _readable_dest())
+    assert off.aborted_reason is None
+    assert off.counts.get(UploadState.COMPLETED.value) == 1
+
+
+def test_verify_defaults_on() -> None:
+    """The safe default: a command built without a verify arg verifies."""
+    assert UploadCommand(out_dir=Path("unused")).verify is True
+
+
+def test_verify_on_without_render_extra_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify on + PyMuPDF unavailable => the run REFUSES (fail closed), never
+    files unverified. Nothing touches the destination."""
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES)  # built while fitz is real
+    monkeypatch.setitem(sys.modules, "fitz", None)  # now `import fitz` raises ImportError
+    dest = _readable_dest()
+    with pytest.raises(VerificationUnavailableError):
+        run_upload_command(UploadCommand(out_dir=out), lambda: dest)
+    assert dest.uploads == []  # refused before any browser/upload work
