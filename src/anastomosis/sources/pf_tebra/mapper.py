@@ -59,7 +59,7 @@ from anastomosis.core.textutil import (
 from anastomosis.core.timeutil import age_at, parse_date, parse_dt
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
-from .loader import Export, Row
+from .loader import KNOWN_TABLES, Export, Row, UnsupportedTablesError
 
 __all__ = ["map_export"]
 
@@ -887,8 +887,57 @@ def _map_facilities(export: Export) -> list[Facility]:
 # --- assembly --------------------------------------------------------------------
 
 
+def _unmapped_tables(
+    export: Export, patient_guids: frozenset[str]
+) -> dict[str, dict[str, list[Row]]]:
+    """Account for EVERY table the mapper does not consume — losslessly.
+
+    Returns ``{patient_guid: {table_name: [rows verbatim]}}`` for unmapped tables
+    whose every row attributes to a KNOWN patient via ``PatientPracticeGuid``;
+    the mapper stashes those rows in the owning patient's ``extensions`` so no
+    field is dropped. A table with rows that cannot ALL be attributed to a known
+    patient (no patient-key column, a null key, or a guid absent from
+    patient-demographics) cannot be placed in the per-patient model, so the run
+    is refused (:class:`UnsupportedTablesError`) — failing closed beats silently
+    discarding clinical data. Empty tables are ignored (nothing to lose).
+    """
+    by_patient: dict[str, dict[str, list[Row]]] = {}
+    orphans: list[str] = []
+    for table in sorted(set(export) - set(KNOWN_TABLES)):
+        rows = export[table]
+        if not rows:
+            continue
+        grouped = _by(rows, "PatientPracticeGuid")
+        attributed = sum(len(group) for group in grouped.values())
+        if attributed != len(rows) or any(guid not in patient_guids for guid in grouped):
+            orphans.append(table)
+            continue
+        for guid, guid_rows in grouped.items():
+            by_patient.setdefault(guid, {})[table] = guid_rows
+    if orphans:
+        raise UnsupportedTablesError(sorted(orphans))
+    return by_patient
+
+
 def map_export(export: Export) -> Iterator[PatientRecord]:
     """Join the loaded tables into one PatientRecord per patient."""
+    # Losslessness: account for every table the mapper does not consume before
+    # producing any record (so a refusal happens cleanly, before partial output).
+    patient_guids = frozenset(
+        guid
+        for demo_row in export["patient-demographics"]
+        if (guid := _s(demo_row, "PatientPracticeGuid")) is not None
+    )
+    unmapped_by_patient = _unmapped_tables(export, patient_guids)
+    if unmapped_by_patient:
+        preserved = sorted({table for tables in unmapped_by_patient.values() for table in tables})
+        # Table NAMES are schema, not PHI — safe to log; row values are not logged.
+        logger.info(
+            "pf_tebra: preserved %d unmapped table(s) into extensions: %s",
+            len(preserved),
+            preserved,
+        )
+
     practitioners = _map_practitioners(export)
     facilities = _map_facilities(export)
     plan_types = _PlanTypeLookup(export["superbill-insurances"])
@@ -937,6 +986,11 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
                 len(all_encounters),
             )
             record_extensions[f"{SOURCE}:skipped_encounters"] = skipped
+
+        # Preserve every unmapped table's rows verbatim (lossless), keyed by table
+        # name, so no field the adapter does not yet map is dropped.
+        for table_name, table_rows in unmapped_by_patient.get(guid, {}).items():
+            record_extensions[f"{SOURCE}:unmapped:{table_name}"] = table_rows
 
         observations = [_map_observation(row) for row in obs_by_patient.get(guid, [])]
         for encounter in encounters:

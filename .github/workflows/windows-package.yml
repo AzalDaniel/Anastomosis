@@ -35,6 +35,10 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 120
+    # Expose the resolved package version so the tag-gated release job can assert
+    # the pushed tag matches it without re-installing the package.
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v6
 
@@ -77,12 +81,40 @@ jobs:
         # bundled Chromium is not actually present in the frozen build.
         run: dist\anast\anast.exe doctor
 
+      - name: Self-check the FROZEN GUI bundle (Anastomosis.exe --self-check)
+        # The GUI bundle is the Start-menu target and carries its OWN copy of
+        # every data asset + Chromium, so it must be self-checked too — the CLI
+        # `anast doctor` above only proves the CLI bundle. The GUI exe is built
+        # with console mode "disable" (GUI subsystem), and PowerShell's `&` does
+        # NOT wait for / capture the exit code of a GUI-subsystem process (it
+        # returns immediately, leaving $LASTEXITCODE empty). Start-Process -Wait
+        # -PassThru reliably waits and reads .ExitCode regardless of subsystem;
+        # stdout is redirected to a file so the per-check lines still show.
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\gui-selfcheck.out"
+          $p = Start-Process -FilePath dist\Anastomosis\Anastomosis.exe `
+            -ArgumentList '--self-check' -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $out
+          if (Test-Path $out) { Get-Content $out }
+          if ($p.ExitCode -ne 0) {
+            throw "GUI bundle self-check failed (exit $($p.ExitCode))"
+          }
+
       - name: Download the WebView2 bootstrapper
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
             -OutFile "build\MicrosoftEdgeWebview2Setup.exe"
+          # Supply-chain gate: trust this bootstrapper only if Windows reports a
+          # VALID Authenticode signature AND the signer is Microsoft — a tampered
+          # or unsigned download (e.g. a poisoned mirror) fails the build here
+          # instead of being baked into the installer.
+          $sig = Get-AuthenticodeSignature build\MicrosoftEdgeWebview2Setup.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {
+            throw 'invalid WebView2 bootstrapper signature'
+          }
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -149,6 +181,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Assert the pushed tag matches the package version
+        # Guard the write-scoped upload: refuse to publish if the tag that
+        # triggered this run does not equal `v` + the version the build job
+        # resolved from the package. A mistyped/stale tag fails here rather than
+        # attaching the installer to the wrong release.
+        shell: bash
+        run: |
+          expected="v${{ needs.build.outputs.version }}"
+          if [ "${{ github.ref_name }}" != "$expected" ]; then
+            echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+            exit 1
+          fi
+          echo "tag '${{ github.ref_name }}' matches package version '$expected'"
+
       - name: Download the built installer
         uses: actions/download-artifact@v4
         with:
@@ -156,7 +202,9 @@ jobs:
           path: installer
 
       - name: Attach it to the release
-        uses: softprops/action-gh-release@v2
+        # Third-party action pinned to a full commit SHA (supply-chain hardening
+        # for this write-scoped job); first-party actions/* stay on major tags.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: installer/*.exe
           fail_on_unmatched_files: true

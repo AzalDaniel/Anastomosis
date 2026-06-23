@@ -122,7 +122,7 @@ def test_happy_path_all_completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     pack_root = _pack_dir(tmp_path)
     monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
 
-    result = _invoke(out_dir, pack_root)
+    result = _invoke(out_dir, pack_root, "--no-verify")  # drive test; stub PDFs
 
     assert result.exit_code == 0, result.output
     counts = _ledger_states(out_dir)
@@ -158,7 +158,7 @@ def test_resume_no_double_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         "_make_destination",
         lambda cdp, loaded: FakeDestination(_known(), existing=shared, crash_after=1),
     )
-    first = _invoke(out_dir, pack_root)
+    first = _invoke(out_dir, pack_root, "--no-verify")  # drive/resume test; stub PDFs
     # The crash propagated out of the run (no clean exit).
     assert first.exit_code != 0
 
@@ -168,7 +168,7 @@ def test_resume_no_double_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         "_make_destination",
         lambda cdp, loaded: FakeDestination(_known(), existing=shared),
     )
-    second = _invoke(out_dir, pack_root)
+    second = _invoke(out_dir, pack_root, "--no-verify")
 
     counts = _ledger_states(out_dir)
     # Every item terminal, none failed; completed + duplicate == N.
@@ -194,7 +194,7 @@ def test_skiplist_item_skipped_never_uploaded(
     dest = FakeDestination(_known())
     monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: dest)
 
-    result = _invoke(out_dir, pack_root, "--skiplist", str(skip))
+    result = _invoke(out_dir, pack_root, "--skiplist", str(skip), "--no-verify")
 
     assert result.exit_code == 0, result.output
     counts = _ledger_states(out_dir)
@@ -392,30 +392,32 @@ def _capture_cmd(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return captured
 
 
-def test_verify_flag_threads_into_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_verify_flag_threads_into_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
     monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
     captured = _capture_cmd(monkeypatch)
 
-    result = _invoke(out_dir, pack_root, "--verify")
+    result = _invoke(out_dir, pack_root, "--no-verify")
+
+    assert result.exit_code == 0, result.output
+    cmd = captured["cmd"]
+    assert cmd.verify is False  # type: ignore[union-attr]  — explicit opt-out
+
+
+def test_verify_defaults_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_dir = _write_manifest(tmp_path)
+    pack_root = _pack_dir(tmp_path)
+    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    captured = _capture_cmd(monkeypatch)
+
+    result = _invoke(out_dir, pack_root)  # no flag — the SAFE default is on
 
     assert result.exit_code == 0, result.output
     cmd = captured["cmd"]
     assert cmd.verify is True  # type: ignore[union-attr]
-
-
-def test_verify_defaults_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    out_dir = _write_manifest(tmp_path)
-    pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
-    captured = _capture_cmd(monkeypatch)
-
-    result = _invoke(out_dir, pack_root)  # no --verify
-
-    assert result.exit_code == 0, result.output
-    cmd = captured["cmd"]
-    assert cmd.verify is False  # type: ignore[union-attr]
 
 
 def test_manifest_found_under_charts_subdir(
@@ -441,6 +443,6 @@ def test_manifest_found_under_charts_subdir(
     pack_root = _pack_dir(tmp_path)
     monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known(2)))
 
-    result = _invoke(out_dir, pack_root)
+    result = _invoke(out_dir, pack_root, "--no-verify")  # drive test; stub PDFs
     assert result.exit_code == 0, result.output
     assert _ledger_states(out_dir).get(UploadState.COMPLETED.value) == 2
