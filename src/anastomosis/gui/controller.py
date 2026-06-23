@@ -480,7 +480,7 @@ class GuiController:
         pack_dirs: list[str] | None = None,
         skiplist: list[str] | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        verify: bool = False,
+        verify: bool = True,
     ) -> dict[str, object]:
         """Drive the resumable browser upload engine over a CDP attach (async).
 
@@ -1177,7 +1177,14 @@ class GuiController:
             finally:
                 self._release()
 
-        threading.Thread(target=_worker, name="anast-migration", daemon=True).start()
+        try:
+            threading.Thread(target=_worker, name="anast-migration", daemon=True).start()
+        except Exception as exc:
+            # A spawn failure (e.g. thread exhaustion) must not propagate to the
+            # bridge nor leak the busy flag — release and return the error dict,
+            # exactly as the other async methods do.
+            self._release()
+            return self._fail("run_migration", exc)
         return {"ok": True, "started": True}
 
     # --- internals ----------------------------------------------------------

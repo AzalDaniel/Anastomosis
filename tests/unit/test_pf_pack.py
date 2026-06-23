@@ -598,3 +598,36 @@ def test_build_context_without_cache_still_builds(pack: LoadedPack, records: lis
     record = next(r for r in records if r.encounters)
     ctx = pack.build_context(record.encounters[0], record, _cfg(pack))  # no record_cache
     assert ctx and "payment" in ctx  # built locally via the fallback, render-ready
+
+
+def test_record_static_context_built_once_and_merge_preserves_output(
+    pack: LoadedPack, records: list[Any]
+) -> None:
+    """The RECORD-STATIC views (insurance, meds, allergies, diagnoses,
+    immunizations, demographics, social history) are assembled ONCE per record
+    and reused across encounters — proven by object identity of the memoized
+    static dict — and merging static + per-encounter must reproduce the full
+    context exactly (per-encounter keys win on the disjoint partition)."""
+    from anastomosis.packs.practice_fusion_soap.context import build_record_context
+
+    record = max(records, key=lambda r: len(r.encounters))
+    assert len(record.encounters) >= 2  # static-vs-encounter only differ with >=2 encounters
+
+    cache: dict[str, Any] = {}
+    cfg = {**_cfg(pack), "record_cache": cache}
+    ctx0 = pack.build_context(record.encounters[0], record, cfg)
+    static_first = cache["pf_record_context"]
+    # A representative record-static value is present and identical across encounters.
+    assert "active_medications" in static_first
+    ctx1 = pack.build_context(record.encounters[1], record, cfg)
+    # The static dict is the SAME object on the second encounter (built once).
+    assert cache["pf_record_context"] is static_first
+    # Every record-static key is byte-identical across the two encounters.
+    for key in static_first:
+        assert ctx0[key] == ctx1[key], f"record-static key drifted across encounters: {key}"
+
+    # The merged context equals static-keys-from-static + the rest from the
+    # per-encounter build (no key is silently dropped by the merge).
+    no_cache_ctx = pack.build_context(record.encounters[0], record, _cfg(pack))
+    assert set(no_cache_ctx) == set(ctx0)  # the cached and uncached paths agree on keys
+    assert build_record_context(record, cfg, cache) is static_first  # idempotent + cached

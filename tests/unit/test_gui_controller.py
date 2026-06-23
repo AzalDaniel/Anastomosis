@@ -1501,7 +1501,7 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
     sink = _RecordingSink()
     controller = GuiController(sink)
     started = controller.upload_start(
-        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
     )
     assert started == {"ok": True, "started": True}
 
@@ -1544,6 +1544,7 @@ def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.Monkey
         _UPLOAD_DEST,
         pack_dirs=[str(pack_root)],
         skiplist=["enc-1", "# a comment", "  "],  # blank + comment are dropped
+        verify=False,  # this test drives the skiplist mechanics, not verification
     )
     assert started == {"ok": True, "started": True}
 
@@ -1582,7 +1583,7 @@ def test_upload_start_rejects_non_loopback_cdp(
     assert seam_calls["n"] == 0  # the seam is never reached past the loopback gate
     # The busy guard was never held — a clean loopback start now succeeds.
     second = controller.upload_start(
-        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
     )
     assert second == {"ok": True, "started": True}
     # Drain the spawned worker so its daemon thread does not outlive the test.
@@ -1702,6 +1703,17 @@ class _ExplodingThread:
             "source",
             id="source_init_async",
         ),
+        pytest.param(
+            "run_migration_async",
+            {
+                "export_dir": str(FIXTURE),
+                "out_dir": "out",
+                "source": "pf-tebra",
+                "destination": "tebra",
+            },
+            "run_migration",  # _fail("run_migration", ...) channel
+            id="run_migration_async",
+        ),
     ],
 )
 def test_async_spawn_failure_is_clean_error_and_releases_busy(
@@ -1760,8 +1772,8 @@ def _capture_upload_command(monkeypatch: pytest.MonkeyPatch) -> dict[str, object
     return captured
 
 
-def test_upload_start_threads_verify_true(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """upload_start(..., verify=True) threads verify into the UploadCommand."""
+def test_upload_start_threads_no_verify(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """upload_start(..., verify=False) threads the explicit opt-out into the command."""
     from anastomosis.deliver.browser.fake import FakeDestination
 
     out_dir = _write_upload_manifest(tmp_path)
@@ -1776,15 +1788,15 @@ def test_upload_start_threads_verify_true(tmp_path: Path, monkeypatch: pytest.Mo
     sink = _RecordingSink()
     controller = GuiController(sink)
     started = controller.upload_start(
-        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=True
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
     )
     assert started == {"ok": True, "started": True}
     _wait_for_terminal_upload(sink)
-    assert captured["cmd"].verify is True  # type: ignore[union-attr]
+    assert captured["cmd"].verify is False  # type: ignore[union-attr]
 
 
-def test_upload_start_verify_defaults_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The verify lever defaults OFF — no verify arg means an unchanged drive."""
+def test_upload_start_verify_defaults_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The verify lever defaults ON — no verify arg means the safe, verified drive."""
     from anastomosis.deliver.browser.fake import FakeDestination
 
     out_dir = _write_upload_manifest(tmp_path)
@@ -1803,7 +1815,7 @@ def test_upload_start_verify_defaults_off(tmp_path: Path, monkeypatch: pytest.Mo
     )
     assert started == {"ok": True, "started": True}
     _wait_for_terminal_upload(sink)
-    assert captured["cmd"].verify is False  # type: ignore[union-attr]
+    assert captured["cmd"].verify is True  # type: ignore[union-attr]
 
 
 def test_upload_start_spawn_failure_releases_busy_and_clears_stop(

@@ -25,6 +25,7 @@ import anastomosis.sources.ccda
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra
 from anastomosis.core.presentation import Glyphs, terminal_glyphs
+from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -704,7 +705,7 @@ def upload_cmd(
     ] = None,
     max_attempts: Annotated[
         int, typer.Option("--max-attempts", help="Retry budget per item before FAILED.")
-    ] = 3,
+    ] = DEFAULT_MAX_ATTEMPTS,
     pack_dir: Annotated[
         list[Path] | None,
         typer.Option("--pack-dir", help="Extra directories to find the destination pack in."),
@@ -714,11 +715,13 @@ def upload_cmd(
         typer.Option(
             "--verify/--no-verify",
             help=(
-                "Run the L0-L6 verification ladder around each upload (needs the "
-                "render extra). The engine's wrong-patient banner check is always on."
+                "Run the L0-L6 verification ladder around each upload (ON by "
+                "default; needs the render extra and fails closed without it). "
+                "Pass --no-verify to file WITHOUT the ladder — the engine's "
+                "wrong-patient banner check still runs either way."
             ),
         ),
-    ] = False,
+    ] = True,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Skip the shared-machine attach confirmation."),
@@ -740,6 +743,7 @@ def upload_cmd(
 
     from anastomosis.core.upload_command import (
         UploadCommand,
+        VerificationUnavailableError,
         resolve_manifest_root,
         run_upload_command,
     )
@@ -811,6 +815,10 @@ def upload_cmd(
     )
     try:
         result = run_upload_command(cmd, lambda: _make_destination(cdp, loaded))
+    except VerificationUnavailableError as exc:
+        # Fail closed: verification was requested but its dependency is missing.
+        console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
     except OutputLockedError as exc:
         console.print(f"[red]{_escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from None
