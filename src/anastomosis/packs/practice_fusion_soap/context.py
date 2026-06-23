@@ -526,72 +526,48 @@ def _social_history_context(patient: Patient, index: _RecordViewIndex) -> dict[s
     }
 
 
-def build_context(
-    encounter: Encounter, record: PatientRecord, cfg: dict[str, Any]
+def build_record_context(
+    record: PatientRecord, cfg: dict[str, Any], record_cache: dict[str, Any]
 ) -> dict[str, Any]:
+    """The RECORD-STATIC half of the context — everything that depends only on
+    the record / patient / cfg, NOT on the encounter.
+
+    Built ONCE per record and memoized in ``record_cache`` (so a 30-encounter
+    chart assembles these views once, not 30 times). ``build_context`` merges
+    this with the per-encounter half; the two key sets are disjoint, so the
+    merge is order-independent and the rendered output is byte-identical to the
+    prior per-encounter assembly. ``meds_as_of`` is render-day (GOLD §5#9) —
+    identical across a record's encounters within one render run.
+    """
+    cached: dict[str, Any] | None = record_cache.get("pf_record_context")
+    if cached is not None:
+        return cached
+
     tz = str(cfg.get("timezone", "America/New_York"))
     sections: dict[str, bool] = cfg.get("sections", {})
     tokens: dict[str, str] = cfg.get("tokens", {})
     pack_root: Path = Path(cfg.get("pack_root", Path(__file__).resolve().parent))
     patient = record.patient
-    dos = encounter.date_of_service  # calendar date — never timezone-shifted
-    # Record-level groupings, built ONCE per record and memoized in the engine's
-    # per-record cache (so a 30-encounter chart builds them once, not 30 times).
-    # CONTRACT: record_cache is per-record — the engine allocates a fresh dict
-    # for each record. A caller must not share one cache across DIFFERENT records
-    # (that would mis-render the second). Absent a cache, it builds locally.
-    cache = cfg.get("record_cache")
-    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+
+    # Record-level groupings, one pass each (the index is itself memoized so a
+    # direct caller of build_record_context still pays for it only once).
     index = record_cache.get("pf_view_index")
     if index is None:
-        index = _RecordViewIndex.build(record)  # record-level groupings, one pass each
+        index = _RecordViewIndex.build(record)
         record_cache["pf_view_index"] = index
-
-    # --- header: patient / facility / encounter --------------------------------
-    age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
-    facility = record.facility(encounter.facility_id)
-    seen_by = record.practitioner(encounter.provider_id)
-    signer = record.practitioner(encounter.signed_by_id)
-    prn = _ext(patient, "PatientContactCode") or _ext(patient, "PRN")
-    city_state_zip = None
-    if facility:
-        bits = [facility.city, facility.state, facility.postal_code]
-        city_state_zip = " ".join(p for p in bits if p) or None
 
     # --- demographics (the unified 6-col table) --------------------------------
     demo = _demographics(patient)
+    prn = _ext(patient, "PatientContactCode") or _ext(patient, "PRN")
 
-    # --- insurance -------------------------------------------------------------
+    # --- insurance / payment ---------------------------------------------------
     active_cov = index.active_coverages
     inactive_cov = index.inactive_coverages
-
-    # --- payment / guarantor ---------------------------------------------------
     payment = _payment(patient.guarantor)
-
-    # --- vitals ----------------------------------------------------------------
-    # observations grouped by encounter once per record (the indexed form of
-    # observations_for); .get(id, []) == observations_for(id) exactly.
-    obs_by_encounter = record_cache.get("obs_by_encounter")
-    if obs_by_encounter is None:
-        obs_by_encounter = record.observations_by_encounter()
-        record_cache["obs_by_encounter"] = obs_by_encounter
-    enc_vitals = [
-        o
-        for o in obs_by_encounter.get(encounter.id, [])
-        if o.category == ObservationCategory.VITAL_SIGNS
-    ]
-    enc_vital_rows = _encounter_vital_rows(enc_vitals)
-    vitals_obs_dt = next((o.effective_at for o in enc_vitals if o.effective_at), None)
-
-    # vitals flowsheet — prior encounters only, most-recent 10 columns (GOLD §8).
-    # The vital-by-encounter scan is built ONCE per record (memoized in
-    # record_cache); only the per-encounter DOS cutoff is applied here.
-    flowsheet_columns, flowsheet_rows = _build_flowsheet(record, dos, record_cache)
 
     # --- diagnoses -------------------------------------------------------------
     current_dx = [_dx_view(c) for c in index.active_conditions]
     historical_dx = [_dx_view(c) for c in index.historical_conditions]
-    encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
 
     # --- allergies -------------------------------------------------------------
     drug_allergies = _allergy_views(index.allergies_by_category.get(AllergyCategory.DRUG, []))
@@ -606,13 +582,6 @@ def build_context(
     ]
     # "as of" = render-day, NOT encounter date (GOLD §5#9).
     meds_as_of = _dt.date.today().strftime("%m/%d/%Y")  # noqa: DTZ011 — display-only render-day
-
-    # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
-    soap = {s.kind: s for s in encounter.sections}
-    subjective = soap.get(SectionKind.SUBJECTIVE) or soap.get(SectionKind.NARRATIVE)
-    objective = soap.get(SectionKind.OBJECTIVE)
-    assessment = soap.get(SectionKind.ASSESSMENT)
-    plan = soap.get(SectionKind.PLAN)
 
     # --- past medical history --------------------------------------------------
     pmh_sections = [
@@ -645,6 +614,117 @@ def build_context(
     active_goals = [_concern_view(g) for g in index.active_goals]
     inactive_goals = [_concern_view(g) for g in index.inactive_goals]
 
+    static: dict[str, Any] = {
+        # patient identity (record-level)
+        "patient_name": patient.display_name or "Unknown patient",
+        "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
+        "sex": patient.sex,
+        "prn": prn,
+        "demo": demo,
+        "patient_notes": patient.notes,
+        # section flags (a pure function of cfg's sections — constant per record)
+        **_section_flags(sections),
+        # insurance / payment
+        "active_insurance": [_coverage_view(c) for c in active_cov],
+        "inactive_insurance": [_coverage_view(c) for c in inactive_cov],
+        "payment": payment,
+        # flowsheet patient name (the column/row data is per-encounter)
+        "flowsheet_patient_name": patient.display_name or "",
+        # diagnoses / allergies
+        "current_diagnoses": current_dx,
+        "historical_diagnoses": historical_dx,
+        "diag_recon_text": None,  # LOUD: no reconciliation column in EHI
+        "allergy_recon_text": None,  # LOUD: same; falls to "No selection made"
+        "drug_allergies": drug_allergies,
+        "food_allergies": food_allergies,
+        "env_allergies": env_allergies,
+        # medications
+        "active_medications": active_meds,
+        "historical_medications": historical_meds,
+        "meds_as_of": meds_as_of,
+        "med_recon_text": "No selection made",  # GOLD §5#10 (hard-coded)
+        # immunizations
+        "immunizations": [_immunization_view(i, tz) for i in record.immunizations],
+        # social history
+        **_social_history_context(patient, index),
+        # PMH / family / directives / devices / concerns / goals
+        "pmh_sections": pmh_sections,
+        "family_history": family_history,
+        "family_history_freetext": None,
+        "advance_directives": advance_directives,
+        "implantable_devices": implantable_devices,
+        "active_concerns": active_hc,
+        "inactive_concerns": inactive_hc,
+        "active_goals": active_goals,
+        "inactive_goals": inactive_goals,
+        # screenings (events not modeled in EHI -> empty state)
+        "screening_events": [],  # LOUD: patient-encounter-events not modeled yet
+        # logo + tokens
+        "logo_data_uri": _logo_data_uri(tokens, pack_root),
+        "tokens": tokens,
+    }
+    record_cache["pf_record_context"] = static
+    return static
+
+
+def build_context(
+    encounter: Encounter, record: PatientRecord, cfg: dict[str, Any]
+) -> dict[str, Any]:
+    tz = str(cfg.get("timezone", "America/New_York"))
+    patient = record.patient
+    dos = encounter.date_of_service  # calendar date — never timezone-shifted
+    # CONTRACT: record_cache is per-record — the engine allocates a fresh dict
+    # for each record. A caller must not share one cache across DIFFERENT records
+    # (that would mis-render the second). Absent a cache, it builds locally.
+    cache = cfg.get("record_cache")
+    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+
+    # Record-static views (insurance, payment, diagnoses, allergies, meds,
+    # immunizations, social history, demographics, …) are independent of the
+    # encounter: build them ONCE per record and reuse across every encounter.
+    static = build_record_context(record, cfg, record_cache)
+    index = record_cache["pf_view_index"]  # populated by build_record_context
+
+    # --- header: patient / facility / encounter --------------------------------
+    age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
+    facility = record.facility(encounter.facility_id)
+    seen_by = record.practitioner(encounter.provider_id)
+    signer = record.practitioner(encounter.signed_by_id)
+    city_state_zip = None
+    if facility:
+        bits = [facility.city, facility.state, facility.postal_code]
+        city_state_zip = " ".join(p for p in bits if p) or None
+
+    # --- vitals ----------------------------------------------------------------
+    # observations grouped by encounter once per record (the indexed form of
+    # observations_for); .get(id, []) == observations_for(id) exactly.
+    obs_by_encounter = record_cache.get("obs_by_encounter")
+    if obs_by_encounter is None:
+        obs_by_encounter = record.observations_by_encounter()
+        record_cache["obs_by_encounter"] = obs_by_encounter
+    enc_vitals = [
+        o
+        for o in obs_by_encounter.get(encounter.id, [])
+        if o.category == ObservationCategory.VITAL_SIGNS
+    ]
+    enc_vital_rows = _encounter_vital_rows(enc_vitals)
+    vitals_obs_dt = next((o.effective_at for o in enc_vitals if o.effective_at), None)
+
+    # vitals flowsheet — prior encounters only, most-recent 10 columns (GOLD §8).
+    # The vital-by-encounter scan is built ONCE per record (memoized in
+    # record_cache); only the per-encounter DOS cutoff is applied here.
+    flowsheet_columns, flowsheet_rows = _build_flowsheet(record, dos, record_cache)
+
+    # --- diagnoses attached to this encounter ----------------------------------
+    encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
+
+    # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
+    soap = {s.kind: s for s in encounter.sections}
+    subjective = soap.get(SectionKind.SUBJECTIVE) or soap.get(SectionKind.NARRATIVE)
+    objective = soap.get(SectionKind.OBJECTIVE)
+    assessment = soap.get(SectionKind.ASSESSMENT)
+    plan = soap.get(SectionKind.PLAN)
+
     # --- orders ----------------------------------------------------------------
     lab_orders = [
         {"test_items": [{"display": i.test_name} for i in o.items if i.test_name]}
@@ -664,13 +744,9 @@ def build_context(
         if (a.text or "").strip()
     ]
 
-    return {
-        # header / patient
-        "patient_name": patient.display_name or "Unknown patient",
-        "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
+    encounter_specific: dict[str, Any] = {
+        # header / facility / encounter
         "age": age,
-        "sex": patient.sex,
-        "prn": prn,
         "fac_name": facility.name if facility else None,
         "fac_phone": facility.phone if facility else None,
         "fac_fax": facility.fax if facility else None,
@@ -687,63 +763,27 @@ def build_context(
         "signed_by_credential": signer.credential if signer else None,
         "signed_at": _fmt_signed_at(encounter.signed_at, tz),
         "cc_text": encounter.chief_complaint,
-        "demo": demo,
-        "patient_notes": patient.notes,
-        # section flags
-        **_section_flags(sections),
-        # insurance / payment
-        "active_insurance": [_coverage_view(c) for c in active_cov],
-        "inactive_insurance": [_coverage_view(c) for c in inactive_cov],
-        "payment": payment,
         # vitals
         "enc_vitals_rows": enc_vital_rows,
         "vitals_date": _fmt_date_short(dos),
         "vitals_time": _fmt_time(vitals_obs_dt, tz),
-        "flowsheet_patient_name": patient.display_name or "",
         "flowsheet_columns": flowsheet_columns,
         "flowsheet_rows": flowsheet_rows,
         "flowsheet_vitals_label": bool(flowsheet_columns),
-        # diagnoses / allergies
-        "current_diagnoses": current_dx,
-        "historical_diagnoses": historical_dx,
+        # diagnoses attached to this encounter
         "encounter_diagnoses": encounter_dx,
-        "diag_recon_text": None,  # LOUD: no reconciliation column in EHI
-        "allergy_recon_text": None,  # LOUD: same; falls to "No selection made"
-        "drug_allergies": drug_allergies,
-        "food_allergies": food_allergies,
-        "env_allergies": env_allergies,
-        # medications
-        "active_medications": active_meds,
-        "historical_medications": historical_meds,
-        "meds_as_of": meds_as_of,
-        "med_recon_text": "No selection made",  # GOLD §5#10 (hard-coded)
-        # immunizations
-        "immunizations": [_immunization_view(i, tz) for i in record.immunizations],
-        # social history
-        **_social_history_context(patient, index),
         # SOAP
         "subjective_html": subjective.html if subjective else None,
         "objective_html": objective.html if objective else None,
         "assessment_html": assessment.html if assessment else None,
         "plan_html": plan.html if plan else None,
-        # PMH / family / directives / devices / concerns / goals
-        "pmh_sections": pmh_sections,
-        "family_history": family_history,
-        "family_history_freetext": None,
-        "advance_directives": advance_directives,
-        "implantable_devices": implantable_devices,
-        "active_concerns": active_hc,
-        "inactive_concerns": inactive_hc,
-        "active_goals": active_goals,
-        "inactive_goals": inactive_goals,
-        # orders / screenings (events not modeled in EHI -> empty state)
+        # orders
         "lab_orders": lab_orders,
-        "screening_events": [],  # LOUD: patient-encounter-events not modeled yet
-        # addenda + logo + tokens
+        # addenda
         "addendums": addendums,
-        "logo_data_uri": _logo_data_uri(tokens, pack_root),
-        "tokens": tokens,
     }
+    # Disjoint key sets: the merge is order-independent and output is unchanged.
+    return {**static, **encounter_specific}
 
 
 # --- small view helpers --------------------------------------------------------

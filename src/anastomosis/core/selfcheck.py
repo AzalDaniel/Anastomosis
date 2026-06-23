@@ -70,10 +70,27 @@ def _check_registry() -> AssetCheck:
 
 
 def _check_tebra_pack() -> AssetCheck:
-    try:
-        from anastomosis.destinations.loader import load_destination_pack
+    """The BUNDLED tebra browser-pack scaffold (its ``pack.yaml``), specifically.
 
-        load_destination_pack("tebra", [])  # the bundled tebra browser-pack scaffold
+    Resolves the built-in pack by its package path
+    (``importlib.resources.files("anastomosis.destinations") / "tebra"`` — the
+    same anchor the registry uses for its packaged data) and loads THAT exact
+    directory, NOT through the user-pack-override-respecting precedence. A
+    user-supplied ``tebra`` pack must not mask a missing built-in: this check
+    fails iff the BUNDLED pack is absent/broken, even when a user pack exists.
+    """
+    try:
+        from importlib.resources import files
+
+        from anastomosis.destinations.loader import _PACK_FILE, load_destination_pack
+
+        builtin_dir = Path(str(files("anastomosis.destinations") / "tebra"))
+        if not _readable(builtin_dir / _PACK_FILE):
+            return AssetCheck("tebra destination pack", False, "bundled pack.yaml missing")
+        # Point the loader straight at the bundled directory so its defensive
+        # parsing still validates the manifest, but precedence cannot let a user
+        # pack stand in for the built-in one.
+        load_destination_pack("tebra", [builtin_dir])
     except Exception as exc:
         return AssetCheck("tebra destination pack", False, type(exc).__name__)
     return AssetCheck("tebra destination pack", True, "loaded")

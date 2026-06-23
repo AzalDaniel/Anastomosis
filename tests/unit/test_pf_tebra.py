@@ -3,6 +3,7 @@
 Each test asserts one trap documented in tests/fixtures/pf_tebra_v9/README.md.
 """
 
+import shutil
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.sources import get_source
+from anastomosis.sources.pf_tebra.loader import UnsupportedTablesError
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -69,6 +71,45 @@ def test_lossless_extensions_carry_unmapped_columns(records: dict[str, PatientRe
     assert "pf_tebra:FirstName" not in ada.extensions
     boris = records[P2].patient
     assert "pf_tebra:MothersMaidenName" not in boris.extensions  # was \N
+
+
+def _export_with_extra_table(
+    dst: Path, table: str, header: list[str], rows: list[list[str]]
+) -> Path:
+    """Copy the fixture and drop in one extra TSV — used to exercise unmapped tables."""
+    shutil.copytree(FIXTURE, dst)
+    lines = ["\t".join(header), *("\t".join(row) for row in rows)]
+    (dst / f"{table}.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dst
+
+
+def test_unmapped_patient_keyed_table_is_preserved_in_extensions(tmp_path: Path) -> None:
+    """A table the adapter does not map is preserved verbatim per patient, not dropped."""
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-procedures",
+        ["PatientPracticeGuid", "ProcedureName", "ProcedureCode"],
+        [[P1, "Appendectomy", "44970"]],
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+    assert loaded[P1].extensions["pf_tebra:unmapped:patient-procedures"] == [
+        {"PatientPracticeGuid": P1, "ProcedureName": "Appendectomy", "ProcedureCode": "44970"}
+    ]
+    # A patient with no row in the unmapped table gains no such key.
+    assert "pf_tebra:unmapped:patient-procedures" not in loaded[P2].extensions
+
+
+def test_unmapped_orphan_table_refuses_the_run(tmp_path: Path) -> None:
+    """A table with data but no patient key fails closed — never silently discarded."""
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "practice-codebook",
+        ["CodeId", "Description"],
+        [["X1", "a practice-level lookup with no patient key"]],
+    )
+    with pytest.raises(UnsupportedTablesError) as exc:
+        list(get_source("pf-tebra").load(export))
+    assert "practice-codebook" in str(exc.value)
 
 
 def test_sentinel_cells_mean_absent(records: dict[str, PatientRecord]) -> None:

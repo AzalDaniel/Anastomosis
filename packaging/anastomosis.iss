@@ -79,6 +79,16 @@ Name: "{group}\Uninstall Anastomosis"; Filename: "{uninstallexe}"
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
   ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\cli"; \
   Tasks: addtopath; Check: NeedsAddPath('{app}\cli')
+; Installer-owned marker: written under the SAME task + Check conditions as the
+; PATH append above, so it exists IFF this installer actually added the segment
+; (not when the task was unchecked, nor when the dir was already on PATH).
+; CurUninstallStepChanged consults it and strips the segment only when we own it,
+; so a pre-existing/manual entry is never corrupted. uninsdeletevalue removes the
+; marker on uninstall; uninsdeletekeyifempty tidies the empty key afterwards.
+Root: HKLM; Subkey: "Software\Anastomosis"; ValueType: dword; \
+  ValueName: "PathAdded"; ValueData: 1; \
+  Tasks: addtopath; Check: NeedsAddPath('{app}\cli'); \
+  Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Run]
 ; Install the Edge WebView2 Runtime only when it is not already present (the GUI
@@ -133,6 +143,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Cur, Seg: string;
   P: Integer;
+  Marker: Cardinal;
 begin
   // Strip the CLI directory we may have appended to the machine PATH. Without
   // this an "add to PATH" install would leave a dead segment behind forever.
@@ -140,6 +151,14 @@ begin
   // as NeedsAddPath does on the way in, so a sibling like '...\cli2' can never
   // be partially matched and a correct PATH is never mangled.
   if CurUninstallStep <> usUninstall then
+    exit;
+  // Gate on the installer-owned marker ([Registry]): only strip the segment if
+  // WE actually added it. If the marker is absent (task unchecked, or the dir
+  // already pre-existed so NeedsAddPath returned False and we never appended),
+  // leave PATH untouched — the segment belongs to the user, not to us.
+  if not RegQueryDWordValue(HKLM, 'Software\Anastomosis', 'PathAdded', Marker) then
+    exit;
+  if Marker <> 1 then
     exit;
   if not RegQueryStringValue(HKLM, EnvKey, 'Path', Cur) then
     exit;

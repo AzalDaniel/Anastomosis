@@ -288,19 +288,19 @@ def test_console_drives_uploads_only_through_controller() -> None:
         assert call not in js, f"console.js must not invoke {call!r} (controller owns writes)"
 
 
-def test_console_offers_optin_verify_checkbox() -> None:
-    """The console exposes the opt-in L0-L6 verification ladder as a checkbox.
+def test_console_verify_checkbox_defaults_on() -> None:
+    """The console exposes the L0-L6 verification ladder as a checkbox.
 
-    The lever is OFF by default (an unchecked checkbox) and its value is passed
-    as the `verify` argument to upload_start — the GUI parity for the CLI's
-    `anast upload --verify`. The checkbox must not ship pre-checked.
+    The lever is ON by default (a pre-checked checkbox — verifying is the safe
+    default; unchecking is the explicit `--no-verify` opt-out) and its value is
+    passed as the `verify` argument to upload_start — the GUI parity for the CLI.
     """
     html = (WEB / "console.html").read_text(encoding="utf-8")
     js = (WEB / "console.js").read_text(encoding="utf-8")
     assert 'id="verify-uploads"' in html, "console.html must host the verify checkbox"
-    # Default OFF: the checkbox input is not pre-checked.
+    # Default ON: the checkbox input ships pre-checked.
     checkbox = re.search(r'<input[^>]*id="verify-uploads"[^>]*>', html)
-    assert checkbox is not None and "checked" not in checkbox.group(0)
+    assert checkbox is not None and "checked" in checkbox.group(0)
     # The checkbox value is read and threaded into the drive call.
     assert "verify-uploads" in js
     assert "verify" in js
