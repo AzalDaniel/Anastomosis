@@ -76,16 +76,39 @@ parentheses.
 - Upload `max_attempts` is unified to 3 across the CLI and GUI, the GUI gains a
   `--skiplist`, and the GUI now acquires the busy-guard and output lock BEFORE
   reading the upload manifest, closing a lock-then-read race. (#58)
-- The four GUI async methods (`run_pipeline_async`, `pack_init_async`,
-  `source_init_async`, `upload_start`) now guard the worker-thread spawn: if
-  `Thread.start()` fails, they release the busy flag and return a clean error
-  dict instead of propagating to the bridge and wedging the GUI in "Busy".
-- **Windows installer "add to PATH" correctness:** the optional task now writes
-  the MACHINE `Path` (the install is per-machine/elevated, so the per-user HKCU
-  hive would have been the elevating admin's, not the user's); the entry is
-  stripped on uninstall (delimiter-anchored, so a sibling dir is never mangled);
-  and `ChangesEnvironment=yes` broadcasts the change so a new shell sees `anast`
-  without a logout.
+- All five GUI async methods (`run_pipeline_async`, `run_migration_async`,
+  `pack_init_async`, `source_init_async`, `upload_start`) now guard the
+  worker-thread spawn: if `Thread.start()` fails, they release the busy flag and
+  return a clean error dict instead of propagating to the bridge and wedging the
+  GUI in "Busy".
+- **No silent table loss in the Practice Fusion adapter.** The loader now reads
+  EVERY `*.tsv` in an export (not just the 30 it maps); the mapper preserves each
+  unmapped table's rows verbatim in the owning patient's `extensions`, and refuses
+  the run (`UnsupportedTablesError`) when a table's rows cannot be attributed to a
+  known patient — failing closed rather than discarding clinical data (e.g. an
+  unmapped `patient-procedures` table).
+- **Upload verification is ON by default and fails closed.** `anast upload` (and
+  the GUI) now run the L0-L6 wrong-chart/wrong-patient ladder unless the operator
+  explicitly passes `--no-verify`; if the render extra the ladder needs is absent,
+  the run is refused rather than filing unverified. Filing into the wrong chart is
+  worse than not filing.
+- **Upload lock fences the migrate layout too.** `run_upload_command` now locks
+  both the output dir AND the resolved manifest root (a `migrate` writes/locks the
+  manifest under `<out>/charts`, a different lock dir), closing the lock-then-read
+  race for that layout.
+- **Windows installer "add to PATH" correctness:** the optional task writes the
+  MACHINE `Path` (the install is per-machine/elevated, so the per-user HKCU hive
+  would have been the elevating admin's, not the user's); it records an
+  installer-owned marker and strips the entry on uninstall ONLY when that marker
+  is present (delimiter-anchored), so a pre-existing or manually-added entry is
+  never removed; and `ChangesEnvironment=yes` broadcasts the change so a new shell
+  sees `anast` without a logout.
+- **Windows package integrity:** CI now self-checks the FROZEN GUI bundle
+  (`Anastomosis.exe --self-check`, the Start-menu target), not only the CLI bundle;
+  the `anast doctor` tebra-pack check targets the BUNDLED pack specifically (a user
+  pack can no longer mask a missing built-in); the WebView2 bootstrapper download
+  is Authenticode-verified (signer = Microsoft); the release action is pinned to a
+  commit SHA; and a release tag is asserted to equal `v<version>`.
 
 ## [0.2.0] — 2026-06-15
 

@@ -15,17 +15,20 @@ it prints/logs nothing patient-derived, and the ledger + report stay inside the
 0700 output dir. The operator's browser is NEVER closed — only our own ledger
 handle is.
 
-Verification is OPT-IN: ``UploadCommand.verify`` (default ``False``) decides
-whether the engine runs behind the L0-L6 :class:`LayeredVerifier` or the
-default pass-through :class:`NullVerifier`. With verify off this path never
-imports PyMuPDF (the ``render`` extra the verifier needs); the engine's banner
-wrong-patient abort runs in BOTH cases — it is the engine's own guard, not a
-verifier level.
+Verification is ON by default and fails CLOSED: ``UploadCommand.verify`` (default
+``True``) runs the engine behind the L0-L6 :class:`LayeredVerifier` — the
+wrong-chart/wrong-patient defense. Filing a chart that does not match its patient
+is worse than not filing it, so an operator must EXPLICITLY pass ``--no-verify``
+to skip the ladder, and if the verification dependency (PyMuPDF, the ``render``
+extra) is missing the run is REFUSED (:class:`VerificationUnavailableError`)
+rather than silently filing unverified. The engine's banner wrong-patient abort
+runs regardless of this flag — it is the engine's own guard, not a verifier level.
 """
 
 from __future__ import annotations
 
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,9 +41,21 @@ __all__ = [
     "LEDGER_NAME",
     "UploadCommand",
     "UploadCommandResult",
+    "VerificationUnavailableError",
     "resolve_manifest_root",
     "run_upload_command",
 ]
+
+
+class VerificationUnavailableError(RuntimeError):
+    """``verify=True`` was requested but the verification dependency is missing.
+
+    Fail closed: rather than file charts UNVERIFIED, the run refuses. Install the
+    render extra (``pip install 'anastomosis[render]'``), or pass ``--no-verify``
+    to explicitly accept an unverified upload (the engine's wrong-patient banner
+    check still runs).
+    """
+
 
 # The retry budget per item before it is marked FAILED — ONE default for BOTH
 # frontends (they previously diverged: the CLI used 3, the GUI 4).
@@ -58,12 +73,14 @@ class UploadCommand:
     out_dir: Path
     skiplist: frozenset[str] = field(default_factory=frozenset)
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    # Opt-in: run the L0-L6 verification ladder (:class:`LayeredVerifier`)
-    # around each upload. Default OFF — the engine falls back to the
-    # pass-through :class:`NullVerifier`, and PyMuPDF (the ``render`` extra the
-    # ladder reads PDFs with) is never imported. The engine's banner
-    # wrong-patient abort runs regardless of this flag.
-    verify: bool = False
+    # Run the L0-L6 verification ladder (:class:`LayeredVerifier`) around each
+    # upload. Default ON: filing a chart into the wrong patient is worse than not
+    # filing it, so verification is the safe default and skipping it
+    # (``--no-verify``) is an explicit operator choice. When on and the render
+    # extra the ladder needs is missing, the run fails closed
+    # (:class:`VerificationUnavailableError`) — never files unverified. The
+    # engine's banner wrong-patient abort runs regardless of this flag.
+    verify: bool = True
 
 
 @dataclass
@@ -128,10 +145,32 @@ def run_upload_command(
     from anastomosis.deliver.browser.tracking import TrackingDB
     from anastomosis.destinations.base import Destination
 
+    # Fail closed BEFORE touching the browser: if verification is on but the
+    # dependency that reads the PDFs is missing, refuse rather than file unverified.
+    if cmd.verify:
+        try:
+            import fitz  # noqa: F401 — PyMuPDF; the L0-L6 ladder reads PDFs with it
+        except ImportError as exc:
+            raise VerificationUnavailableError(
+                "upload verification (on by default) needs the render extra: "
+                "pip install 'anastomosis[render]' — or pass --no-verify to file "
+                "without the L0-L6 ladder (the engine's wrong-patient banner check "
+                "still runs)."
+            ) from exc
+
+    manifest_root = resolve_manifest_root(cmd.out_dir)
     secure_output_dir(cmd.out_dir)
-    with output_lock(cmd.out_dir):
+    with ExitStack() as stack:
+        # Lock the output dir AND the manifest root. A `migrate` writes (and
+        # locks) the manifest under <out>/charts — a DIFFERENT directory with a
+        # different .anast.lock than <out> — so locking only <out> would still
+        # race the producer (the TOCTOU the review caught). Locking the sorted,
+        # de-duplicated set fences both: sorted so two paths never deadlock,
+        # de-duplicated so a collapsed (manifest-under-<out>) layout locks once.
+        for target in sorted({cmd.out_dir.resolve(), manifest_root.resolve()}):
+            stack.enter_context(output_lock(target))
         # Lock-then-read: the authoritative manifest is the one under the lock.
-        items, patients = read_upload_manifest(resolve_manifest_root(cmd.out_dir))
+        items, patients = read_upload_manifest(manifest_root)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol
         managed = ManagedDestination(destination)
