@@ -20,9 +20,11 @@ Anastomosis is the missing last mile, free and open source:
 
 1. **Ingest** raw EHI exports — Practice Fusion/Tebra TSV, C-CDA/CCD, FHIR R4
    (Bundle or Bulk-Data NDJSON), Oracle Health/Cerner Millennium V500 dumps —
-   into a lossless canonical model, every unmapped field preserved. Meet an
-   export it doesn't recognize? **Teach it that format from a single example**,
-   and it maps to the canonical model from then on.
+   into a lossless canonical model: every unmapped field, and every unmapped
+   table the export carries, is preserved verbatim in `extensions`; an export
+   carrying data that cannot be placed is refused rather than silently dropped.
+   Meet an export it doesn't recognize? **Teach it that format from a single
+   example**, and it maps to the canonical model from then on.
 2. **Reconstruct** human-readable clinical documents from template packs: a
    neutral SOAP layout, a standard HL7 C-CDA stylesheet view, or a
    sample-learned vendor replica (the Practice Fusion pack reproduces that

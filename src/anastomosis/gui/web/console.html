@@ -98,14 +98,15 @@
         </div>
         <div class="confirm-row">
           <label class="toggle">
-            <input type="checkbox" id="verify-uploads" />
+            <input type="checkbox" id="verify-uploads" checked />
             <span class="track"></span>
             <span>Verify uploads (L0–L6)</span>
           </label>
         </div>
         <div class="muted">
-          Run the verification ladder around each upload (needs the render extra).
-          The wrong-patient banner check is always on, verified or not.
+          Run the verification ladder around each upload (ON by default; needs the
+          render extra and refuses to run without it). Unchecking files WITHOUT the
+          ladder — the wrong-patient banner check is always on, verified or not.
         </div>
         <div class="muted">
           The output directory above (manifest + ledger) is the upload source.
