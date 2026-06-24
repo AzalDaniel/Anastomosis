@@ -233,8 +233,9 @@ async function onStartUpload() {
   const skiplist = skiplistEl
     ? skiplistEl.value.split("\n").map((s) => s.trim()).filter((s) => s.length > 0)
     : [];
-  // Opt-in L0-L6 verification ladder (off by default). The wrong-patient banner
-  // check runs regardless; this only adds the file/identity/round-trip levels.
+  // L0-L6 verification ladder (ON by default — the box ships pre-checked;
+  // unchecking opts out). The wrong-patient banner check runs regardless; this
+  // toggles the file/identity/round-trip levels.
   const verifyEl = el("verify-uploads");
   const verify = !!(verifyEl && verifyEl.checked);
   setStatus("starting upload…");
