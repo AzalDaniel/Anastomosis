@@ -31,9 +31,9 @@ Anastomosis is the missing last mile, free and open source:
    chart's layout and typography — or learn a new layout from your own sample
    PDFs).
 3. **Verify** every rendered document with a multi-layer QA engine
-   (data-integrity, layout, and identity checks), and guard every upload with a
-   live wrong-patient banner check — with a full L0–L6 verification ladder
-   available (`anast upload --verify`).
+   (data-integrity, layout, and identity checks), and guard every upload with the
+   full L0–L6 verification ladder — on by default (`--no-verify` to skip) — plus a
+   live wrong-patient banner check that runs regardless.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. A cross-EHR migration moves the **structured C-CDA/FHIR payload** the
@@ -242,11 +242,12 @@ src/anastomosis/
   (sources + destinations).
 - **Verification is the core product, not a test.** A migration that puts the
   right notes in the wrong chart is worse than no migration. So the QA engine
-  verifies every rendered document, the delivery path guards every upload with
-  a live wrong-patient banner check, and the full L0–L6 ladder is available
-  (`anast upload --verify`) — boundary-anchored and identity-based, because
-  the naive matches (substring, whole-page similarity) demonstrably false-pass
-  the exact failures these checks exist to catch.
+  verifies every rendered document, and the delivery path runs the full L0–L6
+  ladder around every upload by default (`--no-verify` to skip; a missing render
+  extra refuses rather than files unverified) plus a live wrong-patient banner
+  check — boundary-anchored and identity-based, because the naive matches
+  (substring, whole-page similarity) demonstrably false-pass the exact failures
+  these checks exist to catch.
 - **Packs and registries make a vendor change a one-module event.** Source
   adapters, template packs, QA checks, and destinations are versioned modules
   behind defensive registries; the capability registry is data with cited

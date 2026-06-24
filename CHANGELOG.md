@@ -9,7 +9,7 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-06-22
+## [0.3.0] — 2026-06-24
 
 The third alpha. Packages the toolkit as a downloadable Windows application — a
 normal installer that bundles its own Python runtime and Chromium (with no
@@ -41,14 +41,13 @@ parentheses.
   instead of reaching an operator. (#63)
 - A standalone GUI entry point (`anastomosis.gui.__main__` plus a `gui-scripts`
   console entry) that the installed Start-menu shortcut targets. (#63)
-- **Opt-in L0–L6 verification ladder around uploads** (`anast upload --verify`
-  and a GUI "Verify uploads" toggle) — the implemented `LayeredVerifier`
-  (`deliver/verify/`) is now reachable from both frontends through the shared
-  upload command: L0 file integrity, L1 page/size, L2 document identity
-  (fuzzy name ≥0.88 + DOB hard-fail), and, after upload, L5 metadata and L6
-  round-trip read-back. Default off (so the `render` extra stays off the default
-  path); the engine's live wrong-patient banner abort runs on every upload
-  regardless.
+- **L0–L6 verification ladder around uploads** (`anast upload` + a GUI "Verify
+  uploads" toggle) — the implemented `LayeredVerifier` (`deliver/verify/`) is now
+  reachable from both frontends through the shared upload command: L0 file
+  integrity, L1 page/size, L2 document identity (fuzzy name ≥0.88 + DOB
+  hard-fail), and, after upload, L5 metadata and L6 round-trip read-back. It runs
+  by default (see Fixed); the engine's live wrong-patient banner abort runs on
+  every upload regardless.
 
 ### Changed
 
