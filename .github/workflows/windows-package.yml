@@ -181,6 +181,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the repo (for the CHANGELOG release notes)
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Assert the pushed tag matches the package version
         # Guard the write-scoped upload: refuse to publish if the tag that
         # triggered this run does not equal `v` + the version the build job
@@ -195,6 +200,24 @@ jobs:
           fi
           echo "tag '${{ github.ref_name }}' matches package version '$expected'"
 
+      - name: Extract this version's CHANGELOG section as the release notes
+        # Slice the `## [<version>] — <date>` section out of CHANGELOG.md (up to
+        # the next `## [` header) so the GitHub release body is the curated notes.
+        # generate_release_notes (below) appends GitHub's auto PR list to this.
+        shell: bash
+        run: |
+          ver="${{ needs.build.outputs.version }}"
+          awk -v ver="$ver" '
+            $0 ~ ("^## \\[" ver "\\]") {flag=1; print; next}
+            flag && /^## \[/ {exit}
+            flag {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "no CHANGELOG section for $ver; falling back to generated notes only" >&2
+            printf 'Anastomosis %s\n' "$ver" > RELEASE_NOTES.md
+          fi
+          echo "----- release notes -----"; cat RELEASE_NOTES.md
+
       - name: Download the built installer
         uses: actions/download-artifact@v4
         with:
@@ -208,3 +231,7 @@ jobs:
         with:
           files: installer/*.exe
           fail_on_unmatched_files: true
+          # The curated CHANGELOG section, with GitHub's auto-generated "What's
+          # Changed" PR list appended after it.
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
