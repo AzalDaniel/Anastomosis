@@ -5,11 +5,11 @@ verification ladder — the L0-L6 checks, of which L4 (the banner readback) is t
 wrong-patient defense — IS implemented, in :mod:`anastomosis.deliver.verify`
 (``composite.py`` + ``levels.py``), behind exactly this protocol. The engine
 itself is untouched: it calls this small protocol, so the verifier can be the
-default :class:`NullVerifier` (pass-through, used when verification is not
-requested) or the real :class:`~anastomosis.deliver.verify.LayeredVerifier`,
-which is wired OPT-IN through :class:`~anastomosis.core.upload_command.UploadCommand`'s
-``verify`` flag (``anast upload --verify`` / the GUI's "Verify uploads"
-checkbox).
+default :class:`NullVerifier` (pass-through, used only when verification is
+explicitly skipped) or the real :class:`~anastomosis.deliver.verify.LayeredVerifier`,
+wired through :class:`~anastomosis.core.upload_command.UploadCommand`'s ``verify``
+flag — which is ON by default (``anast upload`` / the GUI's pre-checked "Verify
+uploads" box); ``--no-verify`` / unchecking selects the pass-through.
 
 The engine's banner wrong-patient abort runs BEFORE the verifier and regardless
 of which verifier is in place — it is the engine's own safety gate, not a
@@ -51,15 +51,15 @@ class Verifier(Protocol):
 
 
 class NullVerifier:
-    """A verifier that passes everything — the DEFAULT pass-through.
+    """A verifier that passes everything — the explicit-skip pass-through.
 
-    Used when verification is not requested (``UploadCommand.verify`` is
-    ``False``, the default). The real L0-L6 ladder is
-    :class:`anastomosis.deliver.verify.LayeredVerifier`, wired opt-in via
-    ``UploadCommand.verify`` / ``anast upload --verify``; with verify off the
-    engine falls back to this, and the ``render`` extra the ladder needs is
-    never imported. The engine's banner wrong-patient abort runs regardless of
-    which verifier is in place.
+    Used only when verification is explicitly skipped (``UploadCommand.verify``
+    is ``False`` — ``--no-verify`` / the unchecked GUI box); verification is ON
+    by default. The real L0-L6 ladder is
+    :class:`anastomosis.deliver.verify.LayeredVerifier`, wired via
+    ``UploadCommand.verify``; with verify off the engine falls back to this and
+    the ``render`` extra the ladder needs is never imported. The engine's banner
+    wrong-patient abort runs regardless of which verifier is in place.
     """
 
     def verify_pre(self, item: UploadItem, patient: Patient) -> None:

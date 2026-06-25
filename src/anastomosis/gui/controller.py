@@ -499,9 +499,9 @@ class GuiController:
         comments are ignored. ``max_attempts`` is the per-item retry budget,
         defaulting to the SHARED :data:`~anastomosis.core.upload_command.DEFAULT_MAX_ATTEMPTS`
         both frontends now use (they previously diverged). ``verify`` (default
-        ``False``, the GUI parity for the CLI's ``--verify``) opts into the
-        L0-L6 verification ladder around each upload; the engine's wrong-patient
-        banner abort runs regardless.
+        ``True``, the GUI parity for the CLI's ``--verify``/``--no-verify``) runs
+        the L0-L6 verification ladder around each upload; set it ``False`` to
+        skip the ladder. The engine's wrong-patient banner abort runs regardless.
 
         Safety model (never weakened — the engine enforces it; this only drives):
 

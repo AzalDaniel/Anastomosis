@@ -216,9 +216,10 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     resumability]/batch/manager/cdp/parallel/errors/reports/manifest/skiplist)
     with FakeDestination test double; kill-and-resume test.
 11. ✅ `deliver/verify/` L0–L6 ladder (L2 fuzzy ≥0.88 + DOB hard-fail; L3 pack-driven
-    header fields; L4 banner check = the wrong-patient defense). Wired opt-in into
-    the upload path via `anast upload --verify` / the GUI verify toggle (0.3.0); the
-    engine's banner wrong-patient abort runs on every upload regardless.
+    header fields; L4 banner check = the wrong-patient defense). Wired into the
+    upload path and ON by default (`--no-verify` to skip; fail-closed without the
+    render extra) / a GUI verify toggle (0.3.0); the engine's banner wrong-patient
+    abort runs on every upload regardless.
 12. ✅ `destinations/tebra/` pack + `anast destination init` discovery wizard +
     capability registry + **`deliver/router.py`** (shortest-path selection).
 13. ✅ `deliver/fhir_api/` pusher (HAPI/Medplum CI service container) +
