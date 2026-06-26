@@ -223,6 +223,11 @@ async function onStartUpload() {
   const outDir = el("out-dir").value;
   const cdpUrl = el("cdp-url").value;
   const packName = el("pack-name").value;
+  // Extra pack directory (optional) — GUI parity for the CLI's --pack-dir, so a
+  // custom destination pack works here too (was hard-coded null before).
+  const packDirEl = el("upload-pack-dir");
+  const packDir = packDirEl ? packDirEl.value.trim() : "";
+  const packDirs = packDir ? [packDir] : null;
   if (!outDir || !cdpUrl || !packName) {
     showBanner("Provide an output directory, a loopback CDP endpoint, and a pack name.");
     return;
@@ -244,7 +249,7 @@ async function onStartUpload() {
       outDir,
       cdpUrl,
       packName,
-      null,
+      packDirs,
       skiplist.length ? skiplist : null,
       DEFAULT_MAX_ATTEMPTS,
       verify,
