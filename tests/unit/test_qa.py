@@ -1,6 +1,8 @@
 """QA engine tests: a good document passes, and every mutation in the
 corpus trips exactly the check built to catch it."""
 
+import os
+import stat
 from datetime import date
 from pathlib import Path
 
@@ -176,6 +178,18 @@ def test_report_json(tmp_path: Path) -> None:
     assert payload["summary"]["pass"] == 1
     assert payload["documents"][0]["verdict"] == "pass"
     assert payload["documents"][0]["encounter_id"] == ENC
+
+
+def test_write_report_hardens_its_output_dir(tmp_path: Path) -> None:
+    """The report embeds findings that can carry patient names, so write_report
+    secures its own output dir to 0o700 rather than trusting the caller — a
+    direct caller passing an un-hardened dir must not expose PHI."""
+    out = tmp_path / "unhardened"
+    out.mkdir()  # default perms, NOT secured
+    report = _qa(make_pdf(out / "good.pdf", GOOD_LINES))
+    write_report(report, out)
+    if os.name == "posix":
+        assert stat.S_IMODE(out.stat().st_mode) == 0o700
 
 
 def test_worst_verdict_wins_mixed_warn_and_fail(tmp_path: Path) -> None:
