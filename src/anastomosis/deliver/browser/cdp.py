@@ -91,8 +91,15 @@ class CdpEndpoint:
             )
 
 
-def connect_over_cdp(endpoint: CdpEndpoint) -> Any:  # pragma: no cover - needs playwright
-    """Attach to the browser at ``endpoint`` over CDP and return the browser.
+def connect_over_cdp(endpoint: CdpEndpoint) -> tuple[Any, Any]:  # pragma: no cover
+    """Attach over CDP; return ``(playwright, browser)`` — BOTH owned for teardown.
+
+    Returning the Playwright instance too (not just the browser) is what lets the
+    caller release OUR resources when the run ends: ``browser.close()`` disconnects
+    the CDP session (per Playwright's docs it does NOT close a browser obtained via
+    ``connect_over_cdp`` — the operator's Chrome keeps running) and
+    ``playwright.stop()`` ends the driver subprocess. Without the Playwright handle
+    the driver leaks. The operator's browser/context is NEVER closed.
 
     Playwright is imported lazily here so the module (and its validation) work
     without the ``deliver-browser`` extra; a missing install raises a
@@ -108,4 +115,5 @@ def connect_over_cdp(endpoint: CdpEndpoint) -> Any:  # pragma: no cover - needs 
             "playwright is required for browser delivery — install anastomosis[deliver-browser]"
         ) from exc
     playwright = sync_playwright().start()
-    return playwright.chromium.connect_over_cdp(endpoint.url)
+    browser = playwright.chromium.connect_over_cdp(endpoint.url)
+    return playwright, browser

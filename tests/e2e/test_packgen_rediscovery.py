@@ -125,7 +125,17 @@ def test_rediscovers_body_font_family_and_eleven_point_level(analysis) -> None: 
     """
     scale = analysis.type_scale
     assert scale.body_font is not None
-    assert "Serif" in (scale.body_font or ""), scale.body_font
+    # Cross-platform font-name reality: Chromium maps the pack's generic
+    # ``serif`` CSS family to whatever serif face the host OS ships, and the
+    # rendered/embedded PostScript name varies by platform. Linux returns a
+    # "...Serif" name (e.g. DejaVu/Liberation Serif), but Windows returns
+    # "TimesNewRomanPSMT" (Times New Roman) — a serif face whose name contains
+    # no "Serif" substring. Assert membership in a small set of known serif
+    # family markers so we still prove a SERIF (not a sans/mono) was
+    # rediscovered, without pinning to one platform's naming.
+    _SERIF_MARKERS = ("Serif", "Times", "Georgia", "Garamond", "Cambria", "Roman")
+    body_font = scale.body_font or ""
+    assert any(marker in body_font for marker in _SERIF_MARKERS), body_font
     sizes = {round(lvl.size, 1) for lvl in scale.levels if not lvl.bold}
     assert any(abs(s - 11.0) <= 0.5 for s in sizes), sorted(sizes)
 

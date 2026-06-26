@@ -47,7 +47,7 @@ window.anastEvent = function anastEvent(e) {
     case "done":
       Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
       finishRun();
-      loadPatients();
+      loadPatients(e.summary_id);
       break;
     case "error":
       markStage(e.stage, "error");
@@ -298,6 +298,9 @@ async function onRun() {
     force: !!(el("force") && el("force").checked),
     pack_dirs: packDir ? [packDir] : [],
     trust_new: !!(el("trust-pack") && el("trust-pack").checked),
+    // Write the upload manifest the upload console consumes (GUI parity for the
+    // CLI's `pipeline run --upload-manifest`); off unless the operator asks.
+    write_manifest: !!(el("write-manifest") && el("write-manifest").checked),
   };
   try {
     // Fire-and-forget on a worker thread; results stream back via anastEvent.
@@ -313,7 +316,8 @@ async function onRun() {
       payload.ccda,
       payload.force,
       payload.pack_dirs,
-      payload.trust_new
+      payload.trust_new,
+      payload.write_manifest
     );
     if (started && started.ok === false) {
       showBanner(started.error);
@@ -334,12 +338,14 @@ function gatherDeliver(name) {
 // The `done` event carries counts only; the names/DOB/note-counts are fetched
 // here via last_run_summary() and rendered with textContent (PHI shown locally,
 // never logged). The strict CSP forbids inline anyway.
-async function loadPatients() {
+async function loadPatients(summaryId) {
   if (!hasApi()) {
     return;
   }
   try {
-    const res = await window.pywebview.api.last_run_summary();
+    // Pass the run's own summary id (from its `done` event) so a rapid second
+    // run cannot replace the detail this run is about to show (the summary race).
+    const res = await window.pywebview.api.last_run_summary(summaryId);
     if (res && res.ok) {
       renderPatients(res.patients || []);
     }

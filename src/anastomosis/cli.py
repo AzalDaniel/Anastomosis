@@ -663,11 +663,22 @@ def _make_destination(cdp_url: str, loaded: object) -> object:
     from anastomosis.destinations.loader import LoadedBrowserPack
 
     assert isinstance(loaded, LoadedBrowserPack)
-    browser = connect_over_cdp(CdpEndpoint(cdp_url))
-    # The operator has their EHR open; drive its existing context/page.
+    playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
+    # The operator has their EHR open; drive its existing context/page. We NEVER
+    # close that context/page; on close() we only release OUR owned resources —
+    # disconnect the CDP session (browser.close() does not close a connect_over_cdp
+    # browser) and stop the driver subprocess (in that order, per Playwright).
     page = browser.contexts[0].pages[0]
+
+    def _teardown() -> None:
+        browser.close()
+        playwright.stop()
+
     return BrowserPackDestination(
-        loaded.require_selectors(), PlaywrightPageAdapter(page), loaded.config
+        loaded.require_selectors(),
+        PlaywrightPageAdapter(page),
+        loaded.config,
+        teardown=_teardown,
     )
 
 
@@ -1119,8 +1130,11 @@ def _make_validator(cdp_url: str) -> object:
     from anastomosis.destinations.browserpack import PlaywrightPageAdapter
     from anastomosis.destinations.wizard import CdpSelectorValidator
 
-    browser = connect_over_cdp(CdpEndpoint(cdp_url))
-    # The operator has their EHR open; drive its existing context/page.
+    # The operator has their EHR open; drive its existing context/page. This is
+    # the interactive `destination init --validate` one-shot — the Playwright
+    # driver is reaped at process exit (the upload path owns explicit teardown via
+    # run_upload_command's release()). We never close the operator's context/page.
+    _playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
     context = browser.contexts[0]
     page = context.pages[0]
     return CdpSelectorValidator(PlaywrightPageAdapter(page))

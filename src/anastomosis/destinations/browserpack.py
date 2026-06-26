@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
@@ -362,10 +363,20 @@ class BrowserPackDestination:
     uses — so the engine holds one object.
     """
 
-    def __init__(self, selectors: SelectorMap, page: PageLike, config: BrowserPackConfig) -> None:
+    def __init__(
+        self,
+        selectors: SelectorMap,
+        page: PageLike,
+        config: BrowserPackConfig,
+        *,
+        teardown: Callable[[], None] | None = None,
+    ) -> None:
         self._selectors = selectors
         self._page = page
         self._config = config
+        # Releases OUR Playwright driver + CDP connection on close() — NEVER the
+        # operator's browser. None in standalone/test use (no owned resources).
+        self._teardown = teardown
 
     # --- Destination protocol ---
 
@@ -396,17 +407,38 @@ class BrowserPackDestination:
     # --- Session ---
     #
     # In CDP mode Anastomosis attaches to a browser the OPERATOR launched and
-    # logged into; we never own its lifecycle. open() is therefore a no-op (the
-    # operator already established the session) and close() NEVER closes the
-    # page — closing the operator's browser out from under them would end a
-    # session we do not own. Liveness is simply "the page is not closed".
+    # logged into; we never own ITS lifecycle. open()/close() are no-ops — the
+    # operator already established the session, and closing the page would end a
+    # session we do not own. Crucially close() is ALSO the manager's per-recycle
+    # hook (it close()s then open()s the session every N uploads), so it must NOT
+    # tear down our Playwright driver — doing that mid-run would kill the CDP
+    # connection. Owned-resource teardown is a SEPARATE one-shot: release().
 
     def open(self) -> None:
         return None
 
     def close(self) -> None:
-        # Deliberately a no-op: we never own the operator's browser in CDP mode.
+        # Deliberately a no-op: we never own the operator's browser, and this is
+        # the manager's per-recycle hook (see release() for owned teardown).
         return None
+
+    def release(self) -> None:
+        """Release OUR owned Playwright driver + CDP connection — once, at run end.
+
+        Distinct from :meth:`close` (the manager's per-recycle hook): the upload
+        command calls this exactly once when the whole run finishes. The teardown
+        closure does ``browser.close()`` (which, per Playwright, only DISCONNECTS
+        a ``connect_over_cdp`` browser — the operator's Chrome keeps running) then
+        ``playwright.stop()`` (ends the driver subprocess). NEVER touches the
+        operator's context/page. Best-effort: a teardown hiccup is logged by type
+        and swallowed so it cannot mask the run's outcome.
+        """
+        if self._teardown is None:
+            return
+        try:
+            self._teardown()
+        except Exception as exc:  # teardown is best-effort; never mask the run result
+            logger.warning("CDP teardown failed (%s)", exc_tag(exc))
 
     def is_alive(self) -> bool:
         return not self._page.is_closed()
