@@ -439,3 +439,58 @@ def _columns(db: TrackingDB, table: str) -> list[str]:
     finally:
         conn.close()
     return [row["name"] for row in rows]
+
+
+# --- schema hardening (post-audit) ---
+
+
+def test_items_state_index_exists(db: TrackingDB) -> None:
+    """pending_items()'s ``WHERE state IN (...) ORDER BY item_key`` is covered by
+    the compound idx_items_state, not a full table scan at every resume sweep."""
+    conn = _raw(db)
+    try:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        names = {r["name"] for r in rows}
+    finally:
+        conn.close()
+    assert "idx_items_state" in names
+
+
+def test_transitions_table_is_append_only(db: TrackingDB) -> None:
+    """The transitions audit trail is immutable: DELETE and UPDATE are refused at
+    the database (the module's append-only contract, now enforced by triggers)."""
+    run = db.begin_run("fake")
+    item = _item(1)
+    db.enqueue(item)
+    db.transition(item.item_key, UploadState.RESOLVING_PATIENT, run_id=run)  # writes a transition
+    conn = _raw(db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM transitions").fetchone()[0] >= 1
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("DELETE FROM transitions")
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("UPDATE transitions SET to_state = 'tampered'")
+    finally:
+        conn.close()
+
+
+def test_items_state_check_is_derived_from_the_enum(db: TrackingDB) -> None:
+    """A raw write of an out-of-enum state is refused at the DB boundary, and
+    every real UploadState value is accepted — the CHECK is built from the enum,
+    so the schema and the enum cannot drift apart."""
+    insert = (
+        "INSERT INTO items (item_key,encounter_id,patient_id,file_path,sha256,"
+        "size_bytes,state,created_at,updated_at) "
+    )
+    conn = _raw(db)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            conn.execute(insert + "VALUES ('bad','e','p','/f','s',1,'not_a_state','t','t')")
+        for i, state in enumerate(UploadState):
+            conn.execute(
+                insert + "VALUES (?,?,?,?,?,?,?,?,?)",
+                (f"ok{i}", "e", "p", "/f", "s", 1, state.value, "t", "t"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
