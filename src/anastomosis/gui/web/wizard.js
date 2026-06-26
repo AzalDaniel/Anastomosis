@@ -250,7 +250,7 @@ window.anastEvent = function anastEvent(e) {
     case "done":
       setRunBusy(false);
       showMigrationResult("migration complete — charts + C-CDA payload written.");
-      loadPatients();
+      loadPatients(e.summary_id);
       break;
     case "error":
       setRunBusy(false);
@@ -393,12 +393,14 @@ async function onRunMigration() {
 }
 
 // --- per-patient detail (local display; never on an event) ----------------
-async function loadPatients() {
+async function loadPatients(summaryId) {
   if (!hasApi()) {
     return;
   }
   try {
-    const res = await window.pywebview.api.last_run_summary();
+    // Pass the run's own summary id (from its `done` event) so a rapid second
+    // run cannot replace the detail this run is about to show (the summary race).
+    const res = await window.pywebview.api.last_run_summary(summaryId);
     if (res && res.ok) {
       renderPatients(res.patients || []);
     }

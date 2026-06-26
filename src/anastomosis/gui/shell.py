@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from anastomosis.gui.controller import GuiController
+from anastomosis.gui.controller import GuiApi, GuiController
 
 __all__ = ["launch"]
 
@@ -61,10 +61,13 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
 
     sink = _WindowSink()
     controller = GuiController(sink)
+    # Bind the FACADE (not the raw controller) as js_api: only the async/guarded
+    # run methods + light read queries the front end calls are reachable from JS,
+    # so a page can never invoke a synchronous heavy method and freeze the bridge.
     window = webview.create_window(
         _WINDOW_TITLE,
         url=_INDEX.as_uri(),
-        js_api=controller,
+        js_api=GuiApi(controller),
         width=1100,
         height=820,
         min_size=(820, 600),

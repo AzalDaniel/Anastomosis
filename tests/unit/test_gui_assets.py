@@ -380,3 +380,24 @@ def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
         assert any(n.endswith(f"gui/web/fonts/{font}") for n in names), (
             f"wheel is missing gui/web/fonts/{font}"
         )
+
+
+def test_console_offers_pack_dir_parity() -> None:
+    """The upload console exposes an extra-pack-dir input and threads it into
+    upload_start (was hard-coded null) — GUI parity for `--pack-dir` (codex #2)."""
+    html = (WEB / "console.html").read_text(encoding="utf-8")
+    js = (WEB / "console.js").read_text(encoding="utf-8")
+    assert 'id="upload-pack-dir"' in html
+    assert "upload-pack-dir" in js
+    # the upload_start call passes packDirs (not a hard-coded null for that arg).
+    assert "packDirs" in js
+
+
+def test_dashboard_offers_write_manifest_toggle() -> None:
+    """The dashboard run form offers a 'write upload manifest' toggle and threads
+    it into run_pipeline_async — GUI parity for `pipeline run --upload-manifest`
+    (codex #1), so a GUI run can produce the manifest the upload console needs."""
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    js = (WEB / "app.js").read_text(encoding="utf-8")
+    assert 'id="write-manifest"' in html
+    assert "write_manifest" in js
