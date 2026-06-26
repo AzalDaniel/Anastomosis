@@ -44,6 +44,24 @@ vitals table** (vitals are LOINC-coded rows in
 `patient-encounter-observations.tsv`); SOAP narrative lives directly on
 `patient-encounters.tsv` (`Subjective`/`Objective`/`Assessment`/`Plan`).
 
+Social history (issue #7, **verified against a real Tebra/PF v9 export**):
+free-prose history is the `patient-med-history.tsv` table
+(`PatientPracticeGuid`, `HistoryType`, `ReportedHistory`) — `HistoryType` tags
+each block social / family / major-events, and the adapter maps every block to
+`PastMedicalHistory(kind, text)` (the PF pack renders the `social` block as the
+social-history freetext). Smoking is `patient-smokingstatus.tsv`
+(`TobaccoUseDescription`, date `EffectiveDate`→`RecordedDate` — the clinical
+assessment date is preferred over the administrative entry date; the non-chosen
+date is preserved in `extensions`). **Verified-absent:**
+the structured social-history subcategories the predecessor UI showed as empty
+placeholders — **alcohol use, drug/substance use, physical activity/exercise,
+diet/nutrition, sexual activity, stress, social isolation, violence, pregnancy
+status/intent, food insecurity** — have **no source table or column** in the
+export (the predecessor emitted them as empty strings), so the adapter maps them
+to nothing rather than inventing a column. Education, financial resources,
+occupation/industry, and tribal affiliation DO have their own documented v9
+tables (mapped via `_SOCIAL_TABLES`).
+
 ## Traps deliberately baked in (what the adapter tests assert)
 
 | Trap | Where |
