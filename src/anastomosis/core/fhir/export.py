@@ -66,12 +66,16 @@ def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
     """The lossless tail: source extensions + canonical fields FHIR can't hold."""
     out: list[dict[str, str]] = []
     if model.extensions:
-        out.append({"url": EXT_NS, "valueString": json.dumps(model.extensions, sort_keys=True)})
+        # default=str: extensions is dict[str, Any]; a future adapter could stash
+        # a datetime/Decimal there, and without a fallback json.dumps would raise
+        # at bundle-export time and lose the whole record. The field serializer
+        # below already had this guard; the extensions blob did not.
+        blob = json.dumps(model.extensions, sort_keys=True, default=str)
+        out.append({"url": EXT_NS, "valueString": blob})
     for name, value in fields.items():
         if value is None or value == [] or value == {}:
             continue
-        if True:
-            out.append({"url": FIELD_NS + name, "valueString": json.dumps(value, default=str)})
+        out.append({"url": FIELD_NS + name, "valueString": json.dumps(value, default=str)})
     return out
 
 
