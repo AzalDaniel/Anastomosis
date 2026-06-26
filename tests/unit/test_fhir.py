@@ -218,3 +218,27 @@ def test_round_trip_edge_cases_from_qa_review() -> None:
     from fhir.resources.R4B.bundle import Bundle
 
     Bundle.model_validate(bundle)
+
+
+def test_non_json_serializable_extension_value_survives_export() -> None:
+    """A non-JSON-serializable value in extensions (e.g. a datetime a future
+    adapter might stash) must not crash bundle export and lose the whole record.
+    _exts now serializes the extensions blob with default=str (the per-field
+    serializer already had this guard; the blob did not)."""
+    from datetime import UTC, datetime
+
+    from anastomosis.core.model import Patient
+
+    pid = "feedface-0000-0000-0000-0000000000df"
+    stamp = datetime(2023, 6, 1, 12, 30, tzinfo=UTC)
+    record = PatientRecord(patient=Patient(id=pid, extensions={"src:recorded": stamp}))
+
+    bundle = to_bundle(record)  # must not raise TypeError
+    json.dumps(bundle)  # the bundle stays JSON-serializable
+
+    ext_strings = [
+        x.get("valueString", "")
+        for entry in bundle["entry"]
+        for x in entry["resource"].get("extension", [])
+    ]
+    assert any(str(stamp) in s for s in ext_strings)  # datetime survived, stringified
