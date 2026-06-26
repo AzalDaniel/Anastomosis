@@ -72,6 +72,7 @@ KNOWN_TABLES = (
     "patient-insurances",
     "superbill-insurances",
     "patient-guarantor",
+    "patient-med-history",
     "patient-family-medical-history",
     "patient-family-history-diagnoses",
     "patient-immunizations",

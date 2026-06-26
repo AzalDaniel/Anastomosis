@@ -499,8 +499,12 @@ def _section_flags(sections: dict[str, bool]) -> dict[str, bool]:
 
 
 def _social_history_context(patient: Patient, index: _RecordViewIndex) -> dict[str, Any]:
-    """Social-history block: smoking + free-text come from the record; the rest
-    fall to the template's per-subcategory empty state (not modeled in EHI)."""
+    """Social-history block: smoking + the social free-text block come from the
+    record (`patient-smokingstatus` and the `social`-kind `patient-med-history`
+    block); the structured subcategories below stay None because they are
+    VERIFIED-ABSENT from the EHI export — the predecessor emitted alcohol, drug
+    use, physical activity, diet, sexual activity, stress, etc. as empty
+    placeholders with no source table (issue #7), so we invent nothing."""
     smoking = index.smoking
     return {
         "smoking_status": smoking.value if smoking else None,
