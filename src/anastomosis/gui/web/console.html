@@ -93,6 +93,13 @@
           <input type="text" id="pack-name" placeholder="tebra" />
         </div>
         <div class="field">
+          <!-- Extra pack directory (optional): the GUI parity for the CLI's
+               --pack-dir, so a custom destination pack outside the built-ins is
+               selectable here too (was previously hard-coded null). -->
+          <label for="upload-pack-dir">Extra pack directory (optional)</label>
+          <input type="text" id="upload-pack-dir" placeholder="/path/to/custom/packs" />
+        </div>
+        <div class="field">
           <label for="skiplist">Skiplist (optional) — one item key or encounter id per line; "#" comments ignored</label>
           <textarea id="skiplist" rows="3" placeholder="enc-1234&#10;# a comment&#10;item-key-abcd" spellcheck="false"></textarea>
         </div>

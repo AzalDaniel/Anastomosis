@@ -18,6 +18,7 @@ the *lock* lives only as long as a holder's descriptor.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,7 +37,11 @@ def _try_lock(fd: int) -> bool:
 
     Returns True on success, False if another descriptor already holds it.
     """
-    if os.name == "posix":
+    # Branch on ``sys.platform`` (not ``os.name``): mypy narrows the former and
+    # type-checks only the matching arm per ``--platform``, so the POSIX-only
+    # ``fcntl`` and Windows-only ``msvcrt`` attributes each resolve on their own
+    # platform without spurious attr-defined errors on the other.
+    if sys.platform != "win32":
         import fcntl
 
         try:
@@ -44,28 +49,29 @@ def _try_lock(fd: int) -> bool:
         except OSError:
             return False  # EWOULDBLOCK / EACCES — held by another descriptor
         return True
-    try:
+    else:  # explicit else keeps the win32-only arm a sys.platform guard arm
         import msvcrt
 
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-    except OSError:
-        return False
-    return True
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
 
 
 def _unlock(fd: int) -> None:
-    if os.name == "posix":
+    if sys.platform != "win32":  # see _try_lock for the sys.platform rationale
         import fcntl
 
         fcntl.flock(fd, fcntl.LOCK_UN)
-        return
-    import msvcrt
+    else:
+        import msvcrt
 
-    try:
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-    except OSError:
-        pass  # best-effort: closing the fd below releases the lock regardless
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass  # best-effort: closing the fd below releases the lock regardless
 
 
 @contextmanager

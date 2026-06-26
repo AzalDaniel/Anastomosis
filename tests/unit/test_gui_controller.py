@@ -17,7 +17,7 @@ import pytest
 
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
-from anastomosis.gui.controller import GuiController
+from anastomosis.gui.controller import GuiApi, GuiController
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -199,9 +199,12 @@ def test_last_run_summary_serves_async_run(tmp_path: Path, monkeypatch: pytest.M
     deadline = time.time() + 10
     while time.time() < deadline and (not sink.events or sink.events[-1]["type"] != "done"):
         time.sleep(0.05)
-    assert sink.events[-1]["type"] == "done"
+    done = sink.events[-1]
+    assert done["type"] == "done"
 
-    summary = controller.last_run_summary()
+    # Fetch THIS run's detail by the summary id the done event carries (keyed so a
+    # rapid second run cannot overwrite the slot this fetch reads).
+    summary = controller.last_run_summary(done["summary_id"])
     assert summary["ok"] is True
     patients = summary["patients"]
     assert isinstance(patients, list) and len(patients) == 3
@@ -643,9 +646,10 @@ def test_run_migration_async_started_then_done(
     deadline = time.time() + 10
     while time.time() < deadline and (not sink.events or sink.events[-1]["type"] != "done"):
         time.sleep(0.05)
-    assert sink.events[-1]["type"] == "done"
-    # The per-patient detail is fetchable after done (names there, not in events).
-    summary = controller.last_run_summary()
+    done = sink.events[-1]
+    assert done["type"] == "done"
+    # The per-patient detail is fetchable after done by the run's summary id.
+    summary = controller.last_run_summary(done["summary_id"])
     assert summary["ok"] is True
     assert len(summary["patients"]) == 3  # type: ignore[arg-type]
 
@@ -1854,3 +1858,75 @@ def test_upload_start_spawn_failure_releases_busy_and_clears_stop(
     #     false 'stopping' against a stale flag).
     assert controller._upload_stop is None
     assert controller.upload_stop() == {"ok": False, "error": "NoRun"}
+
+
+# --- codex round 3 fixes ------------------------------------------------------
+
+
+def test_gui_api_facade_exposes_only_safe_methods() -> None:
+    """The pywebview js_api facade exposes the async/light-read surface the JS
+    calls and NOT the synchronous heavy methods (which would block the single
+    bridge thread and freeze the UI) — codex #3."""
+    api = GuiApi(GuiController(_RecordingSink()))
+    exposed = {name for name in dir(api) if not name.startswith("_")}
+    must_have = {
+        "info", "detect", "routes", "destination_status", "pack_freshness",
+        "last_run_summary", "last_pack_result", "last_source_result",
+        "upload_status", "upload_item_keys", "upload_manifest_preview",
+        "upload_safety_notice", "upload_start", "upload_stop",
+        "run_pipeline_async", "run_migration_async", "pack_init_async",
+        "source_init_async",
+    }  # fmt: skip
+    assert must_have <= exposed
+    # The synchronous heavy methods + doctor (which can start Playwright) are NOT
+    # reachable from JS through the facade.
+    for forbidden in ("run_pipeline", "run_migration", "pack_init", "source_init", "doctor"):
+        assert forbidden not in exposed, forbidden
+
+
+def test_run_summaries_are_keyed_per_run_no_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each run's per-patient detail is keyed by its own summary id, so a rapid
+    SECOND run cannot erase the first run's detail before its UI reads it, and a
+    bare last_run_summary() (no id) finds no global slot — codex #4."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+
+    controller.run_pipeline(str(FIXTURE), str(tmp_path / "a"))
+    sid1 = [e for e in sink.events if e["type"] == "done"][-1]["summary_id"]
+    controller.run_pipeline(str(FIXTURE), str(tmp_path / "b"))  # a quick second run
+    sid2 = [e for e in sink.events if e["type"] == "done"][-1]["summary_id"]
+
+    assert sid1 != sid2
+    # The first run's detail is STILL fetchable by its own id after the second run.
+    assert len(controller.last_run_summary(sid1)["patients"]) == 3  # type: ignore[arg-type]
+    assert len(controller.last_run_summary(sid2)["patients"]) == 3  # type: ignore[arg-type]
+    # No global slot: a missing/unknown id yields empty rather than another run's.
+    assert controller.last_run_summary()["patients"] == []
+    assert controller.last_run_summary("nope")["patients"] == []
+
+
+def test_run_pipeline_threads_write_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run_pipeline(write_manifest=...) builds a PipelineCommand with it set — GUI
+    parity for `anast pipeline run --upload-manifest` (codex #1)."""
+    import anastomosis.core.commands as commands
+    from anastomosis.pipeline import PipelineError
+
+    captured: dict[str, object] = {}
+
+    def _fake(cmd: object, on_event: object = None) -> object:
+        captured["cmd"] = cmd
+        raise PipelineError("stop after capture")  # short-circuit; controller catches it
+
+    monkeypatch.setattr(commands, "run_pipeline_command", _fake)
+    controller = GuiController(_RecordingSink())
+
+    controller.run_pipeline(str(FIXTURE), str(tmp_path / "on"), write_manifest=True)
+    assert captured["cmd"].write_manifest is True  # type: ignore[attr-defined]
+    controller.run_pipeline(str(FIXTURE), str(tmp_path / "off"))  # default
+    assert captured["cmd"].write_manifest is False  # type: ignore[attr-defined]

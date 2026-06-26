@@ -108,6 +108,28 @@ parentheses.
   pack can no longer mask a missing built-in); the WebView2 bootstrapper download
   is Authenticode-verified (signer = Microsoft); the release action is pinned to a
   commit SHA; and a release tag is asserted to equal `v<version>`.
+- **GUI dashboard runs can now produce the upload manifest** the upload console
+  consumes (a "write upload manifest" toggle threading `write_manifest` through
+  `run_pipeline_async`) — GUI parity for `pipeline run --upload-manifest`. The
+  upload console also gained the `--pack-dir` parity it was missing (it had
+  hard-coded `null`).
+- **The GUI bridge exposes only safe methods.** A `GuiApi` facade is bound as
+  pywebview's `js_api` instead of the raw controller, so the synchronous heavy
+  methods (`run_pipeline`/`run_migration`/`pack_init`/`source_init`) and `doctor`
+  (which can start Playwright) are no longer callable from JS and cannot freeze
+  the bridge; the front end uses the `*_async` variants.
+- **Per-run GUI result summaries** are keyed by an opaque `summary_id` carried on
+  the `done` event, so a rapid second run can no longer overwrite the per-patient
+  detail the first run's UI is about to read.
+- **Browser-upload teardown owns its Playwright resources.** When a run ends,
+  `run_upload_command` releases the Playwright driver + CDP connection it owns
+  (`browser.close()` then `playwright.stop()`, which per Playwright only
+  disconnect a `connect_over_cdp` browser) — never the operator's EHR browser,
+  and distinct from the manager's per-recycle session `close()`.
+- **Cross-platform CI hygiene:** `core/locking.py` type-checks cleanly under
+  `mypy --platform win32` (the fcntl/msvcrt branches are `sys.platform`-guarded);
+  the packgen body-font e2e test accepts Windows's serif rendering
+  (`TimesNewRomanPSMT`), not only a literal "Serif".
 
 ## [0.2.0] — 2026-06-15
 

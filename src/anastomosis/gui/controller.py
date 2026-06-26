@@ -35,7 +35,8 @@ import threading
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+from uuid import uuid4
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
@@ -144,11 +145,13 @@ class GuiController:
         self._sink = sink
         self._lock = threading.Lock()
         self._busy = False
-        # The most recent run's per-patient detail (display name, DOB, note
-        # counts), held for the dashboard to fetch via last_run_summary() once
-        # the count-only `done` event lands. PHI: local display only, never
-        # logged or emitted. Empty until the first successful run.
-        self._last_patients: list[dict[str, object]] = []
+        # Per-run per-patient detail (display name, DOB, note counts), keyed by an
+        # opaque summary id the `done` event carries, for the dashboard/wizard to
+        # fetch via last_run_summary(summary_id). Keyed (not a single slot) so a
+        # rapid SECOND run cannot overwrite the slot the first run's UI then reads
+        # (the summary race). Bounded to the most recent few. PHI: local display
+        # only, never logged or emitted.
+        self._summaries: dict[str, list[dict[str, object]]] = {}
         # The most recent pack_init_async run's result dict, held for the wizard
         # to fetch via last_pack_result() once the packgen `done` event lands.
         # PHI-safe (static template text, counts, pack config); empty until the
@@ -231,19 +234,39 @@ class GuiController:
         except Exception as exc:
             return self._fail("doctor", exc)
 
-    def last_run_summary(self) -> dict[str, object]:
-        """The most recent run's per-patient detail, for LOCAL dashboard display.
+    def last_run_summary(self, summary_id: str | None = None) -> dict[str, object]:
+        """A run's per-patient detail, for LOCAL dashboard display, by summary id.
 
         The async run path returns immediately with ``{"started": True}`` and
         streams PHI-safe COUNTS back as events; the per-patient roll-up (display
-        name, DOB, #encounters, #notes) is held here for the dashboard to fetch
-        once the ``done`` event lands. These values are PHI by design — they are
-        returned for direct on-screen display on the operator's own machine and
-        are NEVER emitted as events or written to any log. Returns
-        ``{"ok": True, "patients": [...]}``; the list is empty before the first
-        successful run and after a failed run. Never raises.
+        name, DOB, #encounters, #notes) is held here, keyed by the ``summary_id``
+        the ``done`` event carries, for the dashboard/wizard to fetch by that id.
+        Keying by id (not a single slot) means a rapid second run cannot erase or
+        replace the first run's detail before its UI reads it. These values are
+        PHI by design — returned for direct on-screen display on the operator's
+        own machine, NEVER emitted as events or written to any log. Returns
+        ``{"ok": True, "patients": [...]}``; the list is empty for an unknown or
+        missing id. Never raises.
         """
-        return {"ok": True, "patients": list(self._last_patients)}
+        return {"ok": True, "patients": list(self._summaries.get(summary_id or "", []))}
+
+    # Bound how many runs' detail we retain (PHI in memory, local only): keep the
+    # most recent few so a UI fetch right after `done` always finds its run.
+    _SUMMARY_CAP = 16
+
+    def _store_summary(self, patients: list[dict[str, object]]) -> str:
+        """Stash a run's per-patient detail under a fresh opaque id; return the id.
+
+        The id is random hex (never patient-derived) and rides the `done` event;
+        the front end passes it back to :meth:`last_run_summary`. Oldest entries
+        are evicted past ``_SUMMARY_CAP`` so PHI does not accumulate unbounded.
+        """
+        summary_id = uuid4().hex
+        self._summaries[summary_id] = patients
+        while len(self._summaries) > self._SUMMARY_CAP:
+            oldest = next(iter(self._summaries))
+            del self._summaries[oldest]
+        return summary_id
 
     def detect(self, export_dir: str) -> dict[str, object]:
         """Sniff ``export_dir`` for a known source format (the picker hint)."""
@@ -994,6 +1017,7 @@ class GuiController:
         force: bool = False,
         pack_dirs: list[str] | None = None,
         trust_new: bool = False,
+        write_manifest: bool = False,
     ) -> dict[str, object]:
         """Drive the shared pipeline core, emitting stage/progress events.
 
@@ -1027,6 +1051,7 @@ class GuiController:
                 force=force,
                 pack_dirs=pack_dirs,
                 trust_new=trust_new,
+                write_manifest=write_manifest,
             )
         finally:
             self._release()
@@ -1045,6 +1070,7 @@ class GuiController:
         force: bool = False,
         pack_dirs: list[str] | None = None,
         trust_new: bool = False,
+        write_manifest: bool = False,
     ) -> dict[str, object]:
         """Run the pipeline on a daemon thread (the GUI stays responsive).
 
@@ -1075,6 +1101,7 @@ class GuiController:
                     force=force,
                     pack_dirs=pack_dirs,
                     trust_new=trust_new,
+                    write_manifest=write_manifest,
                 )
             finally:
                 self._release()
@@ -1213,9 +1240,6 @@ class GuiController:
         from anastomosis.pipeline import PipelineError
 
         rollup: dict[str, int] = {}
-        # Clear stale detail up front so a failed run never leaves the previous
-        # run's patients fetchable.
-        self._last_patients = []
 
         def _on_event(event: StageEvent) -> None:
             stage = _STAGE_MAP.get(event.stage)
@@ -1270,7 +1294,7 @@ class GuiController:
                 }
                 for s in summarize_patients(result.pipeline)
             ]
-        self._last_patients = patients
+        summary_id = self._store_summary(patients)
         route = _transit_to_dict(result.transit)
 
         # The SAME shared verdict the CLI uses. A migration with no viable
@@ -1286,11 +1310,12 @@ class GuiController:
                 "ok": False,
                 "error": notice,
                 "manual_import": True,
+                "summary_id": summary_id,
                 **rollup,
                 "route": route,
                 "patients": patients,
             }
-        self._emit(done_event(**rollup))
+        self._emit(done_event(summary_id=summary_id, **rollup))
         return {"ok": True, **rollup, "route": route, "patients": patients}
 
     @staticmethod
@@ -1336,6 +1361,7 @@ class GuiController:
         force: bool = False,
         pack_dirs: list[str] | None = None,
         trust_new: bool = False,
+        write_manifest: bool = False,
     ) -> dict[str, object]:
         from anastomosis.core.commands import (
             DeliveryCommand,
@@ -1347,9 +1373,6 @@ class GuiController:
 
         out = Path(out_dir)
         rollup: dict[str, int] = {}
-        # Clear stale detail up front so a failed run never leaves the previous
-        # run's patients fetchable.
-        self._last_patients = []
 
         def _on_event(event: StageEvent) -> None:
             stage = _STAGE_MAP.get(event.stage)
@@ -1384,6 +1407,7 @@ class GuiController:
                     sections=sections,
                     qa=qa,
                     deliveries=tuple(deliveries),
+                    write_manifest=write_manifest,
                 ),
                 on_event=_on_event,
             )
@@ -1410,8 +1434,8 @@ class GuiController:
             }
             for s in summarize_patients(result.pipeline)
         ]
-        self._last_patients = patients
-        self._emit(done_event(**rollup))
+        summary_id = self._store_summary(patients)
+        self._emit(done_event(summary_id=summary_id, **rollup))
         return {"ok": True, **rollup, "patients": patients}
 
     def _present_deliveries(
@@ -1611,3 +1635,76 @@ def _failed_stage(message: str) -> str:
     if "failed to render" in message:
         return "reconstruct"
     return "ingest"
+
+
+class GuiApi:
+    """The pywebview ``js_api`` surface: a thin facade over a :class:`GuiController`.
+
+    It exposes ONLY the async/busy-guarded run methods and the light read-only
+    queries the front end actually calls (the exact set ``gui/web/*.js`` uses).
+    The controller ALSO has synchronous heavy methods — ``run_pipeline``,
+    ``run_migration``, ``pack_init``, ``source_init`` — and ``doctor`` (which can
+    start Playwright in the bundled-asset check). Those are kept for tests and
+    internal use, but they would block the single pywebview bridge thread and
+    freeze the UI if a page invoked them. Binding THIS facade (not the raw
+    controller) as ``js_api`` makes them un-callable from JS by construction.
+    """
+
+    def __init__(self, controller: GuiController) -> None:
+        self._c = controller
+
+    # --- light read-only queries ---
+    def info(self) -> dict[str, object]:
+        return self._c.info()
+
+    def detect(self, export_dir: str) -> dict[str, object]:
+        return self._c.detect(export_dir)
+
+    def routes(self, destination: str | None = None) -> dict[str, object]:
+        return self._c.routes(destination)
+
+    def destination_status(self, name: str) -> dict[str, object]:
+        return self._c.destination_status(name)
+
+    def pack_freshness(self) -> dict[str, object]:
+        return self._c.pack_freshness()
+
+    def last_run_summary(self, summary_id: str | None = None) -> dict[str, object]:
+        return self._c.last_run_summary(summary_id)
+
+    def last_pack_result(self) -> dict[str, object]:
+        return self._c.last_pack_result()
+
+    def last_source_result(self) -> dict[str, object]:
+        return self._c.last_source_result()
+
+    def upload_status(self, db_path: str) -> dict[str, object]:
+        return self._c.upload_status(db_path)
+
+    def upload_item_keys(self, db_path: str, limit: int = 200) -> dict[str, object]:
+        return self._c.upload_item_keys(db_path, limit)
+
+    def upload_manifest_preview(self, out_dir: str) -> dict[str, object]:
+        return self._c.upload_manifest_preview(out_dir)
+
+    def upload_safety_notice(self) -> dict[str, object]:
+        return self._c.upload_safety_notice()
+
+    # --- async runs + upload driving (return immediately / busy-guarded) ---
+    def run_pipeline_async(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return self._c.run_pipeline_async(*args, **kwargs)
+
+    def run_migration_async(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return self._c.run_migration_async(*args, **kwargs)
+
+    def pack_init_async(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return self._c.pack_init_async(*args, **kwargs)
+
+    def source_init_async(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return self._c.source_init_async(*args, **kwargs)
+
+    def upload_start(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return self._c.upload_start(*args, **kwargs)
+
+    def upload_stop(self) -> dict[str, object]:
+        return self._c.upload_stop()
