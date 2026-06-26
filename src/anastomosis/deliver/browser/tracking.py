@@ -67,7 +67,13 @@ _PENDING_STATES: tuple[UploadState, ...] = (
 # path (which intentionally bypasses validate_transition — see ``recover``).
 _RECOVERY_TAG = "CrashRecovery"
 
-_SCHEMA = """
+# The items.state CHECK list is derived from the UploadState enum so the schema
+# and the enum can never drift: a raw SQL write of an unknown state is refused at
+# the database boundary, rather than surfacing later (far from the cause) when
+# UploadState(row["state"]) raises during a read.
+_STATE_LITERALS = ", ".join(f"'{s.value}'" for s in UploadState)
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS runs (
     run_id        TEXT PRIMARY KEY,
     destination   TEXT NOT NULL,
@@ -83,7 +89,7 @@ CREATE TABLE IF NOT EXISTS items (
     file_path         TEXT NOT NULL,
     sha256            TEXT NOT NULL,
     size_bytes        INTEGER NOT NULL,
-    state             TEXT NOT NULL,
+    state             TEXT NOT NULL CHECK (state IN ({_STATE_LITERALS})),
     attempts          INTEGER NOT NULL DEFAULT 0,
     last_error_type   TEXT,
     destination_doc_id TEXT,
@@ -103,6 +109,24 @@ CREATE TABLE IF NOT EXISTS transitions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transitions_item ON transitions(item_key);
+-- A covering index for single-state scans (recover()'s per-source-state sweep,
+-- WHERE state = ?), which fall back to a full table scan without it. For
+-- pending_items()'s multi-value WHERE state IN (...) ORDER BY item_key the
+-- planner prefers the item_key primary-key index (already ordered, no sort), so
+-- this mainly accelerates equality scans and is otherwise a harmless defensive
+-- index.
+CREATE INDEX IF NOT EXISTS idx_items_state ON items(state, item_key);
+
+-- transitions is an append-only audit trail (the module contract, and the basis
+-- for HIPAA-style integrity). SQLite does not enforce that, so guard it: any
+-- DELETE or UPDATE aborts; only INSERT is allowed. Added via CREATE TRIGGER IF
+-- NOT EXISTS, so an existing ledger gains the protection on next open.
+CREATE TRIGGER IF NOT EXISTS transitions_no_delete
+    BEFORE DELETE ON transitions
+    BEGIN SELECT RAISE(ABORT, 'transitions is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS transitions_no_update
+    BEFORE UPDATE ON transitions
+    BEGIN SELECT RAISE(ABORT, 'transitions is append-only'); END;
 """
 
 
