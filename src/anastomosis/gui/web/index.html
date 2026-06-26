@@ -157,6 +157,13 @@
             <span class="track"></span>
             <span>trust new pack code</span>
           </label>
+          <!-- Write the upload manifest the upload console consumes (GUI parity
+               for the CLI's `pipeline run --upload-manifest`). -->
+          <label class="toggle">
+            <input type="checkbox" id="write-manifest" />
+            <span class="track"></span>
+            <span>write upload manifest</span>
+          </label>
         </div>
 
         <button class="run-btn btn btn-primary" id="run-btn" type="button">run pipeline</button>

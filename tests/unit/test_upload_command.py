@@ -317,3 +317,27 @@ def test_verify_on_without_render_extra_fails_closed(
     with pytest.raises(VerificationUnavailableError):
         run_upload_command(UploadCommand(out_dir=out), lambda: dest)
     assert dest.uploads == []  # refused before any browser/upload work
+
+
+def test_run_upload_command_releases_destination_resources(tmp_path: Path) -> None:
+    """At run end the command calls the destination's one-shot release() exactly
+    once — the owned Playwright driver/CDP teardown (codex #5). For a destination
+    with no owned resources (plain FakeDestination) it is simply skipped."""
+    out = _write_manifest(tmp_path / "out")
+    released = {"n": 0}
+
+    class _ReleasableDestination(FakeDestination):
+        def release(self) -> None:
+            released["n"] += 1
+
+    run_upload_command(
+        UploadCommand(out_dir=out, verify=False), lambda: _ReleasableDestination(_known())
+    )
+    assert released["n"] == 1  # called once, at the end of the run
+
+    # A destination without release() (the plain double) is skipped, not an error.
+    out2 = _write_manifest(tmp_path / "out2")
+    result = run_upload_command(
+        UploadCommand(out_dir=out2, verify=False), lambda: FakeDestination(_known())
+    )
+    assert result.aborted_reason is None
