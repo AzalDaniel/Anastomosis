@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.model import Encounter, PatientRecord
+from anastomosis.core.output import secure_output_dir
 
 from . import checks as _checks  # noqa: F401 — registers the engine checks
 from .base import CheckResult, QACheck, QAContext, Verdict, engine_checks
@@ -98,6 +99,12 @@ def write_report(report: QAReport, out_dir: Path) -> Path:
             for doc in report.documents
         ],
     }
+    # The report embeds DataIntegrityCheck findings, which can contain literal
+    # patient names ("patient name ... not found"). Harden the directory to
+    # 0o700 HERE rather than trusting every caller to have done so — the function
+    # that writes the PHI owns its boundary. Idempotent: in the normal pipeline
+    # the dir is already secured, so this is a no-op.
+    out_dir = secure_output_dir(out_dir)
     target = out_dir / REPORT_NAME
     # Atomic write: a reader (or a concurrent run) never sees a half-written
     # report. os.replace is atomic within the directory on every platform.
