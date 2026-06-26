@@ -41,6 +41,7 @@ from anastomosis.core.model import (
     NoteSection,
     Observation,
     ObservationCategory,
+    PastMedicalHistory,
     Patient,
     PatientRecord,
     Practitioner,
@@ -502,8 +503,20 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
             value = _s(row, value_col)
             if value is None:
                 continue
+            # EffectiveDate is the clinical assessment date, so it wins; the
+            # EffectiveDateFrom range-start is the next clinical form. RecordedDate
+            # (the administrative EHR entry date) is only a last-resort fallback for
+            # rows that carry no clinical date — so effective_at reflects when the
+            # fact was true, not when it was typed. (The predecessor preferred
+            # RecordedDate for smoking; the canonical model favors the clinical
+            # date. The non-chosen date is preserved verbatim in extensions.)
             effective = next(
-                (d for c in ("EffectiveDate", "EffectiveDateFrom") if (d := _dt(row, c))), None
+                (
+                    d
+                    for c in ("EffectiveDate", "EffectiveDateFrom", "RecordedDate")
+                    if (d := _dt(row, c))
+                ),
+                None,
             )
             observations.append(
                 Observation(
@@ -517,6 +530,35 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
                 )
             )
     return observations
+
+
+# patient-med-history is the free-prose history table (verified against a real
+# v9 export): one row per block, HistoryType tagging it social / family / major-
+# events, ReportedHistory carrying the narrative. The predecessor split it by
+# HistoryType to render the social-history freetext, the family-history freetext,
+# and "MAJOR EVENTS"; the canonical PastMedicalHistory(kind, text) holds all three
+# losslessly, and the PF pack already renders the `social`-kind block as the
+# social-history freetext. (The structured subcategories the predecessor showed
+# empty — alcohol, drug use, physical activity, diet, sexual activity, stress,
+# etc. — have NO source table in the export: verified-absent, mapped to nothing.)
+def _past_medical_history(export: Export, guid: str) -> list[PastMedicalHistory]:
+    blocks: list[PastMedicalHistory] = []
+    for row in _by(export["patient-med-history"], "PatientPracticeGuid").get(guid, []):
+        text = _s(row, "ReportedHistory")
+        if text is None:
+            continue  # an empty narrative block carries nothing
+        blocks.append(
+            PastMedicalHistory(
+                patient_id=guid,
+                kind=_s(row, "HistoryType"),
+                text=text,
+                extensions=_ext(
+                    row, frozenset({"PatientPracticeGuid", "HistoryType", "ReportedHistory"})
+                ),
+                provenance=_prov("patient-med-history", guid),
+            )
+        )
+    return blocks
 
 
 # --- discrete clinical tables --------------------------------------------------
@@ -1024,6 +1066,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             prescriptions=prescriptions,
             immunizations=[_map_immunization(row) for row in imm_by_patient.get(guid, [])],
             family_history=_map_family_history(export, guid),
+            past_medical_history=_past_medical_history(export, guid),
             advance_directives=[
                 AdvanceDirective(
                     patient_id=guid,

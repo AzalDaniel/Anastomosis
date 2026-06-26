@@ -364,3 +364,67 @@ def test_provenance_traces_to_source(records: dict[str, PatientRecord]) -> None:
     assert ada.patient.provenance.source_id == P1
     assert ada.encounters[0].provenance is not None
     assert ada.encounters[0].provenance.source_file == "patient-encounters.tsv"
+
+
+def test_patient_med_history_freetext_blocks_mapped(records: dict[str, PatientRecord]) -> None:
+    """patient-med-history (verified against a real v9 export) maps each free-prose
+    block to PastMedicalHistory(kind, text) — social/family/major-events — which
+    the PF pack renders as the social-history freetext + the PMH sections. The
+    structured subcategories the predecessor showed empty (alcohol, drug use,
+    physical activity, diet, sexual activity, ...) have NO source table: absent."""
+    pmh = records[P1].past_medical_history
+    by_kind = {(p.kind or "").lower(): (p.text or "") for p in pmh}
+    assert any("social" in k for k in by_kind)
+    assert "retired librarian" in next(t for k, t in by_kind.items() if "social" in k)
+    assert any("family" in k for k in by_kind)
+    assert any("past medical" in k for k in by_kind)
+    # A patient with no history blocks gets an empty list (no crash, nothing invented).
+    assert records[P3].past_medical_history == []
+
+
+def test_social_observation_prefers_clinical_effective_date() -> None:
+    """effective_at on a social-history observation is the clinical EffectiveDate,
+    not the administrative RecordedDate (the two differ in a real v9 export).
+    RecordedDate is only a last-resort fallback when no clinical date is present;
+    the non-chosen date is preserved verbatim in extensions (lossless)."""
+    from anastomosis.core.timeutil import parse_dt
+    from anastomosis.sources.pf_tebra.mapper import _social_observations
+
+    guid = "feedface-0000-0000-0000-0000000000aa"
+    empty_socials = {
+        "occupation-industry": [],
+        "patient-education": [],
+        "patient-financial-resources": [],
+        "tribal-affiliation": [],
+    }
+
+    # Both dates present: the clinical EffectiveDate wins over RecordedDate.
+    both = {
+        "patient-smokingstatus": [
+            {
+                "PatientPracticeGuid": guid,
+                "TobaccoUseDescription": "Never smoker",
+                "EffectiveDate": "2021-03-15",
+                "RecordedDate": "2023-09-01",
+            }
+        ],
+        **empty_socials,
+    }
+    obs = _social_observations(both, guid)
+    assert len(obs) == 1
+    assert obs[0].effective_at == parse_dt("2021-03-15")  # EffectiveDate, not RecordedDate
+    assert obs[0].extensions["pf_tebra:RecordedDate"] == "2023-09-01"  # not lost
+
+    # Only the administrative date present: it is the last-resort fallback.
+    only_recorded = {
+        "patient-smokingstatus": [
+            {
+                "PatientPracticeGuid": guid,
+                "TobaccoUseDescription": "Never smoker",
+                "RecordedDate": "2023-09-01",
+            }
+        ],
+        **empty_socials,
+    }
+    obs2 = _social_observations(only_recorded, guid)
+    assert obs2[0].effective_at == parse_dt("2023-09-01")
