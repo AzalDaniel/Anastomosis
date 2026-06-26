@@ -24,7 +24,23 @@ __all__ = ["CCDAAdapter"]
 # ClinicalDocument root. Reading the first 4 KB avoids a full parse (and avoids
 # matching a PF/Tebra TSV export, which has no XML at all).
 _SNIFF_BYTES = 4096
-_SNIFF_MARKERS = (b"urn:hl7-org:v3", b"ClinicalDocument")
+_SNIFF_MARKERS = ("urn:hl7-org:v3", "ClinicalDocument")
+
+
+def _looks_like_cda(head: bytes) -> bool:
+    """Whether a file head looks like an HL7 CDA document, tolerant of the XML
+    encodings real exports use.
+
+    The markers are ASCII, but a UTF-16 document (some Windows EHRs export
+    UTF-16) interleaves every ASCII byte with a NUL, so a raw byte search misses
+    them and the file would be silently skipped (zero records, no error). Decode
+    the head by its BOM first, then match as text. lxml parses UTF-8 and UTF-16
+    (LE/BE) natively from the path, so a match here is safe to hand to
+    ``parse_document`` — the document loads rather than failing closed.
+    """
+    encoding = "utf-16" if head[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+    text = head.decode(encoding, errors="ignore")
+    return all(marker in text for marker in _SNIFF_MARKERS)
 
 
 class CCDAAdapter:
@@ -37,14 +53,14 @@ class CCDAAdapter:
                 head = xml_file.read_bytes()[:_SNIFF_BYTES]
             except OSError:
                 continue
-            if all(marker in head for marker in _SNIFF_MARKERS):
+            if _looks_like_cda(head):
                 return True
         return False
 
     def load(self, path: Path) -> Iterator[PatientRecord]:
         for xml_file in sorted(path.glob("*.xml")):
             head = xml_file.read_bytes()[:_SNIFF_BYTES]
-            if all(marker in head for marker in _SNIFF_MARKERS):
+            if _looks_like_cda(head):
                 yield parse_document(xml_file)
 
 
