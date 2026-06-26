@@ -100,6 +100,27 @@ def test_detect_ndjson_export_dir(tmp_path: Path) -> None:
     assert _adapter().detect(tmp_path) is True
 
 
+def test_utf8_bom_bundle_loads(tmp_path: Path) -> None:
+    """A UTF-8 BOM (common from Windows export tools) is stripped on read, so a
+    BOM-prefixed Bundle JSON loads instead of crashing json.loads on line 1
+    (which previously surfaced as an opaque bad_input with no encoding hint)."""
+    text = BUNDLE.read_text(encoding="utf-8")
+    (tmp_path / "bundle.json").write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+    records = list(_adapter().load(tmp_path))
+    assert records  # non-empty: the BOM did not silently break parsing
+
+
+def test_utf8_bom_ndjson_streams_and_loads(tmp_path: Path) -> None:
+    """A BOM-prefixed NDJSON $export file streams (utf-8-sig, line-by-line) and
+    loads — the BOM is stripped and the resource parses."""
+    patient = json.dumps(_patient_resource())
+    (tmp_path / "Patient.ndjson").write_bytes(b"\xef\xbb\xbf" + (patient + "\n").encode("utf-8"))
+    adapter = _adapter()
+    assert adapter.detect(tmp_path) is True
+    records = list(adapter.load(tmp_path))
+    assert len(records) == 1
+
+
 # --- patient demographics --------------------------------------------------
 
 

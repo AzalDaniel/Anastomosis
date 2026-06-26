@@ -49,6 +49,41 @@ def test_pf_adapter_does_not_claim_ccda_dir() -> None:
     assert not get_source("pf-tebra").detect(CCDA_FIXTURE)
 
 
+def test_utf16_encoded_cda_is_detected_and_loaded(tmp_path: Path) -> None:
+    """A UTF-16-encoded C-CDA (some Windows EHRs export UTF-16) is detected and
+    loaded rather than silently skipped (zero records, no error). The
+    encoding-aware sniff hands it to lxml, which parses UTF-16 natively, and the
+    canonical record matches the UTF-8 form byte-for-byte (provenance aside)."""
+    text = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
+    u16_dir = tmp_path / "u16"
+    u16_dir.mkdir()
+    (u16_dir / "feedface_ccd.xml").write_bytes(text.encode("utf-16"))  # adds a BOM
+
+    adapter = get_source("ccda")
+    assert adapter.detect(u16_dir)  # the old ASCII byte-sniff missed UTF-16
+    loaded = list(adapter.load(u16_dir))
+    assert len(loaded) == 1
+
+    utf8 = next(iter(adapter.load(CCDA_FIXTURE)))
+    u16 = loaded[0]
+    assert u16.patient.birth_date == date(1979, 4, 6)
+    # Compare clinical demographics; `id` is a per-load synthetic handle (not
+    # source-derived in this adapter) and `provenance` carries the file path.
+    drop = {"provenance", "id"}
+    assert u16.patient.model_dump(mode="json", exclude=drop) == utf8.patient.model_dump(
+        mode="json", exclude=drop
+    )
+    # The stable source identity is carried and matches across the two encodings.
+    assert {(i.kind, i.value) for i in u16.patient.identifiers} == {
+        (i.kind, i.value) for i in utf8.patient.identifiers
+    }
+    assert (len(u16.conditions), len(u16.observations), len(u16.encounters)) == (
+        len(utf8.conditions),
+        len(utf8.observations),
+        len(utf8.encounters),
+    )
+
+
 # --- demographics ------------------------------------------------------------
 
 

@@ -45,12 +45,17 @@ def _resources_from_file(path: Path) -> list[dict[str, Any]]:
     resource). Loud on malformed JSON — a corrupt export must not parse to empty."""
     if path.suffix.lower() == ".ndjson":
         resources: list[dict[str, Any]] = []
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if line:
-                resources.append(json.loads(line))
+        # Stream line-by-line (a $export NDJSON can be hundreds of MB; read_text
+        # +splitlines holds the whole file AND a list of its lines in RAM at
+        # once). utf-8-sig strips a leading BOM if present — Windows export tools
+        # often emit one, and a BOM otherwise makes json.loads raise on line 1.
+        with path.open(encoding="utf-8-sig") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if line:
+                    resources.append(json.loads(line))
         return resources
-    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(doc, dict) and doc.get("resourceType") == "Bundle":
         return [
             entry["resource"]
