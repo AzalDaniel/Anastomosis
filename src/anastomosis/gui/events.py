@@ -39,9 +39,18 @@ def progress_event(stage: str, **fields: int | str) -> dict[str, object]:
     return {"type": "progress", "stage": stage, **fields}
 
 
-def done_event(**counts: int) -> dict[str, object]:
-    """The run finished successfully, with its final roll-up counts (integers)."""
-    return {"type": "done", **counts}
+def done_event(summary_id: str | None = None, **counts: int) -> dict[str, object]:
+    """The run finished successfully, with its final roll-up counts (integers).
+
+    ``summary_id`` (when given) is a non-PHI opaque key the front end passes back
+    to ``last_run_summary(summary_id)`` to fetch THIS run's per-patient detail —
+    so a rapid second run cannot overwrite the slot the first run's UI then reads
+    (the summary race). It is a random hex id, never patient-derived.
+    """
+    event: dict[str, object] = {"type": "done", **counts}
+    if summary_id is not None:
+        event["summary_id"] = summary_id
+    return event
 
 
 def error_event(stage: str, error: str) -> dict[str, object]:

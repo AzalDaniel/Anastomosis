@@ -203,8 +203,19 @@ def run_upload_command(
             report_path = write_run_report(tracking, run_id, cmd.out_dir)
             counts = dict(tracking.counts())
         finally:
-            # Close ONLY our own ledger handle — NEVER the operator's browser.
+            # Release the resources WE own and nothing the operator owns:
+            #  - our ledger handle, and
+            #  - the destination's owned Playwright driver + CDP connection, via
+            #    its one-shot release() (NOT close(), which is the manager's
+            #    per-recycle hook). release() disconnects the CDP session and
+            #    stops the driver; per Playwright that does NOT close a
+            #    connect_over_cdp browser, so the operator's EHR browser stays
+            #    open. Duck-typed so a destination without owned resources (the
+            #    test FakeDestination, the FHIR pusher) is simply skipped.
             tracking.close()
+            release = getattr(destination, "release", None)
+            if callable(release):
+                release()
     return UploadCommandResult(
         counts=counts, aborted_reason=result.aborted_reason, report_path=report_path
     )
