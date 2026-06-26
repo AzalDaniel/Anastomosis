@@ -14,6 +14,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 from anastomosis.core.model import ObservationCategory
+from anastomosis.core.timeutil import all_date_spellings
 
 from .base import CheckResult, QAContext, Verdict, register_check
 
@@ -46,16 +47,13 @@ def _present(needle: str, text: str) -> bool:
 
 
 def _date_spellings(value: date) -> set[str]:
-    """Padded and unpadded chart spellings; %-d is glibc-only, build by hand."""
-    return {
-        value.strftime("%B %d, %Y"),
-        value.strftime("%b %d, %Y"),
-        f"{value.strftime('%B')} {value.day}, {value.year}",
-        f"{value.strftime('%b')} {value.day}, {value.year}",
-        value.strftime("%m/%d/%Y"),
-        value.strftime("%m-%d-%Y"),
-        f"{value.month}/{value.day}/{value.year}",
-    }
+    """The chart spellings the QA integrity check accepts for a date.
+
+    Delegates to the single canonical enumerator so the QA check and the L2/L3
+    delivery verifier can never diverge (they once did — the verifier accepted an
+    unpadded ``M-D-YYYY`` DOB the QA check rejected, blocking a correct chart).
+    """
+    return all_date_spellings(value)
 
 
 class DataIntegrityCheck:
