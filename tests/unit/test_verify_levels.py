@@ -111,6 +111,35 @@ def test_date_renderings_built_without_glibc_codes() -> None:
     assert "January 2, 1990" in renders
 
 
+def test_qa_and_verify_date_spellings_are_unified() -> None:
+    """The QA DataIntegrityCheck and the L2/L3 verifier must enumerate the SAME
+    date spellings. They once diverged — the verifier accepted an unpadded
+    ``M-D-YYYY`` DOB that the QA check rejected, silently blocking a correct
+    chart (PipelineError qa_failed). Both now delegate to one canonical
+    enumerator, so the sets cannot drift apart."""
+    from anastomosis.core.timeutil import all_date_spellings
+    from anastomosis.qa.checks import _date_spellings
+
+    for d in (date(1990, 1, 5), date(1990, 1, 2), date(2023, 12, 31), date(2024, 7, 4)):
+        canonical = all_date_spellings(d)
+        assert _date_spellings(d) == canonical == date_renderings(d)
+
+    # Pin the canonical contents directly. The equality above is tautological
+    # (all three delegate to one function), so without this a dropped element
+    # would survive; this asserts the exact set, including the unpadded-dash
+    # `1-5-1990` form whose prior absence from the QA set was the bug.
+    assert all_date_spellings(date(1990, 1, 5)) == {
+        "01/05/1990",
+        "1/5/1990",
+        "01-05-1990",
+        "1-5-1990",
+        "January 05, 1990",
+        "January 5, 1990",
+        "Jan 05, 1990",
+        "Jan 5, 1990",
+    }
+
+
 def test_fuzzy_contains_exact_and_absent() -> None:
     assert fuzzy_contains("Synthia Testpatient", "header Synthia Testpatient DOB") == 1.0
     assert fuzzy_contains("Wrongname Different", "Synthia Testpatient only") < 0.88

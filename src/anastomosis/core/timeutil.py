@@ -24,7 +24,14 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, tzinfo
 from zoneinfo import ZoneInfo
 
-__all__ = ["age_at", "age_display", "parse_date", "parse_dt", "to_local"]
+__all__ = [
+    "age_at",
+    "age_display",
+    "all_date_spellings",
+    "parse_date",
+    "parse_dt",
+    "to_local",
+]
 
 # Formats beyond ISO 8601 seen in real exports, most common first.
 _FORMATS = (
@@ -84,6 +91,38 @@ def parse_date(value: str | None) -> date | None:
     """
     parsed = parse_dt(value)
     return None if parsed is None else parsed.date()
+
+
+def all_date_spellings(value: date) -> set[str]:
+    """Every chart spelling a pack might render ``value`` as — the SINGLE source
+    of truth shared by the L2/L3 delivery verifier (``deliver.verify.levels``) and
+    the QA ``DataIntegrityCheck`` (``qa.checks``).
+
+    Packs declare no canonical date format: different packs, and different fields
+    within one pack, render a date as ``%m/%d/%Y``, ``%B %d, %Y``, dash-separated,
+    or unpadded variants. A caller asserts that *at least one* spelling is present
+    rather than guessing which the pack used. The two call sites historically kept
+    independent copies of this set and silently diverged (a missing unpadded
+    ``M-D-YYYY`` made verify accept a chart the QA check then rejected, blocking a
+    correct chart); routing both through this one function makes that class of
+    drift impossible.
+
+    The unpadded ``%-m``/``%-d`` forms are built BY HAND from the integer parts —
+    those strftime codes are glibc-only and absent on Windows, where ruff
+    (DTZ/portability) and ``mypy --strict`` also run.
+    """
+    return {
+        # numeric, padded and unpadded, slash and dash
+        f"{value.month:02d}/{value.day:02d}/{value.year}",
+        f"{value.month}/{value.day}/{value.year}",
+        f"{value.month:02d}-{value.day:02d}-{value.year}",
+        f"{value.month}-{value.day}-{value.year}",
+        # month-name spellings (full and abbreviated), padded and unpadded day
+        f"{value.strftime('%B')} {value.day:02d}, {value.year}",
+        f"{value.strftime('%B')} {value.day}, {value.year}",
+        f"{value.strftime('%b')} {value.day:02d}, {value.year}",
+        f"{value.strftime('%b')} {value.day}, {value.year}",
+    }
 
 
 def to_local(dt: datetime, tz: str | tzinfo) -> datetime:

@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from anastomosis.core.model import Encounter, Patient
+from anastomosis.core.timeutil import all_date_spellings
 from anastomosis.deliver.browser.errors import WrongPatientError
 from anastomosis.destinations.base import (
     DestinationPatient,
@@ -153,30 +154,13 @@ def _normalize(text: str) -> str:
 
 
 def date_renderings(value: date) -> set[str]:
-    """Every chart spelling a pack might render ``value`` as.
+    """Every chart spelling a pack might render ``value`` as (L2/L3 verify).
 
-    The pack does not declare a single canonical date format — different packs
-    (and different fields within one pack) render dates as ``%m/%d/%Y``,
-    ``%B %d, %Y``, or unpadded variants. Rather than guess one, this returns
-    the full candidate set and the caller requires *at least one* present
-    (the QA ``_date_spellings`` lesson, re-applied here).
-
-    The unpadded ``%-m/%-d`` equivalents are built BY HAND from the integer
-    date parts — ``%-d``/``%-m`` are glibc-only and absent on Windows, and
-    ``ruff`` (DTZ/portability) and ``mypy --strict`` both run on Windows CI.
+    Delegates to the single canonical enumerator in ``core.timeutil`` so this
+    delivery verifier and the QA ``DataIntegrityCheck`` share one definition and
+    cannot drift apart (the caller still requires *at least one* present).
     """
-    return {
-        # numeric, padded and unpadded
-        f"{value.month:02d}/{value.day:02d}/{value.year}",
-        f"{value.month}/{value.day}/{value.year}",
-        f"{value.month:02d}-{value.day:02d}-{value.year}",
-        f"{value.month}-{value.day}-{value.year}",
-        # month-name spellings (full and abbreviated), padded and unpadded day
-        f"{value.strftime('%B')} {value.day:02d}, {value.year}",
-        f"{value.strftime('%B')} {value.day}, {value.year}",
-        f"{value.strftime('%b')} {value.day:02d}, {value.year}",
-        f"{value.strftime('%b')} {value.day}, {value.year}",
-    }
+    return all_date_spellings(value)
 
 
 def _date_present(value: date, text: str) -> bool:
