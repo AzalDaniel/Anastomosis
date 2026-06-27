@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -163,7 +164,32 @@ _PHONE_COLS = (
 )
 
 
-def _map_patient(row: Row, export: Export) -> Patient:
+@dataclass(frozen=True)
+class _DemographicsGroups:
+    """The patient-keyed tables `_map_patient` joins, each grouped by
+    PatientPracticeGuid ONCE for the whole export. Building these per patient
+    re-scanned every table on every patient (O(patients * rows)); grouping once
+    and slicing by guid is identical output for a fraction of the work.
+    """
+
+    pinned_notes: dict[str, list[Row]]
+    giso: dict[str, list[Row]]
+    race: dict[str, list[Row]]
+    ethnicity: dict[str, list[Row]]
+    guarantor: dict[str, list[Row]]
+
+    @classmethod
+    def build(cls, export: Export) -> _DemographicsGroups:
+        return cls(
+            pinned_notes=_by(export["pinned-notes"], "PatientPracticeGuid"),
+            giso=_by(export["patient-gender-identity-sexual-orientation"], "PatientPracticeGuid"),
+            race=_by(export["patient-race"], "PatientPracticeGuid"),
+            ethnicity=_by(export["patient-ethnicity"], "PatientPracticeGuid"),
+            guarantor=_by(export["patient-guarantor"], "PatientPracticeGuid"),
+        )
+
+
+def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     guid = _s(row, "PatientPracticeGuid")
     assert guid is not None  # loader guarantees keyed rows; join column required
 
@@ -190,13 +216,11 @@ def _map_patient(row: Row, export: Export) -> Patient:
     notes = [_s(row, "UnPinnedNote")]
     notes += [
         f"{_s(pin, 'NoteType') or 'Note'}: {_s(pin, 'NoteText')}"
-        for pin in _by(export["pinned-notes"], "PatientPracticeGuid").get(guid, [])
+        for pin in groups.pinned_notes.get(guid, [])
         if _s(pin, "NoteText")
     ]
 
-    giso_rows = _by(
-        export["patient-gender-identity-sexual-orientation"], "PatientPracticeGuid"
-    ).get(guid, [])
+    giso_rows = groups.giso.get(guid, [])
     giso = giso_rows[0] if giso_rows else {}
 
     return Patient(
@@ -209,15 +233,9 @@ def _map_patient(row: Row, export: Export) -> Patient:
         sex=_s(row, "Gender"),
         gender_identity=_s(giso, "GenderIdentity"),
         sexual_orientation=_s(giso, "SexualOrientation"),
-        race=[
-            name
-            for r in _by(export["patient-race"], "PatientPracticeGuid").get(guid, [])
-            if (name := _s(r, "RaceName"))
-        ],
+        race=[name for r in groups.race.get(guid, []) if (name := _s(r, "RaceName"))],
         ethnicity=[
-            name
-            for r in _by(export["patient-ethnicity"], "PatientPracticeGuid").get(guid, [])
-            if (name := _s(r, "EthnicityName"))
+            name for r in groups.ethnicity.get(guid, []) if (name := _s(r, "EthnicityName"))
         ],
         language=_s(row, "PreferredLanguage"),
         mothers_maiden_name=_s(row, "MothersMaidenName"),
@@ -226,7 +244,7 @@ def _map_patient(row: Row, export: Export) -> Patient:
         identifiers=identifiers,
         telecom=telecom,
         addresses=[address] if any(address.model_dump().values()) else [],
-        guarantor=_map_guarantor(export, guid),
+        guarantor=_map_guarantor(groups.guarantor, guid),
         extensions=_ext(row, _DEMOGRAPHICS_MAPPED),
         provenance=_prov("patient-demographics", guid),
     )
@@ -255,8 +273,8 @@ _GUARANTOR_MAPPED = frozenset(
 )
 
 
-def _map_guarantor(export: Export, guid: str) -> Guarantor | None:
-    rows = _by(export["patient-guarantor"], "PatientPracticeGuid").get(guid, [])
+def _map_guarantor(guarantor_by: dict[str, list[Row]], guid: str) -> Guarantor | None:
+    rows = guarantor_by.get(guid, [])
     if not rows:
         return None
     row = rows[-1]  # last row wins, matching the predecessor's dict-overwrite load (gpdfs:284-287)
@@ -996,6 +1014,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     imm_by_patient = _by(export["patient-immunizations"], "PatientPracticeGuid")
     ad_by_patient = _by(export["patient-advance-directives"], "PatientPracticeGuid")
     docs_by_patient = _by(export["patient-documents"], "PatientPracticeGuid")
+    demo_groups = _DemographicsGroups.build(export)  # pinned-notes/giso/race/ethnicity/guarantor
 
     seen_guids: set[str] = set()
     for demo_row in export["patient-demographics"]:
@@ -1012,7 +1031,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
                 "malformed. Resolve the duplicate before migrating."
             )
         seen_guids.add(guid)
-        patient = _map_patient(demo_row, export)
+        patient = _map_patient(demo_row, demo_groups)
 
         # Reproduce the predecessor's render SELECTION (gpdfs get_valid_encounters):
         # empty-SOAP and adult-growth-chart encounters are excluded from the
