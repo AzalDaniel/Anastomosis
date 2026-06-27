@@ -177,6 +177,25 @@ def _identifiers(patient_role: _Element) -> list[Identifier]:
     return out
 
 
+def _patient_id(patient_role: _Element, source_file: str) -> str:
+    """Stable canonical patient id, mirroring :func:`_encounter_id`.
+
+    The encounter ids in this adapter are already deterministic (uuid5 of the
+    source), but the patient inherited :class:`AnastBase`'s ``uuid4`` default — so
+    re-parsing the same CCD produced a DIFFERENT patient id each time (and the
+    PF/Tebra adapter, by contrast, uses the source guid). This derives the patient
+    id from the source instead: a clean source GUID is used verbatim; any other
+    source identifier is hashed into a deterministic uuid5; absent any id, the
+    file name is. Re-parsing the same document now yields the same patient id.
+    """
+    for ident in _identifiers(patient_role):
+        if ident.kind == IdentifierKind.SOURCE_GUID:
+            if _GUID_RE.match(ident.value):
+                return ident.value
+            return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{ident.value}"))
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:patient"))
+
+
 def _telecom(patient_role: _Element) -> list[ContactPoint]:
     out: list[ContactPoint] = []
     for node in _findall(patient_role, "v3:telecom"):
@@ -245,6 +264,7 @@ def _patient(clinical_doc: _Element, source_file: str, doc_meta: dict[str, Any])
         (i.value for i in _identifiers(patient_role) if i.kind == IdentifierKind.SSN), None
     )
     return Patient(
+        id=_patient_id(patient_role, source_file),
         given_name=givens[0] if givens else None,
         middle_name=" ".join(givens[1:]) or None if len(givens) > 1 else None,
         family_name=_text_content(_find(name, "v3:family")),
