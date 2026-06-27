@@ -49,6 +49,22 @@ def test_pf_adapter_does_not_claim_ccda_dir() -> None:
     assert not get_source("pf-tebra").detect(CCDA_FIXTURE)
 
 
+def test_patient_id_is_deterministic_across_loads() -> None:
+    """The C-CDA patient id is derived from the source (uuid5), not a fresh
+    uuid4, so re-parsing the same document yields the same canonical id — like
+    the encounter ids already did, and like the PF/Tebra adapter's source-guid
+    id. Child records reference that same id, and it is a valid UUID."""
+    import uuid
+
+    adapter = get_source("ccda")
+    first = next(iter(adapter.load(CCDA_FIXTURE)))
+    second = next(iter(adapter.load(CCDA_FIXTURE)))
+    assert first.patient.id == second.patient.id  # deterministic, not random
+    uuid.UUID(first.patient.id)  # this fixture's id is a uuid5 — a valid UUID
+    assert "901-65-4329" not in first.patient.id  # the SSN never becomes the id (PHI-safe)
+    assert first.conditions and all(c.patient_id == first.patient.id for c in first.conditions)
+
+
 def test_utf16_encoded_cda_is_detected_and_loaded(tmp_path: Path) -> None:
     """A UTF-16-encoded C-CDA (some Windows EHRs export UTF-16) is detected and
     loaded rather than silently skipped (zero records, no error). The
