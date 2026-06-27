@@ -997,10 +997,21 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     ad_by_patient = _by(export["patient-advance-directives"], "PatientPracticeGuid")
     docs_by_patient = _by(export["patient-documents"], "PatientPracticeGuid")
 
+    seen_guids: set[str] = set()
     for demo_row in export["patient-demographics"]:
         guid = _s(demo_row, "PatientPracticeGuid")
         if guid is None:
             continue
+        if guid in seen_guids:
+            # Two demographics rows for one patient: downstream the QA lookup and
+            # delivery key on the guid, so the second would silently overwrite the
+            # first. Fail closed instead. PHI-safe: the guid value is never named.
+            raise ValueError(
+                "patient-demographics contains a duplicate PatientPracticeGuid "
+                "(one demographics row per patient is expected) — the export is "
+                "malformed. Resolve the duplicate before migrating."
+            )
+        seen_guids.add(guid)
         patient = _map_patient(demo_row, export)
 
         # Reproduce the predecessor's render SELECTION (gpdfs get_valid_encounters):
