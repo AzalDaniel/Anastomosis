@@ -17,7 +17,11 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.sources import get_source
-from anastomosis.sources.pf_tebra.loader import UnsupportedTablesError
+from anastomosis.sources.pf_tebra.loader import (
+    MalformedExportError,
+    UnsupportedTablesError,
+    read_table,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -110,6 +114,44 @@ def test_unmapped_orphan_table_refuses_the_run(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedTablesError) as exc:
         list(get_source("pf-tebra").load(export))
     assert "practice-codebook" in str(exc.value)
+
+
+def test_duplicate_patient_guid_is_refused(tmp_path: Path) -> None:
+    """Two demographics rows for one patient fail closed — downstream the QA
+    lookup and delivery key on the guid, so the second would silently overwrite
+    the first. PHI-safe: the offending guid value never appears in the message."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    demo = dst / "patient-demographics.tsv"
+    lines = demo.read_text(encoding="utf-8").splitlines()
+    demo.write_text("\n".join([*lines, lines[1]]) + "\n", encoding="utf-8")  # dup first patient
+    with pytest.raises(ValueError, match="duplicate PatientPracticeGuid") as exc:
+        list(get_source("pf-tebra").load(dst))
+    assert "feedface-" not in str(exc.value)  # no guid value leaked into the error
+
+
+def test_row_wider_than_its_header_is_refused(tmp_path: Path) -> None:
+    """A row with more columns than the header (an unquoted tab split a cell,
+    shifting every later column) fails closed — it must not pass with misaligned
+    values. PHI-safe: only the file and line are named, never the row values."""
+    (tmp_path / "patient-demographics.tsv").write_text(
+        "PatientPracticeGuid\tFirstName\nfeedface-aa\tAda\tEXTRA\n", encoding="utf-8"
+    )
+    with pytest.raises(MalformedExportError, match="more columns than its header") as exc:
+        read_table(tmp_path, "patient-demographics")
+    assert "Ada" not in str(exc.value) and "EXTRA" not in str(exc.value)
+
+
+def test_trailing_empty_column_is_tolerated(tmp_path: Path) -> None:
+    """A purely trailing-empty surplus (some exporters append a delimiter to each
+    data row) carries no data and misaligns no named column — it is dropped, not
+    refused. Only a DATA-bearing surplus (a content-shifting embedded tab) fails."""
+    (tmp_path / "patient-demographics.tsv").write_text(
+        "PatientPracticeGuid\tFirstName\nfeedface-aa\tAda\t\t\n", encoding="utf-8"
+    )
+    assert read_table(tmp_path, "patient-demographics") == [
+        {"PatientPracticeGuid": "feedface-aa", "FirstName": "Ada"}
+    ]
 
 
 def test_sentinel_cells_mean_absent(records: dict[str, PatientRecord]) -> None:
