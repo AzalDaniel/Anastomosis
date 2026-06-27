@@ -474,6 +474,29 @@ def test_transitions_table_is_append_only(db: TrackingDB) -> None:
         conn.close()
 
 
+def test_crash_during_upload_recovers_to_interrupted(tmp_path: Path) -> None:
+    """A crash mid-UPLOADING must leave the item recoverable, not lost. The raw
+    ledger still reads UPLOADING after the (simulated) process exit; a resumed
+    run's recover() rewinds it to UPLOAD_INTERRUPTED so it is re-attempted."""
+    path = tmp_path / "tracking.sqlite3"
+    db = TrackingDB(path)
+    run = db.begin_run("fake")
+    item = _item(1)
+    db.enqueue(item)
+    for state in (UploadState.RESOLVING_PATIENT, UploadState.VERIFYING_PRE, UploadState.UPLOADING):
+        db.transition(item.item_key, state, run_id=run)
+    db.close()  # the process dies mid-upload
+
+    # A fresh process opens the same WAL ledger: the persisted state is UPLOADING.
+    resumed = TrackingDB(path)
+    try:
+        assert resumed.state_of(item.item_key) is UploadState.UPLOADING
+        resumed.recover(resumed.begin_run("fake"))
+        assert resumed.state_of(item.item_key) is UploadState.UPLOAD_INTERRUPTED
+    finally:
+        resumed.close()
+
+
 def test_items_state_check_is_derived_from_the_enum(db: TrackingDB) -> None:
     """A raw write of an out-of-enum state is refused at the DB boundary, and
     every real UploadState value is accepted — the CHECK is built from the enum,
