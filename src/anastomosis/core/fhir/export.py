@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import uuid
 from html import escape
 from typing import Any
 
@@ -58,8 +59,31 @@ _FHIR_ALLERGY_CATEGORY = {"drug": "medication", "food": "food", "environment": "
 _FHIR_SEVERITIES = {"mild", "moderate", "severe"}
 
 
+def _urn(resource_id: str) -> str:
+    """The bundle-internal URN for a resource id, used for BOTH each entry's
+    ``fullUrl`` and every reference to it (they must match to resolve).
+
+    A UUID id gets the standard ``urn:uuid:`` form — the one a receiving FHIR
+    server recognizes and resolves within a collection Bundle. Any other id shape
+    keeps ``urn:anastomosis:`` so the id is still recoverable on ingest (the
+    round-trip strips whichever prefix is present); ``urn:uuid:`` would be invalid
+    for a non-UUID id. PF/Tebra, C-CDA, and FHIR-R4 ids are UUIDs, so they take
+    the standard form; this only falls back for an odd non-UUID source id.
+    """
+    try:
+        parsed = uuid.UUID(resource_id)
+    except (ValueError, AttributeError, TypeError):
+        return f"urn:anastomosis:{resource_id}"
+    # uuid.UUID also accepts braced / urn-prefixed / dash-less forms; urn:uuid must
+    # carry a CANONICAL 8-4-4-4-12 uuid, so emit it only when the id already is one
+    # (else fall back, keeping the URN valid). The round-trip holds either way.
+    if str(parsed) != resource_id.lower():
+        return f"urn:anastomosis:{resource_id}"
+    return f"urn:uuid:{resource_id}"
+
+
 def _ref(resource_id: str) -> dict[str, str]:
-    return {"reference": f"urn:anastomosis:{resource_id}"}
+    return {"reference": _urn(resource_id)}
 
 
 def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
@@ -613,5 +637,5 @@ def to_bundle(record: PatientRecord) -> dict[str, Any]:
     return {
         "resourceType": "Bundle",
         "type": "collection",
-        "entry": [{"fullUrl": f"urn:anastomosis:{r['id']}", "resource": r} for r in resources],
+        "entry": [{"fullUrl": _urn(r["id"]), "resource": r} for r in resources],
     }
