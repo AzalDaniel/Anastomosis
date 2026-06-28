@@ -171,3 +171,127 @@ def test_summary_line_has_no_paths_or_keys() -> None:
     assert line == "completed=1"
     assert "enc-secret" not in line
     assert ".pdf" not in line
+
+
+# --- verification coverage (Codex audit Finding #5) ---
+
+
+def test_report_embeds_verification_coverage_when_supplied(tmp_path: Path) -> None:
+    """The report's new ``verification_coverage`` field tells the truth about
+    which L-levels actually ran for this run. The README/CLI no longer over-
+    claim a 'full L0-L6 ladder' — the report names every skipped level.
+    """
+    tracking, run_id = _mixed_run(tmp_path)
+    out_dir = tmp_path / "report-out"
+
+    coverage = {
+        "L0": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
+        "L1": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
+        "L2": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
+        # The exact contract Codex flagged: L3 SKIP with the verifier's own
+        # level-shape reason string (no patient values, no paths).
+        "L3": {
+            "pass_count": 0,
+            "fail_count": 0,
+            "skip_count": 3,
+            "skip_reasons": ["no pack provided"],
+        },
+        "L4": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
+        "L5": {
+            "pass_count": 0,
+            "fail_count": 0,
+            "skip_count": 3,
+            "skip_reasons": ["destination has no MetadataReader"],
+        },
+        "L6": {
+            "pass_count": 0,
+            "fail_count": 0,
+            "skip_count": 3,
+            "skip_reasons": ["destination has no DocumentReader"],
+        },
+    }
+    path = write_run_report(tracking, run_id, out_dir, verification_coverage=coverage)
+    report = json.loads(path.read_text(encoding="utf-8"))
+
+    assert "verification_coverage" in report
+    assert set(report["verification_coverage"].keys()) == {f"L{i}" for i in range(7)}
+    assert report["verification_coverage"]["L0"]["pass_count"] == 3
+    assert report["verification_coverage"]["L3"]["skip_count"] == 3
+    assert report["verification_coverage"]["L3"]["skip_reasons"] == ["no pack provided"]
+    assert report["verification_coverage"]["L5"]["skip_reasons"] == [
+        "destination has no MetadataReader"
+    ]
+
+
+def test_report_coverage_omitted_when_none(tmp_path: Path) -> None:
+    """``--no-verify`` runs supply None — the field must NOT appear."""
+    tracking, run_id = _mixed_run(tmp_path)
+    out_dir = tmp_path / "report-out"
+    path = write_run_report(tracking, run_id, out_dir, verification_coverage=None)
+    report = json.loads(path.read_text(encoding="utf-8"))
+    assert "verification_coverage" not in report
+
+
+def test_report_coverage_round_trip_is_deterministic(tmp_path: Path) -> None:
+    """Same coverage → byte-identical bytes (sort_keys + sorted reasons)."""
+    tracking, run_id = _mixed_run(tmp_path)
+    out_dir = tmp_path / "report-out"
+
+    coverage = {
+        "L3": {
+            "pass_count": 1,
+            "fail_count": 0,
+            "skip_count": 2,
+            # Reasons supplied unsorted — the writer must canonicalize.
+            "skip_reasons": ["no header fields declared", "no pack provided"],
+        },
+    }
+    first = write_run_report(tracking, run_id, out_dir, verification_coverage=coverage).read_bytes()
+    second = write_run_report(
+        tracking, run_id, out_dir, verification_coverage=coverage
+    ).read_bytes()
+    assert first == second
+    blob = first.decode("utf-8")
+    # Sorted alphabetically.
+    assert blob.index("no header fields declared") < blob.index("no pack provided")
+
+
+def test_layered_verifier_coverage_summary_aggregates_by_level() -> None:
+    """``LayeredVerifier.coverage_summary()`` collects per-level counts and
+    dedup'd skip-reason strings across all items the verifier saw — no item
+    keys, no paths, only PHI-safe aggregate counts and detail strings.
+    """
+    from anastomosis.deliver.verify.composite import LayeredVerifier
+    from anastomosis.deliver.verify.levels import LevelResult, LevelStatus
+
+    verifier = LayeredVerifier()
+    # Two items hand-fed into the verifier's results dict — bypasses
+    # verify_pre/verify_post which need real UploadItem fixtures. We are
+    # testing the aggregator, not the level runners.
+    verifier._results = {  # type: ignore[attr-defined]
+        "item-A": [
+            LevelResult("L0", LevelStatus.PASS, "sha256 and size match"),
+            LevelResult("L3", LevelStatus.SKIP, "no pack provided"),
+            LevelResult("L5", LevelStatus.SKIP, "destination has no MetadataReader"),
+        ],
+        "item-B": [
+            LevelResult("L0", LevelStatus.PASS, "sha256 and size match"),
+            LevelResult("L3", LevelStatus.SKIP, "no pack provided"),  # dedup target
+            LevelResult("L4", LevelStatus.FAIL, "wrong patient on banner"),
+        ],
+    }
+    summary = verifier.coverage_summary()
+
+    assert summary["L0"] == {
+        "pass_count": 2,
+        "fail_count": 0,
+        "skip_count": 0,
+        "skip_reasons": [],
+    }
+    assert summary["L3"]["skip_count"] == 2
+    # Identical reasons collapse to one — the dedup contract.
+    assert summary["L3"]["skip_reasons"] == ["no pack provided"]
+    assert summary["L4"]["fail_count"] == 1
+    # PHI-safety: nothing in the summary should carry an item key.
+    flat = json.dumps(summary)
+    assert "item-A" not in flat and "item-B" not in flat
