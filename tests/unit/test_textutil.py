@@ -283,6 +283,28 @@ def test_sanitize_soap_html_preserves_class_attr() -> None:
     assert "<p" in out and ">hi</p>" in out
 
 
+def test_sanitize_soap_html_multiline_open_tag_does_not_corrupt() -> None:
+    # Pretty-printed EHR exports sometimes wrap a long attribute list across
+    # lines: ``<p\n  class="foo"\n>x</p>``. The source-bytes-preservation
+    # shortcut must NOT emit that verbatim — the downstream stray-newline
+    # regex would otherwise inject ``<br>`` inside the open tag, producing
+    # ``<p<br>\n  class="foo"<br>\n>`` and silently dropping the class.
+    # Reconstruction collapses the open tag to a clean single line.
+    out = sanitize_soap_html('<p\n  class="foo"\n>x</p>')
+    # The dangerous corruption shape MUST be absent.
+    assert "<p<br>" not in out
+    assert "<br>\n  " not in out
+    # And the class survives intact.
+    assert 'class="foo"' in out
+    assert ">x</p>" in out
+    # Same for a multi-line open tag inside a table cell (the polymerase
+    # leading-strand's table-cell probe).
+    out = sanitize_soap_html('<table><tr><td\n  class="narrow">A</td></tr></table>')
+    assert "<td<br>" not in out
+    assert 'class="narrow"' in out
+    assert ">A</td>" in out
+
+
 def test_sanitize_soap_html_byte_identical_on_fixture_shape() -> None:
     # Pins the byte-identity invariant the e2e goldens rely on: every shape
     # the PF/Tebra v9 fixture carries (paragraphs with text, paragraphs with

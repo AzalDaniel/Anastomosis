@@ -328,10 +328,14 @@ class _SoapHtmlSanitizer(HTMLParser):
         # ``<br />``). This is what keeps benign clinical HTML byte-identical
         # round-tripping through the sanitizer — critical for the PF/Tebra
         # e2e goldens. The fallback reconstructs from the parsed attr list
-        # whenever something had to be filtered.
+        # whenever something had to be filtered — or whenever the source open
+        # tag spans multiple lines (a pretty-printed EHR export wrapping a
+        # long attribute list): emitting the multi-line source verbatim would
+        # let the downstream stray-newline regex inject ``<br>`` *inside* the
+        # open tag, corrupting it. Reconstruction collapses to a single line.
         if all(name and name.lower() in _ALLOWED_ATTRS for name, _ in attrs):
             original = self.get_starttag_text()
-            if original is not None:
+            if original is not None and "\n" not in original:
                 self._parts.append(original)
                 return
         suffix = "/>" if self_closing and tag in _VOID_ALLOWED else ">"
