@@ -66,7 +66,9 @@ _EXTRA_MODELS: dict[str, type[AnastBase]] = {
 def _unref(ref: dict[str, str] | None) -> str | None:
     if not ref or "reference" not in ref:
         return None
-    return ref["reference"].removeprefix("urn:anastomosis:")
+    # Recover the id from either URN scheme to_bundle emits: urn:uuid: for a UUID
+    # id (the standard, server-resolvable form), urn:anastomosis: otherwise.
+    return ref["reference"].removeprefix("urn:uuid:").removeprefix("urn:anastomosis:")
 
 
 def _exts(resource: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
