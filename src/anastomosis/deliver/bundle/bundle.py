@@ -33,7 +33,7 @@ from anastomosis.core.fhir import to_bundle
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.deliver.pdfindex import patient_prefix
+from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport, Verdict
 
 __all__ = ["BundleDeliverer", "BundleResult"]
@@ -99,34 +99,41 @@ class BundleDeliverer:
         *,
         qa_report: QAReport | None = None,
     ) -> list[BundleResult]:
-        """Deliver a bundle per record, attributing each patient's charts in a
-        single pass over the rendered PDFs.
+        """Deliver a bundle per record, attributing each patient's charts via
+        the engine's persisted render index.
 
-        Instead of re-filtering every rendered PDF for every patient (the old
-        O(patients x pdfs) loop), bucket each chart under the LONGEST patient
-        prefix it starts with, once, then hand each record its own bucket. The
-        longest-first, single-assignment rule is exactly equivalent to the old
-        per-patient ``startswith`` filter — patient prefixes end in ``_`` so a
-        chart matches at most one — and stays correct for multi-token names
-        (``Van_Buren_John_…``) that a naive ``{token0}_{token1}_`` index would
-        mis-bucket.
+        Pre-PR-O this bucketed PDFs by the leading ``{family}_{given}_``
+        filename prefix; two patients sharing both names cross-attributed
+        without warning. Attribution is now strictly by ``patient_id``:
+        the render index (``render_index.json`` written by the engine into
+        ``pdfs_dir``) tells the deliverer exactly which PDFs the engine
+        wrote for which patient. When the index is missing every patient's
+        PDF list is empty — bundles render without charts and the index
+        absence is logged loudly. Bundle has no per-patient ``unattributed``
+        slot (it's per-patient by definition), so it never guesses.
         """
-        all_pdfs = sorted(pdfs_dir.glob("*.pdf")) if pdfs_dir and pdfs_dir.is_dir() else []
-        prefixes = sorted(
-            {p for record in records if (p := patient_prefix(record.patient))},
-            key=len,
-            reverse=True,
-        )
-        buckets: dict[str, list[Path]] = {p: [] for p in prefixes}
-        for pdf in all_pdfs:
-            for prefix in prefixes:
-                if pdf.name.startswith(prefix):
-                    buckets[prefix].append(pdf)
-                    break
+        render_index = RenderIndex.load(pdfs_dir)
+        if pdfs_dir is None or not pdfs_dir.is_dir():
+            pdfs_lookup: dict[str, list[Path]] = {}
+        elif render_index is None:
+            logger.warning(
+                "no render index in %s; bundle will deliver without chart PDFs",
+                pdfs_dir,
+            )
+            pdfs_lookup = {}
+        else:
+            pdfs_lookup = {
+                record.patient.id: [
+                    pdfs_dir / name
+                    for name in render_index.for_patient(record.patient.id)
+                    if (pdfs_dir / name).is_file()
+                ]
+                for record in records
+            }
         return [
             self.deliver(
                 record,
-                buckets.get(patient_prefix(record.patient), []),
+                pdfs_lookup.get(record.patient.id, []),
                 out_dir,
                 qa_report=qa_report,
             )
@@ -179,17 +186,18 @@ class BundleDeliverer:
     # --- internals ----------------------------------------------------------
 
     def _copy_pdfs(self, patient: Patient, pdfs: list[Path], patient_dir: Path) -> list[Path]:
+        # ``pdfs`` is the index-attributed list assembled by
+        # :meth:`deliver_records` (or supplied directly by a caller that
+        # already filtered by ``patient.id``). The deliverer trusts that
+        # filter and copies the lot verbatim; the old startswith re-check
+        # is gone because filename prefixes are no longer the source of
+        # truth for attribution — the render index is.
         if not pdfs:
-            return []
-        prefix = patient_prefix(patient)
-        if not prefix:
             return []
         target_dir = patient_dir / "pdfs"
         target_dir.mkdir(parents=True, exist_ok=True)
         copied: list[Path] = []
         for pdf in pdfs:
-            if not pdf.name.startswith(prefix):
-                continue
             try:
                 destination = target_dir / pdf.name
                 shutil.copyfile(pdf, destination)

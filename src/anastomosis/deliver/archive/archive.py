@@ -56,7 +56,7 @@ from anastomosis.core.fhir import to_bundle
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.deliver.pdfindex import patient_prefix
+from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport
 
 from .templates import CSP_META_CONTENT, ENCOUNTER_HTML, INDEX_HTML, PATIENT_HTML, README_TEXT
@@ -129,7 +129,7 @@ class ArchiveDeliverer:
     ) -> ArchiveResult:
         out = secure_output_dir(out_dir)
         self._copy_assets(out)
-        pdf_lookup = _index_pdfs(pdfs_dir)
+        render_index = RenderIndex.load(pdfs_dir)
 
         manifest_entries: list[dict[str, object]] = []
         encounter_count = 0
@@ -138,6 +138,7 @@ class ArchiveDeliverer:
 
         records_list = list(records)
         qa_lookup = _qa_lookup(qa_report)
+        owned_pdfs: set[str] = set()
 
         for record in records_list:
             pid = _safe_id(record.patient.id, "unknown")
@@ -150,10 +151,14 @@ class ArchiveDeliverer:
                 json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8"
             )
 
-            # PDFs — only those that belong to this patient, named by the
-            # engine's deterministic pattern; PDFs we can't attribute stay
-            # unowned (logged in the archive's README, not silently dropped).
-            patient_pdfs = self._copy_patient_pdfs(record, pdf_lookup, patient_dir)
+            # PDFs — attributed strictly via the render index (patient_id
+            # match). The pre-PR-O fallback that guessed ownership from
+            # ``{family}_{given}_`` filename prefixes is gone: it cross-
+            # leaked between two same-name patients. With no index present
+            # the deliverer routes every PDF into ``unattributed/`` instead
+            # of guessing (see :meth:`_route_unattributed_pdfs` below).
+            patient_pdfs = self._copy_patient_pdfs(record, render_index, pdfs_dir, patient_dir)
+            owned_pdfs.update(patient_pdfs.values())
             pdf_count += len(patient_pdfs)
 
             # Per-encounter HTML pages.
@@ -173,6 +178,10 @@ class ArchiveDeliverer:
 
             manifest_entries.append(_manifest_entry(record, pid))
 
+        # Anything in ``pdfs_dir`` not claimed by an indexed patient lands
+        # in ``unattributed/`` so nothing is silently dropped or guessed.
+        unattributed_count = self._route_unattributed_pdfs(pdfs_dir, render_index, owned_pdfs, out)
+
         index_path = self._write_index(
             out,
             manifest_entries,
@@ -181,10 +190,11 @@ class ArchiveDeliverer:
         )
         self._write_readme(out)
         logger.info(
-            "archive delivered: %d patients, %d encounters, %d pdfs",
+            "archive delivered: %d patients, %d encounters, %d pdfs (%d unattributed)",
             len(manifest_entries),
             encounter_count,
             pdf_count,
+            unattributed_count,
         )
         return ArchiveResult(
             out_dir=out,
@@ -215,56 +225,91 @@ class ArchiveDeliverer:
     def _copy_patient_pdfs(
         self,
         record: PatientRecord,
-        pdf_lookup: dict[str, list[Path]],
+        render_index: RenderIndex | None,
+        pdfs_dir: Path | None,
         patient_dir: Path,
     ) -> dict[str, str]:
         """Copy this patient's PDFs into the patient's own ``pdfs/`` slot.
 
         Returns a mapping of ``encounter.id -> pdf filename`` so the
-        per-encounter pages can link to the right file. PDFs are matched by
-        the engine's filename prefix (``{family}_{given}_``); patient ids
-        never appear inside the chart filenames so this is the only way to
-        attribute a PDF without coupling to the engine."""
-        if not pdf_lookup:
+        per-encounter pages can link to the right file. Attribution is
+        strictly index-based: only PDFs the engine actually wrote for
+        ``record.patient.id`` are copied, and the encounter link comes
+        from the index entry's ``encounter_id`` (not a substring match
+        on the date in the filename). A patient with no index entries
+        gets no PDFs — never a guess.
+        """
+        if render_index is None or pdfs_dir is None or not pdfs_dir.is_dir():
             return {}
-        prefix = patient_prefix(record.patient)
-        if not prefix:
-            return {}
-        candidates = pdf_lookup.get(prefix, [])
-        if not candidates:
+        names = render_index.for_patient(record.patient.id)
+        if not names:
             return {}
 
         out_dir = patient_dir / "pdfs"
         out_dir.mkdir(parents=True, exist_ok=True)
         mapping: dict[str, str] = {}
-        copied: set[str] = set()
-        for source in candidates:
+        for name in names:
+            source = pdfs_dir / name
+            if not source.is_file():
+                # The index claims a PDF the engine never wrote (or it
+                # was deleted post-render). Log loud, never silently fake
+                # an attribution.
+                logger.warning("indexed pdf missing on disk: %s", name)
+                continue
             try:
-                shutil.copyfile(source, out_dir / source.name)
-                copied.add(source.name)
+                shutil.copyfile(source, out_dir / name)
             except OSError as exc:
                 logger.warning("pdf copy failed (%s)", exc_tag(exc))
-
-        # Best-effort encounter→file assignment: match by DOS in the
-        # filename. The engine pattern is ``{family}_{given}_{dos}_{type}``
-        # so the date appears as a stable substring per encounter.
-        for encounter in record.encounters:
-            if encounter.date_of_service is None:
                 continue
-            dos = encounter.date_of_service.strftime("%m-%d-%Y")
-            matches = sorted(name for name in copied if dos in name)
-            if not matches:
-                continue
-            # Collisions: the engine suffixes the second filename with a
-            # short hash of the encounter id. Prefer that one if it matches.
-            suffix = encounter.id.replace("-", "")[:8]
-            for name in matches:
-                if suffix and suffix in name:
-                    mapping[encounter.id] = name
-                    break
-            else:
-                mapping.setdefault(encounter.id, matches[0])
+            entry = render_index.lookup(name)
+            if entry is not None:
+                # First-wins: a doubled encounter→pdf row (corrupted index)
+                # keeps the first assignment, never overwrites.
+                mapping.setdefault(entry.encounter_id, name)
         return mapping
+
+    def _route_unattributed_pdfs(
+        self,
+        pdfs_dir: Path | None,
+        render_index: RenderIndex | None,
+        owned: set[str],
+        out: Path,
+    ) -> int:
+        """Copy any leftover PDFs into ``out/unattributed/`` (fail-closed).
+
+        Two cases land here: PDFs in ``pdfs_dir`` that the index does not
+        mention (a stray file not produced by THIS run), and the entire
+        directory when no index is present at all. In both cases the
+        deliverer refuses to guess — the PDFs are visible to the operator
+        in one place, never silently dropped, never silently misattributed.
+        Returns the count for the run summary.
+        """
+        if pdfs_dir is None or not pdfs_dir.is_dir():
+            return 0
+        all_pdfs = sorted(p for p in pdfs_dir.glob("*.pdf"))
+        if not all_pdfs:
+            return 0
+        if render_index is None:
+            # No index at all → every PDF is unattributed by the same
+            # fail-closed rule. Log loud so the missing sidecar is visible.
+            logger.warning(
+                "no render index in %s; routing all %d pdf(s) to unattributed/",
+                pdfs_dir,
+                len(all_pdfs),
+            )
+            orphans = all_pdfs
+        else:
+            orphans = [p for p in all_pdfs if p.name not in owned]
+        if not orphans:
+            return 0
+        target = out / "unattributed"
+        target.mkdir(parents=True, exist_ok=True)
+        for source in orphans:
+            try:
+                shutil.copyfile(source, target / source.name)
+            except OSError as exc:
+                logger.warning("unattributed pdf copy failed (%s)", exc_tag(exc))
+        return len(orphans)
 
     def _write_patient_page(
         self,
@@ -375,29 +420,6 @@ class ArchiveDeliverer:
 
 
 # --- helpers ----------------------------------------------------------------
-
-
-def _index_pdfs(pdfs_dir: Path | None) -> dict[str, list[Path]]:
-    """Build a prefix→files index over the rendered PDF directory.
-
-    The engine names each chart ``{family}_{given}_{dos}_{type}.pdf``, so
-    grouping by the leading ``family_given_`` prefix gives every chart that
-    might belong to one patient with one cheap scan. Patients that share
-    a family+given name (synthetic-fixture collisions, or unrelated patients
-    with the same name) will need a tighter match later — for v0.1 the
-    fixture data has no such collisions.
-    """
-    if pdfs_dir is None or not pdfs_dir.is_dir():
-        return {}
-    index: dict[str, list[Path]] = {}
-    for pdf in sorted(pdfs_dir.glob("*.pdf")):
-        # Prefix = up to the second underscore (family + "_" + given + "_").
-        parts = pdf.name.split("_")
-        if len(parts) < 3:
-            continue
-        prefix = f"{parts[0]}_{parts[1]}_"
-        index.setdefault(prefix, []).append(pdf)
-    return index
 
 
 def _qa_lookup(qa_report: QAReport | None) -> dict[str, str]:
