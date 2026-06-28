@@ -61,6 +61,35 @@ def test_round_trip_is_lossless(records: list[PatientRecord]) -> None:
             )
 
 
+def test_uuid_ids_use_standard_urn_uuid_scheme(records: list[PatientRecord]) -> None:
+    """A UUID resource id is emitted as the FHIR-standard, server-resolvable
+    ``urn:uuid:`` in fullUrl and references; a non-UUID id keeps
+    ``urn:anastomosis:`` so the id still round-trips. Both recover on ingest."""
+    from anastomosis.core.fhir.export import _ref, _urn
+    from anastomosis.core.fhir.ingest import _unref
+
+    assert _urn("feedface-0000-0000-0000-000000000001").startswith("urn:uuid:")
+    assert _urn("patient-1") == "urn:anastomosis:patient-1"  # non-UUID fallback
+    # parseable-but-non-canonical (braced) → fallback, so urn:uuid stays valid
+    braced = "{feedface-0000-0000-0000-000000000001}"
+    assert _urn(braced) == f"urn:anastomosis:{braced}"
+    for rid in ("feedface-0000-0000-0000-000000000001", "patient-1", braced):
+        assert _unref(_ref(rid)) == rid  # every scheme recovers the id verbatim
+
+    # PF/Tebra ids are UUIDs, so the live bundle uses the standard scheme, and
+    # every reference still resolves to a fullUrl under it.
+    bundle = to_bundle(records[0])
+    full_urls = {e["fullUrl"] for e in bundle["entry"]}
+    patient_full = next(
+        e["fullUrl"] for e in bundle["entry"] if e["resource"]["resourceType"] == "Patient"
+    )
+    assert patient_full.startswith("urn:uuid:")
+    encounters = [
+        e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == "Encounter"
+    ]
+    assert encounters and all(e["subject"]["reference"] in full_urls for e in encounters)
+
+
 def test_bundle_is_standard_shaped(records: list[PatientRecord]) -> None:
     bundle = to_bundle(records[0])  # Ada Fixture
     assert bundle["resourceType"] == "Bundle" and bundle["type"] == "collection"
