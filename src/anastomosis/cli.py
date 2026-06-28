@@ -26,6 +26,9 @@ import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra
 from anastomosis.core.presentation import Glyphs, terminal_glyphs
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.deliver.browser.attach import (
+    attach_destination as _make_destination,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -642,44 +645,12 @@ _CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
 )
 
 
-def _make_destination(cdp_url: str, loaded: object) -> object:
-    """Build the live browser destination for ``anast upload`` (the SEAM tests mock).
-
-    Attaches over CDP (loopback-only, already validated by the caller) to the
-    browser the operator launched and logged into, drives its first
-    context/page through the :class:`PlaywrightPageAdapter`, and wraps the
-    discovered pack's selectors + config into a
-    :class:`~anastomosis.destinations.browserpack.BrowserPackDestination`. This
-    is the ONLY Playwright touch in the upload path; the import is lazy (via
-    ``connect_over_cdp``) so the command and its tests load without the
-    ``deliver-browser`` extra. Tests monkeypatch this whole function so the run
-    flow drives a :class:`FakeDestination` with no browser.
-    """
-    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
-    from anastomosis.destinations.browserpack import (
-        BrowserPackDestination,
-        PlaywrightPageAdapter,
-    )
-    from anastomosis.destinations.loader import LoadedBrowserPack
-
-    assert isinstance(loaded, LoadedBrowserPack)
-    playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
-    # The operator has their EHR open; drive its existing context/page. We NEVER
-    # close that context/page; on close() we only release OUR owned resources —
-    # disconnect the CDP session (browser.close() does not close a connect_over_cdp
-    # browser) and stop the driver subprocess (in that order, per Playwright).
-    page = browser.contexts[0].pages[0]
-
-    def _teardown() -> None:
-        browser.close()
-        playwright.stop()
-
-    return BrowserPackDestination(
-        loaded.require_selectors(),
-        PlaywrightPageAdapter(page),
-        loaded.config,
-        teardown=_teardown,
-    )
+# NB: ``_make_destination`` is exported from this module (imported at the top
+# of the file) as an alias of :func:`anastomosis.deliver.browser.attach.attach_destination`,
+# so long-standing tests that ``monkeypatch.setattr("anastomosis.cli._make_destination",
+# ...)`` continue to work. The implementation lives in
+# ``deliver.browser.attach`` so the GUI does not need to import the CLI
+# (Codex Finding #2's boundary fix).
 
 
 def _upload_exit_code(counts: dict[str, int], aborted_reason: str | None) -> int:
