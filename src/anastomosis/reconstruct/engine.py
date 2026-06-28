@@ -169,7 +169,34 @@ class ReconstructionEngine:
                     )
         finally:
             self._retire_renderer()
+        # Persist the render index so downstream deliverers (archive, bundle)
+        # can attribute PDFs by patient_id directly, instead of reverse-
+        # inferring ownership from the leading ``{family}_{given}_`` prefix
+        # — the patient-safety hazard with two same-name patients that the
+        # old pdfindex helper warned about in its own docstring. The index
+        # is written even on partial/empty runs (an empty index is still a
+        # truthful answer, "this directory's attribution is known").
+        self._write_render_index(out, result)
         return result
+
+    @staticmethod
+    def _write_render_index(out: Path, result: RenderResult) -> None:
+        from anastomosis.deliver.render_index import RenderEntry, RenderIndex
+
+        index = RenderIndex.from_entries(
+            RenderEntry(
+                pdf=doc.path.name,
+                patient_id=doc.patient_id,
+                encounter_id=doc.encounter_id,
+            )
+            for doc in result.documents
+        )
+        try:
+            index.write(out)
+        except OSError as exc:
+            # A failed sidecar must not crash the render — log loud and
+            # let the deliverers fall back to fail-closed (unattributed/).
+            logger.warning("render index write failed (%s)", exc_tag(exc))
 
     def _render_one(
         self,

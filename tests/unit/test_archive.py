@@ -16,9 +16,9 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapter
 from anastomosis.core.fhir import from_bundle
-from anastomosis.core.model import PatientRecord
+from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.deliver.archive import ArchiveDeliverer
-from anastomosis.deliver.pdfindex import patient_prefix as _patient_prefix
+from anastomosis.deliver.render_index import RenderEntry, RenderIndex
 from anastomosis.sources import get_source
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
@@ -29,16 +29,32 @@ def records() -> list[PatientRecord]:
     return list(get_source("pf-tebra").load(FIXTURE))
 
 
+def _engine_prefix(patient: Patient) -> str:
+    """The engine's ``{family}_{given}_`` filename prefix.
+
+    Used only by the test's :func:`_fake_pdfs` helper to mimic the engine's
+    naming pattern; production attribution is by the render-index sidecar
+    the engine writes, not by this prefix (the cross-leak Codex flagged).
+    """
+    family = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.family_name or "").strip()).strip("_")
+    given = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.given_name or "").strip()).strip("_")
+    if not (family and given):
+        return ""
+    return f"{family}_{given}_"
+
+
 def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
     """Materialize one fake-but-valid PDF per encounter using the same name
-    pattern the engine produces, so the deliverer's PDF lookup has files to
-    match against. ``b"%PDF-1.7 fake"`` is the same shape used in
-    ``test_engine.py``'s FakeRenderer."""
+    pattern the engine produces AND write the render-index sidecar so the
+    deliverer can attribute each PDF to its owning patient. ``b"%PDF-1.7
+    fake"`` is the same shape used in ``test_engine.py``'s FakeRenderer.
+    """
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
+    entries: list[RenderEntry] = []
     seen: set[str] = set()
     for record in records:
-        prefix = _patient_prefix(record.patient)
+        prefix = _engine_prefix(record.patient)
         if not prefix:
             continue
         for encounter in record.encounters:
@@ -56,6 +72,14 @@ def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
             path = pdfs_dir / name
             path.write_bytes(b"%PDF-1.7 fake\n")
             written.append(path)
+            entries.append(
+                RenderEntry(
+                    pdf=name,
+                    patient_id=record.patient.id,
+                    encounter_id=encounter.id,
+                )
+            )
+    RenderIndex.from_entries(entries).write(pdfs_dir)
     return written
 
 
@@ -224,7 +248,7 @@ def test_archive_pdfs_attributed_to_their_patient(
     ArchiveDeliverer().deliver(records, pdfs_dir, out)
 
     for record in records:
-        prefix = _patient_prefix(record.patient)
+        prefix = _engine_prefix(record.patient)
         if not prefix:
             continue
         patient_pdfs_dir = out / "patients" / record.patient.id / "pdfs"
@@ -244,6 +268,99 @@ def test_archive_handles_missing_pdfs_dir(tmp_path: Path, records: list[PatientR
     assert result.pdf_count == 0
     for record in records:
         assert (out / "patients" / record.patient.id / "bundle.json").is_file()
+
+
+def test_archive_same_name_patients_never_cross_attribute(tmp_path: Path) -> None:
+    """The patient-safety regression Codex flagged: two distinct patients
+    sharing both ``family_name`` and ``given_name`` (different ids, different
+    DOBs) must each receive only their own PDFs. Pre-PR-O the deliverer
+    matched on ``{family}_{given}_`` prefix and silently mixed both.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+
+    # Two patients with the same family/given names — separated only by
+    # patient.id (and DOB, which is informative but not consulted by the
+    # archive's attribution path).
+    def _make_record(patient_id: str, dos: date, enc_id: str) -> PatientRecord:
+        return PatientRecord(
+            patient=Patient(
+                id=patient_id,
+                family_name="Smith",
+                given_name="John",
+                birth_date=date(1980, 1, 1) if patient_id.endswith("1") else date(1995, 6, 15),
+            ),
+            encounters=[
+                Encounter(id=enc_id, patient_id=patient_id, date_of_service=dos, note_type="SOAP")
+            ],
+        )
+
+    rec_a = _make_record("aaaa-0000-0000-0000-000000000001", date(2023, 5, 10), "encA-0000-0000")
+    rec_b = _make_record("bbbb-0000-0000-0000-000000000002", date(2024, 3, 15), "encB-0000-0000")
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir(parents=True)
+    # Two distinct PDFs, both named Smith_John_* (the cross-leak surface).
+    pdf_a = pdfs_dir / "Smith_John_05-10-2023_SOAP.pdf"
+    pdf_b = pdfs_dir / "Smith_John_03-15-2024_SOAP.pdf"
+    pdf_a.write_bytes(b"%PDF-1.7 patient A\n")
+    pdf_b.write_bytes(b"%PDF-1.7 patient B\n")
+
+    # Write the render index so attribution is by patient_id, not prefix.
+    RenderIndex.from_entries(
+        [
+            RenderEntry(pdf=pdf_a.name, patient_id=rec_a.patient.id, encounter_id="encA-0000-0000"),
+            RenderEntry(pdf=pdf_b.name, patient_id=rec_b.patient.id, encounter_id="encB-0000-0000"),
+        ]
+    ).write(pdfs_dir)
+
+    out = tmp_path / "archive"
+    ArchiveDeliverer().deliver([rec_a, rec_b], pdfs_dir, out)
+
+    # Each patient gets exactly its own PDF; never the other's.
+    a_pdfs = sorted(p.name for p in (out / "patients" / rec_a.patient.id / "pdfs").glob("*.pdf"))
+    b_pdfs = sorted(p.name for p in (out / "patients" / rec_b.patient.id / "pdfs").glob("*.pdf"))
+    assert a_pdfs == [pdf_a.name], f"patient A got {a_pdfs}, expected only {pdf_a.name}"
+    assert b_pdfs == [pdf_b.name], f"patient B got {b_pdfs}, expected only {pdf_b.name}"
+    # And nothing leaked into ``unattributed/``.
+    assert not (out / "unattributed").exists() or not list((out / "unattributed").glob("*.pdf")), (
+        "no PDFs should be unattributed when every PDF is indexed"
+    )
+
+
+def test_archive_missing_render_index_routes_to_unattributed(tmp_path: Path) -> None:
+    """When ``pdfs_dir`` has PDFs but no ``render_index.json``, the archive
+    refuses to guess: every PDF lands in ``out/unattributed/`` and no patient
+    directory receives any chart. The opposite of the silent cross-leak.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Patient, PatientRecord
+
+    record = PatientRecord(
+        patient=Patient(
+            id="cccc-0000-0000-0000-000000000003",
+            family_name="Smith",
+            given_name="John",
+            birth_date=date(1980, 1, 1),
+        ),
+        encounters=[],
+    )
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir(parents=True)
+    (pdfs_dir / "Smith_John_05-10-2023_SOAP.pdf").write_bytes(b"%PDF-1.7 unindexed\n")
+
+    out = tmp_path / "archive"
+    result = ArchiveDeliverer().deliver([record], pdfs_dir, out)
+
+    # No PDF reached the patient.
+    assert result.pdf_count == 0
+    patient_pdfs = out / "patients" / record.patient.id / "pdfs"
+    assert not patient_pdfs.exists() or not list(patient_pdfs.glob("*.pdf"))
+    # The orphan landed in unattributed/.
+    unattributed = sorted(p.name for p in (out / "unattributed").glob("*.pdf"))
+    assert unattributed == ["Smith_John_05-10-2023_SOAP.pdf"]
 
 
 def test_archive_index_json_search_haystack_is_lowercased(

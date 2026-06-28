@@ -11,6 +11,7 @@ import pytest
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapter
 from anastomosis.core.model import PatientRecord
 from anastomosis.deliver.bundle import BundleDeliverer
+from anastomosis.deliver.render_index import RenderEntry, RenderIndex
 from anastomosis.qa import CheckResult, DocumentQA, QAReport, Verdict
 from anastomosis.sources import get_source
 
@@ -23,9 +24,12 @@ def records() -> list[PatientRecord]:
 
 
 def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
-    """One ``%PDF-1.7 fake`` file per encounter, using the engine's name shape."""
+    """One ``%PDF-1.7 fake`` file per encounter, using the engine's name shape,
+    plus a render-index sidecar so the bundle deliverer can attribute each
+    PDF to its owning patient by ``patient_id`` (the PR-O regression fix)."""
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     out: list[Path] = []
+    entries: list[RenderEntry] = []
     for record in records:
         family = re.sub(r"[^A-Za-z0-9_-]+", "_", (record.patient.family_name or "").strip()).strip(
             "_"
@@ -52,23 +56,28 @@ def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
             path = pdfs_dir / name
             path.write_bytes(b"%PDF-1.7 fake\n")
             out.append(path)
+            entries.append(
+                RenderEntry(
+                    pdf=name,
+                    patient_id=record.patient.id,
+                    encounter_id=encounter.id,
+                )
+            )
+    RenderIndex.from_entries(entries).write(pdfs_dir)
     return out
 
 
 def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord]) -> None:
     pdfs_dir = tmp_path / "charts"
-    pdfs = _fake_pdfs(records, pdfs_dir)
+    _fake_pdfs(records, pdfs_dir)
     out = tmp_path / "bundles"
 
     deliverer = BundleDeliverer(generator="anastomosis test")
-    for record in records:
-        deliverer.deliver(record, pdfs, out)
+    results = deliverer.deliver_records(records, pdfs_dir, out)
+    assert len(results) == len(records)
 
-    # One subdir per patient, each with the expected files.
     subdirs = sorted(p.name for p in out.iterdir() if p.is_dir())
     expected = sorted(record.patient.id for record in records)
-    # Subdirs are safe-id versions of patient ids; the synthetic fixture uses
-    # plain ASCII GUIDs so the round-trip is identity.
     assert subdirs == expected
 
     for record in records:
@@ -78,80 +87,74 @@ def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord])
         pdfs_subdir = patient_dir / "pdfs"
         if pdfs_subdir.exists():
             for pdf in pdfs_subdir.glob("*.pdf"):
-                # PDFs in this patient's slot must be named after this patient.
+                # PDFs in this patient's slot must be the ones the engine
+                # actually wrote for this patient. Filename prefix matches
+                # patient name today because the synthetic fixture has no
+                # same-name patients; the source of truth is the index.
                 expected_prefix = pdf.name.split("_", 2)[:2]
                 assert expected_prefix[0] == (record.patient.family_name or "")
                 assert expected_prefix[1] == (record.patient.given_name or "")
 
 
-def test_bundle_deliver_records_matches_per_record(
-    tmp_path: Path, records: list[PatientRecord]
-) -> None:
-    """The O(pdfs + patients) batch path attributes each patient's PDFs
-    identically to the old per-record deliver(all_pdfs) loop."""
-    pdfs_dir = tmp_path / "charts"
-    pdfs = _fake_pdfs(records, pdfs_dir)
-
-    out_old = tmp_path / "old"
-    for record in records:
-        BundleDeliverer().deliver(record, pdfs, out_old)
-
-    out_new = tmp_path / "new"
-    results = BundleDeliverer().deliver_records(records, pdfs_dir, out_new)
-    assert len(results) == len(records)
-
-    def _pdf_names(root: Path, pid: str) -> list[str]:
-        slot = root / pid / "pdfs"
-        return sorted(p.name for p in slot.glob("*.pdf")) if slot.exists() else []
-
-    for record in records:
-        pid = record.patient.id
-        assert _pdf_names(out_new, pid) == _pdf_names(out_old, pid)
-
-
-def test_bundle_attributes_spaced_surname(tmp_path: Path, records: list[PatientRecord]) -> None:
-    """A surname with a space ("Van Buren") sanitizes to a multi-token prefix
-    ("Van_Buren_John_"). A naive {token0}_{token1}_ index keys the chart under
-    "Van_Buren_" and would silently drop it; longest-prefix bucketing keeps it.
+def test_bundle_same_name_patients_never_cross_attribute(tmp_path: Path) -> None:
+    """The patient-safety regression Codex flagged for the bundle deliverer:
+    two distinct patients sharing both ``family_name`` and ``given_name`` must
+    each receive only their own PDFs. Pre-PR-O the deliverer bucketed by
+    ``{family}_{given}_`` prefix and silently mixed them.
     """
-    record = records[0]
-    record.patient.family_name = "Van Buren"
-    record.patient.given_name = "John"
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+
+    def _make(pid: str, dos: date, enc_id: str) -> PatientRecord:
+        return PatientRecord(
+            patient=Patient(
+                id=pid, family_name="Smith", given_name="John", birth_date=date(1980, 1, 1)
+            ),
+            encounters=[
+                Encounter(id=enc_id, patient_id=pid, date_of_service=dos, note_type="SOAP")
+            ],
+        )
+
+    rec_a = _make("aaaa-0000-0000-0000-000000000001", date(2023, 5, 10), "encA-0000-0000")
+    rec_b = _make("bbbb-0000-0000-0000-000000000002", date(2024, 3, 15), "encB-0000-0000")
+
     pdfs_dir = tmp_path / "charts"
     pdfs_dir.mkdir()
-    chart = pdfs_dir / "Van_Buren_John_01-01-2020_progress.pdf"
-    chart.write_bytes(b"%PDF-1.7 fake\n")
+    pdf_a = pdfs_dir / "Smith_John_05-10-2023_SOAP.pdf"
+    pdf_b = pdfs_dir / "Smith_John_03-15-2024_SOAP.pdf"
+    pdf_a.write_bytes(b"%PDF-1.7 patient A\n")
+    pdf_b.write_bytes(b"%PDF-1.7 patient B\n")
+    RenderIndex.from_entries(
+        [
+            RenderEntry(pdf=pdf_a.name, patient_id=rec_a.patient.id, encounter_id="encA-0000-0000"),
+            RenderEntry(pdf=pdf_b.name, patient_id=rec_b.patient.id, encounter_id="encB-0000-0000"),
+        ]
+    ).write(pdfs_dir)
 
-    (result,) = BundleDeliverer().deliver_records([record], pdfs_dir, tmp_path / "bundles")
-    assert [p.name for p in result.pdf_paths] == ["Van_Buren_John_01-01-2020_progress.pdf"]
+    results = BundleDeliverer().deliver_records([rec_a, rec_b], pdfs_dir, tmp_path / "bundles")
+    by_pid = {r.patient_id: r for r in results}
+    assert [p.name for p in by_pid[rec_a.patient.id].pdf_paths] == [pdf_a.name]
+    assert [p.name for p in by_pid[rec_b.patient.id].pdf_paths] == [pdf_b.name]
 
 
-def test_bundle_pdfs_never_cross_patient(tmp_path: Path, records: list[PatientRecord]) -> None:
-    """A PDF for patient A must never appear inside patient B's pdfs/ dir."""
+def test_bundle_missing_index_skips_pdfs_loudly(
+    tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
+) -> None:
+    """When ``pdfs_dir`` has PDFs but no ``render_index.json``, the bundle
+    deliverer refuses to guess: every record gets zero PDFs and a WARNING
+    naming the missing-index condition is logged."""
+    import logging
+
     pdfs_dir = tmp_path / "charts"
-    pdfs = _fake_pdfs(records, pdfs_dir)
-    out = tmp_path / "bundles"
-    deliverer = BundleDeliverer()
-    for record in records:
-        deliverer.deliver(record, pdfs, out)
+    pdfs_dir.mkdir()
+    (pdfs_dir / "Smith_John_05-10-2023_SOAP.pdf").write_bytes(b"%PDF-1.7 unindexed\n")
 
-    # Build the truth table: filename → owning patient's family_given prefix.
-    truth: dict[str, str] = {}
-    for record in records:
-        if not (record.patient.family_name and record.patient.given_name):
-            continue
-        family = re.sub(r"[^A-Za-z0-9_-]+", "_", record.patient.family_name.strip()).strip("_")
-        given = re.sub(r"[^A-Za-z0-9_-]+", "_", record.patient.given_name.strip()).strip("_")
-        truth[record.patient.id] = f"{family}_{given}_"
-
-    for record_id, expected_prefix in truth.items():
-        pdfs_subdir = out / record_id / "pdfs"
-        if not pdfs_subdir.exists():
-            continue
-        for pdf in pdfs_subdir.glob("*.pdf"):
-            assert pdf.name.startswith(expected_prefix), (
-                f"PDF {pdf.name} leaked into {record_id}/pdfs/ (expected prefix {expected_prefix})"
-            )
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.bundle.bundle"):
+        results = BundleDeliverer().deliver_records(records, pdfs_dir, tmp_path / "bundles")
+    for r in results:
+        assert r.pdf_paths == []
+    assert any("no render index" in rec.message for rec in caplog.records)
 
 
 def test_bundle_qa_slice_isolates_each_patient(
