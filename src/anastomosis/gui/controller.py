@@ -65,17 +65,19 @@ _STALE_DAYS = 90
 def _attach_destination(cdp_url: str, loaded: object) -> object:
     """Build the live browser destination for an upload run (the Playwright seam).
 
-    Lazily delegates to the CLI's proven :func:`anastomosis.cli._make_destination`
-    — the ONE place a CDP attach over Playwright happens. The caller has already
-    validated the loopback gate. This is kept a SEPARATE module-level function so
-    the GUI tests can ``monkeypatch.setattr(controller, "_attach_destination",
-    lambda cdp, loaded: FakeDestination(...))`` and drive the whole upload flow
-    with no browser. The import is lazy so the controller loads cleanly without
-    the ``deliver-browser`` extra.
+    Delegates to :func:`anastomosis.deliver.browser.attach.attach_destination`
+    — the ONE place a CDP attach over Playwright happens — WITHOUT depending
+    on ``anastomosis.cli`` (the import-boundary fix from Codex Finding #2).
+    The caller has already validated the loopback gate. This is kept a
+    SEPARATE module-level function so the GUI tests can
+    ``monkeypatch.setattr(controller, "_attach_destination",
+    lambda cdp, loaded: FakeDestination(...))`` and drive the whole upload
+    flow with no browser. The import is lazy so the controller loads
+    cleanly without the ``deliver-browser`` extra.
     """
-    from anastomosis.cli import _make_destination
+    from anastomosis.deliver.browser.attach import attach_destination
 
-    return _make_destination(cdp_url, loaded)
+    return attach_destination(cdp_url, loaded)
 
 
 def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
