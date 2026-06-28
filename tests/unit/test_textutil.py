@@ -129,3 +129,179 @@ def test_sanitize_soap_html_idempotent_wrap() -> None:
     # Already wrapped → not double-wrapped (gpdfs:158 guard).
     wrapped = '<div class="pf-rich-text"><p>Note.</p></div>'
     assert sanitize_soap_html(wrapped).count("pf-rich-text") == 1
+
+
+# --- sanitize_soap_html allowlist (XSS / unsafe-markup defense) ------------
+#
+# These exercise the allowlist sanitizer the SOAP render path puts between
+# source HTML and Chromium's renderer. The render path templates the section
+# with Jinja ``| safe`` (autoescape off, by design — legitimate inline
+# formatting must survive), so nothing else stops a stored ``<script>`` from
+# executing inside the local PDF renderer. Every assertion follows the same
+# pattern: the dangerous shape is gone, and a benign neighbour proves the
+# sanitizer is not just deleting everything.
+
+
+def test_sanitize_soap_html_drops_script_tag_and_body() -> None:
+    out = sanitize_soap_html("<p>Before</p><script>alert('x')</script><p>After</p>")
+    # Tag and body both gone (alert text must not become visible chart text).
+    assert "<script" not in out
+    assert "</script" not in out
+    assert "alert" not in out
+    # Benign neighbours survive.
+    assert "<p>Before</p>" in out
+    assert "<p>After</p>" in out
+
+
+def test_sanitize_soap_html_drops_style_tag_and_body() -> None:
+    out = sanitize_soap_html("<p>Note</p><style>@import url('http://evil/x.css');</style>")
+    assert "<style" not in out
+    assert "@import" not in out
+    assert "evil" not in out
+    assert "<p>Note</p>" in out
+
+
+def test_sanitize_soap_html_strips_event_handler_attrs() -> None:
+    out = sanitize_soap_html('<p onclick="alert(1)" onmouseover="x()">Click</p>')
+    # The <p> tag survives — paragraph IS in the allowlist; only the
+    # event handlers are stripped (the surrounding text remains).
+    assert "onclick" not in out.lower()
+    assert "onmouseover" not in out.lower()
+    assert "alert" not in out.lower()
+    assert ">Click</p>" in out
+
+
+def test_sanitize_soap_html_drops_iframe() -> None:
+    out = sanitize_soap_html("<p>x</p><iframe src='http://evil/'></iframe><p>y</p>")
+    assert "<iframe" not in out
+    assert "evil" not in out
+    assert "<p>x</p>" in out and "<p>y</p>" in out
+
+
+def test_sanitize_soap_html_drops_object_and_embed() -> None:
+    out = sanitize_soap_html(
+        '<p>before</p><object data="evil.swf"></object><embed src="evil"><p>after</p>'
+    )
+    assert "<object" not in out
+    assert "<embed" not in out
+    assert "evil" not in out
+    assert "<p>before</p>" in out and "<p>after</p>" in out
+
+
+def test_sanitize_soap_html_drops_img_with_onerror() -> None:
+    # <img> is not in the allowlist (clinical SOAP fixture has none) — the
+    # whole tag goes, taking the onerror handler with it.
+    out = sanitize_soap_html('<p>x</p><img src="x" onerror="alert(1)"><p>y</p>')
+    assert "<img" not in out
+    assert "onerror" not in out
+    assert "alert" not in out
+    assert "<p>x</p>" in out and "<p>y</p>" in out
+
+
+def test_sanitize_soap_html_drops_anchor_javascript_url() -> None:
+    # <a> is not in the allowlist either; the surrounding text (the link
+    # label "click") survives because we drop the tag but keep its data.
+    out = sanitize_soap_html('<p>Visit <a href="javascript:alert(1)">click</a> now</p>')
+    assert "<a " not in out and "<a>" not in out
+    assert "javascript:" not in out
+    assert "alert" not in out
+    assert "Visit " in out and "click" in out and " now" in out
+
+
+def test_sanitize_soap_html_drops_comments() -> None:
+    # Comments are a classic mXSS bypass vector (parser disagreement between
+    # HTMLParser and Chromium on ``<!--<script-->``).
+    out = sanitize_soap_html("<p>x</p><!--<script>alert(1)</script>--><p>y</p>")
+    assert "<!--" not in out
+    assert "alert" not in out
+    assert "<p>x</p>" in out and "<p>y</p>" in out
+
+
+def test_sanitize_soap_html_drops_form_controls() -> None:
+    out = sanitize_soap_html(
+        '<p>x</p><form action="javascript:alert(1)">'
+        '<input name="x"><button>go</button></form><p>y</p>'
+    )
+    assert "<form" not in out
+    assert "<input" not in out
+    assert "<button" not in out
+    assert "javascript:" not in out
+    assert "<p>x</p>" in out and "<p>y</p>" in out
+
+
+def test_sanitize_soap_html_uppercase_handlers_normalized() -> None:
+    # HTMLParser lowercases tag names; the handler-name comparison must also
+    # be case-insensitive — verify with all-uppercase input.
+    out = sanitize_soap_html('<P ONCLICK="alert(1)">X</P>')
+    assert "onclick" not in out.lower()
+    assert "alert" not in out.lower()
+    assert ">X</p>" in out
+
+
+def test_sanitize_soap_html_meta_link_dropped() -> None:
+    out = sanitize_soap_html(
+        '<meta http-equiv="refresh" content="0;url=http://evil"><link rel="stylesheet" href="http://evil/x"><p>note</p>'
+    )
+    assert "<meta" not in out
+    assert "<link" not in out
+    assert "evil" not in out
+    assert "<p>note</p>" in out
+
+
+def test_sanitize_soap_html_svg_dropped() -> None:
+    # SVG can host <script> too; drop the whole subtree.
+    out = sanitize_soap_html("<p>x</p><svg><script>alert(1)</script></svg><p>y</p>")
+    assert "<svg" not in out
+    assert "<script" not in out
+    assert "alert" not in out
+    assert "<p>x</p>" in out and "<p>y</p>" in out
+
+
+def test_sanitize_soap_html_unknown_tag_drops_tag_keeps_text() -> None:
+    # Graceful degradation: unrecognized wrapper disappears but its text
+    # remains, so an old export with an obscure tag still surfaces content.
+    out = sanitize_soap_html("<p>Refer to <font color='red'>RED</font> band</p>")
+    assert "<font" not in out
+    assert "color" not in out
+    assert "RED" in out
+    assert "Refer to " in out and " band" in out
+
+
+def test_sanitize_soap_html_drops_style_attr() -> None:
+    # ``style`` carries no semantic the templates need and is an
+    # expression()/url(javascript:) carrier; the allowlist refuses it.
+    out = sanitize_soap_html('<p style="background:url(javascript:alert(1))">x</p>')
+    assert "style=" not in out
+    assert "javascript:" not in out
+    assert ">x</p>" in out
+
+
+def test_sanitize_soap_html_preserves_class_attr() -> None:
+    # ``class`` IS allowed — the templates style on it (``pf-rich-text`` etc).
+    out = sanitize_soap_html('<p class="note-emphasis">hi</p>')
+    assert 'class="note-emphasis"' in out
+    assert "<p" in out and ">hi</p>" in out
+
+
+def test_sanitize_soap_html_byte_identical_on_fixture_shape() -> None:
+    # Pins the byte-identity invariant the e2e goldens rely on: every shape
+    # the PF/Tebra v9 fixture carries (paragraphs with text, paragraphs with
+    # ``<br/>``, the ``\\n``-escaped TSV form) round-trips with no surprise
+    # rewrites from the allowlist pass.
+    shapes = [
+        "<p>Reports good medication adherence. No dizziness or headache.</p>",
+        "<p>Continue lisinopril 10 mg daily.<br/>Recheck in 3 months.</p>",
+        "<p>Step 1.\\nStep 2.\\nStep 3.</p>",
+    ]
+    for shape in shapes:
+        out = sanitize_soap_html(shape)
+        # Wrap added once; the inner content is preserved verbatim
+        # (including the <br/> self-closing form).
+        assert out.startswith('<div class="pf-rich-text">')
+        assert out.endswith("</div>")
+        # The fixture's bytes survive, modulo the wrap.
+        inner = out[len('<div class="pf-rich-text">') : -len("</div>")]
+        # \\n in the test source means literal two-char "\n" → the
+        # legacy transform turns it into a real newline, then into <br>.
+        expected_inner = shape.replace("\\n", "<br>\n")
+        assert inner == expected_inner, f"{inner!r} != {expected_inner!r}"
