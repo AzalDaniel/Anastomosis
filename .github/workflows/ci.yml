@@ -32,6 +32,21 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
 
+  # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
+  # as one of the gates; this lane closes the drift Codex audit Finding #7
+  # flagged. The dev extra brings mypy + type stubs and pulls in render+fhir
+  # so the optional-extra imports type-resolve cleanly under --strict.
+  type-check:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m mypy
+
   test:
     name: Tests (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
