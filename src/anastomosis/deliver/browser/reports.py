@@ -28,7 +28,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from anastomosis.core.output import secure_output_dir
-from anastomosis.deliver.verify.composite import LevelCoverage
+
+# Imported from .verify.types (a leaf module with no project imports) rather
+# than .verify.composite — the latter pulls .browser.errors, and via
+# .browser/__init__.py back to this file, creating a circular import that
+# Codex's re-audit caught.
+from anastomosis.deliver.verify.types import LevelCoverage
 
 from .states import UploadState
 from .tracking import TrackingDB
