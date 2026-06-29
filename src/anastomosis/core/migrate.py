@@ -42,13 +42,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
     from anastomosis.deliver.router import TransitMap
-    from anastomosis.pipeline import EventSink, PipelineResult
+    from anastomosis.pipeline import EventSink, PipelineResult, StageEvent
     from anastomosis.reconstruct.ccda_standard import CCDARenderResult
+    from anastomosis.reconstruct.engine import RenderedDoc
+    from anastomosis.sources.base import SourceAdapter
 
 __all__ = [
     "RENDER_CCDA_STANDARD",
@@ -121,6 +123,91 @@ def _charts_dir(out_dir: Path) -> Path:
 
 def _ccda_dir(out_dir: Path) -> Path:
     return out_dir / "ccda"
+
+
+# --- shared migration helpers (Codex audit Finding #4: DRY) ----------------
+#
+# Pre-PR-S ``_run_ccda_standard`` hand-rolled output validation, source
+# resolution + DETECT/INGEST event emission, and manifest writing — work
+# ``run_pipeline_command`` already does for pack mode. The three helpers
+# below own that work once so both modes share the same:
+#
+# * exit-code semantics for output validation (PipelineError, kind="bad_output");
+# * adapter resolution + DETECT/INGEST event ORDER and SHAPE (the stage
+#   contract a parity test pins);
+# * upload manifest writing + the MANIFEST event count payload.
+#
+# ``_run_pack_mode`` reaches these emissions through ``run_pipeline_command``
+# (which calls into ``pipeline.run_pipeline``); ``_run_ccda_standard`` reaches
+# them through these helpers. The parity test
+# ``test_migrate_pack_and_ccda_standard_share_stage_contract`` proves they
+# stay in sync.
+
+
+def _validate_outputs(targets: tuple[Path, ...]) -> None:
+    """Pre-flight every output target, mapping path-collisions to exit 2.
+
+    Mirrors :func:`run_pipeline_command`'s pre-flight: a target path that is
+    actually a file (a stale leftover from a different run, an operator typo,
+    a name collision) fails closed with a clean
+    :class:`PipelineError` (``kind="bad_output"``) rather than a raw OSError
+    deep inside the renderer or deliverer.
+    """
+    from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.pipeline import PipelineError
+
+    for target in targets:
+        try:
+            validate_output_target(target)
+        except OutputPathError as exc:
+            raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
+
+
+def _resolve_source_and_load(
+    cmd: MigrationCommand, emit: Callable[[StageEvent], None]
+) -> tuple[SourceAdapter, list[PatientRecord]]:
+    """Resolve the adapter and load records, emitting DETECT + INGEST.
+
+    Mirrors the same two-step emission sequence ``pipeline.run_pipeline`` uses
+    so a migration that does NOT route through the pack pipeline still tells
+    the same CLI/GUI presenters the same story in the same order. The events'
+    PHI-safety contract is preserved: DETECT carries only the adapter name,
+    INGEST carries only a record count.
+    """
+    from anastomosis.pipeline import (
+        STAGE_DETECT,
+        STAGE_INGEST,
+        StageEvent,
+        load_records,
+        resolve_source,
+    )
+
+    adapter = resolve_source(cmd.export_dir, cmd.source)
+    emit(StageEvent(STAGE_DETECT, detail=adapter.name))
+    records = load_records(adapter, cmd.export_dir)
+    emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
+    return adapter, records
+
+
+def _write_manifest_with_event(
+    docs: list[RenderedDoc],
+    records: list[PatientRecord],
+    charts_dir: Path,
+    emit: Callable[[StageEvent], None],
+) -> None:
+    """Persist the upload manifest next to the charts and emit MANIFEST.
+
+    A migration intends to deliver, so the upload manifest is written by
+    default (matching ``run_pipeline_command``'s ``write_manifest=True``
+    posture for migrations). The event count payload — ``items`` — is the
+    same shape ``run_pipeline_command`` emits, so a parity test on the stage
+    contract sees identical payloads from both render modes.
+    """
+    from anastomosis.deliver.browser.persist import write_upload_manifest
+    from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
+
+    write_upload_manifest(docs, records, charts_dir)
+    emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
 
 
 def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> MigrationResult:
@@ -198,30 +285,20 @@ def _run_ccda_standard(
 ) -> MigrationResult:
     """Standard-C-CDA-view mode: no Jinja pack — render HL7's own view per patient.
 
-    There is no pack pipeline here, so this loads records once via the source
-    adapter (mirroring :func:`anastomosis.pipeline.resolve_source` +
-    ``adapter.load`` and emitting the same DETECT/INGEST events), renders the
-    standard C-CDA view into ``<out>/charts``, and writes the structured payload
-    into ``<out>/ccda``. Output dirs are validated up front (exit-2 on a file
-    collision) and the charts dir is held under the same advisory lock
-    :func:`run_pipeline_command` uses.
+    Composes the three shared helpers (Codex audit Finding #4): output
+    pre-flight, source resolution + DETECT/INGEST emission, and manifest
+    writing + MANIFEST emission — the same primitives :func:`run_pipeline_command`
+    uses for pack mode. Only the *render* (HL7 standard view, no Jinja) and the
+    *delivery* (the structured C-CDA payload) are mode-specific. The stage
+    contract that both modes emit is pinned by the parity test
+    ``test_migrate_pack_and_ccda_standard_share_stage_contract``.
     """
     from contextlib import ExitStack
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
-    from anastomosis.core.output import OutputPathError, validate_output_target
-    from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.deliver.ccda_export import deliver_ccda
-    from anastomosis.pipeline import (
-        STAGE_DETECT,
-        STAGE_INGEST,
-        STAGE_MANIFEST,
-        PipelineError,
-        StageEvent,
-        load_records,
-        resolve_source,
-    )
+    from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.ccda_standard import (
         ccda_standard_doc_path,
         render_ccda_standard,
@@ -233,17 +310,8 @@ def _run_ccda_standard(
     charts = _charts_dir(out)
     ccda = _ccda_dir(out)
 
-    # Pre-flight BOTH output targets before any work, so a path that is actually
-    # a file fails cleanly (exit 2) rather than raising a raw OSError deep in a
-    # renderer/deliverer.
-    for target in (charts, ccda):
-        try:
-            validate_output_target(target)
-        except OutputPathError as exc:
-            raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
-
-    adapter = resolve_source(cmd.export_dir, cmd.source)
-    emit(StageEvent(STAGE_DETECT, detail=adapter.name))
+    # Pre-flight BOTH output targets — shared helper, same exit-2 semantics.
+    _validate_outputs((charts, ccda))
 
     try:
         # Lock BOTH output dirs (deadlock-free sorted order), so a concurrent
@@ -253,8 +321,10 @@ def _run_ccda_standard(
             # subdirs here, but match run_pipeline_command's no-self-deadlock rule).
             for target in sorted({charts.resolve(), ccda.resolve()}):
                 stack.enter_context(output_lock(target))
-            records = load_records(adapter, cmd.export_dir)
-            emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
+
+            # Resolve source + emit DETECT + load + emit INGEST — same shape
+            # ``pipeline.run_pipeline`` emits for pack mode.
+            _adapter, records = _resolve_source_and_load(cmd, emit)
 
             view = render_ccda_standard(records, charts, force=cmd.force)
             if view.failed:
@@ -280,8 +350,7 @@ def _run_ccda_standard(
                 )
                 for record in records
             ]
-            write_upload_manifest(manifest_docs, records, charts)
-            emit(StageEvent(STAGE_MANIFEST, counts={"items": len(manifest_docs)}))
+            _write_manifest_with_event(manifest_docs, records, charts, emit)
 
             paths = deliver_ccda(records, ccda)
     except OutputLockedError as exc:
