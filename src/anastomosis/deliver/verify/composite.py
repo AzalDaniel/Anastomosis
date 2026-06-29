@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from typing import TypedDict
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Encounter, Patient
@@ -67,7 +68,23 @@ from .levels import (
     LevelStatus,
 )
 
-__all__ = ["ALL_LEVELS", "LayeredVerifier"]
+__all__ = ["ALL_LEVELS", "LayeredVerifier", "LevelCoverage"]
+
+
+class LevelCoverage(TypedDict):
+    """Aggregate verification outcome for one L-level across a run.
+
+    Carries counts and deduplicated level-shape skip-reason strings only;
+    never an item key, never a patient value, never a path. Surfaced in
+    the upload run report so the L0-L6 coverage claim cannot drift wider
+    than the runtime (Codex audit Finding #5).
+    """
+
+    pass_count: int
+    fail_count: int
+    skip_count: int
+    skip_reasons: list[str]
+
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +208,52 @@ class LayeredVerifier:
     def results_for(self, item_key: str) -> list[LevelResult]:
         """The collected level table for ``item_key`` (empty if never verified)."""
         return list(self._results.get(item_key, []))
+
+    def coverage_summary(self) -> dict[str, LevelCoverage]:
+        """Aggregate verification coverage across every item that ran.
+
+        Returns one :class:`LevelCoverage` row per level (L0..L6) the
+        verifier ran: per-status counts plus a sorted, deduplicated list of
+        the level-shaped skip-reason strings. Counts and reason strings
+        only — no item keys, no paths, no patient-derived values — so the
+        result is safe to embed in the upload run report (the same PHI-
+        safety contract :func:`write_run_report` documents).
+
+        Skip reasons are deduplicated across items: a fleet of items that
+        all skip L3 with ``"no pack provided"`` aggregates to a single
+        reason string. The detail strings are level-shape descriptions
+        (``"no pack provided"``, ``"no banner (standalone mode)"``,
+        ``"destination has no MetadataReader"``); none of them embed
+        per-item identifiers (verified by the LevelResult docstring).
+
+        Used by :func:`upload_command.run_upload_command` to surface the
+        *actual* L-coverage of a run — closing the README/runtime gap
+        Codex audit Finding #5 flagged.
+        """
+        passes: dict[str, int] = {}
+        fails: dict[str, int] = {}
+        skips: dict[str, int] = {}
+        reasons: dict[str, set[str]] = {}
+        for results in self._results.values():
+            for entry in results:
+                level = entry.level
+                if entry.status is LevelStatus.PASS:
+                    passes[level] = passes.get(level, 0) + 1
+                elif entry.status is LevelStatus.FAIL:
+                    fails[level] = fails.get(level, 0) + 1
+                else:
+                    skips[level] = skips.get(level, 0) + 1
+                    reasons.setdefault(level, set()).add(entry.detail)
+        levels = sorted(passes.keys() | fails.keys() | skips.keys())
+        return {
+            level: {
+                "pass_count": passes.get(level, 0),
+                "fail_count": fails.get(level, 0),
+                "skip_count": skips.get(level, 0),
+                "skip_reasons": sorted(reasons.get(level, set())),
+            }
+            for level in levels
+        }
 
     # --- helpers ---
 

@@ -28,6 +28,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from anastomosis.core.output import secure_output_dir
+from anastomosis.deliver.verify.composite import LevelCoverage
 
 from .states import UploadState
 from .tracking import TrackingDB
@@ -71,20 +72,35 @@ def summary_line(counts: Mapping[str, int]) -> str:
     return " ".join(parts)
 
 
-def write_run_report(tracking: TrackingDB, run_id: str, out_dir: Path) -> Path:
+def write_run_report(
+    tracking: TrackingDB,
+    run_id: str,
+    out_dir: Path,
+    *,
+    verification_coverage: Mapping[str, LevelCoverage] | None = None,
+) -> Path:
     """Write ``run-report-{run_id}.json`` into the hardened ``out_dir``.
 
     The report carries the run row (destination, timestamps, abort reason),
     per-state counts, an attempts histogram, and an error-type histogram from
     the transitions audit. Every value is a count, a type name, a timestamp,
-    or a run/destination identifier — :attr:`UploadItem.file_path` values are
+    or a run/destination identifier - :attr:`UploadItem.file_path` values are
     deliberately NOT copied (they can embed a patient-derived filename, and the
     report is a sharable artifact). Written deterministically (``sort_keys``)
     so a re-write over the same ledger is byte-identical.
+
+    When ``verification_coverage`` is supplied (an opt-in from the upload
+    command, materialized via
+    :meth:`anastomosis.deliver.verify.LayeredVerifier.coverage_summary`)
+    it is embedded under ``"verification_coverage"`` as an L0..L6 table of
+    :class:`LevelCoverage` rows. The same PHI-safety contract applies - the
+    verifier only ever produces aggregate counts and dedup'd level-shaped
+    reason strings, never patient values. Closes Codex audit Finding #5
+    (truth-in-claims for the L0-L6 ladder).
     """
     out = secure_output_dir(out_dir)
     run = tracking.run_info(run_id)
-    report = {
+    report: dict[str, object] = {
         "run_id": run_id,
         "destination": run["destination"],
         "started_at": run["started_at"],
@@ -95,6 +111,18 @@ def write_run_report(tracking: TrackingDB, run_id: str, out_dir: Path) -> Path:
         "attempts_histogram": {str(k): v for k, v in tracking.attempts_histogram().items()},
         "error_type_histogram": dict(tracking.error_type_histogram(run_id)),
     }
+    if verification_coverage is not None:
+        # Materialize into plain JSON-safe dicts so the caller can supply
+        # the TypedDict view without losing determinism here.
+        report["verification_coverage"] = {
+            level: {
+                "pass_count": data["pass_count"],
+                "fail_count": data["fail_count"],
+                "skip_count": data["skip_count"],
+                "skip_reasons": sorted(data["skip_reasons"]),
+            }
+            for level, data in verification_coverage.items()
+        }
     path = out / f"run-report-{run_id}.json"
     path.write_text(
         json.dumps(report, sort_keys=True, indent=2) + "\n",

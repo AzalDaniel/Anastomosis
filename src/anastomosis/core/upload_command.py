@@ -200,7 +200,15 @@ def run_upload_command(
             # own finish_run inside the engine (manage_run defaults True).
             if result.aborted_reason is None:
                 tracking.finish_run(run_id)
-            report_path = write_run_report(tracking, run_id, cmd.out_dir)
+            # Aggregate verification coverage (PHI-safe - counts + dedup'd
+            # level-shape reason strings only) so the report tells the truth
+            # about which L-levels actually ran for this run, instead of the
+            # blanket "full L0-L6 ladder" claim Codex audit Finding #5
+            # flagged. ``verifier`` is None when --no-verify was passed.
+            coverage = verifier.coverage_summary() if verifier is not None else None
+            report_path = write_run_report(
+                tracking, run_id, cmd.out_dir, verification_coverage=coverage
+            )
             counts = dict(tracking.counts())
         finally:
             # Release the resources WE own and nothing the operator owns:
