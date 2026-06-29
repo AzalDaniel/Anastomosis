@@ -32,8 +32,15 @@ Anastomosis is the missing last mile, free and open source:
    PDFs).
 3. **Verify** every rendered document with a multi-layer QA engine
    (data-integrity, layout, and identity checks), and guard every upload with the
-   full L0–L6 verification ladder — on by default (`--no-verify` to skip) — plus a
-   live wrong-patient banner check that runs regardless.
+   L0–L6 verification ladder — on by default (`--no-verify` to skip; the run
+   report names exactly which levels ran) — plus a live wrong-patient banner
+   check that runs regardless. **Active coverage** depends on the destination:
+   L0/L1 (file integrity, page count) and L2/L4 (patient identity + live banner
+   readback) run on every upload; L3 (pack-driven header fields) runs when the
+   upload carries pack context; L5/L6 (destination metadata + byte/identity
+   round-trip) run when the destination supports read-back. Levels that don't
+   apply skip with a reason recorded in the run report, so the claim never
+   exceeds the coverage.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. A cross-EHR migration moves the **structured C-CDA/FHIR payload** the
@@ -242,12 +249,15 @@ src/anastomosis/
   (sources + destinations).
 - **Verification is the core product, not a test.** A migration that puts the
   right notes in the wrong chart is worse than no migration. So the QA engine
-  verifies every rendered document, and the delivery path runs the full L0–L6
-  ladder around every upload by default (`--no-verify` to skip; a missing render
+  verifies every rendered document, and the delivery path runs the L0–L6 ladder
+  around every upload by default (`--no-verify` to skip; a missing render
   extra refuses rather than files unverified) plus a live wrong-patient banner
   check — boundary-anchored and identity-based, because the naive matches
   (substring, whole-page similarity) demonstrably false-pass the exact failures
-  these checks exist to catch.
+  these checks exist to catch. The truthful active coverage is destination-
+  dependent (L0/L1/L2/L4 always; L3 with pack context; L5/L6 with destination
+  read-back) and the run report names every level that skipped and why, so the
+  product claim cannot drift wider than the runtime.
 - **Packs and registries make a vendor change a one-module event.** Source
   adapters, template packs, QA checks, and destinations are versioned modules
   behind defensive registries; the capability registry is data with cited
