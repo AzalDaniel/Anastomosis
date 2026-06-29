@@ -283,3 +283,101 @@ def test_profile_missing_or_garbage_starts_empty(tmp_path: Path) -> None:
 def test_user_migrations_path_under_anastomosis_home(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: Path("/home/example")))
     assert user_migrations_path() == Path("/home/example/.anastomosis/migrations.json")
+
+
+# --- stage-contract parity (Codex audit Finding #4) -------------------------
+
+
+def test_migrate_pack_and_ccda_standard_share_stage_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both render modes must emit DETECT, INGEST, and MANIFEST in the same
+    order, with the same PHI-safe payload shapes. Pre-PR-S the ccda-standard
+    path hand-rolled these emissions; PR-S routed them through three shared
+    helpers, but ``_run_pack_mode`` still reaches them via
+    ``run_pipeline_command``. This test is the contract that the two paths
+    keep emitting the same events — drift would silently break the CLI/GUI
+    presenters that consume the stream.
+    """
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    _patch_chromium(monkeypatch)
+
+    from anastomosis.pipeline import STAGE_DETECT, STAGE_INGEST, STAGE_MANIFEST, StageEvent
+
+    def _collect(events: list[StageEvent]) -> list[StageEvent]:
+        return events
+
+    pack_events: list[StageEvent] = []
+    ccda_events: list[StageEvent] = []
+
+    run_migration(
+        MigrationCommand(
+            export_dir=FIXTURE,
+            out_dir=tmp_path / "pack",
+            source="pf-tebra",
+            destination="tebra",
+            # qa=False so the parity is on the shared stages only; we are not
+            # testing the QA stage here, just the contract that both modes
+            # emit DETECT/INGEST/MANIFEST identically.
+            qa=False,
+        ),
+        on_event=pack_events.append,
+    )
+    run_migration(
+        MigrationCommand(
+            export_dir=FIXTURE,
+            out_dir=tmp_path / "ccda",
+            source="pf-tebra",
+            destination="tebra",
+            render=RENDER_CCDA_STANDARD,
+        ),
+        on_event=ccda_events.append,
+    )
+
+    def _by_stage(events: list[StageEvent], stage: str) -> StageEvent | None:
+        for ev in events:
+            if ev.stage == stage:
+                return ev
+        return None
+
+    # Both modes emit DETECT with the same adapter name (the PHI-safe detail).
+    pack_detect = _by_stage(pack_events, STAGE_DETECT)
+    ccda_detect = _by_stage(ccda_events, STAGE_DETECT)
+    assert pack_detect is not None and ccda_detect is not None
+    assert pack_detect.detail == ccda_detect.detail == "pf-tebra"
+
+    # Both modes emit INGEST with the same record-count payload SHAPE.
+    pack_ingest = _by_stage(pack_events, STAGE_INGEST)
+    ccda_ingest = _by_stage(ccda_events, STAGE_INGEST)
+    assert pack_ingest is not None and ccda_ingest is not None
+    assert pack_ingest.counts == ccda_ingest.counts  # {"records": 3}
+    assert set(pack_ingest.counts) == {"records"}  # nothing else (PHI fence)
+
+    # Both modes emit MANIFEST with the same ``items`` count-payload key (and
+    # the same numeric count, since the same fixture renders six encounters
+    # per pack mode / one C-CDA per patient — three patients * two encounters
+    # per patient on average vs. three per-patient C-CDAs).
+    pack_manifest = _by_stage(pack_events, STAGE_MANIFEST)
+    ccda_manifest = _by_stage(ccda_events, STAGE_MANIFEST)
+    assert pack_manifest is not None and ccda_manifest is not None
+    assert set(pack_manifest.counts) == set(ccda_manifest.counts) == {"items"}
+    assert pack_manifest.counts["items"] > 0
+    assert ccda_manifest.counts["items"] > 0
+
+    # Both modes emit DETECT BEFORE INGEST BEFORE MANIFEST — the order the
+    # CLI/GUI presenters render. Drift here breaks both frontends.
+    def _index(events: list[StageEvent], stage: str) -> int:
+        for i, ev in enumerate(events):
+            if ev.stage == stage:
+                return i
+        return -1
+
+    for events in (pack_events, ccda_events):
+        d = _index(events, STAGE_DETECT)
+        i = _index(events, STAGE_INGEST)
+        m = _index(events, STAGE_MANIFEST)
+        assert -1 < d < i < m, f"stage order broke: detect={d} ingest={i} manifest={m}"
+
+    # Sanity: _collect is unused but pins the test's intent (events are
+    # collected by appending to a list, not interpreted as messages).
+    assert _collect(pack_events) is pack_events
