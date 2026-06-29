@@ -75,3 +75,83 @@ def test_cli_make_destination_aliases_attach_destination() -> None:
     from anastomosis.deliver.browser.attach import attach_destination
 
     assert _make_destination is attach_destination
+
+
+# --- public verification imports (Codex re-audit P1 regression) ------------
+#
+# A circular import between ``deliver.verify.composite`` and
+# ``deliver.browser.reports`` snuck past PR-Q's full-suite run because the
+# test runner's import order happened to load the modules in a safe sequence
+# first. A FRESH process can hit the cycle and fail; the subprocess tests
+# below run each public import in its own interpreter so the cycle cannot
+# be masked by prior imports of the test suite.
+
+
+def test_layered_verifier_public_import_in_fresh_process() -> None:
+    """``from anastomosis.deliver.verify import LayeredVerifier`` must succeed
+    in a clean interpreter — no circular import between
+    :mod:`.verify.composite` and :mod:`.browser.reports`.
+    """
+    loaded = _modules_after_import("anastomosis.deliver.verify")
+    assert "anastomosis.deliver.verify.composite" in loaded
+    # Best-effort sanity: the leaf types module is loaded too.
+    assert "anastomosis.deliver.verify.types" in loaded
+
+
+def test_level_coverage_imports_from_both_sites() -> None:
+    """:class:`LevelCoverage` is published in two places for back-compat:
+    its canonical home (:mod:`.verify.types` — a leaf module) and re-export
+    from :mod:`.verify.composite`. Both imports must succeed in a fresh
+    process and resolve to the SAME class object (the alias-identity contract
+    that downstream consumers like the upload reporter rely on).
+    """
+    script = textwrap.dedent("""
+        from anastomosis.deliver.verify.composite import LevelCoverage as A
+        from anastomosis.deliver.verify.types import LevelCoverage as B
+        assert A is B, f"LevelCoverage drift: composite={A!r} types={B!r}"
+        print("ok")
+    """)
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.stdout.strip() == "ok"
+
+
+def test_browser_reports_does_not_directly_import_verify_composite() -> None:
+    """The fix-the-cycle constraint: ``browser.reports`` MUST NOT *directly*
+    import from :mod:`.verify.composite`. Codex's re-audit caught the cycle
+    that emerged when this rule was broken — ``verify.composite`` imports
+    ``browser.errors`` which (via ``browser/__init__.py``) re-enters
+    ``.reports``, and a direct import of ``LevelCoverage`` from
+    ``verify.composite`` then resolves against a partially-initialized
+    module.
+
+    Static check on the source text: a module-level
+    ``from anastomosis.deliver.verify.composite import ...`` line in
+    ``reports.py`` is the regression signal. The canonical home of
+    :class:`LevelCoverage` is :mod:`.verify.types` (a leaf module) and the
+    report writer must reach it that way.
+    """
+    from pathlib import Path
+
+    reports_src = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "anastomosis"
+        / "deliver"
+        / "browser"
+        / "reports.py"
+    ).read_text(encoding="utf-8")
+    assert "from anastomosis.deliver.verify.composite" not in reports_src, (
+        "browser/reports.py reintroduced a direct import from verify.composite. "
+        "That's the cycle Codex's re-audit caught. Import LevelCoverage from "
+        "anastomosis.deliver.verify.types instead (the leaf module)."
+    )
+    # The leaf import is what the fix expects to see.
+    assert "from anastomosis.deliver.verify.types import LevelCoverage" in reports_src, (
+        "browser/reports.py must import LevelCoverage from the leaf .verify.types "
+        "module (the break-the-cycle fix)."
+    )
