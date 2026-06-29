@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from typing import TypedDict
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Encounter, Patient
@@ -68,22 +67,12 @@ from .levels import (
     LevelStatus,
 )
 
+# Re-exported here for back-compat (the public typedef lives in .types so the
+# report writer can import it without traversing this module's heavier imports
+# — Codex re-audit caught the verify.composite <-> browser.reports cycle).
+from .types import LevelCoverage
+
 __all__ = ["ALL_LEVELS", "LayeredVerifier", "LevelCoverage"]
-
-
-class LevelCoverage(TypedDict):
-    """Aggregate verification outcome for one L-level across a run.
-
-    Carries counts and deduplicated level-shape skip-reason strings only;
-    never an item key, never a patient value, never a path. Surfaced in
-    the upload run report so the L0-L6 coverage claim cannot drift wider
-    than the runtime (Codex audit Finding #5).
-    """
-
-    pass_count: int
-    fail_count: int
-    skip_count: int
-    skip_reasons: list[str]
 
 
 logger = logging.getLogger(__name__)
