@@ -1,7 +1,7 @@
 """Persisted index of (pdf_filename → patient_id, encounter_id).
 
 The reconstruction engine names each chart ``{family}_{given}_{dos}_{type}.pdf``
-and a patient id never appears IN the filename. Pre-PR-O the archive and
+and a patient id never appears IN the filename. Previously the archive and
 bundle deliverers reverse-inferred ownership from the leading
 ``{family}_{given}_`` prefix; that quietly cross-attributes any two patients
 sharing both names (a synthetic-fixture collision today, a real-world hazard

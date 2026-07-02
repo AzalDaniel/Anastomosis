@@ -1065,9 +1065,15 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             record_extensions[f"{SOURCE}:unmapped:{table_name}"] = table_rows
 
         observations = [_map_observation(row) for row in obs_by_patient.get(guid, [])]
+        # Single-pass index: build encounter_id -> observations once instead of
+        # rescanning all observations per encounter (O(n) instead of O(n*m)).
+        obs_by_encounter_id: dict[str | None, list[Observation]] = {}
+        for observation in observations:
+            obs_by_encounter_id.setdefault(observation.encounter_id, []).append(observation)
         for encounter in encounters:
-            if bmi := _auto_bmi([o for o in observations if o.encounter_id == encounter.id]):
+            if bmi := _auto_bmi(obs_by_encounter_id.get(encounter.id, [])):
                 observations.append(bmi)
+                obs_by_encounter_id.setdefault(encounter.id, []).append(bmi)
         observations.extend(_social_observations(export, guid))
 
         prescriptions = [

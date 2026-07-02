@@ -8,10 +8,11 @@ the thin webview adapter, kept under ~80 lines and marked
 :func:`launch` lazily imports ``webview``; a missing install raises a
 ``RuntimeError`` naming the ``anastomosis[gui]`` extra (the optional-dependency
 error style used across the toolkit). It builds a window over the bundled,
-network-free ``web/index.html``, exposes a :class:`GuiController` as the
-``js_api`` (so the front end calls ``pywebview.api.*``), and wires a sink that
-marshals each event into ``window.evaluate_js("anastEvent(...)")`` — pywebview's
-``evaluate_js`` is thread-safe, so the controller's daemon worker may call it.
+network-free ``web/index.html``, exposes a :class:`GuiApi` wrapping the
+:class:`GuiController` as the ``js_api`` (so the front end calls
+``pywebview.api.*``), and wires a sink that marshals each event into
+``window.evaluate_js("anastEvent(...)")`` — pywebview's ``evaluate_js`` is
+thread-safe, so the controller's daemon worker may call it.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ class _WindowSink:
     """An :class:`~anastomosis.gui.controller.EventSink` backed by a window.
 
     The window is attached *after* construction (the controller is built first,
-    because it is the window's ``js_api``, and the window is built next). Until
+    because it backs the window's ``js_api``, and the window is built next). Until
     then ``emit`` is a no-op. Once attached, each JSON-safe event dict is
     marshalled into a single ``anastEvent(<json>)`` call — ``json.dumps`` keeps
     the payload a literal the browser parses, never interpolated JS source.
