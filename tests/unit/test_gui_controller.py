@@ -415,10 +415,10 @@ def test_gui_rejects_second_long_running_job_while_busy(tmp_path: Path) -> None:
         parked.set()
         gate.wait(10.0)
 
-    # Shadow the instance's locked body so the pipeline worker parks
+    # Shadow the pipeline console's locked body so the pipeline worker parks
     # deterministically (the public entry still runs the real acquire/spawn
     # choreography through the job runner).
-    controller._run_pipeline_locked = _blocked_locked_body  # type: ignore[method-assign]
+    controller._pipeline._run_pipeline_locked = _blocked_locked_body  # type: ignore[method-assign]
 
     first = controller.run_pipeline_async(str(FIXTURE), str(tmp_path / "out"))
     assert first == {"ok": True, "started": True}
