@@ -41,6 +41,7 @@ from uuid import uuid4
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.events import done_event, error_event, progress_event, stage_event
+from anastomosis.gui.jobs import GuiJob, GuiJobRunner
 
 if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome
@@ -145,8 +146,11 @@ class GuiController:
 
     def __init__(self, sink: EventSink) -> None:
         self._sink = sink
-        self._lock = threading.Lock()
-        self._busy = False
+        # The async-job choreography (busy guard + spawn/release/error) lives
+        # in GuiJobRunner — one owner instead of five hand-rolled copies
+        # (Codex audit Finding #3, first extraction). Sync busy-guarded paths
+        # contend on the SAME guard via _acquire/_release below.
+        self._jobs = GuiJobRunner(self._emit)
         # Per-run per-patient detail (display name, DOB, note counts), keyed by an
         # opaque summary id the `done` event carries, for the dashboard/wizard to
         # fetch via last_run_summary(summary_id). Keyed (not a single slot) so a
@@ -602,15 +606,18 @@ class GuiController:
         except Exception as exc:  # never-raise: a malformed argument, etc.
             return self._fail("upload", exc)
 
-        # 5. Only now take the busy guard (a clean pre-flight never blocks it).
-        if not self._acquire():
-            return {"ok": False, "error": "Busy"}
-
-        # The cooperative cancel flag upload_stop() sets; stored on self so the
-        # stop request reaches the engine's item-boundary check.
+        # The cooperative cancel flag upload_stop() sets; published to self in
+        # on_start (after the busy guard is held) so the stop request reaches
+        # the engine's item-boundary check, and cleared in cleanup on every
+        # exit path (worker finish OR spawn failure).
         stop = threading.Event()
-        self._upload_stop = stop
-        self._emit(stage_event("upload", "start"))
+
+        def _on_start() -> None:
+            self._upload_stop = stop
+            self._emit(stage_event("upload", "start"))
+
+        def _cleanup() -> None:
+            self._upload_stop = None
 
         def _worker() -> None:
             # Drive the SAME shared core the CLI's `anast upload` drives, so the
@@ -646,22 +653,14 @@ class GuiController:
                 self._emit(error_event("upload", "OutputLocked"))
             except Exception as exc:  # never-raise: type name only, no PHI
                 self._emit(error_event("upload", exc_tag(exc)))
-            finally:
-                self._upload_stop = None
-                self._release()
 
-        try:
-            threading.Thread(target=_worker, name="anast-upload", daemon=True).start()
-        except Exception as exc:
-            # Thread.start() can raise (e.g. RuntimeError under thread
-            # exhaustion). The worker never runs, so its finally never fires:
-            # release the busy guard AND clear the stop flag here (else a later
-            # upload_stop() would falsely report stopping), then return the same
-            # no-traceback error shape the pre-flight uses.
-            self._upload_stop = None
-            self._release()
-            return self._fail("upload", exc)
-        return {"ok": True, "started": True}
+        # 5. Only now hand off to the job runner (a clean pre-flight never
+        # blocks the busy guard). The runner owns acquire-or-Busy, the start
+        # event via on_start, the worker's cleanup+release finally, and the
+        # spawn-failure path (cleanup + release + upload error event).
+        return self._jobs.submit(
+            GuiJob(name="upload", worker=_worker, on_start=_on_start, cleanup=_cleanup)
+        )
 
     def upload_stop(self) -> dict[str, object]:
         """Request the in-flight upload stop after the current document.
@@ -800,10 +799,6 @@ class GuiController:
         summary + caveat), so the JS can use the async path for BOTH wizard
         steps. Never raises.
         """
-        if not self._acquire():
-            return {"ok": False, "error": "Busy"}
-
-        self._emit(stage_event("packgen", "start"))
 
         def _worker() -> None:
             try:
@@ -833,20 +828,14 @@ class GuiController:
                 tag = exc_tag(exc)
                 self._last_pack = {"ok": False, "error": tag}
                 self._emit(error_event("packgen", tag))
-            finally:
-                self._release()
 
-        try:
-            threading.Thread(target=_worker, name="anast-packgen", daemon=True).start()
-        except Exception as exc:
-            # Thread.start() can raise (e.g. RuntimeError under thread
-            # exhaustion). The worker never runs, so its finally never releases
-            # the busy guard — release it here and return the same no-traceback
-            # error shape (_fail emits a packgen error event too, matching the
-            # method's terminal-event contract).
-            self._release()
-            return self._fail("packgen", exc)
-        return {"ok": True, "started": True}
+        return self._jobs.submit(
+            GuiJob(
+                name="packgen",
+                worker=_worker,
+                on_start=lambda: self._emit(stage_event("packgen", "start")),
+            )
+        )
 
     def last_pack_result(self) -> dict[str, object]:
         """The most recent :meth:`pack_init_async` result, for the wizard to fetch.
@@ -936,10 +925,6 @@ class GuiController:
         BOTH so it can render the outcome-specific detail (dropped columns, the
         load-failure diagnosis), never raises.
         """
-        if not self._acquire():
-            return {"ok": False, "error": "Busy"}
-
-        self._emit(stage_event("source", "start"))
 
         def _worker() -> None:
             try:
@@ -972,20 +957,14 @@ class GuiController:
                 tag = exc_tag(exc)
                 self._last_source = {"ok": False, "error": tag}
                 self._emit(error_event("source", tag))
-            finally:
-                self._release()
 
-        try:
-            threading.Thread(target=_worker, name="anast-source", daemon=True).start()
-        except Exception as exc:
-            # Thread.start() can raise (e.g. RuntimeError under thread
-            # exhaustion). The worker never runs, so its finally never releases
-            # the busy guard — release it here and return the same no-traceback
-            # error shape (_fail emits a source error event too, matching the
-            # method's terminal-event contract).
-            self._release()
-            return self._fail("source", exc)
-        return {"ok": True, "started": True}
+        return self._jobs.submit(
+            GuiJob(
+                name="source",
+                worker=_worker,
+                on_start=lambda: self._emit(stage_event("source", "start")),
+            )
+        )
 
     def last_source_result(self) -> dict[str, object]:
         """The most recent :meth:`source_init_async` result, for the wizard to fetch.
@@ -1085,40 +1064,28 @@ class GuiController:
         is fetched after ``done`` via :meth:`last_run_summary` (the events stay
         count-only).
         """
-        if not self._acquire():
-            return {"ok": False, "error": "Busy"}
 
         def _worker() -> None:
-            try:
-                self._run_pipeline_locked(
-                    export_dir=export_dir,
-                    out_dir=out_dir,
-                    pack=pack,
-                    source=source,
-                    sections=sections or {},
-                    qa=qa,
-                    archive=archive,
-                    bundle=bundle,
-                    ccda=ccda,
-                    force=force,
-                    pack_dirs=pack_dirs,
-                    trust_new=trust_new,
-                    write_manifest=write_manifest,
-                )
-            finally:
-                self._release()
+            self._run_pipeline_locked(
+                export_dir=export_dir,
+                out_dir=out_dir,
+                pack=pack,
+                source=source,
+                sections=sections or {},
+                qa=qa,
+                archive=archive,
+                bundle=bundle,
+                ccda=ccda,
+                force=force,
+                pack_dirs=pack_dirs,
+                trust_new=trust_new,
+                write_manifest=write_manifest,
+            )
 
-        try:
-            threading.Thread(target=_worker, name="anast-pipeline", daemon=True).start()
-        except Exception as exc:
-            # Thread.start() can raise (e.g. RuntimeError under thread
-            # exhaustion). The worker never runs, so its finally never releases
-            # the busy guard — release it here and return the same no-traceback
-            # error shape the locked body's non-pipeline crash path uses. (No
-            # start event was emitted before the spawn, so none is leaked.)
-            self._release()
-            return self._fail("run_pipeline", exc)
-        return {"ok": True, "started": True}
+        # No on_start: the locked body emits its own stage events. The runner
+        # owns acquire-or-Busy, release-in-finally, and the spawn-failure path
+        # (release + run_pipeline error event, the same shape as before).
+        return self._jobs.submit(GuiJob(name="pipeline", stage="run_pipeline", worker=_worker))
 
     # --- the migration run (EHR-to-EHR; PF→Tebra is one instance) -----------
 
@@ -1186,35 +1153,24 @@ class GuiController:
         :meth:`last_run_summary` (the route also rides the synchronous return of
         :meth:`run_migration`; the async path's done event carries counts only).
         """
-        if not self._acquire():
-            return {"ok": False, "error": "Busy"}
 
         def _worker() -> None:
-            try:
-                self._run_migration_locked(
-                    export_dir=export_dir,
-                    out_dir=out_dir,
-                    source=source,
-                    destination=destination,
-                    render=render,
-                    sections=sections or {},
-                    qa=qa,
-                    force=force,
-                    pack_dirs=pack_dirs,
-                    trust_new=trust_new,
-                )
-            finally:
-                self._release()
+            self._run_migration_locked(
+                export_dir=export_dir,
+                out_dir=out_dir,
+                source=source,
+                destination=destination,
+                render=render,
+                sections=sections or {},
+                qa=qa,
+                force=force,
+                pack_dirs=pack_dirs,
+                trust_new=trust_new,
+            )
 
-        try:
-            threading.Thread(target=_worker, name="anast-migration", daemon=True).start()
-        except Exception as exc:
-            # A spawn failure (e.g. thread exhaustion) must not propagate to the
-            # bridge nor leak the busy flag — release and return the error dict,
-            # exactly as the other async methods do.
-            self._release()
-            return self._fail("run_migration", exc)
-        return {"ok": True, "started": True}
+        # No on_start: the locked body emits its own stage events (see
+        # run_pipeline_async for the identical rationale).
+        return self._jobs.submit(GuiJob(name="migration", stage="run_migration", worker=_worker))
 
     # --- internals ----------------------------------------------------------
 
@@ -1510,15 +1466,10 @@ class GuiController:
         return {"ok": False, "error": tag}
 
     def _acquire(self) -> bool:
-        with self._lock:
-            if self._busy:
-                return False
-            self._busy = True
-            return True
+        return self._jobs.acquire()
 
     def _release(self) -> None:
-        with self._lock:
-            self._busy = False
+        self._jobs.release()
 
 
 # Pipeline-core stage names -> dashboard rail names (detect has no rail).
