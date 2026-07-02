@@ -188,6 +188,25 @@ class GuiController:
 
     # --- read-only queries --------------------------------------------------
 
+    def gui_config(self) -> dict[str, object]:
+        """The Python-canonical constants the browser UI mirrors.
+
+        The frontends used to hand-mirror these (``console.js`` hard-coded
+        ``DEFAULT_MAX_ATTEMPTS``; ``app.js`` hard-coded the stage rail) — the
+        drift risk Codex's audit flagged. The JS keeps same-valued fallbacks
+        for the api-less browser preview and refreshes from this endpoint on
+        load; ``tests/unit/test_frontend_constants.py`` pins the fallbacks to
+        these values so neither side can drift alone. PHI-free by
+        construction (retry budget, stage names, state-group names). Never
+        raises.
+        """
+        return {
+            "ok": True,
+            "max_attempts": DEFAULT_MAX_ATTEMPTS,
+            "stage_rail": list(_STAGE_RAIL),
+            "state_groups": {group: list(states) for group, states in _STATE_GROUPS.items()},
+        }
+
     def info(self) -> dict[str, object]:
         """Toolkit status for the dashboard header and the run form.
 
@@ -1479,6 +1498,12 @@ _STAGE_MAP = {
     "qa": "qa",
 }
 
+# The dashboard's stage rail, in display order — the Python-canonical list the
+# JS consumes via gui_config() (app.js keeps a same-valued fallback for the
+# api-less browser preview; the drift test pins the two together). Every
+# _STAGE_MAP value must be a member; "deliver" is driven by delivery events.
+_STAGE_RAIL: tuple[str, ...] = ("ingest", "reconstruct", "qa", "deliver")
+
 
 def _transit_to_dict(transit: TransitMap) -> dict[str, object]:
     """Serialize a :class:`TransitMap` to a JSON-safe dict for the GUI."""
@@ -1607,6 +1632,9 @@ class GuiApi:
         self._c = controller
 
     # --- light read-only queries ---
+    def gui_config(self) -> dict[str, object]:
+        return self._c.gui_config()
+
     def info(self) -> dict[str, object]:
         return self._c.info()
 

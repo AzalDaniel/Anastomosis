@@ -39,13 +39,32 @@ let PALETTE = null;
 // (counts come from the ledger, never from events).
 let POLL_TIMER = null;
 const POLL_INTERVAL_MS = 1500;
-// The shared per-item retry budget both frontends use (mirrors the controller's
-// DEFAULT_MAX_ATTEMPTS). Passed explicitly so the trailing `verify` argument
-// reaches upload_start positionally without overriding the budget.
-const DEFAULT_MAX_ATTEMPTS = 3;
+// The shared per-item retry budget both frontends use. The FALLBACK below is
+// only for the api-less browser preview; the live value is refreshed from the
+// Python-canonical gui_config() endpoint on load (loadGuiConfig), so the
+// backend's DEFAULT_MAX_ATTEMPTS is the single source of truth. The drift
+// test (tests/unit/test_frontend_constants.py) pins this fallback to the
+// Python constant so neither side can drift alone. Passed explicitly so the
+// trailing `verify` argument reaches upload_start positionally without
+// overriding the budget.
+let DEFAULT_MAX_ATTEMPTS = 3;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+}
+
+async function loadGuiConfig() {
+  // Refresh the mirrored constants from the backend; keep fallbacks on any
+  // failure (api-less preview, an old backend without the endpoint).
+  if (!hasApi() || typeof window.pywebview.api.gui_config !== "function") return;
+  try {
+    const cfg = await window.pywebview.api.gui_config();
+    if (cfg && cfg.ok && Number.isInteger(cfg.max_attempts) && cfg.max_attempts > 0) {
+      DEFAULT_MAX_ATTEMPTS = cfg.max_attempts;
+    }
+  } catch (e) {
+    /* keep the fallback */
+  }
 }
 
 function el(id) {
@@ -500,6 +519,11 @@ function init() {
 
   Shell.initLogStrip();
   PALETTE = Shell.initCommandPalette(itemKeyCommands());
+
+  // Refresh the mirrored backend constants: now if the api is already up,
+  // and again on pywebviewready (the bridge often lands after DOM ready).
+  loadGuiConfig();
+  window.addEventListener("pywebviewready", loadGuiConfig);
 
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
