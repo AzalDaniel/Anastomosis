@@ -27,6 +27,7 @@ CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 # ``pip install ruff && ruff check`` chained, etc.). The marker is the
 # minimum string CI must contain for the gate to count as covered.
 _GATE_MARKERS: tuple[tuple[str, str], ...] = (
+    ("python tools/preflight.py", "tools/preflight.py"),
     ("ruff check .", "ruff check"),
     ("ruff format --check .", "ruff format --check"),
     ("python -m mypy", "mypy"),  # CI may use bare `mypy` or `python -m mypy`

@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+python tools/preflight.py
 ruff check .
 ruff format --check .
 python -m mypy
