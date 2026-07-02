@@ -86,6 +86,10 @@ jobs:
       # which imports tests/unit/conftest.py's network guard.
       - run: pip install -e ".[render,fhir]" "playwright==1.56.0" pytest pytest-socket hypothesis
       - run: playwright install chromium --with-deps
+      # The gate preflight (tools/check.sh runs it first): proves in CI that
+      # a playwright-installed environment with the browser present passes,
+      # keeping the check.sh <-> ci.yml parity contract whole.
+      - run: python tools/preflight.py
       - run: pytest -m e2e
 
   # Separate lane: stands up a live HAPI FHIR R4 server as a service container
