@@ -153,6 +153,57 @@ def test_render_index_write_is_atomic_and_deterministic(tmp_path: Path) -> None:
     assert (a / INDEX_FILENAME).read_bytes() == (b / INDEX_FILENAME).read_bytes()
 
 
+def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -> None:
+    """Codex re-audit's explicit negative: two patients with the SAME display
+    name, one prefix-matching PDF on disk, and NO sidecar — neither the
+    archive nor the bundle deliverer may attach the PDF to either patient.
+    The archive routes it to ``unattributed/``; the bundle delivers both
+    patients with zero PDFs. Filename-prefix guessing must never resurface
+    as a fallback path.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver.archive import ArchiveDeliverer
+    from anastomosis.deliver.bundle import BundleDeliverer
+
+    def _record(pid: str, dob: date) -> PatientRecord:
+        return PatientRecord(
+            patient=Patient(id=pid, family_name="Smith", given_name="John", birth_date=dob),
+            encounters=[],
+        )
+
+    rec_a = _record("aaaa-0000-0000-0000-00000000000a", date(1980, 1, 1))
+    rec_b = _record("bbbb-0000-0000-0000-00000000000b", date(1995, 6, 15))
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    orphan = "Smith_John_05-10-2023_SOAP.pdf"
+    (pdfs_dir / orphan).write_bytes(b"%PDF-1.7 whose is this\n")
+    assert RenderIndex.load(pdfs_dir) is None  # genuinely no sidecar
+
+    # Archive: the PDF lands in unattributed/, and in NEITHER patient's slot.
+    archive_out = tmp_path / "archive"
+    archive_result = ArchiveDeliverer().deliver([rec_a, rec_b], pdfs_dir, archive_out)
+    assert archive_result.pdf_count == 0
+    for rec in (rec_a, rec_b):
+        slot = archive_out / "patients" / rec.patient.id / "pdfs"
+        assert not slot.exists() or not list(slot.glob("*.pdf")), (
+            f"{orphan} was guessed onto {rec.patient.id} without an index"
+        )
+    assert [p.name for p in (archive_out / "unattributed").glob("*.pdf")] == [orphan]
+
+    # Bundle: both patients deliver with zero PDFs (no unattributed slot,
+    # never a guess).
+    bundle_results = BundleDeliverer().deliver_records(
+        [rec_a, rec_b], pdfs_dir, tmp_path / "bundles"
+    )
+    for result in bundle_results:
+        assert result.pdf_paths == [], (
+            f"bundle guessed {orphan} onto {result.patient_id} without an index"
+        )
+
+
 def test_engine_writes_render_index_at_end_of_run(tmp_path: Path) -> None:
     """The reconstruction engine must persist a render_index.json next to
     the rendered PDFs so the archive/bundle deliverers can attribute by
