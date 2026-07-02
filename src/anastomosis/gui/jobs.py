@@ -6,9 +6,7 @@ start event, spawn a daemon worker whose ``finally`` releases the guard,
 handle a ``Thread.start()`` failure by cleaning up + releasing + returning
 the no-traceback error dict, and return ``{"ok": True, "started": True}``.
 Five copies of that choreography lived in ``controller.py`` (upload,
-packgen, source-init, pipeline, migration), and Codex's audit named the
-duplication the controller's worst "spaghetti" shape. This module owns it
-once.
+packgen, source-init, pipeline, migration). This module owns it once.
 
 Contract highlights, all preserved verbatim from the hand-rolled copies:
 

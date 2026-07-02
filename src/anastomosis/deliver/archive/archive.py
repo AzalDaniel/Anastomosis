@@ -152,7 +152,7 @@ class ArchiveDeliverer:
             )
 
             # PDFs — attributed strictly via the render index (patient_id
-            # match). The pre-PR-O fallback that guessed ownership from
+            # match). The old fallback that guessed ownership from
             # ``{family}_{given}_`` filename prefixes is gone: it cross-
             # leaked between two same-name patients. With no index present
             # the deliverer routes every PDF into ``unattributed/`` instead

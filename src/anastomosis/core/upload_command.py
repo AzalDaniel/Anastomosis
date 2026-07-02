@@ -164,9 +164,10 @@ def run_upload_command(
         # Lock the output dir AND the manifest root. A `migrate` writes (and
         # locks) the manifest under <out>/charts — a DIFFERENT directory with a
         # different .anast.lock than <out> — so locking only <out> would still
-        # race the producer (the TOCTOU the review caught). Locking the sorted,
-        # de-duplicated set fences both: sorted so two paths never deadlock,
-        # de-duplicated so a collapsed (manifest-under-<out>) layout locks once.
+        # race the producer (a time-of-check-to-time-of-use gap). Locking the
+        # sorted, de-duplicated set fences both: sorted so two paths never
+        # deadlock, de-duplicated so a collapsed (manifest-under-<out>) layout
+        # locks once.
         for target in sorted({cmd.out_dir.resolve(), manifest_root.resolve()}):
             stack.enter_context(output_lock(target))
         # Lock-then-read: the authoritative manifest is the one under the lock.
@@ -202,9 +203,9 @@ def run_upload_command(
                 tracking.finish_run(run_id)
             # Aggregate verification coverage (PHI-safe - counts + dedup'd
             # level-shape reason strings only) so the report tells the truth
-            # about which L-levels actually ran for this run, instead of the
-            # blanket "full L0-L6 ladder" claim Codex audit Finding #5
-            # flagged. ``verifier`` is None when --no-verify was passed.
+            # about which L-levels actually ran for this run, instead of a
+            # blanket "full L0-L6 ladder" claim that does not match what ran.
+            # ``verifier`` is None when --no-verify was passed.
             coverage = verifier.coverage_summary() if verifier is not None else None
             report_path = write_run_report(
                 tracking, run_id, cmd.out_dir, verification_coverage=coverage
