@@ -397,6 +397,61 @@ def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.M
     assert sink.events[-1]["type"] == "done"
 
 
+def test_gui_rejects_second_long_running_job_while_busy(tmp_path: Path) -> None:
+    """The Codex re-audit's deterministic busy test: while one long-running
+    job holds the guard (its worker parked on an event we control), EVERY
+    other long-running entry point is rejected with exactly
+    ``{"ok": False, "error": "Busy"}`` — across job kinds, not just a second
+    click of the same button. No sleeps, no races: the worker cannot finish
+    until the test releases it.
+    """
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+
+    gate = threading.Event()
+    parked = threading.Event()
+
+    def _blocked_locked_body(**_kwargs: object) -> None:
+        parked.set()
+        gate.wait(10.0)
+
+    # Shadow the instance's locked body so the pipeline worker parks
+    # deterministically (the public entry still runs the real acquire/spawn
+    # choreography through the job runner).
+    controller._run_pipeline_locked = _blocked_locked_body  # type: ignore[method-assign]
+
+    first = controller.run_pipeline_async(str(FIXTURE), str(tmp_path / "out"))
+    assert first == {"ok": True, "started": True}
+    assert parked.wait(5.0), "worker never started"
+
+    try:
+        # A DIFFERENT job kind is rejected too — one busy guard for all.
+        assert controller.run_migration_async(
+            str(FIXTURE), str(tmp_path / "out2"), source="pf-tebra", destination="tebra"
+        ) == {"ok": False, "error": "Busy"}
+        assert controller.pack_init_async(str(FIXTURE), "acme_soap") == {
+            "ok": False,
+            "error": "Busy",
+        }
+        assert controller.source_init_async(str(FIXTURE), "clinic_csv") == {
+            "ok": False,
+            "error": "Busy",
+        }
+        # And the same kind again, for completeness.
+        assert controller.run_pipeline_async(str(FIXTURE), str(tmp_path / "out3")) == {
+            "ok": False,
+            "error": "Busy",
+        }
+    finally:
+        gate.set()
+
+    # The guard releases once the parked worker finishes — not wedged.
+    deadline = time.time() + 5
+    while time.time() < deadline and not controller._acquire():
+        time.sleep(0.02)
+    controller._release()
+
+
 # --- deliverers ------------------------------------------------------------
 
 
