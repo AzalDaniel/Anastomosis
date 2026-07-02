@@ -649,8 +649,8 @@ _CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
 # of the file) as an alias of :func:`anastomosis.deliver.browser.attach.attach_destination`,
 # so long-standing tests that ``monkeypatch.setattr("anastomosis.cli._make_destination",
 # ...)`` continue to work. The implementation lives in
-# ``deliver.browser.attach`` so the GUI does not need to import the CLI
-# (Codex Finding #2's boundary fix).
+# ``deliver.browser.attach`` so the GUI does not need to import the CLI to
+# reach it.
 
 
 def _upload_exit_code(counts: dict[str, int], aborted_reason: str | None) -> int:

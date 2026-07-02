@@ -125,9 +125,9 @@ def _ccda_dir(out_dir: Path) -> Path:
     return out_dir / "ccda"
 
 
-# --- shared migration helpers (Codex audit Finding #4: DRY) ----------------
+# --- shared migration helpers -----------------------------------------------
 #
-# Pre-PR-S ``_run_ccda_standard`` hand-rolled output validation, source
+# Previously ``_run_ccda_standard`` hand-rolled output validation, source
 # resolution + DETECT/INGEST event emission, and manifest writing — work
 # ``run_pipeline_command`` already does for pack mode. The three helpers
 # below own that work once so both modes share the same:
@@ -285,12 +285,12 @@ def _run_ccda_standard(
 ) -> MigrationResult:
     """Standard-C-CDA-view mode: no Jinja pack — render HL7's own view per patient.
 
-    Composes the three shared helpers (Codex audit Finding #4): output
-    pre-flight, source resolution + DETECT/INGEST emission, and manifest
-    writing + MANIFEST emission — the same primitives :func:`run_pipeline_command`
-    uses for pack mode. Only the *render* (HL7 standard view, no Jinja) and the
-    *delivery* (the structured C-CDA payload) are mode-specific. The stage
-    contract that both modes emit is pinned by the parity test
+    Composes the three shared helpers: output pre-flight, source resolution +
+    DETECT/INGEST emission, and manifest writing + MANIFEST emission — the
+    same primitives :func:`run_pipeline_command` uses for pack mode. Only
+    the *render* (HL7 standard view, no Jinja) and the *delivery* (the
+    structured C-CDA payload) are mode-specific. The stage contract that
+    both modes emit is pinned by the parity test
     ``test_migrate_pack_and_ccda_standard_share_stage_contract``.
     """
     from contextlib import ExitStack

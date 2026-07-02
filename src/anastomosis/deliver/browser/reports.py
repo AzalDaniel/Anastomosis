@@ -31,8 +31,9 @@ from anastomosis.core.output import secure_output_dir
 
 # Imported from .verify.types (a leaf module with no project imports) rather
 # than .verify.composite — the latter pulls .browser.errors, and via
-# .browser/__init__.py back to this file, creating a circular import that
-# Codex's re-audit caught.
+# .browser/__init__.py back to this file, creating a circular import
+# (verify.composite -> browser.errors -> browser/__init__ -> browser.reports
+# -> verify.composite) that only surfaces in a fresh interpreter.
 from anastomosis.deliver.verify.types import LevelCoverage
 
 from .states import UploadState
@@ -100,8 +101,8 @@ def write_run_report(
     it is embedded under ``"verification_coverage"`` as an L0..L6 table of
     :class:`LevelCoverage` rows. The same PHI-safety contract applies - the
     verifier only ever produces aggregate counts and dedup'd level-shaped
-    reason strings, never patient values. Closes Codex audit Finding #5
-    (truth-in-claims for the L0-L6 ladder).
+    reason strings, never patient values, so the report states the L-levels
+    that actually ran instead of a blanket claim.
     """
     out = secure_output_dir(out_dir)
     run = tracking.run_info(run_id)

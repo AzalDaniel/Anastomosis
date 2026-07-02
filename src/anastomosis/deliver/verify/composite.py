@@ -68,8 +68,10 @@ from .levels import (
 )
 
 # Re-exported here for back-compat (the public typedef lives in .types so the
-# report writer can import it without traversing this module's heavier imports
-# — Codex re-audit caught the verify.composite <-> browser.reports cycle).
+# report writer can import it without traversing this module's heavier
+# imports and hitting a circular import: verify.composite -> browser.errors
+# -> browser/__init__ -> browser.reports -> verify.composite, which only
+# surfaces in a fresh interpreter).
 from .types import LevelCoverage
 
 __all__ = ["ALL_LEVELS", "LayeredVerifier", "LevelCoverage"]
@@ -216,8 +218,8 @@ class LayeredVerifier:
         per-item identifiers (verified by the LevelResult docstring).
 
         Used by :func:`upload_command.run_upload_command` to surface the
-        *actual* L-coverage of a run — closing the README/runtime gap
-        Codex audit Finding #5 flagged.
+        *actual* L-coverage of a run, rather than a blanket claim that
+        does not match what ran.
         """
         passes: dict[str, int] = {}
         fails: dict[str, int] = {}

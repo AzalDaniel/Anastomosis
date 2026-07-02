@@ -198,8 +198,7 @@ class FhirClient:
         # results for identical search URLs for up to a minute. The resolver's
         # read-after-write semantics REQUIRE fresh reads: a stale empty search
         # right after a Patient create cascades into one duplicate patient per
-        # resolve, with the chart filed under the last duplicate. Proven live
-        # on PR #19's HAPI lane.
+        # resolve, with the chart filed under the last duplicate.
         headers = {"Accept": FHIR_JSON, "Cache-Control": "no-cache"}
         if with_content_type:
             headers["Content-Type"] = FHIR_JSON

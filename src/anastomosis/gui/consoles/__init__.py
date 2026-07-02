@@ -1,10 +1,10 @@
 """The GUI's focused consoles: the controller's five operator surfaces.
 
 :class:`~anastomosis.gui.controller.GuiController` was one ~1,700-line class
-carrying every JS-facing method; Codex audit Finding #3 named the module split.
-The async-job choreography was extracted first
-(:mod:`anastomosis.gui.jobs`); this package holds the remaining surfaces, each
-a small class the controller constructs once and delegates to:
+carrying every JS-facing method, split here into focused per-surface modules
+so each surface stays reviewable. The async-job choreography was extracted
+first (:mod:`anastomosis.gui.jobs`); this package holds the remaining
+surfaces, each a small class the controller constructs once and delegates to:
 
 * :class:`~anastomosis.gui.consoles.upload.UploadConsole` — browser-delivery
   driving + read-only ledger views;

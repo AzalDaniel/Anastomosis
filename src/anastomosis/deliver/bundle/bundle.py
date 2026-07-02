@@ -102,7 +102,7 @@ class BundleDeliverer:
         """Deliver a bundle per record, attributing each patient's charts via
         the engine's persisted render index.
 
-        Pre-PR-O this bucketed PDFs by the leading ``{family}_{given}_``
+        Previously this bucketed PDFs by the leading ``{family}_{given}_``
         filename prefix; two patients sharing both names cross-attributed
         without warning. Attribution is now strictly by ``patient_id``:
         the render index (``render_index.json`` written by the engine into

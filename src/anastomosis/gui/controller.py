@@ -9,8 +9,7 @@ pywebview, so the whole surface is unit-testable against a recording fake sink
 constructs the controller, wires a sink that marshals events into
 ``window.evaluate_js("anastEvent(...)")``, and opens the window.
 
-Architecture (Codex audit Finding #3, the module split): this class is a thin
-FACADE. The async-job choreography lives in
+Architecture: this class is a thin FACADE. The async-job choreography lives in
 :class:`~anastomosis.gui.jobs.GuiJobRunner`; the operator surfaces live in the
 :mod:`anastomosis.gui.consoles` package (upload, packgen, source, and the
 pipeline/migration run flows sharing a
@@ -92,9 +91,8 @@ def _attach_destination(cdp_url: str, loaded: object) -> object:
 
     Delegates to :func:`anastomosis.deliver.browser.attach.attach_destination`
     — the ONE place a CDP attach over Playwright happens — WITHOUT depending
-    on ``anastomosis.cli`` (the import-boundary fix from Codex Finding #2).
-    The caller has already validated the loopback gate. This is kept a
-    SEPARATE module-level function so the GUI tests can
+    on ``anastomosis.cli``. The caller has already validated the loopback
+    gate. This is kept a SEPARATE module-level function so the GUI tests can
     ``monkeypatch.setattr(controller, "_attach_destination",
     lambda cdp, loaded: FakeDestination(...))`` and drive the whole upload
     flow with no browser. The import is lazy so the controller loads
@@ -122,14 +120,14 @@ class GuiController:
     def __init__(self, sink: EventSink) -> None:
         self._sink = sink
         # The async-job choreography (busy guard + spawn/release/error) lives
-        # in GuiJobRunner — one owner instead of five hand-rolled copies
-        # (Codex audit Finding #3, first extraction). Sync busy-guarded paths
-        # contend on the SAME guard via _acquire/_release below.
+        # in GuiJobRunner — one owner instead of five hand-rolled copies.
+        # Sync busy-guarded paths contend on the SAME guard via
+        # _acquire/_release below.
         self._jobs = GuiJobRunner(self._emit)
-        # The five operator surfaces (Codex audit Finding #3, module split):
-        # each takes the controller's emit + the shared job runner, so every
-        # entry (sync or async) contends on the SAME busy guard. The two run
-        # flows share one SummaryStore for the keyed per-patient roll-up.
+        # The five operator surfaces: each takes the controller's emit + the
+        # shared job runner, so every entry (sync or async) contends on the
+        # SAME busy guard. The two run flows share one SummaryStore for the
+        # keyed per-patient roll-up.
         self._summary_store = SummaryStore()
         self._upload = UploadConsole(self._emit, self._jobs)
         self._packgen = PackgenConsole(self._emit, self._jobs)
@@ -155,8 +153,8 @@ class GuiController:
         """The Python-canonical constants the browser UI mirrors.
 
         The frontends used to hand-mirror these (``console.js`` hard-coded
-        ``DEFAULT_MAX_ATTEMPTS``; ``app.js`` hard-coded the stage rail) — the
-        drift risk Codex's audit flagged. The JS keeps same-valued fallbacks
+        ``DEFAULT_MAX_ATTEMPTS``; ``app.js`` hard-coded the stage rail), risking
+        the two copies drifting apart. The JS keeps same-valued fallbacks
         for the api-less browser preview and refreshes from this endpoint on
         load; ``tests/unit/test_frontend_constants.py`` pins the fallbacks to
         these values so neither side can drift alone. PHI-free by
