@@ -19,11 +19,28 @@
  */
 "use strict";
 
-const RAIL = ["ingest", "reconstruct", "qa", "deliver"];
+// The dashboard stage rail. The FALLBACK below is only for the api-less
+// browser preview; the live list is refreshed from the Python-canonical
+// gui_config() endpoint (controller._STAGE_RAIL) on load, and the drift test
+// (tests/unit/test_frontend_constants.py) pins this fallback to the Python
+// list so neither side can drift alone.
+let RAIL = ["ingest", "reconstruct", "qa", "deliver"];
 const Shell = window.AnastShell;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+}
+
+async function loadGuiConfig() {
+  if (!hasApi() || typeof window.pywebview.api.gui_config !== "function") return;
+  try {
+    const cfg = await window.pywebview.api.gui_config();
+    if (cfg && cfg.ok && Array.isArray(cfg.stage_rail) && cfg.stage_rail.length) {
+      RAIL = cfg.stage_rail.map(String);
+    }
+  } catch (e) {
+    /* keep the fallback */
+  }
 }
 
 function el(id) {
@@ -421,6 +438,11 @@ function init() {
 
   Shell.initSegmentToggles(document);
   Shell.initLogStrip();
+
+  // Refresh the mirrored backend constants: now if the api is already up,
+  // and again on pywebviewready (the bridge often lands after DOM ready).
+  loadGuiConfig();
+  window.addEventListener("pywebviewready", loadGuiConfig);
 
   // Command palette: PHI-free dashboard actions only.
   const palette = Shell.initCommandPalette([
