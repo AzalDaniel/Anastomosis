@@ -599,7 +599,7 @@ def migrate_cmd(
         ),
     ] = None,
 ) -> None:
-    """Migrate records from one EHR to another (PF→Tebra is one instance).
+    """Migrate records from one EHR to another (PF->Tebra is one instance).
 
     Emits BOTH the structured C-CDA payload the destination imports (``<out>/ccda``)
     and a human-readable chart archive (``<out>/charts``) in the chosen
