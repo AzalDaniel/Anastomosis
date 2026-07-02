@@ -19,8 +19,10 @@
 | [SP-ZIP] | `single-patient-ehi-export-data-format-specifications.zip` | Contains `EHI MYSQL DATA MODEL 2026101.zip` (HTML data-model reports, title "Millennium Data Model Reports - 2026.1.01") and `Longitudinal Plan EHI Export - Single Patient.pdf` |
 | [POP-ZIP] | `patient-population-ehi-export-data-format-specifications.zip` | Contains `EHI MYSQL DATA MODEL 2025401.zip`, `EHI ORACLE DATA MODEL 2025401.zip`, `Longitudinal Plan EHI Export - Patient Population.pdf`, plus Multimedia-Storage DICOM/non-DICOM definitions, the Document Imaging content-management schema PDF, and `Oracle Health Document Imaging AxAnnotations.xsd` |
 
-`docs/bulk2.pdf` is a **byte-identical duplicate** of [HDI-OVW]
-(md5 `b8ad38b7ed71b98aa95bdb173e1c470b` for both); it is not cited further.
+`docs/bulk2.pdf` was a **byte-identical duplicate** of [HDI-OVW]
+(md5 `b8ad38b7ed71b98aa95bdb173e1c470b` for both, re-verified by sha256
+before removal); the duplicate file was deleted from the repo — [HDI-OVW]
+is the sole retained copy and carries every citation.
 
 Zip-internal citations are written
 `[SP-ZIP → EHI MYSQL DATA MODEL 2026101.zip → html/<file>]`.
