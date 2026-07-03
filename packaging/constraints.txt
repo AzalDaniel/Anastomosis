@@ -1,0 +1,11 @@
+# pip constraints — the single source of truth for the Playwright build pin.
+#
+# The library range in pyproject.toml (playwright>=1.46) stays OPEN so users who
+# depend on Anastomosis float to a compatible Playwright of their choosing. But
+# every place that produces or verifies a rendered artifact — the CI test lanes,
+# golden regeneration (tools/regen_goldens.py), and the Windows package build —
+# resolves Playwright through THIS file (pip install -c packaging/constraints.txt).
+# That is what keeps the rendering goldens and the Chromium bundled in the
+# installer from drifting apart: one pin here governs them all. Bump it and
+# regenerate the goldens (python tools/regen_goldens.py) in the same change.
+playwright==1.56.0
