@@ -100,6 +100,39 @@ blocked by the scanner. False positives are added to
 `tools/phi_allowlist.txt` with a written justification, never by
 relaxing the scanner.
 
+## CodeQL suppression policy (auditable)
+
+CodeQL runs on every push in the default security-and-quality suite. Two
+rules are deliberately suppressed in a committed, source-controlled
+config at [`.github/codeql/codeql-config.yml`](.github/codeql/codeql-config.yml):
+
+- **`py/clear-text-storage-sensitive-data`** — excluded for
+  `src/anastomosis/deliver/**`. This tool's product surface is a
+  local-first archive/migration path: the archive, bundle, browser and
+  render-index deliverers exist to write patient records, FHIR bundles,
+  READMEs, upload manifests and the render-index sidecar to disk on the
+  operator's own machine. Every such write goes through
+  `core.output.secure_output_dir`, which enforces a `0o700` mode and
+  drops a mandatory `_PHI_WARNING_README.txt` next to the output. Without
+  those writes, there is no product.
+- **`py/clear-text-logging-sensitive-data`** — excluded for
+  `src/anastomosis/deliver/fhir_api/destination.py`. The single line that
+  triggered the rule (`logger.info("no destination patient matched on
+  %s", matched_on)`) logs the *name* of the matching field
+  (`"mrn"` / `"name-and-dob"` / …), not a value.
+
+Every affected call site carries a `PHI-BY-DESIGN` code comment that
+names both the hardened-directory guarantee (or the field-name-not-value
+guarantee) and this SECURITY.md section, so a future reviewer or auditor
+can follow the trail without leaving the repository. If a new writer
+lands outside `deliver/`, or the field-name convention drifts, the
+suppression does not cover it and CodeQL alerts again.
+
+Storage-at-rest encryption is a separate, opt-in concern the operator
+controls (BitLocker / FileVault / dm-crypt); the archive's `0o700` mode
+prevents siblings, containers and casual peers, not a compromised host.
+See `docs/PLAN.md` decision 4 for the full PHI policy.
+
 ## Hall of thanks
 
 To be populated after the first coordinated disclosure. If you'd like to

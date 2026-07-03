@@ -109,6 +109,10 @@ class RenderIndex:
         }
         tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         try:
+            # PHI-BY-DESIGN: the index maps chart filename to (patient_id,
+            # encounter_id). ``pdfs_dir`` is a ``secure_output_dir``
+            # (0o700 + PHI-warning README) — writing the map there IS the
+            # product (see .github/codeql/codeql-config.yml, SECURITY.md).
             tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
             os.replace(tmp, target)
         except BaseException:

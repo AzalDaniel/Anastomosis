@@ -146,6 +146,11 @@ class ArchiveDeliverer:
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
             # FHIR R4 Bundle — the machine-readable rendition.
+            # PHI-BY-DESIGN: bundle.json IS this patient's clinical record
+            # in FHIR R4 form; ``patient_dir`` lives inside a
+            # ``secure_output_dir`` (0o700 + PHI-warning README). The
+            # archive's purpose is to hold this locally
+            # (see .github/codeql/codeql-config.yml, SECURITY.md).
             bundle = to_bundle(record)
             (patient_dir / "bundle.json").write_text(
                 json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8"
@@ -409,6 +414,11 @@ class ArchiveDeliverer:
         )
         index_path = out / "index.html"
         index_path.write_text(html, encoding="utf-8")
+        # PHI-BY-DESIGN: the archive's index carries display names, DOBs
+        # and search haystacks so the operator can find a patient in the
+        # in-browser archive. ``out`` is a ``secure_output_dir`` (0o700 +
+        # PHI-warning README) — that IS the local-first archive product
+        # (see .github/codeql/codeql-config.yml, SECURITY.md).
         (out / "index.json").write_text(
             json.dumps(manifest_entries, indent=2, sort_keys=True), encoding="utf-8"
         )

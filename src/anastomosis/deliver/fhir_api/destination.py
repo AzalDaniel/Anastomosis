@@ -167,6 +167,10 @@ class FhirApiDestination:
             )
         if len(ids) == 1:
             return DestinationPatient(destination_patient_id=ids[0], matched_on=matched_on)
+        # PHI-BY-DESIGN: ``matched_on`` is a level-shape category — the NAME
+        # of the field(s) searched (``"mrn"``, ``"name-and-dob"``, ...), not
+        # a value. The log line therefore carries no patient-derived data
+        # (see .github/codeql/codeql-config.yml, SECURITY.md).
         logger.info("no destination patient matched on %s", matched_on)
         return None
 

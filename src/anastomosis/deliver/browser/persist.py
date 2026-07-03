@@ -132,6 +132,11 @@ def write_upload_manifest(
     }
     out = secure_output_dir(out_dir)
     path = out / MANIFEST_NAME
+    # PHI-BY-DESIGN: the manifest bridges render->upload with the item
+    # keys and demographics the driver needs. ``out`` is a
+    # ``secure_output_dir`` (0o700 + PHI-warning README) — the manifest
+    # LIVES on the operator's box (see .github/codeql/codeql-config.yml,
+    # SECURITY.md).
     path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     # PHI: log the COUNT only — never a name, a DOB, or a path under out_dir.
     logger.info("wrote upload manifest: %d item(s)", len(items_json))

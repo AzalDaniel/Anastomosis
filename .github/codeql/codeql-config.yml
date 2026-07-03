@@ -1,0 +1,53 @@
+# CodeQL configuration for GitHub default setup.
+#
+# Anastomosis is a local-first archive/migration tool for medical records: its
+# job is to write charts, bundles, and manifests to disk under the operator's
+# own control. Every write in `deliver/` lands in a directory hardened by
+# `core.output.secure_output_dir` — mode 0o700, owner-only, with a mandatory
+# `_PHI_WARNING_README.txt` — and the repository's PHI scanner
+# (`tools/phi_scan.py`) enforces that no real PHI (or its hashed shape) can
+# enter the repo at build time. That posture is documented at length in
+# `SECURITY.md` and `docs/PLAN.md` (decision 4).
+#
+# The default CodeQL security-and-quality suite treats every disk write /
+# structured log of an object shaped like patient data as a potential
+# "clear-text storage of sensitive information" (py/clear-text-storage-...)
+# or "clear-text logging of sensitive information" (py/clear-text-logging-...).
+# For an EHR-adjacent local-first archive, those rules would flag every
+# code path that fulfils the product's promise. Rather than dismiss each
+# alert one-by-one in the UI (which does not survive rescans and leaves no
+# trace in the repo), we suppress the two rules for the DELIBERATELY PHI-
+# writing / PHI-adjacent modules here and add a "PHI-BY-DESIGN" annotation
+# at each affected call site pointing at this file.
+#
+# Every other module remains covered by the full default query suite — this
+# suppression is scoped as tightly as possible.
+
+name: "Anastomosis CodeQL config"
+
+query-filters:
+  - exclude:
+      id: py/clear-text-storage-sensitive-data
+    reason: >-
+      Local-first archive/bundle deliverers write patient records, FHIR
+      bundles, README notices, upload manifests and the render-index sidecar
+      into a hardened 0o700 output directory with a mandatory PHI-warning
+      README. That IS the product surface: without those writes, no archive
+      exists. Each affected write site carries an inline PHI-BY-DESIGN
+      annotation and the repository documents its PHI-safety posture in
+      SECURITY.md. Test-time hygiene is enforced by `tools/phi_scan.py`
+      running in CI and pre-commit.
+    paths:
+      - src/anastomosis/deliver/**
+
+  - exclude:
+      id: py/clear-text-logging-sensitive-data
+    reason: >-
+      The one flagged log is `logger.info("no destination patient matched
+      on %s", matched_on)` in `deliver/fhir_api/destination.py`, where
+      `matched_on` is the NAME of the matching field (`"mrn"`,
+      `"name-and-dob"`) — not a value. All PHI-adjacent logging in this
+      package goes through the redaction filter documented in
+      SECURITY.md; the `matched_on` label is a level-shape category.
+    paths:
+      - src/anastomosis/deliver/fhir_api/destination.py

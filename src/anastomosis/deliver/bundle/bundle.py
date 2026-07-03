@@ -154,6 +154,11 @@ class BundleDeliverer:
         patient_dir.mkdir(parents=True, exist_ok=True)
 
         # FHIR R4 Bundle — the machine-readable rendition.
+        # PHI-BY-DESIGN: the bundle IS this patient's clinical record in
+        # FHIR R4 form. ``patient_dir`` lives inside a ``secure_output_dir``
+        # (0o700 + PHI-warning README) — writing PHI here is the whole
+        # point of the bundle deliverer (see codeql-config.yml,
+        # SECURITY.md).
         bundle_path = patient_dir / "bundle.json"
         bundle_path.write_text(
             json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8"
@@ -248,6 +253,11 @@ class BundleDeliverer:
 
     def _write_readme(self, patient_id: str, patient_dir: Path) -> Path:
         target = patient_dir / "README.txt"
+        # PHI-BY-DESIGN: the per-bundle README carries only the patient's
+        # opaque id, a timestamp, and the tool version + a PHI-handling
+        # notice. ``patient_dir`` lives inside a ``secure_output_dir``
+        # (0o700 + PHI-warning README) — the bundle IS a per-patient PHI
+        # packet, that is its purpose (see codeql-config.yml, SECURITY.md).
         target.write_text(
             _README_TEMPLATE.format(
                 patient_id=patient_id,
