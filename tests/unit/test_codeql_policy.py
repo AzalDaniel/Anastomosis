@@ -177,6 +177,11 @@ def test_every_suppression_is_alone_and_justified() -> None:
             f"{rel}:{idx + 1} — a `# codeql[...]` suppression must be alone on its own line; "
             "CodeQL ignores it when it trails code."
         )
+        following = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
+        assert following and not following.startswith("#"), (
+            f"{rel}:{idx + 1} — a suppression covers ONLY the line immediately below it; "
+            "a blank or comment line there silently un-suppresses the site."
+        )
         window = lines[max(0, idx - _RATIONALE_WINDOW) : idx]
         assert any("PHI-BY-DESIGN" in line for line in window), (
             f"{rel}:{idx + 1} — no PHI-BY-DESIGN rationale within the "

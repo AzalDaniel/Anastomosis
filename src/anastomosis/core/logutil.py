@@ -25,15 +25,18 @@ __all__ = ["RedactionFilter", "configure_logging", "exc_tag", "redact"]
 # Shapes that are PHI wherever they appear in a log line. Dates are included
 # deliberately: a date inside a log *message* is almost always input-derived
 # (a DOB or date of service) — the timestamp belongs to the formatter. The
-# date shapes cover M/D/Y, YYYY-MM-DD, and MM-DD-YYYY (the last is the shape
-# rendered chart filenames use); the MM-DD-YYYY run is 2-2-4, so it cannot
-# collide with the SSN shape (3-2-4) or the phone shape (3-3-4).
+# date shapes cover M/D/Y slashes, ISO YYYY-M-D, and D-M-YYYY dashes (padded
+# or not; the padded MM-DD-YYYY form is what rendered chart filenames use).
+# The SSN (3-2-4) and phone (3-3-4) patterns run first, so the wider date
+# runs cannot swallow them.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED-SSN]"),
     (re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}|\b\d{3}[-.]\d{3}[-.]\d{4}\b"), "[REDACTED-PHONE]"),
     (re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), "[REDACTED-EMAIL]"),
     (
-        re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{2}-\d{2}-\d{4}\b"),
+        re.compile(
+            r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}-\d{1,2}-\d{4}\b"
+        ),
         "[REDACTED-DATE]",
     ),
 )

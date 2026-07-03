@@ -404,4 +404,10 @@ from anastomosis.cli_commands import packsrc  # noqa: E402, F401
 
 
 if __name__ == "__main__":
-    app()
+    # Under ``python -m anastomosis.cli`` this file runs as ``__main__`` — a
+    # second module instance whose Typer apps the command modules never see
+    # (they register on ``anastomosis.cli``). Delegate to the canonical
+    # instance so both invocation forms expose the same command set.
+    from anastomosis.cli import app as _canonical_app
+
+    _canonical_app()
