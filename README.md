@@ -54,10 +54,11 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.3.0 (alpha)** — on [PyPI](https://pypi.org/project/anastomosis/) and
+**v0.4.0 (alpha)** — the fourth alpha, on
+[PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
-[CHANGELOG.md](CHANGELOG.md) for what shipped and [docs/PLAN.md](docs/PLAN.md)
-for the roadmap.
+[CHANGELOG.md](CHANGELOG.md) for what shipped, [DESIGN.md](DESIGN.md) for the
+design record, and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 
 | Capability | State |
 |---|---|
@@ -67,6 +68,7 @@ for the roadmap.
 | Pack-from-samples layout learner | ✅ v0.2.0 |
 | Desktop GUI — pipeline dashboard, migration wizard, upload console | ✅ v0.2.0 |
 | Windows desktop installer — bundles Chromium offline, installs WebView2 if absent, with an installed self-check | ✅ v0.3.0 |
+| PHI-at-rest & log hardening — Windows NTFS ACLs on every output dir, redacting log handler wired at both entry points, CodeQL scanning, design/provenance record | ✅ v0.4.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -265,7 +267,10 @@ src/anastomosis/
   module — never the system.
 - **Local-first PHI posture.** The core pipeline makes zero network calls;
   PHI never leaves the operator's machine. Logs carry counts, ids, and
-  exception type names — never values — and output directories are owner-only.
+  exception type names — never values — behind a redaction filter installed at
+  both entry points, and output directories are locked down on both platforms
+  (owner-only `0o700` on POSIX; on Windows NTFS, ACL inheritance is stripped
+  and access restricted to the current user, SYSTEM, and Administrators).
 
 ## Privacy & safety
 
@@ -290,7 +295,7 @@ live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
 destination transit map and the full set of run levers, a learn-a-source wizard,
 and an upload console that drives the delivery engine over its ledger.
 
-## Provenance
+## Provenance & AI assistance
 
 Anastomosis generalizes a private production system, by the same author, that
 migrated a clinic's full EHI export — reconstructing its encounter documents and
@@ -298,3 +303,34 @@ filing them into the destination EHR with no wrong-patient events. Those results
 are self-reported and specific to that deployment; this open-source release has
 been built and tested only against synthetic data (see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md)).
+
+Anastomosis is authored by Azal Daniel and developed with substantial
+assistance from AI coding agents (Anthropic Claude-family models) operating
+under the author's direction and review: the author sets the scope,
+architecture, clinical-domain requirements, and acceptance criteria; every
+agent-produced change is reviewed and must pass the full gate (`ruff` incl.
+bandit-S, `mypy --strict`, the test suite, the PHI scanner) before merge.
+Source files carry a one-line AI-assistance citation comment; the full
+authorship and provenance record — including what is original, what is a
+re-typed generalization of the predecessor system, and what is vendored — is
+in [DESIGN.md](DESIGN.md).
+
+## CS50 final project
+
+Anastomosis is also the author's CS50x final project — built for the course's
+bar but not scoped to it.
+
+- **Title:** Anastomosis — reconstruct, verify, and re-home clinical records.
+- **Video:** *to be added at submission time* (placeholder — the demo video
+  URL will land here before `submit50`).
+- **Description:** this README (what it does and why), plus
+  [DESIGN.md](DESIGN.md) for the architecture, the design choices that were
+  genuinely debated, the hardest problems, and the authorship/provenance
+  record, and the file-by-file map above for what each part of the codebase
+  does.
+- **AI policy compliance:** per the
+  [CS50 academic-honesty policy](https://cs50.harvard.edu/x/honesty/), AI
+  tools may be used for the final project provided the essence of the work is
+  the student's own and their use is cited in code comments — every authored
+  source file carries that citation, and the division of labor is documented
+  in [DESIGN.md](DESIGN.md).

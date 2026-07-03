@@ -49,13 +49,20 @@ contract — regressions in any of them are security findings:
   generic shape patterns (SSN, non-fixture GUIDs, non-555 phones,
   DOB-adjacent dates). Synthetic-data conventions are documented in
   `docs/PLAN.md` and `tests/fixtures/*/README.md`.
-- **Log redaction.** `core/logutil.py` provides a `RedactionFilter` and
-  `exc_tag()` so input-derived exceptions never log their message —
-  only the exception type. The convention is "log counts and ids,
-  never values."
+- **Log redaction.** `core/logutil.py` provides a `RedactionFilter`
+  (SSN/phone/email/date shapes, including the `MM-DD-YYYY` filename form)
+  and `exc_tag()` so input-derived exceptions never log their message —
+  only the exception type. The redacting handler is installed at both
+  application entry points (the CLI root callback and the GUI main),
+  idempotently. The convention is "log counts, field names, and opaque
+  ids — never values, and never a path under an output directory."
 - **Output hygiene.** `core/output.py` creates output directories
-  `0o700` on POSIX and drops a PHI-warning README into every output
-  root.
+  `0o700` (owner-only) on POSIX; on Windows NTFS it strips ACL
+  inheritance and grants access only to the current user, SYSTEM, and
+  Administrators (the same posture as CPython's `os.mkdir(mode=0o700)`
+  and Win32-OpenSSH), re-applied on every run. On filesystems without
+  ACLs (FAT32/exFAT) it warns loudly instead. A PHI-warning README
+  lands in every output root on every platform.
 - **Loud failures.** Unknown source formats raise; sentinel dates
   (`1/1/0001`) and explicit null tokens (`\N`) return `None`; nothing
   vanishes silently. This is enforced in `core/timeutil.py`,
@@ -83,6 +90,48 @@ contract — regressions in any of them are security findings:
   charted values) before they merged.
 - **CI least privilege.** Workflows declare `permissions: contents: read`
   by default; releases require explicit elevation.
+
+## Code scanning & suppression policy (auditable)
+
+An advanced CodeQL workflow is committed at
+[`.github/workflows/codeql.yml`](.github/workflows/codeql.yml): the
+`security-extended` suite on every push and pull request plus a weekly
+schedule, with the alert-suppression query pack enabled. (One-time
+repository setting: GitHub rejects advanced-setup SARIF uploads while
+code-scanning *default setup* is enabled, so default setup must be
+disabled in Settings → Code security for this workflow's results to land.)
+
+Anastomosis's product surface is writing patient records to disk under the
+operator's control, which the `py/clear-text-storage-sensitive-data` rule
+cannot distinguish from a defect. Rather than exclude any rule repo-wide,
+suppression is **inline and per-site**: each deliberately PHI-writing call
+site carries a `# codeql[rule-id]` suppression comment immediately beside a
+`PHI-BY-DESIGN` comment stating the guarantee that justifies it (a
+`secure_output_dir`-hardened directory, or field-name-not-value logging).
+The audited suppression sites are exactly:
+
+- `src/anastomosis/deliver/archive/archive.py` (per-patient FHIR bundle;
+  archive index) — `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/bundle/bundle.py` (per-patient FHIR bundle;
+  bundle README) — `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/browser/persist.py` (upload manifest) —
+  `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/render_index.py` (render-index sidecar) —
+  `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/fhir_api/destination.py` (a log line carrying
+  the *name* of the matched field, never a value) —
+  `py/clear-text-logging-sensitive-data`
+
+A policy test pins this list: every inline suppression in `src/` must sit
+beside a `PHI-BY-DESIGN` rationale and appear in the list above, so a new
+suppression cannot land without amending this policy. Every module not
+listed here remains fully covered by both rules; if the field-name
+convention drifts or a writer lands outside a hardened directory, CodeQL
+alerts again.
+
+Storage-at-rest encryption remains a separate, opt-in operator concern
+(BitLocker / FileVault / dm-crypt); directory hardening resists siblings
+and casual access, not a compromised host.
 
 ## Synthetic-data conventions (for contributors)
 
