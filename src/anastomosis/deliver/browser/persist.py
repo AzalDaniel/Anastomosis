@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Manifest persistence: the bridge from a render run to a later ``anast upload``.
 
 A browser upload is a separate, operator-driven step that happens AFTER the
@@ -132,6 +133,14 @@ def write_upload_manifest(
     }
     out = secure_output_dir(out_dir)
     path = out / MANIFEST_NAME
+    # PHI-BY-DESIGN: the upload manifest carries the demographics the later
+    # ``anast upload`` resolver needs (name + DOB), so it is written ONLY into
+    # this secure_output_dir-hardened directory (0o700 owner-only on POSIX; on
+    # Windows NTFS, inheritance stripped and access limited to the current user,
+    # SYSTEM, and Administrators) with a PHI-warning README, never logged and
+    # never committed. See SECURITY.md, "Code scanning & suppression policy
+    # (auditable)".
+    # codeql[py/clear-text-storage-sensitive-data]
     path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     # PHI: log the COUNT only — never a name, a DOB, or a path under out_dir.
     logger.info("wrote upload manifest: %d item(s)", len(items_json))

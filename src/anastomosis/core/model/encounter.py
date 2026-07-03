@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Encounters and the clinical narrative (the part vendors lose in migration)."""
 
 from __future__ import annotations

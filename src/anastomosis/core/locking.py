@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """A cross-platform advisory lock over an output directory.
 
 Two ``anast`` runs writing into the same output directory at once would

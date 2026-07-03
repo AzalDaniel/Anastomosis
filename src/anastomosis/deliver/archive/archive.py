@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Offline archive deliverer — Archivist persona.
 
 Produces a static, browsable directory tree from canonical PatientRecords:
@@ -147,6 +148,13 @@ class ArchiveDeliverer:
 
             # FHIR R4 Bundle — the machine-readable rendition.
             bundle = to_bundle(record)
+            # PHI-BY-DESIGN: writing the patient's FHIR record to disk IS the
+            # product. ``patient_dir`` sits under a secure_output_dir-hardened
+            # tree (0o700 owner-only on POSIX; on Windows NTFS, inheritance
+            # stripped and access limited to the current user, SYSTEM, and
+            # Administrators) with a PHI-warning README. See SECURITY.md, "Code
+            # scanning & suppression policy (auditable)".
+            # codeql[py/clear-text-storage-sensitive-data]
             (patient_dir / "bundle.json").write_text(
                 json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8"
             )
@@ -251,10 +259,11 @@ class ArchiveDeliverer:
         for name in names:
             source = pdfs_dir / name
             if not source.is_file():
-                # The index claims a PDF the engine never wrote (or it
-                # was deleted post-render). Log loud, never silently fake
-                # an attribution.
-                logger.warning("indexed pdf missing on disk: %s", name)
+                # The index claims a PDF the engine never wrote (or it was
+                # deleted post-render). Log loud by the opaque patient id —
+                # never the filename, which embeds the patient name and date
+                # of service — and never silently fake an attribution.
+                logger.warning("indexed pdf missing on disk for patient %s", record.patient.id)
                 continue
             try:
                 shutil.copyfile(source, out_dir / name)
@@ -291,10 +300,10 @@ class ArchiveDeliverer:
             return 0
         if render_index is None:
             # No index at all → every PDF is unattributed by the same
-            # fail-closed rule. Log loud so the missing sidecar is visible.
+            # fail-closed rule. Log loud (by count only — the pdfs dir is a
+            # path under the output tree) so the missing sidecar is visible.
             logger.warning(
-                "no render index in %s; routing all %d pdf(s) to unattributed/",
-                pdfs_dir,
+                "no render index; routing all %d pdf(s) to unattributed/",
                 len(all_pdfs),
             )
             orphans = all_pdfs
@@ -408,7 +417,17 @@ class ArchiveDeliverer:
             index_json=index_json,
         )
         index_path = out / "index.html"
+        # PHI-BY-DESIGN: the archive index and its JSON manifest name patients so
+        # the offline search box works; both land under a secure_output_dir-
+        # hardened directory (0o700 owner-only on POSIX; on Windows NTFS,
+        # inheritance stripped and access limited to the current user, SYSTEM, and
+        # Administrators) with a PHI-warning README. See SECURITY.md, "Code
+        # scanning & suppression policy (auditable)".
+        # codeql[py/clear-text-storage-sensitive-data]
         index_path.write_text(html, encoding="utf-8")
+        # PHI-BY-DESIGN: same hardened-directory guarantee as the index above
+        # (see SECURITY.md, "Code scanning & suppression policy (auditable)").
+        # codeql[py/clear-text-storage-sensitive-data]
         (out / "index.json").write_text(
             json.dumps(manifest_entries, indent=2, sort_keys=True), encoding="utf-8"
         )

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The closed canonical target-path enumeration (W2 learn-a-source foundation).
 
 These pin the contract the learned-mapping spec validates against: scalar leaves

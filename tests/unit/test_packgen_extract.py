@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the packgen harvest (extract.py).
 
 No Chromium: tiny PDFs are built directly with PyMuPDF (``insert_text`` /

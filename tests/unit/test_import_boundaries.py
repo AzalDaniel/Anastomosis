@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Enforce package import boundaries that the architecture relies on.
 
 These tests are quick property checks against ``sys.modules``: they import
@@ -8,8 +9,8 @@ ended up loaded.
 Today's only boundary: the GUI must not depend on the CLI. The two are
 peer frontends over a shared core; a GUI-to-CLI dependency is a one-way
 ratchet toward a CLI-shaped GUI, and the lazy CLI import that used to live
-at ``gui/controller.py:_attach_destination`` was the symptom Codex Finding
-#2 flagged. The shared browser-attach code now lives in
+at ``gui/controller.py:_attach_destination`` was exactly such a leak. The
+shared browser-attach code now lives in
 ``anastomosis.deliver.browser.attach``; both frontends import it directly.
 """
 
@@ -54,6 +55,21 @@ def test_gui_does_not_import_cli() -> None:
     )
 
 
+def test_gui_does_not_import_cli_commands() -> None:
+    """``anastomosis.gui`` must not pull any ``anastomosis.cli_commands`` module
+    into ``sys.modules`` either. Each command group (the 0.4.0 CLI facade split)
+    imports ``anastomosis.cli`` at its top for the Typer app objects, so a
+    GUI-to-cli_commands edge would drag the whole CLI in — the same peer-frontend
+    boundary :func:`test_gui_does_not_import_cli` guards, one layer down.
+    """
+    loaded = _modules_after_import("anastomosis.gui")
+    leaked = {name for name in loaded if name.startswith("anastomosis.cli_commands")}
+    assert not leaked, (
+        f"anastomosis.gui leaked cli_commands modules into sys.modules: {sorted(leaked)}. "
+        "The GUI must not import any CLI command group (they import anastomosis.cli)."
+    )
+
+
 def test_browser_attach_module_loads_without_playwright_extra() -> None:
     """The attach module is a thin shell — importing the module must not
     require the optional ``deliver-browser`` extra. The Playwright imports
@@ -77,7 +93,7 @@ def test_cli_make_destination_aliases_attach_destination() -> None:
     assert _make_destination is attach_destination
 
 
-# --- public verification imports (Codex re-audit P1 regression) ------------
+# --- public verification imports (circular-import regression) --------------
 #
 # A circular import between ``deliver.verify.composite`` and
 # ``deliver.browser.reports`` snuck past PR-Q's full-suite run because the
@@ -122,8 +138,8 @@ def test_level_coverage_imports_from_both_sites() -> None:
 
 def test_browser_reports_does_not_directly_import_verify_composite() -> None:
     """The fix-the-cycle constraint: ``browser.reports`` MUST NOT *directly*
-    import from :mod:`.verify.composite`. Codex's re-audit caught the cycle
-    that emerged when this rule was broken — ``verify.composite`` imports
+    import from :mod:`.verify.composite`. The cycle emerges when this rule
+    is broken — ``verify.composite`` imports
     ``browser.errors`` which (via ``browser/__init__.py``) re-enters
     ``.reports``, and a direct import of ``LevelCoverage`` from
     ``verify.composite`` then resolves against a partially-initialized
@@ -147,7 +163,7 @@ def test_browser_reports_does_not_directly_import_verify_composite() -> None:
     ).read_text(encoding="utf-8")
     assert "from anastomosis.deliver.verify.composite" not in reports_src, (
         "browser/reports.py reintroduced a direct import from verify.composite. "
-        "That's the cycle Codex's re-audit caught. Import LevelCoverage from "
+        "That's the cycle this test guards against. Import LevelCoverage from "
         "anastomosis.deliver.verify.types instead (the leaf module)."
     )
     # The leaf import is what the fix expects to see.

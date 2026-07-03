@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Console glyphs that survive non-UTF-8 terminals.
 
 Windows' legacy console code pages (CP-1252, CP-437, …) cannot encode the

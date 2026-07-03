@@ -46,6 +46,7 @@ exchange, SSNs use never-issued ranges.
 
 ## Reporting a vulnerability
 
-Open a GitHub security advisory (preferred) or a private report to the
-maintainer. Please do not file public issues for exploitable problems.
-You'll get an acknowledgment within 7 days.
+See the root [SECURITY.md](../SECURITY.md) — the canonical reporting policy
+(private email channel, 72-hour acknowledgement, 14-day disclosure timeline,
+coordinated disclosure by default). Please do not file public issues for
+exploitable problems.

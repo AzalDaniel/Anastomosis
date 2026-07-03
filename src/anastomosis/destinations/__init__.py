@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Destination packs — see :mod:`.base` for the upload contract.
 
 A destination pack implements the protocols in :mod:`.base` to teach the

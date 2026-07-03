@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shared migration core (``core/migrate.py``).
 
 A migration is a general EHR→EHR move; PF→Tebra is one instance. These pin:
@@ -285,7 +286,7 @@ def test_user_migrations_path_under_anastomosis_home(monkeypatch: pytest.MonkeyP
     assert user_migrations_path() == Path("/home/example/.anastomosis/migrations.json")
 
 
-# --- stage-contract parity (Codex audit Finding #4) -------------------------
+# --- stage-contract parity --------------------------------------------------
 
 
 def test_migrate_pack_and_ccda_standard_share_stage_contract(

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit-suite network guard.
 
 The toolkit is local-first and PHI-stays-on-the-box; nothing in the unit suite

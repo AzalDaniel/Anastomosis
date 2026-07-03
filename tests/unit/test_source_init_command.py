@@ -1,6 +1,7 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared learn-a-source command core (one flow, two frontends).
 
-Pins codex P1-5's consolidation: ``resolve_example`` and the analyze -> confirm
+Pins the shared-core consolidation: ``resolve_example`` and the analyze -> confirm
 -> build -> round-trip -> save flow live here once, returning enumerated codes
 both frontends present. The CLI (`test_cli_source`) and GUI
 (`test_gui_controller`) suites exercise the adapters; this pins the core directly.

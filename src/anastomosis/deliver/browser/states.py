@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The 15-state upload machine and its legal-transition graph.
 
 One :class:`UploadItem` walks this machine from :data:`UploadState.PENDING`

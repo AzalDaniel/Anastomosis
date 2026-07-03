@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared pack-from-samples command layer (one flow, two frontends).
 
 ``anast pack init`` (:mod:`anastomosis.cli`) and the GUI's

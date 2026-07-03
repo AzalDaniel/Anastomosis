@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The bundled-asset self-check (`anast doctor` / GUI doctor / the packaging CI hook).
 
 These pin that every shipped data asset is discovered through the app's real

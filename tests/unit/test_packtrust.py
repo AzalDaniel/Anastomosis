@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for external-pack hash-pinning + explicit trust.
 
 The security property under test: an external pack's ``context.py`` is NEVER

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 import os
 import stat
 from pathlib import Path
@@ -47,6 +48,34 @@ def test_info_lists_sources_and_packs() -> None:
     assert "anastomosis" in result.output
     assert "pf-tebra" in result.output
     assert "generic_soap" in result.output
+
+
+def test_cli_callback_installs_redacting_log_handler() -> None:
+    """Every ``anast`` command routes through the callback that wires the
+    redacting log handler onto the root logger (otherwise production falls back
+    to an unredacted lastResort handler)."""
+    import logging
+
+    from anastomosis.core.logutil import RedactionFilter
+
+    def _redacting(logger: logging.Logger) -> list[logging.Handler]:
+        return [
+            h for h in logger.handlers if any(isinstance(f, RedactionFilter) for f in h.filters)
+        ]
+
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    saved_level = root.level
+    try:
+        # Strip any pre-existing redacting handler so the assertion proves the
+        # callback installs one, not a leftover from another test.
+        root.handlers[:] = [h for h in root.handlers if h not in _redacting(root)]
+        result = runner.invoke(app, ["info"])
+        assert result.exit_code == 0, result.output
+        assert _redacting(root), "the CLI callback must install a redacting log handler"
+    finally:
+        root.handlers[:] = saved
+        root.setLevel(saved_level)
 
 
 class _FakeChromium:

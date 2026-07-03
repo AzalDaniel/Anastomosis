@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the per-patient bundle deliverer (Responder persona)."""
 
 from __future__ import annotations
@@ -97,10 +98,10 @@ def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord])
 
 
 def test_bundle_same_name_patients_never_cross_attribute(tmp_path: Path) -> None:
-    """The patient-safety regression Codex flagged for the bundle deliverer:
+    """The cross-leak failure mode for the bundle deliverer:
     two distinct patients sharing both ``family_name`` and ``given_name`` must
-    each receive only their own PDFs. Pre-PR-O the deliverer bucketed by
-    ``{family}_{given}_`` prefix and silently mixed them.
+    each receive only their own PDFs. A deliverer that bucketed by the
+    ``{family}_{given}_`` prefix would silently mix them.
     """
     from datetime import date
 
@@ -154,7 +155,10 @@ def test_bundle_missing_index_skips_pdfs_loudly(
         results = BundleDeliverer().deliver_records(records, pdfs_dir, tmp_path / "bundles")
     for r in results:
         assert r.pdf_paths == []
-    assert any("no render index" in rec.message for rec in caplog.records)
+    warnings = [rec.message for rec in caplog.records if "no render index" in rec.message]
+    assert warnings
+    # The warning stands alone — the pdfs dir path (under the output tree) is gone.
+    assert all(str(pdfs_dir) not in msg for msg in warnings)
 
 
 def test_bundle_qa_slice_isolates_each_patient(

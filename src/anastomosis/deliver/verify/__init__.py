@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The L0-L6 delivery verification ladder (M2 item 11).
 
 The layered defense that proves a reconstructed chart landed in the right

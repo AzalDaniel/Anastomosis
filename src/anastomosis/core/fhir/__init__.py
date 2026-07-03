@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FHIR R4 interchange for canonical records.
 
 Design contract (the lossless rule, applied to FHIR):

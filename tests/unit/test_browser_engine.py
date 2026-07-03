@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Upload engine tests: the full lifecycle, every terminal, and kill-and-resume.
 
 Synthetic data only — ``feedface-`` GUIDs for patient ids, neutral file names

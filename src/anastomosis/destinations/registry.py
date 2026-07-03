@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Data-driven destination capability registry (the no-hallucination rule).
 
 What a destination can *receive* is a fact about the world that decays: a

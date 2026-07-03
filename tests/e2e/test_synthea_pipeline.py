@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Synthea end-to-end lane — the external-evidence pipeline test.
 
 Every other C-CDA fixture in this repo was authored here, so ingest tests

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Anastomosis canonical model.
 
 FHIR R4-aligned, USCDI-informed, pydantic v2. Every model carries an

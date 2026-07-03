@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Persisted index of (pdf_filename → patient_id, encounter_id).
 
 The reconstruction engine names each chart ``{family}_{given}_{dos}_{type}.pdf``
@@ -109,6 +110,14 @@ class RenderIndex:
         }
         tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
         try:
+            # PHI-BY-DESIGN: the sidecar maps PDF filenames (which embed patient
+            # name + date of service) to their owning patient/encounter ids;
+            # ``pdfs_dir`` is the engine's secure_output_dir-hardened output tree
+            # (0o700 owner-only on POSIX; on Windows NTFS, inheritance stripped and
+            # access limited to the current user, SYSTEM, and Administrators) with a
+            # PHI-warning README. See SECURITY.md, "Code scanning & suppression
+            # policy (auditable)".
+            # codeql[py/clear-text-storage-sensitive-data]
             tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
             os.replace(tmp, target)
         except BaseException:
@@ -134,18 +143,20 @@ class RenderIndex:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("render index unreadable at %s (%s)", path, exc_tag(exc))
+            # Name the file by its basename only — the full path sits under the
+            # output tree, which the log discipline keeps out of log lines.
+            logger.warning("render index unreadable at %s (%s)", INDEX_FILENAME, exc_tag(exc))
             return None
         if not isinstance(raw, dict) or raw.get("version") != _SCHEMA_VERSION:
             logger.warning(
                 "render index schema mismatch at %s (expected version %s)",
-                path,
+                INDEX_FILENAME,
                 _SCHEMA_VERSION,
             )
             return None
         entries_raw = raw.get("entries")
         if not isinstance(entries_raw, list):
-            logger.warning("render index has no entries list at %s", path)
+            logger.warning("render index has no entries list at %s", INDEX_FILENAME)
             return None
         entries: list[RenderEntry] = []
         for item in entries_raw:
@@ -155,7 +166,7 @@ class RenderIndex:
                 or not isinstance(item.get("patient_id"), str)
                 or not isinstance(item.get("encounter_id"), str)
             ):
-                logger.warning("render index has malformed entry at %s; skipping", path)
+                logger.warning("render index has malformed entry at %s; skipping", INDEX_FILENAME)
                 continue
             entries.append(
                 RenderEntry(

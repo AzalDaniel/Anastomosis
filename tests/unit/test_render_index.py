@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PDF→patient render index that the engine writes alongside
 charts (PR-O — the patient-safety hardening that replaces the old
 ``{family}_{given}_`` filename-prefix guessing with explicit ``patient_id``
@@ -97,9 +98,10 @@ def test_render_index_load_returns_none_for_malformed_json(
     (tmp_path / INDEX_FILENAME).write_text("{not valid json", encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.render_index"):
         assert RenderIndex.load(tmp_path) is None
-    assert any("unreadable" in rec.message for rec in caplog.records), (
-        "a corrupted index must be logged loudly, never silent"
-    )
+    unreadable = [rec.message for rec in caplog.records if "unreadable" in rec.message]
+    assert unreadable, "a corrupted index must be logged loudly, never silent"
+    # Named by basename only — never the path under the output tree.
+    assert all(INDEX_FILENAME in msg and str(tmp_path) not in msg for msg in unreadable)
 
 
 def test_render_index_load_rejects_schema_mismatch(
@@ -112,7 +114,9 @@ def test_render_index_load_rejects_schema_mismatch(
     )
     with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.render_index"):
         assert RenderIndex.load(tmp_path) is None
-    assert any("schema mismatch" in rec.message for rec in caplog.records)
+    mismatch = [rec.message for rec in caplog.records if "schema mismatch" in rec.message]
+    assert mismatch
+    assert all(INDEX_FILENAME in msg and str(tmp_path) not in msg for msg in mismatch)
 
 
 def test_render_index_load_skips_malformed_entries(
@@ -138,7 +142,9 @@ def test_render_index_load_skips_malformed_entries(
     assert index is not None
     assert [e.pdf for e in index.entries] == ["ok.pdf"]
     # Each malformed row emits a warning so corruption is never silent.
-    assert sum("malformed entry" in rec.message for rec in caplog.records) >= 2
+    malformed = [rec.message for rec in caplog.records if "malformed entry" in rec.message]
+    assert len(malformed) >= 2
+    assert all(INDEX_FILENAME in msg and str(tmp_path) not in msg for msg in malformed)
 
 
 def test_render_index_write_is_atomic_and_deterministic(tmp_path: Path) -> None:
@@ -154,8 +160,8 @@ def test_render_index_write_is_atomic_and_deterministic(tmp_path: Path) -> None:
 
 
 def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -> None:
-    """Codex re-audit's explicit negative: two patients with the SAME display
-    name, one prefix-matching PDF on disk, and NO sidecar — neither the
+    """The explicit filename-attribution negative: two patients with the SAME
+    display name, one prefix-matching PDF on disk, and NO sidecar — neither the
     archive nor the bundle deliverer may attach the PDF to either patient.
     The archive routes it to ``unattributed/``; the bundle delivers both
     patients with zero PDFs. Filename-prefix guessing must never resurface

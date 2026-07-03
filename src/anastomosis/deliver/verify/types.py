@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Lightweight value types shared between the verifier and its consumers.
 
 This module deliberately imports nothing from the rest of the project, so the

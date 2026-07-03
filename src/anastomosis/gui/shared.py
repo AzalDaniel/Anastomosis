@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Leaf constants and serializers shared across the GUI consoles.
 
 The pieces here have no behavior of their own — they are the small, pure

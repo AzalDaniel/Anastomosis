@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Standard C-CDA render path — a neutral HL7 view of the delivered payload.
 
 Renders the C-CDA a migration actually moves (via the vendored HL7 ``CDA.xsl``)

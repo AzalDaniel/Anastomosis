@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Classify a finished migration's delivery outcome — one verdict, two frontends.
 
 A migration ALWAYS writes its artifacts (the structured C-CDA payload under

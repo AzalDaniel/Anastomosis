@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """C-CDA export tests — the round trip IS the deliverable.
 
 ``parse(build_ccd(record)) ≈ record`` through this repo's OWN

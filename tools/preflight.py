@@ -1,12 +1,12 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Preflight the local gate's optional-but-installed dependencies.
 
 ``tools/check.sh`` presents itself as the full local gate, but a fresh
 ``[dev]`` venv has Playwright installed *without* a Chromium download —
 and the doctor/e2e tests then fail deep inside pytest with
 ``bundled Chromium: executable not found at resolved path``, which reads
-like a product bug rather than a one-command setup step (Codex re-audit
-P2). This preflight turns that failure mode into one actionable line
-BEFORE pytest runs.
+like a product bug rather than a one-command setup step. This preflight
+turns that failure mode into one actionable line BEFORE pytest runs.
 
 Exit contract:
 
