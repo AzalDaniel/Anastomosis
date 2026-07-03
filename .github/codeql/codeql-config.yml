@@ -9,12 +9,10 @@
 # sites, are governed by the "Code scanning & suppression policy (auditable)"
 # section of SECURITY.md.
 #
-# The advanced-security/python-alert-suppression pack is the GitHub-maintained
-# query pack that makes CodeQL honor those inline `# codeql[...]` comments.
+# Inline `# codeql[query-id]` suppression is a built-in query
+# (`AlertSuppression.ql`) shipped inside every standard query pack, including
+# `security-extended` below — no extra pack is needed to honor it.
 name: Anastomosis CodeQL config
 
 queries:
   - uses: security-extended
-
-packs:
-  - "advanced-security/python-alert-suppression"

@@ -128,8 +128,9 @@ Woven into milestones; tracked here:
 - [x] ruff with bandit (S) + naive-datetime (DTZ) rules; mypy --strict
 - [x] CI least-privilege permissions; gitleaks pre-commit
 - [ ] uv + committed `uv.lock` (hash-pinned deps) — M6
-- [x] CodeQL: advanced workflow (security-extended + alert-suppression pack,
-      inline audited suppressions only, no repo-wide exclusions) — 0.4.0;
+- [x] CodeQL: advanced workflow (security-extended, whose built-in
+      AlertSuppression.ql honors inline `# codeql[...]` comments with no
+      extra pack; audited suppressions only, no repo-wide exclusions) — 0.4.0;
       requires the one-time repo setting flip off default setup (GitHub
       rejects advanced SARIF while default setup is on). semgrep lane — M6
 - [x] PyPI Trusted Publishing + Sigstore attestations (SLSA L2) — workflow
