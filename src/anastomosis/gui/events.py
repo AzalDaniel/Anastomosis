@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Typed constructors for the GUI's JSON-safe event dicts (one schema, one place).
 
 Every event the controller emits to the front end is a flat, JSON-safe dict

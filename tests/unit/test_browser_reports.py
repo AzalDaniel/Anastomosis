@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Run report tests: JSON content, determinism, PHI exclusion, summary line.
 
 Synthetic data only. A name-shaped path is deliberately placed in the ledger

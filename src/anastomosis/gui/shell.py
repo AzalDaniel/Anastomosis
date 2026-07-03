@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The pywebview shell: the ONLY module that touches webview (lazy-imported).
 
 Everything testable lives in :mod:`anastomosis.gui.controller`; this file is

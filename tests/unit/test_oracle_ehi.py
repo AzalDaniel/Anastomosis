@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the Oracle Health (Cerner Millennium) EHI adapter.
 
 Each test asserts one fact the brief (docs/vendor_refs/ORACLE_EHI_SCHEMA.md)

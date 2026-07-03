@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Manifest + skiplist tests: identity, integrity, and operator exclusion.
 
 Synthetic data only — neutral file names in ``tmp_path``, no patient-derived

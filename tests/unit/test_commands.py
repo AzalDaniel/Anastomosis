@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shared application/command layer (``core/commands.py``).
 
 This is the single orchestration core both the CLI and the GUI now build on, so

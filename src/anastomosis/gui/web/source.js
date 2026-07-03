@@ -1,3 +1,4 @@
+// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis Learn-a-source wizard — vanilla JS, no frameworks, no build.
  *

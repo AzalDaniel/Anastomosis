@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast upload`` — drive the resumable browser engine over a CDP attach.
 
 The command body and its exit-code rule split out of :mod:`anastomosis.cli`. It

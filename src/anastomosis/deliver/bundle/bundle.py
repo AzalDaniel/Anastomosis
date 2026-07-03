@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Per-patient bundle deliverer — Responder persona.
 
 When a practice gets a record request, the deliverable is a packet for ONE

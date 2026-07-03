@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for core.textutil — cell hygiene and note-HTML extraction."""
 
 import pytest

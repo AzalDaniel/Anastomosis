@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """CDP attach config tests: loopback-only validation, warning, lazy import.
 
 These tests MUST NOT require Playwright (the CI test lane does not install the

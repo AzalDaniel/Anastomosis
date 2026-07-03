@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Terminology data: the LOINC vital-sign map, pain answer codes, BMI math.
 
 Codes live here as plain data so every adapter, template pack, and the FHIR

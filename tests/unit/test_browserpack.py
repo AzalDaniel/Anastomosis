@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the generic selector-driven browser pack machinery.
 
 A :class:`FakePage` implements :class:`PageLike` with scripted text contents per

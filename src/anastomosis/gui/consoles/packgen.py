@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The pack-from-samples wizard backend (the packgen console).
 
 A thin adapter over the shared :func:`anastomosis.core.packinit.run_pack_init`

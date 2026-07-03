@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FhirApiDestination tests against an in-memory FHIR server (opener seam).
 
 The destination is driven through a REAL :class:`FhirClient` whose transport is

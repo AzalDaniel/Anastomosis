@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Destination-pack contract: what the browser upload engine drives.
 
 A destination pack teaches Anastomosis how to put one reconstructed chart

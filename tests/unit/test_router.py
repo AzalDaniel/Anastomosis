@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shortest-path delivery router — the preference matrix.
 
 Pure logic, no I/O. Routes are chosen vendor_api > ccda_import > browser;

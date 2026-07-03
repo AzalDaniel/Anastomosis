@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The GUI controller: the JS-API bridge, with no webview import anywhere.
 
 This is the headless half of the GUI. pywebview exposes an object's methods to

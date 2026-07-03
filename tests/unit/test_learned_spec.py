@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Validation of the learned-mapping spec — the safety boundary for run-a-mapping.
 
 The spec is the whole contract: it must reject unknown keys, unknown canonical

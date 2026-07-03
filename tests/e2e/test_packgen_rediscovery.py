@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E validation of the packgen layout learner — the honesty loop for M3.
 
 Renders the synthetic ``pf_tebra_v9`` encounters through the ``generic_soap``

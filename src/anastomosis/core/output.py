@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Output-directory hygiene (security backlog: output hygiene, M1).
 
 Everything the pipeline writes — archives, rendered PDFs, QA reports,

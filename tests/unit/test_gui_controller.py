@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GUI controller tests — headless, no pywebview, no real Chromium.
 
 Drives :class:`anastomosis.gui.controller.GuiController` against a recording

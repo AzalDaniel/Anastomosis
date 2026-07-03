@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Oracle Health (Cerner Millennium) V500 join graph → canonical records.
 
 The lossless rule is enforced exactly as in the PF/Tebra mapper: every table

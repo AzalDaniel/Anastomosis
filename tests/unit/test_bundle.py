@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the per-patient bundle deliverer (Responder persona)."""
 
 from __future__ import annotations

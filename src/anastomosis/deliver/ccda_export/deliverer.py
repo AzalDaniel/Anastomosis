@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """C-CDA deliverer — write one CCD XML per patient for import destinations.
 
 Mirrors the shape of :mod:`anastomosis.deliver.bundle`: it takes canonical

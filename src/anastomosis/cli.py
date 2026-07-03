@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Anastomosis command-line interface.
 
 Installed as both ``anast`` (everyday) and ``anastomosis`` (formal).

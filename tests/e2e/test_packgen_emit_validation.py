@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E validation of the packgen draft emitter — the item-15 proof (adapted).
 
 PLAN item 15 says: "regenerate the PF pack from synthetic PF-style samples and

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pins the advanced CodeQL setup and the inline-suppression policy.
 
 Three invariants live here, each a property of the committed files (not a

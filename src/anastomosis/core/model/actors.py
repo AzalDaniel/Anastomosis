@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """People and places that appear on clinical documents."""
 
 from __future__ import annotations

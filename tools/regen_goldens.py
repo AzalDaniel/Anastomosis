@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Regenerate the golden rendering snapshots for the e2e golden tests.
 
 Golden rendering tests pin *exactly* what real Chromium produces for the

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The CLI's command groups: the Typer app's per-surface command modules.
 
 :mod:`anastomosis.cli` was one ~1,650-line module carrying every Typer command

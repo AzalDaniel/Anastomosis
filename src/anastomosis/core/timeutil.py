@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Time handling for clinical source data.
 
 EHI exports are full of temporal traps this module exists to absorb:

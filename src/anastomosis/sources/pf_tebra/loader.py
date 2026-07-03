@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """TSV loading for PF/Tebra EHI exports.
 
 Kept dumb on purpose: read every TSV in the export into header-keyed rows and

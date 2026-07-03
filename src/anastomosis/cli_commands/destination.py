@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast destination list`` / ``route`` / ``init`` — inspect routes, discover packs.
 
 The three command bodies and their helpers (registry load, oldest-evidence and

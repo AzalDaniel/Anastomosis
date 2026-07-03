@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PF/Tebra adapter against the synthetic v9 fixture.
 
 Each test asserts one trap documented in tests/fixtures/pf_tebra_v9/README.md.

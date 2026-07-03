@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared learn-a-source command core (one flow, two frontends).
 
 Pins the shared-core consolidation: ``resolve_example`` and the analyze -> confirm
