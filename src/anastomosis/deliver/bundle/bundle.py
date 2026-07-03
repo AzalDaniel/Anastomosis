@@ -152,6 +152,13 @@ class BundleDeliverer:
 
         # FHIR R4 Bundle — the machine-readable rendition.
         bundle_path = patient_dir / "bundle.json"
+        # PHI-BY-DESIGN: delivering the patient's FHIR record IS the product.
+        # ``patient_dir`` sits under a secure_output_dir-hardened tree (0o700
+        # owner-only on POSIX; on Windows NTFS, inheritance stripped and access
+        # limited to the current user, SYSTEM, and Administrators) with a
+        # PHI-warning README. See SECURITY.md, "Code scanning & suppression
+        # policy (auditable)".
+        # codeql[py/clear-text-storage-sensitive-data]
         bundle_path.write_text(
             json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8"
         )
@@ -245,6 +252,13 @@ class BundleDeliverer:
 
     def _write_readme(self, patient_id: str, patient_dir: Path) -> Path:
         target = patient_dir / "README.txt"
+        # PHI-BY-DESIGN: the per-bundle README names its patient id and the PHI
+        # handling rules; it lands in the same secure_output_dir-hardened tree
+        # (0o700 owner-only on POSIX; on Windows NTFS, inheritance stripped and
+        # access limited to the current user, SYSTEM, and Administrators) as the
+        # record it describes. See SECURITY.md, "Code scanning & suppression
+        # policy (auditable)".
+        # codeql[py/clear-text-storage-sensitive-data]
         target.write_text(
             _README_TEMPLATE.format(
                 patient_id=patient_id,
