@@ -40,8 +40,12 @@ def test_redact_mm_dd_yyyy_shape() -> None:
     # scrubbed too — defense-in-depth behind the discipline of never logging
     # such a filename in the first place.
     assert redact("dos 01-02-2020 recorded") == "dos [REDACTED-DATE] recorded"
-    # The 2-2-4 run cannot collide with the SSN (3-2-4) or phone (3-3-4)
-    # shapes: an SSN still redacts as an SSN, not as a date.
+    # Non-padded dash and ISO variants are shapes too — a hand-typed date in
+    # an error message doesn't come zero-padded.
+    assert redact("dob 1-5-1980") == "dob [REDACTED-DATE]"
+    assert redact("dob 1980-1-5") == "dob [REDACTED-DATE]"
+    # The dash runs cannot collide with the SSN (3-2-4) or phone (3-3-4)
+    # shapes, which are matched first: an SSN still redacts as an SSN.
     assert redact("ssn 987-65-4320") == "ssn [REDACTED-SSN]"
 
 
