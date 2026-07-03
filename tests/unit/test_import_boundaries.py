@@ -54,6 +54,21 @@ def test_gui_does_not_import_cli() -> None:
     )
 
 
+def test_gui_does_not_import_cli_commands() -> None:
+    """``anastomosis.gui`` must not pull any ``anastomosis.cli_commands`` module
+    into ``sys.modules`` either. Each command group (the 0.4.0 CLI facade split)
+    imports ``anastomosis.cli`` at its top for the Typer app objects, so a
+    GUI-to-cli_commands edge would drag the whole CLI in — the same peer-frontend
+    boundary :func:`test_gui_does_not_import_cli` guards, one layer down.
+    """
+    loaded = _modules_after_import("anastomosis.gui")
+    leaked = {name for name in loaded if name.startswith("anastomosis.cli_commands")}
+    assert not leaked, (
+        f"anastomosis.gui leaked cli_commands modules into sys.modules: {sorted(leaked)}. "
+        "The GUI must not import any CLI command group (they import anastomosis.cli)."
+    )
+
+
 def test_browser_attach_module_loads_without_playwright_extra() -> None:
     """The attach module is a thin shell — importing the module must not
     require the optional ``deliver-browser`` extra. The Playwright imports
