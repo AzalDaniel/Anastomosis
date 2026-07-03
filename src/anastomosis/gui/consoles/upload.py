@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
@@ -26,8 +26,84 @@ from anastomosis.gui.jobs import GuiJob, GuiJobRunner
 
 if TYPE_CHECKING:
     from anastomosis.deliver.browser.tracking import TrackingDB
+    from anastomosis.destinations.loader import LoadedBrowserPack
 
 __all__ = ["UploadConsole"]
+
+
+class _UploadInputs(NamedTuple):
+    """The validated pre-flight inputs a clean upload drive needs.
+
+    The successful return of :func:`_upload_preflight`; distinguished from the
+    enumerated failure dict by type (a dict is a failure, this tuple is a go).
+    """
+
+    out: Path
+    loaded: LoadedBrowserPack
+    skiplist: frozenset[str]
+
+
+def _upload_preflight(
+    out_dir: str,
+    cdp_url: str,
+    pack_name: str,
+    pack_dirs: list[str] | None,
+    skiplist: list[str] | None,
+) -> _UploadInputs | dict[str, object]:
+    """The upload drive's never-raise pre-flight: validate, then normalize inputs.
+
+    Runs the SAME cheap, pre-attach gates ``anast upload`` runs, in order: the
+    loopback CDP gate, the manifest validation (``<dir>`` then ``<dir>/charts``,
+    the migrate layout), the destination-pack load + readiness gate, and the
+    operator-skiplist normalization. Returns the validated :class:`_UploadInputs`
+    on a clean pre-flight, or the enumerated failure dict (``BadCdpEndpoint`` /
+    ``BadManifest`` / ``PackNotReady`` / an :func:`exc_tag` pack-load type name),
+    which emits no event and spawns no worker. A surprise (a non-string
+    ``out_dir`` / ``pack_dirs``) is left to RAISE so the caller routes it through
+    the no-traceback ``_fail`` path — matching the original inline behaviour.
+    """
+    # The deliver-browser imports are lazy so this module loads without the
+    # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
+    from anastomosis.core.upload_command import resolve_manifest_root
+    from anastomosis.deliver.browser.cdp import CdpEndpoint
+    from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
+    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+    # 1. Loopback gate — a hard ValueError, never weakened to a warning.
+    try:
+        CdpEndpoint(cdp_url)
+    except ValueError:
+        return {"ok": False, "error": "BadCdpEndpoint"}
+
+    # 2. Validate the manifest (cheap, pre-attach), trying <dir> then
+    #    <dir>/charts (the migrate layout) — the SAME resolution the CLI
+    #    uses, so a migrate output dir works in either frontend. Loud on
+    #    missing/malformed. The AUTHORITATIVE read happens inside
+    #    run_upload_command under the output lock (lock-then-read), so this
+    #    early copy is validation only.
+    out = Path(out_dir)
+    try:
+        read_upload_manifest(resolve_manifest_root(out))
+    except (ManifestError, OSError):
+        return {"ok": False, "error": "BadManifest"}
+
+    # 3. Load the destination pack and gate on readiness (selectors found).
+    try:
+        loaded = load_destination_pack(pack_name, [Path(p) for p in pack_dirs or []])
+    except BrowserPackError as exc:
+        return {"ok": False, "error": exc_tag(exc)}
+    if not loaded.ready:
+        return {"ok": False, "error": "PackNotReady"}
+
+    # 4. Normalize the operator skiplist (GUI parity for the CLI's
+    #    --skiplist): one item_key/encounter_id per entry; blanks and
+    #    "#" comments ignored, matching deliver.browser.manifest.load_skiplist.
+    skiplist_set = frozenset(
+        entry.strip()
+        for entry in (skiplist or [])
+        if entry.strip() and not entry.strip().startswith("#")
+    )
+    return _UploadInputs(out=out, loaded=loaded, skiplist=skiplist_set)
 
 
 class UploadConsole:
@@ -203,54 +279,17 @@ class UploadConsole:
         undiscovered — run ``anast destination init``), an :func:`exc_tag` type
         name for a pack load error, or ``Busy`` (a run already in flight).
         """
-        # The deliver-browser imports are lazy so this module loads without the
-        # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
-        from anastomosis.core.upload_command import resolve_manifest_root
-        from anastomosis.deliver.browser.cdp import CdpEndpoint
-        from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
-        from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
-
         # Pre-flight, wrapped so it NEVER raises (the controller contract): a
         # non-string out_dir/pack_dirs or any other surprise becomes the
         # no-traceback error dict, like every sibling method. The enumerated
-        # codes below return before this catch.
+        # codes return their dict directly (no event); only a surprise takes the
+        # _fail path here.
         try:
-            # 1. Loopback gate — a hard ValueError, never weakened to a warning.
-            try:
-                CdpEndpoint(cdp_url)
-            except ValueError:
-                return {"ok": False, "error": "BadCdpEndpoint"}
-
-            # 2. Validate the manifest (cheap, pre-attach), trying <dir> then
-            #    <dir>/charts (the migrate layout) — the SAME resolution the CLI
-            #    uses, so a migrate output dir works in either frontend. Loud on
-            #    missing/malformed. The AUTHORITATIVE read happens inside
-            #    run_upload_command under the output lock (lock-then-read), so this
-            #    early copy is validation only.
-            out = Path(out_dir)
-            try:
-                read_upload_manifest(resolve_manifest_root(out))
-            except (ManifestError, OSError):
-                return {"ok": False, "error": "BadManifest"}
-
-            # 3. Load the destination pack and gate on readiness (selectors found).
-            try:
-                loaded = load_destination_pack(pack_name, [Path(p) for p in pack_dirs or []])
-            except BrowserPackError as exc:
-                return {"ok": False, "error": exc_tag(exc)}
-            if not loaded.ready:
-                return {"ok": False, "error": "PackNotReady"}
-
-            # 4. Normalize the operator skiplist (GUI parity for the CLI's
-            #    --skiplist): one item_key/encounter_id per entry; blanks and
-            #    "#" comments ignored, matching deliver.browser.manifest.load_skiplist.
-            skiplist_set = frozenset(
-                entry.strip()
-                for entry in (skiplist or [])
-                if entry.strip() and not entry.strip().startswith("#")
-            )
+            preflight = _upload_preflight(out_dir, cdp_url, pack_name, pack_dirs, skiplist)
         except Exception as exc:  # never-raise: a malformed argument, etc.
             return self._fail("upload", exc)
+        if isinstance(preflight, dict):
+            return preflight  # an enumerated pre-flight failure — no busy guard taken
 
         # The cooperative cancel flag upload_stop() sets; published to self in
         # on_start (after the busy guard is held) so the stop request reaches
@@ -264,6 +303,42 @@ class UploadConsole:
 
         def _cleanup() -> None:
             self._upload_stop = None
+
+        # 5. Only now hand off to the job runner (a clean pre-flight never
+        # blocks the busy guard). The runner owns acquire-or-Busy, the start
+        # event via on_start, the worker's cleanup+release finally, and the
+        # spawn-failure path (cleanup + release + upload error event).
+        return self._jobs.submit(
+            GuiJob(
+                name="upload",
+                worker=self._upload_worker(
+                    preflight, cdp_url, stop, max_attempts=max_attempts, verify=verify
+                ),
+                on_start=_on_start,
+                cleanup=_cleanup,
+            )
+        )
+
+    def _upload_worker(
+        self,
+        inputs: _UploadInputs,
+        cdp_url: str,
+        stop: threading.Event,
+        *,
+        max_attempts: int,
+        verify: bool,
+    ) -> Callable[[], None]:
+        """Build the daemon worker that drives the shared upload core to a terminal event.
+
+        The closure the job runner spawns once the busy guard is held; it drives
+        the SAME shared core (:func:`run_upload_command`) the CLI's ``anast
+        upload`` drives, emitting the terminal ``done``/``error`` upload event
+        from the returned outcome. Split out of :meth:`upload_start` so the
+        entry reads preflight -> closures -> job submit; behaviour is unchanged.
+        """
+        out = inputs.out
+        loaded = inputs.loaded
+        skiplist_set = inputs.skiplist
 
         def _worker() -> None:
             # Drive the SAME shared core the CLI's `anast upload` drives, so the
@@ -306,13 +381,7 @@ class UploadConsole:
             except Exception as exc:  # never-raise: type name only, no PHI
                 self._emit(error_event("upload", exc_tag(exc)))
 
-        # 5. Only now hand off to the job runner (a clean pre-flight never
-        # blocks the busy guard). The runner owns acquire-or-Busy, the start
-        # event via on_start, the worker's cleanup+release finally, and the
-        # spawn-failure path (cleanup + release + upload error event).
-        return self._jobs.submit(
-            GuiJob(name="upload", worker=_worker, on_start=_on_start, cleanup=_cleanup)
-        )
+        return _worker
 
     def upload_stop(self) -> dict[str, object]:
         """Request the in-flight upload stop after the current document.
