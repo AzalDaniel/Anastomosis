@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Jinja2 templates for the offline archive.
 
 Three pages:

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The QA check contract and registry.
 
 Preserved verbatim from the battle-tested predecessor: a check is a named

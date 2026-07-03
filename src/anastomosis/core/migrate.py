@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared EHR-to-EHR migration core (one migration, two frontends).
 
 A migration is a general EHR→EHR move; the PF→Tebra path is just one instance

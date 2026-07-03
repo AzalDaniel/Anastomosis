@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the practice_fusion_soap template pack.
 
 These exercise discovery, manifest geometry/tokens/sections, and the

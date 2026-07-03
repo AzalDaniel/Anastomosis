@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """C-CDA R2.1 / CCD XML → canonical PatientRecord.
 
 The lossless rule, applied to a CDA document: every section the adapter knows

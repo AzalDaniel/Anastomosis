@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shared migration core (``core/migrate.py``).
 
 A migration is a general EHR→EHR move; PF→Tebra is one instance. These pin:

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Persisted index of (pdf_filename → patient_id, encounter_id).
 
 The reconstruction engine names each chart ``{family}_{given}_{dos}_{type}.pdf``

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Preflight the local gate's optional-but-installed dependencies.
 
 ``tools/check.sh`` presents itself as the full local gate, but a fresh

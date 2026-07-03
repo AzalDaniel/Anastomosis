@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Property-based invariants (Hypothesis) for the highest data-loss-risk pure
 functions: date parsing and the date-spelling enumerator. These complement the
 example-based unit tests with machine-generated inputs across wide ranges.

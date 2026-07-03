@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E rendering tests for the practice_fusion_soap pack (REAL Chromium).
 
 Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through the

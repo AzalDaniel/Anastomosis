@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for LayeredVerifier — directly and through a real UploadEngine run.
 
 The composite stacks L0-L6 behind the engine's Verifier seam. The engine-level

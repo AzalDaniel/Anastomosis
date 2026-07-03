@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PatientRecord → C-CDA R2.1 / CCD XML (the inverse of ``sources/ccda``).
 
 This is the export side of the C-CDA round trip. Its single hard contract is

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Logging with PHI redaction (security backlog: log redaction, from M1).
 
 The discipline is "never log patient names, DOBs, or identifiers" — but

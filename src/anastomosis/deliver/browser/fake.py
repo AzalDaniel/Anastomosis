@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The reference in-memory destination: test double and future --dry-run target.
 
 :class:`FakeDestination` implements the whole :class:`Destination` protocol

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The upload console: the browser-delivery operator surface.
 
 Owns the read-only tracking-ledger views (``upload_status``,

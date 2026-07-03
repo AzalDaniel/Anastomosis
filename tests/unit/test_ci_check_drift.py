@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pins ``tools/check.sh`` <-> ``.github/workflows/ci.yml`` parity.
 
 ``tools/check.sh`` claims at the top of its file that it is "exactly what

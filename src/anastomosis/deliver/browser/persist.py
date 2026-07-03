@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Manifest persistence: the bridge from a render run to a later ``anast upload``.
 
 A browser upload is a separate, operator-driven step that happens AFTER the

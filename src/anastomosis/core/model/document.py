@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Generated artifacts: the documents this toolkit produces and tracks."""
 
 from __future__ import annotations

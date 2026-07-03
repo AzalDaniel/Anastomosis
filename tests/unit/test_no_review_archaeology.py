@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Guard: source comments state invariants, never review history.
 
 A comment must pin the PROPERTY the code or test enforces, never the

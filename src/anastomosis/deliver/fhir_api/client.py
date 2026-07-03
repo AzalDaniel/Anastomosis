@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """A minimal FHIR R4 REST client over stdlib ``urllib`` — no new dependencies.
 
 The API delivery route (PLAN item 13a) is the modern counterpart to the

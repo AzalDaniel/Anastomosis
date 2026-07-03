@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Desktop GUI entry point.
 
 ``python -m anastomosis.gui`` and the frozen GUI executable produced by the

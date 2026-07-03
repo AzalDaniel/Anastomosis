@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """TrackingDB tests: idempotent enqueue, validated transitions, crash
 recovery, WAL persistence across a reopen, thread safety, and the PHI
 schema guarantee."""

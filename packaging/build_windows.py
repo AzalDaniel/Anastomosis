@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Build the Windows GUI + CLI executables with Nuitka (run on a Windows runner).
 
 Produces two self-contained ``--mode=standalone`` (onedir) builds under ``dist/``,

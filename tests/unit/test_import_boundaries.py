@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Enforce package import boundaries that the architecture relies on.
 
 These tests are quick property checks against ``sys.modules``: they import

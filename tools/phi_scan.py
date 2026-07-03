@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PHI scanner: blocks protected health information from entering this repo.
 
 Anastomosis was generalized from a private production system that handled

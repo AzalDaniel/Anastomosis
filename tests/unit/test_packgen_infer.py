@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the packgen statistics (infer.py).
 
 No Chromium: a small set of synthetic 'sample' PDFs is built directly with

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FHIR R4 / US Core ingest adapter (the universal "any EHR in" lane).
 
 Reads the structured export every certified US EHR can produce — a FHIR R4

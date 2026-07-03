@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pins the Playwright build version to ONE source of truth.
 
 Invariant: ``packaging/constraints.txt`` carries the single ``playwright==``

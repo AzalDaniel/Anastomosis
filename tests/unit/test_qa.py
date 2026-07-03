@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """QA engine tests: a good document passes, and every mutation in the
 corpus trips exactly the check built to catch it."""
 

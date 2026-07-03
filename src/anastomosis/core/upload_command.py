@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared browser-upload orchestration core (one engine drive, two frontends).
 
 ``anast upload`` (CLI) and the GUI upload console must drive the resumable upload

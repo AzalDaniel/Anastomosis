@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for core.timeutil — including the DST oracle.
 
 The oracle below is a clean re-implementation of the predecessor's hand-rolled

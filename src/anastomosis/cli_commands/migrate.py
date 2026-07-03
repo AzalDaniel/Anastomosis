@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast migrate`` — EHR-to-EHR migration (PF->Tebra is one instance).
 
 The command body and its two helpers (saved-profile resolution and the

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The GUI's focused consoles: the controller's five operator surfaces.
 
 :class:`~anastomosis.gui.controller.GuiController` was one ~1,700-line class

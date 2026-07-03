@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the offline archive deliverer.
 
 The archive must be browsable from a ``file://`` URL with zero outbound
