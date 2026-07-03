@@ -147,6 +147,13 @@ class ArchiveDeliverer:
 
             # FHIR R4 Bundle — the machine-readable rendition.
             bundle = to_bundle(record)
+            # PHI-BY-DESIGN: writing the patient's FHIR record to disk IS the
+            # product. ``patient_dir`` sits under a secure_output_dir-hardened
+            # tree (0o700 owner-only on POSIX; on Windows NTFS, inheritance
+            # stripped and access limited to the current user, SYSTEM, and
+            # Administrators) with a PHI-warning README. See SECURITY.md, "Code
+            # scanning & suppression policy (auditable)".
+            # codeql[py/clear-text-storage-sensitive-data]
             (patient_dir / "bundle.json").write_text(
                 json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8"
             )
@@ -409,7 +416,17 @@ class ArchiveDeliverer:
             index_json=index_json,
         )
         index_path = out / "index.html"
+        # PHI-BY-DESIGN: the archive index and its JSON manifest name patients so
+        # the offline search box works; both land under a secure_output_dir-
+        # hardened directory (0o700 owner-only on POSIX; on Windows NTFS,
+        # inheritance stripped and access limited to the current user, SYSTEM, and
+        # Administrators) with a PHI-warning README. See SECURITY.md, "Code
+        # scanning & suppression policy (auditable)".
+        # codeql[py/clear-text-storage-sensitive-data]
         index_path.write_text(html, encoding="utf-8")
+        # PHI-BY-DESIGN: same hardened-directory guarantee as the index above
+        # (see SECURITY.md, "Code scanning & suppression policy (auditable)").
+        # codeql[py/clear-text-storage-sensitive-data]
         (out / "index.json").write_text(
             json.dumps(manifest_entries, indent=2, sort_keys=True), encoding="utf-8"
         )
