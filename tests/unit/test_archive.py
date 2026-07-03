@@ -373,3 +373,72 @@ def test_archive_index_json_search_haystack_is_lowercased(
         assert entry["search"] == entry["search"].lower(), (
             "search haystack must be lowercased for case-insensitive matching"
         )
+
+
+def test_archive_missing_indexed_pdf_logs_opaque_id_not_filename(
+    tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
+) -> None:
+    """When the render index names a PDF that is not on disk, the archive logs
+    the WARNING by the patient's opaque id — never the filename, which embeds
+    the patient name and a MM-DD-YYYY date of service."""
+    import logging
+
+    record = records[0]
+    assert record.encounters, "fixture record must expose at least one encounter"
+    enc = record.encounters[0]
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    # An index entry naming a PDF that is never written to disk. The filename
+    # embeds the (synthetic) patient name + a MM-DD-YYYY token on purpose — the
+    # exact string that must NOT reach the log.
+    missing = f"{record.patient.family_name}_{record.patient.given_name}_01-02-2020_SOAP.pdf"
+    RenderIndex.from_entries(
+        [RenderEntry(pdf=missing, patient_id=record.patient.id, encounter_id=enc.id)]
+    ).write(pdfs_dir)
+
+    out = tmp_path / "archive"
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.archive.archive"):
+        ArchiveDeliverer().deliver([record], pdfs_dir, out)
+
+    hits = [r.getMessage() for r in caplog.records if "missing on disk" in r.getMessage()]
+    assert hits, "a missing indexed PDF must be logged loudly"
+    blob = "\n".join(hits)
+    assert record.patient.id in blob, "the opaque patient id must identify the missing chart"
+    assert record.patient.family_name not in blob
+    assert record.patient.given_name not in blob
+    assert not re.search(r"\b\d{2}-\d{2}-\d{4}\b", blob), "a date-of-service token leaked"
+
+
+def test_pipeline_never_logs_patient_names(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Ingest the synthetic PF/Tebra fixture and run the archive deliverer over
+    it with a render index naming PDFs absent from disk (exercising the
+    missing-on-disk warning), then assert no log line carries any fixture
+    patient's family/given name. Names are collected from the ingested records,
+    never hardcoded; no Chromium / rendering is required."""
+    import logging
+
+    with caplog.at_level(logging.DEBUG):
+        loaded = list(get_source("pf-tebra").load(FIXTURE))
+        pdfs_dir = tmp_path / "charts"
+        pdfs_dir.mkdir()
+        entries: list[RenderEntry] = []
+        for rec in loaded:
+            for enc in rec.encounters:
+                fname = f"{rec.patient.family_name}_{rec.patient.given_name}_01-02-2020_SOAP.pdf"
+                entries.append(
+                    RenderEntry(pdf=fname, patient_id=rec.patient.id, encounter_id=enc.id)
+                )
+        RenderIndex.from_entries(entries).write(pdfs_dir)
+        ArchiveDeliverer().deliver(loaded, pdfs_dir, tmp_path / "archive")
+
+    names: set[str] = set()
+    for rec in loaded:
+        for value in (rec.patient.family_name, rec.patient.given_name):
+            if value:
+                names.add(value)
+    assert names, "fixture must expose patient names to guard against"
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    for name in names:
+        assert name not in blob, f"patient name leaked into logs: {name!r}"

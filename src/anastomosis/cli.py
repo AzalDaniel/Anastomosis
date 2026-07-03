@@ -14,6 +14,7 @@ Sub-commands appear as their pipeline stages are implemented:
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -24,6 +25,7 @@ import anastomosis
 import anastomosis.sources.ccda
 import anastomosis.sources.oracle_ehi
 import anastomosis.sources.pf_tebra
+from anastomosis.core.logutil import configure_logging
 from anastomosis.core.presentation import Glyphs, terminal_glyphs
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.browser.attach import (
@@ -83,6 +85,10 @@ def main(
     ),
 ) -> None:
     """Reconstruct, verify, and re-home clinical records."""
+    # Install the redacting log handler for every ``anast`` command (the root
+    # logger otherwise falls back to an unredacted lastResort handler). Wired
+    # here at the entry point, never at import time; the call is idempotent.
+    configure_logging(logging.WARNING)
 
 
 @app.command()

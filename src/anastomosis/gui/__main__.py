@@ -59,12 +59,23 @@ def main() -> None:
     if "--self-check" in sys.argv[1:]:
         raise SystemExit(_self_check())
 
+    # Install the redacting log handler before launching (the root logger
+    # otherwise falls back to an unredacted lastResort handler). logutil is
+    # stdlib-only, so a plain lazy import keeps this entry dependency-light.
+    import logging
+
+    from anastomosis.core.logutil import configure_logging
+
+    configure_logging(logging.WARNING)
+
     from anastomosis.gui.shell import launch
 
     try:
         launch()
     except Exception as exc:  # top-level entry: a user must never see a raw traceback
-        print(f"GUI failed to start ({type(exc).__name__}): {exc}", file=sys.stderr)
+        # Broad catch: print the exception TYPE only (its message may embed
+        # input); the type name is always safe to surface.
+        print(f"GUI failed to start ({type(exc).__name__})", file=sys.stderr)
         raise SystemExit(1) from None
 
 
