@@ -20,7 +20,7 @@ _DATETIMES = st.datetimes(min_value=datetime(1900, 1, 1), max_value=datetime(210
 )
 _DATES = st.dates(min_value=date(1900, 1, 1), max_value=date(2100, 12, 31))
 
-# Explicit, pinned settings (Codex re-audit P2): a cold-cache first run on a
+# Explicit, pinned settings: a cold-cache first run on a
 # loaded machine tripped Hypothesis's default per-example deadline and the
 # too_slow health check once — an environment artifact, not a product signal.
 # CI installs unpinned hypothesis>=6.0, so future default changes must not be

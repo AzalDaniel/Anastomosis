@@ -1,6 +1,6 @@
 """The shared migration-status classifier (one verdict, two frontends).
 
-These pin the CLI/GUI parity fix (codex P0-2): a no-viable-route migration is a
+These pin CLI/GUI parity: a no-viable-route migration is a
 manual-import outcome (exit 1, loud notice) even though its artifacts are still
 written — and both the CLI and the GUI read this single classifier, so they
 cannot disagree about whether a migration "succeeded".

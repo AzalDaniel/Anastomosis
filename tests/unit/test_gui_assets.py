@@ -254,7 +254,7 @@ def test_console_lists_item_keys_never_names() -> None:
     ("page", "needle"),
     [
         # The wizard labels the deferred live API push. (The console's live
-        # driving is no longer deferred — it is wired in W5/PR-6b, asserted by
+        # driving is no longer deferred — it is wired live, asserted by
         # test_console_drives_uploads_only_through_controller below.)
         ("wizard.js", "later milestone"),
     ],
@@ -267,7 +267,7 @@ def test_deferred_functionality_is_labeled(page: str, needle: str) -> None:
 def test_console_drives_uploads_only_through_controller() -> None:
     """The console drives real uploads, but ONLY through the controller seam.
 
-    W5/PR-6b wired live driving: the JS must call the controller's drive methods
+    Live driving is wired: the JS must call the controller's drive methods
     (upload_start / upload_stop) and surface the shared-machine safety warning.
     Driving is SAFE because the JS goes only through the controller — it must
     never reach into the ledger's write surface (no transition/begin_run/recover
@@ -384,7 +384,7 @@ def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
 
 def test_console_offers_pack_dir_parity() -> None:
     """The upload console exposes an extra-pack-dir input and threads it into
-    upload_start (was hard-coded null) — GUI parity for `--pack-dir` (codex #2)."""
+    upload_start (was hard-coded null) — GUI parity for `--pack-dir`."""
     html = (WEB / "console.html").read_text(encoding="utf-8")
     js = (WEB / "console.js").read_text(encoding="utf-8")
     assert 'id="upload-pack-dir"' in html
@@ -395,8 +395,8 @@ def test_console_offers_pack_dir_parity() -> None:
 
 def test_dashboard_offers_write_manifest_toggle() -> None:
     """The dashboard run form offers a 'write upload manifest' toggle and threads
-    it into run_pipeline_async — GUI parity for `pipeline run --upload-manifest`
-    (codex #1), so a GUI run can produce the manifest the upload console needs."""
+    it into run_pipeline_async — GUI parity for `pipeline run --upload-manifest`,
+    so a GUI run can produce the manifest the upload console needs."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     js = (WEB / "app.js").read_text(encoding="utf-8")
     assert 'id="write-manifest"' in html

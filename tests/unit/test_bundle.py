@@ -97,10 +97,10 @@ def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord])
 
 
 def test_bundle_same_name_patients_never_cross_attribute(tmp_path: Path) -> None:
-    """The patient-safety regression Codex flagged for the bundle deliverer:
+    """The cross-leak failure mode for the bundle deliverer:
     two distinct patients sharing both ``family_name`` and ``given_name`` must
-    each receive only their own PDFs. Pre-PR-O the deliverer bucketed by
-    ``{family}_{given}_`` prefix and silently mixed them.
+    each receive only their own PDFs. A deliverer that bucketed by the
+    ``{family}_{given}_`` prefix would silently mix them.
     """
     from datetime import date
 

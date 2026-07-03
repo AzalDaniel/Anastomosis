@@ -484,7 +484,8 @@ class MigrationConsole:
         # automated route still WROTE its artifacts (the C-CDA + charts), but the
         # operator must import them by hand — so surface it as a manual-import
         # (error) event, never a silent `done`, exactly as the CLI exits 1 with a
-        # loud notice. This is the CLI/GUI parity fix (codex P0-2).
+        # loud notice. This keeps CLI/GUI parity: both frontends surface a
+        # no-viable-route migration as a manual-import event, never a silent done.
         status = classify_migration(result)
         if status.needs_manual_import:
             notice = manual_import_notice(status)
