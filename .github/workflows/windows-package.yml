@@ -237,3 +237,7 @@ jobs:
           # Changed" PR list appended after it.
           body_path: RELEASE_NOTES.md
           generate_release_notes: true
+          # Pre-1.0 versions are alphas by this project's own convention
+          # (README/CHANGELOG framing, the Alpha trove classifier) — flag the
+          # GitHub release accordingly instead of presenting it as stable.
+          prerelease: ${{ startsWith(needs.build.outputs.version, '0.') }}
