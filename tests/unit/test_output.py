@@ -3,6 +3,7 @@
 
 import logging
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -198,14 +199,25 @@ def test_windows_real_dacl_is_protected(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    sddl = sddl_file.read_text(encoding="utf-16")
+    # ``icacls /save`` writes UTF-16-LE with NO BOM; the plain ``utf-16``
+    # codec refuses BOM-less input, so decode explicitly (and drop a BOM if
+    # a Windows version ever adds one).
+    sddl = sddl_file.read_bytes().decode("utf-16-le").lstrip("\ufeff")
 
     # Inheritance stripped → DACL is protected (typically ``D:PAI``).
     assert "D:P" in sddl
-    # The current user retains access...
     user_sid = _windows_user_sid()
     assert user_sid is not None
-    assert user_sid in sddl
-    # ...but broad principals do not: no BUILTIN\Users, no Everyone ACE.
-    assert ";BU)" not in sddl
-    assert ";WD)" not in sddl
+    # Every ACE trustee must be within the granted set — the current user
+    # (as a literal SID, or the well-known alias SDDL abbreviates it to:
+    # ``LA`` for a RID-500 admin account, ``OW`` owner-rights), SYSTEM
+    # (``SY``), and Administrators (``BA``). Broad principals (BU Users,
+    # WD Everyone, AU Authenticated Users, IU Interactive) must be absent.
+    dacl = sddl.split("D:", 1)[1]
+    if "S:" in dacl:
+        dacl = dacl.split("S:", 1)[0]
+    trustees = set(re.findall(r";([A-Z0-9-]+)\)", dacl))
+    assert trustees, f"no ACE trustees parsed from SDDL: {sddl!r}"
+    allowed = {user_sid, "LA", "OW", "SY", "BA"}
+    assert trustees <= allowed, f"unexpected ACE trustees: {sorted(trustees - allowed)}"
+    assert not trustees & {"BU", "WD", "AU", "IU"}
