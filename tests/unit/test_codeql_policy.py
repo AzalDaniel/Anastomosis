@@ -9,8 +9,9 @@ record of how they came to be):
   write`` so its SARIF can upload; and every third-party action is pinned to a
   full 40-hex commit SHA (never a floating tag).
 * The config (``.github/codeql/codeql-config.yml``) selects the
-  ``security-extended`` suite and the ``advanced-security/python-alert-suppression``
-  pack, and declares NO repo-wide exclusions — no ``query-filters`` and no
+  ``security-extended`` suite (which ships the built-in ``AlertSuppression.ql``
+  query that honors inline ``# codeql[...]`` comments — no extra pack needed)
+  and declares NO repo-wide exclusions — no ``query-filters`` and no
   ``paths`` / ``paths-ignore``. Coverage is full-tree; suppression is per-site.
 * Every ``# codeql[...]`` suppression in ``src/`` sits alone on its own line
   (CodeQL only honors it there), carries a ``PHI-BY-DESIGN`` rationale within the
@@ -141,15 +142,12 @@ def test_init_step_references_config_file() -> None:
 # --- config -------------------------------------------------------------------
 
 
-def test_config_selects_extended_suite_and_suppression_pack() -> None:
-    """The config runs security-extended plus the alert-suppression pack."""
+def test_config_selects_extended_suite() -> None:
+    """The config runs security-extended, whose built-in AlertSuppression.ql
+    query honors inline ``# codeql[...]`` comments with no extra pack."""
     config = _load_yaml(CODEQL_CONFIG)
     query_suites = {q.get("uses") for q in config.get("queries", []) if isinstance(q, dict)}
     assert "security-extended" in query_suites, "config must select the security-extended suite"
-    assert "advanced-security/python-alert-suppression" in config.get("packs", []), (
-        "config must enable the advanced-security/python-alert-suppression pack so CodeQL "
-        "honors the inline `# codeql[...]` suppressions."
-    )
 
 
 def test_config_declares_no_repo_wide_exclusions() -> None:

@@ -96,7 +96,8 @@ contract — regressions in any of them are security findings:
 An advanced CodeQL workflow is committed at
 [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml): the
 `security-extended` suite on every push and pull request plus a weekly
-schedule, with the alert-suppression query pack enabled. (One-time
+schedule — which ships the built-in `AlertSuppression.ql` query, so inline
+`# codeql[...]` comments are honored with no extra pack. (One-time
 repository setting: GitHub rejects advanced-setup SARIF uploads while
 code-scanning *default setup* is enabled, so default setup must be
 disabled in Settings → Code security for this workflow's results to land.)

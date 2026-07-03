@@ -32,10 +32,11 @@ trustworthiness. Beta is reserved for the CS50 submission cut.
   lands regardless. POSIX behavior (`0o700`) is unchanged. A real ACL
   assertion runs in the Windows CI lane.
 - **CodeQL, for real** (`.github/workflows/codeql.yml`) — an advanced-setup
-  workflow (push / PR / weekly) with the `security-extended` suite and the
-  alert-suppression query pack, plus inline `# codeql[rule-id]` suppressions
-  at exactly the audited PHI-by-design write sites — no rule is excluded
-  repo-wide. Each suppression sits beside a `PHI-BY-DESIGN` rationale
+  workflow (push / PR / weekly) with the `security-extended` suite, whose
+  built-in `AlertSuppression.ql` query honors inline `# codeql[rule-id]`
+  comments with no extra pack, placed at exactly the audited PHI-by-design
+  write sites — no rule is excluded repo-wide. Each suppression sits beside
+  a `PHI-BY-DESIGN` rationale
   comment, and a policy test pins that every suppression carries one. (The
   repository's code-scanning *default setup* must be disabled once in
   Settings for the workflow's uploads to be accepted — GitHub rejects
