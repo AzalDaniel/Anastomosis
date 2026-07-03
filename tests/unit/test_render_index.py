@@ -159,8 +159,8 @@ def test_render_index_write_is_atomic_and_deterministic(tmp_path: Path) -> None:
 
 
 def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -> None:
-    """Codex re-audit's explicit negative: two patients with the SAME display
-    name, one prefix-matching PDF on disk, and NO sidecar — neither the
+    """The explicit filename-attribution negative: two patients with the SAME
+    display name, one prefix-matching PDF on disk, and NO sidecar — neither the
     archive nor the bundle deliverer may attach the PDF to either patient.
     The archive routes it to ``unattributed/``; the bundle delivers both
     patients with zero PDFs. Filename-prefix guessing must never resurface

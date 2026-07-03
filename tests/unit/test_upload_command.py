@@ -1,6 +1,6 @@
 """The shared browser-upload orchestration core (one engine drive, two frontends).
 
-These pin codex P1-3/P1-4: a SINGLE retry-budget default for both frontends, the
+These pin the shared-core guarantees: a SINGLE retry-budget default for both frontends, the
 manifest read INSIDE the output lock (lock-then-read — no TOCTOU), and skiplist
 support routed through the one ``UploadCommand``. The Playwright touch is the
 ``attach`` callable, here a :class:`FakeDestination`, so the whole drive runs with
@@ -117,8 +117,8 @@ def test_run_upload_command_locks_before_reading_or_attaching(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Lock-then-read: when another run holds the output lock, the command refuses
-    BEFORE the manifest is read AND before the browser is attached (codex P1-4
-    TOCTOU). Instrumenting BOTH sides proves the ordering — a regression that
+    BEFORE the manifest is read AND before the browser is attached (the
+    read-before-lock TOCTOU). Instrumenting BOTH sides proves the ordering — a regression that
     moved ONLY the manifest read above the lock would raise OutputLockedError with
     the attach untouched, and would survive an attach-only assertion."""
     import anastomosis.deliver.browser.persist as persist
@@ -151,7 +151,7 @@ def test_run_upload_command_locks_before_reading_or_attaching(
 
 
 def test_run_upload_command_locks_the_charts_manifest_dir_too(tmp_path: Path) -> None:
-    """Migrate-layout fencing (codex P1-3): when the manifest lives under
+    """Migrate-layout fencing: when the manifest lives under
     <out>/charts (a `migrate` output), the upload must lock <out>/charts — the
     producer's lock dir — not only <out>. Holding the REAL charts lock makes
     run_upload_command(out_dir=<out>) refuse, proving both dirs are locked."""
@@ -321,7 +321,7 @@ def test_verify_on_without_render_extra_fails_closed(
 
 def test_run_upload_command_releases_destination_resources(tmp_path: Path) -> None:
     """At run end the command calls the destination's one-shot release() exactly
-    once — the owned Playwright driver/CDP teardown (codex #5). For a destination
+    once — the owned Playwright driver/CDP teardown. For a destination
     with no owned resources (plain FakeDestination) it is simply skipped."""
     out = _write_manifest(tmp_path / "out")
     released = {"n": 0}

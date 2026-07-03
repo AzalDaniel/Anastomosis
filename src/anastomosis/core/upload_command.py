@@ -6,7 +6,7 @@ recover -> run -> finish -> report, and — critically — the manifest is read
 INSIDE the output lock (lock-then-read). Reading it under the lock means the
 items the engine acts on are the ones present while the lock is held, never a
 copy read before a concurrent ``render``/``migrate`` could rewrite the manifest
-(the TOCTOU the codex review flagged). This module is that single orchestration;
+(the TOCTOU a read-before-lock would open). This module is that single orchestration;
 each frontend keeps only its own pre-flight (loopback gate, operator
 confirmation, pack readiness, skiplist source) and its own presentation.
 

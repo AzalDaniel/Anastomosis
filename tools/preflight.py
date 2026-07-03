@@ -4,9 +4,8 @@
 ``[dev]`` venv has Playwright installed *without* a Chromium download —
 and the doctor/e2e tests then fail deep inside pytest with
 ``bundled Chromium: executable not found at resolved path``, which reads
-like a product bug rather than a one-command setup step (Codex re-audit
-P2). This preflight turns that failure mode into one actionable line
-BEFORE pytest runs.
+like a product bug rather than a one-command setup step. This preflight
+turns that failure mode into one actionable line BEFORE pytest runs.
 
 Exit contract:
 

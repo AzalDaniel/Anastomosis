@@ -285,7 +285,7 @@ def test_user_migrations_path_under_anastomosis_home(monkeypatch: pytest.MonkeyP
     assert user_migrations_path() == Path("/home/example/.anastomosis/migrations.json")
 
 
-# --- stage-contract parity (Codex audit Finding #4) -------------------------
+# --- stage-contract parity --------------------------------------------------
 
 
 def test_migrate_pack_and_ccda_standard_share_stage_contract(

@@ -102,7 +102,7 @@ def test_malformed_value_does_not_leak_content() -> None:
 
 
 def test_insert_reader_quoted_cell_containing_insert_shape() -> None:
-    # FINDING 3 regression: a quoted cell whose text is a literal
+    # Quoted-INSERT regression: a quoted cell whose text is a literal
     # "INSERT INTO ... VALUES (...)" must NOT be re-scanned as a statement head.
     # Single-pass lexing consumes the string literal whole, so the statement
     # parses to ONE row with the embedded SQL text intact.
@@ -229,7 +229,7 @@ def test_remote_blob_is_reference_not_fetched(records: dict[str, PatientRecord])
 def test_two_vitals_on_one_encounter_become_two_observations(
     records: dict[str, PatientRecord],
 ) -> None:
-    # FINDING 1 regression (the collision probe's exact scenario): two measured
+    # Collision regression: two measured
     # events on encounter E1 (Systolic BP 128, Body weight 150) map to TWO
     # distinct Observations, each keyed by its EVENT_ID, with BOTH values and
     # their unit codes preserved. The old shared-encounter-extensions fold made
@@ -250,7 +250,7 @@ def test_two_vitals_on_one_encounter_become_two_observations(
 
 
 def test_problem_event_becomes_condition(records: dict[str, PatientRecord]) -> None:
-    # FINDING 1: a problem-shaped event (title prefix "Problem:", §3.2) maps to
+    # Problem-event mapping: a problem-shaped event (title prefix "Problem:", §3.2) maps to
     # a Condition keyed by EVENT_ID; the coded RESULT_VAL (I10) is preserved
     # losslessly (no ICD-10/SNOMED column is documented, so it is not typed).
     conditions = {c.id: c for c in records[P1].conditions}
@@ -262,7 +262,7 @@ def test_problem_event_becomes_condition(records: dict[str, PatientRecord]) -> N
 def test_allergy_event_becomes_allergy_with_reaction(
     records: dict[str, PatientRecord],
 ) -> None:
-    # FINDING 1: the Penicillin allergy lands as an AllergyIntolerance with the
+    # Allergy-event mapping: the Penicillin allergy lands as an AllergyIntolerance with the
     # Hives reaction preserved (RESULT_VAL → reaction), keyed by EVENT_ID.
     allergies = {a.id: a for a in records[P2].allergies}
     penicillin = allergies["900300005"]
@@ -303,7 +303,7 @@ def test_superseded_event_is_filtered_but_preserved(
 def test_superseded_blob_body_survives_ingest(
     records: dict[str, PatientRecord],
 ) -> None:
-    # FINDING 2 regression: the superseded event preserves not just its ROW but
+    # Superseded-body regression: the superseded event preserves not just its ROW but
     # its CE_BLOB body. The superseded probe proved "Earlier draft of the
     # progress note." vanished; it must now ride in the stashed payload.
     e1 = next(e for e in records[P1].encounters if e.id == E1)

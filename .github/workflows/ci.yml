@@ -33,8 +33,8 @@ jobs:
       - run: ruff format --check .
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
-  # as one of the gates; this lane closes the drift Codex audit Finding #7
-  # flagged. The dev extra brings mypy + type stubs and pulls in render+fhir
+  # as one of the gates; this lane closes the drift where mypy is a local
+  # gate with no CI lane. The dev extra brings mypy + type stubs and pulls in render+fhir
   # so the optional-extra imports type-resolve cleanly under --strict.
   type-check:
     name: Type check (mypy)
