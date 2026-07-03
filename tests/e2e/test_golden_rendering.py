@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Golden rendering tests — pin what REAL Chromium produces.
 
 These tests render the ``pf_tebra_v9`` fixture's six encounters through the

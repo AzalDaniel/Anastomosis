@@ -9,6 +9,89 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-03
+
+The fourth alpha (**0.4.0-alpha**). Closes the external release review with
+hardening rather than suppression, and turns the repository into a complete,
+self-explaining product: real Windows PHI-at-rest protection, log redaction
+that is actually installed, executable (not decorative) CodeQL policy, a
+design/authorship record (`DESIGN.md`), and the remaining size hotspots split
+behind stable facades. No new feature surface — this release's job is
+trustworthiness. Beta is reserved for the CS50 submission cut.
+
+### Added
+
+- **Windows PHI-at-rest hardening** (`core/output.py`) — `secure_output_dir`
+  now hardens every output directory on Windows NTFS: ACL inheritance
+  stripped, access restricted to the current user, SYSTEM, and Administrators
+  (the posture CPython adopted for `os.mkdir(mode=0o700)` in the
+  CVE-2024-4030 fix, and Win32-OpenSSH uses for key material), via `icacls`
+  with literal, localization-safe SIDs and fail-safe ordering (grant before
+  inheritance strip — no failure mode can lock the operator out). ACL-less
+  filesystems (FAT32/exFAT) degrade to a loud warning; the PHI-warning README
+  lands regardless. POSIX behavior (`0o700`) is unchanged. A real ACL
+  assertion runs in the Windows CI lane.
+- **CodeQL, for real** (`.github/workflows/codeql.yml`) — an advanced-setup
+  workflow (push / PR / weekly) with the `security-extended` suite, whose
+  built-in `AlertSuppression.ql` query honors inline `# codeql[rule-id]`
+  comments with no extra pack, placed at exactly the audited PHI-by-design
+  write sites — no rule is excluded repo-wide. Each suppression sits beside
+  a `PHI-BY-DESIGN` rationale
+  comment, and a policy test pins that every suppression carries one. (The
+  repository's code-scanning *default setup* must be disabled once in
+  Settings for the workflow's uploads to be accepted — GitHub rejects
+  advanced SARIF while default setup is on.)
+- **`DESIGN.md`** — the design record: architecture, data model, the
+  genuinely debated decisions, hardest problems, verification strategy, and
+  the authorship/provenance table, including exactly how AI assistance is
+  used and cited. README gained the matching CS50 final-project section and
+  a Provenance & AI assistance section; every authored source file carries a
+  one-line AI-assistance citation comment (CS50 academic-honesty policy asks
+  for citation in code comments; the convention serves any reader).
+- **Single-sourced Playwright pin** (`packaging/constraints.txt`) — the CI
+  e2e lane and the Windows packaging build both resolve Playwright through
+  one constraints file (`pip install -c`); the Windows browser-cache key
+  derives from the file's hash; a drift test pins the whole arrangement
+  (library floor stays open for users — builds pin).
+- A review-archaeology CI guard: a test that bans review-history tokens from
+  src/, tests/, tools/, and workflows — comments state invariants; history
+  lives in the changelog and `docs/reviews/`.
+
+### Fixed
+
+- **Log redaction is now actually installed.** `configure_logging()` — the
+  only code that installs the `RedactionFilter` — existed but was never
+  called, so production logging ran unredacted through Python's last-resort
+  stderr handler. The redacting handler is now installed idempotently at
+  both entry points (the CLI root callback and the GUI main), the filter
+  learned the `MM-DD-YYYY` filename date shape, and a pipeline-level
+  regression test asserts no fixture patient name can appear in any log
+  record.
+- **The one patient-derived log message.** The archive deliverer's
+  missing-PDF warning logged a rendered filename that embeds patient name +
+  date of service; it now logs the opaque patient id. Remaining messages
+  that interpolated paths under an output directory were aligned with the
+  repo convention (never a path under out_dir) and their tests updated.
+- One vulnerability-reporting SLA: `docs/SECURITY.md` now defers to the root
+  `SECURITY.md` (72-hour acknowledgement, coordinated disclosure); a stale
+  unchecked CDP-attach backlog item (shipped in 0.2.0) was corrected in
+  `docs/PLAN.md`.
+
+### Changed
+
+- **The size hotspots are split behind stable facades** (the "post-beta"
+  refactor, pulled forward): `cli.py` (1,650 lines) now delegates its command
+  groups to focused modules while remaining the import facade — every public
+  symbol, monkeypatch seam (`cli._make_destination`, `cli.console`), entry
+  point, and help string is preserved and pinned by the existing boundary
+  and encoding tests; `UploadConsole.upload_start` (167 lines) is decomposed
+  into its pre-flight and worker stages. The PF mapper was evaluated and
+  deliberately left whole (already function-decomposed; goldens pin its
+  output byte-identical).
+- Review-history comments across src/, tests/, tools/, and CI were rewritten
+  as invariant comments — each now states the property it pins, not the
+  review that requested it.
+
 ## [0.3.0] — 2026-06-24
 
 The third alpha. Packages the toolkit as a downloadable Windows application — a
@@ -392,7 +475,8 @@ archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AzalDaniel/Anastomosis/releases/tag/v0.1.0

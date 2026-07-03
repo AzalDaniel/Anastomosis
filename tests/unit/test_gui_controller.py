@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GUI controller tests — headless, no pywebview, no real Chromium.
 
 Drives :class:`anastomosis.gui.controller.GuiController` against a recording
@@ -398,7 +399,7 @@ def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_gui_rejects_second_long_running_job_while_busy(tmp_path: Path) -> None:
-    """The Codex re-audit's deterministic busy test: while one long-running
+    """The deterministic busy test: while one long-running
     job holds the guard (its worker parked on an event we control), EVERY
     other long-running entry point is rejected with exactly
     ``{"ok": False, "error": "Busy"}`` — across job kinds, not just a second
@@ -595,7 +596,7 @@ def test_run_migration_no_route_surfaces_manual_import_not_done(
 ) -> None:
     """A KNOWN destination with no viable automated route writes the C-CDA but
     must surface a manual-import (error) event, never a silent `done` — CLI/GUI
-    parity with `migrate` exiting 1 (codex P0-2)."""
+    parity with `migrate` exiting 1."""
     pytest.importorskip("fitz", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
@@ -1442,7 +1443,7 @@ def test_source_init_async_failure_emits_single_source_error(tmp_path: Path) -> 
         assert leak not in blob
 
 
-# --- upload_start / upload_stop (W5/PR-6b: live driving, no browser) -------
+# --- upload_start / upload_stop (live driving, no browser) -----------------
 #
 # Mirrors tests/unit/test_cli_upload.py exactly: a manifest written into out_dir,
 # a ready destination pack dir, and the destination SEAM monkeypatched to a
@@ -1585,7 +1586,7 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The GUI gained --skiplist parity (codex P1-4): a skiplist (with blank/`#`
+    """The GUI gained --skiplist parity: a skiplist (with blank/`#`
     lines, which are ignored) excludes its encounter from the drive."""
     from anastomosis.deliver.browser.fake import FakeDestination
     from anastomosis.deliver.browser.states import UploadState
@@ -1915,13 +1916,13 @@ def test_upload_start_spawn_failure_releases_busy_and_clears_stop(
     assert controller.upload_stop() == {"ok": False, "error": "NoRun"}
 
 
-# --- codex round 3 fixes ------------------------------------------------------
+# --- js_api facade surface, per-run summary isolation, manifest threading -----
 
 
 def test_gui_api_facade_exposes_only_safe_methods() -> None:
     """The pywebview js_api facade exposes the async/light-read surface the JS
     calls and NOT the synchronous heavy methods (which would block the single
-    bridge thread and freeze the UI) — codex #3."""
+    bridge thread and freeze the UI)."""
     api = GuiApi(GuiController(_RecordingSink()))
     exposed = {name for name in dir(api) if not name.startswith("_")}
     must_have = {
@@ -1944,7 +1945,7 @@ def test_run_summaries_are_keyed_per_run_no_race(
 ) -> None:
     """Each run's per-patient detail is keyed by its own summary id, so a rapid
     SECOND run cannot erase the first run's detail before its UI reads it, and a
-    bare last_run_summary() (no id) finds no global slot — codex #4."""
+    bare last_run_summary() (no id) finds no global slot."""
     pytest.importorskip("fitz", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
@@ -1968,7 +1969,7 @@ def test_run_pipeline_threads_write_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """run_pipeline(write_manifest=...) builds a PipelineCommand with it set — GUI
-    parity for `anast pipeline run --upload-manifest` (codex #1)."""
+    parity for `anast pipeline run --upload-manifest`."""
     import anastomosis.core.commands as commands
     from anastomosis.pipeline import PipelineError
 

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Run report tests: JSON content, determinism, PHI exclusion, summary line.
 
 Synthetic data only. A name-shaped path is deliberately placed in the ledger
@@ -173,7 +174,7 @@ def test_summary_line_has_no_paths_or_keys() -> None:
     assert ".pdf" not in line
 
 
-# --- verification coverage (Codex audit Finding #5) ---
+# --- verification coverage ---
 
 
 def test_report_embeds_verification_coverage_when_supplied(tmp_path: Path) -> None:
@@ -188,7 +189,7 @@ def test_report_embeds_verification_coverage_when_supplied(tmp_path: Path) -> No
         "L0": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
         "L1": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
         "L2": {"pass_count": 3, "fail_count": 0, "skip_count": 0, "skip_reasons": []},
-        # The exact contract Codex flagged: L3 SKIP with the verifier's own
+        # The exact contract: L3 SKIP with the verifier's own
         # level-shape reason string (no patient values, no paths).
         "L3": {
             "pass_count": 0,

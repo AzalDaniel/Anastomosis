@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GuiJobRunner: the one owner of the GUI's async-job choreography.
 
 Every long-running GUI action used to hand-roll the same six steps —

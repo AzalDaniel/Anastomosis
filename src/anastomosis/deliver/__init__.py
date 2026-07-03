@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Delivery: canonical records go where they need to live next.
 
 Three destinations matter for the v0.1 archive vertical slice:

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """A FHIR R4 ``DocumentReference`` pusher implementing the Destination protocol.
 
 :class:`FhirApiDestination` is the API counterpart to a browser destination
@@ -167,6 +168,11 @@ class FhirApiDestination:
             )
         if len(ids) == 1:
             return DestinationPatient(destination_patient_id=ids[0], matched_on=matched_on)
+        # PHI-BY-DESIGN: ``matched_on`` is the NAME of the field(s) the search
+        # used ("identifier" / "family_name" / "given_name" / "birth_date"),
+        # never a patient value — the field-name-not-value logging discipline.
+        # See SECURITY.md, "Code scanning & suppression policy (auditable)".
+        # codeql[py/clear-text-logging-sensitive-data]
         logger.info("no destination patient matched on %s", matched_on)
         return None
 

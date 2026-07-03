@@ -1,0 +1,18 @@
+# CodeQL configuration for Anastomosis.
+#
+# Full-tree scan: no `paths` / `paths-ignore` (every module is analyzed) and no
+# `query-filters` (no rule is excluded repo-wide). Anastomosis's product surface
+# is writing patient records to disk, which the clear-text storage/logging rules
+# cannot distinguish from a defect; rather than silence any rule everywhere, each
+# deliberate PHI-writing call site carries an inline `# codeql[...]` suppression
+# next to a PHI-BY-DESIGN rationale. That per-site policy, and the exact audited
+# sites, are governed by the "Code scanning & suppression policy (auditable)"
+# section of SECURITY.md.
+#
+# Inline `# codeql[query-id]` suppression is a built-in query
+# (`AlertSuppression.ql`) shipped inside every standard query pack, including
+# `security-extended` below — no extra pack is needed to honor it.
+name: Anastomosis CodeQL config
+
+queries:
+  - uses: security-extended

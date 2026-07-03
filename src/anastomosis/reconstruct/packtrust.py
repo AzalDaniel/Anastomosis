@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Content-hash pinning + explicit trust for external template packs.
 
 External packs (``--pack-dir``, entry points) execute arbitrary Python — their

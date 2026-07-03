@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """`anast upload` CLI driver tests — exercisable with NO browser/Chromium.
 
 The Playwright touch is the single ``cli._make_destination`` seam, monkeypatched

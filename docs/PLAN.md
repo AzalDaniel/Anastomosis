@@ -128,22 +128,32 @@ Woven into milestones; tracked here:
 - [x] ruff with bandit (S) + naive-datetime (DTZ) rules; mypy --strict
 - [x] CI least-privilege permissions; gitleaks pre-commit
 - [ ] uv + committed `uv.lock` (hash-pinned deps) — M6
-- [ ] CodeQL + semgrep CI lanes — M6
+- [x] CodeQL: advanced workflow (security-extended, whose built-in
+      AlertSuppression.ql honors inline `# codeql[...]` comments with no
+      extra pack; audited suppressions only, no repo-wide exclusions) — 0.4.0;
+      requires the one-time repo setting flip off default setup (GitHub
+      rejects advanced SARIF while default setup is on). semgrep lane — M6
 - [x] PyPI Trusted Publishing + Sigstore attestations (SLSA L2) — workflow
       shipped (`release.yml`: OIDC, no tokens, PEP 740 attestations +
       build provenance); first publish fires on the `v0.1.0` tag push
 - [ ] OpenSSF Scorecard action + badge — M6
 - [x] Log redaction (`core/logutil.py`): RedactionFilter scrubs
-      SSN/phone/email/date shapes; `exc_tag()` on error paths — discipline
-      stays "log counts and ids, never values"
-- [x] Output hygiene (`core/output.py`): output dirs `0o700` + PHI warning
-      README (optional zip-AES/age encryption still open — M2)
+      SSN/phone/email/date shapes (incl. the MM-DD-YYYY filename form);
+      `exc_tag()` on error paths; the redacting handler is installed at both
+      entry points (CLI callback + GUI main) as of 0.4.0 — discipline stays
+      "log counts and ids, never values"
+- [x] Output hygiene (`core/output.py`): output dirs `0o700` on POSIX; on
+      Windows NTFS, ACL inheritance stripped + access restricted to the
+      current user, SYSTEM, and Administrators (CPython `mkdir(0o700)`
+      semantics) as of 0.4.0; PHI warning README everywhere (optional
+      zip-AES/age encryption still open)
 - [x] Pack trust model v1: built-ins implicitly trusted; external packs need
       explicit `--pack-dir`/allow_external opt-in (hash pinning + signing — M2)
 - [x] PHI scanner hardening: untracked-file blind spot closed; allowlist
       ledger (`tools/phi_allowlist.txt`) with justification requirement;
       `tools/check.sh` is the only sanctioned local gate (pipefail)
-- [ ] CDP attach: loopback-only, warn on shared machines, never store creds — M2
+- [x] CDP attach: loopback-only, warn on shared machines, never store creds —
+      shipped with the browser-delivery spine in 0.2.0
 - [ ] hypothesis property tests on parsers; mutmut on QA suite — M6
 - [ ] REUSE/SPDX headers incl. vendored MiniSearch; mkdocs-material; release-please — M6
 
@@ -275,6 +285,22 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     and an `anast doctor` bundled-asset self-check. The build, installer, and a
     silent install-and-self-check are produced and validated on Windows CI; the
     installer attaches to the GitHub release on a version tag.
+
+### M5.75 — Fourth alpha (0.4.0-alpha): security truth + design record ✅
+20c. ✅ Closed the external release review with hardening rather than
+    suppression: Windows NTFS ACL hardening on every output directory
+    (`core/output.py`, mirroring CPython's `mkdir(0o700)` posture); the
+    redacting log handler actually installed at the CLI and GUI entry points
+    (it existed but was never wired), the one patient-derived log message
+    fixed, and a pipeline-level log-leak regression test added; an advanced
+    CodeQL workflow committed with inline, audited suppressions at the
+    PHI-by-design write sites; one vulnerability-reporting SLA; the
+    Playwright pin single-sourced (`packaging/constraints.txt` + drift test);
+    the CLI and upload-console size hotspots split behind stable facades;
+    review-archaeology comments rewritten as invariant comments with a CI
+    guard; `DESIGN.md` (architecture, debated decisions, authorship &
+    provenance incl. AI-assistance citations) and the README CS50 section.
+    Beta is reserved for the CS50 submission cut.
 
 ### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`

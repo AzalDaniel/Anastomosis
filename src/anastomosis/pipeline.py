@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The frontend-agnostic pipeline core (one pipeline, two frontends).
 
 ``ingest -> reconstruct -> optional QA`` lived inside :mod:`anastomosis.cli`

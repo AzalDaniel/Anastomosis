@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Upload-manifest persistence tests: round-trip, determinism, 0700, PHI probe.
 
 Synthetic data only — ``feedface-`` ids, neutral file names in ``tmp_path``.

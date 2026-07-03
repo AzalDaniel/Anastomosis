@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the shared pack-init command core (core/packinit.py).
 
 Drives :func:`anastomosis.core.packinit.run_pack_init` directly — the analyze →

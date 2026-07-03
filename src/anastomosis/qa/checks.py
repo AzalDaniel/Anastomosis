@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Engine-level QA checks: pack-independent verification of every PDF.
 
 These read the PDF back with PyMuPDF and compare it against the canonical

@@ -47,6 +47,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Rendering + QA. PyMuPDF is AGPL-3.0 — license-aligned with this project.
+# The playwright floor stays open for library users; builds pin it exactly via
+# packaging/constraints.txt so goldens and bundled Chromium cannot drift.
 render = ["playwright>=1.46", "pymupdf>=1.24"]
 # FHIR canonical-model import/export (fhir.resources is pydantic-v2 based).
 fhir = ["fhir.resources>=8.1"]

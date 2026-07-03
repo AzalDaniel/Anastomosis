@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The fixed-point honesty check for the practice_fusion_soap pack (M3.15).
 
 The original PF pack took five manual forensic sprints. This test closes the

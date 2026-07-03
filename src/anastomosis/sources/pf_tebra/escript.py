@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Prescription status resolution from transaction history.
 
 ``prescription-transactions.tsv`` records every status transition of a

@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Typer-rendered help must survive a legacy Windows console (cp1252).
 
 A stock Windows console gives Python a ``cp1252`` stdout. Runtime output

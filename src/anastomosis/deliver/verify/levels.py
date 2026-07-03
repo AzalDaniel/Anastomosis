@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The L0-L6 verification levels: one small class per check.
 
 This is the verification ladder PLAN item 11 calls for — the layered defense

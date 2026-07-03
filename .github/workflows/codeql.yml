@@ -1,0 +1,42 @@
+# CodeQL — advanced security scanning for Anastomosis.
+#
+# Activation note (one-time, by a repository admin): GitHub rejects
+# advanced-setup SARIF uploads while code-scanning DEFAULT setup is enabled, so
+# this workflow's results only land once default setup is turned off under
+# Settings -> Code security -> CodeQL analysis (default setup). Do that once and
+# the pushes/PRs/schedule below start uploading results.
+#
+# The scan runs the security-extended suite over the FULL tree with no repo-wide
+# rule exclusions; deliberate PHI-writing call sites carry inline per-site
+# suppressions instead. The query selection lives in
+# ./.github/codeql/codeql-config.yml and the suppression policy is governed by
+# the "Code scanning & suppression policy (auditable)" section of SECURITY.md.
+name: CodeQL
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  schedule:
+    # Weekly, at a quiet UTC hour (Monday 03:23 UTC).
+    - cron: "23 3 * * 1"
+
+# Least-privilege default for every job (mirrors ci.yml).
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      # checkout needs contents: read; SARIF upload needs security-events: write.
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+        with:
+          languages: python
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3

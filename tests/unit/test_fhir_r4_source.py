@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the FHIR R4 / US Core source adapter (``sources/fhir_r4``).
 
 Drives the adapter against the in-repo synthetic US Core fixture

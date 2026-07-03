@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The verifier seam the upload engine calls before and after each upload.
 
 This module is the *seam* plus the default pass-through implementation. The real

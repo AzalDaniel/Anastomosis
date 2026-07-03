@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The closed transform verb table for learned mappings.
 
 Every verb is single-input and returns ``None`` for an empty/sentinel cell;

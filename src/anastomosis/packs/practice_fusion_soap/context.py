@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Context builder for the practice_fusion_soap pack.
 
 Maps a canonical :class:`PatientRecord` + :class:`Encounter` into the

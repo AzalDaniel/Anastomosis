@@ -1,4 +1,5 @@
-"""Pin frontend/backend constant parity (Codex audit Finding #6).
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
+"""Pin frontend/backend constant parity.
 
 The browser UI used to hand-mirror backend constants; PR-X made
 ``GuiController.gui_config()`` the Python-canonical source the JS refreshes

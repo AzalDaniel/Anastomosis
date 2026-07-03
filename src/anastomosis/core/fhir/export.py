@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PatientRecord → FHIR R4 Bundle (type=collection), plain JSON dicts."""
 
 from __future__ import annotations

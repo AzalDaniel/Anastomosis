@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The harvest: read every text span and vector drawing out of sample PDFs.
 
 PyMuPDF (``fitz``) is the only engine — deterministic, fully offline, no

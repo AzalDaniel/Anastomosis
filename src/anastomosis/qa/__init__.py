@@ -1,3 +1,4 @@
+# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """QA: every reconstructed document is verified before it ships.
 
 The predecessor finished at 100% final QA across 12,906 documents because
