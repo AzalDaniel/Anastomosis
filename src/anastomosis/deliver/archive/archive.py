@@ -251,10 +251,11 @@ class ArchiveDeliverer:
         for name in names:
             source = pdfs_dir / name
             if not source.is_file():
-                # The index claims a PDF the engine never wrote (or it
-                # was deleted post-render). Log loud, never silently fake
-                # an attribution.
-                logger.warning("indexed pdf missing on disk: %s", name)
+                # The index claims a PDF the engine never wrote (or it was
+                # deleted post-render). Log loud by the opaque patient id —
+                # never the filename, which embeds the patient name and date
+                # of service — and never silently fake an attribution.
+                logger.warning("indexed pdf missing on disk for patient %s", record.patient.id)
                 continue
             try:
                 shutil.copyfile(source, out_dir / name)
@@ -291,10 +292,10 @@ class ArchiveDeliverer:
             return 0
         if render_index is None:
             # No index at all → every PDF is unattributed by the same
-            # fail-closed rule. Log loud so the missing sidecar is visible.
+            # fail-closed rule. Log loud (by count only — the pdfs dir is a
+            # path under the output tree) so the missing sidecar is visible.
             logger.warning(
-                "no render index in %s; routing all %d pdf(s) to unattributed/",
-                pdfs_dir,
+                "no render index; routing all %d pdf(s) to unattributed/",
                 len(all_pdfs),
             )
             orphans = all_pdfs

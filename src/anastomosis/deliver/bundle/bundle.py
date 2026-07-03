@@ -116,10 +116,7 @@ class BundleDeliverer:
         if pdfs_dir is None or not pdfs_dir.is_dir():
             pdfs_lookup: dict[str, list[Path]] = {}
         elif render_index is None:
-            logger.warning(
-                "no render index in %s; bundle will deliver without chart PDFs",
-                pdfs_dir,
-            )
+            logger.warning("no render index; bundle will deliver without chart PDFs")
             pdfs_lookup = {}
         else:
             pdfs_lookup = {

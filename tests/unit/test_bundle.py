@@ -154,7 +154,10 @@ def test_bundle_missing_index_skips_pdfs_loudly(
         results = BundleDeliverer().deliver_records(records, pdfs_dir, tmp_path / "bundles")
     for r in results:
         assert r.pdf_paths == []
-    assert any("no render index" in rec.message for rec in caplog.records)
+    warnings = [rec.message for rec in caplog.records if "no render index" in rec.message]
+    assert warnings
+    # The warning stands alone — the pdfs dir path (under the output tree) is gone.
+    assert all(str(pdfs_dir) not in msg for msg in warnings)
 
 
 def test_bundle_qa_slice_isolates_each_patient(
