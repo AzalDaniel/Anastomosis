@@ -98,9 +98,9 @@ def test_html_to_text_plain_text_passthrough() -> None:
 
 
 def test_sanitize_soap_html_repairs_ragged_export() -> None:
-    # A crafted sample of every repair the predecessor's sanitize_soap_html
-    # makes (gpdfs:137): TSV-exported \n inside inline content → <br>, empty
-    # filler blocks stripped, wrapped once in pf-rich-text.
+    # A crafted sample of every repair sanitize_soap_html makes: TSV-exported
+    # \n inside inline content → <br>, empty filler blocks stripped, wrapped
+    # once in pf-rich-text.
     raw = "<p>Injection sites:\\n1. Left deltoid\\n2. Right deltoid</p><p>&nbsp;</p><div></div>"
     out = sanitize_soap_html(raw)
     assert out.startswith('<div class="pf-rich-text">')
@@ -116,7 +116,7 @@ def test_sanitize_soap_html_repairs_ragged_export() -> None:
 
 
 def test_sanitize_soap_html_plain_text_escapes_and_breaks() -> None:
-    # No tags (no "<"): escape entities, then turn newlines into <br> (gpdfs:146).
+    # No tags (no "<"): escape entities, then turn newlines into <br>.
     out = sanitize_soap_html("Tylenol & rest\\nRTC if worse")
     assert out == "Tylenol &amp; rest<br>RTC if worse"
 
@@ -127,7 +127,7 @@ def test_sanitize_soap_html_empty_inputs() -> None:
 
 
 def test_sanitize_soap_html_idempotent_wrap() -> None:
-    # Already wrapped → not double-wrapped (gpdfs:158 guard).
+    # Already wrapped → not double-wrapped (idempotent-wrap guard).
     wrapped = '<div class="pf-rich-text"><p>Note.</p></div>'
     assert sanitize_soap_html(wrapped).count("pf-rich-text") == 1
 

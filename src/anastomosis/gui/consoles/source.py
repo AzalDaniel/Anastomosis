@@ -80,6 +80,11 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
 class SourceConsole:
     """The learn-a-source wizard backend."""
 
+    # The operation family this console owns; stamped on every event so only the
+    # learn-a-source wizard page consumes them (the P2-5 per-page flow guard).
+    # The event STAGE stays "source"; the FLOW is the page-owning family name.
+    _FLOW = "source_init"
+
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
         self._emit = emit
         self._jobs = jobs
@@ -189,19 +194,20 @@ class SourceConsole:
                 # the proposal vs the saved result). Every other outcome is an
                 # `error`; the JS still fetches the stashed result for its detail.
                 if result_dict.get("ok") or result_dict.get("error") == "ConfirmationRequired":
-                    self._emit(stage_event("source", "done"))
+                    self._emit(stage_event(self._FLOW, "source", "done"))
                 else:
-                    self._emit(error_event("source", str(result_dict.get("error"))))
+                    self._emit(error_event(self._FLOW, "source", str(result_dict.get("error"))))
             except Exception as exc:  # never-raise: stash + emit, swallow nothing else
                 tag = exc_tag(exc)
                 self._last_source = {"ok": False, "error": tag}
-                self._emit(error_event("source", tag))
+                self._emit(error_event(self._FLOW, "source", tag))
 
         return self._jobs.submit(
             GuiJob(
                 name="source",
+                flow=self._FLOW,
                 worker=_worker,
-                on_start=lambda: self._emit(stage_event("source", "start")),
+                on_start=lambda: self._emit(stage_event(self._FLOW, "source", "start")),
             )
         )
 
@@ -224,5 +230,5 @@ class SourceConsole:
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._FLOW, stage, tag))
         return {"ok": False, "error": tag}

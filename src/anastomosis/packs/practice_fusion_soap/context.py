@@ -248,17 +248,17 @@ def _benefit_key(cov: Coverage) -> int:
 
 
 def _guarantor_addr(addr: Address | None) -> str:
-    """Comma-joined line1, city, state, zip — only when line1 exists (gpdfs:944-948)."""
+    """Comma-joined line1, city, state, zip — only when line1 exists."""
     if addr is None or not addr.line1:
         return "-"
     return ", ".join(p for p in (addr.line1, addr.city, addr.state, addr.postal_code) if p)
 
 
 def _payment(guarantor: Guarantor | None) -> dict[str, str]:
-    """The payment-information cells, with the predecessor's exact empty states
-    (gpdfs:950-961): every absent value renders as ``-`` except PAYMENT
-    PREFERENCE, which PF defaults to ``Primary Insurance``. Never emits None —
-    the template interpolates these raw."""
+    """The payment-information cells and their empty states: every absent value
+    renders as ``-`` except PAYMENT PREFERENCE, which PF defaults to
+    ``Primary Insurance``. Never emits None — the template interpolates these
+    raw."""
     phones = guarantor.phones if guarantor else []
     by_kind = {p.kind: p.value for p in phones}
     if ContactKind.PHONE_HOME in by_kind or ContactKind.PHONE_OTHER in by_kind:

@@ -7,8 +7,12 @@
 
 EHR vendors are legally required to hand practices their data (§170.315(b)(10)
 EHI export) but hand over unusable table dumps — and clinical notes routinely
-fail to survive cross-vendor migration (73% of orgs hit complications; archive
-vendors charge $5K–$150K). Anastomosis closes that gap, free and open:
+fail to survive cross-vendor migration: a systematic review of EHR-to-EHR
+transitions identifies data migration and continuity of the legacy record as
+persistent, under-addressed risk areas (Miake-Lye et al., JGIM 2023,
+doi:10.1007/s11606-023-08276-3), while commercial legacy-archive subscriptions
+put simple retention behind recurring fees. Anastomosis closes that gap, free
+and open:
 **parse the dump → rebuild the charts → verify every byte → deliver anywhere.**
 
 An *anastomosis* is the surgical connection between two structures. This
@@ -315,12 +319,34 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     (see docs/reviews/): PF-mapper/C-CDA-builder splits (M6), per-user install
     scope, code signing + bespoke icon (GA).
 
+### M5.95 — Sixth alpha (0.6.0-alpha): claims match the runtime ✅
+20e. ✅ Closed the external v0.5.0 review's four P1 truth defects: `migrate`
+    classifies a chosen-but-unexecuted route as PREPARED (DELIVERED is
+    reserved for a future destination executor with a durable receipt, pinned
+    by test); `--render ccda-standard` runs the document-generic QA checks
+    and records the rest as skipped-with-reason; the upload verdict
+    (is_clean/exit_code) lives in the shared core so the GUI can no longer
+    display a failed run as complete; no operator path enters logs. Plus the
+    confirmed P2s: flow-scoped GUI events + window-close busy veto,
+    single-read-snapshot pack-trust hashing + locked atomic trust-store
+    writes, instant ExitStack resource registration, the PF-mapper link-table
+    index hoist (~9x), one-PDF-open QA, streamed FHIR NDJSON ingest. Claims
+    hygiene: phantom README statistics replaced with cited evidence,
+    python-dateutil removed, predecessor line-reference archaeology swept
+    with guard tokens. Deferred with rationale (docs/reviews/): C-CDA XSD
+    gate (blocked on exporter author/custodian + OID id-root fixes), lazy
+    import barrels, FHIR spooling.
+
 ### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
     (NDJSON), `sources/generic_tabular/` YAML mapping DSL (DrChrono CSV,
     ModMed pipe-CSV, Veradigm TSV).
 22. API delivery adapters per verified priority: Epic DocumentReference.Create,
     athenahealth Document-Create, DrChrono POST /api/documents, Canvas FHIR.
+    C-CDA Schematron conformance lane (HL7 .sch via external validator tooling) —
+    plus CDA R2 XSD structural validity for the exporter output (today's C-CDA is
+    own-parser-round-trip-faithful, not CDA.xsd-valid: it omits author/custodian
+    and uses non-OID id roots).
 23. Security backlog completion (uv.lock, CodeQL/semgrep, Scorecard, Trusted
     Publishing + Sigstore, hypothesis/mutmut, REUSE, mkdocs, release-please);
     PyPI release (`pipx install anastomosis[render]`); quarterly registry

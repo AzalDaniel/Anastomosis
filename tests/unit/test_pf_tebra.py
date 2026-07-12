@@ -171,7 +171,7 @@ def test_encounter_soap_sections_and_html_shadow(records: dict[str, PatientRecor
     subjective = encounter.section(SectionKind.SUBJECTIVE)
     assert subjective is not None
     # html is the sanitize_soap_html rendering path: rich HTML wrapped in
-    # pf-rich-text (predecessor sanitize, gpdfs:1258); text is the plain shadow.
+    # pf-rich-text; text is the plain shadow.
     assert subjective.html is not None
     assert subjective.html.startswith('<div class="pf-rich-text">')
     assert "<p>Reports good medication adherence. No dizziness or headache.</p>" in subjective.html
@@ -190,9 +190,9 @@ def test_simple_note_maps_to_narrative(records: dict[str, PatientRecord]) -> Non
 def test_invalid_encounters_excluded_from_render_but_preserved(
     records: dict[str, PatientRecord],
 ) -> None:
-    # Predecessor get_valid_encounters SELECTION (gpdfs:1484): empty-SOAP and
-    # adult-growth-chart encounters are not rendered. Justified divergence: we
-    # keep them in record.extensions (losslessness) instead of dropping them.
+    # Render SELECTION (see _skip_reason): empty-SOAP and adult-growth-chart
+    # encounters are not rendered. Losslessness: they are kept in
+    # record.extensions instead of being dropped.
     boris = records[P2]
     rendered_ids = {e.id for e in boris.encounters}
     assert E7 not in rendered_ids  # empty SOAP
@@ -221,10 +221,46 @@ def test_addendum_attached(records: dict[str, PatientRecord]) -> None:
     assert addendum.text is not None and "lipid panel" in addendum.text
 
 
+def test_encounter_link_tables_grouped_once_preserve_per_encounter_order() -> None:
+    """The encounter-keyed addendum/diagnosis link tables are grouped ONCE for the
+    whole export and sliced per encounter (a perf hoist). Interleaved source rows
+    must still land on the right encounter in source order — i.e. the hoisted
+    index is byte-for-byte equivalent to the old per-encounter rebuild."""
+    from anastomosis.sources.pf_tebra.loader import KNOWN_TABLES
+    from anastomosis.sources.pf_tebra.mapper import map_export
+
+    pat = "feedface-0000-0000-0000-0000000000f0"
+    e1 = "feedface-e000-0000-0000-0000000000f1"
+    e2 = "feedface-e000-0000-0000-0000000000f2"
+    export: dict[str, list[dict[str, str | None]]] = {name: [] for name in KNOWN_TABLES}
+    export["patient-demographics"] = [{"PatientPracticeGuid": pat, "IsActive": "true"}]
+    export["patient-encounters"] = [
+        {"EncounterGuid": e, "PatientPracticeGuid": pat, "IsSoapNote": "true", "Subjective": "s"}
+        for e in (e1, e2)
+    ]
+    # Interleave rows across the two encounters so per-encounter order is testable.
+    export["patient-encounter-addendums"] = [
+        {"EncounterGuid": e1, "Addendum": "a1"},
+        {"EncounterGuid": e2, "Addendum": "b1"},
+        {"EncounterGuid": e1, "Addendum": "a2"},
+    ]
+    export["patient-encounter-diagnoses"] = [
+        {"EncounterGuid": e2, "DiagnosisGuid": "dx-b1"},
+        {"EncounterGuid": e1, "DiagnosisGuid": "dx-a1"},
+        {"EncounterGuid": e2, "DiagnosisGuid": "dx-b2"},
+    ]
+    record = next(iter(map_export(export)))
+    by_id = {e.id: e for e in record.encounters}
+    assert [a.text for a in by_id[e1].addenda] == ["a1", "a2"]
+    assert [a.text for a in by_id[e2].addenda] == ["b1"]
+    assert by_id[e1].diagnosis_ids == ["dx-a1"]
+    assert by_id[e2].diagnosis_ids == ["dx-b1", "dx-b2"]
+
+
 def test_bmi_auto_calc_trigger(records: dict[str, PatientRecord]) -> None:
     obs_e1 = records[P1].observations_for(E1)
     bmi = next(o for o in obs_e1 if o.code == "39156-5")
-    # 2dp matches the predecessor (gpdfs:592). Weight charted as 29463-7
+    # 2 decimal places for BMI. Weight charted as 29463-7
     # (modern alias) still fires the trigger keyed on 3141-9-or-alias.
     assert bmi.value == "25.75"  # round(703 * 150 / 64^2, 2)
     assert bmi.extensions["pf_tebra:computed"] == "bmi_auto_calc"
@@ -300,21 +336,21 @@ def test_medication_activity_and_prescription_links(
 
 
 def test_escript_status_resolution(records: dict[str, PatientRecord]) -> None:
-    # Resolution runs on the predecessor's _ESCRIPT_LABEL_MAP keyed on the
-    # transaction DESCRIPTION (gpdfs:331): dispensing (100) beats the refill (10)
-    # and the order-sent VERIFIED (50).
+    # Resolution runs on _ESCRIPT_LABEL_MAP keyed on the transaction
+    # DESCRIPTION: dispensing (100) beats the refill (10) and the order-sent
+    # VERIFIED (50).
     sent_rx = next(rx for rx in records[P1].prescriptions if rx.id.endswith("000000000001"))
     assert sent_rx.prefix == "ESCRIPT"
     assert sent_rx.status_label == "DISPENSED"
     assert [t.kind for t in sent_rx.transactions] == ["Sent", "Verified", "Dispensed"]
     printed_rx = records[P2].prescriptions[0]
-    assert printed_rx.prefix == "SCRIPT"  # "Prescription printed" → SCRIPT (gpdfs:333)
+    assert printed_rx.prefix == "SCRIPT"  # "Prescription printed" → SCRIPT
     assert printed_rx.status_label == "PRINTED"
     assert printed_rx.refills is None  # -1 sentinel
 
 
 def test_escript_refill_does_not_override_verified(records: dict[str, PatientRecord]) -> None:
-    # The §5 rule (gpdfs:355-361): Order sent + Refill request approved with no
+    # The refill-vs-verified rule: Order sent + Refill request approved with no
     # dispense resolves to VERIFIED — refills (priority 10) never beat the
     # baseline VERIFIED (priority 50).
     rx = next(rx for rx in records[P1].prescriptions if rx.id.endswith("000000000003"))
@@ -325,7 +361,7 @@ def test_escript_refill_does_not_override_verified(records: dict[str, PatientRec
 
 def test_escript_display_date_uses_order_sent_eastern(records: dict[str, PatientRecord]) -> None:
     # ESCRIPT display date = the Order-sent transaction datetime converted to
-    # practice-local Eastern (gpdfs:408 resolve_script_display_date). Order sent
+    # practice-local Eastern (see resolve_display_date). Order sent
     # at 5/10/2023 9:40 PM UTC → 5:40 PM US/Eastern (EDT, UTC-4), same day.
     sent_rx = next(rx for rx in records[P1].prescriptions if rx.id.endswith("000000000001"))
     assert sent_rx.display_date is not None
@@ -339,9 +375,8 @@ def test_escript_display_date_uses_order_sent_eastern(records: dict[str, Patient
 def test_plan_type_superbill_join_with_regex_fallback(
     records: dict[str, PatientRecord],
 ) -> None:
-    # The predecessor's three-tier superbill PlanType join (gpdfs:266-279):
-    # PIPG tier-1, plan-name tier-2, payer tier-3, then the "(PPO)" regex as the
-    # heuristic of last resort.
+    # The three-tier superbill PlanType join: PIPG tier-1, plan-name tier-2,
+    # payer tier-3, then the "(PPO)" regex as the heuristic of last resort.
     ada_coverages = {c.plan_name: c for c in records[P1].coverages}
     # Cascadia has NO superbill row → regex last-resort on "(PPO)".
     ppo = ada_coverages["Cascadia Choice (PPO)"]
@@ -379,9 +414,9 @@ def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     guarantor = cleo.patient.guarantor
     assert guarantor is not None
     assert guarantor.name == "Gus Placeholder"
-    # The Billing* / bare City-State-Zip columns are this table's real names
-    # (gpdfs:940-961) — regression for the invented Address*/RelationshipTo
-    # names that silently mapped nothing.
+    # The Billing* / bare City-State-Zip columns are this table's real names —
+    # this pins them so the wrong Address*/RelationshipTo names (which silently
+    # map nothing) cannot creep back.
     assert guarantor.relationship_to_patient == "Parent"
     assert guarantor.birth_date == date(1988, 3, 15)
     assert guarantor.sex == "Male"

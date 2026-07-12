@@ -27,7 +27,8 @@ def records() -> list[PatientRecord]:
 def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
     """One ``%PDF-1.7 fake`` file per encounter, using the engine's name shape,
     plus a render-index sidecar so the bundle deliverer can attribute each
-    PDF to its owning patient by ``patient_id`` (the PR-O regression fix)."""
+    PDF to its owning patient by ``patient_id`` — explicit attribution, not
+    filename-prefix guessing."""
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     out: list[Path] = []
     entries: list[RenderEntry] = []

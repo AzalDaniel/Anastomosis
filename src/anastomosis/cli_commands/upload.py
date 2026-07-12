@@ -19,25 +19,6 @@ import typer
 from anastomosis.cli import app
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 
-# Terminal states that count as a clean landing (an item reached a safe end).
-# Anything else terminal — FAILED, PRE/POST_VERIFY_FAILED, PATIENT_NOT_FOUND,
-# PREFLIGHT_FAILED — is a non-clean outcome that makes `anast upload` exit 1.
-_CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
-    {"completed", "skipped_skiplist", "duplicate_at_destination"}
-)
-
-
-def _upload_exit_code(counts: dict[str, int], aborted_reason: str | None) -> int:
-    """The process exit code for a finished run: 1 on abort/any non-clean terminal."""
-    if aborted_reason is not None:
-        return 1
-    for state, n in counts.items():
-        if n and state not in _CLEAN_UPLOAD_STATES:
-            # A non-clean state still carrying items (a non-terminal leftover or a
-            # failure terminal) is a non-clean run — exit 1 so scripts branch on it.
-            return 1
-    return 0
-
 
 @app.command("upload")
 def upload_cmd(
@@ -189,6 +170,8 @@ def upload_cmd(
         raise typer.Exit(code=2) from None
     _cli.console.print(summary_line(result.counts))
     _cli.console.print(f"run report {_cli._glyphs().arrow} {result.report_path}")
-    code = _upload_exit_code(result.counts, result.aborted_reason)
-    if code != 0:
-        raise typer.Exit(code=code)
+    # The verdict (0 on a clean landing, 1 on abort/any non-clean terminal) is
+    # the SHARED classifier on the result, so the CLI exit and the GUI's
+    # done-vs-error branch cannot drift.
+    if result.exit_code != 0:
+        raise typer.Exit(code=result.exit_code)

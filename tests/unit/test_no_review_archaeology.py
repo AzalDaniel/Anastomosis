@@ -43,6 +43,8 @@ _BANNED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("prior-pass tag", re.compile("re" + "-audit", re.IGNORECASE)),
     ("review-round marker", re.compile("round-" + r"[0-9] p[0-9]", re.IGNORECASE)),
     ("worklog PR tag", re.compile("w" + r"[0-9]/" + "pr-" + r"[0-9]+[a-z]?\b", re.IGNORECASE)),
+    ("lettered worklog PR tag", re.compile(r"\b" + "pr-" + r"[a-z]\b", re.IGNORECASE)),
+    ("predecessor source line reference", re.compile("gpd" + "fs", re.IGNORECASE)),
 )
 
 
@@ -80,8 +82,13 @@ def test_no_review_archaeology_in_source() -> None:
 
 
 def test_guard_patterns_actually_fire() -> None:
-    """The scanner is not a silent no-op: a synthetic string carrying a
-    banned token matches at least one pattern. The sample is assembled from
+    """The scanner is not a silent no-op: each synthetic string carrying a
+    banned token matches at least one pattern. Every sample is assembled from
     fragments so this file's own source stays clean."""
-    sample = "a comment that mentions " + "cod" + "ex"
-    assert any(pattern.search(sample) for _name, pattern in _BANNED_PATTERNS)
+    samples = (
+        "a comment that mentions " + "cod" + "ex",
+        "ported from " + "gpd" + "fs" + ":1508",
+        "the " + "pr-" + "o worklog tag",
+    )
+    for sample in samples:
+        assert any(pattern.search(sample) for _name, pattern in _BANNED_PATTERNS), sample

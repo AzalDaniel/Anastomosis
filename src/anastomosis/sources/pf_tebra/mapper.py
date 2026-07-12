@@ -251,9 +251,9 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     )
 
 
-# patient-guarantor.tsv columns as the predecessor consumed them
-# (gpdfs:940-961). NOTE the Billing* names and the bare City/State/Zip —
-# this table does NOT share patient-demographics' Address* column names.
+# patient-guarantor.tsv columns consumed here. NOTE the Billing* names and the
+# bare City/State/Zip — this table does NOT share patient-demographics' Address*
+# column names.
 _GUARANTOR_MAPPED = frozenset(
     {
         "PatientPracticeGuid",
@@ -278,7 +278,7 @@ def _map_guarantor(guarantor_by: dict[str, list[Row]], guid: str) -> Guarantor |
     rows = guarantor_by.get(guid, [])
     if not rows:
         return None
-    row = rows[-1]  # last row wins, matching the predecessor's dict-overwrite load (gpdfs:284-287)
+    row = rows[-1]  # last row wins (dict-overwrite load semantics)
     name = " ".join(p for p in (_s(row, "FirstName"), _s(row, "LastName")) if p)
     phones = [
         ContactPoint(kind=kind, value=phone)
@@ -339,9 +339,9 @@ _SOAP_COLUMNS = (
 def _note_section(kind: SectionKind, raw: str | None, title: str | None) -> NoteSection:
     """One SOAP/narrative section: rich HTML for rendering, text shadow for QA.
 
-    ``html`` carries the predecessor's ``sanitize_soap_html`` output (the
-    rendering path, gpdfs:1258-1261); ``text`` keeps the flattened plain text
-    for search, QA, and plain-text consumers.
+    ``html`` carries the ``sanitize_soap_html`` output (the rendering path);
+    ``text`` keeps the flattened plain text for search, QA, and plain-text
+    consumers.
     """
     sanitized = sanitize_soap_html(raw)
     return NoteSection(
@@ -352,7 +352,11 @@ def _note_section(kind: SectionKind, raw: str | None, title: str | None) -> Note
     )
 
 
-def _map_encounter(row: Row, export: Export) -> Encounter:
+def _map_encounter(
+    row: Row,
+    addenda_by_encounter: dict[str, list[Row]],
+    dx_by_encounter: dict[str, list[Row]],
+) -> Encounter:
     guid = _s(row, "EncounterGuid")
     patient_guid = _s(row, "PatientPracticeGuid")
     assert guid is not None and patient_guid is not None
@@ -366,6 +370,11 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
         # SIMPLE encounters carry the whole narrative in Subjective.
         sections.append(_note_section(SectionKind.NARRATIVE, _s(row, "Subjective"), None))
 
+    # The addendum/diagnosis link tables are grouped by EncounterGuid ONCE for the
+    # whole export (see map_export's hoist block) and sliced here — building the
+    # index inside this function re-scanned both whole tables on every encounter
+    # (O(encounters * rows)). _by preserves insertion order, so the sliced lists
+    # are identical to the per-encounter rebuild.
     addenda = [
         Addendum(
             text=html_to_text(_s(add, "Addendum")),
@@ -373,13 +382,11 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
             source=_s(add, "AmendmentSource"),
             at=_dt(add, "LastModifiedDateTimeUtc"),
         )
-        for add in _by(export["patient-encounter-addendums"], "EncounterGuid").get(guid, [])
+        for add in addenda_by_encounter.get(guid, [])
     ]
 
     diagnosis_ids = [
-        dx
-        for link in _by(export["patient-encounter-diagnoses"], "EncounterGuid").get(guid, [])
-        if (dx := _s(link, "DiagnosisGuid"))
+        dx for link in dx_by_encounter.get(guid, []) if (dx := _s(link, "DiagnosisGuid"))
     ]
 
     return Encounter(
@@ -402,21 +409,21 @@ def _map_encounter(row: Row, export: Export) -> Encounter:
     )
 
 
-_GROWTH_CHART_AGE = 18  # gpdfs:1508 — skip growth-chart CC for adults
+_GROWTH_CHART_AGE = 18  # growth-chart chief complaints are pediatric; skipped at age >= 18
 
 
 def _skip_reason(encounter: Encounter, birth_date: date | None) -> str | None:
     """Why an encounter is excluded from rendering, or ``None`` if it renders.
 
-    Ports the predecessor's get_valid_encounters selection (gpdfs:1484-1510):
+    Two selection rules decide exclusion:
       - empty SOAP: all four sections strip to nothing  -> "empty_soap"
       - adult growth chart: CC contains "growth chart" and patient is >=18 at
         DOS                                             -> "adult_growth_chart"
     """
-    if not encounter.has_note_content:  # gpdfs:1491-1498 (post-strip text)
+    if not encounter.has_note_content:  # empty SOAP (post-strip text)
         return "empty_soap"
     cc = (encounter.chief_complaint or "").lower()
-    if "growth chart" in cc and birth_date and encounter.date_of_service:  # gpdfs:1500-1508
+    if "growth chart" in cc and birth_date and encounter.date_of_service:  # adult growth chart
         if age_at(birth_date, encounter.date_of_service) >= _GROWTH_CHART_AGE:
             return "adult_growth_chart"
     return None
@@ -443,7 +450,7 @@ def _map_observation(row: Row) -> Observation:
     vital = _VITAL_BY_LOINC.get(code or "")
     value = _s(row, "Value")
     # Pain values arrive as an LA answer code or a raw number; convert to the
-    # 0-10 display value the predecessor showed (gpdfs:551 _pain_conv).
+    # canonical 0-10 display value.
     if code in _PAIN_LOINCS:
         value = pain_display(value)
     return Observation(
@@ -482,9 +489,8 @@ def _find_vital(by_code: dict[str | None, Observation], kind: str) -> Observatio
 def _auto_bmi(encounter_obs: list[Observation]) -> Observation | None:
     """The BMI trigger: synthesize 39156-5 when height+weight exist without it.
 
-    Fires for either LOINC edition of weight (gpdfs:589 keyed on 3141-9; ours
-    also accepts the 29463-7 alias). Unit-aware (in/cm, lb/kg); an explicitly
-    charted BMI always wins.
+    Fires for either LOINC edition of weight (primary 3141-9 or the 29463-7
+    alias). Unit-aware (in/cm, lb/kg); an explicitly charted BMI always wins.
     """
     by_code = {o.code: o for o in encounter_obs}
     if VITALS["bmi"].loinc in by_code:
@@ -507,7 +513,7 @@ def _auto_bmi(encounter_obs: list[Observation]) -> Observation | None:
         category=ObservationCategory.VITAL_SIGNS,
         code=VITALS["bmi"].loinc,
         display=VITALS["bmi"].display,
-        value=f"{value:.2f}",  # 2dp matches the predecessor (gpdfs:543,592)
+        value=f"{value:.2f}",  # 2 decimal places (BMI display precision)
         unit="kg/m2",
         effective_at=weight.effective_at,
         extensions={f"{SOURCE}:computed": "bmi_auto_calc"},
@@ -737,9 +743,9 @@ def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
     )
     prefix = resolve_prefix(transactions, _s(row, "DestinationTypeCode"))
     # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS otherwise
-    # (gpdfs:408 resolve_script_display_date).
+    # (see resolve_display_date).
     display_date = resolve_display_date(transactions, prefix, _dt(row, "DateOfService"))
-    # Refills: NumberOfRefills, falling back to Refills (gpdfs §5 fallback).
+    # Refills: NumberOfRefills, falling back to Refills.
     refills = clean_numeric(row.get("NumberOfRefills"))
     if refills is None:
         refills = clean_numeric(row.get("Refills"))  # -1 sentinel → None
@@ -780,25 +786,24 @@ _INSURANCE_MAPPED = frozenset(
 )
 
 _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
-# Quaternary→3, Other→99 mirror the predecessor's benefit ordering (gpdfs §7).
+# Quaternary→3, Other→99 extend the primary/secondary/tertiary benefit ordering.
 _BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2, "quaternary": 3, "other": 99}
 
 
 class _PlanTypeLookup:
     """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...) three-tier join.
 
-    Ported from generate_pdfs.py:245-279. PF displays the TYPE from
+    Ported from the predecessor's prescription-line builder. PF displays the TYPE from
     superbill-insurances.PlanType — NOT from patient-insurances, which only
     carries the generic "Medical" coverage type. Resolve by
-    PatientInsurancePlanGuid first, then lowercased plan name, then payer name
-    (gpdfs:266-278). The plan-name "(PPO)" regex is the last-resort fallback
-    only (gpdfs treated it as the heuristic of last resort).
+    PatientInsurancePlanGuid first, then lowercased plan name, then payer name.
+    The plan-name "(PPO)" regex is the last-resort fallback only.
     """
 
     def __init__(self, superbill_rows: list[Row]) -> None:
         self._by_pipg: dict[str, str] = {}
         self._by_name: dict[str, str] = {}
-        for row in superbill_rows:  # gpdfs:254-261
+        for row in superbill_rows:  # build PIPG- and plan-name-keyed lookups
             pipg = _s(row, "PatientInsurancePlanGuid")
             plan_type = _s(row, "PlanType")
             name = (_s(row, "PlanName") or "").lower()
@@ -808,13 +813,13 @@ class _PlanTypeLookup:
                 self._by_name[name] = plan_type
 
     def resolve(self, ins_row: Row) -> str | None:
-        pipg = _s(ins_row, "PatientInsurancePlanGuid")  # gpdfs:270 — tier 1
+        pipg = _s(ins_row, "PatientInsurancePlanGuid")  # tier 1: exact plan GUID
         if pipg and pipg in self._by_pipg:
             return self._by_pipg[pipg]
-        name = (_s(ins_row, "InsurancePlanName") or "").lower()  # gpdfs:273 — tier 2
+        name = (_s(ins_row, "InsurancePlanName") or "").lower()  # tier 2: plan name
         if name and name in self._by_name:
             return self._by_name[name]
-        payer = (_s(ins_row, "PayerName") or "").lower()  # gpdfs:276 — tier 3
+        payer = (_s(ins_row, "PayerName") or "").lower()  # tier 3: payer name
         if payer and payer in self._by_name:
             return self._by_name[payer]
         # Last resort: the "(PPO)"-style suffix some practices embed in the plan
@@ -1004,6 +1009,10 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     plan_types = _PlanTypeLookup(export["superbill-insurances"])
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
+    # Encounter-keyed link tables, grouped once for the whole run and threaded into
+    # _map_encounter (which previously rebuilt each index per encounter).
+    addenda_by_encounter = _by(export["patient-encounter-addendums"], "EncounterGuid")
+    encounter_dx_by_encounter = _by(export["patient-encounter-diagnoses"], "EncounterGuid")
     obs_by_patient = _by(export["patient-encounter-observations"], "PatientPracticeGuid")
     dx_by_patient = _by(export["patient-diagnoses"], "PatientPracticeGuid")
     allergy_by_patient = _by(export["patient-allergy"], "PatientPracticeGuid")
@@ -1034,13 +1043,13 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
         seen_guids.add(guid)
         patient = _map_patient(demo_row, demo_groups)
 
-        # Reproduce the predecessor's render SELECTION (gpdfs get_valid_encounters):
-        # empty-SOAP and adult-growth-chart encounters are excluded from the
-        # rendered set. Justified divergence from the old code: the predecessor
-        # DROPPED them entirely; we keep the old selection for `encounters` but
-        # stash the skipped ones in `extensions` so nothing vanishes (losslessness).
+        # The render SELECTION (see _skip_reason) excludes empty-SOAP and
+        # adult-growth-chart encounters from `encounters`. Losslessness: rather
+        # than dropping them, the skipped ones are stashed in `extensions` so
+        # nothing vanishes.
         all_encounters = [
-            _map_encounter(row, export) for row in encounters_by_patient.get(guid, [])
+            _map_encounter(row, addenda_by_encounter, encounter_dx_by_encounter)
+            for row in encounters_by_patient.get(guid, [])
         ]
         encounters: list[Encounter] = []
         skipped: list[dict[str, Any]] = []

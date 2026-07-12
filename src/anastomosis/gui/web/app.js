@@ -49,8 +49,15 @@ function el(id) {
 }
 
 // --- the event dispatcher the shell (Python side) calls -------------------
+// Flow guard (P2-5): the dashboard owns the "pipeline" flow. Every event carries
+// a `flow`; we early-return on any other flow so navigating mid-run can't let the
+// dashboard consume the wizard's migration terminal event (both emit identical
+// stage/progress/done/error kinds).
 window.anastEvent = function anastEvent(e) {
   if (!e || typeof e !== "object") {
+    return;
+  }
+  if (e.flow !== "pipeline") {
     return;
   }
   switch (e.type) {
@@ -87,7 +94,7 @@ function markStage(stage, state) {
 
 function counterText(e) {
   return Object.keys(e)
-    .filter((k) => k !== "type" && k !== "stage" && k !== "state")
+    .filter((k) => k !== "type" && k !== "stage" && k !== "state" && k !== "flow")
     .map((k) => `${k}=${e[k]}`)
     .join(" ");
 }

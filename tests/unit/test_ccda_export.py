@@ -1176,6 +1176,23 @@ def test_no_patient_values_logged_on_deliverer_failure(
     assert rec.patient.id not in blob
 
 
+def test_deliverer_never_logs_output_path(caplog: pytest.LogCaptureFixture, tmp_path: Path) -> None:
+    """The ccda deliverer's completion log carries counts only — never the output
+    PATH. An operator dir named after a patient would otherwise enter the logs
+    (SECURITY.md: never a path)."""
+    rec = _rich_record()
+    # A directory whose NAME is a stand-in for a patient-derived operator dir.
+    out = tmp_path / "Specimen_Cora_export"
+    with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.ccda_export.deliverer"):
+        deliver_ccda([rec], out)
+    blob = " ".join(r.getMessage() for r in caplog.records)
+    # No os.sep-joined output-dir string (and no bare dir name) reaches the log.
+    assert str(out) not in blob
+    assert out.name not in blob
+    # The PHI-safe completion count IS logged.
+    assert "1 of 1 patient" in blob
+
+
 # --- helpers -----------------------------------------------------------------
 
 

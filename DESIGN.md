@@ -17,8 +17,11 @@ US-certified EHRs must export a practice's full Electronic Health Information
 (45 CFR §170.315(b)(10)), but no format is mandated, so practices receive
 vendor-native table dumps that no other system ingests. The clinical
 narrative — the part of the chart clinicians actually read — routinely fails
-to survive migration. Commercial rescue is expensive ($5,000–$150,000);
-manual re-entry costs months. Anastomosis is a free, open-source,
+to survive migration — a systematic review of EHR-to-EHR transitions
+identifies data migration and continuity of the legacy record as persistent,
+under-addressed risk areas (Miake-Lye et al., JGIM 2023). Commercial rescue
+puts retention behind recurring fees; manual re-entry costs months.
+Anastomosis is a free, open-source,
 local-first toolkit that parses the dump, rebuilds the charts, verifies every
 document, and delivers the result — to a new EHR, a decades-readable offline
 archive, or per-patient record-request bundles.

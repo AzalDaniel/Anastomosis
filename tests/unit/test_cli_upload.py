@@ -233,6 +233,39 @@ def test_wrong_patient_aborts_exit_1(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert report["aborted_reason"] == "WrongPatientError"
 
 
+# --- (5b) finished-but-failed (no abort) still exits 1 ----------------------
+
+
+def test_failed_items_no_abort_exit_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that FINISHES with no abort but leaves items in a non-clean terminal
+    state (every upload fails permanently -> FAILED) exits 1 — so a script can
+    branch on a failed file. Delegates to the shared result.exit_code verdict."""
+    from anastomosis.core.upload_command import resolve_manifest_root
+    from anastomosis.deliver.browser.persist import read_upload_manifest
+
+    out_dir = _write_manifest(tmp_path)
+    pack_root = _pack_dir(tmp_path)
+    # Read the manifest to learn the item_keys, then fail every upload.
+    items, _patients = read_upload_manifest(resolve_manifest_root(out_dir))
+    fail_keys = {item.item_key for item in items}
+    monkeypatch.setattr(
+        cli,
+        "_make_destination",
+        lambda cdp, loaded: FakeDestination(_known(), permanent_failures=fail_keys),
+    )
+
+    result = _invoke(out_dir, pack_root, "--no-verify")
+
+    assert result.exit_code == 1, result.output
+    counts = _ledger_states(out_dir)
+    assert counts.get(UploadState.FAILED.value) == 3
+    # It was NOT an abort — the run finished; the items just failed.
+    import json
+
+    report = json.loads(next(out_dir.glob("run-report-*.json")).read_text(encoding="utf-8"))
+    assert report["aborted_reason"] is None
+
+
 # --- (6) non-loopback cdp ---------------------------------------------------
 
 

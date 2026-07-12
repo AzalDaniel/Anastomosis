@@ -110,6 +110,10 @@ def _upload_preflight(
 class UploadConsole:
     """The browser-delivery console: read-only ledger views + live driving."""
 
+    # The operation family this console owns; stamped on every event so only the
+    # upload console page consumes them (the P2-5 per-page flow guard).
+    _FLOW = "upload"
+
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
         self._emit = emit
         self._jobs = jobs
@@ -300,7 +304,7 @@ class UploadConsole:
 
         def _on_start() -> None:
             self._upload_stop = stop
-            self._emit(stage_event("upload", "start"))
+            self._emit(stage_event(self._FLOW, "upload", "start"))
 
         def _cleanup() -> None:
             self._upload_stop = None
@@ -312,6 +316,7 @@ class UploadConsole:
         return self._jobs.submit(
             GuiJob(
                 name="upload",
+                flow=self._FLOW,
                 worker=self._upload_worker(
                     preflight, cdp_url, stop, max_attempts=max_attempts, verify=verify
                 ),
@@ -370,17 +375,24 @@ class UploadConsole:
                     lambda: _controller_module._attach_destination(cdp_url, loaded),
                     stop=stop,
                 )
-                if result.aborted_reason is None:
-                    self._emit(stage_event("upload", "done"))
-                else:
+                if result.aborted_reason is not None:
                     # A wrong-patient abort (or other safety stop) surfaces as an
                     # error event carrying the abort TYPE name — never a value.
-                    self._emit(error_event("upload", result.aborted_reason))
+                    self._emit(error_event(self._FLOW, "upload", result.aborted_reason))
+                elif not result.is_clean:
+                    # No abort, but items landed in non-clean TERMINAL states
+                    # (failed / pre_verify_failed / ...). Emitting `done` here was
+                    # the bug — "upload complete" for a run that actually failed.
+                    # Surface an error carrying a PHI-safe state-name summary
+                    # (state names + counts only) so the operator sees the truth.
+                    self._emit(error_event(self._FLOW, "upload", result.nonclean_summary()))
+                else:
+                    self._emit(stage_event(self._FLOW, "upload", "done"))
             except OutputLockedError:
                 # A CLI or GUI run already holds this output dir — refuse cleanly.
-                self._emit(error_event("upload", "OutputLocked"))
+                self._emit(error_event(self._FLOW, "upload", "OutputLocked"))
             except Exception as exc:  # never-raise: type name only, no PHI
-                self._emit(error_event("upload", exc_tag(exc)))
+                self._emit(error_event(self._FLOW, "upload", exc_tag(exc)))
 
         return _worker
 
@@ -418,5 +430,5 @@ class UploadConsole:
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._FLOW, stage, tag))
         return {"ok": False, "error": tag}

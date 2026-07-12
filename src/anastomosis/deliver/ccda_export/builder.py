@@ -14,14 +14,20 @@ The output targets two things and only two things:
 
 * **Round-trip fidelity** with anastomosis's own parser (the test suite proves
   it section by section), and
-* **Structural CDA validity** (well-formed HL7 v3 ``ClinicalDocument`` with the
-  US-Realm header, the CCD template ids, and the entry shapes the parser reads).
+* the **structural shape the parser consumes** — a well-formed HL7 v3
+  ``ClinicalDocument`` carrying the US-Realm header, the CCD template ids, and
+  the entry shapes ``sources/ccda/parser.py`` traverses.
 
-It does **not** target full C-CDA R2.1 schematron conformance or ONC
-certification: required elements the parser ignores (author/custodian on every
-entry, ``codeSystemName`` everywhere, value-set binding strength, narrative
-``<reference>`` linkage) are emitted only where they are cheap and correct, and
-omitted otherwise. Certifiable conformance is a later, separate effort.
+It does **NOT** target — and does not achieve — full HL7 **CDA R2 XSD schema
+validity**: the document omits mandatory CDA header participations the parser
+ignores (``author``, ``custodian``) and uses non-OID ``root`` values for source
+identifiers (e.g. a vendor system name or a ``urn:anastomosis:id:*`` MRN root),
+so it does **not** validate against the HL7 ``CDA.xsd`` schema set. It likewise
+does not target C-CDA R2.1 **Schematron** template conformance or ONC
+certification (``codeSystemName`` everywhere, value-set binding strength,
+narrative ``<reference>`` linkage). XSD-structural and Schematron conformance are
+a later, separate effort via external validator tooling (see ``docs/PLAN.md``
+M6); today the deliverable is the own-parser round trip, nothing broader.
 
 Declared losses (the no-silent-drop rule, made explicit)
 --------------------------------------------------------
