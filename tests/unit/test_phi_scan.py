@@ -12,6 +12,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -111,3 +112,69 @@ def test_repo_denylist_exists_and_is_hashes_only() -> None:
 def test_whole_repo_is_clean() -> None:
     """The repo itself must always pass its own scanner."""
     assert phi_scan.main([]) == 0
+
+
+def _raise_no_git(*_args: object, **_kwargs: object) -> NoReturn:
+    """Stand in for ``subprocess.run`` when git is unavailable."""
+    raise FileNotFoundError("git not installed")
+
+
+def test_walk_fallback_catches_canary(
+    tmp_path: Path,
+    canary_denylist: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With no git checkout, the scanner walks the tree and still catches PHI."""
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "clean.py").write_text("def add(a, b):\n    return a + b\n")
+    (root / "pkg" / "leak.md").write_text("The patient Zzq Phantomson was seen.\n")
+
+    monkeypatch.setattr(phi_scan, "REPO_ROOT", root)
+    monkeypatch.setattr(phi_scan.subprocess, "run", _raise_no_git)
+
+    rc = phi_scan.main(["--hashes", str(canary_denylist)])
+
+    assert "scanning via filesystem walk" in capsys.readouterr().err
+    assert rc == 1
+
+
+def test_walk_fallback_prunes_cache_dirs(
+    tmp_path: Path,
+    canary_denylist: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Files under pruned dirs are never enumerated, hence never scanned."""
+    root = tmp_path / "repo"
+    (root / "__pycache__").mkdir(parents=True)
+    (root / ".venv").mkdir(parents=True)
+    (root / "leak.egg-info").mkdir(parents=True)
+    # Canaries hidden inside pruned directories must NOT be flagged.
+    (root / "__pycache__" / "hidden.md").write_text("Zzq Phantomson\n")
+    (root / ".venv" / "buried.md").write_text("Zzq Phantomson\n")
+    (root / "leak.egg-info" / "meta.md").write_text("Zzq Phantomson\n")
+    (root / "clean.py").write_text("ok = 1\n")
+
+    walked_names = {p.name for p in phi_scan._walk_all_files(root)}
+    assert "clean.py" in walked_names
+    assert "hidden.md" not in walked_names
+    assert "buried.md" not in walked_names
+    assert "meta.md" not in walked_names
+
+    monkeypatch.setattr(phi_scan, "REPO_ROOT", root)
+    monkeypatch.setattr(phi_scan.subprocess, "run", _raise_no_git)
+    assert phi_scan.main(["--hashes", str(canary_denylist)]) == 0
+
+
+def test_walk_enumeration_is_deterministic(tmp_path: Path) -> None:
+    """Two walks of the same tree return identical, sorted, ordered lists."""
+    for rel in ("a.py", "b/c.py", "b/d.py", "e/f/g.py"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x = 1\n")
+
+    first = phi_scan._walk_all_files(tmp_path)
+    second = phi_scan._walk_all_files(tmp_path)
+    assert first == second
+    assert first == sorted(first)
