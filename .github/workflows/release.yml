@@ -1,4 +1,8 @@
-# PyPI release via Trusted Publishing (OIDC) — runs only on tag push (v*).
+# PyPI release via Trusted Publishing (OIDC) — on a version tag push (v*), or a
+# manual dispatch which publishes the CURRENT main version to PyPI. Trusted
+# Publishing binds to this workflow file + the "pypi" environment, not to the
+# trigger event, so a dispatch is as trusted as a tag push (and is the way to
+# release when a GITHUB_TOKEN-created tag did not cascade-trigger this workflow).
 #
 # No tokens or secrets: pypi.org must be configured with this repo as a
 # trusted publisher (pypi.org → account → Publishing → add pending
@@ -19,6 +23,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 # Least-privilege default; each job grants only what it needs.
 permissions: {}
@@ -32,6 +37,15 @@ jobs:
       id-token: write # Sigstore signing for the provenance attestation
       attestations: write # persist the attestation to GitHub
     steps:
+      - name: Refuse a non-main dispatch
+        # Trusted Publishing binds to this workflow file + the "pypi" environment,
+        # not to the trigger event, so a manual dispatch must run from main (the
+        # release-bearing ref) — a dispatch from any other ref fails here.
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+        shell: bash
+        run: |
+          echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+          exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
