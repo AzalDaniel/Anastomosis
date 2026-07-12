@@ -42,7 +42,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.deliver.browser.errors import PermanentDeliveryError
 from anastomosis.destinations.base import (
@@ -293,7 +293,9 @@ class LayeredVerifier:
         try:
             resolved = self._destination.resolver.resolve(patient)
         except Exception as exc:  # a resolver hiccup must not crash verification
-            logger.warning("verifier resolve failed for item %s (%s)", item.item_key, exc_tag(exc))
+            logger.warning(
+                "verifier resolve failed for item %s (%s)", safe_log_id(item.item_key), exc_tag(exc)
+            )
             return
         if resolved is not None:
             self._resolved[item.item_key] = resolved

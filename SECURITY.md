@@ -50,12 +50,21 @@ contract — regressions in any of them are security findings:
   DOB-adjacent dates). Synthetic-data conventions are documented in
   `docs/PLAN.md` and `tests/fixtures/*/README.md`.
 - **Log redaction.** `core/logutil.py` provides a `RedactionFilter`
-  (SSN/phone/email/date shapes, including the `MM-DD-YYYY` filename form)
-  and `exc_tag()` so input-derived exceptions never log their message —
-  only the exception type. The redacting handler is installed at both
-  application entry points (the CLI root callback and the GUI main),
-  idempotently. The convention is "log counts, field names, and opaque
-  ids — never values, and never a path under an output directory."
+  (SSN/phone/email/date shapes, including the `MM-DD-YYYY` filename form),
+  `exc_tag()` so input-derived exceptions never log their message — only
+  the exception type — and `safe_log_id()`, a run-scoped HMAC surrogate
+  for source-derived identifiers (patient/encounter/event GUIDs, upload
+  item keys): log lines about the same record correlate within a run, but
+  the surrogates are keyed by a per-process ephemeral key, so they are
+  unlinkable across runs and cannot be confirmed against the source
+  export. The redacting handler is installed at both application entry
+  points (the CLI root callback and the GUI main), idempotently. The
+  convention is "log counts, field names, and `safe_log_id` surrogates —
+  never values, never raw source identifiers, and never a path under an
+  output directory." (Operator-facing display surfaces — the CLI's
+  which-encounter-failed lines, the upload console, the resumability
+  ledger inside the hardened output directory — are working surfaces,
+  not logs, and deliberately keep real ids.)
 - **Output hygiene.** `core/output.py` creates output directories
   `0o700` (owner-only) on POSIX; on Windows NTFS it strips ACL
   inheritance and grants access only to the current user, SYSTEM, and

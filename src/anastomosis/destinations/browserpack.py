@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.deliver.browser.errors import (
     DeliveryError,
     PermanentDeliveryError,
@@ -593,12 +593,16 @@ class BrowserPackDestination:
             # may simply be slow. Re-raise as the engine's transient signal,
             # logging the item key + exc TYPE only (never the page text).
             logger.warning(
-                "upload success marker not seen for item %s (%s)", item.item_key, exc_tag(exc)
+                "upload success marker not seen for item %s (%s)",
+                safe_log_id(item.item_key),
+                exc_tag(exc),
             )
             raise TransientDeliveryError(
                 "upload success marker not observed within timeout"
             ) from exc
-        logger.info("upload filed item %s (slot upload_success_marker seen)", item.item_key)
+        logger.info(
+            "upload filed item %s (slot upload_success_marker seen)", safe_log_id(item.item_key)
+        )
         # Browser uploads rarely echo a doc id or size — L6 read-back verifies.
         return UploadReceipt(destination_doc_id=None, echoed_size_bytes=None)
 

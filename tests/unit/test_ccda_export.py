@@ -1146,11 +1146,13 @@ def test_no_patient_values_logged_on_export(caplog: pytest.LogCaptureFixture) ->
     with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.ccda_export.builder"):
         build_ccd(rec)
     blob = " ".join(r.getMessage() for r in caplog.records)
-    # Counts and the opaque patient id may appear; patient-derived values may not.
+    # Counts and the run-scoped surrogate may appear; patient-derived values and
+    # the raw source patient GUID may not.
     assert "Cora" not in blob
     assert "Specimen" not in blob
     assert "901-65-4329" not in blob
     assert "cora.specimen@example.com" not in blob
+    assert rec.patient.id not in blob
 
 
 def test_no_patient_values_logged_on_deliverer_failure(
@@ -1163,12 +1165,15 @@ def test_no_patient_values_logged_on_deliverer_failure(
         raise RuntimeError("Cora Specimen 901-65-4329")  # message embeds PHI
 
     monkeypatch.setattr(deliverer_mod, "build_ccd", _boom)
+    rec = _rich_record()
     with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.ccda_export.deliverer"):
-        written = deliver_ccda([_rich_record()], tmp_path / "out")
+        written = deliver_ccda([rec], tmp_path / "out")
     assert written == []
     blob = " ".join(r.getMessage() for r in caplog.records)
     assert "RuntimeError" in blob  # the exception type IS logged
     assert "Cora" not in blob and "901-65-4329" not in blob
+    # The pid logged is the run-scoped surrogate, never the raw source GUID.
+    assert rec.patient.id not in blob
 
 
 # --- helpers -----------------------------------------------------------------

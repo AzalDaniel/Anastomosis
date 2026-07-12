@@ -11,14 +11,23 @@ name: Windows package
 #
 # On a version tag the installer is attached to the GitHub release by a separate,
 # write-scoped job, so users can download and run it like a normal Windows app.
+# A manual dispatch can also PUBLISH that release: main-only, with the tag
+# asserted against the package version and the release action creating tag
+# v<version> on this ref (set the `publish` input to opt in).
 #
-# Triggers: manual; pushes to main (or the active dev branch) that touch the
-# app/packaging (so pipeline changes are validated); and version tags (release
-# builds). Path filters gate branch pushes only — GitHub ignores them for tags,
-# so a tag always builds and the release job runs.
+# Triggers: manual (validate by default, or publish via the `publish` input);
+# pushes to main (or the active dev branch) that touch the app/packaging (so
+# pipeline changes are validated); and version tags (release builds). Path
+# filters gate branch pushes only — GitHub ignores them for tags, so a tag
+# always builds and the release job runs.
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the GitHub release for the current package version (creates tag v<version> on this ref)"
+        type: boolean
+        default: false
   push:
     branches: [main, claude/practical-mendel-torkk3]
     paths:
@@ -178,7 +187,11 @@ jobs:
     # stays read-only for the ordinary branch-push validation runs.
     name: Attach the installer to the GitHub release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A version tag push, OR an explicit publish dispatch. `inputs.publish` is a
+    # real boolean here (the `inputs` context preserves the dispatch input type),
+    # so it reads directly; `github.event_name` gates it so tag/push runs ignore
+    # the (null) input.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -188,19 +201,31 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Assert the pushed tag matches the package version
-        # Guard the write-scoped upload: refuse to publish if the tag that
-        # triggered this run does not equal `v` + the version the build job
-        # resolved from the package. A mistyped/stale tag fails here rather than
-        # attaching the installer to the wrong release.
+      - name: Assert the release source (tag matches version, or dispatch from main)
+        # Guard the write-scoped upload. Invariant: a publish comes only from a
+        # version tag or from main via an explicit dispatch input.
+        #   - Tag runs: refuse unless the tag that triggered this run equals `v` +
+        #     the version the build job resolved from the package (a mistyped/
+        #     stale tag fails here rather than attaching to the wrong release).
+        #   - Dispatch runs: refuse unless this ref is main — the release action
+        #     creates tag v<version> on it below, so publishing from any other ref
+        #     would tag the wrong commit.
         shell: bash
         run: |
           expected="v${{ needs.build.outputs.version }}"
-          if [ "${{ github.ref_name }}" != "$expected" ]; then
-            echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+              echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+              exit 1
+            fi
+            echo "dispatch publish from main; the release action will create tag '$expected'"
+          else
+            if [ "${{ github.ref_name }}" != "$expected" ]; then
+              echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+              exit 1
+            fi
+            echo "tag '${{ github.ref_name }}' matches package version '$expected'"
           fi
-          echo "tag '${{ github.ref_name }}' matches package version '$expected'"
 
       - name: Extract this version's CHANGELOG section as the release notes
         # Slice the `## [<version>] — <date>` section out of CHANGELOG.md (up to
@@ -231,6 +256,11 @@ jobs:
         # for this write-scoped job); first-party actions/* stay on major tags.
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          # On tag runs tag_name equals the ref name (asserted above) and the tag
+          # already exists, so target_commitish is unused; on dispatch runs the
+          # action creates tag v<version> at target_commitish (this run's SHA).
+          tag_name: v${{ needs.build.outputs.version }}
+          target_commitish: ${{ github.sha }}
           files: installer/*.exe
           fail_on_unmatched_files: true
           # The curated CHANGELOG section, with GitHub's auto-generated "What's

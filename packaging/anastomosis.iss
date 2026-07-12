@@ -23,6 +23,11 @@ AppPublisherURL=https://github.com/AzalDaniel/Anastomosis
 DefaultDirName={autopf}\Anastomosis
 DefaultGroupName=Anastomosis
 UninstallDisplayName=Anastomosis
+; The GUI exe supplies the Add/Remove Programs icon (installed under {app}\gui).
+UninstallDisplayIcon={app}\gui\Anastomosis.exe
+; Repo-root LICENSE, resolved via SourceDir (=..) at compile time; shown on the
+; wizard's license page.
+LicenseFile=LICENSE
 DisableProgramGroupPage=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -53,6 +58,10 @@ SignTool={#SignTool}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+; Desktop shortcut, checked by default — this is a consumer app, so the standard
+; "create a desktop icon" opt-out (no `unchecked` flag) matches user expectation.
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
+  GroupDescription: "{cm:AdditionalIcons}"
 Name: "addtopath"; Description: "Add the 'anast' command-line tool to PATH"; \
   GroupDescription: "Command-line access:"; Flags: unchecked
 
@@ -69,6 +78,7 @@ Source: "build\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deletea
 [Icons]
 Name: "{group}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"
 Name: "{group}\Uninstall Anastomosis"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"; Tasks: desktopicon
 
 [Registry]
 ; Append the CLI directory to the MACHINE PATH (idempotent; only if the task is

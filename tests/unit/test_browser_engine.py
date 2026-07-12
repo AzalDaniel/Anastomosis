@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient
 from anastomosis.deliver.browser.engine import UploadEngine
 from anastomosis.deliver.browser.fake import FakeCrash, FakeDestination
@@ -457,6 +458,8 @@ def test_no_phi_in_logs_across_a_failing_run(
     # No file-system path leaks (paths can embed patient names).
     assert str(p1) not in blob
     assert "one.pdf" not in blob
-    # What IS allowed: item keys, state names, and exc_tag type names.
+    # What IS allowed: item-key surrogates, state names, and exc_tag type names.
     assert "WrongPatientError" in blob
-    assert items[0].item_key in blob
+    assert safe_log_id(items[0].item_key) in blob
+    # The raw item key embeds an encounter GUID — only its surrogate may appear.
+    assert items[0].item_key not in blob
