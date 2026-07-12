@@ -9,6 +9,50 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-03
+
+The fifth alpha (**0.5.0-alpha**). Two fixes from the external alpha-4 review
+plus the piece that makes the Windows app real for users: a release path that
+actually ships the installer. Adjudication of the review is recorded in
+`docs/reviews/2026-07-03-alpha5-adjudication.md`.
+
+### Fixed
+
+- **Raw source identifiers no longer enter logs** (`core/logutil.py`
+  `safe_log_id()`) — the log contract said "opaque ids", but the ids being
+  logged were the source systems' own GUIDs (`PatientPracticeGuid`,
+  `PERSON_ID`, encounter/event ids, and the upload `item_key` that embeds an
+  encounter GUID) — linkable, not opaque, on the machine where the export
+  lives. Every logging site that interpolated one now routes it through
+  `safe_log_id()`: an HMAC-SHA256 surrogate keyed per process, so log lines
+  about the same record still correlate within a run but are unlinkable
+  across runs and cannot be confirmed against the export. Display surfaces
+  (CLI failure lines, upload console, resumability ledger) deliberately keep
+  real ids — they are operator working surfaces inside hardened directories,
+  not logs. SECURITY.md states the contract precisely; the caplog tests
+  assert the surrogate form and the absence of the raw id.
+- **The PHI scanner works without a git checkout** (`tools/phi_scan.py`) —
+  it enumerated files via `git ls-files`, so users running the test suite
+  from a source ZIP or sdist got a scanner crash instead of a scan. When git
+  enumeration is unavailable it now falls back to a deterministic recursive
+  walk with an explicit prune set (VCS/cache/venv/build directories); under
+  git, behavior is unchanged. A scanner that silently skipped non-git users
+  would have been a hole, not a fallback.
+
+### Added
+
+- **Publish a release from the Actions tab** — the Windows-package and PyPI
+  workflows gain a guarded `workflow_dispatch` publish mode (main-only,
+  version-asserted) in which the release action creates the `v<version>` tag
+  itself. The 0.4.0 installer was built and CI-validated but never reached
+  the Releases page because publishing required a terminal tag push; that
+  hard dependency is gone.
+- **Installer polish** (`packaging/anastomosis.iss`) — optional desktop-icon
+  task, `UninstallDisplayIcon`, and the AGPL license page in the wizard. The
+  launch-Anastomosis-on-finish checkbox already existed. Known GA gaps,
+  documented: code signing (needs a purchased certificate; SmartScreen
+  guidance is in the README) and a bespoke application icon.
+
 ## [0.4.0] — 2026-07-03
 
 The fourth alpha (**0.4.0-alpha**). Closes the external release review with
@@ -475,7 +519,8 @@ archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.1.0...v0.2.0

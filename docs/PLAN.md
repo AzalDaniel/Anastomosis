@@ -302,6 +302,19 @@ this plan, README/SECURITY/CONTRIBUTING/DISCLAIMER.
     provenance incl. AI-assistance citations) and the README CS50 section.
     Beta is reserved for the CS50 submission cut.
 
+### M5.9 — Fifth alpha (0.5.0-alpha): opaque log ids + a release that ships ✅
+20d. ✅ Closed the alpha-4 external review: `safe_log_id()` (per-process HMAC
+    surrogates) replaces raw source GUIDs in every logging site — the 0.4.0
+    "opaque id" fix had logged the source system's own identifiers, which are
+    linkable, not opaque; the PHI scanner gained a deterministic no-git
+    fallback walk so source-ZIP/sdist users can run the full suite; and the
+    release path gained a guarded workflow_dispatch publish mode (the release
+    action creates the tag) so the CI-validated Windows installer actually
+    reaches the Releases page without a terminal tag push. Installer polish:
+    desktop-icon task, uninstall icon, license page. Deferred with rationale
+    (see docs/reviews/): PF-mapper/C-CDA-builder splits (M6), per-user install
+    scope, code signing + bespoke icon (GA).
+
 ### M6 — Post-release breadth & hardening
 21. `sources/epic_ehi/` (public table spec + rtfparse), `sources/athenahealth/`
     (NDJSON), `sources/generic_tabular/` YAML mapping DSL (DrChrono CSV,
