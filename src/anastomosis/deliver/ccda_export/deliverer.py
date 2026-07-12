@@ -24,7 +24,7 @@ import logging
 import re
 from pathlib import Path
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
 
@@ -61,7 +61,7 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
         except Exception as exc:
             # One malformed record must not sink the batch; log the exception
             # TYPE only (its message may embed PHI) and move on.
-            logger.warning("ccda export failed for patient %s (%s)", pid, exc_tag(exc))
+            logger.warning("ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc))
             continue
         written.append(target)
     logger.info("ccda delivered: %d of %d records -> %s", len(written), len(records), out)

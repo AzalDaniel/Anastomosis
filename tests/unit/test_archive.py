@@ -17,6 +17,7 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapter
 from anastomosis.core.fhir import from_bundle
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.deliver.archive import ArchiveDeliverer
 from anastomosis.deliver.render_index import RenderEntry, RenderIndex
@@ -377,12 +378,13 @@ def test_archive_index_json_search_haystack_is_lowercased(
         )
 
 
-def test_archive_missing_indexed_pdf_logs_opaque_id_not_filename(
+def test_archive_missing_indexed_pdf_logs_surrogate_not_filename(
     tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
 ) -> None:
     """When the render index names a PDF that is not on disk, the archive logs
-    the WARNING by the patient's opaque id — never the filename, which embeds
-    the patient name and a MM-DD-YYYY date of service."""
+    the WARNING by the patient's run-scoped surrogate — never the raw source
+    GUID, and never the filename, which embeds the patient name and a
+    MM-DD-YYYY date of service."""
     import logging
 
     record = records[0]
@@ -405,7 +407,10 @@ def test_archive_missing_indexed_pdf_logs_opaque_id_not_filename(
     hits = [r.getMessage() for r in caplog.records if "missing on disk" in r.getMessage()]
     assert hits, "a missing indexed PDF must be logged loudly"
     blob = "\n".join(hits)
-    assert record.patient.id in blob, "the opaque patient id must identify the missing chart"
+    assert safe_log_id(record.patient.id) in blob, (
+        "the run-scoped surrogate must identify the missing chart"
+    )
+    assert record.patient.id not in blob, "the raw source GUID must never reach the log"
     assert record.patient.family_name not in blob
     assert record.patient.given_name not in blob
     assert not re.search(r"\b\d{2}-\d{2}-\d{4}\b", blob), "a date-of-service token leaked"
@@ -444,3 +449,8 @@ def test_pipeline_never_logs_patient_names(
     blob = "\n".join(r.getMessage() for r in caplog.records)
     for name in names:
         assert name not in blob, f"patient name leaked into logs: {name!r}"
+    # Nor may a raw source patient GUID appear — only its run-scoped surrogate.
+    ids = {rec.patient.id for rec in loaded if rec.patient.id}
+    assert ids, "fixture must expose patient ids to guard against"
+    for pid in ids:
+        assert pid not in blob, "a raw source patient GUID leaked into logs"

@@ -6,12 +6,16 @@ All identifier-shaped strings below are synthetic: never-issued SSN range
 """
 
 import logging
+import re
+
+import pytest
 
 from anastomosis.core.logutil import (
     RedactionFilter,
     configure_logging,
     exc_tag,
     redact,
+    safe_log_id,
 )
 
 
@@ -96,6 +100,43 @@ def test_filter_replaces_exception_text_with_type() -> None:
 def test_exc_tag_carries_no_message() -> None:
     tag = exc_tag(ValueError("patient Jane Doe rejected"))
     assert tag == "ValueError"
+
+
+def test_safe_log_id_is_stable_within_process() -> None:
+    # Two calls on the same value correlate within a run — that is the whole
+    # point of the surrogate (log lines about one record line up).
+    guid = "feedface-0000-4000-8000-000000000001"
+    assert safe_log_id(guid) == safe_log_id(guid)
+
+
+def test_safe_log_id_distinguishes_distinct_values() -> None:
+    assert safe_log_id("feedface-0000-4000-8000-000000000001") != safe_log_id(
+        "feedface-0000-4000-8000-000000000002"
+    )
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_safe_log_id_sentinel_maps_to_unknown(value: object) -> None:
+    assert safe_log_id(value) == "id:unknown"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "feedface-0000-4000-8000-000000000001",
+        12345,
+        "encounter|feedface-0000-4000-8000-000000000009",
+    ],
+)
+def test_safe_log_id_format(value: object) -> None:
+    assert re.fullmatch(r"id:[0-9a-f]{12}", safe_log_id(value))
+
+
+def test_safe_log_id_does_not_echo_the_source_value() -> None:
+    # The surrogate must never contain the raw identifier: it is a digest, not
+    # an encoding — the source GUID is unrecoverable from the log line.
+    guid = "feedface-0000-4000-8000-000000000abc"
+    assert guid not in safe_log_id(guid)
 
 
 def _redacting_handlers(logger: logging.Logger) -> list[logging.Handler]:

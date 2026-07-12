@@ -30,7 +30,7 @@ from typing import Any, Protocol
 
 from jinja2 import Environment, FileSystemLoader
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 
@@ -232,7 +232,9 @@ class ReconstructionEngine:
             result.rendered.append(target)
             result.documents.append(RenderedDoc(target, encounter.id, record.patient.id))
         except Exception as exc:
-            logger.error("render failed for encounter %s (%s)", encounter.id, exc_tag(exc))
+            logger.error(
+                "render failed for encounter %s (%s)", safe_log_id(encounter.id), exc_tag(exc)
+            )
             result.failed.append((encounter.id, exc_tag(exc)))
 
     def _render_pdf(self, html: str, target: Path) -> None:
