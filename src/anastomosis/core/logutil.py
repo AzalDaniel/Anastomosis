@@ -10,17 +10,23 @@ discipline fails, so this module is the defense-in-depth behind it:
 * :func:`exc_tag` is what error paths log instead of ``str(e)`` — exception
   *messages* frequently embed the input that caused them (a patient name in
   a parse error), while the exception *type* is always safe.
+* :func:`safe_log_id` is a run-scoped HMAC surrogate for a source-derived
+  identifier: loggable for within-run correlation, unlinkable across runs and
+  unconfirmable against the source export without this process's ephemeral key.
 
-Adapters and the pipeline must log **counts, table names, and opaque ids**,
-never field values. The filter exists for the day someone forgets.
+Adapters and the pipeline must log **counts, field names, and safe_log_id
+surrogates** — never values, and never raw source identifiers. The filter
+exists for the day someone forgets.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import re
+import secrets
 
-__all__ = ["RedactionFilter", "configure_logging", "exc_tag", "redact"]
+__all__ = ["RedactionFilter", "configure_logging", "exc_tag", "redact", "safe_log_id"]
 
 # Shapes that are PHI wherever they appear in a log line. Dates are included
 # deliberately: a date inside a log *message* is almost always input-derived
@@ -52,6 +58,26 @@ def redact(text: str) -> str:
 def exc_tag(exc: BaseException) -> str:
     """A loggable name for an exception whose message may embed input."""
     return type(exc).__name__
+
+
+_LOG_ID_KEY = secrets.token_bytes(32)
+
+
+def safe_log_id(value: object) -> str:
+    """A loggable, run-scoped surrogate for a source-derived identifier.
+
+    HMAC-SHA256 under a per-process ephemeral key: log lines about the same
+    record correlate within a run, but surrogates are unlinkable across runs
+    and cannot be confirmed against the source export without this run's key.
+    The 12-hex (48-bit) truncation trades collision headroom for log
+    readability — fine for correlation (collisions become likely only past
+    ~10^7 distinct ids in one process), and a collision costs correlation
+    quality, never data: real identifiers live in the ledger and reports.
+    """
+    if value is None or value == "":
+        return "id:unknown"
+    digest = hmac.new(_LOG_ID_KEY, str(value).encode("utf-8"), "sha256").hexdigest()[:12]
+    return f"id:{digest}"
 
 
 class RedactionFilter(logging.Filter):

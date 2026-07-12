@@ -54,7 +54,7 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.4.0 (alpha)** — the fourth alpha, on
+**v0.5.0 (alpha)** — the fifth alpha, on
 [PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
 [CHANGELOG.md](CHANGELOG.md) for what shipped, [DESIGN.md](DESIGN.md) for the
@@ -69,6 +69,7 @@ design record, and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 | Desktop GUI — pipeline dashboard, migration wizard, upload console | ✅ v0.2.0 |
 | Windows desktop installer — bundles Chromium offline, installs WebView2 if absent, with an installed self-check | ✅ v0.3.0 |
 | PHI-at-rest & log hardening — Windows NTFS ACLs on every output dir, redacting log handler wired at both entry points, CodeQL scanning, design/provenance record | ✅ v0.4.0 |
+| Run-scoped log identifiers (no raw source GUIDs in logs), git-free PHI scanner, one-click release path shipping the installer | ✅ v0.5.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -162,7 +163,8 @@ src/anastomosis/
 │   │                 urn:anastomosis namespaces (fhir.resources R4B available as an extra).
 │   ├── timeutil/textutil/codes  sentinel-safe parsing (`\N`/`-1`/`1/1/0001` → None,
 │   │                 never a fake value), 7-format dates, zoneinfo local time, LOINC vitals.
-│   ├── logutil       RedactionFilter + exc_tag(): logs counts, ids, and exception
+│   ├── logutil       RedactionFilter + exc_tag() + safe_log_id(): logs counts,
+│   │                 run-scoped id surrogates, and exception
 │   │                 TYPE names — never patient-derived values.
 │   └── output        output dirs created 0o700 with a PHI-warning README.
 ├── sources/
@@ -266,9 +268,10 @@ src/anastomosis/
   evidence. A vendor changing an export format, a UI, or an API touches one
   module — never the system.
 - **Local-first PHI posture.** The core pipeline makes zero network calls;
-  PHI never leaves the operator's machine. Logs carry counts, ids, and
-  exception type names — never values — behind a redaction filter installed at
-  both entry points, and output directories are locked down on both platforms
+  PHI never leaves the operator's machine. Logs carry counts, run-scoped id
+  surrogates, and exception type names — never values or raw source
+  identifiers — behind a redaction filter installed at both entry points, and
+  output directories are locked down on both platforms
   (owner-only `0o700` on POSIX; on Windows NTFS, ACL inheritance is stripped
   and access restricted to the current user, SYSTEM, and Administrators).
 

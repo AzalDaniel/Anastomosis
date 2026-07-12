@@ -54,7 +54,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.deliver.render_index import RenderIndex
@@ -260,10 +260,13 @@ class ArchiveDeliverer:
             source = pdfs_dir / name
             if not source.is_file():
                 # The index claims a PDF the engine never wrote (or it was
-                # deleted post-render). Log loud by the opaque patient id —
-                # never the filename, which embeds the patient name and date
-                # of service — and never silently fake an attribution.
-                logger.warning("indexed pdf missing on disk for patient %s", record.patient.id)
+                # deleted post-render). Log loud by the run-scoped surrogate —
+                # never the filename, which embeds the patient name and date of
+                # service, and never the raw source GUID — and never silently
+                # fake an attribution.
+                logger.warning(
+                    "indexed pdf missing on disk for patient %s", safe_log_id(record.patient.id)
+                )
                 continue
             try:
                 shutil.copyfile(source, out_dir / name)

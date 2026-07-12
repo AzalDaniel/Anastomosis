@@ -144,8 +144,9 @@ that matters most, so the model makes it structurally impossible.
    real PHI, yet the tool must be developed against realistic data — so all
    fixtures are synthetic (Synthea or hand-built with `feedface-` GUIDs), a
    hashed deny-list scanner runs on every commit and in CI, and logging is
-   redacted by construction (counts, field names, and opaque ids — never
-   values; output paths and patient-derived filenames never enter logs).
+   redacted by construction (counts, field names, and run-scoped HMAC
+   surrogates for source identifiers — never values, never raw GUIDs;
+   output paths and patient-derived filenames never enter logs).
 6. **Being a real Windows product.** Non-UTF-8 console safety (cp1252),
    Nuitka standalone packaging with bundled Chromium, a self-checking
    installer (`anast doctor` runs against the frozen and the installed

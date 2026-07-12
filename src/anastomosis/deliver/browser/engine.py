@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Patient
 from anastomosis.destinations.base import Destination, UploadItem
 
@@ -233,7 +233,9 @@ class UploadEngine:
             self._to(item, UploadState.RESOLVING_PATIENT, run_id)
         else:  # pragma: no cover - pending_items only yields the three above.
             logger.warning(
-                "skipping item %s in unexpected pickup state %s", item.item_key, state.name
+                "skipping item %s in unexpected pickup state %s",
+                safe_log_id(item.item_key),
+                state.name,
             )
             return
 
@@ -262,7 +264,11 @@ class UploadEngine:
                     run_id,
                     error_type="WrongPatientError",
                 )
-                logger.error("wrong-patient banner for item %s (%s)", item.item_key, exc_tag(exc))
+                logger.error(
+                    "wrong-patient banner for item %s (%s)",
+                    safe_log_id(item.item_key),
+                    exc_tag(exc),
+                )
                 raise _AbortRun("WrongPatientError") from exc
 
     def _lifecycle(self, item: UploadItem, patient: Patient, run_id: str) -> bool:
@@ -321,7 +327,9 @@ class UploadEngine:
             # Unknown failures are treated as transient — failing a flaky
             # upload permanently loses a chart, the worse outcome.
             self._to(item, UploadState.RETRY_WAIT, run_id, error_type=exc_tag(exc))
-            logger.warning("transient failure for item %s (%s)", item.item_key, exc_tag(exc))
+            logger.warning(
+                "transient failure for item %s (%s)", safe_log_id(item.item_key), exc_tag(exc)
+            )
             return False
 
     def _after_retry_wait(self, item: UploadItem, run_id: str) -> bool:
@@ -334,7 +342,9 @@ class UploadEngine:
         attempts = self._attempts(item.item_key)
         if attempts >= self._max_attempts:
             self._to(item, UploadState.FAILED, run_id, error_type="RetriesExhausted")
-            logger.warning("item %s failed after %d attempt(s)", item.item_key, attempts)
+            logger.warning(
+                "item %s failed after %d attempt(s)", safe_log_id(item.item_key), attempts
+            )
             return False
         # Exponential backoff on the attempt just recorded (1-based).
         self._sleeper(self._backoff_base_s * 2 ** (attempts - 1))
@@ -356,7 +366,7 @@ class UploadEngine:
         self._to(item, target, run_id, error_type=exc_tag(exc))
         logger.warning(
             "permanent failure for item %s -> %s (%s)",
-            item.item_key,
+            safe_log_id(item.item_key),
             target.name,
             exc_tag(exc),
         )
@@ -381,7 +391,9 @@ class UploadEngine:
                     digest.update(chunk)
                     size += len(chunk)
         except OSError as exc:
-            logger.warning("preflight read failed for item %s (%s)", item.item_key, exc_tag(exc))
+            logger.warning(
+                "preflight read failed for item %s (%s)", safe_log_id(item.item_key), exc_tag(exc)
+            )
             return False
         return digest.hexdigest() == item.sha256 and size == item.size_bytes
 
@@ -405,4 +417,4 @@ class UploadEngine:
             error_type=error_type,
             destination_doc_id=destination_doc_id,
         )
-        logger.debug("item %s -> %s", item.item_key, new_state.name)
+        logger.debug("item %s -> %s", safe_log_id(item.item_key), new_state.name)

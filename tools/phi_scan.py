@@ -37,6 +37,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 import re
 import subprocess
 import sys
@@ -49,6 +50,28 @@ ALLOWLIST = Path(__file__).resolve().parent / "phi_allowlist.txt"
 # Files the scanner never inspects.
 SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".pyc"}
 SKIP_NAMES = {"phi_hashes.json"}
+
+# Directories the filesystem-walk fallback prunes: version-control metadata,
+# tool caches, and virtualenvs — intrinsic machine state, never project
+# content. Deliberately NOT pruned: ``dist``/``build`` and other
+# conventionally-gitignored output dirs, because git skips those only via
+# .gitignore and the walk runs precisely when there is no git to consult —
+# scanning extra files is safe (binaries are skipped by the NUL sniff),
+# silently skipping a committable file is not. Any directory whose name
+# ends in ``.egg-info`` is pruned too.
+WALK_PRUNE_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".eggs",
+        "node_modules",
+    }
+)
 
 WORD_RE = re.compile(r"[A-Za-z]{2,}")
 GUID_RE = re.compile(
@@ -120,19 +143,52 @@ def scan_text(path: Path, text: str, deny: set[str], allow: set[str]) -> list[st
     return findings
 
 
+def _walk_all_files(root: Path) -> list[Path]:
+    """Enumerate every committable file under ``root`` without git.
+
+    The scanner must cover everything committable whether or not a ``.git``
+    checkout is present, so a source ZIP/sdist unpacked outside version
+    control is scanned exactly as a clone would be. Version-control metadata,
+    tool caches, virtualenvs, and build artifacts are pruned (see
+    ``WALK_PRUNE_DIRS``); every remaining file is returned as an absolute path
+    under ``root`` to match the shape produced by the git enumeration, and the
+    list is sorted for a deterministic order.
+    """
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames if d not in WALK_PRUNE_DIRS and not d.endswith(".egg-info")
+        ]
+        found.extend(Path(dirpath) / name for name in filenames)
+    return sorted(found)
+
+
 def iter_target_files(args_paths: list[str]) -> list[Path]:
+    """Enumerate the files to scan: everything committable, git or not.
+
+    With explicit paths, scan exactly those. Otherwise scan the whole tree —
+    tracked files PLUS untracked-but-not-ignored files, so a "clean" run
+    before ``git add`` cannot miss brand-new files. When git is unavailable
+    (no checkout, git not installed), fall back to a filesystem walk so the
+    scanner never silently stops for users who obtained the code as a source
+    ZIP/sdist rather than a clone.
+    """
     if args_paths:
         return [Path(p) for p in args_paths if Path(p).is_file()]
-    # Tracked files PLUS untracked-but-not-ignored files: anything that could
-    # be committed must be scanned, or a "clean" run before `git add` would
-    # miss brand-new files entirely.
-    out = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        print(
+            "phi_scan: no git checkout detected; scanning via filesystem walk",
+            file=sys.stderr,
+        )
+        return _walk_all_files(REPO_ROOT)
     files = [REPO_ROOT / line for line in out.stdout.splitlines() if line]
     return [f for f in files if f.is_file()]
 
