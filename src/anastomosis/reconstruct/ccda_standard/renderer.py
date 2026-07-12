@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING
 
 from lxml import etree
 
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.output import secure_output_dir
 from anastomosis.deliver.ccda_export.builder import build_ccd
 
@@ -199,7 +199,7 @@ def render_ccda_standard(
             except Exception as exc:
                 logger.error(
                     "ccda_standard render failed for patient %s (%s)",
-                    record.patient.id,
+                    safe_log_id(record.patient.id),
                     exc_tag(exc),
                 )
                 result.failed.append((record.patient.id, exc_tag(exc)))

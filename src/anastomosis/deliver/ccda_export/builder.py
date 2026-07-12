@@ -68,6 +68,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
     AllergyCategory,
     AllergyIntolerance,
@@ -1062,7 +1063,7 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
 
     logger.info(
         "built CCD for patient %s: %d conditions, %d meds, %d allergies, %d encounters",
-        record.patient.id,
+        safe_log_id(record.patient.id),
         len(record.conditions),
         len(record.medications),
         len(record.allergies),

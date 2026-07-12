@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from anastomosis.core.codes import VITALS
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import (
     AllergyCategory,
     AllergyIntolerance,
@@ -392,7 +392,9 @@ def _local_note_sections(
         try:
             text = decode_ce_blob(blob.get("BLOB_CONTENTS"), _s(blob, "COMPRESSION_CD"))
         except NotImplementedError as exc:
-            logger.warning("CE_BLOB for event %s not decoded (%s)", event_id, exc_tag(exc))
+            logger.warning(
+                "CE_BLOB for event %s not decoded (%s)", safe_log_id(event_id), exc_tag(exc)
+            )
             # Losslessness: the UNDECODABLE payload itself must ride along —
             # excluding BLOB_CONTENTS here would silently drop the note body.
             # Empty exclusion set = every column, raw bytes included.

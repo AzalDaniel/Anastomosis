@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.deliver.render_index import RenderIndex
@@ -175,7 +175,7 @@ class BundleDeliverer:
 
         logger.info(
             "bundle delivered for patient %s: %d pdfs, qa=%s",
-            pid,
+            safe_log_id(pid),
             len(pdf_paths),
             "yes" if qa_path else "no",
         )

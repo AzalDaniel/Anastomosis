@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registered for the cross-detect test
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
     AllergyCategory,
     IdentifierKind,
@@ -379,9 +380,12 @@ def test_compressed_blob_logs_type_not_content(
     list(get_source("oracle-ehi").load(ORACLE))
     warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("NotImplementedError" in m for m in warnings)
-    # The event id is a count/id (safe); blob content and the exception message
-    # must never appear.
+    # The event id is logged only as its run-scoped surrogate; the raw source
+    # EVENT_ID, blob content, and the exception message must never appear.
     blob = "\n".join(warnings)
+    compressed_event_id = "900300001"  # the CE_BLOB row with COMPRESSION_CD=2099
+    assert safe_log_id(compressed_event_id) in blob
+    assert compressed_event_id not in blob
     assert "COMPRESSED-BINARY-PLACEHOLDER" not in blob
     assert "compression algorithm" not in blob  # the exc message itself
 
