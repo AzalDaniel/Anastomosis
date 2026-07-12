@@ -237,8 +237,15 @@ async function onDestinationChange() {
 
 // --- step 3b: run the migration -------------------------------------------
 // The event dispatcher the shell (Python side) calls during an async run.
+// Flow guard (P2-5): the wizard owns the "migration" flow. Every event carries a
+// `flow`; we early-return on any other flow so navigating to the wizard mid-run
+// can't let it consume the dashboard's pipeline terminal event and announce
+// "migration prepared" for a pipeline run (both emit identical event kinds).
 window.anastEvent = function anastEvent(e) {
   if (!e || typeof e !== "object") {
+    return;
+  }
+  if (e.flow !== "migration") {
     return;
   }
   switch (e.type) {
@@ -250,7 +257,10 @@ window.anastEvent = function anastEvent(e) {
       break;
     case "done":
       setRunBusy(false);
-      showMigrationResult("migration complete — charts + C-CDA payload written.");
+      showMigrationResult(
+        e.notice ||
+          "migration prepared — charts + C-CDA payload written; delivery not yet executed."
+      );
       loadPatients(e.summary_id);
       break;
     case "error":

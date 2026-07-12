@@ -137,14 +137,14 @@ def html_to_text(html: str | None) -> str | None:
 
 
 # Empty filler blocks PF leaves behind — stripped so a blank <p></p> never
-# renders as a stray gap (generate_pdfs.py:151-154 empty_block_patterns).
+# renders as a stray gap (the predecessor's empty-block patterns).
 _EMPTY_BLOCK_PATTERNS = (
     r"<p[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</p>",
     r"<div[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</div>",
     r"<h([1-6])[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</h\1>",
 )
 # A stray \n that is NOT immediately adjacent to a block tag boundary becomes a
-# <br> (generate_pdfs.py:150) — inline line breaks (e.g. numbered injection
+# <br> — inline line breaks (e.g. numbered injection
 # sites) must survive into the rendered chart.
 _STRAY_NEWLINE_RE = re.compile(r"\n(?!</(p|div|ul|ol|li|h[1-6])>)(?!<(p|div|ul|ol|li|h[1-6])[ >])")
 
@@ -394,7 +394,7 @@ class _SoapHtmlSanitizer(HTMLParser):
 def sanitize_soap_html(raw_html: str | None) -> str:
     """Allowlist-clean PF semantic HTML, then apply the PF rendering repairs.
 
-    Ported from the predecessor's ``sanitize_soap_html`` (generate_pdfs.py:137)
+    Ported from the predecessor's ``sanitize_soap_html``
     with an added :class:`_SoapHtmlSanitizer` allowlist pass at the front so
     script/style/event handlers/non-allowlist URL attributes cannot reach the
     local-Chromium PDF renderer (the section is templated with Jinja's
@@ -418,10 +418,10 @@ def sanitize_soap_html(raw_html: str | None) -> str:
     if not raw_html:
         return ""
     text = str(raw_html).strip()
-    # Unescape TSV-exported newlines back to real newlines first (gpdfs:144).
+    # Unescape TSV-exported newlines back to real newlines first.
     text = text.replace("\\\\n", "\n").replace("\\n", "\n")
     if "<" not in text:
-        # Plain text: escape, then turn newlines into <br> (gpdfs:146). No
+        # Plain text: escape, then turn newlines into <br>. No
         # angle brackets means no allowlist work to do — and html.escape on
         # plain text strictly defeats any HTML interpretation downstream.
         return html_mod.escape(text).replace("\n", "<br>").strip()
@@ -432,10 +432,10 @@ def sanitize_soap_html(raw_html: str | None) -> str:
     sanitizer.close()
     text = sanitizer.cleaned()
     # Convert remaining \n inside HTML content to <br> so inline line breaks
-    # render correctly; only convert \n NOT between two block tags (gpdfs:150).
+    # render correctly; only convert \n NOT between two block tags.
     text = _STRAY_NEWLINE_RE.sub("<br>\n", text)
-    for pattern in _EMPTY_BLOCK_PATTERNS:  # gpdfs:156 — strip empty blocks
+    for pattern in _EMPTY_BLOCK_PATTERNS:  # strip empty filler blocks
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-    if "pf-rich-text" not in text:  # gpdfs:158 — wrap once
+    if "pf-rich-text" not in text:  # wrap once (idempotent guard)
         text = f'<div class="pf-rich-text">{text}</div>'
     return text.strip()

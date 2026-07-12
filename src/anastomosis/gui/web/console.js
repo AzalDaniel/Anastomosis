@@ -321,8 +321,15 @@ function onUploadTerminal(finalStatus) {
 
 // The event channel the shell pushes controller events into. Counts never ride
 // events — only stage/state names and (on abort/failure) the exception TYPE.
+// Flow guard (P2-5): the upload console owns the "upload" flow. Every event
+// carries a `flow`; we early-return on any other flow so a run from another page
+// can't drive this console's terminal handlers (the stage gates below stay as
+// defense in depth).
 window.anastEvent = function anastEvent(e) {
   if (!e || typeof e !== "object") {
+    return;
+  }
+  if (e.flow !== "upload") {
     return;
   }
   switch (e.type) {

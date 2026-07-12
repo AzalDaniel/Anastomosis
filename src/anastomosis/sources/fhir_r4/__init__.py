@@ -12,6 +12,14 @@ which round-trips THIS project's own export (its ``urn:anastomosis:*``
 extensions). This adapter targets *arbitrary* US Core exports, so it reads only
 the public US Core codings — making "FHIR EHR A → EHR B" a real migration, not a
 self-round-trip.
+
+Memory expectation: grouping is global — a Bulk-Data ``$export`` is split across
+per-resource-type NDJSON files and is not patient-sorted, so the whole export
+must be resident to join it. Files stream in without a per-file intermediate
+list, but resident memory still scales with export size (the grouped index holds
+every resource). Very large Bulk-Data exports should be split per-patient-cohort
+upstream before ingest; spooling larger-than-memory exports to disk is roadmap
+(M6).
 """
 
 from __future__ import annotations
@@ -41,11 +49,11 @@ def _first_line(path: Path) -> bytes:
         return handle.readline(_SNIFF_BYTES)
 
 
-def _resources_from_file(path: Path) -> list[dict[str, Any]]:
-    """Every FHIR resource in one file (Bundle entries, NDJSON lines, or a lone
-    resource). Loud on malformed JSON — a corrupt export must not parse to empty."""
+def _resources_from_file(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield every FHIR resource in one file (Bundle entries, NDJSON lines, or a
+    lone resource), streaming rather than materializing a per-file list. Loud on
+    malformed JSON — a corrupt export must not parse to empty."""
     if path.suffix.lower() == ".ndjson":
-        resources: list[dict[str, Any]] = []
         # Stream line-by-line (a $export NDJSON can be hundreds of MB; read_text
         # +splitlines holds the whole file AND a list of its lines in RAM at
         # once). utf-8-sig strips a leading BOM if present — Windows export tools
@@ -54,16 +62,15 @@ def _resources_from_file(path: Path) -> list[dict[str, Any]]:
             for raw in handle:
                 line = raw.strip()
                 if line:
-                    resources.append(json.loads(line))
-        return resources
+                    yield json.loads(line)
+        return
     doc = json.loads(path.read_text(encoding="utf-8-sig"))
     if isinstance(doc, dict) and doc.get("resourceType") == "Bundle":
-        return [
-            entry["resource"]
-            for entry in doc.get("entry", [])
-            if isinstance(entry, dict) and isinstance(entry.get("resource"), dict)
-        ]
-    return [doc] if isinstance(doc, dict) and doc.get("resourceType") else []
+        for entry in doc.get("entry", []):
+            if isinstance(entry, dict) and isinstance(entry.get("resource"), dict):
+                yield entry["resource"]
+    elif isinstance(doc, dict) and doc.get("resourceType"):
+        yield doc
 
 
 class FHIRR4Adapter:
@@ -93,14 +100,20 @@ class FHIRR4Adapter:
         ``$export`` split into ``Patient.ndjson`` / ``Observation.ndjson`` / …
         joins correctly. Files are read in sorted order for determinism; a
         deterministic ``source_file`` is recorded in provenance.
+
+        Each file streams straight into one flat list (no per-file intermediate
+        list). ``records_from_resources`` still needs the full, re-iterable
+        collection — it groups globally and an NDJSON ``$export`` is not
+        patient-sorted — so resident memory scales with export size; see the
+        module docstring for the spooling roadmap note.
         """
-        resources: list[dict[str, Any]] = []
         files = sorted(
             [p for p in path.glob("*.json") if self._looks_fhir_json(p)]
             + list(path.glob("*.ndjson"))
         )
-        for data_file in files:
-            resources.extend(_resources_from_file(data_file))
+        resources: list[dict[str, Any]] = [
+            resource for data_file in files for resource in _resources_from_file(data_file)
+        ]
         if not resources:
             return
         source_file = files[0].name if len(files) == 1 else None

@@ -99,10 +99,16 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     ``anast pipeline run`` uses, then the chart + C-CDA outcome lines. On
     :class:`PipelineError` it reproduces ``_report_pipeline_error`` +
     ``typer.Exit``; on success, ``--save-profile`` persists the resolved config.
+    Ends on the shared verdict: the prepared notice (route resolved, delivery not
+    executed — exit 0) or the manual-import notice (no viable route — exit 1).
     """
     from anastomosis import cli as _cli
     from anastomosis.core.migrate import default_migration_profiles, run_migration
-    from anastomosis.core.migration_status import classify_migration, manual_import_notice
+    from anastomosis.core.migration_status import (
+        classify_migration,
+        manual_import_notice,
+        prepared_notice,
+    )
     from anastomosis.pipeline import PipelineError
 
     # Resolve and SURFACE the route before running — a migration is a route move.
@@ -124,8 +130,10 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
         _cli._report_pipeline_error(exc, source=cmd.source, pack=cmd.render)
         raise typer.Exit(code=exc.exit_code) from None
 
-    # The standard-C-CDA-view mode renders no pipeline reconstruct/QA events, so
-    # report what it produced (the per-patient view PDFs) explicitly.
+    # ccda-standard renders no pipeline reconstruct/QA events (it runs
+    # document-generic QA — layout/pagination + integrity — per patient and
+    # records pack-driven checks as skipped; another agent is implementing that),
+    # so report what it produced (the per-patient view PDFs) explicitly.
     if result.ccda_view is not None:
         view = result.ccda_view
         _cli.console.print(
@@ -157,6 +165,16 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     if status.needs_manual_import:
         _cli.console.print(f"[yellow]{manual_import_notice(status)}[/yellow]")
         raise typer.Exit(code=status.exit_code)
+
+    # A route resolved: the artifacts + the VERIFIED route plan are written, but
+    # `migrate` executes no delivery route — a chosen route is a plan, not proof
+    # a chart landed. Print the prepared notice (neutral, not the success-silent
+    # path) so the operator sees delivery is still theirs to run, and keep exit 0
+    # (preparation succeeded — the exit contract scripts rely on). The verdict
+    # comes from the SAME shared classifier the GUI consumes, so the frontends
+    # never drift, and it is NEVER `delivered` (that needs a receipt no executor
+    # yet produces).
+    _cli.console.print(f"[cyan]{prepared_notice(status)}[/cyan]")
 
 
 @app.command("migrate")

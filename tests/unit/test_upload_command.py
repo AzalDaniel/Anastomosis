@@ -23,6 +23,7 @@ from anastomosis.core.upload_command import (
     DEFAULT_MAX_ATTEMPTS,
     LEDGER_NAME,
     UploadCommand,
+    UploadCommandResult,
     VerificationUnavailableError,
     resolve_manifest_root,
     run_upload_command,
@@ -342,3 +343,140 @@ def test_run_upload_command_releases_destination_resources(tmp_path: Path) -> No
         UploadCommand(out_dir=out2, verify=False), lambda: FakeDestination(_known())
     )
     assert result.aborted_reason is None
+
+
+# --- the shared verdict (is_clean / exit_code / nonclean_summary) -----------
+#
+# The SINGLE classifier both frontends read: the CLI's process exit code and the
+# GUI worker's done-vs-error branch. Clean terminal states are completed /
+# skipped_skiplist / duplicate_at_destination; any other terminal state, or any
+# abort, is non-clean. A non-terminal leftover (pending) is not itself a failure.
+
+
+@pytest.mark.parametrize(
+    ("counts", "aborted", "clean", "code"),
+    [
+        pytest.param({"completed": 3}, None, True, 0, id="all-completed"),
+        pytest.param(
+            {"completed": 2, "skipped_skiplist": 1, "duplicate_at_destination": 1},
+            None,
+            True,
+            0,
+            id="clean-mix",
+        ),
+        pytest.param({}, None, True, 0, id="empty-counts"),
+        pytest.param({"completed": 2, "failed": 1}, None, False, 1, id="failed"),
+        pytest.param({"pre_verify_failed": 2}, None, False, 1, id="pre-verify-failed"),
+        pytest.param(
+            {"completed": 1, "post_verify_failed": 1}, None, False, 1, id="post-verify-failed"
+        ),
+        pytest.param({"patient_not_found": 1}, None, False, 1, id="patient-not-found"),
+        pytest.param({"completed": 3}, "WrongPatientError", False, 1, id="abort-over-clean-counts"),
+        # A cooperatively-stopped run leaves items PENDING (non-terminal) with no
+        # abort: not a failure — it resumes next run — so it stays clean.
+        pytest.param({"completed": 1, "pending": 2}, None, True, 0, id="pending-leftover-clean"),
+    ],
+)
+def test_result_verdict_truth_table(
+    counts: dict[str, int], aborted: str | None, clean: bool, code: int
+) -> None:
+    result = UploadCommandResult(
+        counts=dict(counts), aborted_reason=aborted, report_path=Path("unused")
+    )
+    assert result.is_clean is clean
+    assert result.exit_code == code
+
+
+def test_result_nonclean_summary_names_states_and_counts_only() -> None:
+    """The GUI error message: non-clean TERMINAL state names + counts, nothing
+    else — no clean states, no non-terminal leftovers, no patient values."""
+    result = UploadCommandResult(
+        counts={"completed": 5, "pending": 3, "failed": 1, "pre_verify_failed": 2},
+        aborted_reason=None,
+        report_path=Path("unused"),
+    )
+    summary = result.nonclean_summary()
+    # Alphabetical, PHI-safe: "<total> item(s) in non-clean terminal states: ...".
+    assert summary == "3 item(s) in non-clean terminal states: failed=1, pre_verify_failed=2"
+    # Clean + non-terminal states are NOT named (only the offenders are).
+    assert "completed" not in summary
+    assert "pending" not in summary
+
+
+# --- resource ownership: no leak on a post-attach construction failure ------
+#
+# attach() hands us the destination's owned Playwright driver + CDP BEFORE the
+# TrackingDB / LayeredVerifier are built. Each resource is registered with the
+# ExitStack the instant it is owned, so a construction failure in a LATER
+# resource still releases the earlier ones — no leaked driver/CDP.
+
+
+def test_release_on_tracking_construction_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A TrackingDB constructor failure AFTER attach still releases the
+    destination — the release is ExitStack-owned the instant attach returns."""
+    import anastomosis.deliver.browser.tracking as tracking_mod
+
+    out = _write_manifest(tmp_path / "out")
+    released = {"n": 0}
+
+    class _ReleasableDestination(FakeDestination):
+        def release(self) -> None:
+            released["n"] += 1
+
+    class _BoomTrackingDB:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("ledger open failed")
+
+    monkeypatch.setattr(tracking_mod, "TrackingDB", _BoomTrackingDB)
+
+    with pytest.raises(RuntimeError):
+        run_upload_command(
+            UploadCommand(out_dir=out, verify=False),
+            lambda: _ReleasableDestination(_known()),
+        )
+    assert released["n"] == 1  # released despite the ledger construction failure
+
+
+def test_release_and_close_on_verifier_construction_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A LayeredVerifier constructor failure (after attach AND TrackingDB) closes
+    the ledger AND releases the destination — both are ExitStack-owned by then,
+    so neither leaks, and both fire exactly once."""
+    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    import anastomosis.deliver.browser.tracking as tracking_mod
+    import anastomosis.deliver.verify as verify_mod
+
+    out = _write_manifest(tmp_path / "out")
+    released = {"n": 0}
+    closed = {"n": 0}
+
+    class _ReleasableDestination(FakeDestination):
+        def release(self) -> None:
+            released["n"] += 1
+
+    class _StubTrackingDB:
+        # Construction succeeds; the verifier fails before the ledger is used, so
+        # only close() need be observable here.
+        def __init__(self, path: Path) -> None:
+            self._path = path
+
+        def close(self) -> None:
+            closed["n"] += 1
+
+    class _BoomVerifier:
+        def __init__(self, **kwargs: object) -> None:
+            raise RuntimeError("verifier construction failed")
+
+    monkeypatch.setattr(tracking_mod, "TrackingDB", _StubTrackingDB)
+    monkeypatch.setattr(verify_mod, "LayeredVerifier", _BoomVerifier)
+
+    with pytest.raises(RuntimeError):
+        run_upload_command(
+            UploadCommand(out_dir=out),  # verify defaults ON -> builds the verifier
+            lambda: _ReleasableDestination(_known()),
+        )
+    assert closed["n"] == 1  # the ledger handle was closed on the failure unwind
+    assert released["n"] == 1  # and the destination released — neither leaked

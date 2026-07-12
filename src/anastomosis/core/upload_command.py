@@ -84,13 +84,93 @@ class UploadCommand:
     verify: bool = True
 
 
+# Terminal states that count as a CLEAN landing — an item reached a safe end.
+# Anything else terminal (FAILED, PRE/POST_VERIFY_FAILED, PATIENT_NOT_FOUND,
+# PREFLIGHT_FAILED) is a non-clean outcome. This is the SINGLE source of truth
+# for the verdict both frontends read (:meth:`UploadCommandResult.is_clean` /
+# :meth:`UploadCommandResult.exit_code`): it lived in the CLI, but the GUI needs
+# the same classification, so keeping it here is what stops the two from drifting
+# (the bug where the GUI emitted a `done` "upload complete" for a failed run).
+_CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
+    {"completed", "skipped_skiplist", "duplicate_at_destination"}
+)
+
+
+def _nonclean_terminal_states() -> frozenset[str]:
+    """The TERMINAL state values that are NOT a clean landing.
+
+    Derived from the upload machine's ``TERMINAL_STATES`` minus the clean set,
+    so a terminal state newly added to the machine is classified non-clean by
+    default (fail-loud: an unclassified terminal counts AGAINST a clean run,
+    never silently for it). Imported lazily to keep this module free of the
+    ``deliver.browser`` (browser-extra) dependency at import time — the whole
+    module follows that discipline so ``verify=False`` never pulls the extra.
+    """
+    from anastomosis.deliver.browser.states import TERMINAL_STATES
+
+    return frozenset(s.value for s in TERMINAL_STATES) - _CLEAN_UPLOAD_STATES
+
+
 @dataclass
 class UploadCommandResult:
-    """What an upload run yields the caller: ledger counts, abort reason, report."""
+    """What an upload run yields the caller: ledger counts, abort reason, report.
+
+    Carries the derived verdict both frontends branch on — :attr:`is_clean` (and
+    its :attr:`exit_code` projection) — so the CLI's process exit and the GUI's
+    done-vs-error terminal event are decided by ONE classifier here, not by two
+    that can drift.
+    """
 
     counts: dict[str, int]
     aborted_reason: str | None
     report_path: Path
+
+    @property
+    def is_clean(self) -> bool:
+        """Whether the run landed cleanly: no abort, and no non-clean TERMINAL item.
+
+        Clean means every item reached a SAFE terminal end — ``completed``
+        (filed + verified), ``skipped_skiplist`` (excluded up front), or
+        ``duplicate_at_destination`` (already on file). It is NOT clean when
+        ``aborted_reason`` is set (the engine's wrong-patient/safety stop) OR any
+        item landed in a non-clean terminal state (``failed``,
+        ``pre_verify_failed``, ``post_verify_failed``, ``patient_not_found``,
+        ``preflight_failed``). Non-terminal leftovers (e.g. a cooperatively
+        stopped run's ``pending`` items) are NOT failures — they resume on the
+        next run — so they do not by themselves make a run non-clean.
+        """
+        if self.aborted_reason is not None:
+            return False
+        return not any(self.counts.get(state, 0) for state in _nonclean_terminal_states())
+
+    @property
+    def exit_code(self) -> int:
+        """The process exit code for the run: ``0`` when :attr:`is_clean`, else ``1``.
+
+        ``anast upload`` returns this so a script can branch on a non-clean run —
+        an abort, or any item left in a non-clean terminal state.
+        """
+        return 0 if self.is_clean else 1
+
+    def nonclean_summary(self) -> str:
+        """A PHI-safe one-line summary of the non-clean TERMINAL counts.
+
+        State NAMES and integer counts only — e.g.
+        ``"3 item(s) in non-clean terminal states: failed=1, pre_verify_failed=2"``
+        — never an item key, a path, or any patient value. The GUI worker uses it
+        as the ``error`` event message when :attr:`is_clean` is False without an
+        abort, so the operator sees WHICH states blocked a clean landing instead
+        of a false ``done`` ("upload complete"). States are listed alphabetically
+        for a stable, testable string.
+        """
+        offenders = sorted(
+            (state, self.counts[state])
+            for state in _nonclean_terminal_states()
+            if self.counts.get(state, 0)
+        )
+        total = sum(n for _state, n in offenders)
+        detail = ", ".join(f"{state}={n}" for state, n in offenders)
+        return f"{total} item(s) in non-clean terminal states: {detail}"
 
 
 def resolve_manifest_root(out_dir: Path) -> Path:
@@ -175,8 +255,26 @@ def run_upload_command(
         items, patients = read_upload_manifest(manifest_root)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol
+        # Register each resource with the ExitStack the INSTANT we own it, so a
+        # failure while constructing a LATER resource (the TrackingDB below, or
+        # the LayeredVerifier) cannot leak the one we already hold. Release the
+        # destination's owned Playwright driver + CDP connection via its one-shot
+        # release() (NOT close(), the manager's per-recycle hook): release()
+        # disconnects the CDP session and stops the driver; per Playwright that
+        # does NOT close a connect_over_cdp browser, so the operator's EHR browser
+        # stays open. Duck-typed so a destination with no owned resources (the
+        # test FakeDestination, the FHIR pusher) has no release() and is skipped.
+        release = getattr(destination, "release", None)
+        if callable(release):
+            stack.callback(release)
         managed = ManagedDestination(destination)
+        # Our own ledger handle — registered right after construction so it is
+        # closed on every exit path (success, engine failure, or a verifier
+        # construction failure below). The stack unwinds LIFO, so registering
+        # release() first then tracking.close() second means, on exit,
+        # tracking.close() runs, then release(), then the output locks LAST.
         tracking = TrackingDB(cmd.out_dir / LEDGER_NAME)
+        stack.callback(tracking.close)
         # Opt-in L0-L6 ladder. The LayeredVerifier import (and thus PyMuPDF) is
         # lazy so verify=False never pulls in the render extra. The verifier
         # reads the destination directly for its banner/metadata/round-trip
@@ -184,48 +282,36 @@ def run_upload_command(
         # engine takes the ManagedDestination. There is no pack/records/
         # expected_pages in the upload path, so L3 SKIPs here (correctly): the
         # active levels are L0/L1/L2/L4 (+ L5/L6 when the destination supports
-        # read-back).
+        # read-back). If this constructor raises, the stack already owns both the
+        # destination release and the ledger close, so neither leaks.
         verifier = None
         if cmd.verify:
             from anastomosis.deliver.verify import LayeredVerifier
 
             verifier = LayeredVerifier(destination=destination)
-        try:
-            run_id = tracking.begin_run(managed.name)
-            # The engine contract: the CALLER recovers any mid-flight items from a
-            # prior killed run before driving (a re-start resumes cleanly).
-            tracking.recover(run_id)
-            result = UploadEngine(
-                managed, tracking, verifier=verifier, max_attempts=cmd.max_attempts
-            ).run(items, patients, run_id, skiplist=cmd.skiplist, stop=stop)
-            # On a clean finish stamp the run done; an abort already stamped its
-            # own finish_run inside the engine (manage_run defaults True).
-            if result.aborted_reason is None:
-                tracking.finish_run(run_id)
-            # Aggregate verification coverage (PHI-safe - counts + dedup'd
-            # level-shape reason strings only) so the report tells the truth
-            # about which L-levels actually ran for this run, instead of a
-            # blanket "full L0-L6 ladder" claim that does not match what ran.
-            # ``verifier`` is None when --no-verify was passed.
-            coverage = verifier.coverage_summary() if verifier is not None else None
-            report_path = write_run_report(
-                tracking, run_id, cmd.out_dir, verification_coverage=coverage
-            )
-            counts = dict(tracking.counts())
-        finally:
-            # Release the resources WE own and nothing the operator owns:
-            #  - our ledger handle, and
-            #  - the destination's owned Playwright driver + CDP connection, via
-            #    its one-shot release() (NOT close(), which is the manager's
-            #    per-recycle hook). release() disconnects the CDP session and
-            #    stops the driver; per Playwright that does NOT close a
-            #    connect_over_cdp browser, so the operator's EHR browser stays
-            #    open. Duck-typed so a destination without owned resources (the
-            #    test FakeDestination, the FHIR pusher) is simply skipped.
-            tracking.close()
-            release = getattr(destination, "release", None)
-            if callable(release):
-                release()
+        run_id = tracking.begin_run(managed.name)
+        # The engine contract: the CALLER recovers any mid-flight items from a
+        # prior killed run before driving (a re-start resumes cleanly).
+        tracking.recover(run_id)
+        result = UploadEngine(
+            managed, tracking, verifier=verifier, max_attempts=cmd.max_attempts
+        ).run(items, patients, run_id, skiplist=cmd.skiplist, stop=stop)
+        # On a clean finish stamp the run done; an abort already stamped its
+        # own finish_run inside the engine (manage_run defaults True).
+        if result.aborted_reason is None:
+            tracking.finish_run(run_id)
+        # Aggregate verification coverage (PHI-safe - counts + dedup'd
+        # level-shape reason strings only) so the report tells the truth
+        # about which L-levels actually ran for this run, instead of a
+        # blanket "full L0-L6 ladder" claim that does not match what ran.
+        # ``verifier`` is None when --no-verify was passed.
+        coverage = verifier.coverage_summary() if verifier is not None else None
+        report_path = write_run_report(
+            tracking, run_id, cmd.out_dir, verification_coverage=coverage
+        )
+        counts = dict(tracking.counts())
+        # The ExitStack now releases (LIFO): our ledger handle, the destination's
+        # owned Playwright resources, then the output locks — exactly once each.
     return UploadCommandResult(
         counts=counts, aborted_reason=result.aborted_reason, report_path=report_path
     )

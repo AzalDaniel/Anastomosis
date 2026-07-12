@@ -6,7 +6,7 @@ script ("Order Sent" → "Verified" → "Dispensed"…). Charts print a single
 resolved label, so transitions collapse by priority.
 
 The label map and priority table are ported verbatim from the battle-tested
-predecessor (``generate_pdfs.py`` §5, lines 331-405) — the 20-description
+predecessor's escript module — the 20-description
 ``_ESCRIPT_LABEL_MAP`` and the granular ``_ESCRIPT_PRIORITY`` derived
 empirically from 12,906 real documents. The governing rule that table encodes:
 cancellations override Verified, dispensing overrides cancellations, and
@@ -23,12 +23,12 @@ from anastomosis.core.timeutil import to_local
 __all__ = ["resolve_display_date", "resolve_prefix", "resolve_status", "script_prefix"]
 
 # Practices charting on Practice Fusion are US/Eastern; the predecessor hard-
-# rolled UTC→Eastern (generate_pdfs.py:28,425). We converge on the IANA zone
+# rolled UTC→Eastern. We converge on the IANA zone
 # via core.timeutil.to_local (zoneinfo) — same wall-clock result, DST-correct.
 _DISPLAY_TZ = "America/New_York"
 
 # Transaction description (lowercased) → (prefix, status_label).
-# Ported verbatim from generate_pdfs.py:331-351 (_ESCRIPT_LABEL_MAP).
+# Ported verbatim from the predecessor's escript label map.
 # prefix is "ESCRIPT" for electronic, "SCRIPT" for printed/paper.
 _ESCRIPT_LABEL_MAP: dict[str, tuple[str, str]] = {
     "order sent": ("ESCRIPT", "VERIFIED"),
@@ -53,7 +53,7 @@ _ESCRIPT_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 # Priority ranking when one prescription has multiple transactions. Highest
-# wins. Ported verbatim from generate_pdfs.py:362-383 (_ESCRIPT_PRIORITY):
+# wins. Ported verbatim from the predecessor's escript priority table:
 # dispensing > cancellation > Verified; refills/changes/clarifications (10) DO
 # NOT override Verified (50).
 _ESCRIPT_PRIORITY: dict[str, int] = {
@@ -98,9 +98,9 @@ _FALLBACK_PRIORITY: dict[str, int] = {
 def _resolve_via_label_map(
     transactions: list[PrescriptionTransaction],
 ) -> tuple[str, str] | None:
-    """Predecessor resolve_script_label core (gpdfs:385-399): match each
-    transaction's description against _ESCRIPT_LABEL_MAP, keep the highest
-    priority. Returns (prefix, label) or None when nothing matched."""
+    """Match each transaction's description against _ESCRIPT_LABEL_MAP and keep
+    the highest-priority hit. Returns (prefix, label) or None when nothing
+    matched."""
     best: tuple[int, str, str] | None = None
     for tx in transactions:
         description = (tx.description or "").strip().lower()
@@ -124,7 +124,7 @@ def resolve_status(transactions: list[PrescriptionTransaction]) -> str | None:
     resolved = _resolve_via_label_map(transactions)
     if resolved is not None:
         return resolved[1]
-    # Fallback on the clean Status word (gpdfs had no such column; ours does).
+    # Fallback on the clean Status word when no description matched.
     best: str | None = None
     best_rank = 0
     for tx in transactions:
@@ -142,8 +142,8 @@ def resolve_status(transactions: list[PrescriptionTransaction]) -> str | None:
 def resolve_prefix(
     transactions: list[PrescriptionTransaction], destination_type_code: str | None
 ) -> str:
-    """Display prefix, preferring the label map's prefix (gpdfs:394), then the
-    predecessor's paper/print destination inference (gpdfs:402-405)."""
+    """Display prefix: prefer the label map's prefix, else fall back to the
+    paper/print destination inference in :func:`script_prefix`."""
     resolved = _resolve_via_label_map(transactions)
     if resolved is not None:
         return resolved[0]
@@ -151,8 +151,8 @@ def resolve_prefix(
 
 
 def script_prefix(destination_type_code: str | None) -> str:
-    """Destination-based prefix fallback (predecessor gpdfs:402-405): paper /
-    print destinations are plain SCRIPTs, everything else is an ESCRIPT."""
+    """Destination-based prefix fallback: paper / print destinations are plain
+    SCRIPTs, everything else is an ESCRIPT."""
     dt = (destination_type_code or "").lower()
     if "paper" in dt or "print" in dt:
         return "SCRIPT"
@@ -164,8 +164,7 @@ def resolve_display_date(
     prefix: str,
     fallback: datetime | None,
 ) -> datetime | None:
-    """The date the escript line shows (predecessor resolve_script_display_date,
-    gpdfs:408-429).
+    """The date the escript line shows.
 
     For ESCRIPT: the earliest "Order sent" transaction datetime, converted to
     practice-local (Eastern) time. For SCRIPT or when no Order-sent txn exists:

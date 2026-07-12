@@ -35,6 +35,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -45,7 +46,7 @@ from uuid import uuid4
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash
+from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
 __all__ = ["LoadedPack", "PackManifest", "PackStatus", "SectionFlag", "discover_packs"]
 
@@ -145,6 +146,34 @@ def _load_context_builder(path: Path) -> ContextBuilder:
     return cast(ContextBuilder, builder)
 
 
+def _load_context_builder_from_source(source: bytes, path: Path) -> ContextBuilder:
+    """Compile and exec pinned ``context.py`` bytes into a fresh module.
+
+    ``source`` is the exact snapshot bytes the trust hash covered, so the code
+    that runs is provably the code that was hashed — no writer can swap the file
+    between the check and ``exec`` (the TOCTOU the snapshot closes). ``__file__``
+    is set to the real on-disk ``path`` so ``build_context``'s pack-relative asset
+    resolution (``Path(__file__).parent / …``) keeps working; only the CODE is
+    pinned, not those auxiliary assets. Mirrors :func:`_load_context_builder`: a
+    unique ``sys.modules`` name (two packs' ``context.py`` must not collide),
+    popped on failure.
+    """
+    module_name = f"anastomosis._pack_context_{uuid4().hex}"
+    code = compile(source, str(path), "exec")
+    module = types.ModuleType(module_name)
+    module.__file__ = str(path)
+    sys.modules[module_name] = module
+    try:
+        exec(code, module.__dict__)  # noqa: S102 — pinned, hash-gated pack code
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    builder = getattr(module, "build_context", None)
+    if not callable(builder):
+        raise AttributeError("context.py defines no callable build_context")
+    return cast(ContextBuilder, builder)
+
+
 def _load_pack_dir(root: Path, origin: str) -> PackStatus:
     name = root.name
     try:
@@ -162,6 +191,57 @@ def _load_pack_dir(root: Path, origin: str) -> PackStatus:
         if not context_path.is_file():
             raise FileNotFoundError("context.py not found")
         builder = _load_context_builder(context_path)
+    except (ValidationError, OSError, ImportError, AttributeError, yaml.YAMLError) as exc:
+        # Diagnosis carries the exception type and pack-relative detail only —
+        # safe to log, enough to start the re-discovery wizard.
+        return PackStatus(
+            name=name, pack=None, diagnosis=f"{type(exc).__name__}: {exc}", origin=origin
+        )
+    except Exception as exc:  # context.py crashed at import: arbitrary errors
+        return PackStatus(
+            name=name,
+            pack=None,
+            diagnosis=f"context.py failed at import ({type(exc).__name__})",
+            origin=origin,
+        )
+    return PackStatus(
+        name=name,
+        pack=LoadedPack(
+            manifest=manifest, root=root, template_path=template_path, build_context=builder
+        ),
+        origin=origin,
+    )
+
+
+def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
+    """Load a pack from its hashed :class:`PackSnapshot` — the trusted-external path.
+
+    Parses ``pack.yaml`` and executes ``context.py`` from the snapshot's pinned
+    bytes rather than re-reading them, so the loaded/executed content is exactly
+    what the trust hash covered (the TOCTOU close for arbitrary-code execution).
+    Pinning boundary, precisely: ``context.py`` (executable Python) is pinned to
+    execution; ``pack.yaml`` is parsed from pinned bytes; ``template.html``
+    contributes to the hash and its presence is checked here, but the render
+    engine reads it from disk at render time — a Jinja template is a bounded,
+    non-importing surface, and execution-pinning it (render-from-snapshot) is
+    tracked on the backlog. Auxiliary assets (partials, images) are outside the
+    hash entirely. Diagnoses defensively, identically to :func:`_load_pack_dir`.
+    """
+    root = snapshot.root
+    name = root.name
+    try:
+        manifest_bytes = snapshot.files.get("pack.yaml")
+        if manifest_bytes is None:
+            raise FileNotFoundError("pack.yaml not found")
+        manifest = PackManifest.model_validate(yaml.safe_load(manifest_bytes.decode("utf-8")))
+        name = manifest.name
+        if snapshot.files.get("template.html") is None:
+            raise FileNotFoundError("template.html not found")
+        template_path = root / "template.html"
+        context_bytes = snapshot.files.get("context.py")
+        if context_bytes is None:
+            raise FileNotFoundError("context.py not found")
+        builder = _load_context_builder_from_source(context_bytes, root / "context.py")
     except (ValidationError, OSError, ImportError, AttributeError, yaml.YAMLError) as exc:
         # Diagnosis carries the exception type and pack-relative detail only —
         # safe to log, enough to start the re-discovery wizard.
@@ -262,16 +342,20 @@ def _load_trusted_external(
 ) -> PackStatus:
     """Gate one external candidate on its content hash, then load it if allowed.
 
-    The hash is computed and checked BEFORE ``_load_pack_dir`` so an untrusted
-    pack's ``context.py`` is never exec'd. ``trust_new`` records the current hash
+    The pack is read ONCE into a :class:`PackSnapshot`; the hash is computed from
+    the snapshot bytes and, when trusted, those SAME bytes are parsed/executed by
+    :func:`_load_pack_snapshot`. So an untrusted pack's ``context.py`` is never
+    run, and a trusted pack runs exactly the code that was hashed — there is no
+    swap-between-hash-and-exec window. ``trust_new`` records the current hash
     (trust-on-first-use) and proceeds.
     """
-    content_hash = pack_content_hash(root)
+    snapshot = read_pack_snapshot(root)
+    content_hash = snapshot.content_hash
     if trust.is_trusted(root, content_hash):
-        return _load_pack_dir(root, origin)
+        return _load_pack_snapshot(snapshot, origin)
     if trust_new:
         trust.record(root, content_hash)
-        return _load_pack_dir(root, origin)
+        return _load_pack_snapshot(snapshot, origin)
     return PackStatus(
         name=root.name,
         pack=None,

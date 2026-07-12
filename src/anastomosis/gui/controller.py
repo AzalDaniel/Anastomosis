@@ -118,6 +118,16 @@ class EventSink(Protocol):
 class GuiController:
     """The plain-Python brain behind the GUI window (a facade over the consoles)."""
 
+    # The controller's own read-only queries (info/doctor/detect/routes/
+    # destination_status/pack_freshness) are page-agnostic request/response
+    # calls: their authoritative failure delivery is the SYNCHRONOUS return dict
+    # the caller awaits, not an event. They are not one of the five run flows a
+    # page owns, so their defensive error events carry this distinct "query"
+    # flow — no page's flow guard renders it (the return value already did),
+    # which is exactly right: a read-query error never gets mistaken by a page
+    # for one of its own run's terminal events (the P2-5 guard).
+    _QUERY_FLOW = "query"
+
     def __init__(self, sink: EventSink) -> None:
         self._sink = sink
         # The async-job choreography (busy guard + spawn/release/error) lives
@@ -439,7 +449,7 @@ class GuiController:
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._QUERY_FLOW, stage, tag))
         return {"ok": False, "error": tag}
 
     def _acquire(self) -> bool:
@@ -447,6 +457,28 @@ class GuiController:
 
     def _release(self) -> None:
         self._jobs.release()
+
+    # --- window-close barrier surface (read by the shell) -------------------
+
+    @property
+    def busy(self) -> bool:
+        """True while a long-running job holds the busy guard.
+
+        The shell's ``closing`` handler reads this to veto a window close while
+        a run is in flight, so a mid-run close can't interrupt an in-flight
+        PDF/ledger write. Delegates to the one busy guard the job runner owns.
+        """
+        return self._jobs.busy
+
+    def join_active_job(self, timeout: float | None = None) -> bool:
+        """Wait up to ``timeout`` seconds for the active job's worker to finish.
+
+        Returns ``True`` if no job is active or it finished in time, ``False``
+        if a worker is still running. The shell's close barrier uses the veto
+        (see ``busy``); this is the join surface the barrier's fallback path
+        (and its tests) rely on. Delegates to the job runner.
+        """
+        return self._jobs.join(timeout)
 
 
 def _freshest_evidence(entry: DestinationEntry) -> date | None:

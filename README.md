@@ -11,10 +11,12 @@ Every certified US EHR is legally required to export a practice's full
 Electronic Health Information (21st Century Cures Act, §170.315(b)(10)) — but
 the law doesn't say in what *format*. So practices that exercise their right
 get a pile of raw vendor tables, and the things that matter most — the
-clinical notes — routinely fail to survive migration to a new system. 73% of
-healthcare organizations hit significant complications during EHR migrations;
-legacy-archive vendors charge $5,000–$150,000; small practices get priced out
-or locked in.
+clinical notes — routinely fail to survive migration to a new system: a
+systematic review of EHR-to-EHR transitions identifies data migration and
+continuity of the legacy record as persistent, under-addressed risk areas
+(Miake-Lye et al., JGIM 2023, doi:10.1007/s11606-023-08276-3), while commercial
+legacy-archive subscriptions put simple retention behind recurring fees; small
+practices get priced out or locked in.
 
 Anastomosis is the missing last mile, free and open source:
 
@@ -43,18 +45,22 @@ Anastomosis is the missing last mile, free and open source:
    exceeds the coverage.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
-   does. A cross-EHR migration moves the **structured C-CDA/FHIR payload** the
-   destination imports natively; the rendered PDF is the human-readable archive
-   and upload fallback, never a forgery of another vendor's house style. Or
-   build a **searchable offline archive** — plain folders, PDFs, and JSON
-   readable for decades — in place of a paid legacy-archive subscription.
+   does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
+   **structured C-CDA/FHIR payload** for destinations that import C-CDA/FHIR, an
+   upload manifest, and a verified route plan — but files nothing itself; `anast
+   upload` EXECUTES browser-route delivery, and API-route execution is on the
+   roadmap.
+   The rendered PDF is the human-readable archive and upload fallback, never a
+   forgery of another vendor's house style. Or build a **searchable offline
+   archive** — plain folders, PDFs, and JSON readable for decades — in place of a
+   paid legacy-archive subscription.
 
 Local-first by design: **the core pipeline makes zero network calls.**
 Your records never leave your machine.
 
 ## Status
 
-**v0.5.0 (alpha)** — the fifth alpha, on
+**v0.6.0 (alpha)** — the sixth alpha, on
 [PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
 [CHANGELOG.md](CHANGELOG.md) for what shipped, [DESIGN.md](DESIGN.md) for the
@@ -70,6 +76,7 @@ design record, and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 | Windows desktop installer — bundles Chromium offline, installs WebView2 if absent, with an installed self-check | ✅ v0.3.0 |
 | PHI-at-rest & log hardening — Windows NTFS ACLs on every output dir, redacting log handler wired at both entry points, CodeQL scanning, design/provenance record | ✅ v0.4.0 |
 | Run-scoped log identifiers (no raw source GUIDs in logs), git-free PHI scanner, one-click release path shipping the installer | ✅ v0.5.0 |
+| Claims-match-runtime pass — honest `migrate` PREPARED outcome, QA on every render mode, one upload verdict for CLI + GUI, flow-scoped GUI events, race-free pack trust | ✅ v0.6.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -130,8 +137,10 @@ The source format is auto-detected (or pass `--source pf-tebra`/`ccda`/`fhir-r4`
 QA-verified by default; `anast info` lists every available source adapter and
 template pack.
 
-Migrate from one EHR to another — emitting both the structured C-CDA payload the
-target imports and human-readable charts:
+Migrate from one EHR to another — emitting both the structured C-CDA payload for
+the target's C-CDA import (validated for round-trip fidelity through our own
+parser; full CDA-schema/Schematron conformance is on the M6 roadmap) and
+human-readable charts:
 
 ```bash
 anast migrate ./my_ehi_export --from pf-tebra --to tebra --out ./migration

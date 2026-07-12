@@ -7,7 +7,7 @@ ambulatory exports chart in by convention — adapters override them when a
 source declares its own.
 
 The PRIMARY LOINC for each vital is the one the battle-tested predecessor
-charted against (generate_pdfs.py:540-553, the ``LOINC`` table that ran on
+charted against (the predecessor'sthe ``LOINC`` table that ran on
 12,906 real documents). Modern C-CDA / Synthea editions legitimately chart
 some vitals under newer LOINC siblings, so those ride along as ``aliases``
 that resolve to the same vital kind (dual-map, old code first).
@@ -32,7 +32,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class VitalCode:
-    loinc: str  # PRIMARY code (predecessor generate_pdfs.py:540-553)
+    loinc: str  # PRIMARY code (predecessor-verified primary code)
     display: str
     unit: str  # default UCUM unit; adapters override from source metadata
     aliases: tuple[str, ...] = field(default=())  # newer C-CDA/Synthea editions
@@ -41,18 +41,18 @@ class VitalCode:
 VITALS: Mapping[str, VitalCode] = MappingProxyType(
     {
         "height": VitalCode("8302-2", "Body height", "[in_i]"),
-        # weight: predecessor 3141-9 (gpdfs:542) primary; 29463-7 is the modern
+        # weight: 3141-9 is the primary weight LOINC; 29463-7 is the modern
         # "Body weight" sibling C-CDA/Synthea use — both are body weight.
         "weight": VitalCode("3141-9", "Body weight", "[lb_av]", aliases=("29463-7",)),
         "bmi": VitalCode("39156-5", "Body mass index (BMI) [Ratio]", "kg/m2"),
-        # BMI percentile: predecessor 59576-9 (gpdfs:544) — was absent from ours.
+        # BMI percentile LOINC.
         "bmi_percentile": VitalCode("59576-9", "Body mass index (BMI) [Percentile]", "%"),
         "systolic_bp": VitalCode("8480-6", "Systolic blood pressure", "mm[Hg]"),
         "diastolic_bp": VitalCode("8462-4", "Diastolic blood pressure", "mm[Hg]"),
         "heart_rate": VitalCode("8867-4", "Heart rate", "/min"),
         "respiratory_rate": VitalCode("9279-1", "Respiratory rate", "/min"),
         "temperature": VitalCode("8310-5", "Body temperature", "[degF]"),
-        # O2 sat: predecessor 2708-6 (gpdfs:550) primary; 59408-5 is the modern
+        # O2 sat: 2708-6 is the primary code; 59408-5 is the modern
         # "by Pulse oximetry" sibling — both are arterial SpO2.
         "oxygen_saturation": VitalCode(
             "2708-6", "Oxygen saturation in Arterial blood", "%", aliases=("59408-5",)
@@ -60,7 +60,7 @@ VITALS: Mapping[str, VitalCode] = MappingProxyType(
         "pain_severity": VitalCode(
             "72514-3", "Pain severity - 0-10 verbal numeric rating [Score]", "{score}"
         ),
-        # head circumference: predecessor 8287-5 (gpdfs:552) primary; 9843-4 is
+        # head circumference: 8287-5 is the primary code; 9843-4 is
         # the modern "Head Occipital-frontal circumference" sibling.
         "head_circumference": VitalCode(
             "8287-5", "Head Occipital-frontal circumference", "[in_i]", aliases=("9843-4",)
@@ -70,7 +70,7 @@ VITALS: Mapping[str, VitalCode] = MappingProxyType(
 
 # LOINC answer codes for the 0-10 pain scale (answer list for 72514-3).
 # 0-4 = LA6111-4…LA6115-5 and 5-10 = LA6116-3…LA6121-3 are the predecessor's
-# _PAIN_LA_MAP (generate_pdfs.py:515-518) — the LA61xx run PF actually emits.
+# _PAIN_LA_MAP (the predecessor's) — the LA61xx run PF actually emits.
 # 5-10 also carry the modern LA10137-0… answer list as aliases (see
 # PAIN_LA_TO_LEVEL) so newer exports still translate.
 PAIN_SEVERITY_LA: Mapping[int, str] = MappingProxyType(
@@ -90,7 +90,7 @@ PAIN_SEVERITY_LA: Mapping[int, str] = MappingProxyType(
 )
 
 # Inverse map (answer code → numeric level), the predecessor's _PAIN_LA_MAP
-# direction (generate_pdfs.py:515-518). The LA61xx run is primary (old-first);
+# direction (the predecessor's). The LA61xx run is primary (old-first);
 # the LA10137-0… run is kept as accepted aliases for 5-10 AFTER the old codes.
 PAIN_LA_TO_LEVEL: Mapping[str, int] = MappingProxyType(
     {
@@ -120,30 +120,30 @@ PAIN_LA_TO_LEVEL: Mapping[str, int] = MappingProxyType(
 def pain_display(value: str | None) -> str | None:
     """Convert a pain answer code or numeric string to its 0-10 display value.
 
-    Ports the predecessor's ``_pain_conv`` (generate_pdfs.py:520-538): strip an
+    Ports the predecessor's ``_pain_conv`` (the predecessor's): strip an
     optional ``LOINC:`` prefix, translate a known LA answer code to its number,
     accept a raw 0-10 numeric, else fall back to the raw value (lossless).
     """
     if not value:
         return None
     s = str(value).strip()
-    if s.startswith("LOINC:"):  # gpdfs:526 — strip possible "LOINC:" prefix
+    if s.startswith("LOINC:"):  # strip a possible "LOINC:" prefix
         s = s[6:]
-    if s in PAIN_LA_TO_LEVEL:  # gpdfs:529 — mapped answer code
+    if s in PAIN_LA_TO_LEVEL:  # a known LA answer code → its 0-10 level
         return str(PAIN_LA_TO_LEVEL[s])
-    try:  # gpdfs:532 — raw numeric 0-10
+    try:  # accept a raw 0-10 numeric
         n = int(float(s))
         if 0 <= n <= 10:
             return str(n)
     except (ValueError, TypeError):
         pass
-    return s  # gpdfs:538 — fallback to raw
+    return s  # fallback: return the raw value unchanged (lossless)
 
 
 def bmi_metric(weight_kg: float | None, height_cm: float | None) -> float | None:
     """BMI (kg/m², 2 decimals) from metric vitals; ``None`` when not computable.
 
-    Two decimals matches the predecessor's BMI rendering (generate_pdfs.py:543
+    Two decimals matches the predecessor's BMI rendering (the predecessor's
     ``f"{float(v):.2f}"`` and the auto-calc at :592).
     """
     if not weight_kg or not height_cm or weight_kg <= 0 or height_cm <= 0:
@@ -156,7 +156,7 @@ def bmi_imperial(weight_lb: float | None, height_in: float | None) -> float | No
 
     Sources frequently chart height and weight but omit BMI; the adapter's
     BMI auto-calc fills the gap with this (the standard CDC 703 factor).
-    Two decimals matches the predecessor (generate_pdfs.py:543,592).
+    Two decimals matches the predecessor ().
     """
     if not weight_lb or not height_in or weight_lb <= 0 or height_in <= 0:
         return None

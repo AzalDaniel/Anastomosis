@@ -426,7 +426,7 @@ def test_logo_asset_cannot_escape_pack_root(
     assert "OUTSIDE" not in ctx["logo_data_uri"]
 
 
-# --- payment information (predecessor empty states, gpdfs:950-961) --------------
+# --- payment information (guarantor empty states) -------------------------------
 
 
 def _payment_ctx(pack: LoadedPack, record: Any) -> dict[str, str]:
@@ -438,7 +438,7 @@ def test_payment_fixture_values_match_predecessor_shapes(
 ) -> None:
     record = next(r for r in records if r.patient.guarantor is not None)
     payment = _payment_ctx(pack, record)
-    # Address is the comma-joined line1, city, state, zip (gpdfs:944-948).
+    # Address is the comma-joined line1, city, state, zip.
     assert payment["guarantor_addr"] == "789 Sample Rd, Springfield, WA, 98103"
     assert payment["dob"] == "03/15/1988"
     assert payment["primary_phone"] == "(206) 555-0163"

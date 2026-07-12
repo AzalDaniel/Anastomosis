@@ -454,3 +454,22 @@ def test_pipeline_never_logs_patient_names(
     assert ids, "fixture must expose patient ids to guard against"
     for pid in ids:
         assert pid not in blob, "a raw source patient GUID leaked into logs"
+
+
+def test_archive_delivered_log_never_carries_output_path(
+    tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
+) -> None:
+    """The archive 'delivered' summary logs counts only — never the (operator-
+    chosen, possibly patient-named) output PATH (SECURITY.md: never a path)."""
+    import logging
+
+    # A directory whose NAME stands in for a patient-derived operator dir.
+    out = tmp_path / "Fixture_Ada_archive"
+    with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.archive.archive"):
+        ArchiveDeliverer().deliver(records, None, out)
+    blob = "\n".join(r.getMessage() for r in caplog.records)
+    # No os.sep-joined output-dir string (and no bare dir name) reaches the log.
+    assert str(out) not in blob
+    assert out.name not in blob
+    # The PHI-safe delivered-summary count line IS present.
+    assert "archive delivered" in blob

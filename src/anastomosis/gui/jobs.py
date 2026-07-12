@@ -53,21 +53,30 @@ class GuiJob:
     ``name`` is the daemon-thread suffix (``anast-{name}``); ``stage`` is
     the event-stage label error events carry (defaults to ``name`` — the
     pipeline/migration jobs use their method names, matching the events
-    the JS already routes). ``on_start`` runs after the busy guard is
-    acquired and before the worker spawns (emit the start event, stash
-    per-run state); ``cleanup`` runs in the worker's ``finally`` AND on a
-    spawn failure (clear per-run state), always before the guard releases.
+    the JS already routes). ``flow`` is the owning operation family the
+    runner stamps onto the error events IT raises (the safety net + the
+    spawn-failure path), so those events reach the same page as the job's
+    own events; it defaults to ``name`` for jobs whose family equals their
+    thread name. ``on_start`` runs after the busy guard is acquired and
+    before the worker spawns (emit the start event, stash per-run state);
+    ``cleanup`` runs in the worker's ``finally`` AND on a spawn failure
+    (clear per-run state), always before the guard releases.
     """
 
     name: str
     worker: Callable[[], None]
     stage: str | None = None
+    flow: str | None = None
     on_start: Callable[[], None] | None = None
     cleanup: Callable[[], None] | None = None
 
     @property
     def stage_name(self) -> str:
         return self.stage if self.stage is not None else self.name
+
+    @property
+    def flow_name(self) -> str:
+        return self.flow if self.flow is not None else self.name
 
 
 class GuiJobRunner:
@@ -77,6 +86,12 @@ class GuiJobRunner:
         self._emit = emit
         self._lock = threading.Lock()
         self._busy = False
+        # A handle on the most recently spawned worker, kept so the shell's
+        # window-close barrier can tell a run is in flight (``busy``) and wait
+        # for its in-flight PDF/ledger writes to finish (``join``). The worker
+        # stays ``daemon=True`` — a wedged run must never make the process
+        # unkillable — so this handle is a graceful barrier, not a hard lock.
+        self._worker: threading.Thread | None = None
 
     # --- the busy guard (shared by sync and async entries) -------------------
 
@@ -90,6 +105,30 @@ class GuiJobRunner:
     def release(self) -> None:
         with self._lock:
             self._busy = False
+
+    @property
+    def busy(self) -> bool:
+        """True while a run holds the guard (the shell's close barrier reads this)."""
+        with self._lock:
+            return self._busy
+
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait up to ``timeout`` seconds for the active worker to finish.
+
+        Returns ``True`` when no worker is active or the active one finished
+        within ``timeout``; ``False`` when a worker is still running after the
+        timeout. The shell's window-close barrier uses this so an in-flight
+        PDF/ledger write is given a chance to complete before the window goes.
+        The worker handle is read under the lock, but the join happens OUTSIDE
+        it — the worker's ``finally`` calls ``release`` (which takes the lock),
+        so holding it here would deadlock.
+        """
+        with self._lock:
+            worker = self._worker
+        if worker is None:
+            return True
+        worker.join(timeout)
+        return not worker.is_alive()
 
     # --- the async choreography ----------------------------------------------
 
@@ -111,7 +150,7 @@ class GuiJobRunner:
         except Exception as exc:  # on_start must never leak the busy flag
             self._cleanup(job)
             self.release()
-            return self._fail(job.stage_name, exc)
+            return self._fail(job, exc)
 
         def _run() -> None:
             try:
@@ -120,14 +159,16 @@ class GuiJobRunner:
                 # Safety net: a stray exception on the daemon thread becomes
                 # a PHI-safe error event instead of dying silently. Job
                 # bodies with outcome-specific terminal events handle their
-                # own exceptions and never reach this.
-                self._emit(error_event(job.stage_name, exc_tag(exc)))
+                # own exceptions and never reach this. The event carries the
+                # job's own flow so it reaches the same page as its siblings.
+                self._emit(error_event(job.flow_name, job.stage_name, exc_tag(exc)))
             finally:
                 self._cleanup(job)
                 self.release()
 
+        worker = threading.Thread(target=_run, name=f"anast-{job.name}", daemon=True)
         try:
-            threading.Thread(target=_run, name=f"anast-{job.name}", daemon=True).start()
+            worker.start()
         except Exception as exc:
             # Thread.start() can raise (e.g. RuntimeError under thread
             # exhaustion). The worker never runs, so its finally never fires —
@@ -135,7 +176,9 @@ class GuiJobRunner:
             # error shape every job's spawn-failure path used before.
             self._cleanup(job)
             self.release()
-            return self._fail(job.stage_name, exc)
+            return self._fail(job, exc)
+        with self._lock:
+            self._worker = worker
         return {"ok": True, "started": True}
 
     # --- internals -------------------------------------------------------------
@@ -148,7 +191,7 @@ class GuiJobRunner:
         except Exception as exc:  # cleanup must never mask the real outcome
             logger.warning("gui job cleanup failed (%s)", exc_tag(exc))
 
-    def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
+    def _fail(self, job: GuiJob, exc: BaseException) -> dict[str, object]:
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(job.flow_name, job.stage_name, tag))
         return {"ok": False, "error": tag}
