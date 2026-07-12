@@ -281,6 +281,125 @@ def _run_pack_mode(
     )
 
 
+# --- standard-C-CDA-view QA -------------------------------------------------
+#
+# The neutral/pack path reaches QA through ``run_pipeline``'s ``_run_qa_stage``
+# (one document per encounter). The standard-C-CDA-view path has no per-encounter
+# documents — it renders ONE whole-patient PDF each — so it needs its own QA
+# stage. Only the two DOCUMENT-GENERIC engine checks apply to a whole-patient
+# view; the encounter-scoped checks are recorded as skipped-with-reason rather
+# than silently omitted (the L0-L6 skip-with-reason ethos).
+
+# The engine checks that apply to a whole-patient standard C-CDA view.
+_CCDA_DOC_CHECKS: tuple[str, ...] = ("data_integrity", "layout_pagination")
+
+# The encounter-scoped engine checks, recorded as skipped WITH A REASON (not
+# omitted). A skip is Verdict.PASS + a ``skipped: ...`` finding — the same idiom
+# ``VitalsLoincCheck`` uses when its section is disabled.
+_CCDA_SKIPPED_CHECKS: dict[str, str] = {
+    "vitals_loinc": (
+        "skipped: vitals are encounter-scoped; the standard C-CDA view is a "
+        "whole-patient document with no single-encounter vitals context"
+    ),
+    "date_staleness": (
+        "skipped: date-staleness compares the chart against one encounter's date "
+        "of service; the standard C-CDA view is whole-patient (no single DOS)"
+    ),
+}
+
+# The standard C-CDA view always renders on Letter geometry (see
+# ``reconstruct.ccda_standard.renderer._default_renderer``).
+_CCDA_PAGE_SIZE = "Letter"
+
+
+def _run_ccda_standard_qa(
+    records: list[PatientRecord],
+    charts: Path,
+    emit: Callable[[StageEvent], None],
+) -> None:
+    """Verify each whole-patient standard-C-CDA-view PDF — the ccda-standard
+    counterpart of the pipeline's QA stage.
+
+    Mirrors ``pipeline._run_qa_stage``: write ``qa_report.json`` next to the PDFs,
+    emit a ``STAGE_QA`` counts event, and raise :class:`PipelineError` (exit 1,
+    ``kind="qa_failed"``) when the report is not OK. A missing PyMuPDF (the
+    optional ``render`` extra) downgrades QA to a no-op with a skip event, exactly
+    as the neutral path does.
+
+    It runs the two DOCUMENT-GENERIC engine checks over each per-patient PDF:
+
+    * ``data_integrity`` — the patient identity anchor is on the page. The HL7
+      stylesheet canonicalizes the patient NAME (uppercase family + non-breaking
+      spaces), so the shared date/name matcher cannot assert the mixed-case name;
+      the per-record context therefore anchors the check on the DOB (the identity
+      anchor this view renders in a matchable spelling) using the check's OWN
+      conditional skips — a falsy ``display_name`` skips the name sub-check and a
+      DOS-less encounter skips the DOS sub-check. This is the "appropriate
+      per-record context" for a whole-patient document.
+    * ``layout_pagination`` — no empty/blank pages; page geometry as declared.
+
+    The encounter-scoped checks (``vitals_loinc``, ``date_staleness``) cannot be
+    satisfied per-patient; they are recorded as skipped WITH A REASON
+    (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently omitted.
+    """
+    from anastomosis.core.model import Encounter
+    from anastomosis.pipeline import STAGE_QA, PipelineError, StageEvent
+    from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
+
+    try:
+        from anastomosis.qa import Verdict, run_qa, write_report
+        from anastomosis.qa.base import CheckResult, engine_checks
+    except ImportError as exc:
+        if exc.name != "fitz":  # only the optional dependency may downgrade QA
+            raise
+        emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
+        return
+
+    by_name = {check.name: check for check in engine_checks()}
+    checks = [by_name[name] for name in _CCDA_DOC_CHECKS]
+
+    documents: list[tuple[Path, Encounter, PatientRecord]] = []
+    for record in records:
+        # Anchor data_integrity on the DOB: a patient copy with the name blanked
+        # (display_name falsy → the name sub-check self-skips) and a DOS-less
+        # encounter (the DOS sub-check self-skips). See the docstring for why the
+        # mixed-case name is not assertable against the HL7 stylesheet's output.
+        anchor_patient = record.patient.model_copy(
+            update={
+                "given_name": None,
+                "middle_name": None,
+                "family_name": None,
+                "suffix": None,
+            }
+        )
+        anchor_record = record.model_copy(update={"patient": anchor_patient})
+        encounter = Encounter(id=record.patient.id, patient_id=record.patient.id)
+        documents.append((ccda_standard_doc_path(charts, record), encounter, anchor_record))
+
+    report = run_qa(documents, section_flags={}, page_size=_CCDA_PAGE_SIZE, checks=checks)
+    # Record the encounter-scoped checks as skipped-with-reason (never omitted),
+    # so the report shows the SAME check set the neutral path reports.
+    for doc_qa in report.documents:
+        for name, reason in _CCDA_SKIPPED_CHECKS.items():
+            doc_qa.results.append(CheckResult(name, Verdict.PASS, [reason]))
+
+    write_report(report, charts)
+    emit(
+        StageEvent(
+            STAGE_QA,
+            counts={
+                "pass": report.count(Verdict.PASS),
+                "warn": report.count(Verdict.WARN),
+                "fail": report.count(Verdict.FAIL),
+            },
+        )
+    )
+    if not report.ok:
+        raise PipelineError(
+            f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
+        )
+
+
 def _run_ccda_standard(
     cmd: MigrationCommand, transit: TransitMap, on_event: EventSink | None
 ) -> MigrationResult:
@@ -337,6 +456,13 @@ def _run_ccda_standard(
                     kind="render_failed",
                     failed=tuple(view.failed),
                 )
+
+            # Verify every rendered whole-patient view before delivering — the
+            # ccda-standard counterpart to the pipeline's QA stage. A QA FAIL
+            # aborts HERE (exit 1), before the manifest and the ccda payload are
+            # written, exactly as run_pipeline's QA stage precedes delivery.
+            if cmd.qa and view.documents:
+                _run_ccda_standard_qa(records, charts, emit)
 
             # Write the upload manifest by default (a migration intends to
             # deliver). The whole-patient view has no RenderedDoc list, so the

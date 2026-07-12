@@ -1,8 +1,8 @@
 # AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PDF→patient render index that the engine writes alongside
-charts (PR-O — the patient-safety hardening that replaces the old
+charts — the patient-safety hardening that replaces the old
 ``{family}_{given}_`` filename-prefix guessing with explicit ``patient_id``
-attribution)."""
+attribution."""
 
 from __future__ import annotations
 

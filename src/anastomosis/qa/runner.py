@@ -18,7 +18,7 @@ from pathlib import Path
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 
-from . import checks as _checks  # noqa: F401 — registers the engine checks
+from . import checks as _checks  # registers the engine checks; also primes the shared snapshot
 from .base import CheckResult, QACheck, QAContext, Verdict, engine_checks
 
 __all__ = ["DocumentQA", "QAReport", "run_qa", "write_report"]
@@ -71,6 +71,10 @@ def run_qa(
             section_flags=section_flags or {},
             page_size=page_size,
         )
+        # Extract the PDF's text + geometry once for this document; the engine
+        # checks share it instead of each re-opening the file (up to 4x per run).
+        # Lazy, so a corrupt PDF still fails per-check below, never here.
+        _checks.prime_snapshot_cache(ctx)
         doc_qa = DocumentQA(path=pdf_path, encounter_id=encounter.id)
         for check in active:
             try:

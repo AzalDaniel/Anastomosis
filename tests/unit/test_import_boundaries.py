@@ -84,7 +84,7 @@ def test_browser_attach_module_loads_without_playwright_extra() -> None:
 
 def test_cli_make_destination_aliases_attach_destination() -> None:
     """Long-standing tests monkeypatch ``anastomosis.cli._make_destination``;
-    PR-P kept the alias so that contract still holds. The alias must point
+    the alias is kept so that contract still holds. The alias must point
     at the canonical :func:`attach_destination` (not a stale re-implementation).
     """
     from anastomosis.cli import _make_destination
@@ -96,8 +96,8 @@ def test_cli_make_destination_aliases_attach_destination() -> None:
 # --- public verification imports (circular-import regression) --------------
 #
 # A circular import between ``deliver.verify.composite`` and
-# ``deliver.browser.reports`` snuck past PR-Q's full-suite run because the
-# test runner's import order happened to load the modules in a safe sequence
+# ``deliver.browser.reports`` can hide from a full-suite run because the
+# test runner's import order happens to load the modules in a safe sequence
 # first. A FRESH process can hit the cycle and fail; the subprocess tests
 # below run each public import in its own interpreter so the cycle cannot
 # be masked by prior imports of the test suite.

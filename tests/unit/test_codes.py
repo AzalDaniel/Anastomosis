@@ -1,8 +1,8 @@
 # AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for core.codes — vital LOINC map, pain answers, BMI math.
 
-These assert the DUAL-MAP truth ported from the predecessor (generate_pdfs.py
-§8): the predecessor's LOINC is PRIMARY, the modern C-CDA/Synthea sibling is an
+These assert the DUAL-MAP truth ported from the predecessor's vitals table:
+the predecessor's LOINC is PRIMARY, the modern C-CDA/Synthea sibling is an
 accepted alias.
 """
 
@@ -25,15 +25,15 @@ def test_vitals_map_core_codes() -> None:
 
 
 def test_predecessor_primary_loincs_and_modern_aliases() -> None:
-    # Predecessor charted these codes (gpdfs:542,550,552); the modern siblings
-    # ride along as aliases (old code first).
+    # The primary LOINCs come first; the modern siblings ride along as
+    # aliases (primary first).
     assert VITALS["weight"].loinc == "3141-9"
     assert "29463-7" in VITALS["weight"].aliases
     assert VITALS["oxygen_saturation"].loinc == "2708-6"
     assert "59408-5" in VITALS["oxygen_saturation"].aliases
     assert VITALS["head_circumference"].loinc == "8287-5"
     assert "9843-4" in VITALS["head_circumference"].aliases
-    # BMI Percentile (gpdfs:544) — was absent before this port.
+    # BMI Percentile LOINC.
     assert VITALS["bmi_percentile"].loinc == "59576-9"
 
 
@@ -54,11 +54,11 @@ def test_pain_answer_list_covers_full_scale_with_old_codes() -> None:
 
 
 def test_pain_display_old_codes_primary() -> None:
-    # Predecessor _PAIN_LA_MAP (gpdfs:515-518) — the 5-10 codes that previously
-    # leaked raw to the chart.
+    # The LA61xx 5-10 answer codes map to their numeric level (they must not
+    # leak to the chart as raw codes).
     assert pain_display("LA6116-3") == "5"
     assert pain_display("LA6121-3") == "10"
-    # LOINC: prefix stripped (gpdfs:526).
+    # LOINC: prefix stripped.
     assert pain_display("LOINC:LA6118-9") == "7"
     # Modern 5-10 answer list accepted as a fallback alias.
     assert pain_display("LA10137-0") == "5"
@@ -77,7 +77,7 @@ def test_pain_inverse_map_includes_old_and_alias() -> None:
 
 def test_bmi_imperial_cdc_formula_two_decimals() -> None:
     # 703 * lb / in^2 — the auto-calc used when a source charts height+weight
-    # but omits BMI. 2dp matches the predecessor (gpdfs:543,592).
+    # but omits BMI. Rounded to 2 decimal places.
     assert bmi_imperial(150, 65) == 24.96
     assert bmi_imperial(203, 69) == 29.97
 

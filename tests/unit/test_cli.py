@@ -561,9 +561,29 @@ def test_explicit_source_does_not_print_detected_line(
 import anastomosis.reconstruct.ccda_standard.renderer as ccda_renderer  # noqa: E402
 
 
+class _PointInsertChromium(_FakeChromium):
+    """A fake for the WHOLE-PATIENT C-CDA view, which is far larger than one
+    ``insert_textbox`` rect can hold — the shared fake overflows it into a
+    blank page that ccda-standard QA correctly fails. Point-insertion of the
+    view's first lines (patient header incl. the DOB identity anchor) renders
+    a real, QA-passable page."""
+
+    def render(self, html: str, pdf_path: Path) -> None:
+        import fitz
+
+        from anastomosis.core.textutil import html_to_text
+
+        lines = (html_to_text(html) or "(empty)").splitlines()
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
+        doc.save(str(pdf_path))
+        doc.close()
+
+
 def _patch_migration_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
-    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _FakeChromium())
+    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _PointInsertChromium())
 
 
 def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
@@ -589,6 +609,13 @@ def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     # A migration writes the upload manifest by default; the additive line fires.
     assert "manifest: 6 item(s)" in normalized
     assert (out / "charts" / "upload_manifest.json").is_file()
+    # migrate PREPARES, it does not deliver: the prepared notice prints at exit 0
+    # and the output NEVER claims delivery (a chosen route is a plan, not a receipt).
+    lowered = normalized.lower()
+    assert "migration artifacts prepared" in normalized
+    assert "route plan: ccda_import" in normalized
+    assert "delivery has not been executed" in lowered
+    assert "delivered" not in lowered
     # BOTH artifacts on disk.
     assert len(list((out / "charts").glob("*.pdf"))) == 6
     assert list((out / "ccda").glob("*.xml"))

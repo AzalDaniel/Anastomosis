@@ -9,6 +9,7 @@ doesn't ship.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -29,10 +30,82 @@ __all__ = [
 # US Letter in PDF points; A4 for completeness.
 _PAGE_SIZES = {"Letter": (612.0, 792.0), "A4": (595.0, 842.0)}
 
+# Where the runner stashes the shared per-document snapshot on the (frozen)
+# QAContext. Read via getattr so a bare ctx (a third-party QA pack building its
+# own context) simply has no cache and each check opens the file itself.
+_CACHE_ATTR = "_qa_page_snapshot"
 
-def _pages_text(pdf_path: Path) -> list[str]:
+
+@dataclass(frozen=True)
+class PageInfo:
+    """One rendered page captured in a single PDF open: its text and geometry.
+
+    LayoutPagination needs page geometry; the other checks only join the text.
+    Capturing both once lets every engine check share one ``fitz.open``.
+    """
+
+    text: str
+    width: float
+    height: float
+
+
+def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
+    """Open the PDF once and capture per-page text + geometry.
+
+    Text extraction is the expensive part and every engine check reads the same
+    rendered document, so the runner primes a shared cache
+    (:func:`prime_snapshot_cache`) and the checks read from it instead of each
+    calling ``fitz.open``. A corrupt/unreadable PDF raises here — but this is
+    always called from inside a check, so it surfaces as that check's CHECK
+    CRASHED finding rather than aborting the batch.
+    """
     with fitz.open(pdf_path) as doc:
-        return [page.get_text() for page in doc]
+        return [
+            PageInfo(text=page.get_text(), width=page.rect.width, height=page.rect.height)
+            for page in doc
+        ]
+
+
+class _SnapshotCache:
+    """A lazily-populated page snapshot for one document, shared across a run's
+    checks so the PDF is opened and text-extracted exactly once."""
+
+    __slots__ = ("_pages",)
+
+    def __init__(self) -> None:
+        self._pages: list[PageInfo] | None = None
+
+    def get(self, pdf_path: Path) -> list[PageInfo]:
+        if self._pages is None:
+            self._pages = _open_snapshot(pdf_path)
+        return self._pages
+
+
+def prime_snapshot_cache(ctx: QAContext) -> None:
+    """Attach a lazy per-document snapshot cache to ``ctx`` so the run's checks
+    share one ``fitz.open`` instead of opening the PDF once per check.
+
+    ``QAContext`` is a frozen dataclass, so the cache slot is set through
+    ``object.__setattr__`` — the same escape hatch frozen dataclasses use
+    internally. The cache is lazy: a corrupt PDF still raises inside the first
+    check that touches it (surfacing as that check's CHECK CRASHED finding),
+    never here, so batch behavior is unchanged. Idempotent per document.
+    """
+    object.__setattr__(ctx, _CACHE_ATTR, _SnapshotCache())
+
+
+def _snapshot(pdf_path: Path, ctx: QAContext) -> list[PageInfo]:
+    """The per-page snapshot for ``pdf_path``, from the shared cache when the
+    runner primed one, else opened directly (bare third-party ctx)."""
+    cache: _SnapshotCache | None = getattr(ctx, _CACHE_ATTR, None)
+    if cache is None:
+        return _open_snapshot(pdf_path)
+    return cache.get(pdf_path)
+
+
+def _document_text(pdf_path: Path, ctx: QAContext) -> str:
+    """The whole document's text, joined from the shared per-document snapshot."""
+    return "\n".join(page.text for page in _snapshot(pdf_path, ctx))
 
 
 def _present(needle: str, text: str) -> bool:
@@ -63,7 +136,7 @@ class DataIntegrityCheck:
     name = "data_integrity"
 
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
-        text = "\n".join(_pages_text(pdf_path))
+        text = _document_text(pdf_path, ctx)
         findings: list[str] = []
         warnings: list[str] = []
 
@@ -93,22 +166,22 @@ class LayoutPaginationCheck:
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
         findings: list[str] = []
         warn_only = True
-        with fitz.open(pdf_path) as doc:
-            if doc.page_count == 0:
-                return CheckResult(self.name, Verdict.FAIL, ["document has no pages"])
-            expected = _PAGE_SIZES.get(ctx.page_size)
-            if expected is None:
-                findings.append(f"unrecognized page size {ctx.page_size!r}: geometry not verified")
-            for index, page in enumerate(doc, start=1):
-                if not page.get_text().strip():
-                    findings.append(f"page {index} is blank")
-                    warn_only = False
-                if expected is not None:
-                    width, height = page.rect.width, page.rect.height
-                    if abs(width - expected[0]) > 2 or abs(height - expected[1]) > 2:
-                        findings.append(
-                            f"page {index} is {width:.0f}x{height:.0f}pt, expected {ctx.page_size}"
-                        )
+        snapshot = _snapshot(pdf_path, ctx)
+        if not snapshot:
+            return CheckResult(self.name, Verdict.FAIL, ["document has no pages"])
+        expected = _PAGE_SIZES.get(ctx.page_size)
+        if expected is None:
+            findings.append(f"unrecognized page size {ctx.page_size!r}: geometry not verified")
+        for index, page in enumerate(snapshot, start=1):
+            if not page.text.strip():
+                findings.append(f"page {index} is blank")
+                warn_only = False
+            if expected is not None:
+                width, height = page.width, page.height
+                if abs(width - expected[0]) > 2 or abs(height - expected[1]) > 2:
+                    findings.append(
+                        f"page {index} is {width:.0f}x{height:.0f}pt, expected {ctx.page_size}"
+                    )
         if not findings:
             return CheckResult(self.name, Verdict.PASS, [])
         return CheckResult(self.name, Verdict.WARN if warn_only else Verdict.FAIL, findings)
@@ -122,7 +195,7 @@ class VitalsLoincCheck:
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
         if not ctx.section_flags.get("vitals", True):
             return CheckResult(self.name, Verdict.PASS, ["vitals section disabled by flags"])
-        text = "\n".join(_pages_text(pdf_path))
+        text = _document_text(pdf_path, ctx)
         findings = [
             f"vital {obs.display or obs.code} value {obs.value!r} not found"
             for obs in ctx.record.observations_for(ctx.encounter.id)
@@ -142,7 +215,7 @@ class DateStalenessCheck:
         today = date.today()  # noqa: DTZ011 — local render day is exactly the point
         if ctx.encounter.date_of_service == today:
             return CheckResult(self.name, Verdict.PASS, [])
-        text = "\n".join(_pages_text(pdf_path))
+        text = _document_text(pdf_path, ctx)
         findings = [
             f"today's date ({spelling}) appears on a chart dated {ctx.encounter.date_of_service}"
             for spelling in sorted(_date_spellings(today))

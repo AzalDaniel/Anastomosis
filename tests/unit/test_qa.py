@@ -246,6 +246,42 @@ def test_staleness_catches_generic_soap_signature_format(tmp_path: Path) -> None
     assert findings
 
 
+def test_fitz_open_called_once_per_document_per_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All four engine checks share one PDF open per document: the runner primes a
+    per-document snapshot cache, so fitz.open fires exactly once for the whole run
+    over one document instead of once per check."""
+    from anastomosis.qa import checks as qa_checks
+
+    pdf = make_pdf(tmp_path / "good.pdf", GOOD_LINES)  # created BEFORE the counter
+    calls = {"n": 0}
+    real_open = qa_checks.fitz.open
+
+    def counting_open(*args: object, **kwargs: object) -> object:
+        calls["n"] += 1
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(qa_checks.fitz, "open", counting_open)
+    report = _qa(pdf)
+    assert report.documents[0].verdict is Verdict.PASS
+    assert calls["n"] == 1
+
+
+def test_bare_ctx_without_primed_cache_falls_back_to_opening(tmp_path: Path) -> None:
+    """A third-party QA pack that builds its own QAContext (never primed by the
+    runner) has no snapshot cache — the check must fall back to opening the file
+    itself rather than break."""
+    from anastomosis.qa.base import QAContext
+    from anastomosis.qa.checks import DataIntegrityCheck
+
+    record = _record()
+    pdf = make_pdf(tmp_path / "good.pdf", GOOD_LINES)
+    ctx = QAContext(encounter=record.encounters[0], record=record)  # not primed
+    result = DataIntegrityCheck().run(pdf, ctx)
+    assert result.verdict is Verdict.PASS
+
+
 def test_record_without_identity_anchors_warns(tmp_path: Path) -> None:
     from anastomosis.core.model import Encounter, Patient, PatientRecord
 

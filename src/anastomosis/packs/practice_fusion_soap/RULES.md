@@ -121,7 +121,7 @@ section — heading only when addendum rows exist (GOLD §10).
   TYPE shows "Medical".
 - Insurance + Payment share an identical 4-col 25/25/25/25 fixed grid.
 - Copay: `-1`/empty → `-`; integers without decimals; else shortest repr.
-- **Payment empty states** (gpdfs:950-961): every absent guarantor value
+- **Payment empty states**: every absent guarantor value
   renders `-`, EXCEPT `PAYMENT PREFERENCE` which defaults to
   `Primary Insurance` (the PF billing default). Guarantor address is the
   comma-joined `line1, city, state, zip`, emitted only when line1 exists.

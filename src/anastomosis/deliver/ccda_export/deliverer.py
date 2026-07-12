@@ -64,5 +64,7 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
             logger.warning("ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc))
             continue
         written.append(target)
-    logger.info("ccda delivered: %d of %d records -> %s", len(written), len(records), out)
+    # PHI: never log the output path — an operator dir named after a patient
+    # would enter the logs (SECURITY.md: never a path). Counts only.
+    logger.info("ccda export complete: %d of %d patient(s)", len(written), len(records))
     return written
