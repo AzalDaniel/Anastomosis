@@ -73,6 +73,11 @@ class SummaryStore:
 class PipelineConsole:
     """The pipeline run flow (reconstruct-and-deliver)."""
 
+    # The operation family this console owns; stamped on every event so the
+    # dashboard page consumes them and the wizard (flow "migration") does not
+    # (both emit identical stage/progress/done/error kinds — the P2-5 guard).
+    _FLOW = "pipeline"
+
     def __init__(
         self,
         emit: Callable[[dict[str, object]], None],
@@ -184,7 +189,9 @@ class PipelineConsole:
         # No on_start: the locked body emits its own stage events. The runner
         # owns acquire-or-Busy, release-in-finally, and the spawn-failure path
         # (release + run_pipeline error event, the same shape as before).
-        return self._jobs.submit(GuiJob(name="pipeline", stage="run_pipeline", worker=_worker))
+        return self._jobs.submit(
+            GuiJob(name="pipeline", stage="run_pipeline", flow=self._FLOW, worker=_worker)
+        )
 
     def _run_pipeline_locked(
         self,
@@ -218,9 +225,9 @@ class PipelineConsole:
             stage = _STAGE_MAP.get(event.stage)
             if stage is None:
                 return  # the detect stage has no rail of its own
-            self._emit(stage_event(stage, "start"))
-            self._emit(progress_event(stage, **event.counts))
-            self._emit(stage_event(stage, "done"))
+            self._emit(stage_event(self._FLOW, stage, "start"))
+            self._emit(progress_event(self._FLOW, stage, **event.counts))
+            self._emit(stage_event(self._FLOW, stage, "done"))
             rollup.update(event.counts)
 
         # GUI deliveries land in sibling subdirectories of the output dir (the
@@ -252,7 +259,7 @@ class PipelineConsole:
                 on_event=_on_event,
             )
         except PipelineError as exc:
-            self._emit(error_event(_failed_stage(str(exc)), str(exc)))
+            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # any non-pipeline crash: type name only, no PHI
             return self._fail("run_pipeline", exc)
@@ -275,7 +282,7 @@ class PipelineConsole:
             for s in summarize_patients(result.pipeline)
         ]
         summary_id = self._store.store_summary(patients)
-        self._emit(done_event(summary_id=summary_id, **rollup))
+        self._emit(done_event(self._FLOW, summary_id=summary_id, **rollup))
         return {"ok": True, **rollup, "patients": patients}
 
     def _present_deliveries(
@@ -287,25 +294,30 @@ class PipelineConsole:
         presents the counts. PHI rule: each event carries a COUNT of artifacts
         written, never the rendered filenames or the operator's chosen paths.
         """
-        self._emit(stage_event("deliver", "start"))
+        self._emit(stage_event(self._FLOW, "deliver", "start"))
         for kind in ("archive", "bundle", "ccda"):
             outcome = deliveries.get(kind)
             if outcome is None:
                 continue
             patients = outcome.counts["patients"]
             rollup[f"{kind}_patients"] = patients
-            self._emit(progress_event("deliver", deliverer=kind, patients=patients))
-        self._emit(stage_event("deliver", "done"))
+            self._emit(progress_event(self._FLOW, "deliver", deliverer=kind, patients=patients))
+        self._emit(stage_event(self._FLOW, "deliver", "done"))
 
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._FLOW, stage, tag))
         return {"ok": False, "error": tag}
 
 
 class MigrationConsole:
     """The migration run flow (EHR-to-EHR; PF→Tebra is one instance)."""
+
+    # The operation family this console owns; stamped on every event so the
+    # wizard page consumes them and the dashboard (flow "pipeline") does not —
+    # the P2-5 guard against one page consuming the other's terminal event.
+    _FLOW = "migration"
 
     def __init__(
         self,
@@ -398,7 +410,9 @@ class MigrationConsole:
 
         # No on_start: the locked body emits its own stage events (see
         # run_pipeline_async for the identical rationale).
-        return self._jobs.submit(GuiJob(name="migration", stage="run_migration", worker=_worker))
+        return self._jobs.submit(
+            GuiJob(name="migration", stage="run_migration", flow=self._FLOW, worker=_worker)
+        )
 
     def _run_migration_locked(
         self,
@@ -420,7 +434,11 @@ class MigrationConsole:
             MigrationCommand,
             run_migration,
         )
-        from anastomosis.core.migration_status import classify_migration, manual_import_notice
+        from anastomosis.core.migration_status import (
+            classify_migration,
+            manual_import_notice,
+            prepared_notice,
+        )
         from anastomosis.pipeline import PipelineError
 
         rollup: dict[str, int] = {}
@@ -429,9 +447,9 @@ class MigrationConsole:
             stage = _STAGE_MAP.get(event.stage)
             if stage is None:
                 return  # the detect stage has no rail of its own
-            self._emit(stage_event(stage, "start"))
-            self._emit(progress_event(stage, **event.counts))
-            self._emit(stage_event(stage, "done"))
+            self._emit(stage_event(self._FLOW, stage, "start"))
+            self._emit(progress_event(self._FLOW, stage, **event.counts))
+            self._emit(stage_event(self._FLOW, stage, "done"))
             rollup.update(event.counts)
 
         try:
@@ -451,7 +469,7 @@ class MigrationConsole:
                 on_event=_on_event,
             )
         except PipelineError as exc:
-            self._emit(error_event(_failed_stage(str(exc)), str(exc)))
+            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
             return {"ok": False, "error": str(exc)}
         except Exception as exc:  # any non-migration crash: type name only, no PHI
             return self._fail("run_migration", exc)
@@ -490,7 +508,7 @@ class MigrationConsole:
         status = classify_migration(result)
         if status.needs_manual_import:
             notice = manual_import_notice(status)
-            self._emit(error_event("deliver", notice))
+            self._emit(error_event(self._FLOW, "deliver", notice))
             return {
                 "ok": False,
                 "error": notice,
@@ -500,8 +518,24 @@ class MigrationConsole:
                 "route": route,
                 "patients": patients,
             }
-        self._emit(done_event(summary_id=summary_id, **rollup))
-        return {"ok": True, **rollup, "route": route, "patients": patients}
+        # A route resolved: the artifacts + the verified route plan ARE written,
+        # but `migrate` executes no delivery route, so the honest verdict is
+        # PREPARED, never delivered. Carry the outcome + the prepared notice on the
+        # `done` event (and the return dict) so the wizard renders it truthfully —
+        # "prepared, delivery not yet executed" — matching the CLI's exit-0 notice.
+        notice = prepared_notice(status)
+        done = done_event(self._FLOW, summary_id=summary_id, **rollup)
+        done["outcome"] = status.outcome.value
+        done["notice"] = notice
+        self._emit(done)
+        return {
+            "ok": True,
+            "outcome": status.outcome.value,
+            "notice": notice,
+            **rollup,
+            "route": route,
+            "patients": patients,
+        }
 
     @staticmethod
     def _ccda_standard_patients(result: object) -> list[dict[str, object]]:
@@ -564,7 +598,7 @@ class MigrationConsole:
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._FLOW, stage, tag))
         return {"ok": False, "error": tag}
 
 

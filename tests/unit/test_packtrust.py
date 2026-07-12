@@ -9,13 +9,16 @@ import time — if the sentinel never appears, the code never ran.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
 import anastomosis.reconstruct.packtrust as packtrust
 from anastomosis.reconstruct import discover_packs
-from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash
+from anastomosis.reconstruct.packs import _load_pack_snapshot
+from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash, read_pack_snapshot
 
 # A minimal-but-valid external pack whose context.py writes a sentinel next to
 # itself at IMPORT time, so its execution is observable.
@@ -40,6 +43,25 @@ def _make_pack(parent: Path, name: str = "trust_probe") -> Path:
 
 def _executed(pack: Path) -> bool:
     return (pack / "_executed").is_file()
+
+
+# A pack whose build_context returns a marker baked into context.py's source, so
+# WHICH bytes executed (original vs. a later on-disk swap) is directly observable.
+def _marker_context(marker: str) -> str:
+    return (
+        f"MARKER = {marker!r}\n"
+        "def build_context(encounter, record, cfg):\n"
+        '    return {"marker": MARKER}\n'
+    )
+
+
+def _make_marker_pack(parent: Path, marker: str, name: str = "marker_probe") -> Path:
+    pack = parent / name
+    pack.mkdir(parents=True)
+    (pack / "context.py").write_text(_marker_context(marker), encoding="utf-8")
+    (pack / "pack.yaml").write_text(_PACK_YAML.format(name=name), encoding="utf-8")
+    (pack / "template.html").write_text(_TEMPLATE, encoding="utf-8")
+    return pack
 
 
 class _FakeChromium:
@@ -76,6 +98,42 @@ def test_content_hash_is_stable_and_sensitive(tmp_path: Path) -> None:
         assert pack_content_hash(pack) == before  # back to the original digest
 
 
+def test_content_hash_matches_documented_byte_layout(tmp_path: Path) -> None:
+    # Pins the on-the-wire digest: context.py, template.html, pack.yaml in that
+    # order, each prefixed by b"\0<name>\0" then its raw bytes. The snapshot-based
+    # implementation must stay byte-identical to this documented layout so
+    # already-trusted packs keep their hashes across the refactor.
+    pack = _make_pack(tmp_path)
+    expected = hashlib.sha256()
+    for name in ("context.py", "template.html", "pack.yaml"):
+        expected.update(b"\0" + name.encode("utf-8") + b"\0")
+        expected.update((pack / name).read_bytes())
+    assert pack_content_hash(pack) == expected.hexdigest()
+
+
+def test_snapshot_hash_equals_pack_content_hash(tmp_path: Path) -> None:
+    # The hash the loader gates on (snapshot.content_hash) is the same value
+    # pack_content_hash reports — one definition, computed from one read.
+    pack = _make_pack(tmp_path)
+    snapshot = read_pack_snapshot(pack)
+    assert snapshot.content_hash == pack_content_hash(pack)
+    assert set(snapshot.files) == {"context.py", "template.html", "pack.yaml"}
+
+
+def test_snapshot_load_pins_code_against_toctou_swap(tmp_path: Path) -> None:
+    # The TOCTOU invariant: the bytes that execute are the bytes that were
+    # snapshotted (and therefore hashed). Take the snapshot, then swap context.py
+    # on disk (a hostile writer racing the check), then load FROM the snapshot —
+    # the ORIGINAL code must run, never the swapped on-disk code.
+    pack = _make_marker_pack(tmp_path / "ext", "ORIGINAL")
+    snapshot = read_pack_snapshot(pack)
+    (pack / "context.py").write_text(_marker_context("SWAPPED"), encoding="utf-8")
+
+    status = _load_pack_snapshot(snapshot, "pack-dir")
+    assert status.pack is not None
+    assert status.pack.build_context(None, None, None)["marker"] == "ORIGINAL"
+
+
 # --- PackTrust store -----------------------------------------------------------
 
 
@@ -97,6 +155,41 @@ def test_trust_store_tolerates_missing_and_garbage(tmp_path: Path) -> None:
     garbage = tmp_path / "garbage.json"
     garbage.write_text("not json{", encoding="utf-8")
     assert PackTrust(garbage)._store == {}  # garbage → trusts nothing, never raises
+
+
+def test_concurrent_record_merges_entries(tmp_path: Path) -> None:
+    # Lost-update regression: two PackTrust instances, each constructed against
+    # the (empty) store so neither's ctor snapshot sees the other's entry, record
+    # DIFFERENT packs. record() re-reads under the lock and merges, so the second
+    # write must NOT clobber the first — both entries survive on disk.
+    pack_a = _make_pack(tmp_path / "a", "pack_a")
+    pack_b = _make_pack(tmp_path / "b", "pack_b")
+    store_path = tmp_path / "state" / "trust.json"
+
+    trust_a = PackTrust(store_path)
+    trust_b = PackTrust(store_path)
+    hash_a = pack_content_hash(pack_a)
+    hash_b = pack_content_hash(pack_b)
+
+    trust_a.record(pack_a, hash_a)
+    trust_b.record(pack_b, hash_b)  # ctor snapshot predates trust_a's write
+
+    on_disk = PackTrust(store_path)
+    assert on_disk.is_trusted(pack_a, hash_a)
+    assert on_disk.is_trusted(pack_b, hash_b)
+    # The merged view is also reflected in the recorder's own store.
+    assert trust_b.is_trusted(pack_a, hash_a)
+
+
+def test_record_leaves_parseable_json(tmp_path: Path) -> None:
+    # Atomicity smoke: after record(), the store is a complete, parseable JSON
+    # object (never a torn half-write) — the temp-file + os.replace guarantee.
+    pack = _make_pack(tmp_path / "p")
+    store_path = tmp_path / "state" / "trust.json"
+    PackTrust(store_path).record(pack, pack_content_hash(pack))
+    data = json.loads(store_path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    assert data[str(pack.resolve())] == pack_content_hash(pack)
 
 
 # --- discover_packs enforcement ------------------------------------------------

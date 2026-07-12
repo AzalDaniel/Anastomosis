@@ -11,4 +11,4 @@ offline archive.
 Local-first by design: the core pipeline makes no network calls.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

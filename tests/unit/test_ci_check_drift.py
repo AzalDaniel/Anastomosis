@@ -2,11 +2,11 @@
 """Pins ``tools/check.sh`` <-> ``.github/workflows/ci.yml`` parity.
 
 ``tools/check.sh`` claims at the top of its file that it is "exactly what
-CI runs." Pre-PR-R, mypy lived in check.sh but had no CI lane — silent
-drift, the kind that lets a typing regression slip into main while every
-PR author's local gate stays green. PR-R adds the mypy lane; this test
-keeps the parity live by parsing check.sh and ci.yml and asserting every
-gate command in check.sh appears in some CI job's ``run:`` block.
+CI runs." That parity must hold for every gate, mypy included: a gate that
+lives only in check.sh with no CI lane lets a typing regression slip into
+main while every author's local gate stays green. This test keeps the parity
+live by parsing check.sh and ci.yml and asserting every gate command in
+check.sh appears in some CI job's ``run:`` block.
 
 When the gate roster legitimately changes (a new check.sh command, or a
 deliberate retirement), update both files in the same PR and the test
@@ -99,9 +99,9 @@ def test_every_check_sh_gate_has_a_ci_lane() -> None:
 
 def test_check_sh_claims_match_reality() -> None:
     """The header comment of ``tools/check.sh`` advertises the script as
-    'exactly what CI runs'. PR-R closed the mypy gap so the claim is now
-    true; this assertion just makes that header comment a tested fact
-    rather than aspiration."""
+    'exactly what CI runs'. With the mypy lane present in CI the claim holds;
+    this assertion just makes that header comment a tested fact rather than
+    aspiration."""
     header = "\n".join(CHECK_SH.read_text(encoding="utf-8").splitlines()[:5])
     assert "exactly what CI runs" in header, (
         "tools/check.sh's header comment was edited away from the parity claim. "

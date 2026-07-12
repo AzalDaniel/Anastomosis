@@ -68,6 +68,25 @@ class _FakeChromium:
         pass
 
 
+class _PointInsertCcdaChromium(_FakeChromium):
+    """A fake for the WHOLE-PATIENT C-CDA view: point-inserts the view's first
+    lines (header incl. the DOB identity anchor) so the page is real and
+    QA-passable — one ``insert_textbox`` rect overflows the view into a blank
+    page that ccda-standard QA correctly fails."""
+
+    def render(self, html: str, pdf_path: Path) -> None:
+        import fitz
+
+        from anastomosis.core.textutil import html_to_text
+
+        lines = (html_to_text(html) or "(empty)").splitlines()
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
+        doc.save(str(pdf_path))
+        doc.close()
+
+
 class _SlowFakeChromium(_FakeChromium):
     """A renderer that blocks long enough to test the busy guard."""
 
@@ -541,8 +560,14 @@ def test_run_migration_returns_route_and_per_patient_summary(
     blob = repr(sink.events)
     for name in FIXTURE_NAMES:
         assert name not in blob, f"event log leaked patient name {name!r}"
-    # The done event landed last.
-    assert sink.events[-1]["type"] == "done"
+    # The done event landed last, carrying the honest PREPARED verdict + notice
+    # (a chosen route is a plan; `migrate` executes no delivery route, so the GUI
+    # renders "prepared, delivery not yet executed", never a bare "complete").
+    done = sink.events[-1]
+    assert done["type"] == "done"
+    assert done["outcome"] == "prepared"
+    assert "prepared" in str(done["notice"])
+    assert result["outcome"] == "prepared"
 
 
 def test_run_migration_ccda_standard_summary(
@@ -554,7 +579,10 @@ def test_run_migration_ccda_standard_summary(
     import anastomosis.reconstruct.ccda_standard.renderer as ccda_renderer
 
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
-    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _FakeChromium())
+    # The whole-patient C-CDA view overflows one insert_textbox rect into a
+    # blank page that ccda-standard QA correctly fails; point-insert the view's
+    # first lines (header incl. the DOB identity anchor) instead.
+    monkeypatch.setattr(ccda_renderer, "_default_renderer", lambda: _PointInsertCcdaChromium())
     sink = _RecordingSink()
     result = GuiController(sink).run_migration(
         str(FIXTURE),
@@ -1585,6 +1613,62 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
         assert name not in blob, f"event log leaked patient value {name!r}"
 
 
+def test_upload_start_failed_items_emit_error_not_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Bug A fix: a run that FINISHES with items in a non-clean TERMINAL
+    state (here every item fails permanently, with NO abort) must emit a terminal
+    `error` event — never the `done` that JS renders as "upload complete". The
+    message names the offending state(s) with counts and carries no patient
+    value."""
+    from anastomosis.core.upload_command import resolve_manifest_root
+    from anastomosis.deliver.browser.fake import FakeDestination
+    from anastomosis.deliver.browser.persist import read_upload_manifest
+    from anastomosis.deliver.browser.states import UploadState
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    # Read the manifest to learn the item_keys, then fail every upload (the
+    # permanent_failures idiom from test_browser_engine / test_browser_reports).
+    items, _patients = read_upload_manifest(resolve_manifest_root(out_dir))
+    fail_keys = {item.item_key for item in items}
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known(), permanent_failures=fail_keys),
+    )
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
+    )
+    assert started == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_upload(sink)
+    # The bug was a stage `done`; the fix is an `error` carrying the state summary.
+    assert terminal["type"] == "error", f"expected an error, got {terminal!r}"
+    assert terminal["stage"] == "upload"
+    msg = str(terminal["error"])
+    assert UploadState.FAILED.value in msg  # names the state that blocked a clean landing
+    assert "failed=3" in msg
+    # No `done` ("upload complete") event ever landed for this failed run.
+    assert not any(
+        e.get("type") == "stage" and e.get("stage") == "upload" and e.get("state") == "done"
+        for e in sink.events
+    )
+
+    # Every item really did land FAILED in the shared ledger.
+    counts = _ledger_counts(out_dir)
+    assert counts.get(UploadState.FAILED.value) == 3
+    assert sum(counts.values()) == 3
+
+    # PHI probe: the error message (and every event) carries no patient token.
+    blob = repr(sink.events)
+    for name in ("Family", "Given", *FIXTURE_NAMES):
+        assert name not in blob, f"event log leaked patient value {name!r}"
+
+
 def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The GUI gained --skiplist parity: a skiplist (with blank/`#`
     lines, which are ignored) excludes its encounter from the drive."""
@@ -1986,3 +2070,157 @@ def test_run_pipeline_threads_write_manifest(
     assert captured["cmd"].write_manifest is True  # type: ignore[attr-defined]
     controller.run_pipeline(str(FIXTURE), str(tmp_path / "off"))  # default
     assert captured["cmd"].write_manifest is False  # type: ignore[attr-defined]
+
+
+# --- P2-5: per-flow event scoping (each page owns exactly one flow) ------------
+#
+# Every event now carries a `flow` naming the operation family the emitting page
+# owns. Two pages emit identical stage/progress/done/error KINDS (the dashboard
+# pipeline and the wizard migration), so without the flow a page that navigated
+# mid-run could consume the other page's terminal event (the wizard announcing
+# "migration prepared" for a pipeline run). These pin that every event a console
+# raises carries its own flow, and that the flows are distinct across consoles so
+# a page's flow guard filters the events it does not own.
+
+
+def test_pipeline_run_events_all_carry_pipeline_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"), archive=True)
+    assert sink.events
+    assert all(e.get("flow") == "pipeline" for e in sink.events), sink.events
+
+
+def test_migration_run_events_all_carry_migration_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    GuiController(sink).run_migration(
+        str(FIXTURE), str(tmp_path / "out"), source="pf-tebra", destination="tebra"
+    )
+    assert sink.events
+    assert all(e.get("flow") == "migration" for e in sink.events), sink.events
+
+
+def test_pipeline_and_migration_flows_are_distinct_so_a_page_guard_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The core P2-5 fix: a dashboard pipeline `done` and a wizard migration
+    `done` carry DISTINCT flows, so the wizard's flow guard (``flow ===
+    "migration"``) early-returns on a pipeline done — it can no longer announce
+    "migration prepared" for a pipeline run — and the dashboard guard likewise
+    filters a migration done."""
+    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+
+    pipe_sink = _RecordingSink()
+    GuiController(pipe_sink).run_pipeline(str(FIXTURE), str(tmp_path / "p"))
+    pipeline_done = pipe_sink.events[-1]
+
+    migr_sink = _RecordingSink()
+    GuiController(migr_sink).run_migration(
+        str(FIXTURE), str(tmp_path / "m"), source="pf-tebra", destination="tebra"
+    )
+    migration_done = migr_sink.events[-1]
+
+    assert pipeline_done["type"] == "done" and pipeline_done["flow"] == "pipeline"
+    assert migration_done["type"] == "done" and migration_done["flow"] == "migration"
+    # Distinct flows: neither page's guard would render the other's terminal event.
+    assert pipeline_done["flow"] != migration_done["flow"]
+
+
+def test_upload_events_all_carry_upload_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known()),
+    )
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
+    )
+    assert started == {"ok": True, "started": True}
+    _wait_for_terminal_upload(sink)
+    assert sink.events
+    assert all(e.get("flow") == "upload" for e in sink.events), sink.events
+
+
+def test_source_async_events_all_carry_source_init_flow(tmp_path: Path) -> None:
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.source_init_async(
+        str(LEARNED_FIXTURE), name="clinic_csv", confirmed=False, out_dir=str(tmp_path)
+    )
+    assert started == {"ok": True, "started": True}
+    _wait_for_terminal_source(sink)
+    assert sink.events
+    assert all(e.get("flow") == "source_init" for e in sink.events), sink.events
+
+
+def test_packgen_async_events_all_carry_pack_init_flow(tmp_path: Path) -> None:
+    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    samples = _packgen_samples(tmp_path)
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    started = controller.pack_init_async(
+        str(samples), name="acme_soap", confirmed_distinct_patients=False
+    )
+    assert started == {"ok": True, "started": True}
+    deadline = time.time() + 10
+    while time.time() < deadline and not any(
+        (e.get("type") == "stage" and e.get("stage") == "packgen" and e.get("state") == "done")
+        or (e.get("type") == "error" and e.get("stage") == "packgen")
+        for e in sink.events
+    ):
+        time.sleep(0.05)
+    assert sink.events
+    assert all(e.get("flow") == "pack_init" for e in sink.events), sink.events
+
+
+# --- P2-5: the window-close barrier surface (busy + join) ---------------------
+
+
+def test_busy_and_join_active_job_surface_for_close_barrier(tmp_path: Path) -> None:
+    """The shell's window-close barrier reads ``controller.busy`` (to veto a
+    close while a run is in flight, so an in-flight PDF/ledger write is not
+    interrupted) and ``controller.join_active_job`` (the fallback join). Drive a
+    deterministically-parked worker to pin both surfaces — no sleeps, no races."""
+    controller = GuiController(_RecordingSink())
+    gate = threading.Event()
+    parked = threading.Event()
+
+    def _blocked_locked_body(**_kwargs: object) -> None:
+        parked.set()
+        gate.wait(10.0)
+
+    # Shadow the pipeline console's locked body so the worker parks deterministically.
+    controller._pipeline._run_pipeline_locked = _blocked_locked_body  # type: ignore[method-assign]
+
+    # Idle: not busy, and a join finds no worker (a no-op True).
+    assert controller.busy is False
+    assert controller.join_active_job(0.1) is True
+
+    started = controller.run_pipeline_async(str(FIXTURE), str(tmp_path / "out"))
+    assert started == {"ok": True, "started": True}
+    assert parked.wait(5.0), "worker never started"
+
+    # A run is in flight: busy is True and a bounded join times out (still alive).
+    assert controller.busy is True
+    assert controller.join_active_job(0.1) is False
+
+    gate.set()  # release the parked worker
+    # It finishes: the join returns True and the guard releases (not wedged).
+    assert controller.join_active_job(5.0) is True
+    assert controller.busy is False

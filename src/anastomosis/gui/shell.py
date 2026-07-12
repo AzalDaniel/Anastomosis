@@ -19,16 +19,25 @@ thread-safe, so the controller's daemon worker may call it.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+from anastomosis.core.logutil import exc_tag
 from anastomosis.gui.controller import GuiApi, GuiController
 
 __all__ = ["launch"]
 
+logger = logging.getLogger(__name__)
+
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 _INDEX = _WEB_DIR / "index.html"
 _WINDOW_TITLE = "Anastomosis"
+
+# The close-barrier notice surfaced on whatever page is up when the operator
+# tries to close the window mid-run (see :func:`launch`). PHI-free by
+# construction (a fixed advisory).
+_JOB_RUNNING_NOTICE = "a job is still running — stop it before closing"
 
 
 class _WindowSink:
@@ -54,6 +63,27 @@ class _WindowSink:
         self._window.evaluate_js(f"window.anastEvent({payload})")  # pragma: no cover - needs window
 
 
+def _warn_job_running(window: Any) -> None:  # pragma: no cover - needs window
+    """Best-effort: surface the close-barrier notice on whatever page is up.
+
+    Routed through the shared shell log surface (``AnastShell.logEvent``), which
+    is a safe no-op on a page without a log strip — so the notice reaches the
+    current page regardless of which flow it owns, WITHOUT going through the
+    flow-guarded ``anastEvent`` channel. Best-effort only: the veto (the ``False``
+    return from the ``closing`` handler) is the real guarantee, so an
+    ``evaluate_js`` failure here is logged (type name only) and swallowed.
+    """
+    notice = json.dumps(_JOB_RUNNING_NOTICE)  # a JS string literal, never interpolated source
+    js = (
+        "window.AnastShell && window.AnastShell.logEvent &&"
+        f" window.AnastShell.logEvent({{kind: 'error', msg: {notice}}})"
+    )
+    try:
+        window.evaluate_js(js)
+    except Exception as exc:
+        logger.warning("close-barrier notice failed (%s)", exc_tag(exc))
+
+
 def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a display
     """Open the desktop GUI window. Requires the ``gui`` extra (pywebview)."""
     try:
@@ -75,4 +105,19 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
         min_size=(820, 600),
     )
     sink.attach(window)
+
+    # Window-close barrier (P2-5): while a long-running job is in flight, veto the
+    # close so the window can't interrupt an in-flight PDF/ledger write. pywebview
+    # 5.x cancels the close when a `closing` subscriber returns False; the daemon
+    # workers stay daemon=True, so this is a GRACEFUL guard (the OS can still
+    # force-kill a wedged worker), never a hard lock. The operator is told why via
+    # the shared shell log surface. If a future pywebview drops closing-veto, the
+    # fallback is controller.join_active_job(~5s) here instead of the False return.
+    def _on_closing() -> bool:
+        if not controller.busy:
+            return True  # nothing running — allow the close
+        _warn_job_running(window)
+        return False  # veto: pywebview cancels the close on a False return
+
+    window.events.closing += _on_closing
     webview.start(debug=debug)

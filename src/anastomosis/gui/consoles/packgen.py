@@ -29,6 +29,12 @@ __all__ = ["PackgenConsole"]
 class PackgenConsole:
     """The pack-from-samples wizard backend."""
 
+    # The operation family this console owns; stamped on every event so only the
+    # pack-from-samples wizard page consumes them (the P2-5 per-page flow guard).
+    # The event STAGE stays "packgen"/"pack_init"; the FLOW is the page-owning
+    # family name.
+    _FLOW = "pack_init"
+
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
         self._emit = emit
         self._jobs = jobs
@@ -125,7 +131,7 @@ class PackgenConsole:
         # the async worker emits its own packgen error event).
         error = result.error or "PackInitError"
         if emit_failure:
-            self._emit(error_event("pack_init", error))
+            self._emit(error_event(self._FLOW, "pack_init", error))
         return {"ok": False, "error": error}
 
     def pack_init_async(
@@ -178,19 +184,20 @@ class PackgenConsole:
                 # both `done` (the wizard fetches last_pack_result and routes the
                 # summary vs the draft). Only a genuine failure is an `error`.
                 if result_dict.get("ok") or result_dict.get("error") == "ConfirmationRequired":
-                    self._emit(stage_event("packgen", "done"))
+                    self._emit(stage_event(self._FLOW, "packgen", "done"))
                 else:
-                    self._emit(error_event("packgen", str(result_dict.get("error"))))
+                    self._emit(error_event(self._FLOW, "packgen", str(result_dict.get("error"))))
             except Exception as exc:  # never-raise: stash + emit, swallow nothing else
                 tag = exc_tag(exc)
                 self._last_pack = {"ok": False, "error": tag}
-                self._emit(error_event("packgen", tag))
+                self._emit(error_event(self._FLOW, "packgen", tag))
 
         return self._jobs.submit(
             GuiJob(
                 name="packgen",
+                flow=self._FLOW,
                 worker=_worker,
-                on_start=lambda: self._emit(stage_event("packgen", "start")),
+                on_start=lambda: self._emit(stage_event(self._FLOW, "packgen", "start")),
             )
         )
 
@@ -210,5 +217,5 @@ class PackgenConsole:
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
         tag = exc_tag(exc)
-        self._emit(error_event(stage, tag))
+        self._emit(error_event(self._FLOW, stage, tag))
         return {"ok": False, "error": tag}

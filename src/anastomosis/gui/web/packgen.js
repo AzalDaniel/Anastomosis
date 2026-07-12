@@ -95,8 +95,14 @@ function renderPackResult(res) {
 // The event dispatcher the shell (Python side) calls during an async pack-init.
 // On a packgen `done` (or a generic `done`) we fetch the stashed result and
 // route it; an `error` shows the banner. Other stages just update the status.
+// Flow guard (P2-5): the pack-from-samples wizard owns the "pack_init" flow. Every
+// event carries a `flow`; we early-return on any other flow so a run from another
+// page can't drive this wizard's terminal handlers.
 window.anastEvent = function anastEvent(e) {
   if (!e || typeof e !== "object") {
+    return;
+  }
+  if (e.flow !== "pack_init") {
     return;
   }
   switch (e.type) {

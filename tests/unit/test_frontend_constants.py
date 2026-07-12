@@ -1,8 +1,8 @@
 # AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pin frontend/backend constant parity.
 
-The browser UI used to hand-mirror backend constants; PR-X made
-``GuiController.gui_config()`` the Python-canonical source the JS refreshes
+The browser UI used to hand-mirror backend constants;
+``GuiController.gui_config()`` is the Python-canonical source the JS refreshes
 from on load. The JS keeps same-valued FALLBACKS for the api-less browser
 preview — these tests pin (a) each fallback to its Python constant, so
 neither side can drift alone, and (b) the ``gui_config()`` payload itself

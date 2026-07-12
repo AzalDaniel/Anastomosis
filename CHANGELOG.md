@@ -9,6 +9,85 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-12
+
+The sixth alpha (**0.6.0-alpha**). Closes the external v0.5.0 review's four
+P1 truth defects — every one a case of a claim exceeding the runtime, the
+exact defect class this product exists to prevent — plus its confirmed P2s.
+Finding-by-finding adjudication (including two partial refutations) is
+recorded in `docs/reviews/2026-07-12-alpha6-adjudication.md`.
+
+### Fixed
+
+- **`migrate` no longer reports route availability as delivery**
+  (`core/migration_status.py`) — a chosen route classified the run as
+  `DELIVERED` even though `run_migration` executes no route (and Tebra's
+  `ccda_import` is a manual in-product import). New three-outcome contract:
+  `PREPARED` (route chosen; charts, C-CDA payload, upload manifest, and route
+  plan written — delivery NOT executed) is what the flow earns today;
+  `DELIVERED` is reserved for a future destination executor with a durable
+  receipt, and a test pins that classification never returns it until then.
+  Both frontends print an actionable prepared-notice; exit codes unchanged.
+- **`--render ccda-standard` no longer bypasses requested QA**
+  (`core/migrate.py`) — the mode ignored `--qa` entirely (no events, no
+  report, exit 0). The document-generic checks (data-integrity leak
+  detection, layout/pagination) now run per rendered patient document,
+  `qa_report.json` is written, FAIL exits nonzero, and the encounter/pack-
+  scoped checks are recorded as skipped with a reason.
+- **GUI no longer displays failed uploads as success**
+  (`core/upload_command.py`) — the CLI failed non-clean terminal counts
+  while the GUI checked only the abort reason, so a wrong-chart
+  `PRE_VERIFY_FAILED` run read "upload complete". The verdict (`is_clean`,
+  `exit_code`, PHI-safe non-clean summary) now lives on
+  `UploadCommandResult` in the shared core; both frontends consume it.
+- **No operator output path in logs** (`deliver/ccda_export/deliverer.py`) —
+  the export-complete log carried the full output directory; operators name
+  directories after patients. Count-only now, with caplog regressions.
+- **Cross-page GUI events** (`gui/events.py`) — every event now carries a
+  `flow` tag and each page filters to its own flow, so navigating mid-run
+  can no longer make the wizard announce another flow's completion; the
+  window's close path now refuses to silently interrupt a running job.
+- **Pack-trust hash gate is race-free** (`reconstruct/packtrust.py`) — the
+  external-pack hash was computed from one read and the code executed from a
+  second, so a local writer could swap content between check and use. The
+  executable surface (`context.py`) is now execution-pinned to the same
+  single-read snapshot the hash covered, and `pack.yaml` is parsed from
+  pinned bytes; `template.html` contributes to the hash and is
+  presence-checked but still renders from disk (a bounded, non-importing
+  Jinja surface — render-from-snapshot is on the backlog), and auxiliary
+  assets are documented as outside the hash. Trust-store writes re-read,
+  merge, and atomically replace under the repo file lock.
+- **Upload resources register with the ExitStack the instant they are
+  owned** (`core/upload_command.py`) — a ledger/verifier construction
+  failure used to leak the attached Playwright driver.
+- **Unsourced README statistics removed** — the "73% of organizations" and
+  "$5,000–$150,000" figures traced to phantom citations with no primary
+  source; the problem statement now makes the qualitative case on cited,
+  peer-reviewed evidence (as `paper/paper.md` always did).
+
+### Changed
+
+- **PF mapper builds its encounter link-table indexes once per run** (the
+  two per-encounter whole-table rescans the earlier hoists never covered) —
+  ~9× faster encounter mapping on a 300-encounter probe, output
+  byte-identical by goldens.
+- **QA extracts each PDF once per run** instead of up to four times (one
+  snapshot per document cached on the context, with a fallback so
+  third-party QA packs keep working) — report byte-identical.
+- **FHIR Bulk ingest streams NDJSON into the grouping index** instead of
+  double-buffering per file; the memory expectation (resident memory scales
+  with export size; spooling is roadmap) is documented instead of implied
+  away.
+- C-CDA conformance claims aligned to the code: the export is validated by
+  round-trip with this repo's own parser; CDA XSD structural validation is
+  blocked on two now-documented exporter gaps (mandatory `author`/
+  `custodian` participations, OID id roots) and recorded, with full
+  Schematron conformance, on the backlog.
+- `python-dateutil` removed (declared, never imported); predecessor
+  line-reference comments (`gpdfs:`) and stale worklog tags rewritten as
+  present-tense invariants, with the archaeology guard extended to ban the
+  tokens.
+
 ## [0.5.0] — 2026-07-03
 
 The fifth alpha (**0.5.0-alpha**). Two fixes from the external alpha-4 review
@@ -519,7 +598,8 @@ archive. Everything below shipped across PRs
   (DTZ) rules, gitleaks pre-commit, least-privilege CI permissions. (#1)
 - `SECURITY.md` — reporting policy, threat model, and security posture. (#9)
 
-[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/AzalDaniel/Anastomosis/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/AzalDaniel/Anastomosis/compare/v0.2.0...v0.3.0
