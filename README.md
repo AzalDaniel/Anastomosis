@@ -51,8 +51,9 @@ Anastomosis is the missing last mile, free and open source:
    does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
    **structured C-CDA/FHIR payload** for destinations that import C-CDA/FHIR, an
    upload manifest, and a verified route plan — but files nothing itself; `anast
-   upload` EXECUTES browser-route delivery, and API-route execution is on the
-   roadmap.
+   upload` EXECUTES delivery over **either route**: the destination's web UI
+   (`--to PACK --cdp URL`) or its FHIR R4 API (`--fhir URL`), whichever the
+   destination actually offers.
    The rendered PDF is the human-readable archive and upload fallback, never a
    forgery of another vendor's house style. Or build a **searchable offline
    archive** — plain folders, PDFs, and JSON readable for decades — in place of a
@@ -238,6 +239,8 @@ src/anastomosis/
 │   │                 L5 destination metadata, L6 byte/identity round-trip.
 │   ├── fhir_api/     FHIR R4 DocumentReference pusher over stdlib urllib (https, or
 │   │                 http only for loopback); status codes + resource TYPE names in errors.
+│   │                 attach.py: the one construction seam both frontends call
+│   │                 (`anast upload --fhir`), twin of deliver/browser/attach.py.
 │   └── ccda_export/  PatientRecord → C-CDA R2.1, for destinations that import C-CDA;
 │   │                 its contract is that THIS repo's own ccda parser reads it back.
 │   └── router.py     SHORTEST-PATH router: vendor API → C-CDA import → browser
@@ -258,6 +261,51 @@ src/anastomosis/
                       `doctor`, `gui`, `migrate`, `upload`, `archive`, `bundle`,
                       `destination {list,route,init}`, `pack init`, `source init`.
 ```
+
+### Two delivery routes, one engine
+
+`anast upload` files a prepared output dir into a destination EHR over exactly
+one route per run. Both routes share everything that matters — the crash-
+resumable ledger, the retry budget, the skiplist, the L0–L6 verification
+ladder, the run report, and the exit-code verdict — because both hand the same
+`Destination` protocol to the same engine.
+
+```bash
+# Browser route: drive the destination's web UI in a browser YOU launched
+# with a remote debug port and logged into yourself (loopback CDP only).
+anast upload out/ --to tebra --cdp http://127.0.0.1:9222
+
+# API route: file each chart as a FHIR R4 DocumentReference over HTTPS.
+export ANAST_FHIR_TOKEN='...'          # the token never appears in argv
+anast upload out/ --fhir https://ehr.example.com/fhir
+```
+
+Exactly one route must be selected: `--to` **and** `--cdp` together, or
+`--fhir` alone. Half a browser route, both routes at once, or neither is a
+usage error (exit 2) rather than a run that guesses.
+
+**Bearer token handling.** The API route never accepts a token on the command
+line — argv is visible to every process on the box (`ps`). It reads the token
+from an environment variable, `ANAST_FHIR_TOKEN` by default, or whichever
+variable `--fhir-token-env VAR` names when you keep several destinations
+apart. An unset (or blank) variable means unauthenticated, the normal case for
+a local HAPI server. The token is masked in every `repr`, so it cannot reach a
+log line or a traceback frame.
+
+**Patients that are not there yet.** `--create-patients` (ON by default on
+this route) lets the resolver POST a new `Patient` — built by the same export
+code, so the identifier systems and the lossless extensions tail come along —
+when the destination holds none matching. A search that matches *more than
+one* patient is always refused: filing a chart against a guessed patient is
+the failure the whole subsystem exists to prevent. Pass `--no-create-patients`
+when the target is supposed to already hold every patient.
+
+**Verification coverage differs by route, and the report says so.** On the API
+route L3 (pack-driven header fields) skips — there is no browser pack — while
+L5 (destination metadata) and L6 (byte/identity round-trip) run, because a
+FHIR server can be read back. The browser route is typically the reverse.
+Neither route claims more than it ran: the run report records each level's
+pass/fail/skip counts and the reason for every skip.
 
 ## Design rationale
 

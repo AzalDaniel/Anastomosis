@@ -14,6 +14,10 @@ that give the verifier L5/L6).
 * :mod:`.destination` — :class:`FhirApiDestination`, the pusher: identifier-based
   patient resolution (reusing the export identifier systems), a re-read banner
   defense, a title-fingerprint duplicate scan, and the DocumentReference driver.
+* :mod:`.attach` — ``attach_fhir_destination``, the one construction seam the
+  frontends call (``anast upload --fhir``); the API counterpart to
+  :mod:`anastomosis.deliver.browser.attach`. Deliberately NOT re-exported here,
+  mirroring that module: a frontend imports the seam by its module path.
 
 The runtime modules work WITHOUT ``fhir.resources`` installed — resources are
 built as plain stdlib dicts. The ``fhir`` extra is used only by the tests, to

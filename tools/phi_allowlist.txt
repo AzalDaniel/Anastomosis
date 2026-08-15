@@ -85,3 +85,7 @@ billingpatientrelationshipoption
 # (learn.microsoft.com/microsoft-edge/webview2/concepts/distribution). A vendor
 # constant, not PHI.
 f3017226-fe2a-4295-8bdf-00c3a9a7e4c5
+# Windows installer product identity (packaging/anastomosis.iss AppId) — a
+# generated application GUID, not a record identifier; stable for the life
+# of the product so upgrades find the existing install.
+eec2f7c9-06ad-4bc2-91d4-84bbae937b98
