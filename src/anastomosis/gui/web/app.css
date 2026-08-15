@@ -65,13 +65,14 @@ svg { display: block; }
 }
 
 
-/* ─── 5. Title bar (frameless drag region) ──────────────────── */
+/* ─── 5. Title band ──────────────────────────────────────────── */
+/* The in-page app-name band under the native frame. The window keeps its
+   OS title bar (pywebview default), so this is a header, not a drag
+   region — no app-region property, which only means something frameless. */
 .title-bar {
   position: fixed; top: 0; left: 0; right: 0;
   height: 36px;
   display: flex; align-items: center; justify-content: center;
-  -webkit-app-region: drag;
-  app-region: drag;
   z-index: 100;
   user-select: none;
   pointer-events: auto;
