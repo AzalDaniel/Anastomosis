@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The standard C-CDA render path: a neutral, vendor-faithful view of the payload.
 
 Real EHR-to-EHR migrations move structured C-CDA/FHIR; the rendered PDF is the

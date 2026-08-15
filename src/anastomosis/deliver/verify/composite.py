@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The layered verifier: stack L0-L6 behind the engine's Verifier seam.
 
 :class:`LayeredVerifier` implements the engine's

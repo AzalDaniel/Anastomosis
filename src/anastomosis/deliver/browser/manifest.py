@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Build the upload manifest from rendered documents, and the operator skiplist.
 
 The manifest is the bridge from reconstruction (:class:`RenderedDoc`) to the

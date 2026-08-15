@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """SQL-dump loading for Oracle Health (Cerner Millennium) EHI exports.
 
 The single-patient Millennium export ships the V500 data model as MySQL

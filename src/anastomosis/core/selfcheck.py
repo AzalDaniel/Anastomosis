@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Bundled-asset self-check (one source of truth for the CLI, the GUI, and CI).
 
 Verifies that every data asset the toolkit ships is present, non-empty, and

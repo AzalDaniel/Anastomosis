@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Text cleaning for source export cells and note HTML.
 
 Three jobs:

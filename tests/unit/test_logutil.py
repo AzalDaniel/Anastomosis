@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PHI log-redaction layer.
 
 All identifier-shaped strings below are synthetic: never-issued SSN range

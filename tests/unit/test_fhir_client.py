@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FhirClient + FhirEndpoint tests: status routing, id parsing, token masking.
 
 The transport is an in-process fake opener injected at construction — urllib is

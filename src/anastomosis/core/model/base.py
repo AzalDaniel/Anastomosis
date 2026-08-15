@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Foundation of the canonical model.
 
 Every Anastomosis model carries two things beyond its mapped fields:

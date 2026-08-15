@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Parallel runner tests: patient partitioning, abort propagation, worker crash.
 
 Synthetic data only — ``feedface-`` GUIDs, neutral file names in ``tmp_path``.

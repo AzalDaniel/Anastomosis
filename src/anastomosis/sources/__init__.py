@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Source adapters: each module here turns one vendor's export into
 canonical :class:`~anastomosis.core.model.PatientRecord` objects.
 

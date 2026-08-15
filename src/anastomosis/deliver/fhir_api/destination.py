@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """A FHIR R4 ``DocumentReference`` pusher implementing the Destination protocol.
 
 :class:`FhirApiDestination` is the API counterpart to a browser destination

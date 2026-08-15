@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The two long run flows: the pipeline and the migration consoles.
 
 Both drive a shared command core, emit PHI-safe stage/progress events, are

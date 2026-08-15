@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The closed set of canonical target paths a learned mapping may write to.
 
 A learned source mapping (:mod:`anastomosis.sources.learned`) is *data*: it says

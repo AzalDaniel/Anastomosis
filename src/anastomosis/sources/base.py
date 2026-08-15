@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The source-adapter contract and registry.
 
 An adapter declares what it can read and proves it can read a given folder

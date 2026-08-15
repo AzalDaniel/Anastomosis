@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the standard C-CDA render path (``reconstruct/ccda_standard``).
 
 Renders the C-CDA a migration actually moves (``deliver.ccda_export.build_ccd``)

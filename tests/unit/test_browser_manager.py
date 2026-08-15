@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """ManagedDestination tests: recycling, crash relaunch, and pass-through.
 
 Synthetic data only — ``feedface-`` GUIDs, neutral file names. The inner

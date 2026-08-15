@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Live-browser destination attach (the Playwright seam).
 
 Single owner of the CDP-attach flow: takes a loopback CDP URL and a loaded

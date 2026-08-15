@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared migration-status classifier (one verdict, two frontends).
 
 These pin CLI/GUI parity AND the honesty invariant: a route-resolved migration is

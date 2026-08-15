@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """US Core R4 resources → canonical :class:`PatientRecord` objects.
 
 This maps *standard* FHIR R4 / US Core resources — the shape a certified EHR's

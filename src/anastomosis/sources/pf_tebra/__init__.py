@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Practice Fusion / Tebra EHI export adapter.
 
 Reads the §170.315(b)(10) export format: one TSV per entity, GUID foreign

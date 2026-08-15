@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The learned-mapping spec: a validated, declarative description of one format.
 
 A learned source is a directory ``~/.anastomosis/sources/<id>/`` whose

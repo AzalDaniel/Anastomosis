@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast archive`` / ``anast bundle`` — full pipeline + an offline deliverable.
 
 The two command bodies split out of :mod:`anastomosis.cli`; they register

@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis Pack-from-samples wizard — vanilla JS, no frameworks, no build.
  *

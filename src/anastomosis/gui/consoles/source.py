@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The learn-a-source wizard backend (the source console).
 
 Marshals the shared

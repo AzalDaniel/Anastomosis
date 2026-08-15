@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PF/Tebra join graph → canonical PatientRecords.
 
 The lossless rule, mechanically enforced: every table mapping declares the

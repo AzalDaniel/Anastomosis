@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Live FHIR-server integration test (PLAN item 13a).
 
 Runs the real :class:`FhirApiDestination` over a real :class:`FhirClient`

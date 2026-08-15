@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GUI web-asset tests — offline guarantee, parse sanity, packaging, design system.
 
 The desktop GUI's html/css/js/fonts ship bundled and must be network-free (the

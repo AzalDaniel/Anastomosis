@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for core.codes — vital LOINC map, pain answers, BMI math.
 
 These assert the DUAL-MAP truth ported from the predecessor's vitals table:

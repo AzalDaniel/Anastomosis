@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Generic, selector-driven destination pack machinery (PLAN item 12b).
 
 A *browser pack* teaches Anastomosis how to file a reconstructed chart into one

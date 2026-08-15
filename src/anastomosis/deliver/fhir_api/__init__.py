@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """API delivery: file reconstructed charts into a FHIR R4 server (PLAN item 13a).
 
 The modern counterpart to the browser route. When a destination speaks FHIR R4,

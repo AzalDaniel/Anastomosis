@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The crash-resumable upload ledger (M2 item 10): WAL-mode SQLite.
 
 A browser upload run is long and crash-prone, so the ground truth for "what

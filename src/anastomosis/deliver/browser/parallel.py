@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Patient-partitioned parallel upload runner (M2 item 10).
 
 Throughput is the *secondary* goal here; patient safety is the primary one.

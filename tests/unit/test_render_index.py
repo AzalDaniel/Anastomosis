@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PDF→patient render index that the engine writes alongside
 charts — the patient-safety hardening that replaces the old
 ``{family}_{given}_`` filename-prefix guessing with explicit ``patient_id``

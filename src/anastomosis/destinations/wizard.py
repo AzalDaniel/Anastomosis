@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Selector-discovery wizard support (the ``anast destination init`` engine).
 
 Discovering a browser pack means an operator pasting the CSS selector for each

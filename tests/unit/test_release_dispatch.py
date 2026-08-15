@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pins the release workflows' dispatch-publish wiring.
 
 Invariant: a release is publishable straight from the Actions tab — main-only,

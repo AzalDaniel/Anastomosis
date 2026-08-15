@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Browser delivery: the resumable upload pipeline (M2 item 10).
 
 Migration mode's last-resort route — file reconstructed charts into a

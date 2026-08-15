@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shortest-path delivery router (pure logic, no I/O).
 
 Given a destination's declared capabilities (the

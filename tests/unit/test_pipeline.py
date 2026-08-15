@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the pipeline-core input guard ``load_records`` (review P0-2/P0-3).
 
 A malformed export must become a clean, PHI-safe ``bad_input`` error (exit 2)

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """CDP attach configuration: connect to a browser the user already drives.
 
 The browser route's threat model is unusual and deliberate. Anastomosis NEVER

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Discrete clinical data: observations, problems, meds, allergies, et al."""
 
 from __future__ import annotations

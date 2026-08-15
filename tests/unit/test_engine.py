@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the reconstruction engine: the PF fixture rendered through the
 built-in generic_soap pack with a fake renderer — the whole pipeline except
 Chromium itself."""

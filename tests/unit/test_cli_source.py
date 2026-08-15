@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The ``anast source init`` CLI and the no-source "teach it" guidance.
 
 ``source init`` learns a format from an example, refuses to save a lossy

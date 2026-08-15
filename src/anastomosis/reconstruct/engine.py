@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The reconstruction engine: canonical records → chart PDFs via a pack.
 
 Ported behaviors from the predecessor (which reconstructed 12,906 PDFs at

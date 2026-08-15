@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Run QA checks over a batch of rendered documents and report.
 
 The JSON report lands inside the (hardened) output directory next to the

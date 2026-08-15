@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Offline archive deliverer — Archivist persona.
 
 Produces a static, browsable directory tree from canonical PatientRecords:

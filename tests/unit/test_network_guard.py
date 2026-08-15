@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The unit suite must not be able to reach an external network host.
 
 Proves the autouse guard in conftest.py is active: a connection to a

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the C-CDA / CCD adapter against the synthetic fixture.
 
 Each test asserts one section's mapping (or one trap) documented in

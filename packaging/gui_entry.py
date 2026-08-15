@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Frozen GUI entry point for the Nuitka Windows build.
 
 Nuitka warns against compiling a package's ``__main__.py`` AS the main module, so

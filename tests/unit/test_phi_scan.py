@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Self-tests for the PHI scanner — the repo's most important guardrail.
 
 These tests never touch real PHI: the deny-list under test is built from
