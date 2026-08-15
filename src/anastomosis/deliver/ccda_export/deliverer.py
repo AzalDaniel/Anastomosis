@@ -20,25 +20,18 @@ filename PHI-free.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import safe_name
 
 from .builder import build_ccd
 
 __all__ = ["deliver_ccda"]
 
 logger = logging.getLogger(__name__)
-
-_UNSAFE = re.compile(r"[^A-Za-z0-9_-]+")
-
-
-def _safe_id(value: str, fallback: str) -> str:
-    cleaned = _UNSAFE.sub("_", (value or "").strip()).strip("_")
-    return cleaned or fallback
 
 
 def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path]:
@@ -53,7 +46,7 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
     out = secure_output_dir(out_dir)
     written: list[Path] = []
     for index, record in enumerate(records):
-        pid = _safe_id(record.patient.id, f"patient_{index}")
+        pid = safe_name(record.patient.id, f"patient_{index}")
         target = out / f"{pid}.xml"
         try:
             target.write_bytes(build_ccd(record))

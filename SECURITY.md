@@ -157,10 +157,13 @@ site carries a `# codeql[rule-id]` suppression comment immediately beside a
 `secure_output_dir`-hardened directory, or field-name-not-value logging).
 The audited suppression sites are exactly:
 
-- `src/anastomosis/deliver/archive/archive.py` (per-patient FHIR bundle;
-  archive index) — `py/clear-text-storage-sensitive-data`
-- `src/anastomosis/deliver/bundle/bundle.py` (per-patient FHIR bundle;
-  bundle README) — `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/_shared.py` (the per-patient FHIR bundle, written
+  the same way by every file-writing deliverer) —
+  `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/archive/archive.py` (archive index) —
+  `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/bundle/bundle.py` (bundle README) —
+  `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/browser/persist.py` (upload manifest) —
   `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/render_index.py` (render-index sidecar) —

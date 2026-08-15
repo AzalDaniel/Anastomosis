@@ -45,6 +45,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.timeutil import age_display, to_local
+from anastomosis.reconstruct.packctx import observations_by_encounter, record_cache_of
 
 # --- vitals --------------------------------------------------------------------
 # Display order (GOLD §8 VITAL_ORDER). Blood Pressure is the combined sys/dia row.
@@ -661,8 +662,7 @@ def build_context(
     # CONTRACT: record_cache is per-record — the engine allocates a fresh dict
     # for each record. A caller must not share one cache across DIFFERENT records
     # (that would mis-render the second). Absent a cache, it builds locally.
-    cache = cfg.get("record_cache")
-    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+    record_cache = record_cache_of(cfg)
 
     # Record-static views (insurance, payment, diagnoses, allergies, meds,
     # immunizations, social history, demographics, …) are independent of the
@@ -683,10 +683,7 @@ def build_context(
     # --- vitals ----------------------------------------------------------------
     # observations grouped by encounter once per record (the indexed form of
     # observations_for); .get(id, []) == observations_for(id) exactly.
-    obs_by_encounter = record_cache.get("obs_by_encounter")
-    if obs_by_encounter is None:
-        obs_by_encounter = record.observations_by_encounter()
-        record_cache["obs_by_encounter"] = obs_by_encounter
+    obs_by_encounter = observations_by_encounter(record, record_cache)
     enc_vitals = [
         o
         for o in obs_by_encounter.get(encounter.id, [])

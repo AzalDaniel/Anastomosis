@@ -380,6 +380,132 @@
     });
   }
 
+  // ─── Controller bridge helpers (shared by the run pages) ──────
+  // The dashboard and the migration wizard drive different flows but present
+  // their results the same way, so the presentation lives here once. PHI rule
+  // (unchanged): the per-patient detail below is fetched over the bridge and
+  // painted with textContent for LOCAL display only — it never rides an event
+  // and is never logged.
+
+  function hasApi() {
+    return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+  }
+
+  // Fill a <select> with [{value, label}] entries, replacing what was there.
+  // Each page supplies its own leading entry (the dashboard's "auto-detect"
+  // sentinel vs the wizard's "Select a source…" prompt are different contracts).
+  function fillSelect(select, entries) {
+    if (!select) return;
+    select.innerHTML = "";
+    for (const entry of entries) {
+      const opt = document.createElement("option");
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      select.appendChild(opt);
+    }
+  }
+
+  // Build the section-selection checkbox matrix into `matrix` from a
+  // {key: {label, default}} map. The host owns WHICH map applies (the dashboard
+  // keys off the chosen pack, the wizard off the render mode) and the
+  // empty-state wording; the toggle markup is identical on both pages.
+  function renderSectionMatrix(matrix, sections, emptyText) {
+    if (!matrix) return;
+    matrix.innerHTML = "";
+    const keys = Object.keys(sections || {});
+    if (keys.length === 0) {
+      matrix.textContent = emptyText;
+      matrix.classList.add("empty");
+      return;
+    }
+    matrix.classList.remove("empty");
+    for (const key of keys) {
+      const flag = sections[key];
+      const label = document.createElement("label");
+      label.className = "toggle";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.section = key;
+      input.checked = flag.default !== false;
+      const track = document.createElement("span");
+      track.className = "track";
+      const text = document.createElement("span");
+      text.textContent = flag.label || key;
+      label.appendChild(input);
+      label.appendChild(track);
+      label.appendChild(text);
+      matrix.appendChild(label);
+    }
+  }
+
+  // Read a section matrix back into the {section: bool} map the run calls take.
+  // Scoped to inputs carrying data-section so a future non-section checkbox in
+  // the same container can never pollute the map.
+  function gatherSections(matrix) {
+    const sections = {};
+    if (!matrix) return sections;
+    for (const box of $$("input[data-section]", matrix)) {
+      sections[box.dataset.section] = box.checked;
+    }
+    return sections;
+  }
+
+  // The per-patient roll-up table (patient / dob / encounters / notes).
+  // `panel` hides itself when there is nothing to show.
+  function renderPatients(panel, body, patients) {
+    if (!panel || !body) return;
+    body.innerHTML = "";
+    if (!patients.length) {
+      panel.hidden = true;
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "patients-table";
+    const head = document.createElement("tr");
+    for (const heading of ["patient", "dob", "encounters", "notes"]) {
+      const th = document.createElement("th");
+      th.textContent = heading;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const p of patients) {
+      const tr = document.createElement("tr");
+      const cells = [
+        p.display_name || "—",
+        p.birth_date || "—",
+        String(p.encounters),
+        String(p.documents),
+      ];
+      for (const value of cells) {
+        const td = document.createElement("td");
+        td.textContent = value; // textContent: PHI rendered as text, never HTML
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    body.appendChild(table);
+    panel.hidden = false;
+  }
+
+  function clearPatients(panel, body) {
+    if (body) body.innerHTML = "";
+    if (panel) panel.hidden = true;
+  }
+
+  // Fetch a finished run's per-patient detail and paint it. `summaryId` is the
+  // run's OWN id (from its `done` event), so a rapid second run cannot replace
+  // the detail this run is about to show (the summary race). The summary is
+  // advisory: a failure never blocks the run roll-up.
+  async function loadPatients(panel, body, summaryId) {
+    if (!hasApi()) return;
+    try {
+      const res = await window.pywebview.api.last_run_summary(summaryId);
+      if (res && res.ok) renderPatients(panel, body, res.patients || []);
+    } catch (_) {
+      /* advisory only */
+    }
+  }
+
   // ─── Calendar grid builder (halo cells + count badges) ────────
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
@@ -472,6 +598,12 @@
     closeLogDrawer,
     toggleLogDrawer,
     renderCalendar,
+    fillSelect,
+    renderSectionMatrix,
+    gatherSections,
+    renderPatients,
+    clearPatients,
+    loadPatients,
     MONTH_NAMES,
   };
 })();

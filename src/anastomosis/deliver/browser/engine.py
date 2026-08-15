@@ -37,13 +37,13 @@ output directory).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Patient
 from anastomosis.destinations.base import Destination, UploadItem
@@ -53,10 +53,6 @@ from .manifest import is_skiplisted
 from .states import UploadState
 from .tracking import TrackingDB
 from .verify import NullVerifier, Verifier
-
-# 1 MiB chunks: matches the manifest hasher so preflight re-hashing reads the
-# file the same way it was originally measured.
-_HASH_CHUNK_BYTES = 1024 * 1024
 
 __all__ = ["EngineResult", "UploadEngine"]
 
@@ -375,26 +371,23 @@ class UploadEngine:
     def _preflight_ok(self, item: UploadItem) -> bool:
         """File exists and its content/size still match the manifest.
 
-        Re-hashes the file streamed in chunks; a mismatch means the render was
-        corrupted or swapped after the manifest was built — a hard preflight
+        Re-hashes the file through the shared streaming hasher — the same
+        chunking the manifest measured it with — so a mismatch means the render
+        was corrupted or swapped after the manifest was built, never a
+        difference in how the two sites read. A mismatch is a hard preflight
         fail, never an upload. Logs the item key only, never the path.
         """
         path = item.file_path
         if not path.exists():
             return False
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with path.open("rb") as handle:
-                while chunk := handle.read(_HASH_CHUNK_BYTES):
-                    digest.update(chunk)
-                    size += len(chunk)
+            digest, size = hash_and_size(path)
         except OSError as exc:
             logger.warning(
                 "preflight read failed for item %s (%s)", safe_log_id(item.item_key), exc_tag(exc)
             )
             return False
-        return digest.hexdigest() == item.sha256 and size == item.size_bytes
+        return digest == item.sha256 and size == item.size_bytes
 
     def _attempts(self, item_key: str) -> int:
         return self._tracking.attempts_of(item_key)

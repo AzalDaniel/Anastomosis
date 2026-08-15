@@ -37,6 +37,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.timeutil import all_date_spellings
 from anastomosis.deliver.browser.errors import WrongPatientError
@@ -61,13 +62,10 @@ __all__ = [
     "L6RoundTrip",
     "LevelResult",
     "LevelStatus",
+    "PdfSnapshot",
     "date_renderings",
     "fuzzy_contains",
 ]
-
-# 1 MiB chunks: matches the engine/manifest hashers so an L0 re-hash reads the
-# file exactly the way the manifest measured it.
-_HASH_CHUNK_BYTES = 1024 * 1024
 
 # A sub-KiB "PDF" is a rendering failure, not a one-page chart: a Chromium
 # print of even an empty note is several KiB. Below this the file is corrupt or
@@ -83,6 +81,12 @@ _MIN_PDF_BYTES = 1024
 # rather than a similar-but-wrong name slipping through. The DOB hard gate is
 # the primary defense; the ratio is the secondary one.
 _NAME_RATIO = 0.88
+
+# How far past the needle's length each comparison window reaches, so a middle
+# name or a credential suffix rendered next to the name does not sink the ratio.
+# Load-bearing for the probe ratios documented above — widening it moves every
+# ratio the threshold is calibrated against.
+_WINDOW_SLACK = 8
 
 
 class LevelStatus(StrEnum):
@@ -133,18 +137,25 @@ def fuzzy_contains(needle: str, haystack: str, *, ratio: float = _NAME_RATIO) ->
         return 1.0
     matcher = SequenceMatcher(autojunk=False)
     matcher.set_seq2(n)
-    tokens = hay.split(" ")
-    window_len = len(n)
+    window_len = len(n) + _WINDOW_SLACK
     best = 0.0
     # Anchor each window start on a token boundary so we never compare against a
     # window that bisects a word; take a little more than the needle's length so
     # a rendered middle name or suffix padding the name does not sink the ratio.
-    for i in range(len(tokens)):
-        window = " ".join(tokens[i:])[: window_len + 8]
-        matcher.set_seq1(window)
+    #
+    # ``_normalize`` collapsed every whitespace run to ONE space and stripped the
+    # ends, so a token's start offset indexes straight into ``hay`` and the
+    # window is a slice: ``hay[start : start + window_len]`` is character-for-
+    # character the old ``" ".join(tokens[i:])[:window_len]``, without rebuilding
+    # (and immediately discarding) the rest of the page at every token. Same
+    # windows, same ratios, linear instead of quadratic in page length.
+    start = 0
+    for token in hay.split(" "):
+        matcher.set_seq1(hay[start : start + window_len])
         best = max(best, matcher.ratio())
         if best >= 1.0:
             break
+        start += len(token) + 1  # +1 for the single separating space
     return best
 
 
@@ -196,14 +207,71 @@ def _first_page_text(doc: Any) -> str:
     return ""
 
 
-def _page_one_text(path: Path) -> str:
-    with _import_pymupdf().open(path) as doc:
-        return _first_page_text(doc)
+class PdfSnapshot:
+    """One item's parsed PDF facts — page count + page-1 text — read once.
+
+    L1 wants the page count, L2/L3 want page-1 text, L5 wants the page count
+    again and L6 wants it once more: five levels, one unchanging local file,
+    and (before this) up to five ``pymupdf.open`` + text-extraction passes per
+    item. This is the per-item twin of the QA runner's per-document snapshot
+    cache (:func:`anastomosis.qa.checks.prime_snapshot_cache`): the levels read
+    from it instead of each opening the file.
+
+    **Lazy on purpose.** Nothing is parsed until a level asks, so the ladder's
+    ordering semantics are untouched: L1 still rejects a sub-KiB file on its
+    size alone without ever opening it, a missing render extra still raises
+    from the level that needs PyMuPDF (never from the composite that built the
+    snapshot), and a corrupt PDF still raises inside the first level that reads
+    it.
+
+    **Scoped to one phase.** :class:`~.composite.LayeredVerifier` builds one
+    snapshot for its pre-upload levels and a second for its post-upload levels
+    rather than carrying one across the upload: L5/L6 run *after* bytes were
+    sent, and re-reading the local file there keeps their answer about the
+    on-disk file honest (and keeps page text — PHI — out of memory for the
+    duration of a run).
+
+    A level given no snapshot builds its own, so calling a level directly
+    (``L1PageAndSize().run(item)``) behaves exactly as it always has.
+    """
+
+    __slots__ = ("_page_count", "_page_one_text", "_parsed", "path")
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._parsed = False
+        self._page_count = 0
+        self._page_one_text = ""
+
+    def _parse(self) -> None:
+        if self._parsed:
+            return
+        with _import_pymupdf().open(self.path) as doc:
+            # Order matters: read the text while the document is open, and take
+            # page_count from the same open so the two facts describe ONE read
+            # of one file.
+            page_count = int(doc.page_count)
+            text = _first_page_text(doc)
+        self._page_count = page_count
+        self._page_one_text = text
+        self._parsed = True
+
+    @property
+    def page_count(self) -> int:
+        self._parse()
+        return self._page_count
+
+    @property
+    def page_one_text(self) -> str:
+        self._parse()
+        return self._page_one_text
 
 
-def _page_count(path: Path) -> int:
-    with _import_pymupdf().open(path) as doc:
-        return int(doc.page_count)
+def _snapshot_for(item: UploadItem, snapshot: PdfSnapshot | None) -> PdfSnapshot:
+    """The caller's shared snapshot, or a fresh one for a direct level call."""
+    if snapshot is not None:
+        return snapshot
+    return PdfSnapshot(item.file_path)
 
 
 def _pages_and_text_of_bytes(pymupdf: Any, data: bytes) -> tuple[int, str]:
@@ -226,7 +294,14 @@ class L0FileIntegrity:
     Overlaps the engine's preflight by design: re-hashing here makes the stack
     self-contained when run *outside* the engine (a future ``anast verify``
     command, a standalone re-check), so the ladder never assumes the engine ran
-    first. L0 uses only the stdlib hashlib — it works without the render extra.
+    first. The engine having just hashed the same file is therefore NOT a reason
+    to reuse its digest — an independent re-read of the bytes is the whole
+    proposition of this level, and a cached digest would prove only that the
+    manifest agrees with itself. What IS shared with preflight and the manifest
+    is the *hasher* (:func:`anastomosis.core.hashutil.hash_and_size`), so the
+    three sites cannot disagree about how a file is chunked.
+
+    L0 uses only the stdlib — it works without the render extra.
     """
 
     level = "L0"
@@ -235,18 +310,13 @@ class L0FileIntegrity:
         path = item.file_path
         if not path.exists():
             return LevelResult(self.level, LevelStatus.FAIL, "file missing")
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with path.open("rb") as handle:
-                while chunk := handle.read(_HASH_CHUNK_BYTES):
-                    digest.update(chunk)
-                    size += len(chunk)
+            digest, size = hash_and_size(path)
         except OSError:
             return LevelResult(self.level, LevelStatus.FAIL, "file unreadable")
         if size != item.size_bytes:
             return LevelResult(self.level, LevelStatus.FAIL, "size_bytes mismatch")
-        if digest.hexdigest() != item.sha256:
+        if digest != item.sha256:
             return LevelResult(self.level, LevelStatus.FAIL, "sha256 mismatch")
         return LevelResult(self.level, LevelStatus.PASS, "sha256 and size match")
 
@@ -260,12 +330,20 @@ class L1PageAndSize:
 
     level = "L1"
 
-    def run(self, item: UploadItem, *, expected_pages: int | None = None) -> LevelResult:
+    def run(
+        self,
+        item: UploadItem,
+        *,
+        expected_pages: int | None = None,
+        snapshot: PdfSnapshot | None = None,
+    ) -> LevelResult:
         if item.size_bytes <= _MIN_PDF_BYTES:
+            # Below the floor the file never gets opened — the size alone
+            # condemns it, so the snapshot stays unparsed.
             return LevelResult(
                 self.level, LevelStatus.FAIL, f"size_bytes below {_MIN_PDF_BYTES}-byte floor"
             )
-        pages = _page_count(item.file_path)
+        pages = _snapshot_for(item, snapshot).page_count
         if pages < 1:
             return LevelResult(self.level, LevelStatus.FAIL, "page_count below 1")
         if expected_pages is not None and pages != expected_pages:
@@ -293,8 +371,10 @@ class L2IdentityText:
 
     level = "L2"
 
-    def run(self, item: UploadItem, patient: Patient) -> LevelResult:
-        text = _page_one_text(item.file_path)
+    def run(
+        self, item: UploadItem, patient: Patient, *, snapshot: PdfSnapshot | None = None
+    ) -> LevelResult:
+        text = _snapshot_for(item, snapshot).page_one_text
         name = patient.display_name
         if not name:
             return LevelResult(self.level, LevelStatus.SKIP, "patient has no display name")
@@ -346,13 +426,14 @@ class L3HeaderFields:
         *,
         pack: LoadedPack | None,
         encounter: Encounter | None,
+        snapshot: PdfSnapshot | None = None,
     ) -> LevelResult:
         if pack is None:
             return LevelResult(self.level, LevelStatus.SKIP, "no pack provided")
         fields = pack.manifest.verify_header_fields
         if not fields:
             return LevelResult(self.level, LevelStatus.SKIP, "no header fields declared")
-        text = _page_one_text(item.file_path)
+        text = _snapshot_for(item, snapshot).page_one_text
         failures: list[str] = []
         for field_name in fields:
             if field_name not in _SUPPORTED_HEADER_FIELDS:
@@ -441,6 +522,7 @@ class L5Metadata:
         destination_doc_id: str | None,
         *,
         reader: MetadataReader | None,
+        snapshot: PdfSnapshot | None = None,
     ) -> LevelResult:
         if reader is None:
             return LevelResult(self.level, LevelStatus.SKIP, "destination has no MetadataReader")
@@ -455,7 +537,7 @@ class L5Metadata:
             checked.append("size_bytes")
         reported_pages = meta.get("page_count")
         if reported_pages is not None:
-            if int(reported_pages) != _page_count(item.file_path):
+            if int(reported_pages) != _snapshot_for(item, snapshot).page_count:
                 return LevelResult(self.level, LevelStatus.FAIL, "reported page_count mismatch")
             checked.append("page_count")
         if not checked:
@@ -507,6 +589,7 @@ class L6RoundTrip:
         *,
         reader: DocumentReader | None,
         patient: Patient | None = None,
+        snapshot: PdfSnapshot | None = None,
     ) -> LevelResult:
         if reader is None:
             return LevelResult(self.level, LevelStatus.SKIP, "destination has no DocumentReader")
@@ -524,7 +607,7 @@ class L6RoundTrip:
             back_pages, back_text = _pages_and_text_of_bytes(pymupdf, data)
         except Exception:  # any PyMuPDF parse failure is a corruption fail, not a crash
             return LevelResult(self.level, LevelStatus.FAIL, "read-back is not a valid PDF")
-        if back_pages != _page_count(item.file_path):
+        if back_pages != _snapshot_for(item, snapshot).page_count:
             return LevelResult(self.level, LevelStatus.FAIL, "read-back page_count differs")
         if patient is None or not patient.display_name:
             return LevelResult(

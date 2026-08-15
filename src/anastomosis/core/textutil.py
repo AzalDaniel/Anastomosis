@@ -15,6 +15,11 @@ Three jobs:
   it *preserves* the source's semantic HTML and only repairs it (TSV-exported
   ``\\n`` → ``<br>``, empty-block strip, ``pf-rich-text`` wrap) so a chart
   renders the way the source authored it.
+* **Text → filesystem name** — :func:`safe_name` is the ONE definition of a
+  filesystem-safe file/directory component (renderer filenames, archive and
+  bundle patient directories, C-CDA export filenames). Delivered layouts
+  depend on its exact output, so every writer shares it rather than
+  re-deriving the same regex.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ __all__ = [
     "clean_numeric",
     "format_phone",
     "html_to_text",
+    "safe_name",
     "sanitize_soap_html",
 ]
 
@@ -70,6 +76,30 @@ def format_phone(raw: str | None) -> str | None:
     if len(digits) == 10:
         return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
     return clean_cell(raw)
+
+
+# Everything outside the safe set collapses to a single underscore. ASCII
+# letters/digits plus ``_`` and ``-`` are the intersection of what POSIX and
+# Windows accept unquoted, so a name built from this set never needs escaping
+# and never escapes its slot (no ``/``, no ``..``, no drive letters).
+_UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def safe_name(value: str | None, fallback: str) -> str:
+    """A filesystem-safe file/directory component, or ``fallback`` if nothing survives.
+
+    Runs of unsafe characters collapse to one ``_`` and leading/trailing ``_``
+    are trimmed, so ``feedface-`` GUIDs (the synthetic fixture prefix) and any
+    plain ASCII id pass through unchanged while an exotic value cannot escape
+    its slot. An empty/blank input — or one made entirely of unsafe characters —
+    yields ``fallback`` rather than an empty name.
+
+    Load-bearing: this is the single definition behind rendered chart filenames
+    (:mod:`anastomosis.reconstruct.engine`), archive/bundle patient directories,
+    and C-CDA export filenames. Changing it renames delivered output.
+    """
+    cleaned = _UNSAFE_NAME_RE.sub("_", (value or "").strip()).strip("_")
+    return cleaned or fallback
 
 
 # Paragraph-level tags separate with a blank line; remaining block tags

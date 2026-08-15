@@ -65,6 +65,7 @@ from .levels import (
     L6RoundTrip,
     LevelResult,
     LevelStatus,
+    PdfSnapshot,
 )
 
 # Re-exported here for back-compat (the public typedef lives in .types so the
@@ -143,17 +144,29 @@ class LayeredVerifier:
         # Capture the destination patient once (feeds L5/L6 read-back later).
         self._capture_dest_patient(item, patient)
         encounter = self._records.get(item.encounter_id)
+        # One parse of the local PDF for the whole pre phase: L1 wants the page
+        # count, L2 and L3 want page-1 text. Lazy, so L1's sub-KiB size floor
+        # still rejects a file without opening it, and a corrupt PDF still
+        # raises from the level that reads it. L0 deliberately does NOT take it —
+        # its job is an independent re-read of the bytes.
+        snapshot = PdfSnapshot(item.file_path)
 
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
             ("L0", lambda: self._l0.run(item)),
             (
                 "L1",
-                lambda: self._l1.run(item, expected_pages=self._expected_pages.get(item.item_key)),
+                lambda: self._l1.run(
+                    item,
+                    expected_pages=self._expected_pages.get(item.item_key),
+                    snapshot=snapshot,
+                ),
             ),
-            ("L2", lambda: self._l2.run(item, patient)),
+            ("L2", lambda: self._l2.run(item, patient, snapshot=snapshot)),
             (
                 "L3",
-                lambda: self._l3.run(item, patient, pack=self._pack, encounter=encounter),
+                lambda: self._l3.run(
+                    item, patient, pack=self._pack, encounter=encounter, snapshot=snapshot
+                ),
             ),
             ("L4", lambda: self._l4.run(patient, banner=self._banner())),
         )
@@ -177,16 +190,28 @@ class LayeredVerifier:
         # re-asserts IDENTITY against the read-back (a whole-page similarity
         # ratio false-passes a swapped chart — see L6RoundTrip's docstring).
         patient = self._patients.get(item.item_key)
+        # A FRESH snapshot for the post phase, not the one verify_pre used: L5/L6
+        # run after bytes were sent, and their claim is about the local file as
+        # it is NOW. Within the phase they share it (L5 and L6 both want the
+        # local page count), so the file is parsed once here instead of twice.
+        snapshot = PdfSnapshot(item.file_path)
 
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
             (
                 "L5",
-                lambda: self._l5.run(item, dest_patient, doc_id, reader=self._metadata_reader()),
+                lambda: self._l5.run(
+                    item, dest_patient, doc_id, reader=self._metadata_reader(), snapshot=snapshot
+                ),
             ),
             (
                 "L6",
                 lambda: self._l6.run(
-                    item, dest_patient, doc_id, reader=self._document_reader(), patient=patient
+                    item,
+                    dest_patient,
+                    doc_id,
+                    reader=self._document_reader(),
+                    patient=patient,
+                    snapshot=snapshot,
                 ),
             ),
         )

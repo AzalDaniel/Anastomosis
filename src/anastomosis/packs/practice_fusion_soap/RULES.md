@@ -182,7 +182,7 @@ The predecessor's full convention is
 `{OUTPUT_ROOT}/{First Last}/{MM-DD-YYYY}_{abbreviate_cc(ChiefComplaint)}.pdf`
 (a per-patient subdirectory + a 26-pattern, 50-char-capped chief-complaint
 abbreviation). The current `LoadedPack`/engine filename contract exposes only
-`{family}/{given}/{dos}/{type}`, applies `_safe_name` (which strips path
+`{family}/{given}/{dos}/{type}`, applies `core.textutil.safe_name` (which strips path
 separators), computes no abbreviated-CC token, and creates no per-patient parent
 directory. **DIVERGENCE / follow-up:** rather than hack the engine for one pack,
 this pack ships `{given}_{family}_{dos}_{type}.pdf` (the closest the contract

@@ -196,6 +196,63 @@ def test_pipeline_run_diagnoses_unknown_pack(tmp_path: Path) -> None:
     assert "unavailable" in result.output
 
 
+# --- the delivery commands (archive / bundle) -------------------------------
+#
+# Both commands are built by one factory in cli_commands/delivery.py, so these
+# two happy paths are what proves the factory registers a WORKING command each
+# time (not just an identical --help screen): the pipeline runs, the deliverer
+# writes its own persona's layout, and the charts land in the default
+# <out>/_charts unless --charts-dir says otherwise.
+
+
+def test_archive_command_writes_the_archive_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`anast archive` runs the pipeline and writes the searchable archive."""
+    pytest.importorskip("pymupdf", reason="archive e2e needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "arc"
+    result = runner.invoke(app, ["archive", str(FIXTURE), "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "Archive: 3 patients, 6 encounters, 6 pdfs" in normalized
+    # The archive's own layout: one cross-patient index + per-patient subtrees.
+    assert (out / "index.html").is_file()
+    assert (out / "index.json").is_file()
+    assert (out / "README.txt").is_file()
+    assert len(list((out / "patients").iterdir())) == 3
+    # Charts default to <out>/_charts and every rendered PDF was attributed.
+    assert len(list((out / "_charts").glob("*.pdf"))) == 6
+    assert not (out / "unattributed").exists()
+
+
+def test_bundle_command_writes_one_directory_per_patient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`anast bundle` runs the pipeline and writes one per-patient bundle."""
+    pytest.importorskip("pymupdf", reason="bundle e2e needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "bun"
+    charts = tmp_path / "charts"
+    result = runner.invoke(
+        app, ["bundle", str(FIXTURE), "--out", str(out), "--charts-dir", str(charts)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Bundles: 3 patients" in " ".join(result.output.split())
+    # The bundle's own layout: one self-contained directory per patient, each
+    # carrying the FHIR rendition, its charts, the QA slice, and its README.
+    patient_dirs = sorted(p for p in out.iterdir() if p.is_dir())
+    assert len(patient_dirs) == 3
+    for patient_dir in patient_dirs:
+        assert (patient_dir / "bundle.json").is_file()
+        assert (patient_dir / "README.txt").is_file()
+        assert (patient_dir / "qa_report.json").is_file()
+        assert list((patient_dir / "pdfs").glob("*.pdf"))
+    # --charts-dir was honored, so no _charts sibling was created under --out.
+    assert len(list(charts.glob("*.pdf"))) == 6
+    assert not (out / "_charts").exists()
+
+
 # --- operator-input boundary (clean exit 2, never a traceback) --------------
 
 

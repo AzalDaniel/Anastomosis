@@ -11,9 +11,9 @@ event and never a log.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from anastomosis.core.logutil import exc_tag
@@ -22,7 +22,7 @@ from anastomosis.gui.jobs import GuiJob, GuiJobRunner
 from anastomosis.gui.shared import _STAGE_MAP, _transit_to_dict
 
 if TYPE_CHECKING:
-    from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.core.commands import DeliveryOutcome, PatientSummary
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import StageEvent
 
@@ -69,13 +69,26 @@ class SummaryStore:
         return list(self._summaries.get(summary_id or "", []))
 
 
-class PipelineConsole:
-    """The pipeline run flow (reconstruct-and-deliver)."""
+class _RunConsole:
+    """What the pipeline and migration consoles do identically.
 
-    # The operation family this console owns; stamped on every event so the
-    # dashboard page consumes them and the wizard (flow "migration") does not
-    # (both emit identical stage/progress/done/error kinds — the per-page flow guard).
-    _FLOW = "pipeline"
+    The two flows differ in what they RUN and what they report; they do not
+    differ in how they wire themselves to the GUI. Everything in here is that
+    wiring — construction, the stage→rail event bridge, the no-traceback error
+    contract, and the shape of the per-patient roll-up — and each piece was
+    re-typed identically in both consoles before it moved here.
+
+    The one thing a subclass must supply is :attr:`_FLOW`, the operation family
+    stamped on every event it emits. It is what lets each PAGE consume only its
+    own run: dashboard and wizard emit identical stage/progress/done/error
+    kinds, so the flow tag is the per-page guard against one page announcing the
+    other's terminal event. A subclass that forgot to set it would emit events
+    no page listens to, so the base leaves it deliberately empty rather than
+    defaulting to a real flow name.
+    """
+
+    #: The operation family this console owns — set by every subclass.
+    _FLOW: ClassVar[str] = ""
 
     def __init__(
         self,
@@ -86,6 +99,60 @@ class PipelineConsole:
         self._emit = emit
         self._jobs = jobs
         self._store = store
+
+    def _stage_emitter(self, rollup: dict[str, int]) -> Callable[[StageEvent], None]:
+        """The pipeline-stage → rail-event bridge for ONE run.
+
+        Returns the ``on_event`` callback the shared command core drives, which
+        paints the rail (start → counts → done, per stage) and accumulates the
+        run's counts into ``rollup`` for the terminal event. PHI: an event
+        carries a stage name and counts, never a patient-derived value. A stage
+        the rail does not draw (``detect``) is skipped rather than invented.
+        """
+
+        def _on_event(event: StageEvent) -> None:
+            stage = _STAGE_MAP.get(event.stage)
+            if stage is None:
+                return  # the detect stage has no rail of its own
+            self._emit(stage_event(self._FLOW, stage, "start"))
+            self._emit(progress_event(self._FLOW, stage, **event.counts))
+            self._emit(stage_event(self._FLOW, stage, "done"))
+            rollup.update(event.counts)
+
+        return _on_event
+
+    @staticmethod
+    def _patient_rows(summaries: Iterable[PatientSummary]) -> list[dict[str, object]]:
+        """The per-patient roll-up as JSON-safe rows for the front end.
+
+        PHI: names/DOB ride the RETURN value and the summary store for LOCAL
+        display only — never an event, never a log (the consoles' standing rule).
+        """
+        return [
+            {
+                "patient_id": s.patient_id,
+                "display_name": s.display_name,
+                "birth_date": s.birth_date,
+                "encounters": s.encounters,
+                "documents": s.documents,
+            }
+            for s in summaries
+        ]
+
+    def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
+        """Convert a caught exception to the no-traceback error contract."""
+        tag = exc_tag(exc)
+        self._emit(error_event(self._FLOW, stage, tag))
+        return {"ok": False, "error": tag}
+
+
+class PipelineConsole(_RunConsole):
+    """The pipeline run flow (reconstruct-and-deliver)."""
+
+    # The operation family this console owns; stamped on every event so the
+    # dashboard page consumes them and the wizard (flow "migration") does not
+    # (both emit identical stage/progress/done/error kinds — the per-page flow guard).
+    _FLOW = "pipeline"
 
     def run_pipeline(
         self,
@@ -219,15 +286,7 @@ class PipelineConsole:
 
         out = Path(out_dir)
         rollup: dict[str, int] = {}
-
-        def _on_event(event: StageEvent) -> None:
-            stage = _STAGE_MAP.get(event.stage)
-            if stage is None:
-                return  # the detect stage has no rail of its own
-            self._emit(stage_event(self._FLOW, stage, "start"))
-            self._emit(progress_event(self._FLOW, stage, **event.counts))
-            self._emit(stage_event(self._FLOW, stage, "done"))
-            rollup.update(event.counts)
+        _on_event = self._stage_emitter(rollup)
 
         # GUI deliveries land in sibling subdirectories of the output dir (the
         # GUI has one output-dir field), through the same command path the CLI
@@ -270,16 +329,7 @@ class PipelineConsole:
         # an event: names/DOB are local display only, the event stream is counts.
         # Store before emitting `done` so the dashboard's done handler can fetch
         # it immediately.
-        patients: list[dict[str, object]] = [
-            {
-                "patient_id": s.patient_id,
-                "display_name": s.display_name,
-                "birth_date": s.birth_date,
-                "encounters": s.encounters,
-                "documents": s.documents,
-            }
-            for s in summarize_patients(result.pipeline)
-        ]
+        patients = self._patient_rows(summarize_patients(result.pipeline))
         summary_id = self._store.store_summary(patients)
         self._emit(done_event(self._FLOW, summary_id=summary_id, **rollup))
         return {"ok": True, **rollup, "patients": patients}
@@ -303,30 +353,14 @@ class PipelineConsole:
             self._emit(progress_event(self._FLOW, "deliver", deliverer=kind, patients=patients))
         self._emit(stage_event(self._FLOW, "deliver", "done"))
 
-    def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
-        """Convert a caught exception to the no-traceback error contract."""
-        tag = exc_tag(exc)
-        self._emit(error_event(self._FLOW, stage, tag))
-        return {"ok": False, "error": tag}
 
-
-class MigrationConsole:
+class MigrationConsole(_RunConsole):
     """The migration run flow (EHR-to-EHR; PF→Tebra is one instance)."""
 
     # The operation family this console owns; stamped on every event so the
     # wizard page consumes them and the dashboard (flow "pipeline") does not —
     # the per-page flow guard against one page consuming the other's terminal event.
     _FLOW = "migration"
-
-    def __init__(
-        self,
-        emit: Callable[[dict[str, object]], None],
-        jobs: GuiJobRunner,
-        store: SummaryStore,
-    ) -> None:
-        self._emit = emit
-        self._jobs = jobs
-        self._store = store
 
     def run_migration(
         self,
@@ -441,15 +475,7 @@ class MigrationConsole:
         from anastomosis.pipeline import PipelineError
 
         rollup: dict[str, int] = {}
-
-        def _on_event(event: StageEvent) -> None:
-            stage = _STAGE_MAP.get(event.stage)
-            if stage is None:
-                return  # the detect stage has no rail of its own
-            self._emit(stage_event(self._FLOW, stage, "start"))
-            self._emit(progress_event(self._FLOW, stage, **event.counts))
-            self._emit(stage_event(self._FLOW, stage, "done"))
-            rollup.update(event.counts)
+        _on_event = self._stage_emitter(rollup)
 
         try:
             result = run_migration(
@@ -485,16 +511,7 @@ class MigrationConsole:
             patients = self._ccda_standard_patients(result)
         else:
             assert result.pipeline is not None  # pack mode always carries a pipeline
-            patients = [
-                {
-                    "patient_id": s.patient_id,
-                    "display_name": s.display_name,
-                    "birth_date": s.birth_date,
-                    "encounters": s.encounters,
-                    "documents": s.documents,
-                }
-                for s in summarize_patients(result.pipeline)
-            ]
+            patients = self._patient_rows(summarize_patients(result.pipeline))
         summary_id = self._store.store_summary(patients)
         route = _transit_to_dict(result.transit)
 
@@ -593,12 +610,6 @@ class MigrationConsole:
             "ready": loaded.ready,
             "builtin": loaded.builtin,
         }
-
-    def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
-        """Convert a caught exception to the no-traceback error contract."""
-        tag = exc_tag(exc)
-        self._emit(error_event(self._FLOW, stage, tag))
-        return {"ok": False, "error": tag}
 
 
 def _failed_stage(message: str) -> str:

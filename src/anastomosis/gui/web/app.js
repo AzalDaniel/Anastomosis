@@ -174,43 +174,19 @@ function finishRun() {
 // switching packs repaints the matrix without another round-trip.
 let SECTIONS_BY_PACK = {};
 
+// Read the live matrix into the {section: bool} map run_pipeline expects, and
+// repaint it for a pack. Both are Shell mechanics (the wizard paints the same
+// toggles); the dashboard owns only WHICH pack's sections apply.
 function gatherSections() {
-  const sections = {};
-  const boxes = el("section-matrix").querySelectorAll("input[type=checkbox]");
-  for (const box of boxes) {
-    sections[box.dataset.section] = box.checked;
-  }
-  return sections;
+  return Shell.gatherSections(el("section-matrix"));
 }
 
 function renderSectionMatrix(packName) {
-  const matrix = el("section-matrix");
-  matrix.innerHTML = "";
-  const sections = SECTIONS_BY_PACK[packName] || {};
-  const keys = Object.keys(sections);
-  if (keys.length === 0) {
-    matrix.textContent = "This pack exposes no togglable sections.";
-    matrix.classList.add("empty");
-    return;
-  }
-  matrix.classList.remove("empty");
-  for (const key of keys) {
-    const flag = sections[key];
-    const label = document.createElement("label");
-    label.className = "toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.dataset.section = key;
-    input.checked = flag.default !== false;
-    const track = document.createElement("span");
-    track.className = "track";
-    const text = document.createElement("span");
-    text.textContent = flag.label || key;
-    label.appendChild(input);
-    label.appendChild(track);
-    label.appendChild(text);
-    matrix.appendChild(label);
-  }
+  Shell.renderSectionMatrix(
+    el("section-matrix"),
+    SECTIONS_BY_PACK[packName] || {},
+    "This pack exposes no togglable sections."
+  );
 }
 
 async function populateHeader() {
@@ -250,21 +226,10 @@ async function populateHeader() {
 // Source picker: "auto-detect" (empty value → null → pipeline sniffs the
 // export) plus every registered adapter from info().sources.
 function populateSources(sources) {
-  const select = el("source");
-  if (!select) {
-    return;
-  }
-  select.innerHTML = "";
-  const auto = document.createElement("option");
-  auto.value = "";
-  auto.textContent = "auto-detect";
-  select.appendChild(auto);
-  for (const src of sources) {
-    const opt = document.createElement("option");
-    opt.value = src.name;
-    opt.textContent = src.name;
-    select.appendChild(opt);
-  }
+  Shell.fillSelect(el("source"), [
+    { value: "", label: "auto-detect" },
+    ...sources.map((src) => ({ value: src.name, label: src.name })),
+  ]);
 }
 
 // --- vendor-change detection toast (pack_freshness) -----------------------
@@ -362,70 +327,14 @@ function gatherDeliver(name) {
 // The `done` event carries counts only; the names/DOB/note-counts are fetched
 // here via last_run_summary() and rendered with textContent (PHI shown locally,
 // never logged). The strict CSP forbids inline anyway.
-async function loadPatients(summaryId) {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    // Pass the run's own summary id (from its `done` event) so a rapid second
-    // run cannot replace the detail this run is about to show (the summary race).
-    const res = await window.pywebview.api.last_run_summary(summaryId);
-    if (res && res.ok) {
-      renderPatients(res.patients || []);
-    }
-  } catch (err) {
-    // The summary is advisory; never block the run roll-up on it.
-  }
+// Both the fetch and the table are Shell mechanics (the wizard shows the same
+// roll-up after its own run); the page owns only where they land.
+function loadPatients(summaryId) {
+  Shell.loadPatients(el("patients-panel"), el("patients-body"), summaryId);
 }
 
 function clearPatients() {
-  const body = el("patients-body");
-  if (body) {
-    body.innerHTML = "";
-  }
-  const panel = el("patients-panel");
-  if (panel) {
-    panel.hidden = true;
-  }
-}
-
-function renderPatients(patients) {
-  const panel = el("patients-panel");
-  const body = el("patients-body");
-  if (!panel || !body) {
-    return;
-  }
-  body.innerHTML = "";
-  if (!patients.length) {
-    panel.hidden = true;
-    return;
-  }
-  const table = document.createElement("table");
-  table.className = "patients-table";
-  const head = document.createElement("tr");
-  for (const heading of ["patient", "dob", "encounters", "notes"]) {
-    const th = document.createElement("th");
-    th.textContent = heading;
-    head.appendChild(th);
-  }
-  table.appendChild(head);
-  for (const p of patients) {
-    const tr = document.createElement("tr");
-    const cells = [
-      p.display_name || "—",
-      p.birth_date || "—",
-      String(p.encounters),
-      String(p.documents),
-    ];
-    for (const value of cells) {
-      const td = document.createElement("td");
-      td.textContent = value; // textContent: PHI rendered as text, never HTML
-      tr.appendChild(td);
-    }
-    table.appendChild(tr);
-  }
-  body.appendChild(table);
-  panel.hidden = false;
+  Shell.clearPatients(el("patients-panel"), el("patients-body"));
 }
 
 function init() {

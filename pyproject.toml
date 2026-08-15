@@ -90,6 +90,10 @@ packages = ["src/anastomosis"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests", "tools"]
+# Vendored third-party material (its own license, upstream's style) is not
+# ours to lint — same rule the review-archaeology guard applies to `vendor`
+# path components.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = [

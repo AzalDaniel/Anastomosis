@@ -45,17 +45,17 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag, safe_log_id
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import safe_name
+from anastomosis.deliver._shared import copy_delivered_file, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport
 
@@ -70,17 +70,6 @@ _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 # Files copied into out_dir/assets/ on every run. Anything else in the source
 # assets directory is documentation and stays inside the package.
 _ASSET_FILES: tuple[str, ...] = ("anast.css", "anast-index.js")
-
-
-def _safe_id(value: str, fallback: str) -> str:
-    """Filesystem-safe directory name.
-
-    Mirrors :func:`anastomosis.reconstruct.engine._safe_name` so that
-    ``feedface-`` GUIDs (the synthetic fixture prefix) and any plain ASCII
-    id pass through unchanged, and an exotic id never escapes its slot.
-    """
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (value or "").strip()).strip("_")
-    return cleaned or fallback
 
 
 def _date_iso(value: object) -> str | None:
@@ -141,22 +130,13 @@ class ArchiveDeliverer:
         owned_pdfs: set[str] = set()
 
         for record in records_list:
-            pid = _safe_id(record.patient.id, "unknown")
+            pid = safe_name(record.patient.id, "unknown")
             patient_dir = out / "patients" / pid
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
-            # FHIR R4 Bundle — the machine-readable rendition.
-            bundle = to_bundle(record)
-            # PHI-BY-DESIGN: writing the patient's FHIR record to disk IS the
-            # product. ``patient_dir`` sits under a secure_output_dir-hardened
-            # tree (0o700 owner-only on POSIX; on Windows NTFS, inheritance
-            # stripped and access limited to the current user, SYSTEM, and
-            # Administrators) with a PHI-warning README. See SECURITY.md, "Code
-            # scanning & suppression policy (auditable)".
-            # codeql[py/clear-text-storage-sensitive-data]
-            (patient_dir / "bundle.json").write_text(
-                json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8"
-            )
+            # FHIR R4 Bundle — the machine-readable rendition (the shared
+            # deliverer mechanic; its PHI-BY-DESIGN rationale lives there).
+            write_fhir_bundle(record, patient_dir)
 
             # PDFs — attributed strictly via the render index (patient_id
             # match). The old fallback that guessed ownership from
@@ -267,10 +247,9 @@ class ArchiveDeliverer:
                     "indexed pdf missing on disk for patient %s", safe_log_id(record.patient.id)
                 )
                 continue
-            try:
-                shutil.copyfile(source, out_dir / name)
-            except OSError as exc:
-                logger.warning("pdf copy failed (%s)", exc_tag(exc))
+            failure = copy_delivered_file(source, out_dir / name)
+            if failure is not None:
+                logger.warning("pdf copy failed (%s)", failure)
                 continue
             entry = render_index.lookup(name)
             if entry is not None:
@@ -316,10 +295,9 @@ class ArchiveDeliverer:
         target = out / "unattributed"
         target.mkdir(parents=True, exist_ok=True)
         for source in orphans:
-            try:
-                shutil.copyfile(source, target / source.name)
-            except OSError as exc:
-                logger.warning("unattributed pdf copy failed (%s)", exc_tag(exc))
+            failure = copy_delivered_file(source, target / source.name)
+            if failure is not None:
+                logger.warning("unattributed pdf copy failed (%s)", failure)
         return len(orphans)
 
     def _write_patient_page(
@@ -330,7 +308,7 @@ class ArchiveDeliverer:
     ) -> None:
         encounters_ctx = [
             {
-                "safe_id": _safe_id(enc.id, "encounter"),
+                "safe_id": safe_name(enc.id, "encounter"),
                 "label": _encounter_label(enc),
                 "chief_complaint": enc.chief_complaint,
             }
@@ -392,7 +370,7 @@ class ArchiveDeliverer:
             generator=self.generator,
             generated_at=generated_at,
         )
-        encounter_file = patient_dir / "encounters" / f"{_safe_id(encounter.id, 'encounter')}.html"
+        encounter_file = patient_dir / "encounters" / f"{safe_name(encounter.id, 'encounter')}.html"
         encounter_file.write_text(html, encoding="utf-8")
 
     def _write_index(

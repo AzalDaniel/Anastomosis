@@ -23,16 +23,15 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag, safe_log_id
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import safe_name
+from anastomosis.deliver._shared import copy_delivered_file, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport, Verdict
 
@@ -64,11 +63,6 @@ Handle accordingly:
   * Do not share by unencrypted email.
   * Store on encrypted media; destroy securely when no longer needed.
 """
-
-
-def _safe_id(value: str, fallback: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (value or "").strip()).strip("_")
-    return cleaned or fallback
 
 
 @dataclass(frozen=True)
@@ -146,22 +140,13 @@ class BundleDeliverer:
         qa_report: QAReport | None = None,
     ) -> BundleResult:
         out = secure_output_dir(out_dir)
-        pid = _safe_id(record.patient.id, "unknown")
+        pid = safe_name(record.patient.id, "unknown")
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
 
-        # FHIR R4 Bundle — the machine-readable rendition.
-        bundle_path = patient_dir / "bundle.json"
-        # PHI-BY-DESIGN: delivering the patient's FHIR record IS the product.
-        # ``patient_dir`` sits under a secure_output_dir-hardened tree (0o700
-        # owner-only on POSIX; on Windows NTFS, inheritance stripped and access
-        # limited to the current user, SYSTEM, and Administrators) with a
-        # PHI-warning README. See SECURITY.md, "Code scanning & suppression
-        # policy (auditable)".
-        # codeql[py/clear-text-storage-sensitive-data]
-        bundle_path.write_text(
-            json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8"
-        )
+        # FHIR R4 Bundle — the machine-readable rendition (the shared deliverer
+        # mechanic; its PHI-BY-DESIGN rationale lives there).
+        bundle_path = write_fhir_bundle(record, patient_dir)
 
         # PDFs — copied (never moved) so the caller's working tree is intact.
         pdf_paths = self._copy_pdfs(record.patient, pdfs or [], patient_dir)
@@ -202,12 +187,12 @@ class BundleDeliverer:
         target_dir.mkdir(parents=True, exist_ok=True)
         copied: list[Path] = []
         for pdf in pdfs:
-            try:
-                destination = target_dir / pdf.name
-                shutil.copyfile(pdf, destination)
-                copied.append(destination)
-            except OSError as exc:
-                logger.warning("pdf copy failed (%s)", exc_tag(exc))
+            destination = target_dir / pdf.name
+            failure = copy_delivered_file(pdf, destination)
+            if failure is not None:
+                logger.warning("pdf copy failed (%s)", failure)
+                continue
+            copied.append(destination)
         return copied
 
     def _write_qa_slice(

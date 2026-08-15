@@ -145,6 +145,64 @@ def test_fuzzy_contains_exact_and_absent() -> None:
     assert fuzzy_contains("Wrongname Different", "Synthia Testpatient only") < 0.88
 
 
+# The alternate-rendering probes L2IdentityText's docstring cites as the
+# justification for the 0.88 threshold: (label, needle, page-1 text, ratio).
+# Their RATIOS are pinned, not just their side of the threshold — the number is
+# what the module documents, and a matcher change that moved them (a wider
+# window, a different normalization, a rebuilt window slice) would silently
+# re-calibrate the wrong-chart defense while every pass/fail test still passed.
+_PROBE_RATIOS = [
+    (
+        "middle name added",
+        "Synthia Testpatient",
+        "Synthia Marie Testpatient DOB 01/02/1990",
+        0.8260869565217391,
+    ),
+    (
+        "middle name dropped",
+        "Synthia Marie Testpatient",
+        "Synthia Testpatient DOB 01/02/1990",
+        0.6551724137931034,
+    ),
+    ("hyphen -> space", "Mary-Jane Testpatient", "Mary Jane Testpatient DOB 01/02/1990", 0.8),
+    ("space -> hyphen", "Mary Jane Testpatient", "Mary-Jane Testpatient DOB 01/02/1990", 0.8),
+    (
+        "last, first reorder",
+        "Synthia Testpatient",
+        "Testpatient, Synthia DOB 01/02/1990",
+        0.4782608695652174,
+    ),
+]
+
+
+@pytest.mark.parametrize(("label", "needle", "page", "expected"), _PROBE_RATIOS)
+def test_fuzzy_contains_pins_documented_probe_ratios(
+    label: str, needle: str, page: str, expected: float
+) -> None:
+    ratio = fuzzy_contains(needle, page)
+    assert ratio == pytest.approx(expected, abs=1e-12), f"probe ratio drifted: {label}"
+    # The fail-safe direction the threshold buys: every one of these legitimate
+    # alternate renderings lands BELOW 0.88, so it fails loudly for an operator
+    # rather than letting a similar-but-wrong name through.
+    assert ratio < 0.88
+
+
+def test_fuzzy_contains_window_is_token_anchored_across_a_long_page() -> None:
+    """The needle is found at any token boundary, and padding the page with
+    thousands of tokens neither changes the ratio nor bisects a word.
+
+    The window-slicing optimization is only sound because ``_normalize``
+    guarantees single-space separation; this pins the property on a page long
+    enough that a per-token page rebuild would be the dominant cost.
+    """
+    name = "Synthia Testpatient"
+    filler = " ".join(f"clinical note body line {i}" for i in range(2000))
+    assert fuzzy_contains(name, f"{filler} {name} {filler}") == 1.0
+    # Irregular whitespace (the real PDF-extraction case) normalizes to the same
+    # windows, so the ratio is unchanged.
+    assert fuzzy_contains(name, f"{filler}\n\n  Synthia   Testpatient \t{filler}") == 1.0
+
+
 # --- L0 file integrity ---
 
 

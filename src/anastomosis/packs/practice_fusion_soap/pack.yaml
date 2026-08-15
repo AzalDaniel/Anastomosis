@@ -42,7 +42,7 @@ page:
 #
 # The current LoadedPack/engine filename contract (reconstruct/packs.py
 # FilenameRules + engine._filename_for) exposes exactly four substitution
-# fields — {family} {given} {dos} {type} — applies core _safe_name() to each
+# fields — {family} {given} {dos} {type} — applies core.textutil safe_name() to each
 # (which strips the path separator), does NOT compute an abbreviated-CC token,
 # and does NOT create per-patient parent directories. Reproducing the §11 rule
 # faithfully therefore needs a backwards-compatible engine extension (a
