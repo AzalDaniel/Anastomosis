@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the L0-L6 verification levels (PLAN item 11).
 
 Real tiny PDFs are generated WITH PyMuPDF itself (no Chromium): open an empty
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="verify tests need PyMuPDF (render extra)")
+pymupdf = pytest.importorskip("pymupdf", reason="verify tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import Encounter, Patient  # noqa: E402
 from anastomosis.deliver.browser.errors import WrongPatientError  # noqa: E402
@@ -68,9 +67,9 @@ def _patient(**overrides: object) -> Patient:
 
 
 def _make_pdf(path: Path, lines: list[str], *, pages: int = 1) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     for _ in range(pages - 1):
         doc.new_page(width=612, height=792)
     doc.save(str(path))
@@ -173,7 +172,7 @@ def test_l0_fails_on_tampered_bytes(tmp_path: Path) -> None:
 
 
 def test_l0_works_without_pymupdf(tmp_path: Path) -> None:
-    # L0 must not import fitz: it passes on a plain (non-PDF) intact file.
+    # L0 must not import pymupdf: it passes on a plain (non-PDF) intact file.
     p = tmp_path / "plain.bin"
     p.write_bytes(b"not a pdf but intact")
     item = _item(p)

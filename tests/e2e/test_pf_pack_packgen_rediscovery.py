@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The fixed-point honesty check for the practice_fusion_soap pack (M3.15).
 
 The original PF pack took five manual forensic sprints. This test closes the
@@ -29,7 +28,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 pytest.importorskip("playwright", reason="packgen e2e needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="packgen e2e needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="packgen e2e needs the render extra (PyMuPDF)")
 
 _TOOLS = Path(__file__).resolve().parents[2] / "tools"
 if str(_TOOLS) not in sys.path:

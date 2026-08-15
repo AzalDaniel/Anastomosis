@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the FHIR R4 / US Core source adapter (``sources/fhir_r4``).
 
 Drives the adapter against the in-repo synthetic US Core fixture
@@ -62,14 +61,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -614,7 +613,7 @@ def test_adapter_registered_in_toolkit_info() -> None:
 def test_end_to_end_render_through_pipeline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="render e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="render e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     from anastomosis.core.commands import PipelineCommand, run_pipeline_command, summarize_patients
 

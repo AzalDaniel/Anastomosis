@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Engine-level QA checks: pack-independent verification of every PDF.
 
 These read the PDF back with PyMuPDF and compare it against the canonical
@@ -13,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf
 
 from anastomosis.core.model import ObservationCategory
 from anastomosis.core.timeutil import all_date_spellings
@@ -41,7 +40,7 @@ class PageInfo:
     """One rendered page captured in a single PDF open: its text and geometry.
 
     LayoutPagination needs page geometry; the other checks only join the text.
-    Capturing both once lets every engine check share one ``fitz.open``.
+    Capturing both once lets every engine check share one ``pymupdf.open``.
     """
 
     text: str
@@ -55,11 +54,11 @@ def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
     Text extraction is the expensive part and every engine check reads the same
     rendered document, so the runner primes a shared cache
     (:func:`prime_snapshot_cache`) and the checks read from it instead of each
-    calling ``fitz.open``. A corrupt/unreadable PDF raises here — but this is
+    calling ``pymupdf.open``. A corrupt/unreadable PDF raises here — but this is
     always called from inside a check, so it surfaces as that check's CHECK
     CRASHED finding rather than aborting the batch.
     """
-    with fitz.open(pdf_path) as doc:
+    with pymupdf.open(pdf_path) as doc:  # type: ignore[no-untyped-call]
         return [
             PageInfo(text=page.get_text(), width=page.rect.width, height=page.rect.height)
             for page in doc
@@ -83,7 +82,7 @@ class _SnapshotCache:
 
 def prime_snapshot_cache(ctx: QAContext) -> None:
     """Attach a lazy per-document snapshot cache to ``ctx`` so the run's checks
-    share one ``fitz.open`` instead of opening the PDF once per check.
+    share one ``pymupdf.open`` instead of opening the PDF once per check.
 
     ``QAContext`` is a frozen dataclass, so the cache slot is set through
     ``object.__setattr__`` — the same escape hatch frozen dataclasses use

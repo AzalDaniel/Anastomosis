@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for LayeredVerifier — directly and through a real UploadEngine run.
 
 The composite stacks L0-L6 behind the engine's Verifier seam. The engine-level
@@ -17,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="verify tests need PyMuPDF (render extra)")
+pymupdf = pytest.importorskip("pymupdf", reason="verify tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import Encounter, Patient  # noqa: E402
 from anastomosis.deliver.browser.engine import UploadEngine  # noqa: E402
@@ -51,9 +50,9 @@ def _encounter() -> Encounter:
 
 
 def _make_pdf(path: Path, lines: list[str]) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
     return path

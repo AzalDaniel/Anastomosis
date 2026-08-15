@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E rendering tests for the practice_fusion_soap pack (REAL Chromium).
 
 Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through the
@@ -35,7 +34,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 pytest.importorskip("playwright", reason="PF rendering needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="PF rendering needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="PF rendering needs the render extra (PyMuPDF)")
 
 _TOOLS = Path(__file__).resolve().parents[2] / "tools"
 if str(_TOOLS) not in sys.path:
@@ -146,11 +145,11 @@ def test_forensic_heading_band_fill_is_painted(rendered: dict[str, Any]) -> None
     """Re-render and prove the #f1f1f1 grey heading band is an actual painted
     fill in the PDF (GOLD §1 print-color-adjust — the 2-sprint bug defense).
     Uses PyMuPDF get_drawings() over the live render, not the golden."""
-    import fitz
+    import pymupdf
 
     pdf_path = _render_first_pdf()
     found = False
-    with fitz.open(str(pdf_path)) as doc:
+    with pymupdf.open(str(pdf_path)) as doc:
         for page in doc:
             for drawing in page.get_drawings():
                 fill = drawing.get("fill")

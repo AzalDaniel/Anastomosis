@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 import os
 import stat
 from pathlib import Path
@@ -86,14 +85,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -103,7 +102,7 @@ class _FakeChromium:
 
 
 def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -123,7 +122,7 @@ def test_pipeline_run_no_upload_manifest_by_default(
 ) -> None:
     """Regression: without --upload-manifest, no manifest line and no file (the
     flag is additive — a default run is unchanged)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(app, ["pipeline", "run", str(FIXTURE), "--out", str(out)])
@@ -136,7 +135,7 @@ def test_pipeline_run_upload_manifest_writes_file_and_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """--upload-manifest writes upload_manifest.json and prints the additive line."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -156,7 +155,7 @@ def test_pipeline_run_upload_manifest_writes_file_and_line(
 def test_pipeline_run_delivery_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the CLI's archive/bundle/ccda summary lines (3 patients in the
     fixture), so a future change to the delivery output is caught."""
-    pytest.importorskip("fitz", reason="delivery e2e needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="delivery e2e needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -546,7 +545,7 @@ def test_explicit_source_does_not_print_detected_line(
 ) -> None:
     """Regression: 'Detected source' announces auto-detection only — an
     operator who typed --source already knows (the original behavior)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     result = runner.invoke(
         app,
@@ -569,12 +568,12 @@ class _PointInsertChromium(_FakeChromium):
     a real, QA-passable page."""
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
         lines = (html_to_text(html) or "(empty)").splitlines()
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
         doc.save(str(pdf_path))
@@ -589,7 +588,7 @@ def _patch_migration_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     _patch_migration_chromium(monkeypatch)
     out = tmp_path / "out"
     result = runner.invoke(
@@ -626,7 +625,7 @@ def test_migrate_no_route_destination_produces_ccda_and_exits_1(
 ) -> None:
     """A destination with no viable automated route still gets the importable
     C-CDA written, but the gap is loud and the exit code is 1 (not a silent 0)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     _patch_migration_chromium(monkeypatch)
     out = tmp_path / "out"
     result = runner.invoke(

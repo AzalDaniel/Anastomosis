@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Golden rendering tests — pin what REAL Chromium produces.
 
 These tests render the ``pf_tebra_v9`` fixture's six encounters through the
@@ -44,7 +43,7 @@ pytestmark = pytest.mark.e2e
 # The render extra (playwright + pymupdf) must be importable to even define the
 # rendering helpers; skip the whole module cleanly when it is not.
 pytest.importorskip("playwright", reason="golden rendering needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="golden rendering needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="golden rendering needs the render extra (PyMuPDF)")
 
 import regen_goldens  # noqa: E402 — tool module on sys.path, shared render/extract logic
 

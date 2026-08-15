@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """C-CDA export tests — the round trip IS the deliverable.
 
 ``parse(build_ccd(record)) ≈ record`` through this repo's OWN
@@ -1101,14 +1100,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -1118,7 +1117,7 @@ class _FakeChromium:
 
 
 def test_cli_pipeline_run_ccda_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="pipeline e2e needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="pipeline e2e needs PyMuPDF (render extra)")
     import anastomosis.reconstruct.chromium as chromium
 
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)

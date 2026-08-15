@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the packgen statistics (infer.py).
 
 No Chromium: a small set of synthetic 'sample' PDFs is built directly with
@@ -18,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="packgen infer needs the render extra (PyMuPDF)")
+pymupdf = pytest.importorskip("pymupdf", reason="packgen infer needs the render extra (PyMuPDF)")
 
 from anastomosis.packgen.extract import extract_samples  # noqa: E402
 from anastomosis.packgen.infer import (  # noqa: E402
@@ -50,10 +49,10 @@ def _build_sample(path: Path, name: str, dob: str, complaint: str) -> None:
     "DOB:"/"Provider:" labels, the footer. Variable: the patient name, dob, and
     complaint text.
     """
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=_W, height=_H)
     # Heading band (grey fill) + bold heading — the section-heading signal.
-    page.draw_rect(fitz.Rect(_LABEL_X, 95, 560, 110), fill=_GREY_F1, color=None)
+    page.draw_rect(pymupdf.Rect(_LABEL_X, 95, 560, 110), fill=_GREY_F1, color=None)
     page.insert_text((_LABEL_X, 90), "SUBJECTIVE", fontsize=13, fontname="hebo")
     # Static label column (left) + variable value column (right), aligned x0s.
     page.insert_text((_LABEL_X, 150), "DOB:", fontsize=11, fontname="helv")
@@ -97,7 +96,7 @@ def test_type_scale_separates_body_from_heading(samples: list) -> None:
 
 def test_type_scale_clusters_within_quarter_point(tmp_path: Path) -> None:
     # Two spans 0.2pt apart must merge into one cluster; 0.4pt apart must not.
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=_W, height=_H)
     page.insert_text((60, 100), "AAAA", fontsize=11.0, fontname="helv")
     page.insert_text((60, 120), "BBBB", fontsize=11.2, fontname="helv")
@@ -247,7 +246,7 @@ def test_bold_heading_smaller_than_body_earns_heading_role(tmp_path: Path) -> No
     design does exactly this; larger-only rules miss it)."""
     paths = []
     for i in range(2):
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=_W, height=_H)
         page.insert_text((72, 90), "ASSESSMENT", fontsize=10.5, fontname="hebo")
         page.insert_text(
@@ -270,7 +269,7 @@ def test_mixed_page_sizes_resolve_to_modal_geometry(tmp_path: Path) -> None:
     # 2x Letter + 1x A4: the modal (Letter) geometry wins, documented behavior.
     paths = []
     for i, (w, h) in enumerate([(612, 792), (612, 792), (595, 842)]):
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=w, height=h)
         page.insert_text((72, 90), "DOB:", fontsize=11, fontname="helv")
         path = tmp_path / f"geo_{i}.pdf"

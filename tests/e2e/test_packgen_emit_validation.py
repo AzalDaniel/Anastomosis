@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E validation of the packgen draft emitter — the item-15 proof (adapted).
 
 PLAN item 15 says: "regenerate the PF pack from synthetic PF-style samples and
@@ -40,7 +39,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 pytest.importorskip("playwright", reason="packgen emit e2e needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="packgen emit e2e needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="packgen emit e2e needs the render extra (PyMuPDF)")
 
 _TOOLS = Path(__file__).resolve().parents[2] / "tools"
 if str(_TOOLS) not in sys.path:
@@ -189,7 +188,7 @@ def test_draft_heading_fill_token(draft) -> None:  # type: ignore[no-untyped-def
 def test_draft_renders_parseable_pdf_with_headings(draft, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The draft RENDERS a fixture record through the real engine, producing a
     parseable PDF whose text layer carries the SOAP section headings."""
-    import fitz
+    import pymupdf
 
     pdfs = _render_fixture_through(draft["status"].pack, draft["records"], tmp_path / "drafted")
     assert pdfs, "draft rendered no documents"
@@ -197,7 +196,7 @@ def test_draft_renders_parseable_pdf_with_headings(draft, tmp_path) -> None:  # 
     # headings must be present across the corpus.
     text = ""
     for pdf_path in pdfs:
-        with fitz.open(str(pdf_path)) as doc:
+        with pymupdf.open(str(pdf_path)) as doc:
             assert doc.page_count >= 1
             text += "".join(page.get_text() for page in doc)
     upper = text.upper()

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FhirApiDestination tests against an in-memory FHIR server (opener seam).
 
 The destination is driven through a REAL :class:`FhirClient` whose transport is
@@ -41,8 +40,8 @@ from anastomosis.deliver.verify import LayeredVerifier, LevelStatus
 from anastomosis.destinations.base import DestinationPatient, UploadItem
 from anastomosis.reconstruct.engine import RenderedDoc
 
-pytest.importorskip("fitz", reason="end-to-end verify path needs PyMuPDF (render extra)")
-import fitz
+pytest.importorskip("pymupdf", reason="end-to-end verify path needs PyMuPDF (render extra)")
+import pymupdf
 
 PAT = "feedface-0000-0000-0000-0000000000aa"
 ENC = "feedface-e000-0000-0000-0000000000aa"
@@ -204,9 +203,9 @@ def _client(server: _FakeFhirServer) -> FhirClient:
 
 
 def _make_pdf(path: Path, lines: list[str]) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
     return path

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Regenerate the golden rendering snapshots for the e2e golden tests.
 
 Golden rendering tests pin *exactly* what real Chromium produces for the
@@ -107,9 +106,9 @@ def extract_pdf_props(pdf_path: Path) -> PdfProps:
     Geometry is taken from the first page (the pack renders a single uniform
     page size); the text layer is the concatenation of every page, normalized.
     """
-    import fitz  # PyMuPDF — provided by the render extra.
+    import pymupdf  # provided by the render extra.
 
-    with fitz.open(str(pdf_path)) as doc:
+    with pymupdf.open(str(pdf_path)) as doc:
         first = doc[0]
         text = "".join(page.get_text() for page in doc)
         return PdfProps(
@@ -194,7 +193,7 @@ def _renderer_available() -> str | None:
     """Return ``None`` if the real Chromium renderer can launch, else a reason
     string. Never substitutes the fake renderer (the whole point of a golden)."""
     try:
-        import fitz  # noqa: F401
+        import pymupdf  # noqa: F401
     except ImportError:
         return "PyMuPDF missing: install 'anastomosis[render]'"
     try:

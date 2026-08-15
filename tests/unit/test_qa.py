@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """QA engine tests: a good document passes, and every mutation in the
 corpus trips exactly the check built to catch it."""
 
@@ -9,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="QA tests need PyMuPDF (render extra)")
+pymupdf = pytest.importorskip("pymupdf", reason="QA tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import (  # noqa: E402
     Encounter,
@@ -75,9 +74,9 @@ def make_pdf(
     size: tuple[float, float] = (612, 792),
     extra_blank_page: bool = False,
 ) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=size[0], height=size[1])
-    page.insert_textbox(fitz.Rect(36, 36, size[0] - 36, size[1] - 36), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, size[0] - 36, size[1] - 36), "\n".join(lines))
     if extra_blank_page:
         doc.new_page(width=size[0], height=size[1])
     doc.save(str(path))
@@ -246,23 +245,23 @@ def test_staleness_catches_generic_soap_signature_format(tmp_path: Path) -> None
     assert findings
 
 
-def test_fitz_open_called_once_per_document_per_run(
+def test_pymupdf_open_called_once_per_document_per_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """All four engine checks share one PDF open per document: the runner primes a
-    per-document snapshot cache, so fitz.open fires exactly once for the whole run
+    per-document snapshot cache, so pymupdf.open fires exactly once for the whole run
     over one document instead of once per check."""
     from anastomosis.qa import checks as qa_checks
 
     pdf = make_pdf(tmp_path / "good.pdf", GOOD_LINES)  # created BEFORE the counter
     calls = {"n": 0}
-    real_open = qa_checks.fitz.open
+    real_open = qa_checks.pymupdf.open
 
     def counting_open(*args: object, **kwargs: object) -> object:
         calls["n"] += 1
         return real_open(*args, **kwargs)
 
-    monkeypatch.setattr(qa_checks.fitz, "open", counting_open)
+    monkeypatch.setattr(qa_checks.pymupdf, "open", counting_open)
     report = _qa(pdf)
     assert report.documents[0].verdict is Verdict.PASS
     assert calls["n"] == 1

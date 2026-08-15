@@ -1,7 +1,6 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The harvest: read every text span and vector drawing out of sample PDFs.
 
-PyMuPDF (``fitz``) is the only engine — deterministic, fully offline, no
+PyMuPDF (``pymupdf``) is the only engine — deterministic, fully offline, no
 torch. It is an optional ``render``-extra dependency, imported lazily inside
 :func:`extract_document` so this module imports on a minimal install (the same
 error style the Chromium renderer uses when the extra is absent).
@@ -174,11 +173,11 @@ def extract_document(pdf_path: Path, index: int) -> DocumentSample:
     encrypted PDF — losslessness/loud-failure invariant.
     """
     try:
-        import fitz  # PyMuPDF — render extra.
+        import pymupdf  # render extra.
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise RuntimeError(_RENDER_EXTRA_HINT) from exc
 
-    with fitz.open(str(pdf_path)) as doc:
+    with pymupdf.open(str(pdf_path)) as doc:  # type: ignore[no-untyped-call]
         if doc.needs_pass or doc.is_encrypted:
             raise ValueError(f"sample PDF is encrypted: {pdf_path}")
         spans: list[Span] = []

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shared application/command layer (``core/commands.py``).
 
 This is the single orchestration core both the CLI and the GUI now build on, so
@@ -34,14 +33,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -75,7 +74,7 @@ def test_get_toolkit_info_reports_sources_packs_and_extras() -> None:
 def test_run_pipeline_command_delivers_all_three(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     charts = tmp_path / "charts"
     cmd = PipelineCommand(
@@ -132,7 +131,7 @@ def test_run_pipeline_command_aliased_charts_and_delivery_dir_no_self_deadlock(
 ) -> None:
     """One physical dir used as BOTH charts and a delivery dir, spelled two ways,
     must lock once — not self-deadlock the run (the lock set dedups on resolve())."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     shared = tmp_path / "both"
     alias = tmp_path / "sub" / ".." / "both"  # same physical dir, different spelling
@@ -174,7 +173,7 @@ def test_run_pipeline_command_refuses_a_locked_delivery_dir(
 def test_deliver_outputs_no_deliveries_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     result = run_pipeline_command(
         PipelineCommand(export_dir=FIXTURE, charts_dir=tmp_path / "charts")
@@ -191,7 +190,7 @@ def test_summarize_patients_joins_records_and_documents(
 ) -> None:
     """The per-patient roll-up carries name, DOB, encounter and rendered-doc
     counts, joined on the render result's patient attribution, in ingest order."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     result = run_pipeline_command(
         PipelineCommand(export_dir=FIXTURE, charts_dir=tmp_path / "charts")

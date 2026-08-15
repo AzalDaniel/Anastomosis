@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared browser-upload orchestration core (one engine drive, two frontends).
 
 ``anast upload`` (CLI) and the GUI upload console must drive the resumable upload
@@ -230,7 +229,7 @@ def run_upload_command(
     # dependency that reads the PDFs is missing, refuse rather than file unverified.
     if cmd.verify:
         try:
-            import fitz  # noqa: F401 — PyMuPDF; the L0-L6 ladder reads PDFs with it
+            import pymupdf  # noqa: F401 — the L0-L6 ladder reads PDFs with it
         except ImportError as exc:
             raise VerificationUnavailableError(
                 "upload verification (on by default) needs the render extra: "

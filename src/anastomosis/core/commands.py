@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared application/command layer.
 
 The CLI (:mod:`anastomosis.cli`) and the GUI (:mod:`anastomosis.gui.controller`)
@@ -300,7 +299,7 @@ def _write_pipeline_manifest(
 # The extras probe both frontends show, in display order.
 _EXTRAS: tuple[tuple[str, str], ...] = (
     ("render", "playwright"),
-    ("render-qa", "fitz"),
+    ("render-qa", "pymupdf"),
     ("fhir", "fhir.resources"),
     ("gui", "webview"),
 )

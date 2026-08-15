@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The frontend-agnostic pipeline core (one pipeline, two frontends).
 
 ``ingest -> reconstruct -> optional QA`` lived inside :mod:`anastomosis.cli`
@@ -370,7 +369,7 @@ def _run_qa_stage(
     try:
         from anastomosis.qa import Verdict, run_qa, write_report
     except ImportError as exc:
-        if exc.name != "fitz":  # only the optional dependency may downgrade QA
+        if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
         return None

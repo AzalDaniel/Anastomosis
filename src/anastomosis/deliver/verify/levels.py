@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The L0-L6 verification levels: one small class per check.
 
 This is the verification ladder PLAN item 11 calls for — the layered defense
@@ -21,7 +20,7 @@ counts, ratios, and field *names* — never a patient name, DOB, date, or path.
 The detail strings are surfaced in reports and may be logged, so an honest
 level cannot leak PHI. The same goes for any exception raised out of a level.
 
-PyMuPDF (``fitz``) is imported lazily inside the levels that read the PDF, so
+PyMuPDF (``pymupdf``) is imported lazily inside the levels that read the PDF, so
 this module imports on a machine without the ``render`` extra; L0 (pure
 file-integrity) works there too. A missing install raises a ``RuntimeError``
 naming ``anastomosis[render]``, matching the optional-dependency error style in
@@ -173,7 +172,7 @@ def _date_present(value: date, text: str) -> bool:
 # --- the lazy PyMuPDF gate ---
 
 
-def _import_fitz() -> Any:
+def _import_pymupdf() -> Any:
     """Import PyMuPDF lazily, naming the extra if it is not installed.
 
     The levels that read a PDF import here so this module loads on a machine
@@ -182,12 +181,12 @@ def _import_fitz() -> Any:
     optional-dependency error style in :mod:`anastomosis.reconstruct.chromium`.
     """
     try:
-        import fitz  # PyMuPDF
+        import pymupdf
     except ImportError as exc:  # pragma: no cover - environment-dependent
         raise RuntimeError(
             "PDF verification needs the render extra: pip install 'anastomosis[render]'"
         ) from exc
-    return fitz
+    return pymupdf
 
 
 def _first_page_text(doc: Any) -> str:
@@ -198,23 +197,23 @@ def _first_page_text(doc: Any) -> str:
 
 
 def _page_one_text(path: Path) -> str:
-    with _import_fitz().open(path) as doc:
+    with _import_pymupdf().open(path) as doc:
         return _first_page_text(doc)
 
 
 def _page_count(path: Path) -> int:
-    with _import_fitz().open(path) as doc:
+    with _import_pymupdf().open(path) as doc:
         return int(doc.page_count)
 
 
-def _pages_and_text_of_bytes(fitz: Any, data: bytes) -> tuple[int, str]:
+def _pages_and_text_of_bytes(pymupdf: Any, data: bytes) -> tuple[int, str]:
     """(page_count, page-1 text) of an in-memory PDF — for L6 read-back.
 
-    Takes the already-imported ``fitz`` module so the caller can gate the
+    Takes the already-imported ``pymupdf`` module so the caller can gate the
     render extra (and surface its RuntimeError) *before* the parse, then treat
     any parse failure here as a corruption fail rather than re-raising.
     """
-    with fitz.open(stream=data, filetype="pdf") as doc:
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
         return int(doc.page_count), _first_page_text(doc)
 
 
@@ -520,9 +519,9 @@ class L6RoundTrip:
         # the render extra first (its RuntimeError must surface), then parse —
         # a read-back that no longer parses as a PDF is a corruption FAIL, kept
         # here as a clean L6 fail rather than an exception the engine retries.
-        fitz = _import_fitz()
+        pymupdf = _import_pymupdf()
         try:
-            back_pages, back_text = _pages_and_text_of_bytes(fitz, data)
+            back_pages, back_text = _pages_and_text_of_bytes(pymupdf, data)
         except Exception:  # any PyMuPDF parse failure is a corruption fail, not a crash
             return LevelResult(self.level, LevelStatus.FAIL, "read-back is not a valid PDF")
         if back_pages != _page_count(item.file_path):
