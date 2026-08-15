@@ -120,10 +120,7 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
         for name in (
             "past_medical_history",
             "advance_directives",
-            "health_concerns",
             "goals",
-            "devices",
-            "lab_orders",
         )
         if getattr(record, name)
     }

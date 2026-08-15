@@ -16,14 +16,12 @@ hours-long batch), so the design is built around resumability:
   parse the operator skiplist.
 * :mod:`.persist` — write/read the on-disk upload manifest (items + patient
   demographics) that bridges a render run to a later ``anast upload``.
-* :mod:`.verify` — the pre/post verification seam (the L0-L6 ladder lands in
-  a later PR).
+* :mod:`.verify` — the pre/post verification seam for the L0-L6 ladder.
 * :mod:`.engine` — the sequential driver that walks each item through the
   state machine.
 * :mod:`.fake` — the reference in-memory destination test double.
 * :mod:`.manager` — session-lifecycle management (recycling + crash relaunch)
   decorating one destination.
-* :mod:`.parallel` — the patient-partitioned parallel runner.
 * :mod:`.cdp` — loopback-only CDP attach configuration (no Playwright at
   import time).
 * :mod:`.reports` — the run report (deterministic JSON) and the console
@@ -47,7 +45,6 @@ from .errors import (
 from .fake import FakeDestination
 from .manager import ManagedDestination
 from .manifest import build_manifest, is_skiplisted, load_skiplist
-from .parallel import ParallelResult, run_parallel
 from .persist import (
     MANIFEST_NAME,
     MANIFEST_VERSION,
@@ -81,7 +78,6 @@ __all__ = [
     "ManagedDestination",
     "ManifestError",
     "NullVerifier",
-    "ParallelResult",
     "PermanentDeliveryError",
     "TrackingDB",
     "TransientDeliveryError",
@@ -94,7 +90,6 @@ __all__ = [
     "is_skiplisted",
     "load_skiplist",
     "read_upload_manifest",
-    "run_parallel",
     "summary_line",
     "validate_transition",
     "write_run_report",

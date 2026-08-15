@@ -82,8 +82,14 @@ def test_packaged_registry_loads_clean() -> None:
     assert reg.get("tebra").doc_write_api.kind == DocWriteKind.NONE
     assert reg.get("tebra").doc_write_api.evidence is not None
     assert reg.get("practice_fusion").doc_write_api.kind == DocWriteKind.NONE
-    # No browser packs are declared until the packs actually exist.
-    assert all(e.browser.kind == BrowserKind.NONE for e in reg.entries.values())
+    # Only destinations with a SHIPPED pack declare the browser route: tebra
+    # (src/anastomosis/destinations/tebra/) is the one today. A pack claim
+    # names its pack in ``detail``; everything else stays none.
+    assert reg.get("tebra").browser.kind == BrowserKind.PACK
+    assert reg.get("tebra").browser.detail == "tebra"
+    assert all(
+        e.browser.kind == BrowserKind.NONE for e in reg.entries.values() if e.name != "tebra"
+    )
     # The positive headline claims.
     assert reg.get("epic").doc_write_api.kind == DocWriteKind.FHIR_DOCUMENTREFERENCE
     assert reg.get("athenahealth").ccda_import.kind == CcdaImportKind.API

@@ -168,17 +168,13 @@ after the page number with `flex: 1 1 auto; min-width: 0` — **NOT
 at 7px Arial), clipping the URL to `/soap-` with `text-overflow: ellipsis`
 (sprint-5 bug). Font sizes: 7px URL / 9px page number.
 
-**DIVERGENCE / follow-up (running header & footer not yet emitted).** The PF
-running header (print-timestamp left, encounter-id right) and footer (URL +
-page number with the flex fix) are injected by Playwright's
-`page.pdf(header_template=…, footer_template=…)`. The current
-`reconstruct/chromium.ChromiumRenderer` does not yet pass those templates, and
-the renderer/engine are an untouched-unless-required invariant for this issue.
-So this pack ships the footer-flex rule + the **synthetic** footer URL
-(`tokens.footer_url` = `https://example.com/encounter/soap-note`) as documented
-data, and emitting the running header/footer is recorded as a backwards-
-compatible renderer-contract follow-up. The page body (incl. the bottom-right
-logo) renders fully today.
+**DIVERGENCE (running header & footer not emitted).** The PF running header
+(print-timestamp left, encounter-id right) and footer (URL + page number with
+the flex fix) would require Playwright's
+`page.pdf(header_template=…, footer_template=…)`, which
+`reconstruct/chromium.ChromiumRenderer` does not pass. The pack renders the
+page body fully (including the bottom-right logo); the running header/footer
+is out of the rendering contract.
 
 ## Filename rule (GOLD §11)
 
@@ -214,8 +210,8 @@ unescapes `\\n`, converts stray `\n` → `<br>` outside block tags, removes empt
   anything else falls back to the placeholder. Local image files go through
   `logo_asset` (read + base64-inlined at context build).
 - **Footer URL** (real `static.practicefusion.com/.../{practice-group-guid}/
-  encounter/{guid}/soap-note` tenant path, GOLD §1) → synthetic
-  `https://example.com/encounter/soap-note` (`tokens.footer_url`).
+  encounter/{guid}/soap-note` tenant path, GOLD §1) → not rendered (the
+  running footer is outside the rendering contract; see the DIVERGENCE note).
 - **Provider credentials** (4 real provider GUID → credential strings,
   GOLD §2 "Provider credentials (NOT in EHI — hand-mapped)") → NOT shipped; the
   canonical `Practitioner.credential` field is populated from synthetic

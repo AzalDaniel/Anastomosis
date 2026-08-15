@@ -23,7 +23,6 @@ __all__ = [
     "PAIN_SEVERITY_LA",
     "VITALS",
     "VitalCode",
-    "bmi_imperial",
     "bmi_metric",
     "pain_display",
 ]
@@ -148,15 +147,3 @@ def bmi_metric(weight_kg: float | None, height_cm: float | None) -> float | None
     if not weight_kg or not height_cm or weight_kg <= 0 or height_cm <= 0:
         return None
     return round(weight_kg / (height_cm / 100.0) ** 2, 2)
-
-
-def bmi_imperial(weight_lb: float | None, height_in: float | None) -> float | None:
-    """BMI (kg/m², 2 decimals) from lb/inches — the PF/Tebra charting units.
-
-    Sources frequently chart height and weight but omit BMI; the adapter's
-    BMI auto-calc fills the gap with this (the standard CDC 703 factor).
-    Two decimals matches the predecessor ().
-    """
-    if not weight_lb or not height_in or weight_lb <= 0 or height_in <= 0:
-        return None
-    return round(703.0 * weight_lb / height_in**2, 2)

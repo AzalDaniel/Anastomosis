@@ -403,10 +403,10 @@ class ArchiveDeliverer:
         encounter_count: int,
         generated_at: str,
     ) -> Path:
-        # json.dumps escapes </script> via the </ → </ path by
-        # default? No — only `<` is unconditionally escaped (no it isn't in
-        # python's default). Be explicit so a chart title containing
-        # ``</script>`` can never break the inline JSON block.
+        # INVARIANT: no record value can terminate the inline <script> block.
+        # ``json.dumps`` does not escape ``<``, so a chart title containing
+        # ``</script>`` would close the tag and break out of the JSON island.
+        # Escaping every ``</`` sequence is JSON-equivalent and closes that.
         index_json = json.dumps(manifest_entries, sort_keys=True).replace("</", "<\\/")
         html = self._index_template.render(
             csp=CSP_META_CONTENT,

@@ -1,11 +1,11 @@
 """The sequential upload engine: drive items through the state machine.
 
-This is the heart of M2 item 10. Given a destination pack, the resumable
-ledger, and a manifest of :class:`UploadItem`, the engine walks each item from
-``PENDING`` to exactly one terminal state, recording every move in the ledger
-so a killed run resumes exactly where it stopped. The batch scheduler, the
-parallel workers, the CDP attach, and the reports land in the next PR; this
-engine is the single-threaded driver they will build on.
+Given a destination pack, the resumable ledger, and a manifest of
+:class:`UploadItem`, the engine walks each item from ``PENDING`` to exactly
+one terminal state, recording every move in the ledger so a killed run
+resumes exactly where it stopped. This is the single-threaded driver every
+other layer builds on: schedulers and reporters wrap it through the seam
+documented on :meth:`UploadEngine.run` and never bypass the state machine.
 
 Two safety properties shape the design:
 
@@ -130,8 +130,8 @@ class UploadEngine:
         a defect, not a skip).
 
         ``stop``, ``manage_run``, and ``restrict_to_items`` are the
-        parallel-runner seam (PLAN item 10, the parallel PR); all three default
-        to preserving the single-threaded behavior exactly:
+        parallel-runner seam; all three default to preserving the
+        single-threaded behavior exactly:
 
         * ``stop`` — an optional cooperative cancel flag. When set (by a sibling
           worker hitting a wrong-patient abort), the loop stops between items,

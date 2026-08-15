@@ -21,7 +21,10 @@ practices get priced out or locked in.
 Anastomosis is the missing last mile, free and open source:
 
 1. **Ingest** raw EHI exports — Practice Fusion/Tebra TSV, C-CDA/CCD, FHIR R4
-   (Bundle or Bulk-Data NDJSON), Oracle Health/Cerner Millennium V500 dumps —
+   (Bundle or Bulk-Data NDJSON), and Oracle Health/Cerner Millennium V500 dumps
+   (*experimental*: the single-patient export's seven core tables, giving
+   demographics, encounters, observations, conditions, allergies, and documents —
+   no medications, procedures, or immunizations yet) —
    into a lossless canonical model: every unmapped field, and every unmapped
    table the export carries, is preserved verbatim in `extensions`; an export
    carrying data that cannot be placed is refused rather than silently dropped.
@@ -133,9 +136,9 @@ anast pipeline run ./my_ehi_export --out ./charts --archive ./my_archive
 ```
 
 The source format is auto-detected (or pass `--source pf-tebra`/`ccda`/`fhir-r4`/
-`oracle-ehi`); `--pack` selects the document template; every rendered document is
-QA-verified by default; `anast info` lists every available source adapter and
-template pack.
+`oracle-ehi`, the last of which is experimental — see the ingest note above);
+`--pack` selects the document template; every rendered document is QA-verified by
+default; `anast info` lists every available source adapter and template pack.
 
 Migrate from one EHR to another — emitting both the structured C-CDA payload for
 the target's C-CDA import (validated for round-trip fidelity through our own
@@ -185,11 +188,15 @@ src/anastomosis/
 │   │                 no_network=True, load_dtd=False, huge_tree=False); unmapped
 │   │                 sections preserved under `ccda:section:<loinc>` extension keys.
 │   ├── oracle_ehi/   Oracle Health/Cerner Millennium EHI adapter (V500 single-patient
-│   │                 export). Dependency-free MySQL INSERT-dump reader over
-│   │                 `v500/{schema,activity,reference}`; PERSON/ENCOUNTER/CLINICAL_EVENT
-│   │                 spine, CE_BLOB note text + CE_BLOB_RESULT remote refs (never
-│   │                 fetched); unmapped columns to `oracle_ehi:` extensions; undocumented
-│   │                 CE_BLOB compression (brief §8) raises loudly rather than guessing.
+│   │                 export) — EXPERIMENTAL, deliberately partial. Dependency-free
+│   │                 MySQL INSERT-dump reader over `v500/{schema,activity,reference}`
+│   │                 that reads the SEVEN core tables (plus the CODE_VALUE dictionary):
+│   │                 PERSON/ENCOUNTER/CLINICAL_EVENT spine, CE_BLOB note text +
+│   │                 CE_BLOB_RESULT remote refs (never fetched). Maps Patient,
+│   │                 Encounter, Observation, Condition, AllergyIntolerance, and
+│   │                 DocumentArtifact; medications, procedures, and immunizations are
+│   │                 not mapped yet. Unmapped columns to `oracle_ehi:` extensions;
+│   │                 undocumented CE_BLOB compression raises loudly rather than guessing.
 │   ├── fhir_r4/      FHIR R4 / US Core ingest — a Bundle or a Bulk-Data `$export`
 │   │                 NDJSON directory → canonical records; unmapped fields → `extensions`.
 │   └── learned/      LEARN-A-SOURCE: a single generic adapter that runs a saved,
@@ -284,13 +291,20 @@ src/anastomosis/
   (owner-only `0o700` on POSIX; on Windows NTFS, ACL inheritance is stripped
   and access restricted to the current user, SYSTEM, and Administrators).
 
+## The desktop GUI
+
+`anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
+live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
+destination transit map and the full set of run levers, a learn-a-source wizard,
+and an upload console that drives the delivery engine over its ledger.
+
 ## Privacy & safety
 
 - **No PHI in this repository, ever.** All fixtures are synthetic
   (Synthea-generated or hand-built with `feedface-` GUIDs). A hashed
   deny-list scanner (`tools/phi_scan.py`) runs on every commit and in CI.
 - You run this software on machines you control; you are responsible for
-  HIPAA compliance in your environment. See [docs/SECURITY.md](docs/SECURITY.md)
+  HIPAA compliance in your environment. See [SECURITY.md](SECURITY.md)
   and [docs/DISCLAIMER.md](docs/DISCLAIMER.md).
 
 ## License
@@ -299,50 +313,3 @@ src/anastomosis/
 and anyone who offers it as a service must share their changes back.
 No CLA: contributors keep their copyright, which makes proprietary
 relicensing permanently impossible.
-
-## The desktop GUI
-
-`anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
-live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
-destination transit map and the full set of run levers, a learn-a-source wizard,
-and an upload console that drives the delivery engine over its ledger.
-
-## Provenance & AI assistance
-
-Anastomosis generalizes a private production system, by the same author, that
-migrated a clinic's full EHI export — reconstructing its encounter documents and
-filing them into the destination EHR with no wrong-patient events. Those results
-are self-reported and specific to that deployment; this open-source release has
-been built and tested only against synthetic data (see
-[docs/DISCLAIMER.md](docs/DISCLAIMER.md)).
-
-Anastomosis is authored by Azal Daniel and developed with substantial
-assistance from AI coding agents (Anthropic Claude-family models) operating
-under the author's direction and review: the author sets the scope,
-architecture, clinical-domain requirements, and acceptance criteria; every
-agent-produced change is reviewed and must pass the full gate (`ruff` incl.
-bandit-S, `mypy --strict`, the test suite, the PHI scanner) before merge.
-Source files carry a one-line AI-assistance citation comment; the full
-authorship and provenance record — including what is original, what is a
-re-typed generalization of the predecessor system, and what is vendored — is
-in [DESIGN.md](DESIGN.md).
-
-## CS50 final project
-
-Anastomosis is also the author's CS50x final project — built for the course's
-bar but not scoped to it.
-
-- **Title:** Anastomosis — reconstruct, verify, and re-home clinical records.
-- **Video:** *to be added at submission time* (placeholder — the demo video
-  URL will land here before `submit50`).
-- **Description:** this README (what it does and why), plus
-  [DESIGN.md](DESIGN.md) for the architecture, the design choices that were
-  genuinely debated, the hardest problems, and the authorship/provenance
-  record, and the file-by-file map above for what each part of the codebase
-  does.
-- **AI policy compliance:** per the
-  [CS50 academic-honesty policy](https://cs50.harvard.edu/x/honesty/), AI
-  tools may be used for the final project provided the essence of the work is
-  the student's own and their use is cited in code comments — every authored
-  source file carries that citation, and the division of labor is documented
-  in [DESIGN.md](DESIGN.md).

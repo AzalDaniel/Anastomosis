@@ -62,9 +62,9 @@
       <div class="banner" id="banner"></div>
 
       <!-- This screen INSPECTS the tracking ledger AND drives the resumable
-           upload engine through the controller (W5/PR-6b). Every drive call
-           goes through window.pywebview.api.upload_start / upload_stop — the JS
-           never touches the ledger's write surface (no transition/begin_run/
+           upload engine through the controller. Every drive call goes through
+           window.pywebview.api.upload_start / upload_stop — the JS never
+           touches the ledger's write surface (no transition/begin_run/
            recover from the browser). -->
       <div class="guidance">
         <div>

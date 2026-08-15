@@ -1,15 +1,18 @@
 """Anastomosis command-line interface.
 
 Installed as both ``anast`` (everyday) and ``anastomosis`` (formal).
-Sub-commands appear as their pipeline stages are implemented:
 
-    anast ingest        EHI export / C-CDA  ->  canonical records
-    anast reconstruct   canonical records   ->  rendered documents
-    anast qa            rendered documents  ->  QA report
-    anast archive       full pipeline       ->  searchable offline archive
-    anast bundle        full pipeline       ->  per-patient bundles
-    anast pipeline run  one command, whole pipeline (charts + optional archive/bundle)
-    anast pack init     sample PDFs         ->  a draft template pack
+    anast pipeline run  EHI export  ->  verified charts (+ archive, bundles)
+    anast migrate       EHI export  ->  a prepared cross-EHR move
+    anast upload        prepared charts     ->  a destination EHR
+    anast archive       EHI export  ->  a searchable offline archive
+    anast bundle        EHI export  ->  per-patient record-request bundles
+    anast destination   list destinations, plan a route, or set one up
+    anast pack init     sample PDFs ->  a draft template pack
+    anast source init   one example ->  a learned source-format mapping
+    anast info          installed extras, source adapters, template packs
+    anast doctor        verify every bundled data asset is present
+    anast gui           launch the desktop app
 """
 
 # NB: this module's docstring is the top-level ``anast --help`` text

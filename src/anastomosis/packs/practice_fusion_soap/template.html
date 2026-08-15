@@ -764,16 +764,12 @@ body {
 {% endif %}
 
 {% if show_devices %}
-<!-- IMPLANTABLE DEVICES (keep-together). -->
+<!-- IMPLANTABLE DEVICES (keep-together). Static: the PF layout carries the
+     section; the EHI export has no device data path (same rule as IMAGING
+     ORDERS under Orders). -->
 <div class="keep-together">
 <div class="section-header">Implantable devices</div>
-{% if implantable_devices %}
-  {% for dev in implantable_devices %}
-  <div class="simple-row">{{ dev.name }}{% if dev.date %} (Implanted: {{ dev.date }}){% endif %}</div>
-  {% endfor %}
-{% else %}
-  <div class="no-record">No implantable devices recorded</div>
-{% endif %}
+<div class="no-record">No implantable devices recorded</div>
 </div>
 {% endif %}
 
@@ -783,22 +779,14 @@ body {
 <table class="data-table with-bottom-divider">
   <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
   <tbody>
-    {% if active_concerns %}
-      {% for hc in active_concerns %}<tr><td>{{ hc.description }}</td><td>{{ hc.date }}</td></tr>{% endfor %}
-    {% else %}
-      <tr><td colspan="2" class="no-record">No active health concerns recorded.</td></tr>
-    {% endif %}
+    <tr><td colspan="2" class="no-record">No active health concerns recorded.</td></tr>
   </tbody>
 </table>
 <div class="section-header">Inactive health concerns</div>
 <table class="data-table with-bottom-divider">
   <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
   <tbody>
-    {% if inactive_concerns %}
-      {% for hc in inactive_concerns %}<tr><td>{{ hc.description }}</td><td>{{ hc.date }}</td></tr>{% endfor %}
-    {% else %}
-      <tr><td colspan="2" class="no-record">No inactive health concerns recorded</td></tr>
-    {% endif %}
+    <tr><td colspan="2" class="no-record">No inactive health concerns recorded</td></tr>
   </tbody>
 </table>
 {% endif %}
@@ -857,17 +845,7 @@ body {
 <div class="section-header">Orders</div>
 <div class="sub-header">LAB ORDERS</div>
 <div class="orders-block with-bottom-divider">
-{% if lab_orders %}
-  {% for order in lab_orders %}
-    {% if order.test_items %}
-      {% for item in order.test_items %}<div class="simple-row">{{ item.display }}</div>{% endfor %}
-    {% else %}
-      <div class="no-record">No orders attached to this encounter.</div>
-    {% endif %}
-  {% endfor %}
-{% else %}
-  <div class="no-record">No orders attached to this encounter.</div>
-{% endif %}
+<div class="no-record">No orders attached to this encounter.</div>
 </div>
 <div class="sub-header">IMAGING ORDERS</div>
 <div class="orders-block with-bottom-divider">

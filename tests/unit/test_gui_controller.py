@@ -785,13 +785,18 @@ def test_destination_status_epic_vendor_api_chosen() -> None:
     assert result["pack"] is None
 
 
-def test_destination_status_tebra_ccda_chosen_no_pack() -> None:
-    """Tebra routes by C-CDA import; its browser capability is `none` for now."""
+def test_destination_status_tebra_ccda_chosen_with_pack_chip() -> None:
+    """Tebra still prefers C-CDA import, but the shipped browser pack shows
+    as a chip — not ready until ``anast destination init tebra`` discovers
+    selectors (the pack.yaml ships DISCOVER placeholders)."""
     result = GuiController(_RecordingSink()).destination_status("tebra")
     assert result["ok"] is True
     assert result["transit"]["chosen"] == "ccda_import"  # type: ignore[index]
-    # tebra's registry browser kind is `none` (pack lands later), so no chip.
-    assert result["pack"] is None
+    pack = result["pack"]
+    assert pack is not None
+    assert pack["name"] == "tebra"  # type: ignore[index]
+    assert pack["builtin"] is True  # type: ignore[index]
+    assert pack["ready"] is False  # type: ignore[index]
 
 
 def test_destination_status_unknown_is_clean_error() -> None:

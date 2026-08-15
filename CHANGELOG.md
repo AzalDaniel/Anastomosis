@@ -14,8 +14,6 @@ minor versions may contain breaking changes (noted here when they happen).
 The sixth alpha (**0.6.0-alpha**). Closes the external v0.5.0 review's four
 P1 truth defects — every one a case of a claim exceeding the runtime, the
 exact defect class this product exists to prevent — plus its confirmed P2s.
-Finding-by-finding adjudication (including two partial refutations) is
-recorded in `docs/reviews/2026-07-12-alpha6-adjudication.md`.
 
 ### Fixed
 
@@ -92,8 +90,7 @@ recorded in `docs/reviews/2026-07-12-alpha6-adjudication.md`.
 
 The fifth alpha (**0.5.0-alpha**). Two fixes from the external alpha-4 review
 plus the piece that makes the Windows app real for users: a release path that
-actually ships the installer. Adjudication of the review is recorded in
-`docs/reviews/2026-07-03-alpha5-adjudication.md`.
+actually ships the installer.
 
 ### Fixed
 
@@ -140,7 +137,7 @@ self-explaining product: real Windows PHI-at-rest protection, log redaction
 that is actually installed, executable (not decorative) CodeQL policy, a
 design/authorship record (`DESIGN.md`), and the remaining size hotspots split
 behind stable facades. No new feature surface — this release's job is
-trustworthiness. Beta is reserved for the CS50 submission cut.
+trustworthiness.
 
 ### Added
 
@@ -166,11 +163,7 @@ trustworthiness. Beta is reserved for the CS50 submission cut.
   advanced SARIF while default setup is on.)
 - **`DESIGN.md`** — the design record: architecture, data model, the
   genuinely debated decisions, hardest problems, verification strategy, and
-  the authorship/provenance table, including exactly how AI assistance is
-  used and cited. README gained the matching CS50 final-project section and
-  a Provenance & AI assistance section; every authored source file carries a
-  one-line AI-assistance citation comment (CS50 academic-honesty policy asks
-  for citation in code comments; the convention serves any reader).
+  the authorship record.
 - **Single-sourced Playwright pin** (`packaging/constraints.txt`) — the CI
   e2e lane and the Windows packaging build both resolve Playwright through
   one constraints file (`pip install -c`); the Windows browser-cache key
@@ -178,7 +171,7 @@ trustworthiness. Beta is reserved for the CS50 submission cut.
   (library floor stays open for users — builds pin).
 - A review-archaeology CI guard: a test that bans review-history tokens from
   src/, tests/, tools/, and workflows — comments state invariants; history
-  lives in the changelog and `docs/reviews/`.
+  lives in this changelog.
 
 ### Fixed
 
@@ -195,8 +188,8 @@ trustworthiness. Beta is reserved for the CS50 submission cut.
   date of service; it now logs the opaque patient id. Remaining messages
   that interpolated paths under an output directory were aligned with the
   repo convention (never a path under out_dir) and their tests updated.
-- One vulnerability-reporting SLA: `docs/SECURITY.md` now defers to the root
-  `SECURITY.md` (72-hour acknowledgement, coordinated disclosure); a stale
+- One vulnerability-reporting SLA: the root `SECURITY.md` became the single
+  reporting policy (72-hour acknowledgement, coordinated disclosure); a stale
   unchecked CDP-attach backlog item (shipped in 0.2.0) was corrected in
   `docs/PLAN.md`.
 

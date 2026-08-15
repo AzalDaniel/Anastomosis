@@ -80,9 +80,6 @@ anastomosis-gui = "anastomosis.gui.__main__:main"
 Homepage = "https://github.com/AzalDaniel/Anastomosis"
 Issues = "https://github.com/AzalDaniel/Anastomosis/issues"
 
-[project.entry-points."anastomosis.packs"]
-# Third-party packs register here. Built-in packs ship inside the package.
-
 [tool.hatch.version]
 path = "src/anastomosis/__init__.py"
 
@@ -131,7 +128,6 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
   "e2e: end-to-end pipeline tests (need playwright chromium)",
-  "slow: long-running tests, excluded from default CI lanes",
   "fhir_integration: live FHIR-server tests (need ANAST_FHIR_BASE_URL; CI service container)",
 ]
 

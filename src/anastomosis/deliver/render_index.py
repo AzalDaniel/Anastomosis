@@ -61,9 +61,8 @@ class RenderIndex:
     """The deliverer-facing view of the engine's render-time truth.
 
     Lookups are O(1) — ``_by_name`` and ``_by_patient`` are built once at
-    construction and frozen with the dataclass. The class is a plain
-    container; mutation is *not* allowed (use :meth:`with_entries` to
-    derive a modified copy if ever needed).
+    construction and frozen with the dataclass. The class is a plain,
+    immutable container.
     """
 
     entries: tuple[RenderEntry, ...]
@@ -185,11 +184,3 @@ class RenderIndex:
     def lookup(self, pdf_name: str) -> RenderEntry | None:
         """The entry for a PDF filename, or ``None`` if not indexed."""
         return self._by_name.get(pdf_name)
-
-    def unattributed(self, pdf_names: Iterable[str]) -> tuple[str, ...]:
-        """Filenames from ``pdf_names`` that have no index entry.
-
-        Used by the archive deliverer to route PDFs without an owning
-        patient into ``unattributed/`` instead of guessing.
-        """
-        return tuple(sorted(name for name in pdf_names if name not in self._by_name))

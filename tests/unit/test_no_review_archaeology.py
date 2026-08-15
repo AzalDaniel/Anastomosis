@@ -2,14 +2,14 @@
 
 A comment must pin the PROPERTY the code or test enforces, never the
 review, reviewer, or audit round that once requested it. History lives in
-CHANGELOG.md and docs/reviews/ — not scattered through the tree, where it
-goes stale and turns every file into an excavation site.
+CHANGELOG.md — not scattered through the tree, where it goes stale and turns
+every file into an excavation site.
 
 This test walks the shipped source (``src/``, ``tests/``, ``tools/``,
 ``.github/``) and fails if any line carries one of the review-archaeology
 tokens. Each banned pattern is assembled from concatenated fragments so
 this guard file cannot match itself; if the tokens ever creep back in, add
-the invariant to the comment and move the history to the changelog/docs.
+the invariant to the comment and move the history to the changelog.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def test_no_review_archaeology_in_source() -> None:
     assert not violations, (
         "Review-history archaeology found — comments must state the invariant the "
         "code/test pins, not the review round that requested it. Rewrite these lines "
-        "to name the property, and move any history to CHANGELOG.md / docs/reviews/:\n  "
+        "to name the property, and move any history to CHANGELOG.md:\n  "
         + "\n  ".join(sorted(violations))
     )
 

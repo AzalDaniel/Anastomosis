@@ -40,13 +40,9 @@ from anastomosis.core.model import (
     FamilyMemberHistory,
     Goal,
     Guarantor,
-    HealthConcern,
     Identifier,
     IdentifierKind,
     Immunization,
-    ImplantableDevice,
-    LabOrder,
-    LabOrderItem,
     MedicationStatement,
     NoteSection,
     Observation,
@@ -801,22 +797,7 @@ def _maximal_record() -> PatientRecord:
     advance_directives = [
         AdvanceDirective(patient_id=pid, directive="MaxDirectiveDNR", recorded_at=_AT)
     ]
-    health_concerns = [
-        HealthConcern(
-            patient_id=pid, description="MaxHealthConcern", effective=date(2017, 1, 1), active=True
-        )
-    ]
     goals = [Goal(patient_id=pid, description="MaxGoal", effective=date(2018, 1, 1), active=True)]
-    devices = [ImplantableDevice(patient_id=pid, description="MaxDevicePacemaker", recorded_at=_AT)]
-    lab_orders = [
-        LabOrder(
-            patient_id=pid,
-            encounter_id="feedface-0000-0000-0000-0000000000d1",
-            lab_name="MaxLabName",
-            ordered_at=_AT,
-            items=[LabOrderItem(test_name="MaxLabTest", note="MaxLabNote")],
-        )
-    ]
     coverages = [
         Coverage(
             patient_id=pid,
@@ -918,10 +899,7 @@ def _maximal_record() -> PatientRecord:
         family_history=family_history,
         past_medical_history=past_medical_history,
         advance_directives=advance_directives,
-        health_concerns=health_concerns,
         goals=goals,
-        devices=devices,
-        lab_orders=lab_orders,
         coverages=coverages,
         documents=documents,
         practitioners=practitioners,

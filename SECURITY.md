@@ -21,6 +21,14 @@ sessions) and produces PDFs, JSON, and archives that contain protected
 health information (PHI). The repository itself is treated as
 **untrusted to contain real PHI** — only synthetic data may enter it.
 
+Anastomosis processes PHI **locally**. The core pipeline
+(ingest → reconstruct → QA → archive) makes no network calls; nothing is
+transmitted, telemetered, or phoned home. The assets to protect are
+therefore local: the source export, the reconstructed documents, the
+upload tracking database, and any credentials the *operator's own browser
+session* holds. The threat surface is the local machine, the output
+directories, and any pack (plugin) code the operator chooses to run.
+
 In scope for this policy:
 
 - Code paths that ingest, transform, render, deliver, or persist
@@ -39,11 +47,40 @@ Out of scope:
 - Issues that require physical access to a logged-in user's machine,
   or that depend on the user pasting attacker-supplied credentials.
 
+## Operator responsibilities
+
+The tool hardens what it creates; keeping it safe afterwards is yours:
+
+- Run on an access-controlled machine with full-disk encryption. The
+  tool's directory hardening resists siblings and casual access, not a
+  compromised host.
+- Treat every output directory (archives, rendered PDFs, `tracking.db`)
+  as PHI at rest. The tool creates them with restrictive permissions and
+  drops a warning README inside; retention and disposal are your call.
+- **Never paste real patient data into GitHub issues.** Reproduce bugs
+  with the synthetic fixtures under `tests/fixtures/`.
+- You (or your practice) are the HIPAA covered entity or business
+  associate. The Anastomosis authors are not a business associate and no
+  BAA exists.
+- Review third-party pack code before running it against real data. Packs
+  are executable code; built-in packs are reviewed here, anything else is
+  yours to vet.
+
 ## Posture and controls
 
 The repository ships several defensive controls that are part of the
 contract — regressions in any of them are security findings:
 
+- **No network in the core pipeline.** Ingest, reconstruct, QA, and
+  archive make no network calls; the unit suite runs behind a
+  loopback-only network guard (`pytest-socket`), so an outbound call from
+  the core path fails the tests loudly. The delivery paths that *do* talk
+  to an EHR (FHIR API push, browser automation) say so explicitly and only
+  reach the destination the operator configures.
+- **Credentials are never stored by the tool.** Browser delivery attaches
+  over CDP to a Chrome session the operator launched and logged into
+  (loopback only); API delivery reads credentials from the environment or
+  config and never writes them back.
 - **No-real-PHI rule.** The PHI scanner (`tools/phi_scan.py`) runs in
   pre-commit and CI on the full tree, using a hashed deny-list plus
   generic shape patterns (SSN, non-fixture GUIDs, non-555 phones,
@@ -89,14 +126,14 @@ contract — regressions in any of them are security findings:
   and naive-datetime rules), `ruff format --check`, `mypy --strict`,
   `pytest`, and the full-tree PHI scan via `tools/check.sh`. The gate
   runs unmasked (pipefail; never piped through `tail`).
-- **Adversarial review.** `.claude/skills/quality-gate/` codifies the
-  pre-commit pipeline (PHI/losslessness compliance halts first; reviewers
-  carry no approval authority); `.claude/skills/polymerase-review/`
-  enforces retro-compatibility against existing callers; the
-  `qa-reviewer` agent in `.claude/agents/` runs the adversarial pass.
-  These have already caught real blockers (substring matching that
-  false-PASSed missing vitals; FHIR placeholder strings that corrupted
-  charted values) before they merged.
+- **Adversarial review.** Substantive changes pass a codified review
+  pipeline before merge: a PHI/losslessness compliance pass that halts on
+  any finding, then a general quality pass, then a retro-compatibility
+  pass against every existing caller of the surface being changed.
+  Reviewers report findings and hold no approval authority. This has
+  already caught real blockers (substring matching that false-PASSed
+  missing vitals; FHIR placeholder strings that corrupted charted values)
+  before they merged.
 - **CI least privilege.** Workflows declare `permissions: contents: read`
   by default; releases require explicit elevation.
 

@@ -136,36 +136,8 @@ class AdvanceDirective(AnastBase):
     recorded_at: datetime | None = None
 
 
-class HealthConcern(AnastBase):
-    patient_id: str
-    description: str | None = None
-    effective: date | None = None
-    active: bool = True
-
-
 class Goal(AnastBase):
     patient_id: str
     description: str | None = None
     effective: date | None = None
     active: bool = True
-
-
-class ImplantableDevice(AnastBase):
-    patient_id: str
-    description: str | None = None
-    recorded_at: datetime | None = None
-
-
-class LabOrderItem(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    test_name: str | None = None
-    note: str | None = None
-
-
-class LabOrder(AnastBase):
-    patient_id: str
-    encounter_id: str | None = None
-    lab_name: str | None = None
-    ordered_at: datetime | None = None
-    items: list[LabOrderItem] = []

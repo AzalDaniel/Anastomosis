@@ -131,7 +131,6 @@ tokens:
   # (static.practicefusion.com/.../{practice-group-guid}/encounter/{guid}/...);
   # that real path is REDACTED. This neutral placeholder is shown instead, and
   # the GOLD_STANDARD §1 footer-flex truncation fix is honored in RULES.md.
-  footer_url: "https://example.com/encounter/soap-note"
 
 # Header fields the L3 delivery verification reads back off the rendered PDF
 # (the wrong-chart defense). These appear in the 3-column PATIENT/ENCOUNTER

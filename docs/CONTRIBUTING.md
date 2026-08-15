@@ -6,8 +6,12 @@ takes many hands.
 ## Rule #1 (non-negotiable): no real patient data. Ever. Anywhere.
 
 - All fixtures must be synthetic: Synthea-generated, or hand-built following
-  the conventions in `tests/fixtures/README.md` (`feedface-` GUIDs, 555
-  phones, never-issued SSN ranges).
+  the conventions in [SECURITY.md](../SECURITY.md) (`feedface-` GUIDs, 555
+  phones, never-issued SSN ranges, `example.com` addresses). Each fixture
+  tree carries its own `tests/fixtures/<source>/README.md` recording the
+  VERIFIED/INFERRED ledger and the traps that tree exists to pin — read the
+  one next to the fixture you are touching, and update it in the same
+  commit.
 - `tools/phi_scan.py` runs in pre-commit and CI. If it flags your change,
   fix the data — only add to `tools/phi_allowlist.txt` for genuine false
   positives, with a justification comment.

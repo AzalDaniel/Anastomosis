@@ -131,7 +131,7 @@ svg { display: block; }
 }
 /* Centred wrapper for the iOS-style segment toggles. The auto margins push
    the group to the visual center of the filter bar regardless of how wide
-   the combobox / date pill / quota pill grow on the left or the right. */
+   the neighbouring pills grow on the left or the right. */
 .segment-group {
   display: inline-flex;
   align-items: center;
@@ -770,221 +770,6 @@ svg { display: block; }
 }
 
 
-/* ─── 16. Item-key combobox ───────────────────────────────── */
-/* In Anastomosis this combobox is fed by the upload console's item KEYS
-   (encounter id + content hash) — ids only, never patient names. */
-.patient-combobox {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(255, 250, 240, 0.14);
-  background: rgba(255, 250, 240, 0.04);
-  color: var(--ink-secondary);
-  font-size: var(--text-label);
-  font-weight: 600;
-  min-width: 200px;
-  transition: background var(--dur-snap) var(--ease-quart),
-              border-color var(--dur-snap) var(--ease-quart);
-}
-.patient-combobox:hover,
-.patient-combobox:focus-within {
-  background: var(--surface-pressed);
-  border-color: rgba(255, 250, 240, 0.22);
-}
-.patient-combobox[aria-expanded="true"] {
-  background: var(--surface-pressed);
-  border-color: rgba(255, 250, 240, 0.28);
-}
-.patient-combobox-input {
-  background: transparent;
-  border: 0;
-  outline: 0;
-  color: var(--ink-primary);
-  font: inherit;
-  font-size: var(--text-body);
-  font-weight: 500;
-  flex: 1 1 0;
-  min-width: 0;
-  width: 18ch;
-  font-family: var(--font-mono);
-}
-.patient-combobox-input::placeholder { color: var(--ink-muted); }
-.patient-combobox-clear {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--surface-pressed);
-  color: var(--ink-muted);
-  padding: 0;
-  transition: background var(--dur-snap) var(--ease-quart),
-              color var(--dur-snap) var(--ease-quart);
-}
-.patient-combobox-clear svg { width: 10px; height: 10px; }
-.patient-combobox-clear:hover {
-  background: var(--primary);
-  color: var(--ink-inverse);
-}
-
-/* Near-opaque tinted background — when this dropdown opens over the
-   .filter-bar glass card, two stacked backdrop-filters layer on top of
-   each other and the result reads as muddy/invisible. The 94% opaque
-   tint keeps row text legible regardless of what's beneath, while the
-   blur still samples the wallpaper through the gaps. isolation:isolate
-   gives the dropdown its own stacking context so its backdrop-filter
-   reads the wallpaper directly, not the filter-bar's already-blurred
-   texture. */
-.patient-listbox {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  left: 0;
-  min-width: 340px;
-  max-width: 440px;
-  max-height: 360px;
-  overflow-y: auto;
-  padding: var(--space-2);
-  z-index: 150;                                 /* above filter-bar, below cmd palette */
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  isolation: isolate;
-  background: rgba(24, 22, 28, 0.94);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
-  backdrop-filter: blur(40px) saturate(180%);
-  border: 1.5px solid rgba(255, 250, 240, 0.18);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.40);
-  animation: combobox-pop var(--dur-std) var(--ease-quart);
-}
-.patient-listbox[hidden] { display: none; }
-.patient-listbox::-webkit-scrollbar { width: 4px; }
-.patient-listbox::-webkit-scrollbar-track { background: transparent; }
-.patient-listbox::-webkit-scrollbar-thumb {
-  background: rgba(255, 250, 240, 0.18);
-  border-radius: 2px;
-}
-@keyframes combobox-pop {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0)    scale(1); }
-}
-
-.patient-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  column-gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  color: var(--ink-secondary);
-  transition: background var(--dur-snap) var(--ease-quart),
-              color var(--dur-snap) var(--ease-quart);
-}
-.patient-row:hover,
-.patient-row[aria-selected="true"] {
-  background: var(--surface-pressed);
-  color: var(--ink-primary);
-}
-.patient-row-name {
-  grid-column: 1;
-  font-size: var(--text-mono);
-  font-weight: 540;
-  letter-spacing: -0.003em;
-  color: var(--ink-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--font-mono);
-}
-.patient-row-chip {
-  grid-column: 2;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface-tile);
-  color: var(--ink-secondary);
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum";
-  font-size: var(--text-caption);
-  font-weight: 600;
-  white-space: nowrap;
-  border: 1px solid rgba(255, 250, 240, 0.10);
-}
-.patient-row-highlight {
-  color: var(--primary);
-  font-weight: 620;
-}
-.patient-row--empty {
-  padding: var(--space-4) var(--space-3);
-  color: var(--ink-muted);
-  text-align: center;
-  font-size: var(--text-label);
-  cursor: default;
-}
-.patient-row--more {
-  padding: var(--space-2) var(--space-3);
-  color: var(--ink-muted);
-  font-size: var(--text-caption);
-  font-family: var(--font-mono);
-  letter-spacing: 0.04em;
-  text-align: center;
-  cursor: default;
-}
-
-
-/* ─── 17. Date trigger pill ───────────────────────────────── */
-.pill.pill--date {
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-}
-.pill--date .pill-value {
-  color: var(--ink-primary);
-  font-size: var(--text-body);
-  font-weight: 540;
-  letter-spacing: -0.003em;
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum";
-}
-.pill--date[aria-expanded="true"] {
-  background: var(--surface-pressed);
-  border-color: rgba(255, 250, 240, 0.28);
-}
-.pill--date.is-active {
-  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
-  background: color-mix(in oklab, var(--primary) 14%, var(--surface-card));
-}
-
-
-/* ─── 18. Calendar popover / HUD (run-activity) ───────────── */
-/* In Anastomosis the calendar plots RUN timestamps (started/finished) with
-   the original halo treatment + count badges — counts only, no names. */
-.calendar-popover {
-  position: fixed;
-  top: 110px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 320px;
-  padding: var(--space-3);
-  z-index: 120;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  animation: cal-in var(--dur-std) var(--ease-quart);
-}
-.calendar-popover[hidden] { display: none; }
-@keyframes cal-in {
-  from { opacity: 0; transform: translate(-50%, -6px) scale(0.98); }
-  to   { opacity: 1; transform: translate(-50%, 0)    scale(1); }
-}
-
 /* The console embeds the same calendar inline (not as a popover) as a HUD. */
 .calendar-hud {
   padding: var(--space-4);
@@ -1067,17 +852,7 @@ svg { display: block; }
   transition: color var(--dur-snap) var(--ease-quart),
               background var(--dur-snap) var(--ease-quart);
 }
-.calendar-cell[disabled],
-.calendar-cell--blank {
-  cursor: default;
-  color: transparent;
-  pointer-events: none;
-}
 .calendar-cell--outside { color: var(--ink-muted); opacity: 0.35; }
-.calendar-cell:hover:not([disabled]):not(.calendar-cell--blank) {
-  background: var(--surface-pressed);
-  color: var(--ink-primary);
-}
 
 /* Halo — perfectly circular radial glow backdrop. Uses a fixed 36×36px
    pseudo-element centered on the day digit via top/left:50% +
@@ -1115,36 +890,6 @@ svg { display: block; }
 .calendar-cell--today {
   outline: 1.5px solid var(--primary);
   outline-offset: -3px;
-}
-
-/* Selected range — coral underline */
-.calendar-cell--in-range {
-  background: color-mix(in oklab, var(--primary) 18%, transparent);
-  border-radius: 0;
-}
-.calendar-cell--range-start { border-radius: 50% 0 0 50%; }
-.calendar-cell--range-end   { border-radius: 0 50% 50% 0; }
-.calendar-cell--range-start.calendar-cell--range-end { border-radius: 50%; }
-.calendar-cell--selected {
-  background: var(--primary);
-  color: var(--ink-inverse);
-}
-.calendar-cell--selected::before { opacity: 0; }
-.calendar-cell--selected::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  right: 22%;
-  bottom: 6%;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--ink-inverse);
-}
-
-.calendar-cell--focused {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-  border-radius: 50%;
 }
 
 .calendar-count-badge {
@@ -1201,52 +946,6 @@ svg { display: block; }
   letter-spacing: 0.04em;
 }
 
-/* Tooltip for calendar cells */
-.calendar-tooltip {
-  position: fixed;
-  z-index: 140;
-  pointer-events: none;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  background: rgba(12, 12, 16, 0.88);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  backdrop-filter: blur(16px) saturate(160%);
-  border: 1px solid rgba(255, 250, 240, 0.14);
-  color: var(--ink-primary);
-  font-size: var(--text-caption);
-  max-width: 260px;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
-  animation: tip-in 160ms var(--ease-quart);
-}
-.calendar-tooltip[hidden] { display: none; }
-.calendar-tooltip-date {
-  display: block;
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum";
-  color: var(--ink-secondary);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  margin-bottom: 2px;
-}
-.calendar-tooltip-item {
-  display: block;
-  color: var(--ink-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.calendar-tooltip-item-count {
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-feature-settings: "tnum";
-  margin-left: var(--space-2);
-}
-@keyframes tip-in {
-  from { opacity: 0; transform: translateY(-2px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
 
 /* ─── 19. Reduced motion ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
@@ -1255,8 +954,6 @@ svg { display: block; }
     transition-duration: 0.01ms !important;
   }
   .cmd-palette { animation: none; }
-  .calendar-popover { animation: none; }
-  .patient-listbox { animation: none; }
 }
 
 

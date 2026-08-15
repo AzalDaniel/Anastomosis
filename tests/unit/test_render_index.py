@@ -75,14 +75,6 @@ def test_render_index_lookup_by_pdf_name(tmp_path: Path) -> None:
     assert index.lookup("missing.pdf") is None
 
 
-def test_render_index_unattributed_for_orphan_names(tmp_path: Path) -> None:
-    index = RenderIndex.from_entries(_entries())
-    orphans = index.unattributed(
-        ["Smith_John_05-10-2023_SOAP.pdf", "stray.pdf", "another_stray.pdf"]
-    )
-    assert orphans == ("another_stray.pdf", "stray.pdf")
-
-
 def test_render_index_load_returns_none_for_missing_file(tmp_path: Path) -> None:
     assert RenderIndex.load(tmp_path) is None  # no file written
     assert RenderIndex.load(tmp_path / "does-not-exist") is None  # no dir

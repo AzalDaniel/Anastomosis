@@ -203,10 +203,7 @@ _ROUND_TRIP_LIST_FIELDS = (
     "family_history",
     "past_medical_history",
     "advance_directives",
-    "health_concerns",
     "goals",
-    "devices",
-    "lab_orders",
     "coverages",
     "documents",
 )
