@@ -124,7 +124,7 @@ class GuiController:
     # page owns, so their defensive error events carry this distinct "query"
     # flow — no page's flow guard renders it (the return value already did),
     # which is exactly right: a read-query error never gets mistaken by a page
-    # for one of its own run's terminal events (the P2-5 guard).
+    # for one of its own run's terminal events (the per-flow guard).
     _QUERY_FLOW = "query"
 
     def __init__(self, sink: EventSink) -> None:

@@ -80,11 +80,24 @@ def _common_flags(version: str) -> list[str]:
         "--product-name=Anastomosis",
         f"--product-version={version}",
         f"--file-version={version}",
+        # The product mark: the multi-res .ico generated from the SVG master
+        # by tools/make_icons.py. This is what brands the exe, the taskbar,
+        # the Start menu, and (via UninstallDisplayIcon) Add/Remove Programs.
+        f"--windows-icon-from-ico={_ROOT / 'assets' / 'icon' / 'icon.ico'}",
+        "--copyright=(c) 2026 Azal Daniel. MIT license.",
         *_pack_data_flags(),
     ]
 
 
-def _build(main: Path, *, out_subdir: str, exe_name: str, console: str, version: str) -> Path:
+def _build(
+    main: Path,
+    *,
+    out_subdir: str,
+    exe_name: str,
+    console: str,
+    version: str,
+    description: str,
+) -> Path:
     """Run one Nuitka standalone build; return the produced ``.dist`` directory."""
     out_dir = _DIST / "_build" / out_subdir
     if out_dir.exists():
@@ -92,6 +105,7 @@ def _build(main: Path, *, out_subdir: str, exe_name: str, console: str, version:
     cmd = [
         *_common_flags(version),
         f"--windows-console-mode={console}",
+        f"--file-description={description}",
         f"--output-filename={exe_name}",
         f"--output-dir={out_dir}",
         str(main),
@@ -118,6 +132,7 @@ def main() -> None:
         exe_name="Anastomosis.exe",
         console="disable",  # windowed: no console window for the desktop app
         version=version,
+        description="Anastomosis - local-first EHR chart migration and archiving",
     )
     cli_dist = _build(
         packaging / "cli_entry.py",
@@ -125,6 +140,7 @@ def main() -> None:
         exe_name="anast.exe",
         console="force",  # console: the CLI writes to the terminal it ran from
         version=version,
+        description="Anastomosis command-line interface (anast)",
     )
 
     # Lay the two builds out under dist/ with clean directory names for the

@@ -74,7 +74,7 @@ class PipelineConsole:
 
     # The operation family this console owns; stamped on every event so the
     # dashboard page consumes them and the wizard (flow "migration") does not
-    # (both emit identical stage/progress/done/error kinds — the P2-5 guard).
+    # (both emit identical stage/progress/done/error kinds — the per-page flow guard).
     _FLOW = "pipeline"
 
     def __init__(
@@ -315,7 +315,7 @@ class MigrationConsole:
 
     # The operation family this console owns; stamped on every event so the
     # wizard page consumes them and the dashboard (flow "pipeline") does not —
-    # the P2-5 guard against one page consuming the other's terminal event.
+    # the per-page flow guard against one page consuming the other's terminal event.
     _FLOW = "migration"
 
     def __init__(

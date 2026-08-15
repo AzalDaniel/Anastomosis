@@ -14,7 +14,7 @@ on:
 * ``{"type": "error",    "flow": str, "stage": str, "error": str}`` — a failure;
   ``error`` is an exception TYPE name or a PHI-free diagnosis, never a traceback.
 
-Flow invariant (P2-5): every event carries a ``flow`` naming the operation
+Flow invariant: every event carries a ``flow`` naming the operation
 family a page owns — one of ``"pipeline"``, ``"migration"``, ``"source_init"``,
 ``"pack_init"``, ``"upload"``. Two pages emit the SAME event kinds (dashboard
 pipeline and wizard migration both raise stage/progress/done/error), so a page

@@ -48,7 +48,7 @@ function el(id) {
 }
 
 // --- the event dispatcher the shell (Python side) calls -------------------
-// Flow guard (P2-5): the dashboard owns the "pipeline" flow. Every event carries
+// Flow guard: the dashboard owns the "pipeline" flow. Every event carries
 // a `flow`; we early-return on any other flow so navigating mid-run can't let the
 // dashboard consume the wizard's migration terminal event (both emit identical
 // stage/progress/done/error kinds).
@@ -169,7 +169,7 @@ function finishRun() {
   }
 }
 
-// --- the Section-Selection Matrix (item 18b) ------------------------------
+// --- the Section-Selection Matrix -----------------------------------------
 // info().packs[].sections is {key: {label, default}}; cache per pack name so
 // switching packs repaints the matrix without another round-trip.
 let SECTIONS_BY_PACK = {};

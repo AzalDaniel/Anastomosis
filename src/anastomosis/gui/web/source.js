@@ -149,7 +149,7 @@ async function fetchSourceResult() {
 // `source` done OR a `source` error we fetch the stashed result and route it
 // (the result carries the outcome-specific detail the banner needs); other
 // stages just update the status.
-// Flow guard (P2-5): the learn-a-source wizard owns the "source_init" flow. Every
+// Flow guard: the learn-a-source wizard owns the "source_init" flow. Every
 // event carries a `flow`; we early-return on any other flow so a run from another
 // page can't drive this wizard's terminal handlers.
 window.anastEvent = function anastEvent(e) {

@@ -754,7 +754,7 @@ def test_no_event_value_contains_a_patient_name(
         assert name not in blob, f"event log leaked patient name {name!r}"
 
 
-# --- info() carries the section matrix (item 18b) -------------------------
+# --- info() carries the section matrix -------------------------------------
 
 
 def test_info_sections_shape_for_generic_soap() -> None:
@@ -770,7 +770,7 @@ def test_info_sections_shape_for_generic_soap() -> None:
     assert set(sections) >= {"vitals", "addenda", "insurance", "social_history"}
 
 
-# --- destination_status (item 18a) -----------------------------------------
+# --- destination_status ----------------------------------------------------
 
 
 def test_destination_status_epic_vendor_api_chosen() -> None:
@@ -2076,7 +2076,7 @@ def test_run_pipeline_threads_write_manifest(
     assert captured["cmd"].write_manifest is False  # type: ignore[attr-defined]
 
 
-# --- P2-5: per-flow event scoping (each page owns exactly one flow) ------------
+# --- per-flow event scoping (each page owns exactly one flow) ------------------
 #
 # Every event now carries a `flow` naming the operation family the emitting page
 # owns. Two pages emit identical stage/progress/done/error KINDS (the dashboard
@@ -2114,7 +2114,7 @@ def test_migration_run_events_all_carry_migration_flow(
 def test_pipeline_and_migration_flows_are_distinct_so_a_page_guard_filters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The core P2-5 fix: a dashboard pipeline `done` and a wizard migration
+    """Per-flow scoping: a dashboard pipeline `done` and a wizard migration
     `done` carry DISTINCT flows, so the wizard's flow guard (``flow ===
     "migration"``) early-returns on a pipeline done — it can no longer announce
     "migration prepared" for a pipeline run — and the dashboard guard likewise
@@ -2193,7 +2193,7 @@ def test_packgen_async_events_all_carry_pack_init_flow(tmp_path: Path) -> None:
     assert all(e.get("flow") == "pack_init" for e in sink.events), sink.events
 
 
-# --- P2-5: the window-close barrier surface (busy + join) ---------------------
+# --- the window-close barrier surface (busy + join) ----------------------------
 
 
 def test_busy_and_join_active_job_surface_for_close_barrier(tmp_path: Path) -> None:

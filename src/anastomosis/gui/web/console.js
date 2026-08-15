@@ -176,7 +176,7 @@ function renderStatus(status) {
   }
 }
 
-// --- drive an upload (W5/PR-6b) -------------------------------------------
+// --- drive an upload ------------------------------------------------------
 // Driving goes through the controller only. The JS never writes the ledger;
 // the live counts come from polling upload_status (never from events).
 
@@ -320,7 +320,7 @@ function onUploadTerminal(finalStatus) {
 
 // The event channel the shell pushes controller events into. Counts never ride
 // events — only stage/state names and (on abort/failure) the exception TYPE.
-// Flow guard (P2-5): the upload console owns the "upload" flow. Every event
+// Flow guard: the upload console owns the "upload" flow. Every event
 // carries a `flow`; we early-return on any other flow so a run from another page
 // can't drive this console's terminal handlers (the stage gates below stay as
 // defense in depth).

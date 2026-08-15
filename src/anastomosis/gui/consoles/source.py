@@ -80,7 +80,7 @@ class SourceConsole:
     """The learn-a-source wizard backend."""
 
     # The operation family this console owns; stamped on every event so only the
-    # learn-a-source wizard page consumes them (the P2-5 per-page flow guard).
+    # learn-a-source wizard page consumes them (the per-page flow guard).
     # The event STAGE stays "source"; the FLOW is the page-owning family name.
     _FLOW = "source_init"
 

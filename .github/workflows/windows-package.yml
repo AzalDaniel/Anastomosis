@@ -29,7 +29,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main, claude/practical-mendel-torkk3]
+    branches: [main, "claude/**"]
     paths:
       - "packaging/**"
       - ".github/workflows/windows-package.yml"
@@ -53,7 +53,9 @@ jobs:
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          # Same interpreter as the CI lint/type/e2e lanes — the shipped
+          # binary freezes the stdlib this version provides.
+          python-version: "3.12"
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -62,12 +64,14 @@ jobs:
           # Keyed on the constraints file so a Playwright pin bump automatically
           # invalidates the cached browser (packaging/constraints.txt is the pin).
           key: ms-playwright-windows-${{ hashFiles('packaging/constraints.txt') }}
+          restore-keys: ms-playwright-windows-
 
       - name: Cache Nuitka
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~\AppData\Local\Nuitka\Nuitka\Cache
           key: nuitka-windows-${{ hashFiles('pyproject.toml') }}
+          restore-keys: nuitka-windows-
 
       - name: Install dependencies
         run: |

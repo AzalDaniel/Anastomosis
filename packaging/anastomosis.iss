@@ -15,16 +15,25 @@
 #endif
 
 [Setup]
-AppId={{A1B2C3D4-0E5F-4A6B-9C7D-ANASTOMOSIS01}}
+AppId={{EEC2F7C9-06AD-4BC2-91D4-84BBAE937B98}}
 AppName=Anastomosis
 AppVersion={#AppVersion}
-AppPublisher=Anastomosis
+AppPublisher=Azal Daniel
 AppPublisherURL=https://github.com/AzalDaniel/Anastomosis
+AppSupportURL=https://github.com/AzalDaniel/Anastomosis/issues
+AppUpdatesURL=https://github.com/AzalDaniel/Anastomosis/releases
+AppCopyright=(c) 2026 Azal Daniel. MIT license.
 DefaultDirName={autopf}\Anastomosis
 DefaultGroupName=Anastomosis
 UninstallDisplayName=Anastomosis
-; The GUI exe supplies the Add/Remove Programs icon (installed under {app}\gui).
+; The GUI exe supplies the Add/Remove Programs icon (installed under {app}\gui);
+; the exe itself carries the multi-res mark via Nuitka --windows-icon-from-ico.
 UninstallDisplayIcon={app}\gui\Anastomosis.exe
+; Setup wizard branding — all three renditions derive from the one SVG
+; master (assets/icon/icon.svg) via tools/make_icons.py.
+SetupIconFile=assets\icon\icon.ico
+WizardImageFile=assets\installer\wizard.bmp
+WizardSmallImageFile=assets\installer\wizard-small.bmp
 ; Repo-root LICENSE, resolved via SourceDir (=..) at compile time; shown on the
 ; wizard's license page.
 LicenseFile=LICENSE
@@ -76,9 +85,11 @@ Source: "dist\anast\*"; DestDir: "{app}\cli"; \
 Source: "build\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{group}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"
+; AppUserModelID matches the id the GUI sets at startup (gui/shell.py), so
+; taskbar pinning/grouping resolves to one stable identity.
+Name: "{group}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"; AppUserModelID: "AzalDaniel.Anastomosis"
 Name: "{group}\Uninstall Anastomosis"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"; Tasks: desktopicon
+Name: "{autodesktop}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"; Tasks: desktopicon; AppUserModelID: "AzalDaniel.Anastomosis"
 
 [Registry]
 ; Append the CLI directory to the MACHINE PATH (idempotent; only if the task is

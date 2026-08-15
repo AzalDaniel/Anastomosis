@@ -46,8 +46,7 @@ builds against:
   (Session, Selectors, UploadDriver, PatientResolver, BannerCheck,
   ExistingDocsScanner) + a `capabilities:` declaration + `config_schema.json`
   for the fields the operator must supply.
-- Discovery order: `--pack-dir` → entry points (`anastomosis.packs`) →
-  built-ins.
+- Discovery order: `--pack-dir` → built-ins.
 
 ### The delivery router
 

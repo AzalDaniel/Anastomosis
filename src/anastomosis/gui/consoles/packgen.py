@@ -29,7 +29,7 @@ class PackgenConsole:
     """The pack-from-samples wizard backend."""
 
     # The operation family this console owns; stamped on every event so only the
-    # pack-from-samples wizard page consumes them (the P2-5 per-page flow guard).
+    # pack-from-samples wizard page consumes them (the per-page flow guard).
     # The event STAGE stays "packgen"/"pack_init"; the FLOW is the page-owning
     # family name.
     _FLOW = "pack_init"

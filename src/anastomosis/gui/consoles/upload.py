@@ -110,7 +110,7 @@ class UploadConsole:
     """The browser-delivery console: read-only ledger views + live driving."""
 
     # The operation family this console owns; stamped on every event so only the
-    # upload console page consumes them (the P2-5 per-page flow guard).
+    # upload console page consumes them (the per-page flow guard).
     _FLOW = "upload"
 
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:

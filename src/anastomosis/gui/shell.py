@@ -83,12 +83,35 @@ def _warn_job_running(window: Any) -> None:  # pragma: no cover - needs window
         logger.warning("close-barrier notice failed (%s)", exc_tag(exc))
 
 
+def _claim_windows_taskbar_identity() -> None:
+    """Set the process AppUserModelID before any window exists (Windows only).
+
+    Without an explicit id, Windows derives one from the host process path, so
+    the taskbar may group the app under a generic Python identity and Start-menu
+    pinning misbehaves. The id must match the ``AppUserModelID`` the installer
+    stamps on the Start-menu shortcut (packaging/anastomosis.iss) — one stable
+    identity across shortcut, taskbar, and running window. A failure here is
+    cosmetic, never fatal.
+    """
+    import sys
+
+    if sys.platform == "win32":  # pragma: no cover - windows-only branch
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AzalDaniel.Anastomosis")
+        except Exception as exc:
+            logger.warning("taskbar identity not set (%s)", exc_tag(exc))
+
+
 def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a display
     """Open the desktop GUI window. Requires the ``gui`` extra (pywebview)."""
     try:
         import webview
     except ImportError as exc:
         raise RuntimeError("pywebview is required for the GUI — install anastomosis[gui]") from exc
+
+    _claim_windows_taskbar_identity()
 
     sink = _WindowSink()
     controller = GuiController(sink)
@@ -105,7 +128,7 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
     )
     sink.attach(window)
 
-    # Window-close barrier (P2-5): while a long-running job is in flight, veto the
+    # Window-close barrier: while a long-running job is in flight, veto the
     # close so the window can't interrupt an in-flight PDF/ledger write. pywebview
     # 5.x cancels the close when a `closing` subscriber returns False; the daemon
     # workers stay daemon=True, so this is a GRACEFUL guard (the OS can still
