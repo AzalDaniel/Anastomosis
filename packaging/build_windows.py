@@ -76,6 +76,10 @@ def _common_flags(version: str) -> list[str]:
         # version-suffixed dir name (chromium-NNNN), so a bare "chromium" misses.
         "--playwright-include-browser=all",  # bundle Chromium offline (build-time)
         "--include-package-data=anastomosis",  # the registry/packs/fonts/web/CDA.xsl/etc.
+        # pymupdf ships a ~2.3M-line generated binding module; C-compiling it
+        # exhausts MSVC's heap (fatal C1002) and buys nothing — the hot code is
+        # the native mupdf DLL. Ship the package as bytecode instead.
+        "--noinclude-custom-mode=pymupdf:bytecode",
         "--company-name=Anastomosis",
         "--product-name=Anastomosis",
         f"--product-version={version}",
