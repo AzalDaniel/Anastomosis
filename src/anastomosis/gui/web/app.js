@@ -62,6 +62,9 @@ window.anastEvent = function anastEvent(e) {
   switch (e.type) {
     case "stage":
       markStage(e.stage, e.state);
+      if (e.state === "start") {
+        setCurrent(e.stage);
+      }
       Shell.logEvent({ kind: "info", msg: `stage ${e.stage}: ${e.state}` });
       break;
     case "progress":
@@ -70,11 +73,13 @@ window.anastEvent = function anastEvent(e) {
       break;
     case "done":
       Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
+      setCurrent("— complete —");
       finishRun();
       loadPatients(e.summary_id);
       break;
     case "error":
       markStage(e.stage, "error");
+      setCurrent("— failed —");
       showBanner(e.error);
       Shell.logEvent({ kind: "error", msg: `error ${e.stage}: ${e.error}` });
       finishRun();
@@ -91,11 +96,25 @@ function markStage(stage, state) {
   }
 }
 
+// Envelope keys that are not counters: the event discriminators plus the run's
+// opaque summary id (a random hex handle for last_run_summary — never a count,
+// and noise in the operator's activity log).
+const NON_COUNTER_KEYS = ["type", "stage", "state", "flow", "summary_id"];
+
 function counterText(e) {
   return Object.keys(e)
-    .filter((k) => k !== "type" && k !== "stage" && k !== "state" && k !== "flow")
+    .filter((k) => !NON_COUNTER_KEYS.includes(k))
     .map((k) => `${k}=${e[k]}`)
     .join(" ");
+}
+
+// The progress frame's headline — which stage is running right now. Driven by
+// the stage/done/error events; reset to idle when a fresh run starts.
+function setCurrent(text) {
+  const current = el("progress-current");
+  if (current) {
+    current.textContent = text;
+  }
 }
 
 function renderCounters(e) {
@@ -144,7 +163,20 @@ function setStatus(text) {
   }
 }
 
+// No bridge (the plain-browser preview, or an attach that has not landed yet):
+// the run button is inert because there is no controller to run against — but
+// it must NOT read "running…", which would claim a run that does not exist.
+function setOffline() {
+  const btn = el("run-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "run pipeline";
+  }
+  setStatus("offline");
+}
+
 function resetRail() {
+  setCurrent("— idle —");
   for (const stage of RAIL) {
     const card = el(`stage-${stage}`);
     if (card) {
@@ -192,10 +224,14 @@ function renderSectionMatrix(packName) {
 async function populateHeader() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
-    setBusy(true); // no controller to run against; keep the button inert
-    setStatus("offline");
+    setOffline();
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted and re-arm the run button, so a
+  // slow pywebview attach doesn't leave a permanently dead dashboard.
+  el("no-api").classList.remove("show");
+  setBusy(false);
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -355,10 +391,6 @@ function init() {
   Shell.initSegmentToggles(document);
   Shell.initLogStrip();
 
-  // Refresh the mirrored backend constants: now if the api is already up,
-  // and again on pywebviewready (the bridge often lands after DOM ready).
-  loadGuiConfig();
-  window.addEventListener("pywebviewready", loadGuiConfig);
 
   // Command palette: PHI-free dashboard actions only.
   const palette = Shell.initCommandPalette([
@@ -384,7 +416,14 @@ function init() {
     }
   });
 
-  populateHeader();
+  // Bootstrap through the shared bridge gate: run now (painting the offline
+  // notice if this really is a plain browser) and once more when
+  // `pywebviewready` lands, because pywebview attaches the api AFTER DOM ready
+  // — the mirrored constants AND the header/pack pickers both need that retry.
+  Shell.onApiReady(() => {
+    loadGuiConfig();
+    populateHeader();
+  });
 }
 
 function setSegment(name, value) {

@@ -19,6 +19,10 @@
  */
 "use strict";
 
+// Only the bridge gate is needed from the shared shell here (this wizard hosts
+// no segment toggle, palette, or log strip of its own).
+const Shell = window.AnastShell;
+
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
 }
@@ -237,6 +241,11 @@ async function populate() {
     setStatus("offline");
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted, so a slow pywebview attach does
+  // not leave the wizard permanently showing "launch via anast gui".
+  el("no-api").classList.remove("show");
+  setStatus("ready");
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -260,7 +269,9 @@ function init() {
   if (confirm) {
     confirm.addEventListener("change", onConfirmToggle);
   }
-  populate();
+  // Bootstrap through the shared bridge gate: now, and once more when
+  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
+  Shell.onApiReady(populate);
 }
 
 if (document.readyState === "loading") {

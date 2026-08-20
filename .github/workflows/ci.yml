@@ -97,6 +97,25 @@ jobs:
       - run: python tools/preflight.py
       - run: pytest -m e2e
 
+  gui-e2e:
+    name: GUI behaviour (headless Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      # Drives the bundled GUI pages (file:// + a generated pywebview-bridge
+      # stub) in headless Chromium — the Linux proxy for the real WebView2
+      # window. The Windows package job's smoke test asserts the SAME
+      # expectations module against the shipped window, so a selector cannot
+      # rot there without going red here first. Chromium is pinned via
+      # packaging/constraints.txt like every rendering lane.
+      - run: pip install -e ".[render]" -c packaging/constraints.txt pytest pytest-socket hypothesis
+      - run: playwright install chromium --with-deps
+      - run: pytest tests/gui_e2e -m gui_e2e
+
   # Separate lane: stands up a live HAPI FHIR R4 server as a service container
   # and runs the fhir_api destination against it. The fhir_integration tests
   # skipif ANAST_FHIR_BASE_URL is unset, so they are inert in every other lane.

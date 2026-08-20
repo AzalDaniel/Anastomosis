@@ -40,6 +40,14 @@
       if (!options.length) return;
       const count = options.length;
 
+      // --segment-count drives the indicator's slot width in app.css. It MUST be
+      // set here, not as a `style="--segment-count: 2"` markup attribute: the
+      // pages ship a strict `style-src 'self'` CSP with no 'unsafe-inline', so
+      // the browser REFUSES an inline style attribute (console error + the var
+      // never lands, leaving the indicator at width:0). CSSOM writes like this
+      // one are not inline styles and are unaffected by the policy.
+      toggle.style.setProperty("--segment-count", String(count));
+
       const activate = (nextIdxRaw, opts) => {
         const animate = !opts || opts.animate !== false;
         const nextIdx = Math.max(0, Math.min(count - 1, Math.round(nextIdxRaw)));
@@ -121,7 +129,17 @@
         try { toggle.releasePointerCapture(drag.pointerId); } catch (_) { /* release optional */ }
         drag.pointerId = null;
         if (!wasMoved) {
-          toggle.classList.remove("is-dragging"); // plain click → option handler fires
+          toggle.classList.remove("is-dragging");
+          // A plain tap, and it must be resolved HERE. pointerdown took pointer
+          // capture on the TOGGLE, and the browser then retargets the following
+          // click to the capture element — so the per-option click listener
+          // below never fires for a real mouse/touch press, and the toggle
+          // would look dead to anything but the keyboard. Activate the slot
+          // under the pointer instead. The option listener still serves
+          // SYNTHETIC clicks (the command palette's setSegment → btn.click(),
+          // which produces no pointer sequence at all), and activate() early-
+          // outs on an unchanged slot, so the two paths cannot double-fire.
+          if (!canceled && e && typeof e.clientX === "number") activate(xToIndex(e.clientX));
           return;
         }
         const finalFloat = parseFloat(toggle.style.getPropertyValue("--segment-index") || "0");
@@ -330,7 +348,15 @@
     }
 
     const rows = $("#log-rows");
-    if (!rows) return;
+    if (!rows) {
+      // Pages without the activity strip (the wizard and the two learn wizards)
+      // would otherwise SWALLOW the entry entirely — including the shell's
+      // close-barrier notice, which is the operator's only explanation for a
+      // window close that was vetoed mid-run. Fall back to the page banner for
+      // the entries that carry a problem; informational chatter stays dropped.
+      if (kind === "error" || kind === "warn") bannerFallback(msg);
+      return;
+    }
     const row = document.createElement("div");
     row.className = `log-row log-row--${kind}`;
     const tsEl = document.createElement("span"); tsEl.className = "log-ts"; tsEl.textContent = ts;
@@ -347,6 +373,16 @@
   }
 
   const GLYPH = { ok: "✓", warn: "⚠", error: "✗", info: "·" };
+
+  // The log strip's stand-in on pages that don't host one: every page ships a
+  // #banner, so a problem entry still reaches the operator. textContent (never
+  // innerHTML) — the host's text is PHI-free but never trusted as markup.
+  function bannerFallback(msg) {
+    const banner = $("#banner");
+    if (!banner) return;
+    banner.textContent = msg;
+    banner.classList.add("show");
+  }
 
   function openLogDrawer() {
     const drawer = $("#log-drawer"); const strip = $("#log-strip");
@@ -389,6 +425,24 @@
 
   function hasApi() {
     return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+  }
+
+  // Run a page's bootstrap now AND again if the bridge lands late.
+  //
+  // pywebview injects `window.pywebview.api` asynchronously and announces it
+  // with a `pywebviewready` window event, so a page that only probes hasApi()
+  // at DOMContentLoaded can lose the race and paint its "launch via anast gui"
+  // notice over a bridge that is about to arrive — permanently, because nothing
+  // re-runs the bootstrap. Every page bootstraps through here instead: `boot`
+  // runs immediately (painting the offline notice when there is genuinely no
+  // bridge — the plain-browser preview) and ONCE more when `pywebviewready`
+  // fires, at which point the page's own populate clears the notice. A page
+  // that already has the bridge does not re-register: the event is either
+  // already past or would only repeat work.
+  function onApiReady(boot) {
+    boot();
+    if (hasApi()) return;
+    window.addEventListener("pywebviewready", () => boot(), { once: true });
   }
 
   // Fill a <select> with [{value, label}] entries, replacing what was there.
@@ -589,6 +643,8 @@
   }
 
   window.AnastShell = {
+    hasApi,
+    onApiReady,
     initSegmentToggles,
     segmentValue,
     initCommandPalette,

@@ -34,6 +34,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
 input, select { font: inherit; color: inherit; }
 ul, ol { list-style: none; padding: 0; margin: 0; }
 svg { display: block; }
+/* The `hidden` attribute must WIN. Every result panel in this app ships hidden
+   and is revealed by JS (`el.hidden = false`), but the browser expresses that
+   attribute through a UA-stylesheet `[hidden] { display: none }` rule, which
+   ANY author `display` beats — and .panel/.counter-grid/.guidance/.calendar-hud
+   all declare one. Without this rule the upload console opens on a grid of
+   zero counters and the two learn wizards open on empty result scaffolds. */
+[hidden] { display: none !important; }
 
 
 /* ─── 4. Wallpaper layer ─────────────────────────────────────── */
@@ -130,6 +137,11 @@ svg { display: block; }
   position: relative;
   z-index: 100;
 }
+/* A filter bar sitting INSIDE a glass panel, which already supplies the
+   padding. A modifier class rather than a `style="padding: 0"` attribute: the
+   pages ship `style-src 'self'` with no 'unsafe-inline', so an inline style
+   attribute is refused by the CSP (console error, declaration dropped). */
+.filter-bar--flush { padding: 0; }
 /* Centred wrapper for the iOS-style segment toggles. The auto margins push
    the group to the visual center of the filter bar regardless of how wide
    the neighbouring pills grow on the left or the right. */
@@ -223,7 +235,11 @@ svg { display: block; }
   position: absolute;
   top: 4px;
   left: 4px;
-  width: calc((100% - 8px) / var(--segment-count));
+  /* --segment-count / --segment-index are written by shell.js through the
+     CSSOM (initSegmentToggles), NOT by a markup style attribute — the strict
+     CSP refuses those. The fallbacks keep the blob a sane size if the script
+     has not run yet, instead of collapsing the width to 0. */
+  width: calc((100% - 8px) / var(--segment-count, 2));
   height: calc(100% - 8px);
   background: var(--primary);
   border-radius: var(--radius-pill);
@@ -231,7 +247,7 @@ svg { display: block; }
   /* translate3d forces GPU compositing — no per-frame layout reflow.
      The X is "slot width" * --segment-index, where --segment-index is a
      float (0..N-1) updated continuously while the user drags. */
-  transform: translate3d(calc(var(--segment-index) * 100%), 0, 0) scaleX(1);
+  transform: translate3d(calc(var(--segment-index, 0) * 100%), 0, 0) scaleX(1);
   transition: transform 280ms cubic-bezier(0.32, 0.72, 0, 1);
   will-change: transform;
 }
@@ -1495,8 +1511,9 @@ svg { display: block; }
 }
 
 /* Per-patient summary table (last_run_summary): one row per patient, monospace
-   for tabular alignment. Hidden via the [hidden] attribute until a run lands. */
-.patients-panel[hidden] { display: none; }
+   for tabular alignment. Hidden via the [hidden] attribute until a run lands —
+   enforced for every panel by the base `[hidden]` rule in the reset section
+   (this used to be a one-off patch of that same problem). */
 .patients-table {
   width: 100%;
   border-collapse: collapse;

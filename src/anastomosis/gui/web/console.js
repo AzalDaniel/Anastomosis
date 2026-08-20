@@ -486,6 +486,11 @@ async function populate() {
     setStatus("offline");
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted, so a slow pywebview attach does
+  // not leave the console permanently showing "launch via anast gui".
+  el("no-api").classList.remove("show");
+  setStatus("ready");
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -527,11 +532,6 @@ function init() {
   Shell.initLogStrip();
   PALETTE = Shell.initCommandPalette(itemKeyCommands());
 
-  // Refresh the mirrored backend constants: now if the api is already up,
-  // and again on pywebviewready (the bridge often lands after DOM ready).
-  loadGuiConfig();
-  window.addEventListener("pywebviewready", loadGuiConfig);
-
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
       e.preventDefault();
@@ -549,7 +549,13 @@ function init() {
     }
   });
 
-  populate();
+  // Bootstrap through the shared bridge gate: now, and once more when
+  // `pywebviewready` lands (pywebview attaches the api after DOM ready), which
+  // both the mirrored constants and the safety notice / version need.
+  Shell.onApiReady(() => {
+    loadGuiConfig();
+    populate();
+  });
 }
 
 if (document.readyState === "loading") {

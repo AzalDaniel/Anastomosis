@@ -128,10 +128,16 @@ ignore = [
 "src/anastomosis/packgen/emit.py" = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# The default lanes, listed explicitly. tests/gui_e2e is NOT here on purpose:
+# it drives the packaged GUI pages in headless Chromium and is run by its own
+# lane (`pytest tests/gui_e2e -m gui_e2e`), the same way the FHIR integration
+# lane is scoped by path — so the default `pytest` (and tools/check.sh) never
+# needs a browser for it.
+testpaths = ["tests/unit", "tests/integration", "tests/e2e"]
 addopts = "-q --strict-markers"
 markers = [
   "e2e: end-to-end pipeline tests (need playwright chromium)",
+  "gui_e2e: GUI behaviour tests driving the bundled pages in headless Chromium",
   "fhir_integration: live FHIR-server tests (need ANAST_FHIR_BASE_URL; CI service container)",
 ]
 
