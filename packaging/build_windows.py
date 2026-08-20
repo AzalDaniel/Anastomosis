@@ -62,6 +62,33 @@ def _pack_data_flags() -> list[str]:
     return flags
 
 
+def _pack_ctx_import_flags() -> list[str]:
+    """Force-include every ``anastomosis.*`` module the pack contexts import.
+
+    The contexts are DATA files (exec'd from disk), so Nuitka never follows
+    their imports; any ``anastomosis.*`` module only THEY reference would be
+    left out of the binary and the frozen pack load would die with
+    ``ModuleNotFoundError`` (``anast doctor``: "built-in packs: missing").
+    Deriving the ``--include-module`` list from the contexts' own import
+    statements keeps this in lockstep as the contexts evolve.
+    """
+    import ast
+
+    modules: set[str] = set()
+    for pack in _BUILTIN_PACKS:
+        src = _ROOT / "src" / "anastomosis" / "packs" / pack / "context.py"
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.startswith("anastomosis."):
+                    modules.add(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("anastomosis."):
+                        modules.add(alias.name)
+    return [f"--include-module={m}" for m in sorted(modules)]
+
+
 def _common_flags(version: str) -> list[str]:
     return [
         sys.executable,
@@ -80,6 +107,7 @@ def _common_flags(version: str) -> list[str]:
         # exhausts MSVC's heap (fatal C1002) and buys nothing — the hot code is
         # the native mupdf DLL. Ship the package as bytecode instead.
         "--noinclude-custom-mode=pymupdf:bytecode",
+        *_pack_ctx_import_flags(),
         "--company-name=Anastomosis",
         "--product-name=Anastomosis",
         f"--product-version={version}",
@@ -88,7 +116,7 @@ def _common_flags(version: str) -> list[str]:
         # by tools/make_icons.py. This is what brands the exe, the taskbar,
         # the Start menu, and (via UninstallDisplayIcon) Add/Remove Programs.
         f"--windows-icon-from-ico={_ROOT / 'assets' / 'icon' / 'icon.ico'}",
-        "--copyright=(c) 2026 Azal Daniel. MIT license.",
+        "--copyright=(c) 2026 Azal Daniel. AGPL-3.0-or-later.",
         *_pack_data_flags(),
     ]
 

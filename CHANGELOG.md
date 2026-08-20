@@ -9,6 +9,65 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+The surgery arc: scope the product to what it does best, make the repo read
+as a product, close the FHIR-API delivery loop, and brand the Windows app.
+
+### Added
+
+- **FHIR-API delivery route**: `anast upload --fhir URL` drives the same
+  engine, ledger, skiplist, and L0-L6 ladder as the browser route. Bearer
+  token via environment variable only (`--fhir-token-env`, default
+  `ANAST_FHIR_TOKEN`); `--create-patients` (default on) for migration
+  targets; ambiguous patient matches always refused. L4/L5/L6 run on this
+  route (L3 skips with "no pack provided"); proven end-to-end against a
+  live HAPI server in CI.
+- **Product branding**: one SVG master (`assets/icon/icon.svg`) drives the
+  multi-resolution exe icon, installer wizard imagery, Add/Remove Programs
+  entry, and the AppUserModelID taskbar identity (`tools/make_icons.py`
+  regenerates every rendition).
+- **GUI behaviour lane** (`tests/gui_e2e`, 49 tests): headless Chromium
+  drives the bundled pages through a generated pywebview-bridge stub with a
+  console-error recorder and a GuiApi drift guard; runs as its own CI job.
+- **Installed-binary smoke** (`packaging/smoke_windows.py`): silent install
+  -> installed layout -> installed `anast doctor` -> the dashboard rendered
+  inside the real WebView2 window (Playwright over CDP) -> silent uninstall
+  with leftover check; wired into the Windows package job.
+
+### Changed
+
+- The tebra destination declares its shipped browser pack in
+  `destinations/registry.yaml`, so route planning can select browser
+  automation (the GUI surfaces the pack chip; not ready until selector
+  discovery).
+- Verify ladder opens each PDF twice per item instead of five times;
+  `fuzzy_contains` is linear; shared `safe_name`/`hash_and_size`/delivery
+  helpers replace copy-pasted implementations; archive/bundle CLI commands
+  register from one factory; duplicated page JS consolidated in `shell.js`.
+- PyMuPDF is imported as `pymupdf` (the `fitz` alias is deprecated
+  upstream); packaging ships it as bytecode (MSVC heap exhaustion) and
+  force-includes the modules the pack contexts import (derived from their
+  own import statements).
+- Vendor EHI spec binaries (~30MB, non-redistributable) removed from the
+  repository and its history; `docs/vendor_refs/` cites the public Oracle
+  pages instead.
+- Authorship and AI-assistance attribution consolidated in `DESIGN.md`;
+  per-file citation banners removed (`tools/cs50_citations.py` re-applies
+  them on an academic-submission branch).
+
+### Fixed
+
+- `anast --help` no longer advertises commands that do not exist.
+- Segment toggles were mouse-dead under pointer capture; pages without a
+  log strip now surface errors in the banner; an inline style refused by
+  the pages' CSP is set via CSSOM (`gui/web/shell.js`).
+- The exe version-info and installer copyright name the project's actual
+  license (AGPL-3.0-or-later, not MIT).
+- Dead surface removed (verified unreferenced): `bmi_imperial`,
+  `RenderIndex.unattributed`, ~300 lines of orphaned GUI CSS, unused pack
+  tokens, entry-point pack discovery, the parallel upload runner, and the
+  never-populated HealthConcern/ImplantableDevice/LabOrder model family
+  (their PF chart sections render statically; golden output byte-identical).
+
 ## [0.6.0] — 2026-07-12
 
 The sixth alpha (**0.6.0-alpha**). Closes the external v0.5.0 review's four
