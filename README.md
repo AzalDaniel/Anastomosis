@@ -69,7 +69,7 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.6.0 (alpha)** — the sixth alpha, on
+**v0.7.0 (alpha)** — the seventh alpha, on
 [PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
 [CHANGELOG.md](CHANGELOG.md) for what shipped, [DESIGN.md](DESIGN.md) for the
@@ -86,6 +86,7 @@ design record, and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 | PHI-at-rest & log hardening — Windows NTFS ACLs on every output dir, redacting log handler wired at both entry points, CodeQL scanning, design/provenance record | ✅ v0.4.0 |
 | Run-scoped log identifiers (no raw source GUIDs in logs), git-free PHI scanner, one-click release path shipping the installer | ✅ v0.5.0 |
 | Claims-match-runtime pass — honest `migrate` PREPARED outcome, QA on every render mode, one upload verdict for CLI + GUI, flow-scoped GUI events, race-free pack trust | ✅ v0.6.0 |
+| External-audit closure — one boundary-anchored identity predicate behind every wrong-patient gate, lossless refusals that name what they refuse, redirect-refusing FHIR client, verified Windows ACLs, budgeted delivered paths, licensed artifacts | ✅ v0.7.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.

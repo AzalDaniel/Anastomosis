@@ -158,6 +158,14 @@ Shipped:
   the document-generic QA checks and records the rest as skipped-with-reason,
   one upload verdict shared by CLI and GUI, flow-scoped GUI events, race-free
   pack trust, and the PF-mapper index hoist.
+- **M5.99 — 0.7.0** ✅ — the surgery arc (scope, FHIR-API delivery route,
+  branding, the GUI and installed-binary test lanes) plus the closure of a
+  full-depth external audit: one shared boundary-anchored identity predicate
+  behind every wrong-patient gate, adapters that preserve or refuse loudly
+  and say what they refused, a redirect-refusing FHIR client, Windows ACL
+  hardening that verifies its own result, budgeted delivered paths with a
+  collision ledger, and third-party license texts shipped with every
+  artifact.
 
 Next:
 
