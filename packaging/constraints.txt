@@ -1,11 +1,26 @@
-# pip constraints — the single source of truth for the Playwright build pin.
+# pip constraints — the single source of truth for the build pins.
 #
-# The library range in pyproject.toml (playwright>=1.46) stays OPEN so users who
-# depend on Anastomosis float to a compatible Playwright of their choosing. But
-# every place that produces or verifies a rendered artifact — the CI test lanes,
+# Every place that produces or verifies a shipped artifact — the CI test lanes,
 # golden regeneration (tools/regen_goldens.py), and the Windows package build —
-# resolves Playwright through THIS file (pip install -c packaging/constraints.txt).
-# That is what keeps the rendering goldens and the Chromium bundled in the
-# installer from drifting apart: one pin here governs them all. Bump it and
+# resolves through THIS file (pip install -c packaging/constraints.txt), while
+# the library ranges in pyproject.toml stay OPEN so users who depend on
+# Anastomosis float to compatible versions of their choosing. A pin belongs here
+# when an unpinned resolution can silently change what the installer contains or
+# how it behaves; each one says why, so a future bump is a decision, not a guess.
+
+# Rendering. The library range (playwright>=1.46) is open; this pin is what keeps
+# the rendering goldens and the Chromium bundled in the installer from drifting
+# apart — one pin governs the test lanes, the goldens, and the build. Bump it and
 # regenerate the goldens (python tools/regen_goldens.py) in the same change.
 playwright==1.56.0
+
+# Desktop GUI. The library range (pywebview>=5.0) is open and resolves to 6.2.1,
+# which upstream reports as failing to import from a Nuitka-frozen Windows build
+# (pywebview issue #1817); 6.2 is the last known good release for that path, and
+# the frozen GUI exe IS a Nuitka standalone build. Pinned so the packaged app
+# resolves the version that survives freezing rather than whatever is newest.
+# The captured GUI stderr from packaging/smoke_windows.py (the smoke step prints
+# both streams on failure) is the evidence that confirms or refutes this as the
+# cause of the installed Anastomosis.exe exiting immediately; keep the pin either
+# way until a later pywebview is verified against the frozen build.
+pywebview==6.2

@@ -33,6 +33,12 @@ _WEB_DIR = Path(__file__).resolve().parent / "web"
 _INDEX = _WEB_DIR / "index.html"
 _WINDOW_TITLE = "Anastomosis"
 
+# The WebView2 runtime reads its profile location from this environment
+# variable; the per-user folder it is pointed at lives under %LOCALAPPDATA%
+# (see :func:`_ensure_webview2_user_data_folder`).
+_WEBVIEW2_USER_DATA_ENV = "WEBVIEW2_USER_DATA_FOLDER"
+_WEBVIEW2_USER_DATA_PARTS = ("Anastomosis", "WebView2")
+
 # The close-barrier notice surfaced on whatever page is up when the operator
 # tries to close the window mid-run (see :func:`launch`). PHI-free by
 # construction (a fixed advisory).
@@ -104,6 +110,34 @@ def _claim_windows_taskbar_identity() -> None:
             logger.warning("taskbar identity not set (%s)", exc_tag(exc))
 
 
+def _ensure_webview2_user_data_folder() -> None:
+    """Point WebView2 at a WRITABLE per-user profile folder (Windows only).
+
+    Invariant: an app installed under Program Files must not let WebView2
+    default its user-data folder next to the exe — that directory is read-only
+    for a standard user, so the runtime cannot create its profile and the window
+    never opens. The one location every account may write is
+    ``%LOCALAPPDATA%\\Anastomosis\\WebView2``, so name it explicitly before the
+    runtime is created (WebView2 reads the folder from the environment at
+    startup). An operator-supplied value wins: a deliberate override is never
+    second-guessed. Like the taskbar identity above, a failure here is warned
+    about (exception TYPE only) and never fatal — WebView2 then falls back to
+    its own default, which is the behaviour we already have.
+    """
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        try:
+            if os.environ.get(_WEBVIEW2_USER_DATA_ENV):
+                return
+            folder = Path(os.environ["LOCALAPPDATA"], *_WEBVIEW2_USER_DATA_PARTS)
+            folder.mkdir(parents=True, exist_ok=True)
+            os.environ[_WEBVIEW2_USER_DATA_ENV] = str(folder)
+        except Exception as exc:
+            logger.warning("webview2 user-data folder not set (%s)", exc_tag(exc))
+
+
 def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a display
     """Open the desktop GUI window. Requires the ``gui`` extra (pywebview)."""
     try:
@@ -112,6 +146,7 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
         raise RuntimeError("pywebview is required for the GUI — install anastomosis[gui]") from exc
 
     _claim_windows_taskbar_identity()
+    _ensure_webview2_user_data_folder()
 
     sink = _WindowSink()
     controller = GuiController(sink)

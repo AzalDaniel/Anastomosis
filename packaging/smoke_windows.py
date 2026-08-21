@@ -15,7 +15,9 @@ build already proves the FROZEN bundles are whole (``anast doctor`` +
    actually RENDERED inside the shipped WebView2 runtime. The DOM expectations
    come from ``tests/gui_e2e/expectations.py`` — the same module the Linux GUI
    lane asserts on every push, so a selector cannot rot here without going red
-   there first;
+   there first. The app's stdout/stderr are captured to files and printed on
+   any failure of this step: a frozen GUI that dies on startup leaves no other
+   evidence;
 4. **uninstall** — run the RECORDED uninstaller silently and prove the app
    directory and the Start-menu group are gone (an installer that cannot
    cleanly remove itself is a defect users pay for later).
@@ -62,6 +64,23 @@ _EXPECTATIONS = _ROOT / "tests" / "gui_e2e" / "expectations.py"
 _WEBVIEW2_ARGS_ENV = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 _CDP_PORT = 9222
 _CDP_URL = f"http://127.0.0.1:{_CDP_PORT}"
+
+#: Where the launched GUI's streams are captured (under the temp dir install()
+#: resolves). Never DEVNULL: a frozen app that dies on startup says why exactly
+#: once, on stderr, and nobody is watching the window on a CI runner.
+_GUI_STDOUT_LOG = "anastomosis-gui-stdout.log"
+_GUI_STDERR_LOG = "anastomosis-gui-stderr.log"
+
+#: The per-user folder anastomosis.gui.shell points WebView2 at, relative to
+#: %LOCALAPPDATA% — searched for logs alongside the two temp roots.
+_APP_LOCAL_SUBDIR = "Anastomosis"
+#: Both case spellings are globbed rather than trusting the filesystem's rules.
+_WEBVIEW2_LOG_GLOBS = ("*webview2*", "*WebView2*")
+#: Files whose CONTENTS are printed; anything else is listed by name and size.
+_TEXT_LOG_SUFFIXES = frozenset({".log", ".txt"})
+#: Bounds on the failure dump, so one huge log cannot bury the rest of it.
+_MAX_LOG_MATCHES = 8
+_MAX_DUMP_CHARS = 20_000
 
 # Time budgets (seconds). The installer bound matches the workflow step this
 # script replaces; the GUI bound is the hard kill for a window that never paints.
@@ -120,6 +139,15 @@ def _app_dir() -> Path:
     return _program_files() / "Anastomosis"
 
 
+def _temp_dir() -> Path:
+    """The runner's temp directory: RUNNER_TEMP, else TEMP, else the cwd.
+
+    One resolution shared by every step that writes a diagnostic file, so the
+    installer log and the captured GUI streams always land together.
+    """
+    return Path(os.environ.get("RUNNER_TEMP", os.environ.get("TEMP", ".")))
+
+
 def _start_menu_group() -> Path:
     program_data = Path(os.environ.get("ProgramData", r"C:\ProgramData"))
     return program_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / _START_MENU_GROUP
@@ -164,8 +192,7 @@ def _load_expectations() -> ModuleType:
 
 def install(installer: Path) -> None:
     """Install silently, the way a scripted rollout would."""
-    temp = Path(os.environ.get("RUNNER_TEMP", os.environ.get("TEMP", ".")))
-    log = temp / "anastomosis-install.log"
+    log = _temp_dir() / "anastomosis-install.log"
     print(f"installing {installer.name} silently (log: {log})")
     try:
         result = _run(
@@ -236,43 +263,137 @@ def check_installed_doctor() -> None:
 
 
 def check_gui_window() -> None:
-    """Launch the installed GUI and assert the dashboard rendered for real."""
-    from playwright.sync_api import sync_playwright
+    """Launch the installed GUI and assert the dashboard rendered for real.
 
+    Invariant: the launched process's stdout and stderr are CAPTURED to files,
+    never discarded. A frozen Windows app that dies on startup says why exactly
+    once — on stderr, before it exits — and nobody is watching the window on a
+    CI runner, so DEVNULL here would throw away the only diagnostic the failure
+    produces. On ANY failure of this step both streams are printed, together
+    with any WebView2 log the launch left behind; the pass path stays quiet.
+    """
     expectations = _load_expectations()
     gui_exe = _app_dir() / "gui" / "Anastomosis.exe"
     env = dict(os.environ)
     # WebView2 forwards these switches to its Chromium; this is the ONLY way to
     # get a debugging port out of an embedded WebView2 window.
     env[_WEBVIEW2_ARGS_ENV] = f"--remote-debugging-port={_CDP_PORT}"
+    temp = _temp_dir()
+    stdout_log = temp / _GUI_STDOUT_LOG
+    stderr_log = temp / _GUI_STDERR_LOG
     print(f"launching {gui_exe} with {_WEBVIEW2_ARGS_ENV}={env[_WEBVIEW2_ARGS_ENV]}")
-    process = subprocess.Popen(  # noqa: S603 - absolute exe path, argv list, no shell
-        [str(gui_exe)],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    print(f"capturing GUI output to {stdout_log} and {stderr_log}")
     try:
-        _await_cdp(process)
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.connect_over_cdp(_CDP_URL)
+        # The `with` closes (and flushes) both captures on the way out — before
+        # the failure path below reads them back.
+        with stdout_log.open("wb") as out_stream, stderr_log.open("wb") as err_stream:
+            process = subprocess.Popen(  # noqa: S603 - absolute exe path, argv list, no shell
+                [str(gui_exe)],
+                env=env,
+                stdout=out_stream,
+                stderr=err_stream,
+            )
             try:
-                page = _dashboard_page(browser)
-                page.wait_for_function(
-                    "() => { const v = document.querySelector('#version');"
-                    " return v && v.textContent.trim() && v.textContent.trim() !== '—'; }",
-                    timeout=_DASHBOARD_TIMEOUT_MS,
-                )
-                problems = expectations.check_dashboard(page)
-                for problem in problems:
-                    print(f"  dashboard: {problem}")
-                if problems:
-                    raise SmokeFailure(f"{len(problems)} dashboard expectation(s) failed")
-                print(f"dashboard rendered in the shipped WebView2 window ({page.url})")
+                _await_cdp(process)
+                _assert_dashboard_rendered(expectations)
             finally:
-                browser.close()
-    finally:
-        _kill_tree(process)
+                _kill_tree(process)
+    except Exception:
+        _dump_gui_diagnostics(stdout_log, stderr_log)
+        raise
+
+
+def _assert_dashboard_rendered(expectations: ModuleType) -> None:
+    """Attach to the live WebView2 over CDP and check the shared DOM expectations."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.connect_over_cdp(_CDP_URL)
+        try:
+            page = _dashboard_page(browser)
+            page.wait_for_function(
+                "() => { const v = document.querySelector('#version');"
+                " return v && v.textContent.trim() && v.textContent.trim() !== '—'; }",
+                timeout=_DASHBOARD_TIMEOUT_MS,
+            )
+            problems = expectations.check_dashboard(page)
+            for problem in problems:
+                print(f"  dashboard: {problem}")
+            if problems:
+                raise SmokeFailure(f"{len(problems)} dashboard expectation(s) failed")
+            print(f"dashboard rendered in the shipped WebView2 window ({page.url})")
+        finally:
+            browser.close()
+
+
+def _dump_gui_diagnostics(stdout_log: Path, stderr_log: Path) -> None:
+    """Print what the failed GUI launch left behind: both streams, then any log.
+
+    Only ever called from the failure path, and only once the capture files are
+    closed. Defensive by design: a diagnostic dump must never replace the real
+    failure with an error of its own, so an unreadable file degrades to one
+    type-named line.
+    """
+    try:
+        _dump_section("gui stdout", stdout_log)
+        _dump_section("gui stderr", stderr_log)
+        for log in _webview2_logs():
+            if log.suffix.lower() in _TEXT_LOG_SUFFIXES:
+                _dump_section(f"webview2 log {log.name}", log)
+            else:
+                print(f"----- webview2 artifact: {log} ({log.stat().st_size} bytes) -----")
+    except OSError as exc:
+        print(f"warning: the GUI diagnostics could not be read ({type(exc).__name__})")
+
+
+def _dump_section(label: str, path: Path) -> None:
+    """Print one captured file between markers, bounded to its tail.
+
+    An absent or empty file says so: "the app printed nothing before exiting"
+    is itself a finding, and silently printing nothing would hide it.
+    """
+    print(f"----- {label}: {path} -----")
+    if not path.is_file():
+        print("(absent)")
+    else:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if not text.strip():
+            print("(empty)")
+        elif len(text) > _MAX_DUMP_CHARS:
+            print(f"(truncated: the last {_MAX_DUMP_CHARS} of {len(text)} characters)")
+            print(text[-_MAX_DUMP_CHARS:])
+        else:
+            print(text)
+    print(f"----- end of {label} -----")
+
+
+def _webview2_log_roots() -> list[Path]:
+    """The directories searched for WebView2/pywebview logs."""
+    roots = [Path(os.environ[name]) for name in ("TEMP", "LOCALAPPDATA") if os.environ.get(name)]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.append(Path(local, _APP_LOCAL_SUBDIR))
+    return roots
+
+
+def _webview2_logs() -> list[Path]:
+    """Likely pywebview/WebView2 logs, found by a deliberately shallow glob.
+
+    Bounded on purpose: one glob per root for a matching entry, plus the
+    ``*.log`` files directly inside a matching DIRECTORY. Walking
+    %LOCALAPPDATA% recursively on a runner would cost minutes and bury the
+    traceback this dump exists to surface.
+    """
+    found: list[Path] = []
+    for root in _webview2_log_roots():
+        for pattern in _WEBVIEW2_LOG_GLOBS:
+            for entry in sorted(root.glob(pattern))[:_MAX_LOG_MATCHES]:
+                if entry.is_dir():
+                    found.extend(sorted(entry.glob("*.log"))[:_MAX_LOG_MATCHES])
+                elif entry.is_file():
+                    found.append(entry)
+    # The two globs overlap on a case-insensitive filesystem; dedupe in order.
+    return list(dict.fromkeys(found))[:_MAX_LOG_MATCHES]
 
 
 def _await_cdp(process: subprocess.Popen[bytes]) -> None:
@@ -394,14 +515,16 @@ def uninstall() -> None:
 
 
 def _has_payload(app: Path) -> bool:
-    """True while any INSTALLED file remains under the app directory.
+    """True while any INSTALLED file of ANY kind remains under the app directory.
 
-    The uninstaller may legitimately leave the (empty) directory behind on a
-    locked filesystem; what must not survive is the payload.
+    The uninstaller may legitimately leave the (empty) directory tree behind on
+    a locked filesystem; what must not survive is the payload — and the payload
+    is mostly NOT exes: the DLLs, fonts, bundled Chromium data, and logs the app
+    wrote all count, so this asks for files, not for a suffix.
     """
     if not app.is_dir():
         return False
-    return any(app.rglob("*.exe"))
+    return any(p.is_file() for p in app.rglob("*"))
 
 
 def main(argv: list[str] | None = None) -> int:
