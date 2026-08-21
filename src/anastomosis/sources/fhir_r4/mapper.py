@@ -20,14 +20,16 @@ Design rules:
   records.
 * **Defensive reads.** Vendor exports vary; every accessor tolerates a missing
   or differently-shaped field rather than raising, so one malformed resource
-  cannot abort a whole patient. (The adapter raises only when a bundle has no
-  Patient at all — the loud, structural failure.)
+  cannot abort a whole patient. (The adapter raises only on the two structural
+  failures that would otherwise lose data silently: a bundle with no Patient at
+  all, and unanchored resources it cannot attribute — see
+  :class:`AmbiguousUnanchoredError`.)
 """
 
 from __future__ import annotations
 
 import base64
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from datetime import date, datetime
 from typing import Any
@@ -59,7 +61,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.textutil import html_to_text
 
-__all__ = ["records_from_resources"]
+__all__ = ["AmbiguousUnanchoredError", "records_from_resources"]
 
 SOURCE_SYSTEM = "fhir-r4"
 _EXT = "fhir_r4:"  # extension-key namespace for preserved-but-unmapped fields
@@ -225,7 +227,7 @@ _STRUCTURAL = frozenset({"resourceType", "id", "subject", "patient", "beneficiar
 
 
 def _residual(resource: dict[str, Any], consumed: frozenset[str]) -> dict[str, Any]:
-    """Every top-level resource element the builder did not consume, namespaced.
+    """Every resource element the builder did not consume, namespaced.
 
     The per-field half of the lossless guarantee (mirrors pf_tebra's ``_ext``):
     a FHIR element the mapper does not lift into a typed slot is preserved
@@ -234,17 +236,86 @@ def _residual(resource: dict[str, Any], consumed: frozenset[str]) -> dict[str, A
     verificationStatus``, ``Observation.status``, ``AllergyIntolerance.
     criticality`` — whose loss would silently *reverse* a record's clinical
     meaning (a refuted diagnosis migrating as active, a retracted value as real).
+
+    ``consumed`` names whole elements (``"birthDate"``) and/or exact sub-paths
+    inside one (``"name[0].family"`` — the C-CDA exporter's relative-path
+    convention, at the index the mapper actually read). An element named only by
+    sub-paths is **partially** consumed: what the mapper read is pruned out and
+    the rest is preserved, so a sibling the mapper never touched
+    (``name[0].prefix``, a vendor's own ``extension`` entry) cannot ride out on
+    the coat-tails of one it did.
     """
     skip = consumed | _STRUCTURAL
-    return {f"{_EXT}{key}": value for key, value in resource.items() if key not in skip}
+    out: dict[str, Any] = {}
+    for key, value in resource.items():
+        if key in skip:
+            continue
+        if any(path.startswith((f"{key}.", f"{key}[")) for path in consumed):
+            residue = _unconsumed(value, key, consumed)
+            if residue is not None:
+                out[f"{_EXT}{key}"] = residue
+            continue
+        out[f"{_EXT}{key}"] = value
+    return out
+
+
+def _unconsumed(value: Any, path: str, consumed: frozenset[str]) -> Any:
+    """``value`` with every consumed sub-path pruned out, or None if none is left.
+
+    Empty containers prune away with it (sentinel discipline: a fully-consumed
+    element yields None, never an empty placeholder).
+    """
+    if value is None or path in consumed:
+        return None
+    if isinstance(value, dict):
+        kept = {
+            key: sub
+            for key, item in value.items()
+            if (sub := _unconsumed(item, f"{path}.{key}", consumed)) is not None
+        }
+        return kept or None
+    if isinstance(value, list):
+        items = [
+            sub
+            for index, item in enumerate(value)
+            if (sub := _unconsumed(item, f"{path}[{index}]", consumed)) is not None
+        ]
+        return items or None
+    return value
 
 
 # --- resource → canonical -----------------------------------------------------
 
 
+def _us_core_url(suffix: str) -> str:
+    return f"http://hl7.org/fhir/us/core/StructureDefinition/us-core-{suffix}"
+
+
+# The Patient.extension urls _race_ethnicity lifts into typed slots. Every other
+# entry — a vendor's own extension, a US Core one this mapper does not read — is
+# preserved by _residual (see _lifted_extension_paths).
+_LIFTED_EXTENSIONS = frozenset({_us_core_url("race"), _us_core_url("ethnicity")})
+
+
+def _lifted_extension_paths(resource: dict[str, Any]) -> set[str]:
+    """The ``extension[i]`` sub-paths :func:`_race_ethnicity` actually reads: the
+    FIRST entry per lifted url. A later duplicate of that url is read by nobody,
+    so it stays unconsumed and is preserved verbatim."""
+    seen: set[str] = set()
+    paths: set[str] = set()
+    for index, ext in enumerate(resource.get("extension", [])):
+        if not isinstance(ext, dict):
+            continue
+        url = str(ext.get("url"))
+        if url in _LIFTED_EXTENSIONS and url not in seen:
+            seen.add(url)
+            paths.add(f"extension[{index}]")
+    return paths
+
+
 def _race_ethnicity(resource: dict[str, Any], suffix: str) -> list[str]:
     """The US Core race/ethnicity ``text`` (or ombCategory displays) as a list."""
-    url = f"http://hl7.org/fhir/us/core/StructureDefinition/us-core-{suffix}"
+    url = _us_core_url(suffix)
     for ext in resource.get("extension", []):
         if not isinstance(ext, dict) or ext.get("url") != url:
             continue
@@ -264,7 +335,9 @@ def _race_ethnicity(resource: dict[str, Any], suffix: str) -> list[str]:
 
 
 def _patient(resource: dict[str, Any], source_file: str | None) -> Patient:
-    name = next((n for n in resource.get("name", []) if isinstance(n, dict)), {})
+    names = resource.get("name", [])
+    name_index = next((i for i, n in enumerate(names) if isinstance(n, dict)), None)
+    name = names[name_index] if name_index is not None else {}
     given = [g for g in name.get("given", []) if g]
     communication = resource.get("communication", [])
     language = None
@@ -304,6 +377,26 @@ def _patient(resource: dict[str, Any], source_file: str | None) -> Patient:
             tel_kind = ContactKind.PHONE_OTHER
         telecom.append(ContactPoint(kind=tel_kind, value=str(tel["value"])))
     addresses = [_address(a) for a in resource.get("address", []) if isinstance(a, dict)]
+    # `name` and `extension` are consumed only in PART: the sub-paths below are
+    # what this function reads, and _residual preserves the rest (HumanName.use/
+    # prefix/period, a second name, a non-US-Core extension). The given/suffix
+    # indices are RAW list positions while the reads above filter empty entries;
+    # a degenerate empty entry can therefore only duplicate a value into the
+    # residue, never drop one.
+    consumed = {
+        "birthDate",
+        "gender",
+        "maritalStatus",
+        "communication",
+        "identifier",
+        "telecom",
+        "address",
+        *_lifted_extension_paths(resource),
+    }
+    if name_index is not None:
+        consumed |= {
+            f"name[{name_index}].{sub}" for sub in ("family", "suffix[0]", "given[0]", "given[1]")
+        }
     return Patient(
         id=resource["id"],
         given_name=given[0] if given else None,
@@ -319,22 +412,7 @@ def _patient(resource: dict[str, Any], source_file: str | None) -> Patient:
         identifiers=identifiers,
         telecom=telecom,
         addresses=addresses,
-        extensions=_residual(
-            resource,
-            frozenset(
-                {
-                    "name",
-                    "birthDate",
-                    "gender",
-                    "maritalStatus",
-                    "communication",
-                    "identifier",
-                    "telecom",
-                    "address",
-                    "extension",
-                }
-            ),
-        ),
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -807,6 +885,28 @@ def _note_encounter(
 # --- orchestration ------------------------------------------------------------
 
 
+class AmbiguousUnanchoredError(ValueError):
+    """Resources reference a patient the data does not contain, and the data
+    describes more than one patient.
+
+    Attaching them to an arbitrary record would misattribute one patient's data
+    to another; dropping them would breach the lossless guarantee. Neither is
+    acceptable, so the load is refused. The message names the resource TYPES and
+    their counts — schema names and counts, never a resource id or any
+    patient-derived value.
+    """
+
+    def __init__(self, counts: dict[str, int]) -> None:
+        self.counts = dict(sorted(counts.items()))
+        detail = ", ".join(f"{rtype} ({count})" for rtype, count in self.counts.items())
+        super().__init__(
+            f"{sum(self.counts.values())} resource(s) reference a patient that is not "
+            f"in the data, and the data holds several patients, so they cannot be "
+            f"attributed to one without guessing: {detail}. Load one patient at a "
+            "time, or include the referenced Patient resource(s)."
+        )
+
+
 def records_from_resources(
     resources: list[dict[str, Any]], *, source_file: str | None = None
 ) -> Iterator[PatientRecord]:
@@ -822,9 +922,11 @@ def records_from_resources(
     dangling reference, or an out-of-scope ``$export`` slice) is "unanchored".
     When the data describes a single patient, unanchored resources are preserved
     under that record's ``extensions["fhir_r4:unanchored"]`` (nothing is dropped).
-    When it describes several patients, an unanchored resource cannot be safely
-    attributed, so it is not attached — attaching it to an arbitrary record would
-    misattribute one patient's data to another, which is worse than omission.
+    When it describes several patients there is no record they can be attributed
+    to without guessing an anchor, so the load is refused
+    (:class:`AmbiguousUnanchoredError`) — omitting them would be a silent drop,
+    and attaching them to an arbitrary record would misattribute one patient's
+    data to another.
     """
     patients = [r for r in resources if r.get("resourceType") == "Patient" and r.get("id")]
     if not patients:
@@ -861,8 +963,13 @@ def records_from_resources(
         by_patient[pid][rtype].append(resource)
 
     # Unanchored resources are preserved only when there is exactly one patient
-    # to attribute them to (see the docstring); otherwise misattribution risk.
+    # to attribute them to (see the docstring); with several, neither attaching
+    # nor omitting them is safe, so the load is refused.
     sole_patient = patients[0]["id"] if len(patients) == 1 else None
+    if unanchored and sole_patient is None:
+        raise AmbiguousUnanchoredError(
+            dict(Counter(str(r.get("resourceType")) for r in unanchored))
+        )
     for patient_res in patients:
         pid = patient_res["id"]
         yield _assemble(

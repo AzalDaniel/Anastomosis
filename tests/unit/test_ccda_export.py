@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import stat
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -612,12 +613,19 @@ def test_declared_losses_is_structured_and_minimal() -> None:
 #
 # Build a MAXIMALLY-populated record (every field of every canonical model set to
 # a distinctive synthetic value), export → re-ingest, then walk every populated
-# leaf of the ORIGINAL. Each leaf must be either (a)/(b) preserved — its value
-# present somewhere on the re-ingested record (structured fields OR the recovered
-# 51899-3 loss narrative, which itself lives in patient.extensions) — or (c)
-# matched by a DECLARED_LOSSES pattern. If a model field is added tomorrow and
-# the exporter is not updated, that field's distinctive value appears in neither
-# place and this test fails. THAT is the test's purpose.
+# leaf of the ORIGINAL. Each leaf must be either (a)/(b) preserved ON ITS OWN
+# FIELD PATH — same field of the same collection on the re-ingested record, or a
+# 51899-3 narrative line naming that path — or (c) matched by a DECLARED_LOSSES
+# pattern. If a model field is added tomorrow and the exporter is not updated,
+# that field's value appears in neither place and this test fails. THAT is the
+# test's purpose.
+#
+# The oracle is path-aware rather than "the value is somewhere in the document":
+# a value that comes back on the WRONG field is misattribution, not preservation,
+# and a whole-document substring search cannot tell the two apart (it passed
+# Identifier.kind == "mrn" purely because "mrn" occurs inside the id ROOT of a
+# different field). Values are compared whitespace-collapsed, and containment
+# within the same field is accepted for the declared SOAP-kind labelling.
 
 
 def _maximal_record() -> PatientRecord:
@@ -887,6 +895,16 @@ def _maximal_record() -> PatientRecord:
             diagnosis_ids=["feedface-0000-0000-0000-0000000000f5"],
         )
     ]
+    # Record-LEVEL extensions: the vendor namespaces a source hangs off the
+    # record itself (pf_tebra's unmapped tables, fhir_r4's note metadata). They
+    # have no typed home at all, so the 51899-3 narrative is their only route
+    # out — the loss class the collector used to skip entirely.
+    extensions = {
+        "pf_tebra:unmapped:patient-procedures": [
+            {"ProcedureName": "MaxRecordExtProcedure", "ProcedureCode": "MaxRecordExtCode"}
+        ],
+        "fhir_r4:note_meta": {"n1": {"fhir_r4:status": "MaxRecordExtStatus"}},
+    }
     return PatientRecord(
         patient=patient,
         encounters=encounters,
@@ -904,6 +922,7 @@ def _maximal_record() -> PatientRecord:
         documents=documents,
         practitioners=practitioners,
         facilities=facilities,
+        extensions=extensions,
     )
 
 
@@ -940,31 +959,109 @@ def _walk_leaves(value: object, path: tuple[str | int, ...] = ()) -> list[tuple[
     return out
 
 
-def _reingested_haystack(record: PatientRecord) -> str:
-    """All scalar leaf values of a re-ingested record (structured fields AND the
-    recovered 51899-3 loss narrative, which lives inside patient.extensions),
-    concatenated — the search space for 'preserved by value'."""
-    leaves = _walk_leaves(record.model_dump(mode="json"))
-    return "\n".join(text for _, text in leaves)
+def _field_path(path: tuple[str | int, ...]) -> str:
+    """``path`` as a dotted FIELD path with list indices erased —
+    ``("coverages", 0, "payer")`` → ``coverages[].payer``.
+
+    Erasing the index (not the field) is what makes the oracle path-AWARE
+    without being order-brittle: a value must come back on the same field of the
+    same collection, but the collection may be re-ordered or re-keyed."""
+    out = ""
+    for segment in path:
+        if isinstance(segment, int):
+            out += "[]"
+        else:
+            out += segment if out == "" else f".{segment}"
+    return out
+
+
+def _structured_values(record: PatientRecord) -> dict[str, set[str]]:
+    """``field path -> values`` for every populated leaf of a record — the
+    locations a value may legitimately come back on."""
+    out: dict[str, set[str]] = {}
+    for path, value in _walk_leaves(dumped(record)):
+        out.setdefault(_field_path(path), set()).add(_collapse(value))
+    return out
+
+
+def dumped(record: PatientRecord) -> dict:
+    return record.model_dump(mode="json")
+
+
+def _collapse(text: str) -> str:
+    """Whitespace collapsed the way the C-CDA parser collapses narrative text,
+    so a value compares equal whether it came back structured or narrated."""
+    return " ".join(text.split())
+
+
+# The narrative comes back from re-ingest as ONE whitespace-collapsed blob (the
+# parser reads a section's <text> as flat text), so the `path = value` lines are
+# re-split here. A path never contains a space, which makes the split
+# unambiguous for any value that does not itself read as " <path> = ".
+_NARRATIVE_SPLIT = re.compile(r" (?=[A-Za-z_][^\s=]* = )")
+
+
+def _narrated_values(record: PatientRecord) -> dict[str, set[str]]:
+    """``field path -> values`` for every line of the recovered 51899-3 loss
+    narrative — the declared, path-carrying home for what CDA cannot structure.
+
+    The narrative roots the record's own dict attrs at a synthetic ``record.``
+    (there is no model to name); the dump paths root them at the attribute, so
+    that prefix is normalized away here."""
+    out: dict[str, set[str]] = {}
+    section = record.patient.extensions.get(f"ccda:section:{LOINC_EXTENSIONS}")
+    if not section or not section.get("text"):
+        return out
+    for line in _NARRATIVE_SPLIT.split(section["text"]):
+        path, sep, value = line.partition(" = ")
+        if not sep:
+            continue
+        field = re.sub(r"\[[^\]]*\]", "[]", path).removeprefix("record.")
+        out.setdefault(field, set()).add(_collapse(value))
+    return out
+
+
+def _survives(recovered: dict[str, set[str]], path: str, value: str) -> bool:
+    """Whether ``value`` comes back ON ``path``: equal to a recovered value
+    there, or contained in one.
+
+    Containment covers the declared ``*.NoteSection.kind`` loss — a note body
+    re-ingests LABELLED with its SOAP kind, so the body is a substring of the
+    recovered text on that same field. It stays scoped to the one field path, so
+    a cross-field collision or a misattribution to another model can never
+    satisfy it."""
+    candidates = recovered.get(path, set())
+    return value in candidates or any(value in candidate for candidate in candidates)
 
 
 def test_no_undeclared_native_loss(tmp_path: Path) -> None:
+    """Every populated leaf of the source record must come back from re-ingest
+    ON ITS OWN FIELD PATH — structurally, or as a narrative line naming that
+    path — or be covered by a DECLARED_LOSSES pattern.
+
+    Path-aware on purpose: "the value appears somewhere in the document" would
+    pass a value that came back on the WRONG field (a cross-field collision) or
+    on another patient's model (a misattribution), which is corruption, not
+    preservation."""
     original = _maximal_record()
     out = tmp_path / "max.xml"
     out.write_bytes(build_ccd(original))
     reingested = parse_document(out)
-    haystack = _reingested_haystack(reingested)
+    recovered = _structured_values(reingested)
+    for field, values in _narrated_values(reingested).items():
+        recovered.setdefault(field, set()).update(values)
 
     undeclared: list[str] = []
-    for path, value in _walk_leaves(original.model_dump(mode="json")):
+    for path, value in _walk_leaves(dumped(original)):
         if _is_declared_loss(path):
             continue  # (c) covered by a DECLARED_LOSSES pattern
-        if value in haystack:
-            continue  # (a) equal on re-ingest OR (b) present in the loss narrative
+        if _survives(recovered, _field_path(path), _collapse(value)):
+            continue  # (a) same field on re-ingest OR (b) narrated under that field path
         undeclared.append(f"{'.'.join(str(p) for p in path)} = {value!r}")
     assert not undeclared, (
-        "fields silently lost (not round-tripped, not in the 51899-3 narrative, "
-        "and not a declared loss): " + "; ".join(undeclared)
+        "fields silently lost (not round-tripped onto their own field path, not "
+        "narrated under it in the 51899-3 section, and not a declared loss): "
+        + "; ".join(undeclared)
     )
 
 

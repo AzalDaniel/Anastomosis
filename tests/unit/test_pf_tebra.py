@@ -18,7 +18,9 @@ from anastomosis.core.model import (
 )
 from anastomosis.sources import get_source
 from anastomosis.sources.pf_tebra.loader import (
+    KNOWN_TABLES,
     MalformedExportError,
+    OrphanRowsError,
     UnsupportedTablesError,
     read_table,
 )
@@ -114,6 +116,93 @@ def test_unmapped_orphan_table_refuses_the_run(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedTablesError) as exc:
         list(get_source("pf-tebra").load(export))
     assert "practice-codebook" in str(exc.value)
+
+
+GHOST = "feedface-0000-0000-0000-0000000000ff"  # a guid with no owning record
+GISO_TABLE = "patient-gender-identity-sexual-orientation"
+
+
+@pytest.mark.parametrize(
+    ("table", "header", "row"),
+    [
+        (
+            "patient-medications",
+            ["PatientPracticeGuid", "MedicationGuid", "MedicationName"],
+            [GHOST, "feedface-m000-0000-0000-0000000000ff", "Amoxicillin 500 MG"],
+        ),
+        ("patient-race", ["PatientPracticeGuid", "RaceName"], [GHOST, "White"]),
+        (
+            "patient-encounter-addendums",
+            ["EncounterGuid", "Addendum"],
+            ["feedface-e000-0000-0000-0000000000ff", "An addendum on no known encounter."],
+        ),
+    ],
+)
+def test_orphan_row_on_a_known_table_refuses_the_run(
+    tmp_path: Path, table: str, header: list[str], row: list[str]
+) -> None:
+    """A MAPPED table's row whose foreign key names no record fails closed.
+
+    The mapper reads these tables by slicing a per-key grouping, so such a row is
+    grouped once and never read again — it would vanish with no sentinel and no
+    extension, exactly like an orphan unmapped table."""
+    export = _export_with_extra_table(tmp_path / "export", table, header, [row])
+    with pytest.raises(OrphanRowsError) as exc:
+        list(get_source("pf-tebra").load(export))
+    assert table in str(exc.value)
+    assert "feedface-" not in str(exc.value)  # table names and counts only, never a key value
+
+
+def test_every_sliced_table_has_a_foreign_key_check() -> None:
+    """Drift guard: every KNOWN table is either checked for foreign-key closure
+    or one of the three read in FULL (never sliced by an owning record), so a
+    newly mapped table cannot quietly reintroduce the orphan-row hole."""
+    from anastomosis.sources.pf_tebra.mapper import _FOREIGN_KEYS
+
+    checked = {table for table, _, _ in _FOREIGN_KEYS}
+    assert checked <= set(KNOWN_TABLES)  # every checked table is read by the loader
+    assert set(KNOWN_TABLES) - checked == {"providers", "facilities", "superbill-insurances"}
+
+
+def test_keyless_demographics_row_is_refused(tmp_path: Path) -> None:
+    """A demographics row with no PatientPracticeGuid owns no join key, so the
+    whole patient would be skipped silently. Fail closed instead."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    demo = dst / "patient-demographics.tsv"
+    lines = demo.read_text(encoding="utf-8").splitlines()
+    keyless = "\t".join(["", *lines[1].split("\t")[1:]])
+    demo.write_text("\n".join([*lines, keyless]) + "\n", encoding="utf-8")
+    with pytest.raises(OrphanRowsError, match="patient-demographics"):
+        list(get_source("pf-tebra").load(dst))
+
+
+def test_demographics_side_row_surplus_columns_are_preserved(tmp_path: Path) -> None:
+    """Reading one column of a race/ethnicity/gender-identity row must not
+    consume the whole row: every other populated cell lands in the patient's
+    extensions under `pf_tebra:<table>:<row index>:<column>`."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    for table in ("patient-race", "patient-ethnicity", GISO_TABLE):
+        path = dst / f"{table}.tsv"
+        header, *rows = path.read_text(encoding="utf-8").splitlines()
+        path.write_text(
+            "\n".join([f"{header}\tFutureColumn", *(f"{row}\tSENTINEL-{table}" for row in rows)])
+            + "\n",
+            encoding="utf-8",
+        )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
+    ext = loaded[P1].patient.extensions
+    assert ext["pf_tebra:patient-race:0:FutureColumn"] == "SENTINEL-patient-race"
+    assert ext["pf_tebra:patient-race:1:FutureColumn"] == "SENTINEL-patient-race"  # 2nd race row
+    assert ext["pf_tebra:patient-ethnicity:0:FutureColumn"] == "SENTINEL-patient-ethnicity"
+    assert ext[f"pf_tebra:{GISO_TABLE}:0:FutureColumn"] == f"SENTINEL-{GISO_TABLE}"
+    # Columns the fixture already carried beside the mapped one survive too.
+    assert ext["pf_tebra:patient-race:0:CdcUniqueIdentifier"] == "2106-3"
+    assert ext[f"pf_tebra:{GISO_TABLE}:0:GenderIdentityCode"] == "446141000124107"
+    # Mapped columns are never duplicated into extensions (the _ext contract).
+    assert "pf_tebra:patient-race:0:RaceName" not in ext
+    assert loaded[P1].patient.race == ["White", "Asian"]  # structural mapping unchanged
 
 
 def test_duplicate_patient_guid_is_refused(tmp_path: Path) -> None:

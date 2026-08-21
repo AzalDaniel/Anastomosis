@@ -1,10 +1,12 @@
 """C-CDA R2.1 / CCD XML → canonical PatientRecord.
 
 The lossless rule, applied to a CDA document: every section the adapter knows
-how to take apart becomes discrete canonical models; **every section it does
-not** has its title and normalized narrative captured into
-``patient.extensions["ccda:section:<loinc>"]`` so nothing on the chart is ever
-silently dropped. Document-level metadata rides ``patient.extensions`` too.
+how to take apart becomes discrete canonical models, and **every section** —
+structurally parsed or not — has its title and normalized narrative captured
+into ``patient.extensions["ccda:section:<loinc>"]`` so nothing on the chart is
+ever silently dropped (a known section whose entries the parser cannot take
+apart would otherwise yield nothing at all). Document-level metadata rides
+``patient.extensions`` too.
 
 Parsing is defensive by design: a missing optional element maps to ``None``, a
 ``nullFlavor`` on an element means "absent", but a file that is not a
@@ -296,6 +298,24 @@ def _sections(clinical_doc: _Element) -> list[_Element]:
 
 def _entries(section: _Element) -> list[_Element]:
     return _findall(section, "v3:entry")
+
+
+def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | None) -> None:
+    """Preserve one section's title and narrative under ``ccda:section:<loinc>``.
+
+    Runs for EVERY section, structurally parsed or not: a structural parser
+    skips an entry whose shape it does not support, and the narrative is then
+    the only copy of what that entry said. A section with neither a title nor
+    narrative text adds no key (sentinel discipline — absent stays absent).
+    Mutating the model's extensions dict in place persists it on the patient (it
+    is the validated dict object, not a fresh copy).
+    """
+    title = _text_content(_find(section, "v3:title"))
+    text = _text_content(_find(section, "v3:text"))
+    if title is None and text is None:
+        return
+    key = f"ccda:section:{loinc}" if loinc else "ccda:section:unknown"
+    record.patient.extensions[key] = {"title": title, "text": text}
 
 
 # --- problems ----------------------------------------------------------------
@@ -628,14 +648,11 @@ def parse_document(path: Path) -> PatientRecord:
             record.encounters += _encounters(section, pid, source_file)
         elif loinc == LOINC_NOTES:
             record.encounters += _note_encounters(section, pid, source_file)
-        else:
-            # Losslessness: an unparsed section's narrative is never dropped.
-            # Mutating the model's extensions dict in place persists it on the
-            # patient (it is the validated dict object, not a fresh copy).
-            key = f"ccda:section:{loinc}" if loinc else "ccda:section:unknown"
-            record.patient.extensions[key] = {
-                "title": _text_content(_find(section, "v3:title")),
-                "text": _text_content(_find(section, "v3:text")),
-            }
+        # Losslessness: the narrative is captured for every section, not only the
+        # unparsed ones. The structural parsers above `continue` past an entry
+        # whose shape they do not support, so a known section can yield nothing
+        # while its <text> still holds the clinical statement; the duplication
+        # for a fully-parsed section is the cheap side of that trade.
+        _capture_narrative(record, section, loinc)
 
     return record

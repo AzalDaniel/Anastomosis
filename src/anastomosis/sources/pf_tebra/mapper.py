@@ -61,7 +61,7 @@ from anastomosis.core.textutil import (
 from anastomosis.core.timeutil import age_at, parse_date, parse_dt
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
-from .loader import KNOWN_TABLES, Export, Row, UnsupportedTablesError
+from .loader import KNOWN_TABLES, Export, OrphanRowsError, Row, UnsupportedTablesError
 
 __all__ = ["map_export"]
 
@@ -107,10 +107,15 @@ def _d(row: Row, col: str) -> Any:
     return parse_date(_s(row, col))
 
 
-def _ext(row: Row, mapped: frozenset[str]) -> dict[str, Any]:
-    """Everything the mapping didn't consume — the lossless catch-all."""
+def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
+    """Everything the mapping didn't consume — the lossless catch-all.
+
+    ``prefix`` qualifies the namespaced key for rows that are NOT the model's
+    own source row (a demographics side row, say), so several tables' surplus
+    columns can share one ``extensions`` dict without colliding.
+    """
     return {
-        f"{SOURCE}:{col}": value
+        f"{SOURCE}:{prefix}{col}": value
         for col, value in row.items()
         if col is not None and col not in mapped and clean_cell(value) is not None
     }
@@ -129,7 +134,14 @@ def _by(rows: list[Row], col: str) -> dict[str, list[Row]]:
     return grouped
 
 
+def _ids(rows: list[Row], col: str) -> frozenset[str]:
+    """The populated values of a key column — the set a foreign key must land in."""
+    return frozenset(key for row in rows if (key := _s(row, col)) is not None)
+
+
 # --- patients ----------------------------------------------------------------
+
+_PATIENT_KEY = "PatientPracticeGuid"
 
 _DEMOGRAPHICS_MAPPED = frozenset(
     {
@@ -189,6 +201,52 @@ class _DemographicsGroups:
         )
 
 
+# Columns `_map_patient` lifts out of ONE demographics side row. A side row is
+# not consumed wholesale by the one column the mapper wants: everything else on
+# it rides `patient.extensions` (see `_side_extensions`). `_KEY_ONLY` is the set
+# for a row the mapper never reads at all — only its join key is accounted for.
+_KEY_ONLY = frozenset({_PATIENT_KEY})
+_PINNED_MAPPED = _KEY_ONLY | {"NoteType", "NoteText"}
+_GISO_MAPPED = _KEY_ONLY | {"GenderIdentity", "SexualOrientation"}
+_RACE_MAPPED = _KEY_ONLY | {"RaceName"}
+_ETHNICITY_MAPPED = _KEY_ONLY | {"EthnicityName"}
+
+_GISO_TABLE = "patient-gender-identity-sexual-orientation"
+
+
+def _side_extensions(groups: _DemographicsGroups, guid: str) -> dict[str, Any]:
+    """Surplus cells of the demographics SIDE rows, as
+    ``pf_tebra:<table>:<row index>:<column>``.
+
+    `_map_patient` lifts one or two columns out of each side row (``RaceName``,
+    ``GenderIdentity``, …) and nothing at all out of the rows it never reaches
+    (a second gender-identity row, a superseded guarantor). Both are losses
+    without this catch-all: `_ext` runs on the demographics row only, so a
+    column added beside ``RaceName`` in a future export would vanish.
+    """
+    out: dict[str, Any] = {}
+
+    def keep(table: str, index: int, row: Row, mapped: frozenset[str]) -> None:
+        out.update(_ext(row, mapped, prefix=f"{table}:{index}:"))
+
+    for index, row in enumerate(groups.pinned_notes.get(guid, [])):
+        # A pinned note with no NoteText never reaches `notes`, so its NoteType
+        # is unread on that row.
+        keep("pinned-notes", index, row, _PINNED_MAPPED if _s(row, "NoteText") else _KEY_ONLY)
+    for index, row in enumerate(groups.giso.get(guid, [])):
+        # Only the first row supplies gender identity / sexual orientation.
+        keep(_GISO_TABLE, index, row, _GISO_MAPPED if index == 0 else _KEY_ONLY)
+    for index, row in enumerate(groups.race.get(guid, [])):
+        keep("patient-race", index, row, _RACE_MAPPED)
+    for index, row in enumerate(groups.ethnicity.get(guid, [])):
+        keep("patient-ethnicity", index, row, _ETHNICITY_MAPPED)
+    # The LAST guarantor row wins and carries its own `_ext` catch-all on
+    # Guarantor.extensions; the superseded rows are read nowhere else.
+    for index, row in enumerate(groups.guarantor.get(guid, [])[:-1]):
+        keep("patient-guarantor", index, row, _KEY_ONLY)
+    return out
+
+
 def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     guid = _s(row, "PatientPracticeGuid")
     assert guid is not None  # loader guarantees keyed rows; join column required
@@ -245,7 +303,7 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
         telecom=telecom,
         addresses=[address] if any(address.model_dump().values()) else [],
         guarantor=_map_guarantor(groups.guarantor, guid),
-        extensions=_ext(row, _DEMOGRAPHICS_MAPPED),
+        extensions=_ext(row, _DEMOGRAPHICS_MAPPED) | _side_extensions(groups, guid),
         provenance=_prov("patient-demographics", guid),
     )
 
@@ -984,16 +1042,82 @@ def _unmapped_tables(
     return by_patient
 
 
+# Every KNOWN table the mapper reads by slicing a per-key grouping, with the key
+# column and the parent whose ids that key must name. superbill-insurances,
+# providers, and facilities are deliberately absent: they are read in full, not
+# sliced by an owning record, so no row of theirs can be orphaned.
+_FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
+    # patient-demographics is the patient table itself, so the only way one of
+    # its rows fails is a MISSING key — which would drop that whole patient.
+    ("patient-demographics", _PATIENT_KEY, "patient"),
+    ("patient-race", _PATIENT_KEY, "patient"),
+    ("patient-ethnicity", _PATIENT_KEY, "patient"),
+    (_GISO_TABLE, _PATIENT_KEY, "patient"),
+    ("pinned-notes", _PATIENT_KEY, "patient"),
+    ("patient-guarantor", _PATIENT_KEY, "patient"),
+    ("patient-smokingstatus", _PATIENT_KEY, "patient"),
+    ("occupation-industry", _PATIENT_KEY, "patient"),
+    ("patient-education", _PATIENT_KEY, "patient"),
+    ("patient-financial-resources", _PATIENT_KEY, "patient"),
+    ("tribal-affiliation", _PATIENT_KEY, "patient"),
+    ("patient-med-history", _PATIENT_KEY, "patient"),
+    ("patient-family-medical-history", _PATIENT_KEY, "patient"),
+    ("patient-encounters", _PATIENT_KEY, "patient"),
+    ("patient-encounter-observations", _PATIENT_KEY, "patient"),
+    ("patient-diagnoses", _PATIENT_KEY, "patient"),
+    ("patient-allergy", _PATIENT_KEY, "patient"),
+    ("patient-medications", _PATIENT_KEY, "patient"),
+    ("patient-prescriptions", _PATIENT_KEY, "patient"),
+    ("patient-insurances", _PATIENT_KEY, "patient"),
+    ("patient-immunizations", _PATIENT_KEY, "patient"),
+    ("patient-advance-directives", _PATIENT_KEY, "patient"),
+    ("patient-documents", _PATIENT_KEY, "patient"),
+    ("patient-encounter-addendums", "EncounterGuid", "encounter"),
+    ("patient-encounter-diagnoses", "EncounterGuid", "encounter"),
+    ("patient-allergy-reactions", "AllergyGuid", "allergy"),
+    ("prescription-transactions", "PrescriptionGuid", "prescription"),
+    ("patient-family-history-diagnoses", "RelativeGuid", "relative"),
+)
+
+
+def _check_key_closure(export: Export, known: dict[str, frozenset[str]]) -> None:
+    """Refuse KNOWN-table rows whose foreign key names no record in the export.
+
+    The counterpart to :func:`_unmapped_tables` for the tables the mapper DOES
+    map: those are read by slicing a grouping with the owning record's guid, so
+    a row with a missing or dangling key is grouped once and never read again —
+    a silent drop of clinical data. Failing closed (:class:`OrphanRowsError`) is
+    the same stance an orphan table gets. Counts only; no row value is read out.
+    """
+    orphans: dict[str, int] = {}
+    for table, column, parent in _FOREIGN_KEYS:
+        keys = known[parent]
+        # _s gives None for a missing or blank key, and "" is never a known id,
+        # so the substitution catches the missing-key row and the dangling one.
+        count = sum(1 for row in export[table] if (_s(row, column) or "") not in keys)
+        if count:
+            orphans[table] = count
+    if orphans:
+        raise OrphanRowsError(orphans)
+
+
 def map_export(export: Export) -> Iterator[PatientRecord]:
     """Join the loaded tables into one PatientRecord per patient."""
-    # Losslessness: account for every table the mapper does not consume before
-    # producing any record (so a refusal happens cleanly, before partial output).
-    patient_guids = frozenset(
-        guid
-        for demo_row in export["patient-demographics"]
-        if (guid := _s(demo_row, "PatientPracticeGuid")) is not None
-    )
+    # Losslessness: account for every table the mapper does not consume, and for
+    # every mapped table's foreign keys, before producing any record (so a
+    # refusal happens cleanly, before partial output).
+    patient_guids = _ids(export["patient-demographics"], _PATIENT_KEY)
     unmapped_by_patient = _unmapped_tables(export, patient_guids)
+    _check_key_closure(
+        export,
+        {
+            "patient": patient_guids,
+            "encounter": _ids(export["patient-encounters"], "EncounterGuid"),
+            "allergy": _ids(export["patient-allergy"], "AllergyGuid"),
+            "prescription": _ids(export["patient-prescriptions"], "PrescriptionGuid"),
+            "relative": _ids(export["patient-family-medical-history"], "RelativeGuid"),
+        },
+    )
     if unmapped_by_patient:
         preserved = sorted({table for tables in unmapped_by_patient.values() for table in tables})
         # Table NAMES are schema, not PHI — safe to log; row values are not logged.
@@ -1027,9 +1151,8 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
 
     seen_guids: set[str] = set()
     for demo_row in export["patient-demographics"]:
-        guid = _s(demo_row, "PatientPracticeGuid")
-        if guid is None:
-            continue
+        guid = _s(demo_row, _PATIENT_KEY)
+        assert guid is not None  # _check_key_closure refuses keyless demographics rows
         if guid in seen_guids:
             # Two demographics rows for one patient: downstream the QA lookup and
             # delivery key on the guid, so the second would silently overwrite the

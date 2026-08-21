@@ -23,7 +23,7 @@ import anastomosis.reconstruct.chromium as chromium
 import anastomosis.sources.fhir_r4  # noqa: F401
 from anastomosis.core.model import AllergyCategory, ObservationCategory
 from anastomosis.sources import detect_source, get_source
-from anastomosis.sources.fhir_r4.mapper import records_from_resources
+from anastomosis.sources.fhir_r4.mapper import AmbiguousUnanchoredError, records_from_resources
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "fhir_r4"
 BUNDLE = FIXTURE_DIR / "uscore_bundle.json"
@@ -327,9 +327,10 @@ def test_orphan_resource_preserved_for_single_patient() -> None:
     assert rec.conditions == []
 
 
-def test_orphan_resource_not_misattributed_across_patients() -> None:
-    """With several patients, an unattributable resource is omitted rather than
-    misattributed to an arbitrary patient (the safer-than-corruption choice)."""
+def test_orphan_resource_across_patients_refuses_the_load() -> None:
+    """With several patients an unanchored resource can be attributed to none of
+    them: attaching it would misattribute one patient's data to another and
+    omitting it would drop clinical data silently, so the load fails loudly."""
     resources = [
         _patient_resource(family="Specimen", pid=PID),
         _patient_resource(family="Placeholder", pid="feedface-0001-0000-0000-000000000002"),
@@ -341,8 +342,43 @@ def test_orphan_resource_not_misattributed_across_patients() -> None:
             "code": {"text": "Stray"},
         },
     ]
-    for rec in records_from_resources(resources):
-        assert "fhir_r4:unanchored" not in rec.extensions
+    with pytest.raises(AmbiguousUnanchoredError) as exc:
+        list(records_from_resources(resources))
+    assert exc.value.counts == {"Condition": 1}
+    assert "Condition (1)" in str(exc.value)
+    # Resource TYPES and counts are schema; no id or patient-derived value leaks.
+    assert "stray" not in str(exc.value)
+    assert "Patient/does-not-exist" not in str(exc.value)
+
+
+def test_patient_name_subkeys_and_custom_extension_are_preserved() -> None:
+    """Reading part of `name`/`extension` must not consume the whole element:
+    HumanName.prefix/use and a non-US-Core extension survive at a namespaced
+    path, while the sub-keys the mapper DID lift do not duplicate into it."""
+    custom = "http://example.com/fhir/StructureDefinition/sentinel-flag"
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [{"use": "official", "prefix": ["Dr"], "given": ["Dexter"], "family": "Specimen"}],
+        "extension": [
+            {"url": custom, "valueString": "SENTINEL-CUSTOM-EXT"},
+            {
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+                "extension": [{"url": "text", "valueString": "White"}],
+            },
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert patient.extensions["fhir_r4:name"] == [{"use": "official", "prefix": ["Dr"]}]
+    assert patient.extensions["fhir_r4:extension"] == [
+        {"url": custom, "valueString": "SENTINEL-CUSTOM-EXT"}
+    ]
+    # The lifted parts still land in their typed slots, and only there.
+    assert (patient.given_name, patient.family_name, patient.race) == (
+        "Dexter",
+        "Specimen",
+        ["White"],
+    )
 
 
 def test_observation_panel_with_value_and_components_emits_all() -> None:

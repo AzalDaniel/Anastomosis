@@ -230,7 +230,10 @@ _EXPORTED_FIELDS: dict[str, frozenset[str]] = {
             "ethnicity[]",
             "language",
             "marital_status",
-            "identifiers[].kind",
+            # identifiers[].kind is deliberately absent: only SSN and SOURCE_GUID
+            # re-ingest as themselves. MRN/PRN/OTHER come back as SOURCE_GUID
+            # (their kind rides the id root as urn:anastomosis:id:<kind>), so the
+            # kind has to narrate to survive on its own field.
             "identifiers[].value",
             "identifiers[].system",
             "telecom[].kind",
@@ -898,8 +901,9 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
     subtracts the per-emitter allowlist (:data:`_EXPORTED_FIELDS`) and the
     structural plumbing (:data:`_STRUCTURAL_SKIP`), and serializes the remainder
     — native fields, nested sub-fields, record-level unmappable lists, and
-    ``extensions`` alike (extensions via :func:`_walk_extensions`, which exempts
-    the natively round-tripped ``ccda:*`` keys).
+    ``extensions`` alike, both the patient's and the RECORD's own (extensions
+    via :func:`_walk_extensions`, which exempts the natively round-tripped
+    ``ccda:*`` keys).
 
     Determinism: ``mode="json"`` gives stable scalar forms (dates as ISO
     strings); output lines are sorted. PHI: this builds the document body, not
@@ -919,8 +923,17 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
                 lines += _walk_model(
                     f"{attr}[{_model_index(item)}]", item, _consumed_fields(attr, item)
                 )
+        elif isinstance(value, dict):
+            # The record's OWN dict attrs — `extensions` (vendor namespaces the
+            # sources hang off the record, e.g. pf_tebra:unmapped:<table>) and
+            # `provenance`. Walking them from a synthetic "record" root routes
+            # extensions through _walk_extensions exactly as the patient's are,
+            # and drops provenance via _STRUCTURAL_SKIP. Without this branch a
+            # record-level dict fell through the loop entirely and never reached
+            # the narrative.
+            lines += _walk_value("record", "", {attr: value}, frozenset())
         # scalar top-level attrs (none exist today) would fall through silently;
-        # the record is a fixed set of model/list fields, so there are none.
+        # the record is a fixed set of model/list/dict fields, so there are none.
     return sorted(lines)
 
 
