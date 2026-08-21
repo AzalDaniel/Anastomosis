@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis Learn-a-source wizard — vanilla JS, no frameworks, no build.
  *
@@ -19,6 +18,10 @@
  * labels, counts, and digit/letter-masked shapes only — never a cell value.
  */
 "use strict";
+
+// Only the bridge gate is needed from the shared shell here (this wizard hosts
+// no segment toggle, palette, or log strip of its own).
+const Shell = window.AnastShell;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
@@ -150,7 +153,7 @@ async function fetchSourceResult() {
 // `source` done OR a `source` error we fetch the stashed result and route it
 // (the result carries the outcome-specific detail the banner needs); other
 // stages just update the status.
-// Flow guard (P2-5): the learn-a-source wizard owns the "source_init" flow. Every
+// Flow guard: the learn-a-source wizard owns the "source_init" flow. Every
 // event carries a `flow`; we early-return on any other flow so a run from another
 // page can't drive this wizard's terminal handlers.
 window.anastEvent = function anastEvent(e) {
@@ -238,6 +241,11 @@ async function populate() {
     setStatus("offline");
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted, so a slow pywebview attach does
+  // not leave the wizard permanently showing "launch via anast gui".
+  el("no-api").classList.remove("show");
+  setStatus("ready");
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -261,7 +269,9 @@ function init() {
   if (confirm) {
     confirm.addEventListener("change", onConfirmToggle);
   }
-  populate();
+  // Bootstrap through the shared bridge gate: now, and once more when
+  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
+  Shell.onApiReady(populate);
 }
 
 if (document.readyState === "loading") {

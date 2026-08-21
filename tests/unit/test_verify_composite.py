@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for LayeredVerifier — directly and through a real UploadEngine run.
 
 The composite stacks L0-L6 behind the engine's Verifier seam. The engine-level
@@ -17,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="verify tests need PyMuPDF (render extra)")
+pymupdf = pytest.importorskip("pymupdf", reason="verify tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import Encounter, Patient  # noqa: E402
 from anastomosis.deliver.browser.engine import UploadEngine  # noqa: E402
@@ -29,6 +28,7 @@ from anastomosis.deliver.browser.tracking import TrackingDB  # noqa: E402
 from anastomosis.deliver.verify import LayeredVerifier, LevelStatus  # noqa: E402
 from anastomosis.destinations.base import UploadItem, UploadReceipt  # noqa: E402
 from anastomosis.reconstruct.engine import RenderedDoc  # noqa: E402
+from anastomosis.reconstruct.packs import LoadedPack, PackManifest  # noqa: E402
 
 PAT = "feedface-0000-0000-0000-0000000000aa"
 ENC = "feedface-e000-0000-0000-0000000000aa"
@@ -51,9 +51,9 @@ def _encounter() -> Encounter:
 
 
 def _make_pdf(path: Path, lines: list[str]) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
     return path
@@ -123,6 +123,47 @@ def test_verify_post_skips_without_readers(tmp_path: Path) -> None:
     v.verify_post(item, UploadReceipt(destination_doc_id="doc-x"))
     post = [r for r in v.results_for(item.item_key) if r.level in {"L5", "L6"}]
     assert all(r.status is LevelStatus.SKIP for r in post)
+
+
+def test_pre_phase_parses_the_local_pdf_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L1 (page count), L2 and L3 (page-1 text) share ONE parse of the file.
+
+    They used to open and text-extract the same unchanging local PDF once each.
+    The shared per-item :class:`PdfSnapshot` collapses that to a single open;
+    this counts the opens so a level that goes back to reading the path itself
+    is caught. L0 is excluded from the count on purpose — it re-reads the bytes
+    to hash them, which is its whole job, and it never opens the PDF.
+    """
+    from anastomosis.deliver.verify import levels
+
+    item = _item(_make_pdf(tmp_path / "g.pdf", GOOD_LINES))
+    real = levels._import_pymupdf()
+    opens = 0
+
+    class _CountingPymupdf:
+        def open(self, *args: object, **kwargs: object) -> object:
+            nonlocal opens
+            opens += 1
+            return real.open(*args, **kwargs)
+
+    monkeypatch.setattr(levels, "_import_pymupdf", _CountingPymupdf)
+    # A pack declaring header fields so L3 actually reads page-1 text too
+    # (without one it skips before touching the file).
+    pack = LoadedPack(
+        manifest=PackManifest(name="test", version="1.0", verify_header_fields=["patient_name"]),
+        root=Path("/nonexistent"),
+        template_path=Path("/nonexistent/t.html"),
+        build_context=lambda **_: {},
+    )
+    v = LayeredVerifier(records={ENC: _encounter()}, pack=pack)
+    v.verify_pre(item, _patient())
+
+    assert [r.status for r in v.results_for(item.item_key) if r.level in {"L1", "L2", "L3"}] == [
+        LevelStatus.PASS
+    ] * 3
+    assert opens == 1, f"the pre levels opened the local PDF {opens} times, expected 1"
 
 
 def test_levels_filter_runs_subset(tmp_path: Path) -> None:

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Self-tests for the PHI scanner — the repo's most important guardrail.
 
 These tests never touch real PHI: the deny-list under test is built from
@@ -101,6 +100,153 @@ def test_dob_adjacent_date_fails(tmp_path: Path, canary_denylist: Path) -> None:
     f = tmp_path / "notes.md"
     f.write_text("DOB: 4/12/" + "1957\n")
     assert run_scan([f], canary_denylist) == 1
+
+
+def test_unapproved_nul_binary_fails(tmp_path: Path, canary_denylist: Path) -> None:
+    """Default-deny: a binary the text passes cannot read must fail, not skip.
+
+    Before this gate, any file with a NUL in its first 8 KiB (or a media
+    suffix) was silently skipped — an unapproved media file could carry
+    sensitive content past the scanner unread.
+    """
+    f = tmp_path / "mystery.pdf"
+    f.write_bytes(b"%PDF-1.4\x00" + b"opaque payload the scanner cannot read")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_unapproved_media_suffix_fails_even_without_nul(
+    tmp_path: Path, canary_denylist: Path
+) -> None:
+    # A media suffix is classified binary even when its bytes happen to look
+    # like text (a mislabeled or crafted file must not dodge the gate).
+    f = tmp_path / "image.png"
+    f.write_bytes(b"not really an image, but the suffix says media")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_allowlisted_binary_hash_passes(
+    tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"\x00approved synthetic binary"
+    f = tmp_path / "approved.woff2"
+    f.write_bytes(payload)
+    allowlist = tmp_path / "allow.txt"
+    allowlist.write_text(
+        "# synthetic test binary, approved for this test only\n"
+        f"sha256:{hashlib.sha256(payload).hexdigest()}\n"
+    )
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    assert run_scan([f], canary_denylist) == 0
+    # The approval is the exact bytes: any change to the file re-fails.
+    f.write_bytes(payload + b"!")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_base64_armored_payload_in_a_text_file_fails(tmp_path: Path, canary_denylist: Path) -> None:
+    """A base64 blob inside a readable file is opaque content, and must fail.
+
+    The binary gate keys on a suffix or a NUL byte, so a text file carrying a
+    ``data:...;base64,...`` payload sails past it — and the token splitter
+    shreds the blob at every ``+``/``/``/``=``, so no pattern inspects it
+    either. That is a chart, a scan, or a spreadsheet of PHI hiding in plain
+    sight inside a .md or .html the reviewer skims.
+    """
+    f = tmp_path / "page.html"
+    payload = "QUJDRA" * 60  # > BASE64_ARMOR_MIN_CHARS of base64 alphabet
+    f.write_text(f'<img src="data:image/png;base64,{payload}">\n')
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_hash_approved_file_may_carry_a_base64_payload(
+    tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The escape hatch is the SAME one binaries use: approve the whole file.
+
+    This is how the vendored HL7 stylesheet (whose two payloads are its own
+    toolbar icons) passes — by provenance, recorded once, invalidated by any
+    change to the file.
+    """
+    f = tmp_path / "stylesheet.xsl"
+    f.write_text(f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n")
+    allowlist = tmp_path / "allow.txt"
+    # An approval covers the LF form of a text file (write_text produces CRLF
+    # on Windows; the scanner normalizes before hashing so ONE digest approves
+    # every platform's checkout).
+    lf_digest = hashlib.sha256(f.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    allowlist.write_text(
+        f"# synthetic stylesheet, approved for this test only\nsha256:{lf_digest}\n"
+    )
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    assert run_scan([f], canary_denylist) == 0
+    # The approval is the exact bytes: any change to the file re-fails.
+    f.write_text(f.read_text() + "<!-- edited -->\n")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_armor_approval_is_line_ending_independent(
+    tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One approval hash covers the LF and CRLF checkouts of a text file.
+
+    git checks text files out with CRLF on Windows runners (autocrlf), so the
+    raw bytes of the SAME committed file hash differently per platform; the
+    armor gate therefore hashes the LF form. Without this, an approval
+    computed on Linux failed every Windows run of the whole-repo scan.
+    """
+    lf_content = f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n"
+    allowlist = tmp_path / "allow.txt"
+    allowlist.write_text(
+        "# synthetic stylesheet, approved for this test only\n"
+        f"sha256:{hashlib.sha256(lf_content.encode()).hexdigest()}\n"
+    )
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    lf = tmp_path / "lf.xsl"
+    lf.write_bytes(lf_content.encode())
+    crlf = tmp_path / "crlf.xsl"
+    crlf.write_bytes(lf_content.replace("\n", "\r\n").encode())
+    assert run_scan([lf], canary_denylist) == 0
+    assert run_scan([crlf], canary_denylist) == 0
+
+
+def test_short_base64_runs_do_not_trip_the_armor_gate(
+    tmp_path: Path, canary_denylist: Path
+) -> None:
+    """A tracking-pixel-sized data URI is not opaque content — it stays clean.
+
+    The floor exists so ordinary inline snippets (and the base64 alphabet
+    appearing by accident) never need an approval entry.
+    """
+    f = tmp_path / "small.md"
+    short = "A" * (phi_scan.BASE64_ARMOR_MIN_CHARS - 1)
+    f.write_text(f"data:image/gif;base64,{short}\n")
+    assert run_scan([f], canary_denylist) == 0
+
+
+def test_indented_comment_never_becomes_an_allowlist_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An INDENTED ``#`` line is a comment, not an allowlist entry.
+
+    Testing the comment marker before stripping let an indented comment enter
+    the token allowlist verbatim — every word of a justification note would
+    then excuse itself, silently widening the ledger.
+    """
+    allowlist = tmp_path / "allow.txt"
+    allowlist.write_text("    # an indented justification comment\nrealentry\n")
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    assert phi_scan.load_allowlist() == {"realentry"}
+
+
+def test_repo_binaries_are_all_hash_approved() -> None:
+    """Every tracked binary's current hash is in the allowlist (drift guard).
+
+    A binary changed without re-approval fails here BEFORE the whole-repo
+    scan does, with a message naming this discipline.
+    """
+    approved = phi_scan.load_approved_file_hashes()
+    assert approved, "the approved-file ledger must not be empty while binaries ship"
+    for entry in approved:
+        assert len(entry) == 64 and all(c in "0123456789abcdef" for c in entry)
 
 
 def test_repo_denylist_exists_and_is_hashes_only() -> None:

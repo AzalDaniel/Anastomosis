@@ -1,11 +1,26 @@
-# pip constraints — the single source of truth for the Playwright build pin.
+# pip constraints — the single source of truth for the build pins.
 #
-# The library range in pyproject.toml (playwright>=1.46) stays OPEN so users who
-# depend on Anastomosis float to a compatible Playwright of their choosing. But
-# every place that produces or verifies a rendered artifact — the CI test lanes,
+# Every place that produces or verifies a shipped artifact — the CI test lanes,
 # golden regeneration (tools/regen_goldens.py), and the Windows package build —
-# resolves Playwright through THIS file (pip install -c packaging/constraints.txt).
-# That is what keeps the rendering goldens and the Chromium bundled in the
-# installer from drifting apart: one pin here governs them all. Bump it and
+# resolves through THIS file (pip install -c packaging/constraints.txt), while
+# the library ranges in pyproject.toml stay OPEN so users who depend on
+# Anastomosis float to compatible versions of their choosing. A pin belongs here
+# when an unpinned resolution can silently change what the installer contains or
+# how it behaves; each one says why, so a future bump is a decision, not a guess.
+
+# Rendering. The library range (playwright>=1.46) is open; this pin is what keeps
+# the rendering goldens and the Chromium bundled in the installer from drifting
+# apart — one pin governs the test lanes, the goldens, and the build. Bump it and
 # regenerate the goldens (python tools/regen_goldens.py) in the same change.
 playwright==1.56.0
+
+# Desktop GUI. The library range (pywebview>=6.2,<7.0) is deliberately narrow
+# but still floats inside 6.x, and floats to 6.2.1 — which upstream reports as
+# failing to import from a Nuitka-frozen Windows build (pywebview issue #1817).
+# 6.2 is the last known good release for that path, and the frozen GUI exe IS a
+# Nuitka standalone build, so this pin is what the packaged app resolves.
+# CONFIRMED by the packaged-installer smoke run on the pin: the installed
+# Anastomosis.exe no longer exits immediately — it stays up for the full launch
+# window with both captured streams empty (a GUI-subsystem exe prints nothing).
+# Keep the pin until a later pywebview is verified against the frozen build.
+pywebview==6.2

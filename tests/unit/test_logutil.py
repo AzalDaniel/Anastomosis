@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PHI log-redaction layer.
 
 All identifier-shaped strings below are synthetic: never-issued SSN range
@@ -149,12 +148,62 @@ def test_configure_logging_is_idempotent() -> None:
     saved_handlers = root.handlers[:]
     saved_level = root.level
     try:
-        # Start from a clean slate: drop any redacting handler a prior test
-        # (or an entry-point call) installed on the shared root logger.
-        root.handlers[:] = [h for h in root.handlers if h not in _redacting_handlers(root)]
+        # Start from an empty root so the count below sees only what
+        # configure_logging itself installs (the sweep would otherwise pull
+        # the test runner's own capture handlers into the count).
+        root.handlers[:] = []
         configure_logging()
         configure_logging()
         assert len(_redacting_handlers(root)) == 1
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_configure_logging_brings_preexisting_handlers_into_the_chain() -> None:
+    """A raw handler installed BEFORE configure_logging must end up redacting.
+
+    A host that calls ``logging.basicConfig`` before importing anastomosis
+    seeds the root with a raw StreamHandler; every root handler must carry the
+    RedactionFilter after configure_logging returns, or that handler emits
+    patient-shaped values unredacted (the disclosure the filter exists for).
+    """
+    import io
+
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    try:
+        root.handlers[:] = []
+        sink = io.StringIO()
+        preexisting = logging.StreamHandler(sink)
+        root.addHandler(preexisting)
+        configure_logging()
+        assert _redacting_handlers(root) == root.handlers  # every handler redacts
+        # Synthetic date-shaped value: the PRE-EXISTING handler must redact it.
+        logging.getLogger("test.chain").warning("dob is 01/02/1990")
+        assert "[REDACTED-DATE]" in sink.getvalue()
+        assert "01/02/1990" not in sink.getvalue()
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_configure_logging_sweeps_late_handlers_without_stacking() -> None:
+    """The reverse ordering: a raw handler added AFTER the first call is swept
+    into the chain by the second call, and no second safe handler stacks."""
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    try:
+        root.handlers[:] = []
+        configure_logging()
+        late = logging.StreamHandler()
+        root.addHandler(late)
+        assert late not in _redacting_handlers(root)
+        configure_logging()
+        assert _redacting_handlers(root) == root.handlers  # the late one redacts now
+        assert len(root.handlers) == 2  # ours + the late one; nothing stacked
     finally:
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)

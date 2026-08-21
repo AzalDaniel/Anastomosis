@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for external-pack hash-pinning + explicit trust.
 
 The security property under test: an external pack's ``context.py`` is NEVER
@@ -71,9 +70,9 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         doc.new_page(width=612, height=792)
         doc.save(str(pdf_path))
         doc.close()
@@ -252,7 +251,7 @@ def test_builtin_packs_load_without_trust(tmp_path: Path) -> None:
 def test_cli_refuses_untrusted_pack_dir_then_trusts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="render path needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="render path needs PyMuPDF")
     from typer.testing import CliRunner
 
     import anastomosis.reconstruct.chromium as chromium

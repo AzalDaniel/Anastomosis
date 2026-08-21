@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Chart reconstruction: template packs render canonical records to PDF.
 
 The pack registry lives here; the rendering engine (browser lifecycle,

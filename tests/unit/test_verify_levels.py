@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the L0-L6 verification levels (PLAN item 11).
 
 Real tiny PDFs are generated WITH PyMuPDF itself (no Chromium): open an empty
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="verify tests need PyMuPDF (render extra)")
+pymupdf = pytest.importorskip("pymupdf", reason="verify tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import Encounter, Patient  # noqa: E402
 from anastomosis.deliver.browser.errors import WrongPatientError  # noqa: E402
@@ -68,9 +67,9 @@ def _patient(**overrides: object) -> Patient:
 
 
 def _make_pdf(path: Path, lines: list[str], *, pages: int = 1) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     for _ in range(pages - 1):
         doc.new_page(width=612, height=792)
     doc.save(str(path))
@@ -146,6 +145,80 @@ def test_fuzzy_contains_exact_and_absent() -> None:
     assert fuzzy_contains("Wrongname Different", "Synthia Testpatient only") < 0.88
 
 
+def test_fuzzy_contains_rejects_short_name_embedded_in_longer_name() -> None:
+    """The boundary-anchored fast path: a short expected name buried inside a
+    longer one must NOT score the perfect 1.0 a raw ``in`` substring returned
+    ("Ann Li" inside "Joann Liang"). It falls through to the fuzzy window and
+    lands well below the 0.88 threshold — the wrong-chart hazard it rejects."""
+    assert fuzzy_contains("Ann Li", "Joann Liang reports well DOB 11/2/1990") < 0.88
+    # The punctuated-compound form of the same collision: joined through
+    # hyphens the parts are still embedded, and the fast path must not hand
+    # back 1.0 for them (intra-name joiners count as embedding).
+    assert fuzzy_contains("Ann Li", "Mary-Ann Li-Wong reports well") < 0.88
+    # A genuine standalone occurrence still scores the exact fast-path 1.0 —
+    # including through a cosmetic trailing sentence period.
+    assert fuzzy_contains("Ann Li", "Patient Ann Li, seen today") == 1.0
+    assert fuzzy_contains("Ann Li", "Seen today: Ann Li.") == 1.0
+
+
+# The alternate-rendering probes L2IdentityText's docstring cites as the
+# justification for the 0.88 threshold: (label, needle, page-1 text, ratio).
+# Their RATIOS are pinned, not just their side of the threshold — the number is
+# what the module documents, and a matcher change that moved them (a wider
+# window, a different normalization, a rebuilt window slice) would silently
+# re-calibrate the wrong-chart defense while every pass/fail test still passed.
+_PROBE_RATIOS = [
+    (
+        "middle name added",
+        "Synthia Testpatient",
+        "Synthia Marie Testpatient DOB 01/02/1990",
+        0.8260869565217391,
+    ),
+    (
+        "middle name dropped",
+        "Synthia Marie Testpatient",
+        "Synthia Testpatient DOB 01/02/1990",
+        0.6551724137931034,
+    ),
+    ("hyphen -> space", "Mary-Jane Testpatient", "Mary Jane Testpatient DOB 01/02/1990", 0.8),
+    ("space -> hyphen", "Mary Jane Testpatient", "Mary-Jane Testpatient DOB 01/02/1990", 0.8),
+    (
+        "last, first reorder",
+        "Synthia Testpatient",
+        "Testpatient, Synthia DOB 01/02/1990",
+        0.4782608695652174,
+    ),
+]
+
+
+@pytest.mark.parametrize(("label", "needle", "page", "expected"), _PROBE_RATIOS)
+def test_fuzzy_contains_pins_documented_probe_ratios(
+    label: str, needle: str, page: str, expected: float
+) -> None:
+    ratio = fuzzy_contains(needle, page)
+    assert ratio == pytest.approx(expected, abs=1e-12), f"probe ratio drifted: {label}"
+    # The fail-safe direction the threshold buys: every one of these legitimate
+    # alternate renderings lands BELOW 0.88, so it fails loudly for an operator
+    # rather than letting a similar-but-wrong name through.
+    assert ratio < 0.88
+
+
+def test_fuzzy_contains_window_is_token_anchored_across_a_long_page() -> None:
+    """The needle is found at any token boundary, and padding the page with
+    thousands of tokens neither changes the ratio nor bisects a word.
+
+    The window-slicing optimization is only sound because ``_normalize``
+    guarantees single-space separation; this pins the property on a page long
+    enough that a per-token page rebuild would be the dominant cost.
+    """
+    name = "Synthia Testpatient"
+    filler = " ".join(f"clinical note body line {i}" for i in range(2000))
+    assert fuzzy_contains(name, f"{filler} {name} {filler}") == 1.0
+    # Irregular whitespace (the real PDF-extraction case) normalizes to the same
+    # windows, so the ratio is unchanged.
+    assert fuzzy_contains(name, f"{filler}\n\n  Synthia   Testpatient \t{filler}") == 1.0
+
+
 # --- L0 file integrity ---
 
 
@@ -173,7 +246,7 @@ def test_l0_fails_on_tampered_bytes(tmp_path: Path) -> None:
 
 
 def test_l0_works_without_pymupdf(tmp_path: Path) -> None:
-    # L0 must not import fitz: it passes on a plain (non-PDF) intact file.
+    # L0 must not import pymupdf: it passes on a plain (non-PDF) intact file.
     p = tmp_path / "plain.bin"
     p.write_bytes(b"not a pdf but intact")
     item = _item(p)
@@ -262,6 +335,38 @@ def test_l2_skips_when_patient_has_no_name(tmp_path: Path) -> None:
         _good_item(tmp_path), _patient(given_name=None, family_name=None, birth_date=None)
     )
     assert result.status is LevelStatus.SKIP
+
+
+def test_l2_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
+    """The wrong-chart collision, end to end at L2: expected "Ann Li" / DOB
+    1990-01-02 against a page that shows "Joann Liang … 11/2/1990". BOTH the
+    name (embedded substring) and the DOB (1/2/1990 inside 11/2/1990) collide
+    under raw substring matching and used to PASS; boundary-anchoring makes L2
+    FAIL. The DOB hard gate fires first (a wrong-patient DOB on the page is the
+    catastrophe), so the detail names birth_date."""
+    lines = ["Joann Liang reports well.", "DOB 11/2/1990", *_FILLER]
+    item = _item(_make_pdf(tmp_path / "collision.pdf", lines))
+    ann_li = Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=DOB)
+    result = L2IdentityText().run(item, ann_li)
+    assert result.status is LevelStatus.FAIL
+    assert "birth_date" in result.detail
+    # And with the DOB gate removed, the NAME alone still fails (no 1.0 fast pass).
+    result_name_only = L2IdentityText().run(
+        item, Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=None)
+    )
+    assert result_name_only.status is LevelStatus.FAIL
+    assert "ratio" in result_name_only.detail
+
+
+def test_l3_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
+    """The same collision at L3 (pack-declared header fields): patient_name and
+    dob must both fail boundary-anchored against the Joann Liang page."""
+    lines = ["Joann Liang reports well.", "DOB 11/2/1990", *_FILLER]
+    item = _item(_make_pdf(tmp_path / "collision3.pdf", lines))
+    ann_li = Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=DOB)
+    result = L3HeaderFields().run(item, ann_li, pack=_pack(["patient_name", "dob"]), encounter=None)
+    assert result.status is LevelStatus.FAIL
+    assert "patient_name" in result.detail and "dob" in result.detail
 
 
 # --- L3 pack header fields ---

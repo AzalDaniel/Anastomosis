@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Anastomosis: reconstruct, verify, and re-home clinical records.
 
 An anastomosis is the surgical connection between two structures.
@@ -11,4 +10,4 @@ offline archive.
 Local-first by design: the core pipeline makes no network calls.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

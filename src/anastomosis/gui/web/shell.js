@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis GUI — shared shell interactions (carried from the predecessor).
  *
@@ -40,6 +39,14 @@
       const options = $$(".segment-option", toggle);
       if (!options.length) return;
       const count = options.length;
+
+      // --segment-count drives the indicator's slot width in app.css. It MUST be
+      // set here, not as a `style="--segment-count: 2"` markup attribute: the
+      // pages ship a strict `style-src 'self'` CSP with no 'unsafe-inline', so
+      // the browser REFUSES an inline style attribute (console error + the var
+      // never lands, leaving the indicator at width:0). CSSOM writes like this
+      // one are not inline styles and are unaffected by the policy.
+      toggle.style.setProperty("--segment-count", String(count));
 
       const activate = (nextIdxRaw, opts) => {
         const animate = !opts || opts.animate !== false;
@@ -122,7 +129,17 @@
         try { toggle.releasePointerCapture(drag.pointerId); } catch (_) { /* release optional */ }
         drag.pointerId = null;
         if (!wasMoved) {
-          toggle.classList.remove("is-dragging"); // plain click → option handler fires
+          toggle.classList.remove("is-dragging");
+          // A plain tap, and it must be resolved HERE. pointerdown took pointer
+          // capture on the TOGGLE, and the browser then retargets the following
+          // click to the capture element — so the per-option click listener
+          // below never fires for a real mouse/touch press, and the toggle
+          // would look dead to anything but the keyboard. Activate the slot
+          // under the pointer instead. The option listener still serves
+          // SYNTHETIC clicks (the command palette's setSegment → btn.click(),
+          // which produces no pointer sequence at all), and activate() early-
+          // outs on an unchanged slot, so the two paths cannot double-fire.
+          if (!canceled && e && typeof e.clientX === "number") activate(xToIndex(e.clientX));
           return;
         }
         const finalFloat = parseFloat(toggle.style.getPropertyValue("--segment-index") || "0");
@@ -331,7 +348,15 @@
     }
 
     const rows = $("#log-rows");
-    if (!rows) return;
+    if (!rows) {
+      // Pages without the activity strip (the wizard and the two learn wizards)
+      // would otherwise SWALLOW the entry entirely — including the shell's
+      // close-barrier notice, which is the operator's only explanation for a
+      // window close that was vetoed mid-run. Fall back to the page banner for
+      // the entries that carry a problem; informational chatter stays dropped.
+      if (kind === "error" || kind === "warn") bannerFallback(msg);
+      return;
+    }
     const row = document.createElement("div");
     row.className = `log-row log-row--${kind}`;
     const tsEl = document.createElement("span"); tsEl.className = "log-ts"; tsEl.textContent = ts;
@@ -348,6 +373,16 @@
   }
 
   const GLYPH = { ok: "✓", warn: "⚠", error: "✗", info: "·" };
+
+  // The log strip's stand-in on pages that don't host one: every page ships a
+  // #banner, so a problem entry still reaches the operator. textContent (never
+  // innerHTML) — the host's text is PHI-free but never trusted as markup.
+  function bannerFallback(msg) {
+    const banner = $("#banner");
+    if (!banner) return;
+    banner.textContent = msg;
+    banner.classList.add("show");
+  }
 
   function openLogDrawer() {
     const drawer = $("#log-drawer"); const strip = $("#log-strip");
@@ -379,6 +414,150 @@
       if (strip && strip.contains(e.target)) return;
       closeLogDrawer();
     });
+  }
+
+  // ─── Controller bridge helpers (shared by the run pages) ──────
+  // The dashboard and the migration wizard drive different flows but present
+  // their results the same way, so the presentation lives here once. PHI rule
+  // (unchanged): the per-patient detail below is fetched over the bridge and
+  // painted with textContent for LOCAL display only — it never rides an event
+  // and is never logged.
+
+  function hasApi() {
+    return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+  }
+
+  // Run a page's bootstrap now AND again if the bridge lands late.
+  //
+  // pywebview injects `window.pywebview.api` asynchronously and announces it
+  // with a `pywebviewready` window event, so a page that only probes hasApi()
+  // at DOMContentLoaded can lose the race and paint its "launch via anast gui"
+  // notice over a bridge that is about to arrive — permanently, because nothing
+  // re-runs the bootstrap. Every page bootstraps through here instead: `boot`
+  // runs immediately (painting the offline notice when there is genuinely no
+  // bridge — the plain-browser preview) and ONCE more when `pywebviewready`
+  // fires, at which point the page's own populate clears the notice. A page
+  // that already has the bridge does not re-register: the event is either
+  // already past or would only repeat work.
+  function onApiReady(boot) {
+    boot();
+    if (hasApi()) return;
+    window.addEventListener("pywebviewready", () => boot(), { once: true });
+  }
+
+  // Fill a <select> with [{value, label}] entries, replacing what was there.
+  // Each page supplies its own leading entry (the dashboard's "auto-detect"
+  // sentinel vs the wizard's "Select a source…" prompt are different contracts).
+  function fillSelect(select, entries) {
+    if (!select) return;
+    select.innerHTML = "";
+    for (const entry of entries) {
+      const opt = document.createElement("option");
+      opt.value = entry.value;
+      opt.textContent = entry.label;
+      select.appendChild(opt);
+    }
+  }
+
+  // Build the section-selection checkbox matrix into `matrix` from a
+  // {key: {label, default}} map. The host owns WHICH map applies (the dashboard
+  // keys off the chosen pack, the wizard off the render mode) and the
+  // empty-state wording; the toggle markup is identical on both pages.
+  function renderSectionMatrix(matrix, sections, emptyText) {
+    if (!matrix) return;
+    matrix.innerHTML = "";
+    const keys = Object.keys(sections || {});
+    if (keys.length === 0) {
+      matrix.textContent = emptyText;
+      matrix.classList.add("empty");
+      return;
+    }
+    matrix.classList.remove("empty");
+    for (const key of keys) {
+      const flag = sections[key];
+      const label = document.createElement("label");
+      label.className = "toggle";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.section = key;
+      input.checked = flag.default !== false;
+      const track = document.createElement("span");
+      track.className = "track";
+      const text = document.createElement("span");
+      text.textContent = flag.label || key;
+      label.appendChild(input);
+      label.appendChild(track);
+      label.appendChild(text);
+      matrix.appendChild(label);
+    }
+  }
+
+  // Read a section matrix back into the {section: bool} map the run calls take.
+  // Scoped to inputs carrying data-section so a future non-section checkbox in
+  // the same container can never pollute the map.
+  function gatherSections(matrix) {
+    const sections = {};
+    if (!matrix) return sections;
+    for (const box of $$("input[data-section]", matrix)) {
+      sections[box.dataset.section] = box.checked;
+    }
+    return sections;
+  }
+
+  // The per-patient roll-up table (patient / dob / encounters / notes).
+  // `panel` hides itself when there is nothing to show.
+  function renderPatients(panel, body, patients) {
+    if (!panel || !body) return;
+    body.innerHTML = "";
+    if (!patients.length) {
+      panel.hidden = true;
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "patients-table";
+    const head = document.createElement("tr");
+    for (const heading of ["patient", "dob", "encounters", "notes"]) {
+      const th = document.createElement("th");
+      th.textContent = heading;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const p of patients) {
+      const tr = document.createElement("tr");
+      const cells = [
+        p.display_name || "—",
+        p.birth_date || "—",
+        String(p.encounters),
+        String(p.documents),
+      ];
+      for (const value of cells) {
+        const td = document.createElement("td");
+        td.textContent = value; // textContent: PHI rendered as text, never HTML
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    body.appendChild(table);
+    panel.hidden = false;
+  }
+
+  function clearPatients(panel, body) {
+    if (body) body.innerHTML = "";
+    if (panel) panel.hidden = true;
+  }
+
+  // Fetch a finished run's per-patient detail and paint it. `summaryId` is the
+  // run's OWN id (from its `done` event), so a rapid second run cannot replace
+  // the detail this run is about to show (the summary race). The summary is
+  // advisory: a failure never blocks the run roll-up.
+  async function loadPatients(panel, body, summaryId) {
+    if (!hasApi()) return;
+    try {
+      const res = await window.pywebview.api.last_run_summary(summaryId);
+      if (res && res.ok) renderPatients(panel, body, res.patients || []);
+    } catch (_) {
+      /* advisory only */
+    }
   }
 
   // ─── Calendar grid builder (halo cells + count badges) ────────
@@ -464,6 +643,8 @@
   }
 
   window.AnastShell = {
+    hasApi,
+    onApiReady,
     initSegmentToggles,
     segmentValue,
     initCommandPalette,
@@ -473,6 +654,12 @@
     closeLogDrawer,
     toggleLogDrawer,
     renderCalendar,
+    fillSelect,
+    renderSectionMatrix,
+    gatherSections,
+    renderPatients,
+    clearPatients,
+    loadPatients,
     MONTH_NAMES,
   };
 })();

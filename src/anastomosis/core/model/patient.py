@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Patient identity and demographics (USCDI Patient data class)."""
 
 from __future__ import annotations

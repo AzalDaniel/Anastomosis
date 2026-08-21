@@ -43,8 +43,14 @@ jobs:
         # release-bearing ref) — a dispatch from any other ref fails here.
         if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
         shell: bash
+        # Ref names reach the shell as ENVIRONMENT values, never as `${{ }}`
+        # interpolated into the script: git permits `"`, `;`, `$`, and backticks
+        # in a ref name and the `v*` filter accepts them, so an interpolated ref
+        # is shell injection inside a job that holds id-token: write.
+        env:
+          REF: ${{ github.ref }}
         run: |
-          echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+          echo "refusing to publish from '$REF': dispatch publishes are main-only" >&2
           exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -52,10 +58,56 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+      - name: Assert the tag names the version this source builds
+        # Every `v*` tag reaches this job, and PyPI publishes whatever version
+        # the SOURCE carries — so a mistyped or stale tag would mint a release
+        # whose tag, artifacts, and PyPI index disagree. Same invariant the
+        # Windows release path enforces (windows-package.yml, "Assert the
+        # release source"): a tag run proceeds only when the tag equals
+        # `v<package version>`. Dispatch runs are main-only (guarded above)
+        # and publish main's version by design.
+        shell: bash
+        # Same rule as the dispatch guard above: the tag name is attacker-
+        # shaped text, so it arrives as an environment value and is only ever
+        # referenced quoted ("$REF_NAME"). The comparison logic is unchanged.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/anastomosis/__init__.py)"
+          if [ -z "$version" ]; then
+            echo "could not read __version__ from src/anastomosis/__init__.py" >&2
+            exit 1
+          fi
+          expected="v${version}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "dispatch publish from main: version '$version'"
+          elif [ "$REF_NAME" != "$expected" ]; then
+            echo "tag '$REF_NAME' does not match package version '$expected'" >&2
+            exit 1
+          else
+            echo "tag '$REF_NAME' matches package version '$expected'"
+          fi
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade build
           python -m build
+      - name: Assert the wheel carries the third-party license texts
+        # The wheel redistributes Apache-2.0 (HL7 CDA stylesheet) and OFL-1.1
+        # (the two GUI fonts) works; PEP 639 license-files in pyproject.toml
+        # places their full texts under dist-info/licenses/. A release whose
+        # wheel lost them (a packaging-config regression) must fail here, not
+        # ship stripped of the attributions it owes.
+        shell: bash
+        run: |
+          wheel="$(ls dist/*.whl)"
+          unzip -p "$wheel" '*/licenses/assets/licenses/APACHE-2.0.txt' | grep -q "Apache License" \
+            || { echo "wheel is missing the Apache-2.0 license text" >&2; exit 1; }
+          unzip -p "$wheel" '*/licenses/assets/licenses/OFL-1.1.txt' | grep -q "SIL OPEN FONT LICENSE" \
+            || { echo "wheel is missing the OFL-1.1 license text" >&2; exit 1; }
+          unzip -p "$wheel" '*/licenses/THIRD_PARTY_LICENSES.md' | grep -q "Third-party material" \
+            || { echo "wheel is missing THIRD_PARTY_LICENSES.md" >&2; exit 1; }
+          echo "wheel carries the third-party license texts"
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:

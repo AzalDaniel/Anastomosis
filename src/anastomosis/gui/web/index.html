@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -109,18 +108,23 @@
           <input type="text" id="pack-dir" placeholder="/path/to/custom/packs" />
         </div>
 
-        <!-- Section-Selection Matrix (item 18b): liquid toggles per pack section,
+        <!-- Section-Selection Matrix: liquid toggles per pack section,
              populated from info().packs[].sections; feeds gatherSections(). -->
         <div class="field">
           <label id="sections-label">Sections</label>
           <div class="section-matrix" id="section-matrix" aria-labelledby="sections-label"></div>
         </div>
 
-        <!-- QA as a gooey segment toggle; deliverers as liquid checkbox toggles. -->
-        <div class="filter-bar" style="padding: 0">
+        <!-- QA as a gooey segment toggle; deliverers as liquid checkbox toggles.
+             No style="" attributes anywhere on this page: the CSP above ships
+             style-src 'self' with no 'unsafe-inline', so an inline style is
+             REFUSED (a console error, and the declaration never applies). The
+             segment's --segment-count/--segment-index are written by shell.js
+             through the CSSOM instead; layout modifiers are classes. -->
+        <div class="filter-bar filter-bar--flush">
           <span class="pill-label">qa</span>
           <div class="segment-toggle" role="radiogroup" aria-label="QA"
-               data-name="qa" data-value="on" style="--segment-count: 2; --segment-index: 0">
+               data-name="qa" data-value="on">
             <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
             <button type="button" class="segment-option" data-value="on" aria-pressed="true">qa on</button>
             <button type="button" class="segment-option" data-value="off" aria-pressed="false">qa off</button>

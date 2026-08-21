@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the generic selector-driven browser pack machinery.
 
 A :class:`FakePage` implements :class:`PageLike` with scripted text contents per
@@ -85,8 +84,8 @@ class FakePage:
     def fill(self, selector: str, value: str) -> None:
         self.calls.append(("fill", (selector, value)))
 
-    def click(self, selector: str) -> None:
-        self.calls.append(("click", (selector,)))
+    def click(self, selector: str, *, nth: int | None = None) -> None:
+        self.calls.append(("click", (selector, nth)))
 
     def text_content(self, selector: str) -> str | None:
         self.calls.append(("text_content", (selector,)))
@@ -208,6 +207,25 @@ def test_resolver_id_is_stable_hash_of_row_text() -> None:
     assert id1.destination_patient_id == id2.destination_patient_id
 
 
+def test_resolver_clicks_the_matched_row_not_row_zero() -> None:
+    """ID-006: only the SECOND row matches, so the resolver must open row 1
+    (nth=1), not the bare selector's row 0 — otherwise it opens (and the banner
+    then reads back) the WRONG chart. The returned id must hash the matched row,
+    and the click must target that same row."""
+    page = FakePage(all_texts={"#patient_result_row": [_OTHER_ROW, _MATCH_ROW]})
+    dest = _dest(page)
+    dp = dest.resolver.resolve(_patient())
+    assert dp is not None
+    row_clicks = [
+        args for name, args in page.calls if name == "click" and args[0] == "#patient_result_row"
+    ]
+    # Exactly one row-open click, and it names the matched row's index (1).
+    assert row_clicks == [("#patient_result_row", 1)]
+    # The id hashes the row actually opened.
+    expected = hashlib.sha256(_MATCH_ROW.encode("utf-8")).hexdigest()[:16]
+    assert dp.destination_patient_id == f"row:{expected}"
+
+
 # --- banner ---
 
 
@@ -244,6 +262,94 @@ def test_banner_wrong_dob_fails() -> None:
 def test_banner_missing_text_fails() -> None:
     # text_content returns None for both slots -> empty strings -> no match.
     assert _dest(FakePage()).banner.current_patient_matches(_patient()) is False
+
+
+# --- boundary-anchored name/DOB: the wrong-patient collisions (ID-001/002) ---
+
+
+def _ann_li() -> Patient:
+    # A short name whose parts embed inside a longer one ("Ann"/"Li" inside
+    # "Joann"/"Liang"). Synthetic; DOB built from date parts.
+    return Patient(
+        id="feedface-0000-0000-0000-000000000009",
+        given_name="Ann",
+        family_name="Li",
+        birth_date=date(1990, 1, 2),
+    )
+
+
+def test_row_and_banner_reject_short_name_embedded_in_longer_name() -> None:
+    """The wrong-patient collision at the destination: expected "Ann Li"
+    against a "Joann Liang" chart with the SAME DOB. The DOB matches, so only
+    boundary-anchored NAME matching stops the wrong chart — raw ``in`` matched
+    "li" in "liang" and "ann" in "joann" and filed into the wrong patient."""
+    row = "Joann Liang  DOB 01/02/1990  MRN 555009"  # DOB matches Ann Li's
+    dest = _dest(FakePage())
+    assert dest._row_matches(row, _ann_li()) is False  # name embedded -> reject
+    banner = FakePage(
+        texts={"#patient_banner_name": "Joann Liang", "#patient_banner_dob": "DOB 01/02/1990"}
+    )
+    assert _dest(banner).banner.current_patient_matches(_ann_li()) is False
+
+
+def test_row_and_banner_reject_name_embedded_through_punctuation() -> None:
+    """The punctuated form of the same collision: "Ann"/"Li" joined into a
+    longer name through hyphens or an apostrophe ("Mary-Ann Li-Wong",
+    "O'Brien") must reject exactly like "Joann Liang" — intra-name joiners are
+    part of the name, not a token boundary."""
+    dest = _dest(FakePage())
+    row = "Mary-Ann Li-Wong  DOB 01/02/1990  MRN 555011"  # DOB matches Ann Li's
+    assert dest._row_matches(row, _ann_li()) is False
+    banner = FakePage(
+        texts={"#patient_banner_name": "Mary-Ann Li-Wong", "#patient_banner_dob": "DOB 01/02/1990"}
+    )
+    assert _dest(banner).banner.current_patient_matches(_ann_li()) is False
+
+
+def test_row_requires_each_name_field_contiguously() -> None:
+    """A multi-word family name is ONE field: satisfied word-by-word across the
+    row (a reordered compound surname — a different patient) it must reject;
+    present contiguously it must match."""
+    patient = Patient(
+        id="feedface-0000-0000-0000-000000000011",
+        given_name="Testgiven",
+        family_name="Dela Testfamily",
+        birth_date=date(1990, 1, 2),
+    )
+    dest = _dest(FakePage())
+    reordered = "Testfamily, Testgiven Dela Other  DOB 01/02/1990  MRN 555012"
+    assert dest._name_present(reordered, patient) is False
+    contiguous = "Dela Testfamily, Testgiven  DOB 01/02/1990  MRN 555013"
+    assert dest._row_matches(contiguous, patient) is True
+
+
+def test_banner_trailing_period_still_matches() -> None:
+    """A cosmetic sentence period in the banner must not read as a different
+    patient — a false mismatch here aborts the ENTIRE run (WrongPatientError),
+    the worst possible cost for a punctuation artifact."""
+    banner = FakePage(
+        texts={
+            "#patient_banner_name": "Patient: Ann Li.",
+            "#patient_banner_dob": "DOB: 01/02/1990.",
+        }
+    )
+    assert _dest(banner).banner.current_patient_matches(_ann_li()) is True
+
+
+def test_row_rejects_unpadded_dob_embedded_in_longer_date() -> None:
+    """The DOB half of the collision: an unpadded rendered DOB must not match
+    inside a longer date run ("1/2/1990" inside "11/2/1990"). Name matches here,
+    so the DOB boundary is the only thing standing between right and wrong."""
+    patient = Patient(
+        id="feedface-0000-0000-0000-000000000010",
+        given_name="Joann",
+        family_name="Liang",
+        birth_date=date(1990, 1, 2),
+    )
+    row = "Liang, Joann  DOB 11/2/1990  MRN 555010"
+    dest = _dest(FakePage(), dob_format="%-m/%-d/%Y")  # renders "1/2/1990"
+    assert dest._name_present(row, patient) is True  # name genuinely present
+    assert dest._row_matches(row, patient) is False  # but the DOB is a collision
 
 
 # --- scanner ---

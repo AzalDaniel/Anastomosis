@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The verifier seam the upload engine calls before and after each upload.
 
 This module is the *seam* plus the default pass-through implementation. The real
@@ -34,7 +33,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from anastomosis.core.model import Patient
-from anastomosis.destinations.base import UploadItem, UploadReceipt
+from anastomosis.destinations.base import DestinationPatient, UploadItem, UploadReceipt
 
 __all__ = ["NullVerifier", "Verifier"]
 
@@ -42,8 +41,18 @@ __all__ = ["NullVerifier", "Verifier"]
 class Verifier(Protocol):
     """Pre- and post-upload verification gates around one upload."""
 
-    def verify_pre(self, item: UploadItem, patient: Patient) -> None:
-        """Check before any bytes are sent. Raise to fail; return to pass."""
+    def verify_pre(
+        self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None = None
+    ) -> None:
+        """Check before any bytes are sent. Raise to fail; return to pass.
+
+        ``dest_patient`` is the destination patient the engine ALREADY resolved
+        for this item. Passing it in lets a verifier reuse that identity for its
+        post-upload read-back instead of RE-resolving — a second resolve on a
+        create-capable destination could POST a duplicate patient. It is
+        optional so a standalone caller (no prior resolve) still works; such a
+        caller's verifier resolves side-effect-free or skips read-back.
+        """
         ...
 
     def verify_post(self, item: UploadItem, receipt: UploadReceipt) -> None:
@@ -63,7 +72,9 @@ class NullVerifier:
     wrong-patient abort runs regardless of which verifier is in place.
     """
 
-    def verify_pre(self, item: UploadItem, patient: Patient) -> None:
+    def verify_pre(
+        self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None = None
+    ) -> None:
         return None
 
     def verify_post(self, item: UploadItem, receipt: UploadReceipt) -> None:

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the FHIR R4 / US Core source adapter (``sources/fhir_r4``).
 
 Drives the adapter against the in-repo synthetic US Core fixture
@@ -24,7 +23,7 @@ import anastomosis.reconstruct.chromium as chromium
 import anastomosis.sources.fhir_r4  # noqa: F401
 from anastomosis.core.model import AllergyCategory, ObservationCategory
 from anastomosis.sources import detect_source, get_source
-from anastomosis.sources.fhir_r4.mapper import records_from_resources
+from anastomosis.sources.fhir_r4.mapper import AmbiguousUnanchoredError, records_from_resources
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "fhir_r4"
 BUNDLE = FIXTURE_DIR / "uscore_bundle.json"
@@ -62,14 +61,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -328,9 +327,10 @@ def test_orphan_resource_preserved_for_single_patient() -> None:
     assert rec.conditions == []
 
 
-def test_orphan_resource_not_misattributed_across_patients() -> None:
-    """With several patients, an unattributable resource is omitted rather than
-    misattributed to an arbitrary patient (the safer-than-corruption choice)."""
+def test_orphan_resource_across_patients_refuses_the_load() -> None:
+    """With several patients an unanchored resource can be attributed to none of
+    them: attaching it would misattribute one patient's data to another and
+    omitting it would drop clinical data silently, so the load fails loudly."""
     resources = [
         _patient_resource(family="Specimen", pid=PID),
         _patient_resource(family="Placeholder", pid="feedface-0001-0000-0000-000000000002"),
@@ -342,8 +342,278 @@ def test_orphan_resource_not_misattributed_across_patients() -> None:
             "code": {"text": "Stray"},
         },
     ]
-    for rec in records_from_resources(resources):
-        assert "fhir_r4:unanchored" not in rec.extensions
+    with pytest.raises(AmbiguousUnanchoredError) as exc:
+        list(records_from_resources(resources))
+    assert exc.value.counts == {"Condition": 1}
+    assert "Condition (1)" in str(exc.value)
+    # Resource TYPES and counts are schema; no id or patient-derived value leaks.
+    assert "stray" not in str(exc.value)
+    assert "Patient/does-not-exist" not in str(exc.value)
+
+
+PID2 = "feedface-0001-0000-0000-000000000002"
+
+
+def test_patient_less_resources_do_not_refuse_a_multi_patient_bundle() -> None:
+    """A PractitionerRole, a Provenance and a Medication reference no patient at
+    all — they are bundle-level, not dangling — so a two-patient bundle loads,
+    and every one of them is accounted for under ``fhir_r4:shared`` on each
+    record (preserved, with no attribution claimed)."""
+    shared_resources = [
+        {"resourceType": "PractitionerRole", "id": "pr1", "practitioner": {"reference": "P/x"}},
+        {"resourceType": "Provenance", "id": "pv1", "target": [{"reference": f"Patient/{PID}"}]},
+        {"resourceType": "Medication", "id": "m1", "code": {"text": "Amoxicillin"}},
+    ]
+    records = list(
+        records_from_resources(
+            [
+                _patient_resource(),
+                _patient_resource(family="Placeholder", pid=PID2),
+                *shared_resources,
+            ]
+        )
+    )
+    assert len(records) == 2
+    for record in records:
+        assert record.extensions["fhir_r4:shared"] == shared_resources
+    # They never leak into a typed collection of either patient.
+    assert all(not record.medications for record in records)
+
+
+def test_dangling_patient_reference_still_refuses_a_multi_patient_bundle() -> None:
+    """The refusal narrows to the real ambiguity: a resource that NAMES a
+    patient the data does not contain."""
+    resources = [
+        _patient_resource(),
+        _patient_resource(family="Placeholder", pid=PID2),
+        {
+            "resourceType": "Condition",
+            "id": "stray",
+            "subject": {"reference": "Patient/does-not-exist"},
+            "code": {"text": "Stray"},
+        },
+        {"resourceType": "Medication", "id": "m1", "code": {"text": "Amoxicillin"}},
+    ]
+    with pytest.raises(AmbiguousUnanchoredError) as exc:
+        list(records_from_resources(resources))
+    # Only the dangling Condition is counted; the patient-less Medication is not.
+    assert exc.value.counts == {"Condition": 1}
+
+
+def test_untrusted_resource_type_is_not_echoed_into_the_message() -> None:
+    """resourceType arrives from a file this adapter does not author. Anything
+    that is not a plain type name reads as "unknown", so a crafted export cannot
+    smuggle patient text into an operator-facing message."""
+    resources = [
+        _patient_resource(),
+        _patient_resource(family="Placeholder", pid=PID2),
+        {
+            "resourceType": "Observation MRN 88231 DOE JANE",
+            "id": "x",
+            "subject": {"reference": "Patient/ghost"},
+        },
+    ]
+    with pytest.raises(AmbiguousUnanchoredError) as exc:
+        list(records_from_resources(resources))
+    assert exc.value.counts == {"unknown": 1}
+    assert "88231" not in str(exc.value)
+    assert "DOE" not in str(exc.value)
+
+
+def test_versioned_patient_reference_resolves() -> None:
+    """``Patient/<id>/_history/2`` is the same logical patient — reading the
+    version as the id would make an ordinary versioned reference dangle."""
+    condition = {
+        "resourceType": "Condition",
+        "id": "c-versioned",
+        "subject": {"reference": f"http://ex.org/fhir/Patient/{PID}/_history/2"},
+        "code": {"text": "Versioned reference"},
+    }
+    records = list(
+        records_from_resources(
+            [_patient_resource(), _patient_resource(family="Placeholder", pid=PID2), condition]
+        )
+    )
+    anchored = {r.patient.id: [c.display for c in r.conditions] for r in records}
+    assert anchored[PID] == ["Versioned reference"]
+    assert anchored[PID2] == []
+
+
+def test_identifier_only_reference_resolves_against_patient_identifier() -> None:
+    """A logical reference carries no id at all; US Core resolves it against
+    Patient.identifier (system + value)."""
+    patient = _patient_resource()
+    patient["identifier"] = [{"system": "urn:oid:1.2.3", "value": "MRN-909"}]
+    condition = {
+        "resourceType": "Condition",
+        "id": "c-logical",
+        "subject": {"identifier": {"system": "urn:oid:1.2.3", "value": "MRN-909"}},
+        "code": {"text": "Logical reference"},
+    }
+    records = list(
+        records_from_resources(
+            [patient, _patient_resource(family="Placeholder", pid=PID2), condition]
+        )
+    )
+    anchored = {r.patient.id: [c.display for c in r.conditions] for r in records}
+    assert anchored[PID] == ["Logical reference"]
+    assert anchored[PID2] == []
+    # The anchor also reaches the typed model, not just the grouping.
+    assert next(r for r in records if r.patient.id == PID).conditions[0].patient_id == PID
+
+
+def test_unmatched_identifier_reference_is_shared_not_a_refusal() -> None:
+    """An identifier reference that matches no Patient names nobody the data can
+    identify — unlike ``Patient/<id>``, it makes no claim about a patient being
+    present. Refusing the whole load over one would block ordinary valid input,
+    so it is preserved bundle-level instead (nothing dropped, nothing guessed)."""
+    condition = {
+        "resourceType": "Condition",
+        "id": "c-unmatched",
+        "subject": {"identifier": {"system": "urn:oid:1.2.3", "value": "MRN-NO-MATCH"}},
+        "code": {"text": "Unmatched logical reference"},
+    }
+    records = list(
+        records_from_resources(
+            [_patient_resource(), _patient_resource(family="Placeholder", pid=PID2), condition]
+        )
+    )
+    assert len(records) == 2
+    for record in records:
+        assert record.extensions["fhir_r4:shared"] == [condition]
+        assert record.conditions == []
+
+
+def test_unread_race_sub_extensions_survive_the_lift() -> None:
+    """The race lift reads ONE sub-extension (``text``) and one field of it. The
+    ombCategory codings it skipped — and a ``detailed`` sub-extension it never
+    reads at all — must therefore stay in the residue, not be marked consumed on
+    the coat-tails of the entry that supplied the typed value."""
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [{"family": "Specimen", "given": ["Dexter"]}],
+        "extension": [
+            {
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+                "extension": [
+                    {"url": "ombCategory", "valueCoding": {"code": "2106-3", "display": "White"}},
+                    {"url": "detailed", "valueCoding": {"code": "1735-0", "display": "Inupiat"}},
+                    {"url": "text", "valueString": "White"},
+                ],
+            }
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert patient.race == ["White"]  # the typed lift is unchanged
+    assert patient.extensions["fhir_r4:extension"] == [
+        {
+            "extension": [
+                {"url": "ombCategory", "valueCoding": {"code": "2106-3", "display": "White"}},
+                {"url": "detailed", "valueCoding": {"code": "1735-0", "display": "Inupiat"}},
+            ]
+        }
+    ]
+
+
+def test_omb_category_race_keeps_its_codes() -> None:
+    """With no ``text``, the lift takes the ombCategory DISPLAYS — so the codes
+    behind them (which nothing reads) still ride the residue."""
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [{"family": "Specimen"}],
+        "extension": [
+            {
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-ethnicity",
+                "extension": [
+                    {
+                        "url": "ombCategory",
+                        "valueCoding": {"code": "2135-2", "display": "Hispanic or Latino"},
+                    }
+                ],
+            }
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert patient.ethnicity == ["Hispanic or Latino"]
+    assert patient.extensions["fhir_r4:extension"] == [
+        {"extension": [{"valueCoding": {"code": "2135-2"}}]}
+    ]
+
+
+def test_vendor_shaped_race_extension_the_lift_cannot_read_survives_whole() -> None:
+    """An entry carrying a lifted url but a shape the lift reads NOTHING from
+    must not be marked consumed: nothing was lifted, so everything is residue."""
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [{"family": "Specimen"}],
+        "extension": [
+            {
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+                "valueString": "SENTINEL-VENDOR-RACE",
+            }
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert patient.race == []
+    assert patient.extensions["fhir_r4:extension"] == [
+        {
+            "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+            "valueString": "SENTINEL-VENDOR-RACE",
+        }
+    ]
+
+
+def test_leading_placeholder_name_entry_does_not_blank_the_patient() -> None:
+    """``name: [{}, {...}]`` must migrate the REAL name into the typed slots —
+    selecting the placeholder loses nothing (it rides fhir_r4:name) but leaves
+    every typed name slot empty, which the wrong-patient defenses fail closed on.
+    The consumed-path bookkeeping follows the selected entry, so the entry's
+    unread sub-keys (prefix) still narrate and the lifted ones do not duplicate.
+    """
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [
+            {},
+            {"family": "SENTINEL-Real", "given": ["SENTINEL-Given"], "prefix": ["Dr"]},
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert (patient.given_name, patient.family_name) == ("SENTINEL-Given", "SENTINEL-Real")
+    assert patient.extensions["fhir_r4:name"] == [{"prefix": ["Dr"]}]
+
+
+def test_patient_name_subkeys_and_custom_extension_are_preserved() -> None:
+    """Reading part of `name`/`extension` must not consume the whole element:
+    HumanName.prefix/use and a non-US-Core extension survive at a namespaced
+    path, while the sub-keys the mapper DID lift do not duplicate into it."""
+    custom = "http://example.com/fhir/StructureDefinition/sentinel-flag"
+    resource = {
+        "resourceType": "Patient",
+        "id": PID,
+        "name": [{"use": "official", "prefix": ["Dr"], "given": ["Dexter"], "family": "Specimen"}],
+        "extension": [
+            {"url": custom, "valueString": "SENTINEL-CUSTOM-EXT"},
+            {
+                "url": "http://hl7.org/fhir/us/core/StructureDefinition/us-core-race",
+                "extension": [{"url": "text", "valueString": "White"}],
+            },
+        ],
+    }
+    patient = next(iter(records_from_resources([resource]))).patient
+    assert patient.extensions["fhir_r4:name"] == [{"use": "official", "prefix": ["Dr"]}]
+    assert patient.extensions["fhir_r4:extension"] == [
+        {"url": custom, "valueString": "SENTINEL-CUSTOM-EXT"}
+    ]
+    # The lifted parts still land in their typed slots, and only there.
+    assert (patient.given_name, patient.family_name, patient.race) == (
+        "Dexter",
+        "Specimen",
+        ["White"],
+    )
 
 
 def test_observation_panel_with_value_and_components_emits_all() -> None:
@@ -614,7 +884,7 @@ def test_adapter_registered_in_toolkit_info() -> None:
 def test_end_to_end_render_through_pipeline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="render e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="render e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     from anastomosis.core.commands import PipelineCommand, run_pipeline_command, summarize_patients
 

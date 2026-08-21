@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FHIR export/ingest tests: the round-trip IS the lossless guarantee.
 
 Every fixture record must survive canonical → Bundle → canonical with
@@ -30,10 +29,7 @@ _LIST_FIELDS = (
     "family_history",
     "past_medical_history",
     "advance_directives",
-    "health_concerns",
     "goals",
-    "devices",
-    "lab_orders",
     "coverages",
     "documents",
     "practitioners",

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 import os
 import stat
 from pathlib import Path
@@ -86,14 +85,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -103,7 +102,7 @@ class _FakeChromium:
 
 
 def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -123,7 +122,7 @@ def test_pipeline_run_no_upload_manifest_by_default(
 ) -> None:
     """Regression: without --upload-manifest, no manifest line and no file (the
     flag is additive — a default run is unchanged)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(app, ["pipeline", "run", str(FIXTURE), "--out", str(out)])
@@ -136,7 +135,7 @@ def test_pipeline_run_upload_manifest_writes_file_and_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """--upload-manifest writes upload_manifest.json and prints the additive line."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -156,7 +155,7 @@ def test_pipeline_run_upload_manifest_writes_file_and_line(
 def test_pipeline_run_delivery_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin the CLI's archive/bundle/ccda summary lines (3 patients in the
     fixture), so a future change to the delivery output is caught."""
-    pytest.importorskip("fitz", reason="delivery e2e needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="delivery e2e needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
     result = runner.invoke(
@@ -195,6 +194,63 @@ def test_pipeline_run_diagnoses_unknown_pack(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "unavailable" in result.output
+
+
+# --- the delivery commands (archive / bundle) -------------------------------
+#
+# Both commands are built by one factory in cli_commands/delivery.py, so these
+# two happy paths are what proves the factory registers a WORKING command each
+# time (not just an identical --help screen): the pipeline runs, the deliverer
+# writes its own persona's layout, and the charts land in the default
+# <out>/_charts unless --charts-dir says otherwise.
+
+
+def test_archive_command_writes_the_archive_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`anast archive` runs the pipeline and writes the searchable archive."""
+    pytest.importorskip("pymupdf", reason="archive e2e needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "arc"
+    result = runner.invoke(app, ["archive", str(FIXTURE), "--out", str(out)])
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "Archive: 3 patients, 6 encounters, 6 pdfs" in normalized
+    # The archive's own layout: one cross-patient index + per-patient subtrees.
+    assert (out / "index.html").is_file()
+    assert (out / "index.json").is_file()
+    assert (out / "README.txt").is_file()
+    assert len(list((out / "patients").iterdir())) == 3
+    # Charts default to <out>/_charts and every rendered PDF was attributed.
+    assert len(list((out / "_charts").glob("*.pdf"))) == 6
+    assert not (out / "unattributed").exists()
+
+
+def test_bundle_command_writes_one_directory_per_patient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`anast bundle` runs the pipeline and writes one per-patient bundle."""
+    pytest.importorskip("pymupdf", reason="bundle e2e needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    out = tmp_path / "bun"
+    charts = tmp_path / "charts"
+    result = runner.invoke(
+        app, ["bundle", str(FIXTURE), "--out", str(out), "--charts-dir", str(charts)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Bundles: 3 patients" in " ".join(result.output.split())
+    # The bundle's own layout: one self-contained directory per patient, each
+    # carrying the FHIR rendition, its charts, the QA slice, and its README.
+    patient_dirs = sorted(p for p in out.iterdir() if p.is_dir())
+    assert len(patient_dirs) == 3
+    for patient_dir in patient_dirs:
+        assert (patient_dir / "bundle.json").is_file()
+        assert (patient_dir / "README.txt").is_file()
+        assert (patient_dir / "qa_report.json").is_file()
+        assert list((patient_dir / "pdfs").glob("*.pdf"))
+    # --charts-dir was honored, so no _charts sibling was created under --out.
+    assert len(list(charts.glob("*.pdf"))) == 6
+    assert not (out / "_charts").exists()
 
 
 # --- operator-input boundary (clean exit 2, never a traceback) --------------
@@ -546,7 +602,7 @@ def test_explicit_source_does_not_print_detected_line(
 ) -> None:
     """Regression: 'Detected source' announces auto-detection only — an
     operator who typed --source already knows (the original behavior)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     result = runner.invoke(
         app,
@@ -569,12 +625,12 @@ class _PointInsertChromium(_FakeChromium):
     a real, QA-passable page."""
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
         lines = (html_to_text(html) or "(empty)").splitlines()
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
         doc.save(str(pdf_path))
@@ -589,7 +645,7 @@ def _patch_migration_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     _patch_migration_chromium(monkeypatch)
     out = tmp_path / "out"
     result = runner.invoke(
@@ -626,7 +682,7 @@ def test_migrate_no_route_destination_produces_ccda_and_exits_1(
 ) -> None:
     """A destination with no viable automated route still gets the importable
     C-CDA written, but the gap is loud and the exit code is 1 (not a silent 0)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF (render extra)")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     _patch_migration_chromium(monkeypatch)
     out = tmp_path / "out"
     result = runner.invoke(

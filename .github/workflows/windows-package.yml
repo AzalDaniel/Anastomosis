@@ -29,7 +29,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main, claude/practical-mendel-torkk3]
+    branches: [main, "claude/**"]
     paths:
       - "packaging/**"
       - ".github/workflows/windows-package.yml"
@@ -53,7 +53,9 @@ jobs:
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.11"
+          # Same interpreter as the CI lint/type/e2e lanes — the shipped
+          # binary freezes the stdlib this version provides.
+          python-version: "3.12"
 
       - name: Cache Playwright browsers
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -62,17 +64,19 @@ jobs:
           # Keyed on the constraints file so a Playwright pin bump automatically
           # invalidates the cached browser (packaging/constraints.txt is the pin).
           key: ms-playwright-windows-${{ hashFiles('packaging/constraints.txt') }}
+          restore-keys: ms-playwright-windows-
 
       - name: Cache Nuitka
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~\AppData\Local\Nuitka\Nuitka\Cache
           key: nuitka-windows-${{ hashFiles('pyproject.toml') }}
+          restore-keys: nuitka-windows-
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ".[render,gui,deliver-browser]" -c packaging/constraints.txt nuitka
+          pip install ".[render,gui,deliver-browser]" -c packaging/constraints.txt "nuitka==4.1.3"
 
       - name: Install Chromium (bundled at build time)
         run: playwright install chromium
@@ -133,41 +137,14 @@ jobs:
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.ver.outputs.version }} packaging\anastomosis.iss
 
-      - name: Smoke-test the installer (silent install + installed self-check)
-        # The second anti-assumption gate. Install the just-built installer the
-        # way a user would (silent, default Program Files location), then prove
-        # the INSTALLED app is whole: the GUI + CLI exes are laid down and the
-        # installed `anast doctor` passes (every bundled asset + Chromium copied
-        # through the install). A UAC/elevation hang is bounded by WaitForExit.
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem dist\installer\*.exe | Select-Object -First 1
-          if (-not $installer) { throw "no installer was produced" }
-          Write-Host "installing $($installer.Name) silently..."
-          $log = "$env:RUNNER_TEMP\anastomosis-install.log"
-          $p = Start-Process -FilePath $installer.FullName `
-            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/LOG=$log" `
-            -PassThru
-          if (-not $p.WaitForExit(300000)) {
-            try { $p.Kill() } catch {}
-            if (Test-Path $log) { Get-Content $log }
-            throw "installer did not finish within 5 min (an elevation prompt may be blocking)"
-          }
-          if ($p.ExitCode -ne 0) {
-            if (Test-Path $log) { Get-Content $log }
-            throw "installer exited with code $($p.ExitCode)"
-          }
-          $app = Join-Path $env:ProgramFiles 'Anastomosis'
-          $cli = Join-Path $app 'cli\anast.exe'
-          $gui = Join-Path $app 'gui\Anastomosis.exe'
-          foreach ($f in @($cli, $gui)) {
-            if (-not (Test-Path $f)) { throw "installed layout is missing: $f" }
-            Write-Host "present: $f"
-          }
-          Write-Host "running the INSTALLED 'anast doctor'..."
-          & $cli doctor
-          if ($LASTEXITCODE -ne 0) { throw "installed 'anast doctor' failed (exit $LASTEXITCODE)" }
-          Write-Host "installed self-check passed."
+      - name: Smoke-test the installer (install, doctor, real window, uninstall)
+        # The second anti-assumption gate, end to end the way a user meets the
+        # artifact: silent install -> installed layout -> installed `anast
+        # doctor` -> the dashboard actually renders inside the shipped WebView2
+        # window (Playwright over CDP; DOM expectations shared with the Linux
+        # gui-e2e lane) -> silent uninstall leaves no payload behind. Any FAIL
+        # exits non-zero and fails the build.
+        run: python packaging/smoke_windows.py
 
       - name: Upload the installer
         # !cancelled() so the installer is available for download even when the
@@ -211,20 +188,30 @@ jobs:
         #     creates tag v<version> on it below, so publishing from any other ref
         #     would tag the wrong commit.
         shell: bash
+        # Ref names reach the shell as ENVIRONMENT values, never as `${{ }}`
+        # interpolated into the script: git permits `"`, `;`, `$`, and backticks
+        # in a ref name and the `v*` filter accepts them, so an interpolated ref
+        # is shell injection inside a job that holds contents: write. The
+        # comparison logic below is unchanged.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          expected="v${{ needs.build.outputs.version }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-              echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+          expected="v${VERSION}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "refusing to publish from '$REF': dispatch publishes are main-only" >&2
               exit 1
             fi
             echo "dispatch publish from main; the release action will create tag '$expected'"
           else
-            if [ "${{ github.ref_name }}" != "$expected" ]; then
-              echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+            if [ "$REF_NAME" != "$expected" ]; then
+              echo "tag '$REF_NAME' does not match package version '$expected'" >&2
               exit 1
             fi
-            echo "tag '${{ github.ref_name }}' matches package version '$expected'"
+            echo "tag '$REF_NAME' matches package version '$expected'"
           fi
 
       - name: Extract this version's CHANGELOG section as the release notes
@@ -232,8 +219,12 @@ jobs:
         # the next `## [` header) so the GitHub release body is the curated notes.
         # generate_release_notes (below) appends GitHub's auto PR list to this.
         shell: bash
+        # Same discipline as the assert above: the job output reaches the script
+        # through the environment, not through `${{ }}` interpolation.
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          ver="${{ needs.build.outputs.version }}"
+          ver="${VERSION}"
           awk -v ver="$ver" '
             $0 ~ ("^## \\[" ver "\\]") {flag=1; print; next}
             flag && /^## \[/ {exit}

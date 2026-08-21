@@ -42,7 +42,7 @@ page:
 #
 # The current LoadedPack/engine filename contract (reconstruct/packs.py
 # FilenameRules + engine._filename_for) exposes exactly four substitution
-# fields — {family} {given} {dos} {type} — applies core _safe_name() to each
+# fields — {family} {given} {dos} {type} — applies core.textutil safe_name() to each
 # (which strips the path separator), does NOT compute an abbreviated-CC token,
 # and does NOT create per-patient parent directories. Reproducing the §11 rule
 # faithfully therefore needs a backwards-compatible engine extension (a
@@ -131,7 +131,6 @@ tokens:
   # (static.practicefusion.com/.../{practice-group-guid}/encounter/{guid}/...);
   # that real path is REDACTED. This neutral placeholder is shown instead, and
   # the GOLD_STANDARD §1 footer-flex truncation fix is honored in RULES.md.
-  footer_url: "https://example.com/encounter/soap-note"
 
 # Header fields the L3 delivery verification reads back off the rendered PDF
 # (the wrong-chart defense). These appear in the 3-column PATIENT/ENCOUNTER

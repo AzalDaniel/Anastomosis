@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the packgen draft-pack emitter (emit.py) and the wizard CLI.
 
 No Chromium: a small set of synthetic 'sample' PDFs is built directly with
@@ -18,7 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-fitz = pytest.importorskip("fitz", reason="packgen emit tests need the render extra (PyMuPDF)")
+pymupdf = pytest.importorskip("pymupdf", reason="packgen emit tests need the render extra")
 
 from typer.testing import CliRunner  # noqa: E402
 
@@ -43,9 +42,9 @@ _PATIENTS = [
 
 def _build_sample(path: Path, name: str, dob: str, complaint: str) -> None:
     """A synthetic note sharing a static frame, differing only in values."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=_W, height=_H)
-    page.draw_rect(fitz.Rect(_LABEL_X, 95, 560, 110), fill=_GREY_F1, color=None)
+    page.draw_rect(pymupdf.Rect(_LABEL_X, 95, 560, 110), fill=_GREY_F1, color=None)
     page.insert_text((_LABEL_X, 90), "SUBJECTIVE", fontsize=13, fontname="hebo")
     page.insert_text((_LABEL_X, 130), "OBJECTIVE", fontsize=13, fontname="hebo")
     page.insert_text((_LABEL_X, 200), "DOB:", fontsize=11, fontname="helv")

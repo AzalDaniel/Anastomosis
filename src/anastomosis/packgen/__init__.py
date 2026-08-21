@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Pack-from-samples layout learner — the analysis half (M3a).
 
 A practice hands us N sample PDFs of their EHR's note format. ``packgen``

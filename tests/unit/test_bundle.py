@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the per-patient bundle deliverer (Responder persona)."""
 
 from __future__ import annotations
@@ -213,9 +212,93 @@ def test_bundle_no_qa_report_means_no_qa_file(tmp_path: Path, records: list[Pati
     assert not (out / records[0].patient.id / "qa_report.json").exists()
 
 
+def test_bundle_long_patient_id_stays_writable(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """A source id longer than the filesystem allows still delivers: the
+    directory name is cut (with its hash tag) instead of raising OSError."""
+    long_id = "feedface-0000-0000-0000-0000000000aa" + "z" * 300
+    patient = records[0].patient.model_copy(update={"id": long_id})
+    record = records[0].model_copy(update={"patient": patient})
+
+    out = tmp_path / "bundles"
+    result = BundleDeliverer().deliver(record, None, out)
+    assert result.out_dir.is_dir()
+    assert result.bundle_path.is_file()
+    assert len(result.patient_id) < len(long_id)
+
+
 def test_bundle_handles_missing_pdfs(tmp_path: Path, records: list[PatientRecord]) -> None:
     out = tmp_path / "bundles"
     result = BundleDeliverer().deliver(records[0], None, out)
     assert result.pdf_paths == []
     assert result.bundle_path.is_file()
     assert result.readme_path is not None and result.readme_path.is_file()
+
+
+def test_bundle_budgets_the_copied_chart_name(tmp_path: Path) -> None:
+    """A renderer-length chart name must be DELIVERED, not warned about.
+
+    Unbudgeted, ``pdfs/<617-char name>.pdf`` under a bundle directory blows the
+    Windows path budget; the copy fails, the deliverer logs "pdf copy failed"
+    and continues, and the operator hands over a bundle with a chart missing.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+    from anastomosis.core.textutil import MAX_PATH_CHARS
+
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    record = PatientRecord(
+        patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
+        encounters=[
+            Encounter(
+                id="feedface-e000-0000-0000-0000000000aa",
+                patient_id=pid,
+                date_of_service=date(2023, 5, 10),
+            )
+        ],
+    )
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    chart = pdfs_dir / f"Fixture_Ada_05-10-2023_{'S' * 200}.pdf"
+    chart.write_bytes(b"%PDF-1.7 fake\n")
+
+    result = BundleDeliverer().deliver(record, [chart], tmp_path / "bundles")
+
+    assert len(result.pdf_paths) == 1
+    delivered = result.pdf_paths[0]
+    assert delivered.is_file()
+    assert delivered.suffix == ".pdf"
+    assert len(str(delivered)) <= MAX_PATH_CHARS
+    assert delivered.read_bytes() == chart.read_bytes()
+
+
+def test_bundle_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
+    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``; the bundle
+    writers are exist_ok/overwrite, so a silent collision would deliver ONE
+    directory holding the second patient's record over the first."""
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    records = [
+        PatientRecord(patient=Patient(id="MRN 1234", family_name="Fixture", given_name="Ada")),
+        PatientRecord(patient=Patient(id="MRN/1234", family_name="Sample", given_name="Boris")),
+    ]
+
+    with pytest.raises(DeliveredNameCollision, match="patient directory"):
+        BundleDeliverer().deliver_records(records, None, tmp_path / "bundles")
+
+
+def test_bundle_standalone_deliver_still_works_without_a_ledger(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """``deliver`` is a public single-record entry point: called without the
+    per-run ledger it must behave exactly as before (one record cannot collide
+    with itself), so a caller outside ``deliver_records`` is never broken."""
+    out = tmp_path / "bundles"
+    first = BundleDeliverer().deliver(records[0], None, out)
+    again = BundleDeliverer().deliver(records[0], None, out)
+    assert first.patient_id == again.patient_id
+    assert again.bundle_path.is_file()

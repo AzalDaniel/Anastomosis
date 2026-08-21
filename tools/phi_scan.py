@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PHI scanner: blocks protected health information from entering this repo.
 
 Anastomosis was generalized from a private production system that handled
@@ -7,7 +6,7 @@ real patient data. This scanner enforces the project's first rule:
 **no real PHI ever enters this repository** — not in code, not in docs,
 not in fixtures, not in git history.
 
-Two complementary mechanisms:
+Three complementary mechanisms:
 
 1. Hashed deny-list (``tools/phi_hashes.json``): SHA-256 hashes of tokens
    known to be PHI from the private predecessor (patient/provider names,
@@ -18,6 +17,21 @@ Two complementary mechanisms:
 2. Generic patterns: SSN-shaped strings, GUIDs outside the synthetic
    fixture prefixes, phone numbers outside the 555 exchange, and dates
    adjacent to DOB markers.
+
+3. Opaque-content default-deny: content the text passes cannot inspect passes
+   ONLY when the whole FILE's sha256 appears as a ``sha256:<hex>`` entry in
+   ``tools/phi_allowlist.txt`` with a provenance comment. Two shapes qualify:
+
+   * a binary file (a binary suffix, or NUL bytes in the first 8 KiB);
+   * a base64-armored payload inside an otherwise readable text file — a
+     ``;base64,<N+ chars>`` run (see :data:`BASE64_ARMOR_RE`). The token
+     splitter chops such a blob into meaningless fragments, so every text
+     pattern above sails straight through it; a chart, a scan, or a
+     spreadsheet of PHI hides there in plain sight.
+
+   The scanner is the repository's no-unapproved-opaque-content enforcer;
+   skipping what it cannot read would let a file carry sensitive content past
+   it unread.
 
 Synthetic-data conventions enforced repo-wide:
   * fixture GUIDs must start with ``feedface-`` or ``00000000-``
@@ -47,18 +61,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HASHES = Path(__file__).resolve().parent / "phi_hashes.json"
 ALLOWLIST = Path(__file__).resolve().parent / "phi_allowlist.txt"
 
-# Files the scanner never inspects.
-SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".pyc"}
+# Suffixes classified as binary/media without sniffing. NOT a skip list: a
+# file with one of these suffixes is checked against the approved-file
+# allowlist (default-deny), exactly like a NUL-sniffed binary.
+BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".pyc"}
 SKIP_NAMES = {"phi_hashes.json"}
+
+# The prefix marking an approved-file hash entry in tools/phi_allowlist.txt.
+_FILE_ALLOW_PREFIX = "sha256:"
 
 # Directories the filesystem-walk fallback prunes: version-control metadata,
 # tool caches, and virtualenvs — intrinsic machine state, never project
 # content. Deliberately NOT pruned: ``dist``/``build`` and other
 # conventionally-gitignored output dirs, because git skips those only via
 # .gitignore and the walk runs precisely when there is no git to consult —
-# scanning extra files is safe (binaries are skipped by the NUL sniff),
-# silently skipping a committable file is not. Any directory whose name
-# ends in ``.egg-info`` is pruned too.
+# scanning extra files is safe (an unlisted binary FAILS the scan rather
+# than slipping through), silently skipping a committable file is not. Any
+# directory whose name ends in ``.egg-info`` is pruned too.
 WALK_PRUNE_DIRS = frozenset(
     {
         ".git",
@@ -78,6 +97,16 @@ GUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 OPAQUE_RE = re.compile(r"\b[A-Za-z0-9_-]{24,}\b")
+#: A base64-armored payload riding inside a TEXT file (``data:...;base64,...``
+#: above all). ``+``, ``/`` and ``=`` are word boundaries to every pattern in
+#: this scanner, so a blob like this is shredded into meaningless fragments and
+#: inspected by nothing — which makes it the obvious way to smuggle a chart
+#: past the gate. The 256-character floor is ~192 decoded bytes: past any
+#: accidental short token, and far below the smallest real payload (the two
+#: icons in the vendored HL7 stylesheet are 1784 and 2748 characters). A run at
+#: or over the floor is a finding unless the whole file is hash-approved.
+BASE64_ARMOR_MIN_CHARS = 256
+BASE64_ARMOR_RE = re.compile(rf";base64,[A-Za-z0-9+/=]{{{BASE64_ARMOR_MIN_CHARS},}}")
 SSN_RE = re.compile(r"\b(\d{3})-(\d{2})-(\d{4})\b")
 PHONE_RE = re.compile(r"\(?\b(\d{3})\)?[ .-](\d{3})[ .-]\d{4}\b")
 DOB_RE = re.compile(r"(?:dob|birth)\W{0,40}?(\d{1,2}/\d{1,2}/(?:19|20)\d{2})", re.IGNORECASE)
@@ -101,10 +130,37 @@ def candidate_tokens(text: str) -> set[str]:
 
 
 def load_allowlist() -> set[str]:
+    """Token false-positive entries (every non-comment line that is not a hash).
+
+    Lines are STRIPPED before the comment test: an indented ``#`` line is a
+    comment too, and admitting its text as an allowlist token would silently
+    excuse whatever words the comment happens to contain.
+    """
     if not ALLOWLIST.exists():
         return set()
     lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
-    return {ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")}
+    stripped = (ln.strip() for ln in lines)
+    return {ln for ln in stripped if ln and not ln.startswith(("#", _FILE_ALLOW_PREFIX))}
+
+
+def load_approved_file_hashes() -> set[str]:
+    """The sha256 hex digests of files APPROVED to carry opaque content.
+
+    ``sha256:<hex>`` lines in ``tools/phi_allowlist.txt``; each needs a
+    preceding provenance/license comment. The digest covers the WHOLE file, so
+    one approval is invalidated the moment the file changes. Any file whose
+    opaque content the text passes cannot inspect — a binary, or a text file
+    carrying a base64-armored payload — fails the scan unless its digest is in
+    this set: default-deny for content the scanner cannot read.
+    """
+    if not ALLOWLIST.exists():
+        return set()
+    lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
+    return {
+        ln.strip()[len(_FILE_ALLOW_PREFIX) :].lower()
+        for ln in lines
+        if ln.strip().startswith(_FILE_ALLOW_PREFIX)
+    }
 
 
 def is_fixture_path(path: Path) -> bool:
@@ -205,28 +261,58 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     deny: set[str] = set(json.loads(hashes_path.read_text(encoding="utf-8"))["sha256"])
     allow = load_allowlist()
+    approved_files = load_approved_file_hashes()
 
     all_findings: list[str] = []
     for path in iter_target_files(args.paths):
-        if path.suffix.lower() in SKIP_SUFFIXES or path.name in SKIP_NAMES:
+        if path.name in SKIP_NAMES:
             continue
         try:
             raw = path.read_bytes()
         except OSError:
             continue
-        if b"\x00" in raw[:8192]:  # binary
+        display = (
+            path.relative_to(REPO_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPO_ROOT)
+            else path
+        )
+        if path.suffix.lower() in BINARY_SUFFIXES or b"\x00" in raw[:8192]:
+            # Default-deny for what the text passes cannot read: a binary or
+            # media file passes only by provenance — its sha256 must be
+            # approved in tools/phi_allowlist.txt. The digest (not the
+            # content) is echoed so approving a legitimate file is one
+            # copy-paste with a provenance comment.
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest not in approved_files:
+                all_findings.append(
+                    f"{display}: unapproved binary/media file (sha256:{digest}) — the "
+                    "scanner cannot inspect it; add a provenance comment + "
+                    "'sha256:<hex>' entry to tools/phi_allowlist.txt to approve"
+                )
             continue
         text = raw.decode("utf-8", errors="ignore")
-        all_findings.extend(
-            scan_text(
-                path.relative_to(REPO_ROOT)
-                if path.is_absolute() and path.is_relative_to(REPO_ROOT)
-                else path,
-                text,
-                deny,
-                allow,
-            )
-        )
+        # The same default-deny, for opaque content hiding INSIDE a text file:
+        # a base64-armored payload is shredded by the token splitter and
+        # inspected by nothing, so it passes every pattern above. It is an
+        # inspection failure unless the whole file is hash-approved. The scan
+        # of the surrounding text continues either way — an armored blob must
+        # not shield the readable part of the file from the rest of the gate.
+        if BASE64_ARMOR_RE.search(text):
+            # The approval digest is computed over the LF form of the file:
+            # git checks TEXT files out with CRLF on Windows (autocrlf), so
+            # the raw bytes of the same committed file hash differently per
+            # platform, and a Linux-computed approval would fail every
+            # Windows run. Binary files never get eol conversion, so the
+            # binary branch above hashes raw bytes.
+            digest = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+            if digest not in approved_files:
+                all_findings.append(
+                    f"{display}: base64-armored payload of {BASE64_ARMOR_MIN_CHARS}+ "
+                    f"characters (sha256:{digest}) — the scanner cannot inspect it; "
+                    "add a provenance comment + 'sha256:<hex>' entry to "
+                    "tools/phi_allowlist.txt to approve the file"
+                )
+        all_findings.extend(scan_text(display, text, deny, allow))
 
     if all_findings:
         print("PHI scan FAILED:", file=sys.stderr)

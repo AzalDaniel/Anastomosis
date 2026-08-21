@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Synthea end-to-end lane — the external-evidence pipeline test.
 
 Every other C-CDA fixture in this repo was authored here, so ingest tests
@@ -32,7 +31,7 @@ from anastomosis.sources import detect_source, get_source
 pytestmark = pytest.mark.e2e
 
 pytest.importorskip("playwright", reason="Synthea e2e needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="Synthea e2e needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="Synthea e2e needs the render extra (PyMuPDF)")
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "synthea"
 PATIENT_NAME = ("Darryl392", "Gislason620")  # synthetic Synthea name (allowlisted provenance)

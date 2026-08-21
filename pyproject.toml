@@ -1,5 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+# >=1.27 is the floor for PEP 639 support: earlier hatchling parses
+# `license-files` only in its legacy table form and silently ignores the LIST
+# form below, producing a wheel with no dist-info/licenses/ at all. The release
+# workflow greps the built wheel for the Apache-2.0 and OFL-1.1 headings, but a
+# floor that admits a backend which cannot honour the config is a gap the grep
+# only catches after the fact.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,7 +14,17 @@ description = "Reconstruct, verify, and re-home clinical records. An open-source
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+# The wheel must CARRY the third-party license texts it redistributes (the
+# HL7 CDA stylesheet is Apache-2.0; the two GUI fonts are OFL-1.1): PEP 639
+# license-files places every entry under <dist>.dist-info/licenses/. The
+# release workflow greps the built wheel for both headings and fails if
+# either is missing.
+license-files = [
+  "LICENSE",
+  "THIRD_PARTY_LICENSES.md",
+  "assets/licenses/APACHE-2.0.txt",
+  "assets/licenses/OFL-1.1.txt",
+]
 authors = [{ name = "Azal Daniel" }]
 keywords = [
   "ehr",
@@ -54,7 +70,11 @@ fhir = ["fhir.resources>=8.1"]
 # Browser-automation delivery (destination packs).
 deliver-browser = ["playwright>=1.46"]
 # Desktop GUI.
-gui = ["pywebview>=5.0"]
+# Lower bound 6.2: pywebview 6.2.1 fails to import from a Nuitka-frozen
+# Windows build (upstream issue #1817) and 6.2 is the last known good; the
+# package build additionally pins ==6.2 via packaging/constraints.txt. <7.0
+# bounds the major so a future breaking release is a deliberate bump here.
+gui = ["pywebview>=6.2,<7.0"]
 dev = [
   "anastomosis[render,fhir,deliver-browser]",
   "pytest>=8.2",
@@ -80,9 +100,6 @@ anastomosis-gui = "anastomosis.gui.__main__:main"
 Homepage = "https://github.com/AzalDaniel/Anastomosis"
 Issues = "https://github.com/AzalDaniel/Anastomosis/issues"
 
-[project.entry-points."anastomosis.packs"]
-# Third-party packs register here. Built-in packs ship inside the package.
-
 [tool.hatch.version]
 path = "src/anastomosis/__init__.py"
 
@@ -93,6 +110,10 @@ packages = ["src/anastomosis"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests", "tools"]
+# Vendored third-party material (its own license, upstream's style) is not
+# ours to lint — same rule the review-archaeology guard applies to `vendor`
+# path components.
+extend-exclude = [".claude"]
 
 [tool.ruff.lint]
 select = [
@@ -127,11 +148,16 @@ ignore = [
 "src/anastomosis/packgen/emit.py" = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# The default lanes, listed explicitly. tests/gui_e2e is NOT here on purpose:
+# it drives the packaged GUI pages in headless Chromium and is run by its own
+# lane (`pytest tests/gui_e2e -m gui_e2e`), the same way the FHIR integration
+# lane is scoped by path — so the default `pytest` (and tools/check.sh) never
+# needs a browser for it.
+testpaths = ["tests/unit", "tests/integration", "tests/e2e"]
 addopts = "-q --strict-markers"
 markers = [
   "e2e: end-to-end pipeline tests (need playwright chromium)",
-  "slow: long-running tests, excluded from default CI lanes",
+  "gui_e2e: GUI behaviour tests driving the bundled pages in headless Chromium",
   "fhir_integration: live FHIR-server tests (need ANAST_FHIR_BASE_URL; CI service container)",
 ]
 
@@ -145,9 +171,9 @@ warn_unreachable = true
 
 [[tool.mypy.overrides]]
 # Optional extras: typed when installed, but their absence (minimal installs)
-# must not fail type-checking of the core package. fitz (PyMuPDF) ships no
-# py.typed marker at all; webview (pywebview) is the optional gui extra.
-module = ["playwright.*", "fitz", "fitz.*", "webview", "webview.*"]
+# must not fail type-checking of the core package. pymupdf's typing is
+# partial; webview (pywebview) is the optional gui extra.
+module = ["playwright.*", "pymupdf", "pymupdf.*", "webview", "webview.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

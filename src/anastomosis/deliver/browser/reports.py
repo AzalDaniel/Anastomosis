@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Run reports for a browser upload run (M2 item 10): JSON file + console line.
 
 Two outputs, two audiences, one shared rule — no patient-derived value leaves

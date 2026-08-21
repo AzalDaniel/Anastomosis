@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Direct tests for GuiJobRunner — the single owner of the async-job
 choreography that used to be hand-rolled five times in the controller.
 

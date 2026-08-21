@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the shared pack-init command core (core/packinit.py).
 
 Drives :func:`anastomosis.core.packinit.run_pack_init` directly — the analyze →
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="packinit tests need the render extra (PyMuPDF)")
+pymupdf = pytest.importorskip("pymupdf", reason="packinit tests need the render extra (PyMuPDF)")
 
 from anastomosis.core.packinit import (  # noqa: E402
     PackInitCommand,
@@ -36,9 +35,9 @@ def _packgen_samples(tmp_path: Path, n: int = 4) -> Path:
     samples.mkdir()
     for i in range(n):
         name, dob, complaint = _PATIENTS[i % len(_PATIENTS)]
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
-        page.draw_rect(fitz.Rect(60, 95, 560, 110), fill=(0.9451, 0.9451, 0.9451), color=None)
+        page.draw_rect(pymupdf.Rect(60, 95, 560, 110), fill=(0.9451, 0.9451, 0.9451), color=None)
         page.insert_text((60, 90), "SUBJECTIVE", fontsize=13, fontname="hebo")
         page.insert_text((60, 130), "OBJECTIVE", fontsize=13, fontname="hebo")
         page.insert_text((60, 200), "DOB:", fontsize=11, fontname="helv")

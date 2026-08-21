@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PatientRecord: everything the pipeline knows about one patient."""
 
 from __future__ import annotations
@@ -11,10 +10,7 @@ from .clinical import (
     Condition,
     FamilyMemberHistory,
     Goal,
-    HealthConcern,
     Immunization,
-    ImplantableDevice,
-    LabOrder,
     MedicationStatement,
     Observation,
     PastMedicalHistory,
@@ -45,10 +41,7 @@ class PatientRecord(AnastBase):
     family_history: list[FamilyMemberHistory] = []
     past_medical_history: list[PastMedicalHistory] = []
     advance_directives: list[AdvanceDirective] = []
-    health_concerns: list[HealthConcern] = []
     goals: list[Goal] = []
-    devices: list[ImplantableDevice] = []
-    lab_orders: list[LabOrder] = []
     coverages: list[Coverage] = []
     documents: list[DocumentArtifact] = []
     practitioners: list[Practitioner] = []

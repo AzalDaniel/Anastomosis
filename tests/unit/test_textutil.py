@@ -1,13 +1,19 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
-"""Tests for core.textutil — cell hygiene and note-HTML extraction."""
+"""Tests for core.textutil — cell hygiene, note-HTML extraction, safe names."""
+
+from pathlib import Path
 
 import pytest
 
 from anastomosis.core.textutil import (
+    HASH_TAG_CHARS,
+    MAX_NAME_CHARS,
+    MAX_PATH_CHARS,
+    budgeted_name,
     clean_cell,
     clean_numeric,
     format_phone,
     html_to_text,
+    safe_name,
     sanitize_soap_html,
 )
 
@@ -50,6 +56,137 @@ def test_format_phone_preserves_partials() -> None:
     assert format_phone("  555-0123 ") == "555-0123"
     assert format_phone("") is None
     assert format_phone(None) is None
+
+
+# --- filesystem names -------------------------------------------------------
+#
+# Synthetic ids only (``feedface-`` prefixes), and every value here is a made-up
+# identifier, never a patient value.
+
+_SYNTHETIC_ID = "feedface-0000-0000-0000-0000000000aa"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (_SYNTHETIC_ID, _SYNTHETIC_ID),
+        ("Ada Q Fixture", "Ada_Q_Fixture"),
+        ("../../etc/passwd", "etc_passwd"),
+        ("", "fallback"),
+        (None, "fallback"),
+        ("///", "fallback"),
+    ],
+)
+def test_safe_name_short_values_pass_through_unchanged(raw: str | None, expected: str) -> None:
+    # PIN: the delivered layouts (chart filenames, archive/bundle patient dirs,
+    # C-CDA filenames) are built from these components. Every real-length value
+    # must come back byte-identical to what it was before the length bound
+    # existed — a change here renames files an operator already holds.
+    assert safe_name(raw, "fallback") == expected
+
+
+def test_safe_name_caps_an_unbounded_value() -> None:
+    # A 300-char component is rejected by NAME_MAX (POSIX) and by MAX_PATH
+    # (Windows) — the delivered chart simply fails to write.
+    capped = safe_name("A" * 300, "unknown")
+    assert len(capped) == MAX_NAME_CHARS
+    assert capped.startswith("A" * 100)
+
+
+def test_safe_name_caps_a_long_fallback_too() -> None:
+    # The bound is a property of what safe_name RETURNS, not of one branch.
+    assert len(safe_name(None, "f" * 300)) == MAX_NAME_CHARS
+
+
+def test_safe_name_long_values_stay_distinct_past_the_cap() -> None:
+    # Two ids that differ ONLY past the cap must not collapse onto one name:
+    # a collision here would file one patient's chart on top of another's.
+    base = "feedface-" + "a" * 300
+    first = safe_name(base + "-one", "unknown")
+    second = safe_name(base + "-two", "unknown")
+    assert first != second
+    # Same visible prefix, different hash tag ("-" + HASH_TAG_CHARS hex).
+    tag = HASH_TAG_CHARS + 1
+    assert first[:-tag] == second[:-tag]
+    assert len(first) == len(second) == MAX_NAME_CHARS
+
+
+def test_hash_tag_is_wide_enough_to_be_a_distinctness_promise() -> None:
+    # PIN the width, not just the shape. The tag is the ONLY thing keeping two
+    # cut ids apart, and the deliverers write with exist_ok/overwrite — so the
+    # birthday bound is a patient-safety parameter, not a formatting choice.
+    # 64 bits keeps a 100k-patient delivery below 3e-10; the 32-bit tag this
+    # replaced sat at ~69%.
+    assert HASH_TAG_CHARS == 16
+    cut = safe_name("feedface-" + "e" * 300, "unknown")
+    digest = cut.rsplit("-", 1)[1]
+    assert len(digest) == HASH_TAG_CHARS
+    assert all(char in "0123456789abcdef" for char in digest)
+
+
+def test_safe_name_cut_is_deterministic() -> None:
+    # A re-run must allocate the same name (the idempotent-skip contract).
+    value = "feedface-" + "b" * 400
+    assert safe_name(value, "unknown") == safe_name(value, "unknown")
+
+
+def test_budgeted_name_passes_through_when_the_path_fits(tmp_path: Path) -> None:
+    assert budgeted_name(_SYNTHETIC_ID, "unknown", parent=tmp_path) == _SYNTHETIC_ID
+    assert budgeted_name(_SYNTHETIC_ID, "unknown", parent=tmp_path, suffix=".html") == _SYNTHETIC_ID
+
+
+def _deep_parent(tmp_path: Path, target_len: int = 200) -> Path:
+    """A parent whose ABSOLUTE length lands near ``target_len`` on any host.
+
+    ``tmp_path`` itself varies wildly by platform (a Windows runner's temp
+    dir is ~90 characters before a test adds anything; Linux's is ~45), so a
+    fixed filler leaves a different amount of budget room per host — on
+    Windows it left less than a hash tag and the helper (correctly) refused
+    where these tests expected a shortened name. Computing the filler from
+    the real ``tmp_path`` pins the room the arithmetic under test gets.
+    """
+    filler = max(1, target_len - len(str(tmp_path)) - 1)
+    parent = tmp_path / ("d" * filler)
+    # If a host's temp dir were ever deep enough to break the target, fail
+    # with a clear reason instead of silently testing something else.
+    assert len(str(parent)) <= target_len + 1, "temp dir too deep for this test's budget"
+    return parent
+
+
+def test_budgeted_name_shortens_for_a_deep_parent(tmp_path: Path) -> None:
+    parent = _deep_parent(tmp_path)
+    name = budgeted_name("feedface-" + "c" * 300, "unknown", parent=parent, suffix=".html")
+    full = parent / f"{name}.html"
+    assert len(str(full)) <= MAX_PATH_CHARS
+    assert len(name) < MAX_NAME_CHARS  # cut further than the component cap
+    (parent).mkdir(parents=True)
+    full.write_text("x", encoding="utf-8")  # and the write actually lands
+    assert full.is_file()
+
+
+def test_budgeted_name_stays_distinct_when_shortened(tmp_path: Path) -> None:
+    parent = _deep_parent(tmp_path)
+    base = "feedface-" + "d" * 300
+    first = budgeted_name(base + "-one", "unknown", parent=parent, suffix=".html")
+    second = budgeted_name(base + "-two", "unknown", parent=parent, suffix=".html")
+    assert first != second
+
+
+def test_budgeted_name_refuses_when_no_distinct_name_fits(tmp_path: Path) -> None:
+    # Fail loudly rather than hand back a name that could collide.
+    parent = tmp_path / ("d" * 230)
+    with pytest.raises(ValueError, match="path budget"):
+        budgeted_name(_SYNTHETIC_ID, "unknown", parent=parent, suffix=".html")
+
+
+def test_budgeted_name_message_carries_no_path(tmp_path: Path) -> None:
+    # PHI: an output directory can be named after a patient, so the message
+    # reports lengths only — never the path itself.
+    parent = tmp_path / ("d" * 230)
+    with pytest.raises(ValueError) as excinfo:
+        budgeted_name(_SYNTHETIC_ID, "unknown", parent=parent, suffix=".html")
+    assert str(parent) not in str(excinfo.value)
+    assert "d" * 20 not in str(excinfo.value)
 
 
 # --- note HTML --------------------------------------------------------------

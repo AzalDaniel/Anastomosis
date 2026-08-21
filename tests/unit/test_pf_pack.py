@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the practice_fusion_soap template pack.
 
 These exercise discovery, manifest geometry/tokens/sections, and the
@@ -149,13 +148,12 @@ def test_record_view_index_splits_match_naive_filtering(records: list[Any]) -> N
 
 def test_record_view_index_inactive_and_duplicate_branches() -> None:
     """Exercise the splits the fixture leaves empty (inactive coverages,
-    active/inactive concerns + goals) and duplicate-id last-wins — branches a
+    active/inactive goals) and duplicate-id last-wins — branches a
     naive-filtering bug (e.g. a swapped active/inactive) would otherwise pass."""
     from anastomosis.core.model import (
         Condition,
         Coverage,
         Goal,
-        HealthConcern,
         Patient,
         PatientRecord,
     )
@@ -173,10 +171,6 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
             Condition(patient_id=pid, id="c1", active=True),
             Condition(patient_id=pid, id="c1", active=False),  # duplicate id
         ],
-        health_concerns=[
-            HealthConcern(patient_id=pid, active=True),
-            HealthConcern(patient_id=pid, active=False),
-        ],
         goals=[
             Goal(patient_id=pid, active=True),
             Goal(patient_id=pid, active=False),
@@ -186,9 +180,7 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
     # active coverages sorted by benefit order (tie keeps source order); inactive split out.
     assert [c.order_of_benefits for c in idx.active_coverages] == [1, 2]
     assert [c.order_of_benefits for c in idx.inactive_coverages] == [1]
-    # active/inactive concerns + goals are not swapped.
-    assert [h.active for h in idx.active_concerns] == [True]
-    assert [h.active for h in idx.inactive_concerns] == [False]
+    # active/inactive goals are not swapped.
     assert [g.active for g in idx.active_goals] == [True]
     assert [g.active for g in idx.inactive_goals] == [False]
     # duplicate condition id: last wins, matching {c.id: c for c in conditions}.

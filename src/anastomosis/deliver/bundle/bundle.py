@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Per-patient bundle deliverer — Responder persona.
 
 When a practice gets a record request, the deliverable is a packet for ONE
@@ -24,22 +23,35 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag, safe_log_id
+from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
+from anastomosis.deliver._shared import (
+    budgeted_copy_name,
+    claim_delivered_name,
+    copy_delivered_file,
+    write_fhir_bundle,
+)
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport, Verdict
 
 __all__ = ["BundleDeliverer", "BundleResult"]
 
 logger = logging.getLogger(__name__)
+
+# Room kept free under each patient directory for its deepest child, a copied
+# chart at ``pdfs/<chart>.pdf``. That name is itself budgeted now
+# (``budgeted_copy_name``), so the reserve holds the room a budgeted child
+# needs to stay DISTINCT — the fixed wrapper plus the shortest distinct name
+# ``budgeted_name`` can return, its hash tag — not a guess at a plausible
+# chart filename (the renderer's can run to ~617 characters, which no reserve
+# could have covered anyway).
+_PDF_CHILD_RESERVE = len("/pdfs/") + HASH_TAG_CHARS + len(".pdf")
 
 
 _README_TEMPLATE = """\
@@ -65,11 +77,6 @@ Handle accordingly:
   * Do not share by unencrypted email.
   * Store on encrypted media; destroy securely when no longer needed.
 """
-
-
-def _safe_id(value: str, fallback: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (value or "").strip()).strip("_")
-    return cleaned or fallback
 
 
 @dataclass(frozen=True)
@@ -112,6 +119,10 @@ class BundleDeliverer:
         PDF list is empty — bundles render without charts and the index
         absence is logged loudly. Bundle has no per-patient ``unattributed``
         slot (it's per-patient by definition), so it never guesses.
+
+        The per-run claimed-name ledger lives here, at the scope that has more
+        than one patient in it: two ids that sanitize to one directory name
+        would otherwise merge two patients into a single bundle.
         """
         render_index = RenderIndex.load(pdfs_dir)
         if pdfs_dir is None or not pdfs_dir.is_dir():
@@ -128,12 +139,14 @@ class BundleDeliverer:
                 ]
                 for record in records
             }
+        claimed_dirs: dict[str, str] = {}
         return [
             self.deliver(
                 record,
                 pdfs_lookup.get(record.patient.id, []),
                 out_dir,
                 qa_report=qa_report,
+                claimed_dirs=claimed_dirs,
             )
             for record in records
         ]
@@ -145,24 +158,33 @@ class BundleDeliverer:
         out_dir: str | Path,
         *,
         qa_report: QAReport | None = None,
+        claimed_dirs: dict[str, str] | None = None,
     ) -> BundleResult:
+        """Deliver ONE patient's bundle into ``out_dir``.
+
+        ``claimed_dirs`` is the per-run ledger of delivered directory name ->
+        the patient id that claimed it, threaded in by :meth:`deliver_records`;
+        a second, DIFFERENT id claiming a name raises rather than merging two
+        patients into one bundle. A standalone call gets a fresh ledger — a
+        single record cannot collide with itself.
+        """
         out = secure_output_dir(out_dir)
-        pid = _safe_id(record.patient.id, "unknown")
+        # Budgeted against the directory this bundle is written into, so a long
+        # source id cannot produce a patient directory the filesystem refuses,
+        # with room reserved for the deepest child (``pdfs/<chart>.pdf``).
+        pid = budgeted_name(record.patient.id, "unknown", parent=out, reserve=_PDF_CHILD_RESERVE)
+        claim_delivered_name(
+            claimed_dirs if claimed_dirs is not None else {},
+            pid,
+            record.patient.id,
+            kind="patient directory",
+        )
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
 
-        # FHIR R4 Bundle — the machine-readable rendition.
-        bundle_path = patient_dir / "bundle.json"
-        # PHI-BY-DESIGN: delivering the patient's FHIR record IS the product.
-        # ``patient_dir`` sits under a secure_output_dir-hardened tree (0o700
-        # owner-only on POSIX; on Windows NTFS, inheritance stripped and access
-        # limited to the current user, SYSTEM, and Administrators) with a
-        # PHI-warning README. See SECURITY.md, "Code scanning & suppression
-        # policy (auditable)".
-        # codeql[py/clear-text-storage-sensitive-data]
-        bundle_path.write_text(
-            json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8"
-        )
+        # FHIR R4 Bundle — the machine-readable rendition (the shared deliverer
+        # mechanic; its PHI-BY-DESIGN rationale lives there).
+        bundle_path = write_fhir_bundle(record, patient_dir)
 
         # PDFs — copied (never moved) so the caller's working tree is intact.
         pdf_paths = self._copy_pdfs(record.patient, pdfs or [], patient_dir)
@@ -197,18 +219,27 @@ class BundleDeliverer:
         # filter and copies the lot verbatim; the old startswith re-check
         # is gone because filename prefixes are no longer the source of
         # truth for attribution — the render index is.
+        #
+        # The DESTINATION name is budgeted (``budgeted_copy_name``): renderer
+        # chart names run to ~617 characters, and an over-MAX_PATH copy used to
+        # fail into the warn-and-continue below — a chart silently missing from
+        # a delivered bundle. Naming is deliberately outside that warn path, so
+        # a destination that cannot be named distinctly raises instead.
         if not pdfs:
             return []
         target_dir = patient_dir / "pdfs"
         target_dir.mkdir(parents=True, exist_ok=True)
         copied: list[Path] = []
+        claimed: dict[str, str] = {}
         for pdf in pdfs:
-            try:
-                destination = target_dir / pdf.name
-                shutil.copyfile(pdf, destination)
-                copied.append(destination)
-            except OSError as exc:
-                logger.warning("pdf copy failed (%s)", exc_tag(exc))
+            delivered = budgeted_copy_name(target_dir, pdf.name)
+            claim_delivered_name(claimed, delivered, pdf.name, kind="chart")
+            destination = target_dir / delivered
+            failure = copy_delivered_file(pdf, destination)
+            if failure is not None:
+                logger.warning("pdf copy failed (%s)", failure)
+                continue
+            copied.append(destination)
         return copied
 
     def _write_qa_slice(

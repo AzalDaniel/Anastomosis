@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GUI web-asset tests — offline guarantee, parse sanity, packaging, design system.
 
 The desktop GUI's html/css/js/fonts ship bundled and must be network-free (the
@@ -231,7 +230,7 @@ def test_anast_event_dispatcher_defined() -> None:
     ],
 )
 def test_page_anast_event_has_flow_guard(script: str, flow: str) -> None:
-    """P2-5: each page's event dispatcher early-returns on events from other
+    """Flow scoping: each page's event dispatcher early-returns on events from other
     flows, so navigating mid-run can't let one page consume another page's
     terminal event (the dashboard pipeline and the wizard migration emit
     identical stage/progress/done/error kinds). The guard is the flow check."""

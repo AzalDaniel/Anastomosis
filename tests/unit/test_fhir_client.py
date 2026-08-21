@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FhirClient + FhirEndpoint tests: status routing, id parsing, token masking.
 
 The transport is an in-process fake opener injected at construction — urllib is
@@ -7,14 +6,23 @@ ids, a never-real bearer token string.
 
 PHI discipline is probed directly: a raised message and the endpoint repr must
 never carry the token, the request URL, or a query string.
+
+The redirect-refusal tests at the bottom are the one exception to the fake
+transport: they drive the PRODUCTION urllib opener against real loopback
+``http.server`` instances, because the property under test (a bearer token
+never reaches a second origin) is only meaningful against real urllib.
 """
 
 from __future__ import annotations
 
+import contextlib
+import http.server
 import io
+import json
 import logging
+import threading
 import urllib.error
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 
 import pytest
 
@@ -27,6 +35,7 @@ from anastomosis.deliver.fhir_api.client import (
     FhirClient,
     FhirEndpoint,
     FhirResponse,
+    RedirectRefusedError,
 )
 
 TOKEN = "feedface-token-never-real-0000"  # synthetic test token, never real
@@ -228,3 +237,218 @@ def test_get_empty_body_is_permanent() -> None:
     client = _client(_RecordingOpener(FhirResponse(status=200, body=None)))
     with pytest.raises(PermanentDeliveryError):
         client.get("Patient")
+
+
+# --- redirect refusal, against the PRODUCTION urllib opener -------------------
+#
+# These are the only tests here that do NOT inject a fake transport: the
+# property under test is a property of real urllib. urllib's default opener
+# follows a 30x and re-attaches the original headers — the Authorization bearer
+# among them — to a target the SERVER named, so the endpoint's validated origin
+# stops bounding who sees the token. Two loopback http.server instances stand in
+# for the configured endpoint (A) and the redirect target (B); B records every
+# request it receives, so "the token did not move" is asserted as a fact about
+# the second origin rather than inferred from an error message.
+#
+# An https -> http downgrade needs no test of its own: refusal happens before
+# the handler looks at the target at all, so there is no scheme-, host-, or
+# port-dependent branch a downgrade could slip through. Standing up TLS would
+# exercise nothing the refuse-all path does not already cover.
+
+# Synthetic, never-real bearer used for the live-loopback tests.
+LOOPBACK_TOKEN = "test-token-not-real"
+
+# What each recording server captures: (method, headers).
+Received = list[tuple[str, dict[str, str]]]
+
+
+@contextlib.contextmanager
+def _running(handler_cls: type[http.server.BaseHTTPRequestHandler]) -> Iterator[str]:
+    """Serve ``handler_cls`` on a fresh 127.0.0.1 port; yield its origin URL."""
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _recording_handler(received: Received) -> type[http.server.BaseHTTPRequestHandler]:
+    """A handler that appends every request to ``received`` and answers 200."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            received.append((self.command, dict(self.headers.items())))
+            payload = json.dumps({"resourceType": "Bundle"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", FHIR_JSON)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        do_GET = _handle
+        do_POST = _handle
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass  # keep pytest output clean
+
+    return Handler
+
+
+def _redirecting_handler(status: int, location: str) -> type[http.server.BaseHTTPRequestHandler]:
+    """A handler that answers every request with ``status`` + ``Location``."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            self.send_response(status)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = _handle
+        do_POST = _handle
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    return Handler
+
+
+def _live_client(base_url: str) -> FhirClient:
+    """A real FhirClient (production opener) pointed at a loopback origin."""
+    # http is allowed here only because the host is loopback — the same
+    # exception FhirEndpoint enforces, so no control is relaxed for the test.
+    return FhirClient(FhirEndpoint(f"{base_url}/fhir", bearer_token=LOOPBACK_TOKEN, timeout_s=5.0))
+
+
+def _assert_phi_safe_refusal(exc: RedirectRefusedError, status: int, target: str) -> None:
+    """The refusal names the status only — never a URL, a host, or the token."""
+    message = str(exc)
+    assert str(status) in message
+    assert LOOPBACK_TOKEN not in message
+    assert "http://" not in message
+    assert "127.0.0.1" not in message
+    assert target not in message
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_cross_origin_redirect_refused_and_target_never_contacted(status: int, method: str) -> None:
+    # Server A (the configured endpoint) redirects to server B on another port.
+    # The bearer must not follow: B must record ZERO requests.
+    received: Received = []
+    with _running(_recording_handler(received)) as target_origin:
+        target = f"{target_origin}/fhir/Patient"
+        with _running(_redirecting_handler(status, target)) as endpoint_origin:
+            client = _live_client(endpoint_origin)
+            with pytest.raises(RedirectRefusedError) as exc:
+                if method == "GET":
+                    client.get("Patient")
+                else:
+                    client.post("Patient", {"resourceType": "Patient"})
+            _assert_phi_safe_refusal(exc.value, status, target)
+    # The whole point: the second origin was never asked for anything, so it
+    # never saw the Authorization header.
+    assert received == []
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_refused_redirect_is_permanent_not_transient(status: int) -> None:
+    # RedirectRefusedError must reach the caller as ITSELF, not re-routed into
+    # the transport-failure branch: the engine would otherwise retry and
+    # re-offer the token to the same redirect.
+    received: Received = []
+    with _running(_recording_handler(received)) as target_origin:
+        with _running(_redirecting_handler(status, f"{target_origin}/fhir")) as endpoint:
+            client = _live_client(endpoint)
+            with pytest.raises(RedirectRefusedError) as exc:
+                client.get("Patient")
+    assert isinstance(exc.value, PermanentDeliveryError)
+    assert not isinstance(exc.value, TransientDeliveryError)
+    assert received == []
+
+
+def test_same_origin_redirect_is_also_refused() -> None:
+    """A same-origin redirect is refused too, by design.
+
+    A validated FHIR base URL that redirects is a misconfiguration, and the
+    only way to call one redirect "safe" is to parse the target — which is
+    server-controlled text. Refusing every redirect is the loud, safe default;
+    the operator's fix is to configure the final URL.
+    """
+    holder: list[str] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # BaseHTTPRequestHandler's dispatch name
+            self.send_response(302)
+            self.send_header("Location", f"{holder[0]}/fhir/Patient")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with _running(Handler) as origin:
+        holder.append(origin)  # Location points back at this same origin.
+        client = _live_client(origin)
+        with pytest.raises(RedirectRefusedError) as exc:
+            client.get("Patient")
+    assert "302" in str(exc.value)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_redirect_without_a_location_header_is_a_clean_permanent_error(status: int) -> None:
+    """A 3xx carrying NO Location must surface as a clean delivery error.
+
+    urllib routes a 30x through the redirect handler only when there is a
+    target to redirect TO; with no ``Location`` (a malformed server, or one
+    stripping the header) the redirect handlers decline and urllib's default
+    error path raises ``HTTPError``. That must land in the delivery taxonomy as
+    a PERMANENT error naming the status and the resource type — not as a raw
+    urllib exception escaping the client, and not as a transient the engine
+    would retry forever against a server that cannot answer.
+    """
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            self.send_response(status)  # deliberately no Location header
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = _handle
+        do_POST = _handle
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with _running(Handler) as origin:
+        client = _live_client(origin)
+        with pytest.raises(PermanentDeliveryError) as exc:
+            client.get("Patient")
+
+    error = exc.value
+    assert not isinstance(error, TransientDeliveryError)
+    assert not isinstance(error, RedirectRefusedError)
+    # PHI + transport discipline: status + resource TYPE only.
+    message = str(error)
+    assert f"HTTP {status}" in message and "Patient" in message
+    assert LOOPBACK_TOKEN not in message
+    assert "127.0.0.1" not in message
+
+
+def test_production_opener_still_works_without_a_redirect() -> None:
+    # Control: refusing redirects must not break the ordinary path. A plain 200
+    # through the production opener parses normally and carries the bearer.
+    received: Received = []
+    with _running(_recording_handler(received)) as origin:
+        client = _live_client(origin)
+        body = client.get("Patient", {"identifier": "sys|feedface-0001"})
+    assert body == {"resourceType": "Bundle"}
+    assert len(received) == 1
+    method, headers = received[0]
+    assert method == "GET"
+    assert headers["Authorization"] == f"Bearer {LOOPBACK_TOKEN}"
+    assert headers["Accept"] == FHIR_JSON

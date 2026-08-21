@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The closed set of value transforms a learned mapping may name.
 
 A learned mapping is data, and the anti-Mirth rule says data must never carry

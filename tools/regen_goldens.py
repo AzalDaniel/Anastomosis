@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Regenerate the golden rendering snapshots for the e2e golden tests.
 
 Golden rendering tests pin *exactly* what real Chromium produces for the
 ``pf_tebra_v9`` fixture rendered through the ``generic_soap`` pack, so a
 template or engine regression is caught as a byte-for-byte text/geometry diff
 rather than slipping out as a silently-wrong chart.
+
+Two baselines per pack, written together from one render: the text/geometry
+golden (``<pack>.json``) and the page-1 word-box baseline
+(``<pack>.words.json``). The second exists because identical text can be laid
+out wrongly — a CSS regression that slides a value under the neighbouring
+label leaves the text layer untouched, and a chart that reads the wrong value
+under the right label is exactly the failure this project refuses to ship.
 
 Regenerating the goldens is a **deliberate act**. Run this tool only when a
 template, pack, or engine change *intentionally* alters the rendered output;
@@ -57,19 +63,46 @@ GOLDENS: dict[str, Path] = {
     "practice_fusion_soap": _GOLDEN_DIR / "pf_tebra_v9_practice_fusion_soap.json",
 }
 
+# The spatial companion to each golden: the page-1 word bounding boxes, keyed
+# by the same pack name. The text golden pins WHICH words were rendered; this
+# pins WHERE they landed, so a CSS regression that slides a value under the
+# wrong label fails instead of passing with identical text.
+WORD_BOXES: dict[str, Path] = {
+    pack: path.with_suffix(".words.json") for pack, path in GOLDENS.items()
+}
+WORD_BOXES_PATH = WORD_BOXES[PACK_NAME]
+
+# Points of slack allowed per coordinate. Chromium's glyph positioning is
+# stable to well under a point for the same build, but exact float equality
+# would make the baseline hostage to sub-pixel rounding; a few points still
+# catches any move a human could see (a 12pt line is ~14pt tall).
+BOX_TOLERANCE = 2.0
+# Decimals kept per coordinate — enough to stay well inside the tolerance,
+# few enough that the committed JSON diffs cleanly.
+_BOX_PRECISION = 1
+# Mismatch lines a failure report shows before it truncates.
+_DIFF_LIMIT = 8
+
 # Exit code the e2e lane / CI reads as "rendering stack unavailable, not a
 # golden mismatch" — mirrors ``pytest`` collecting nothing (exit 5) being OK.
 EXIT_NO_RENDERER = 2
 
 __all__ = [
+    "BOX_TOLERANCE",
     "EXIT_NO_RENDERER",
     "GOLDENS",
     "GOLDEN_PATH",
+    "WORD_BOXES",
+    "WORD_BOXES_PATH",
     "PdfProps",
+    "diff_word_boxes",
+    "dump_word_boxes",
+    "extract_page_boxes",
     "extract_pdf_props",
     "meta_block",
     "normalize_text",
     "render_goldens",
+    "render_snapshots",
 ]
 
 
@@ -107,9 +140,9 @@ def extract_pdf_props(pdf_path: Path) -> PdfProps:
     Geometry is taken from the first page (the pack renders a single uniform
     page size); the text layer is the concatenation of every page, normalized.
     """
-    import fitz  # PyMuPDF — provided by the render extra.
+    import pymupdf  # provided by the render extra.
 
-    with fitz.open(str(pdf_path)) as doc:
+    with pymupdf.open(str(pdf_path)) as doc:
         first = doc[0]
         text = "".join(page.get_text() for page in doc)
         return PdfProps(
@@ -118,6 +151,86 @@ def extract_pdf_props(pdf_path: Path) -> PdfProps:
             height=round(first.rect.height),
             text=normalize_text(text),
         )
+
+
+def extract_page_boxes(pdf_path: Path, page_number: int = 0) -> list[list[object]]:
+    """The word bounding boxes on one page: ``[x0, y0, x1, y1, word]`` each.
+
+    PyMuPDF's ``page.get_text("words")`` yields one tuple per word in block →
+    line → word order, which is stable for a given PDF, so the baseline is
+    compared positionally. Page 1 is the pragmatic choice: it carries the
+    header block — patient, DOB, date of service, facility — where a value
+    sliding under the wrong label is the failure with clinical consequences.
+    """
+    import pymupdf  # provided by the render extra.
+
+    with pymupdf.open(str(pdf_path)) as doc:
+        words = doc[page_number].get_text("words")
+    return [
+        [
+            round(x0, _BOX_PRECISION),
+            round(y0, _BOX_PRECISION),
+            round(x1, _BOX_PRECISION),
+            round(y1, _BOX_PRECISION),
+            word,
+        ]
+        for x0, y0, x1, y1, word, *_rest in words
+    ]
+
+
+def diff_word_boxes(
+    expected: list[list[object]],
+    actual: list[list[object]],
+    *,
+    tolerance: float = BOX_TOLERANCE,
+    limit: int = _DIFF_LIMIT,
+) -> list[str]:
+    """Human-readable mismatch lines; empty when the two layouts agree.
+
+    Names the word and both boxes for every disagreement, because "the layout
+    changed" is not actionable — "``DOB`` moved 31pt down" is. A word-count
+    change is reported first, then the positional comparison walks the common
+    prefix so the first divergence is visible rather than a wall of shifted
+    rows.
+    """
+    lines: list[str] = []
+    if len(expected) != len(actual):
+        lines.append(f"word count {len(actual)} != {len(expected)}")
+    for index in range(min(len(expected), len(actual))):
+        want, got = expected[index], actual[index]
+        if want[4] != got[4]:
+            lines.append(f"word {index}: {got[4]!r} != {want[4]!r}")
+        elif any(
+            abs(float(g) - float(w)) > tolerance  # type: ignore[arg-type]
+            for w, g in zip(want[:4], got[:4], strict=True)
+        ):
+            lines.append(
+                f"word {index} {want[4]!r} moved: expected {tuple(want[:4])} got {tuple(got[:4])}"
+            )
+        if len(lines) >= limit:
+            lines.append("… (further differences not listed)")
+            break
+    return lines
+
+
+def dump_word_boxes(word_boxes: dict[str, object]) -> str:
+    """Serialize a word-box baseline with ONE word per line.
+
+    ``json.dumps(indent=2)`` spreads every box over seven lines, which turns a
+    six-page baseline into thousands of unreviewable lines — and an
+    unreviewable baseline is one that gets re-generated instead of read. Each
+    ``[x0, y0, x1, y1, word]`` is emitted compactly, so one word that moved is
+    one line that changed. Keys are sorted, exactly like the text golden.
+    """
+    chunks: list[str] = []
+    for key in sorted(word_boxes):
+        value = word_boxes[key]
+        if isinstance(value, list):
+            rows = ",\n".join(f"    {json.dumps(box)}" for box in value)
+            chunks.append(f"  {json.dumps(key)}: [\n{rows}\n  ]" if value else f'  "{key}": []')
+        else:
+            chunks.append(f"  {json.dumps(key)}: {json.dumps(value, sort_keys=True)}")
+    return "{\n" + ",\n".join(chunks) + "\n}\n"
 
 
 def meta_block() -> dict[str, str]:
@@ -148,9 +261,22 @@ def _load_pack(pack_name: str = PACK_NAME) -> LoadedPack:
 
 
 def render_goldens(pack_name: str = PACK_NAME) -> dict[str, object]:
+    """The text/geometry golden alone — see :func:`render_snapshots`."""
+    return render_snapshots(pack_name)[0]
+
+
+def render_snapshots(pack_name: str = PACK_NAME) -> tuple[dict[str, object], dict[str, object]]:
     """Render every fixture encounter with the REAL Chromium renderer through
-    ``pack_name`` and return the golden mapping
-    ``{"_meta": {...}, "<encounter_id>": {pages, width, height, text}, ...}``.
+    ``pack_name`` and return BOTH committed baselines from that one pass:
+
+    * the golden mapping ``{"_meta": {...}, "<encounter_id>": {pages, width,
+      height, text}, ...}``;
+    * the word-box baseline ``{"_meta": {...}, "<encounter_id>": [[x0, y0, x1,
+      y1, word], ...], ...}`` for page 1 of each chart.
+
+    One render feeds both, because launching Chromium twice to snapshot the
+    same PDFs would double the slowest part of the e2e lane — and could
+    snapshot two different renders.
 
     Mirrors the real pipeline wiring (``cli._run_pipeline``): pack page
     geometry → renderer; manifest section defaults → engine.
@@ -182,19 +308,24 @@ def render_goldens(pack_name: str = PACK_NAME) -> dict[str, object]:
             raise RuntimeError(f"rendering failed for {len(result.failed)} encounter(s)")
         # Map encounter id -> rendered PDF path via the engine's RenderedDoc list.
         props: dict[str, object] = {}
+        boxes: dict[str, object] = {}
         for doc in sorted(result.documents, key=lambda d: d.encounter_id):
             props[doc.encounter_id] = dict(extract_pdf_props(doc.path))
+            boxes[doc.encounter_id] = extract_page_boxes(doc.path)
 
-    golden: dict[str, object] = {"_meta": meta_block()}
+    meta = meta_block()  # one Chromium probe, shared by both baselines
+    golden: dict[str, object] = {"_meta": meta}
     golden.update(props)
-    return golden
+    word_boxes: dict[str, object] = {"_meta": meta}
+    word_boxes.update(boxes)
+    return golden, word_boxes
 
 
 def _renderer_available() -> str | None:
     """Return ``None`` if the real Chromium renderer can launch, else a reason
     string. Never substitutes the fake renderer (the whole point of a golden)."""
     try:
-        import fitz  # noqa: F401
+        import pymupdf  # noqa: F401
     except ImportError:
         return "PyMuPDF missing: install 'anastomosis[render]'"
     try:
@@ -214,19 +345,24 @@ def main() -> int:
     if reason is not None:
         print(f"regen_goldens: cannot regenerate — {reason}", file=sys.stderr)
         return EXIT_NO_RENDERER
-    # Regenerate every registered pack's golden (generic_soap + practice_fusion_soap).
+    # Regenerate every registered pack's golden (generic_soap + practice_fusion_soap),
+    # text/geometry and page-1 word boxes together — a Chromium bump re-baselines
+    # both from the same render, never one without the other.
     for pack_name, golden_path in GOLDENS.items():
-        golden = render_goldens(pack_name)
+        golden, word_boxes = render_snapshots(pack_name)
         golden_path.parent.mkdir(parents=True, exist_ok=True)
         # Deterministic key order (sort_keys) so the committed diff is reviewable;
         # trailing newline so the file is POSIX-clean.
         golden_path.write_text(
             json.dumps(golden, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        boxes_path = WORD_BOXES[pack_name]
+        boxes_path.write_text(dump_word_boxes(word_boxes), encoding="utf-8")
         encounters = [k for k in golden if k != "_meta"]
         print(
             f"regen_goldens: wrote {len(encounters)} encounter snapshot(s) for "
-            f"{pack_name!r} to {golden_path.relative_to(_REPO_ROOT)} "
+            f"{pack_name!r} to {golden_path.relative_to(_REPO_ROOT)} + "
+            f"{boxes_path.relative_to(_REPO_ROOT)} "
             f"(chromium {golden['_meta']['chromium']}, playwright {golden['_meta']['playwright']})"  # type: ignore[index]
         )
     return 0

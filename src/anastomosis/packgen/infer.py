@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The statistics: infer a design system from harvested sample spans.
 
 Stdlib only — no numpy, no torch. Every function takes the

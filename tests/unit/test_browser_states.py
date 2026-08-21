@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Upload state-machine tests: the legal-transition graph is exactly the
 contract, and every illegal move is a loud, named failure."""
 

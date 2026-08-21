@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the shared migration core (``core/migrate.py``).
 
 A migration is a general EHR→EHR move; PF→Tebra is one instance. These pin:
@@ -41,14 +40,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -80,7 +79,7 @@ def _assert_manifest(charts_dir: Path, *, expected_items: int) -> None:
 def test_migrate_neutral_uses_generic_soap_and_emits_both(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     _patch_chromium(monkeypatch)
     out = tmp_path / "out"
     result = run_migration(
@@ -103,7 +102,7 @@ def test_migrate_pack_render_uses_named_pack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A render value that is neither 'neutral' nor 'ccda-standard' is a pack name."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     _patch_chromium(monkeypatch)
     out = tmp_path / "out"
     result = run_migration(
@@ -310,7 +309,7 @@ def test_migrate_pack_and_ccda_standard_share_stage_contract(
     keep emitting the same events — drift would silently break the CLI/GUI
     presenters that consume the stream.
     """
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     _patch_chromium(monkeypatch)
 
     from anastomosis.pipeline import STAGE_DETECT, STAGE_INGEST, STAGE_MANIFEST, StageEvent
@@ -415,12 +414,12 @@ class _ViewChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
         lines = (html_to_text(html) or "(empty)").splitlines()
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)  # Letter, as the view declares
         page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
         doc.save(str(pdf_path))
@@ -440,9 +439,9 @@ class _NoAnchorChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_text((36, 48), "Standard C-CDA view placeholder page.", fontsize=10)
         doc.save(str(pdf_path))
@@ -474,7 +473,7 @@ def test_migrate_ccda_standard_runs_qa_and_writes_report(
     """Default QA in ccda-standard mode writes qa_report.json next to the
     per-patient PDFs, fires the STAGE_QA event, runs the document-generic checks,
     and records the encounter-scoped checks as skipped-with-reason."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.pipeline import STAGE_QA
     from anastomosis.qa.runner import REPORT_NAME
 
@@ -521,7 +520,7 @@ def test_migrate_ccda_standard_qa_fail_exits_nonzero(
     """A rendered view MISSING the identity anchor fails data_integrity → the
     migration raises PipelineError(exit 1, qa_failed), exactly like run_pipeline;
     the report is still written for the operator to inspect."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.pipeline import PipelineError
     from anastomosis.qa.runner import REPORT_NAME
 
@@ -544,7 +543,7 @@ def test_migrate_ccda_standard_no_qa_writes_no_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`--no-qa` (qa=False) skips the QA stage entirely — no qa_report.json."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.qa.runner import REPORT_NAME
 
     _patch_ccda_renderer(monkeypatch, lambda: _ViewChromium())

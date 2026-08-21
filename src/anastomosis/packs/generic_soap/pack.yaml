@@ -32,5 +32,5 @@ sections:
 tokens:
   heading_fill: "#f1f1f1"
   body_font: "Georgia, 'Times New Roman', serif"
-  mono_font: "'Courier New', monospace"
+
 verify_header_fields: [patient_name, dob, dos]

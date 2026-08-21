@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """E2E rendering tests for the practice_fusion_soap pack (REAL Chromium).
 
 Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through the
@@ -35,7 +34,7 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 pytest.importorskip("playwright", reason="PF rendering needs the render extra (playwright)")
-pytest.importorskip("fitz", reason="PF rendering needs the render extra (PyMuPDF)")
+pytest.importorskip("pymupdf", reason="PF rendering needs the render extra (PyMuPDF)")
 
 _TOOLS = Path(__file__).resolve().parents[2] / "tools"
 if str(_TOOLS) not in sys.path:
@@ -45,6 +44,7 @@ import regen_goldens  # noqa: E402 — shared render/extract logic on sys.path
 
 PACK_NAME = "practice_fusion_soap"
 _GOLDEN = regen_goldens.GOLDENS[PACK_NAME]
+_WORD_BOXES = regen_goldens.WORD_BOXES[PACK_NAME]
 _FORENSIC_FILL = (241, 241, 241)  # #f1f1f1 grey heading band (GOLD §1)
 
 
@@ -66,10 +66,26 @@ def golden() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def rendered() -> dict[str, Any]:
-    """Render the fixture once for the whole module (Chromium launch is slow)."""
+def golden_boxes() -> dict[str, Any]:
+    return json.loads(_WORD_BOXES.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def snapshots() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Render the fixture once for the whole module (Chromium launch is slow);
+    text/geometry and page-1 word boxes come from that single render."""
     _chromium_or_skip()
-    return regen_goldens.render_goldens(PACK_NAME)
+    return regen_goldens.render_snapshots(PACK_NAME)
+
+
+@pytest.fixture(scope="module")
+def rendered(snapshots: tuple[dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
+    return snapshots[0]
+
+
+@pytest.fixture(scope="module")
+def rendered_boxes(snapshots: tuple[dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
+    return snapshots[1]
 
 
 def test_golden_has_six_encounter_snapshots(golden: dict[str, Any]) -> None:
@@ -121,6 +137,32 @@ def test_render_matches_golden_geometry_and_text(
             )
 
 
+def test_render_matches_golden_word_boxes(
+    golden: dict[str, Any], golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
+) -> None:
+    """Page 1 of every chart lands where the baseline says it lands.
+
+    The PF pack is a layout REPLICA — its whole claim is spatial — so identical
+    text at shifted coordinates is precisely the regression to catch, and the
+    text/geometry golden above cannot see it.
+    """
+    expected_keys = sorted(k for k in golden_boxes if k != "_meta")
+    assert expected_keys == sorted(k for k in golden if k != "_meta"), (
+        "the word baseline must cover exactly the charts the text golden pins"
+    )
+    for enc_id in expected_keys:
+        assert golden_boxes[enc_id], f"{enc_id}: empty word baseline"
+        differences = regen_goldens.diff_word_boxes(golden_boxes[enc_id], rendered_boxes[enc_id])
+        if differences:
+            # Synthetic fixture text, so the words are PHI-safe to print.
+            pytest.fail(
+                f"{enc_id}: page-1 layout moved (tolerance "
+                f"{regen_goldens.BOX_TOLERANCE}pt). If this change is intentional, run "
+                f"`python tools/regen_goldens.py` and review the JSON diff in the PR.\n"
+                + "\n".join(differences)
+            )
+
+
 def test_pf_headings_and_sh_labels_in_text_layer(golden: dict[str, Any]) -> None:
     blob = " ".join(str(props["text"]) for enc_id, props in golden.items() if enc_id != "_meta")
     for heading in (
@@ -146,11 +188,11 @@ def test_forensic_heading_band_fill_is_painted(rendered: dict[str, Any]) -> None
     """Re-render and prove the #f1f1f1 grey heading band is an actual painted
     fill in the PDF (GOLD §1 print-color-adjust — the 2-sprint bug defense).
     Uses PyMuPDF get_drawings() over the live render, not the golden."""
-    import fitz
+    import pymupdf
 
     pdf_path = _render_first_pdf()
     found = False
-    with fitz.open(str(pdf_path)) as doc:
+    with pymupdf.open(str(pdf_path)) as doc:
         for page in doc:
             for drawing in page.get_drawings():
                 fill = drawing.get("fill")

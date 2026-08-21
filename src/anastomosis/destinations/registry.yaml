@@ -157,9 +157,12 @@ entries:
       evidence:
         source_url: https://helpme.tebra.com/Clinical/Patient_Management/Facesheet/Import_Summary_of_Care
         verified: 2026-06-11
-    # The destinations/tebra browser pack lands in the next PR; do NOT
-    # pre-declare `kind: pack` until the pack is real.
-    browser: {kind: none}
+    # The shipped destinations/tebra pack drives the browser route; its
+    # evidence is the pack's own canary fixtures (selectors re-validated in
+    # preflight), so no evidence URL is required for kind: pack.
+    browser:
+      kind: pack
+      detail: tebra
 
   practice_fusion:
     name: practice_fusion

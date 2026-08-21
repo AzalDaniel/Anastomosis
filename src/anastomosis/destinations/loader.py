@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Defensive browser-pack discovery (mirrors :mod:`anastomosis.reconstruct.packs`).
 
 A browser destination pack is a directory shipped in the wheel:

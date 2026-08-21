@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Context builder for the practice_fusion_soap pack.
 
 Maps a canonical :class:`PatientRecord` + :class:`Encounter` into the
@@ -46,6 +45,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.timeutil import age_display, to_local
+from anastomosis.reconstruct.packctx import observations_by_encounter, record_cache_of
 
 # --- vitals --------------------------------------------------------------------
 # Display order (GOLD §8 VITAL_ORDER). Blood Pressure is the combined sys/dia row.
@@ -364,8 +364,6 @@ class _RecordViewIndex:
     historical_medications: list[MedicationStatement]
     prescriptions_by_id: dict[str, Prescription]
     allergies_by_category: dict[AllergyCategory, list[Any]]
-    active_concerns: list[Any]
-    inactive_concerns: list[Any]
     active_goals: list[Any]
     inactive_goals: list[Any]
     smoking: Observation | None
@@ -395,11 +393,6 @@ class _RecordViewIndex:
         allergies_by_category: dict[AllergyCategory, list[Any]] = {}
         for allergy in record.allergies:
             allergies_by_category.setdefault(allergy.category, []).append(allergy)
-
-        active_hc: list[Any] = []
-        inactive_hc: list[Any] = []
-        for concern in record.health_concerns:
-            (active_hc if concern.active else inactive_hc).append(concern)
 
         active_goals: list[Any] = []
         inactive_goals: list[Any] = []
@@ -433,8 +426,6 @@ class _RecordViewIndex:
             historical_medications=historical_meds,
             prescriptions_by_id={p.id: p for p in record.prescriptions},
             allergies_by_category=allergies_by_category,
-            active_concerns=active_hc,
-            inactive_concerns=inactive_hc,
             active_goals=active_goals,
             inactive_goals=inactive_goals,
             smoking=smoking,
@@ -609,13 +600,6 @@ def build_record_context(
         for d in record.advance_directives
         if d.directive
     ]
-    implantable_devices = [
-        {"name": d.description, "date": _fmt_signed_at(d.recorded_at, tz)}
-        for d in record.devices
-        if d.description
-    ]
-    active_hc = [_concern_view(h) for h in index.active_concerns]
-    inactive_hc = [_concern_view(h) for h in index.inactive_concerns]
     active_goals = [_concern_view(g) for g in index.active_goals]
     inactive_goals = [_concern_view(g) for g in index.inactive_goals]
 
@@ -657,9 +641,6 @@ def build_record_context(
         "family_history": family_history,
         "family_history_freetext": None,
         "advance_directives": advance_directives,
-        "implantable_devices": implantable_devices,
-        "active_concerns": active_hc,
-        "inactive_concerns": inactive_hc,
         "active_goals": active_goals,
         "inactive_goals": inactive_goals,
         # screenings (events not modeled in EHI -> empty state)
@@ -681,8 +662,7 @@ def build_context(
     # CONTRACT: record_cache is per-record — the engine allocates a fresh dict
     # for each record. A caller must not share one cache across DIFFERENT records
     # (that would mis-render the second). Absent a cache, it builds locally.
-    cache = cfg.get("record_cache")
-    record_cache: dict[str, Any] = cache if isinstance(cache, dict) else {}
+    record_cache = record_cache_of(cfg)
 
     # Record-static views (insurance, payment, diagnoses, allergies, meds,
     # immunizations, social history, demographics, …) are independent of the
@@ -703,10 +683,7 @@ def build_context(
     # --- vitals ----------------------------------------------------------------
     # observations grouped by encounter once per record (the indexed form of
     # observations_for); .get(id, []) == observations_for(id) exactly.
-    obs_by_encounter = record_cache.get("obs_by_encounter")
-    if obs_by_encounter is None:
-        obs_by_encounter = record.observations_by_encounter()
-        record_cache["obs_by_encounter"] = obs_by_encounter
+    obs_by_encounter = observations_by_encounter(record, record_cache)
     enc_vitals = [
         o
         for o in obs_by_encounter.get(encounter.id, [])
@@ -729,13 +706,6 @@ def build_context(
     objective = soap.get(SectionKind.OBJECTIVE)
     assessment = soap.get(SectionKind.ASSESSMENT)
     plan = soap.get(SectionKind.PLAN)
-
-    # --- orders ----------------------------------------------------------------
-    lab_orders = [
-        {"test_items": [{"display": i.test_name} for i in o.items if i.test_name]}
-        for o in record.lab_orders
-        if o.encounter_id in (encounter.id, None)
-    ]
 
     # --- addenda (conditional) -------------------------------------------------
     addendums = [
@@ -783,7 +753,6 @@ def build_context(
         "assessment_html": assessment.html if assessment else None,
         "plan_html": plan.html if plan else None,
         # orders
-        "lab_orders": lab_orders,
         # addenda
         "addendums": addendums,
     }

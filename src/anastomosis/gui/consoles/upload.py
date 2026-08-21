@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The upload console: the browser-delivery operator surface.
 
 Owns the read-only tracking-ledger views (``upload_status``,
@@ -111,7 +110,7 @@ class UploadConsole:
     """The browser-delivery console: read-only ledger views + live driving."""
 
     # The operation family this console owns; stamped on every event so only the
-    # upload console page consumes them (the P2-5 per-page flow guard).
+    # upload console page consumes them (the per-page flow guard).
     _FLOW = "upload"
 
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:

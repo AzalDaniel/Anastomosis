@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The source-adapter contract and registry.
 
 An adapter declares what it can read and proves it can read a given folder
@@ -24,7 +23,31 @@ from typing import Protocol, runtime_checkable
 
 from anastomosis.core.model import PatientRecord
 
-__all__ = ["SourceAdapter", "available_sources", "detect_source", "get_source", "register"]
+__all__ = [
+    "SourceAdapter",
+    "SourceDataError",
+    "available_sources",
+    "detect_source",
+    "get_source",
+    "register",
+]
+
+
+class SourceDataError(Exception):
+    """An adapter's fail-closed refusal whose MESSAGE the operator must see.
+
+    A loud failure is only half the contract: the operator also needs to know
+    *what* to repair. These refusals carry the diagnosis — the offending table
+    or resource-type names and their row/resource COUNTS — and are written to be
+    PHI-safe, schema names and integers only, never a cell value, an id, or any
+    patient-derived string. That is what makes them safe to print verbatim.
+
+    The pipeline distinguishes them from an arbitrary adapter exception (whose
+    message may embed the input that caused it, so only its TYPE may be shown)
+    and passes the message straight through to the CLI/GUI. Every adapter
+    refusal that names schema + counts should subclass this; one that could
+    embed a value must not.
+    """
 
 
 @runtime_checkable

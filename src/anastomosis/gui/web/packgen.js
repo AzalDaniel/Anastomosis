@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis Pack-from-samples wizard — vanilla JS, no frameworks, no build.
  *
@@ -26,6 +25,10 @@
  * single-sample text suppression is inherited from the controller/summary.
  */
 "use strict";
+
+// Only the bridge gate is needed from the shared shell here (this wizard hosts
+// no segment toggle, palette, or log strip of its own).
+const Shell = window.AnastShell;
 
 function hasApi() {
   return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
@@ -95,7 +98,7 @@ function renderPackResult(res) {
 // The event dispatcher the shell (Python side) calls during an async pack-init.
 // On a packgen `done` (or a generic `done`) we fetch the stashed result and
 // route it; an `error` shows the banner. Other stages just update the status.
-// Flow guard (P2-5): the pack-from-samples wizard owns the "pack_init" flow. Every
+// Flow guard: the pack-from-samples wizard owns the "pack_init" flow. Every
 // event carries a `flow`; we early-return on any other flow so a run from another
 // page can't drive this wizard's terminal handlers.
 window.anastEvent = function anastEvent(e) {
@@ -192,6 +195,11 @@ async function populate() {
     setStatus("offline");
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted, so a slow pywebview attach does
+  // not leave the wizard permanently showing "launch via anast gui".
+  el("no-api").classList.remove("show");
+  setStatus("ready");
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -215,7 +223,9 @@ function init() {
   if (confirm) {
     confirm.addEventListener("change", onConfirmToggle);
   }
-  populate();
+  // Bootstrap through the shared bridge gate: now, and once more when
+  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
+  Shell.onApiReady(populate);
 }
 
 if (document.readyState === "loading") {

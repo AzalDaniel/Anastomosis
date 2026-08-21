@@ -21,7 +21,10 @@ practices get priced out or locked in.
 Anastomosis is the missing last mile, free and open source:
 
 1. **Ingest** raw EHI exports — Practice Fusion/Tebra TSV, C-CDA/CCD, FHIR R4
-   (Bundle or Bulk-Data NDJSON), Oracle Health/Cerner Millennium V500 dumps —
+   (Bundle or Bulk-Data NDJSON), and Oracle Health/Cerner Millennium V500 dumps
+   (*experimental*: the single-patient export's seven core tables, giving
+   demographics, encounters, observations, conditions, allergies, and documents —
+   no medications, procedures, or immunizations yet) —
    into a lossless canonical model: every unmapped field, and every unmapped
    table the export carries, is preserved verbatim in `extensions`; an export
    carrying data that cannot be placed is refused rather than silently dropped.
@@ -36,20 +39,26 @@ Anastomosis is the missing last mile, free and open source:
    (data-integrity, layout, and identity checks), and guard every upload with the
    L0–L6 verification ladder — on by default (`--no-verify` to skip; the run
    report names exactly which levels ran) — plus a live wrong-patient banner
-   check that runs regardless. **Active coverage** depends on the destination:
-   L0/L1 (file integrity, page count) and L2/L4 (patient identity + live banner
-   readback) run on every upload; L3 (pack-driven header fields) runs when the
-   upload carries pack context; L5/L6 (destination metadata + byte/identity
-   round-trip) run when the destination supports read-back. Levels that don't
-   apply skip with a reason recorded in the run report, so the claim never
-   exceeds the coverage.
+   check that runs regardless. **Active coverage** depends on the destination
+   AND the route. On the upload path (`anast upload` / the GUI console): L0
+   (file integrity) and L2/L4 (patient identity + live banner readback) run on
+   every upload; L1 runs but only checks that the PDF opens, has ≥1 page, and
+   clears the sub‑KiB floor — its *exact* expected‑page‑count check is **not
+   active** here; L3 (pack‑driven header/DOS fields) is **not active** here
+   either. Both are inactive because the upload manifest carries no pack name,
+   per‑item expected page count, or encounter records to check against (wiring
+   them is a tracked manifest‑schema follow‑up). L5/L6 (destination metadata +
+   byte/identity round‑trip) run when the destination supports read‑back. Every
+   level that does not apply skips with a reason recorded in the run report, so
+   the claim never exceeds the coverage.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
-   **structured C-CDA/FHIR payload** for destinations that import C-CDA/FHIR, an
+   **structured C-CDA payload** for destinations that import C-CDA, an
    upload manifest, and a verified route plan — but files nothing itself; `anast
-   upload` EXECUTES browser-route delivery, and API-route execution is on the
-   roadmap.
+   upload` EXECUTES delivery over **either route**: the destination's web UI
+   (`--to PACK --cdp URL`) or its FHIR R4 API (`--fhir URL`), whichever the
+   destination actually offers.
    The rendered PDF is the human-readable archive and upload fallback, never a
    forgery of another vendor's house style. Or build a **searchable offline
    archive** — plain folders, PDFs, and JSON readable for decades — in place of a
@@ -60,7 +69,7 @@ Your records never leave your machine.
 
 ## Status
 
-**v0.6.0 (alpha)** — the sixth alpha, on
+**v0.7.0 (alpha)** — the seventh alpha, on
 [PyPI](https://pypi.org/project/anastomosis/) and
 [GitHub](https://github.com/AzalDaniel/Anastomosis/releases). See
 [CHANGELOG.md](CHANGELOG.md) for what shipped, [DESIGN.md](DESIGN.md) for the
@@ -77,6 +86,7 @@ design record, and [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 | PHI-at-rest & log hardening — Windows NTFS ACLs on every output dir, redacting log handler wired at both entry points, CodeQL scanning, design/provenance record | ✅ v0.4.0 |
 | Run-scoped log identifiers (no raw source GUIDs in logs), git-free PHI scanner, one-click release path shipping the installer | ✅ v0.5.0 |
 | Claims-match-runtime pass — honest `migrate` PREPARED outcome, QA on every render mode, one upload verdict for CLI + GUI, flow-scoped GUI events, race-free pack trust | ✅ v0.6.0 |
+| External-audit closure — one boundary-anchored identity predicate behind every wrong-patient gate, lossless refusals that name what they refuse, redirect-refusing FHIR client, verified Windows ACLs, budgeted delivered paths, licensed artifacts | ✅ v0.7.0 |
 
 Built and tested entirely against synthetic data; see
 [docs/DISCLAIMER.md](docs/DISCLAIMER.md) for production-readiness notes.
@@ -133,9 +143,9 @@ anast pipeline run ./my_ehi_export --out ./charts --archive ./my_archive
 ```
 
 The source format is auto-detected (or pass `--source pf-tebra`/`ccda`/`fhir-r4`/
-`oracle-ehi`); `--pack` selects the document template; every rendered document is
-QA-verified by default; `anast info` lists every available source adapter and
-template pack.
+`oracle-ehi`, the last of which is experimental — see the ingest note above);
+`--pack` selects the document template; every rendered document is QA-verified by
+default; `anast info` lists every available source adapter and template pack.
 
 Migrate from one EHR to another — emitting both the structured C-CDA payload for
 the target's C-CDA import (validated for round-trip fidelity through our own
@@ -185,11 +195,15 @@ src/anastomosis/
 │   │                 no_network=True, load_dtd=False, huge_tree=False); unmapped
 │   │                 sections preserved under `ccda:section:<loinc>` extension keys.
 │   ├── oracle_ehi/   Oracle Health/Cerner Millennium EHI adapter (V500 single-patient
-│   │                 export). Dependency-free MySQL INSERT-dump reader over
-│   │                 `v500/{schema,activity,reference}`; PERSON/ENCOUNTER/CLINICAL_EVENT
-│   │                 spine, CE_BLOB note text + CE_BLOB_RESULT remote refs (never
-│   │                 fetched); unmapped columns to `oracle_ehi:` extensions; undocumented
-│   │                 CE_BLOB compression (brief §8) raises loudly rather than guessing.
+│   │                 export) — EXPERIMENTAL, deliberately partial. Dependency-free
+│   │                 MySQL INSERT-dump reader over `v500/{schema,activity,reference}`
+│   │                 that reads the SEVEN core tables (plus the CODE_VALUE dictionary):
+│   │                 PERSON/ENCOUNTER/CLINICAL_EVENT spine, CE_BLOB note text +
+│   │                 CE_BLOB_RESULT remote refs (never fetched). Maps Patient,
+│   │                 Encounter, Observation, Condition, AllergyIntolerance, and
+│   │                 DocumentArtifact; medications, procedures, and immunizations are
+│   │                 not mapped yet. Unmapped columns to `oracle_ehi:` extensions;
+│   │                 undocumented CE_BLOB compression raises loudly rather than guessing.
 │   ├── fhir_r4/      FHIR R4 / US Core ingest — a Bundle or a Bulk-Data `$export`
 │   │                 NDJSON directory → canonical records; unmapped fields → `extensions`.
 │   └── learned/      LEARN-A-SOURCE: a single generic adapter that runs a saved,
@@ -231,6 +245,8 @@ src/anastomosis/
 │   │                 L5 destination metadata, L6 byte/identity round-trip.
 │   ├── fhir_api/     FHIR R4 DocumentReference pusher over stdlib urllib (https, or
 │   │                 http only for loopback); status codes + resource TYPE names in errors.
+│   │                 attach.py: the construction seam the CLI upload command calls
+│   │                 (`anast upload --fhir`), twin of deliver/browser/attach.py.
 │   └── ccda_export/  PatientRecord → C-CDA R2.1, for destinations that import C-CDA;
 │   │                 its contract is that THIS repo's own ccda parser reads it back.
 │   └── router.py     SHORTEST-PATH router: vendor API → C-CDA import → browser
@@ -251,6 +267,52 @@ src/anastomosis/
                       `doctor`, `gui`, `migrate`, `upload`, `archive`, `bundle`,
                       `destination {list,route,init}`, `pack init`, `source init`.
 ```
+
+### Two delivery routes, one engine
+
+`anast upload` files a prepared output dir into a destination EHR over exactly
+one route per run. Both routes share everything that matters — the crash-
+resumable ledger, the retry budget, the skiplist, the L0–L6 verification
+ladder, the run report, and the exit-code verdict — because both hand the same
+`Destination` protocol to the same engine.
+
+```bash
+# Browser route: drive the destination's web UI in a browser YOU launched
+# with a remote debug port and logged into yourself (loopback CDP only).
+anast upload out/ --to tebra --cdp http://127.0.0.1:9222
+
+# API route: file each chart as a FHIR R4 DocumentReference over HTTPS.
+export ANAST_FHIR_TOKEN='...'          # the token never appears in argv
+anast upload out/ --fhir https://ehr.example.com/fhir
+```
+
+Exactly one route must be selected: `--to` **and** `--cdp` together, or
+`--fhir` alone. Half a browser route, both routes at once, or neither is a
+usage error (exit 2) rather than a run that guesses. The GUI supports the
+browser route today; use the CLI for the FHIR route.
+
+**Bearer token handling.** The API route never accepts a token on the command
+line — argv is visible to every process on the box (`ps`). It reads the token
+from an environment variable, `ANAST_FHIR_TOKEN` by default, or whichever
+variable `--fhir-token-env VAR` names when you keep several destinations
+apart. An unset (or blank) variable means unauthenticated, the normal case for
+a local HAPI server. The token is masked in every `repr`, so it cannot reach a
+log line or a traceback frame.
+
+**Patients that are not there yet.** `--create-patients` (ON by default on
+this route) lets the resolver POST a new `Patient` — built by the same export
+code, so the identifier systems and the lossless extensions tail come along —
+when the destination holds none matching. A search that matches *more than
+one* patient is always refused: filing a chart against a guessed patient is
+the failure the whole subsystem exists to prevent. Pass `--no-create-patients`
+when the target is supposed to already hold every patient.
+
+**Verification coverage differs by route, and the report says so.** On the API
+route L3 (pack-driven header fields) skips — there is no browser pack — while
+L5 (destination metadata) and L6 (byte/identity round-trip) run, because a
+FHIR server can be read back. The browser route is typically the reverse.
+Neither route claims more than it ran: the run report records each level's
+pass/fail/skip counts and the reason for every skip.
 
 ## Design rationale
 
@@ -284,13 +346,21 @@ src/anastomosis/
   (owner-only `0o700` on POSIX; on Windows NTFS, ACL inheritance is stripped
   and access restricted to the current user, SYSTEM, and Administrators).
 
+## The desktop GUI
+
+`anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
+live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
+destination transit map and the full set of run levers, a learn-a-source wizard,
+and an upload console that drives the delivery engine over its ledger. The GUI
+supports the browser route today; use the CLI for the FHIR route.
+
 ## Privacy & safety
 
 - **No PHI in this repository, ever.** All fixtures are synthetic
   (Synthea-generated or hand-built with `feedface-` GUIDs). A hashed
   deny-list scanner (`tools/phi_scan.py`) runs on every commit and in CI.
 - You run this software on machines you control; you are responsible for
-  HIPAA compliance in your environment. See [docs/SECURITY.md](docs/SECURITY.md)
+  HIPAA compliance in your environment. See [SECURITY.md](SECURITY.md)
   and [docs/DISCLAIMER.md](docs/DISCLAIMER.md).
 
 ## License
@@ -299,50 +369,3 @@ src/anastomosis/
 and anyone who offers it as a service must share their changes back.
 No CLA: contributors keep their copyright, which makes proprietary
 relicensing permanently impossible.
-
-## The desktop GUI
-
-`anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
-live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
-destination transit map and the full set of run levers, a learn-a-source wizard,
-and an upload console that drives the delivery engine over its ledger.
-
-## Provenance & AI assistance
-
-Anastomosis generalizes a private production system, by the same author, that
-migrated a clinic's full EHI export — reconstructing its encounter documents and
-filing them into the destination EHR with no wrong-patient events. Those results
-are self-reported and specific to that deployment; this open-source release has
-been built and tested only against synthetic data (see
-[docs/DISCLAIMER.md](docs/DISCLAIMER.md)).
-
-Anastomosis is authored by Azal Daniel and developed with substantial
-assistance from AI coding agents (Anthropic Claude-family models) operating
-under the author's direction and review: the author sets the scope,
-architecture, clinical-domain requirements, and acceptance criteria; every
-agent-produced change is reviewed and must pass the full gate (`ruff` incl.
-bandit-S, `mypy --strict`, the test suite, the PHI scanner) before merge.
-Source files carry a one-line AI-assistance citation comment; the full
-authorship and provenance record — including what is original, what is a
-re-typed generalization of the predecessor system, and what is vendored — is
-in [DESIGN.md](DESIGN.md).
-
-## CS50 final project
-
-Anastomosis is also the author's CS50x final project — built for the course's
-bar but not scoped to it.
-
-- **Title:** Anastomosis — reconstruct, verify, and re-home clinical records.
-- **Video:** *to be added at submission time* (placeholder — the demo video
-  URL will land here before `submit50`).
-- **Description:** this README (what it does and why), plus
-  [DESIGN.md](DESIGN.md) for the architecture, the design choices that were
-  genuinely debated, the hardest problems, and the authorship/provenance
-  record, and the file-by-file map above for what each part of the codebase
-  does.
-- **AI policy compliance:** per the
-  [CS50 academic-honesty policy](https://cs50.harvard.edu/x/honesty/), AI
-  tools may be used for the final project provided the essence of the work is
-  the student's own and their use is cited in code comments — every authored
-  source file carries that citation, and the division of labor is documented
-  in [DESIGN.md](DESIGN.md).

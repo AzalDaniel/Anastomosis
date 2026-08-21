@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Source adapters: each module here turns one vendor's export into
 canonical :class:`~anastomosis.core.model.PatientRecord` objects.
 
@@ -8,6 +7,20 @@ defensively — a broken adapter reports a diagnosis instead of taking the
 toolkit down.
 """
 
-from .base import SourceAdapter, available_sources, detect_source, get_source, register
+from .base import (
+    SourceAdapter,
+    SourceDataError,
+    available_sources,
+    detect_source,
+    get_source,
+    register,
+)
 
-__all__ = ["SourceAdapter", "available_sources", "detect_source", "get_source", "register"]
+__all__ = [
+    "SourceAdapter",
+    "SourceDataError",
+    "available_sources",
+    "detect_source",
+    "get_source",
+    "register",
+]

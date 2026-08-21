@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the C-CDA / CCD adapter against the synthetic fixture.
 
 Each test asserts one section's mapping (or one trap) documented in
@@ -232,6 +231,120 @@ def test_encounters_include_office_visit_and_note(record: PatientRecord) -> None
 
 
 # --- losslessness ------------------------------------------------------------
+
+
+# A Problems section (LOINC 11450-4 — structurally parsed) whose single entry
+# is NOT the act/entryRelationship/observation shape `_conditions` requires, so
+# the structural parser yields nothing and the narrative is the only record of
+# what the section said.
+_UNSUPPORTED_PROBLEMS_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda2"/>
+  <title>Unsupported-entry CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems</title>
+      <text>SENTINEL-UNSUPPORTED-PROBLEM (active, onset 2021-02-15)</text>
+      <entry><observation classCode="OBS" moodCode="EVN">
+        <value code="38341003" codeSystem="2.16.840.1.113883.6.96"/>
+      </observation></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_known_section_narrative_survives_unsupported_entries(tmp_path: Path) -> None:
+    """A structurally-parsed section whose entries the parser cannot take apart
+    still keeps its narrative: the <text> of EVERY section is captured, not only
+    an unknown section's, so an unsupported entry shape cannot erase the chart."""
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "unsupported_problems.xml"
+    doc.write_text(_UNSUPPORTED_PROBLEMS_CCD, encoding="utf-8")
+    parsed = parse_document(doc)
+    assert parsed.conditions == []  # the structural parser is unchanged: it still skips
+    section = parsed.patient.extensions["ccda:section:11450-4"]
+    assert section["title"] == "Problems"
+    assert "SENTINEL-UNSUPPORTED-PROBLEM" in section["text"]
+
+
+# Two sections sharing one LOINC (split Problems (Active)/(Resolved) is ordinary
+# C-CDA) plus two sections with no code at all — four narratives that must land
+# on four distinct keys.
+_REPEATED_SECTIONS_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda9"/>
+  <title>Repeated-section CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems (Active)</title>
+      <text>SENTINEL-FIRST-PROBLEM-NARRATIVE</text>
+    </section></component>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems (Resolved)</title>
+      <text>SENTINEL-SECOND-PROBLEM-NARRATIVE</text>
+    </section></component>
+    <component><section>
+      <title>No-code section A</title>
+      <text>SENTINEL-NOCODE-A</text>
+    </section></component>
+    <component><section>
+      <title>No-code section B</title>
+      <text>SENTINEL-NOCODE-B</text>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_repeated_section_code_keeps_every_narrative(tmp_path: Path) -> None:
+    """A second section sharing a LOINC must not overwrite the first: each
+    occurrence gets its own key, suffixed in document order, so neither the
+    Active nor the Resolved Problems narrative vanishes. Two code-less sections
+    are disambiguated the same way."""
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "repeated_sections.xml"
+    doc.write_text(_REPEATED_SECTIONS_CCD, encoding="utf-8")
+    ext = parse_document(doc).patient.extensions
+    assert ext["ccda:section:11450-4"] == {
+        "title": "Problems (Active)",
+        "text": "SENTINEL-FIRST-PROBLEM-NARRATIVE",
+    }
+    assert ext["ccda:section:11450-4#2"] == {
+        "title": "Problems (Resolved)",
+        "text": "SENTINEL-SECOND-PROBLEM-NARRATIVE",
+    }
+    assert ext["ccda:section:unknown"]["text"] == "SENTINEL-NOCODE-A"
+    assert ext["ccda:section:unknown#2"]["text"] == "SENTINEL-NOCODE-B"
+
+
+def test_single_occurrence_sections_keep_the_bare_key(record: PatientRecord) -> None:
+    """The suffix appears only on a REPEAT: a document with one section per code
+    reads exactly as before (no ``#1``)."""
+    keys = [k for k in record.patient.extensions if k.startswith("ccda:section:")]
+    assert keys and not any("#" in key for key in keys)
+
+
+def test_parsed_section_keeps_entries_and_narrative(record: PatientRecord) -> None:
+    """Narrative capture is additive: the fixture's Problems section still maps
+    to typed conditions AND now keeps the section text it renders from."""
+    assert {c.snomed for c in record.conditions} >= {"38341003", "37796009"}
+    problems = record.patient.extensions["ccda:section:11450-4"]
+    assert problems["title"] == "Problems"
+    assert "Essential hypertension" in problems["text"]
 
 
 def test_unparsed_section_and_document_metadata_survive(record: PatientRecord) -> None:

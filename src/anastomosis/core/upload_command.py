@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared browser-upload orchestration core (one engine drive, two frontends).
 
 ``anast upload`` (CLI) and the GUI upload console must drive the resumable upload
@@ -230,7 +229,7 @@ def run_upload_command(
     # dependency that reads the PDFs is missing, refuse rather than file unverified.
     if cmd.verify:
         try:
-            import fitz  # noqa: F401 — PyMuPDF; the L0-L6 ladder reads PDFs with it
+            import pymupdf  # noqa: F401 — the L0-L6 ladder reads PDFs with it
         except ImportError as exc:
             raise VerificationUnavailableError(
                 "upload verification (on by default) needs the render extra: "
@@ -279,10 +278,29 @@ def run_upload_command(
         # lazy so verify=False never pulls in the render extra. The verifier
         # reads the destination directly for its banner/metadata/round-trip
         # access (L4/L5/L6) — so it takes the UNwrapped Destination, while the
-        # engine takes the ManagedDestination. There is no pack/records/
-        # expected_pages in the upload path, so L3 SKIPs here (correctly): the
-        # active levels are L0/L1/L2/L4 (+ L5/L6 when the destination supports
-        # read-back). If this constructor raises, the stack already owns both the
+        # engine takes the ManagedDestination.
+        #
+        # NOT active on the upload path (both `anast upload` and the GUI
+        # console), stated plainly so the coverage claim never exceeds reality:
+        #   * L3 (pack-driven header/DOS fields) SKIPs — no `pack`/`records` is
+        #     threaded, so it has nothing to check.
+        #   * L1's EXACT expected-page-count check is inactive — no
+        #     `expected_pages` is threaded, so L1 verifies only "opens, >= 1
+        #     page, above the sub-KiB floor", not "exactly N pages".
+        # Active levels here are L0/L1(sans exact page count)/L2/L4 (+ L5/L6 when
+        # the destination supports read-back). The reason is the upload manifest
+        # (`deliver/browser/persist.py`, version 1) carries item_key/encounter_id/
+        # patient_id/sha256/size/fingerprint + patient demographics only — NOT the
+        # pack name, per-item expected page count, or encounter (DOS) records L3
+        # and the exact-page check need. Wiring them is a manifest-schema change
+        # (a MANIFEST_VERSION bump + render/migrate writers + this reader), tracked
+        # as a follow-up rather than rushed into a patient-safety fix.
+        # TODO(L3-on-upload): extend the manifest to carry pack name, per-item
+        # expected page count, and encounter records, then pass pack/records/
+        # expected_pages here so L3 and L1's exact-page check run on the upload
+        # path. See README "Active coverage".
+        #
+        # If this constructor raises, the stack already owns both the
         # destination release and the ledger close, so neither leaks.
         verifier = None
         if cmd.verify:

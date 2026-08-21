@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Upload engine tests: the full lifecycle, every terminal, and kill-and-resume.
 
 Synthetic data only — ``feedface-`` GUIDs for patient ids, neutral file names
@@ -193,6 +192,43 @@ def test_duplicate_at_destination(tmp_path: Path) -> None:
     result = UploadEngine(dest, tracking).run(items, {PAT_A: _patient(PAT_A)}, run_id)
 
     assert result.counts == {UploadState.DUPLICATE_AT_DESTINATION.value: 1}
+    assert dest.uploads == []
+
+
+def test_wrong_patient_with_existing_fingerprint_aborts_before_duplicate_scan(
+    tmp_path: Path,
+) -> None:
+    """ID-003: a WRONG open chart that ALSO carries this item's fingerprint must
+    NOT resolve to a clean DUPLICATE_AT_DESTINATION with the banner never read.
+    The wrong-patient banner readback runs FIRST and aborts — a chart's
+    existing-docs list is untrusted until the open chart is confirmed to be the
+    right patient. Before the fix the duplicate scan ran first and returned a
+    clean duplicate with banner_calls=0."""
+    items = _single_manifest(tmp_path)
+
+    class _BannerCounter(FakeDestination):
+        banner_calls: int = 0
+
+        def current_patient_matches(self, expected: Patient) -> bool:
+            self.banner_calls += 1
+            return super().current_patient_matches(expected)
+
+    dest = _BannerCounter(
+        {PAT_A: DEST_A},
+        existing={DEST_A: {items[0].fingerprint}},  # the fingerprint IS on file
+        wrong_patient_ids={PAT_A},  # ...but the open chart is the wrong patient
+    )
+    tracking = _tracking(tmp_path)
+    run_id = tracking.begin_run(dest.name)
+
+    result = UploadEngine(dest, tracking).run(items, {PAT_A: _patient(PAT_A)}, run_id)
+
+    # The banner WAS read (not skipped), the run aborted for patient safety, and
+    # the item did NOT land in the clean duplicate terminal.
+    assert dest.banner_calls >= 1
+    assert result.aborted_reason == "WrongPatientError"
+    assert tracking.state_of(items[0].item_key) is UploadState.PRE_VERIFY_FAILED
+    assert result.counts.get(UploadState.DUPLICATE_AT_DESTINATION.value, 0) == 0
     assert dest.uploads == []
 
 

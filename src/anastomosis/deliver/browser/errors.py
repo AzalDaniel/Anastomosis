@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Delivery error taxonomy for the browser upload engine.
 
 The engine's retry, abort, and terminal-state decisions are driven by which

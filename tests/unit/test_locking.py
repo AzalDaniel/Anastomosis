@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the output-directory advisory lock (core/locking.py).
 
 The lock is a kernel advisory lock (flock / msvcrt) held on an open descriptor:

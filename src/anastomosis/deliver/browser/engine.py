@@ -1,12 +1,11 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The sequential upload engine: drive items through the state machine.
 
-This is the heart of M2 item 10. Given a destination pack, the resumable
-ledger, and a manifest of :class:`UploadItem`, the engine walks each item from
-``PENDING`` to exactly one terminal state, recording every move in the ledger
-so a killed run resumes exactly where it stopped. The batch scheduler, the
-parallel workers, the CDP attach, and the reports land in the next PR; this
-engine is the single-threaded driver they will build on.
+Given a destination pack, the resumable ledger, and a manifest of
+:class:`UploadItem`, the engine walks each item from ``PENDING`` to exactly
+one terminal state, recording every move in the ledger so a killed run
+resumes exactly where it stopped. This is the single-threaded driver every
+other layer builds on: schedulers and reporters wrap it through the seam
+documented on :meth:`UploadEngine.run` and never bypass the state machine.
 
 Two safety properties shape the design:
 
@@ -38,13 +37,13 @@ output directory).
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Patient
 from anastomosis.destinations.base import Destination, UploadItem
@@ -54,10 +53,6 @@ from .manifest import is_skiplisted
 from .states import UploadState
 from .tracking import TrackingDB
 from .verify import NullVerifier, Verifier
-
-# 1 MiB chunks: matches the manifest hasher so preflight re-hashing reads the
-# file the same way it was originally measured.
-_HASH_CHUNK_BYTES = 1024 * 1024
 
 __all__ = ["EngineResult", "UploadEngine"]
 
@@ -131,8 +126,8 @@ class UploadEngine:
         a defect, not a skip).
 
         ``stop``, ``manage_run``, and ``restrict_to_items`` are the
-        parallel-runner seam (PLAN item 10, the parallel PR); all three default
-        to preserving the single-threaded behavior exactly:
+        parallel-runner seam; all three default to preserving the
+        single-threaded behavior exactly:
 
         * ``stop`` — an optional cooperative cancel flag. When set (by a sibling
           worker hitting a wrong-patient abort), the loop stops between items,
@@ -286,22 +281,34 @@ class UploadEngine:
                 self._to(item, UploadState.PATIENT_NOT_FOUND, run_id)
                 return True
 
-            # (c) duplicate scan — the resume double-file defense.
+            # (c) VERIFYING_PRE — the wrong-patient banner readback runs FIRST,
+            #     BEFORE the duplicate scan. A chart's existing-docs list must
+            #     never be trusted until the open chart is confirmed to be the
+            #     right patient: a wrong chart that happens to carry this item's
+            #     fingerprint must abort here, not resolve to a clean
+            #     DUPLICATE_AT_DESTINATION with the banner never read.
+            self._to(item, UploadState.VERIFYING_PRE, run_id)
+            if not self._dest.banner.current_patient_matches(patient):
+                raise WrongPatientError
+
+            # (d) duplicate scan — the resume double-file defense, trusted only
+            #     now that the banner has confirmed the open chart's identity.
             if item.fingerprint in self._dest.scanner.existing_fingerprints(dest_patient):
                 self._to(item, UploadState.DUPLICATE_AT_DESTINATION, run_id)
                 return True
 
-            # (d) VERIFYING_PRE — banner readback FIRST, then the verifier.
-            self._to(item, UploadState.VERIFYING_PRE, run_id)
-            if not self._dest.banner.current_patient_matches(patient):
-                raise WrongPatientError
-            self._verifier.verify_pre(item, patient)
+            # (e) the rest of the pre-upload verifier ladder (L0-L4). The
+            #     engine's already-resolved dest_patient is threaded in so the
+            #     verifier does not RE-resolve (a second, CREATE-capable resolve
+            #     would POST a duplicate Patient on a create_missing_patients
+            #     destination with a lagging index).
+            self._verifier.verify_pre(item, patient, dest_patient)
 
-            # (e) UPLOADING.
+            # (f) UPLOADING.
             self._to(item, UploadState.UPLOADING, run_id)
             receipt = self._dest.driver.upload(item, dest_patient)
 
-            # (f) VERIFYING_POST — size echo check, then the verifier.
+            # (g) VERIFYING_POST — size echo check, then the verifier.
             self._to(item, UploadState.VERIFYING_POST, run_id)
             if (
                 receipt.echoed_size_bytes is not None
@@ -376,26 +383,23 @@ class UploadEngine:
     def _preflight_ok(self, item: UploadItem) -> bool:
         """File exists and its content/size still match the manifest.
 
-        Re-hashes the file streamed in chunks; a mismatch means the render was
-        corrupted or swapped after the manifest was built — a hard preflight
+        Re-hashes the file through the shared streaming hasher — the same
+        chunking the manifest measured it with — so a mismatch means the render
+        was corrupted or swapped after the manifest was built, never a
+        difference in how the two sites read. A mismatch is a hard preflight
         fail, never an upload. Logs the item key only, never the path.
         """
         path = item.file_path
         if not path.exists():
             return False
-        digest = hashlib.sha256()
-        size = 0
         try:
-            with path.open("rb") as handle:
-                while chunk := handle.read(_HASH_CHUNK_BYTES):
-                    digest.update(chunk)
-                    size += len(chunk)
+            digest, size = hash_and_size(path)
         except OSError as exc:
             logger.warning(
                 "preflight read failed for item %s (%s)", safe_log_id(item.item_key), exc_tag(exc)
             )
             return False
-        return digest.hexdigest() == item.sha256 and size == item.size_bytes
+        return digest == item.sha256 and size == item.size_bytes
 
     def _attempts(self, item_key: str) -> int:
         return self._tracking.attempts_of(item_key)

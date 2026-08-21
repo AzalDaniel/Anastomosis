@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """A FHIR R4 ``DocumentReference`` pusher implementing the Destination protocol.
 
 :class:`FhirApiDestination` is the API counterpart to a browser destination
@@ -26,6 +25,13 @@ Patient resource construction reuses ``export._patient`` verbatim (the lossless
 extensions tail and identifier systems come along), with the resource ``id``
 dropped before the POST so the server assigns its own.
 
+Size rule: a ``DocumentReference`` carries the PDF *inside* the JSON body, so
+filing one costs several times the file in memory (read + base64 + serialized
+request). :class:`FhirApiDestination` therefore refuses an oversized item
+BEFORE reading it, raising :class:`PayloadTooLarge`; the bound is the
+``max_payload_bytes`` constructor argument. Streaming the bytes as a ``Binary``
+resource is the tracked longer-term path (docs/PLAN.md, "Open work").
+
 PHI rule: every log line and every raised message carries counts, opaque ids,
 HTTP statuses, and ``exc_tag`` type names only — never an identifier value, a
 name, a DOB, a token, or a URL.
@@ -51,7 +57,7 @@ from anastomosis.destinations.base import (
 
 from .client import FhirClient
 
-__all__ = ["FhirApiDestination"]
+__all__ = ["FhirApiDestination", "PayloadTooLarge"]
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,26 @@ _DEFAULT_DOC_LOINC = "34109-9"
 _DEFAULT_DOC_DISPLAY = "Note"
 _LOINC_SYSTEM = export.LOINC
 _PDF_MIME = "application/pdf"
+
+_MIB = 1024 * 1024
+# Largest single document this route will inline. Measured: building the
+# resource for a 32 MiB PDF peaks ~139 MiB (~4.3x — the bytes, their base64
+# form, and the serialized request all live at once), so an unbounded item is
+# an out-of-memory risk on the operator's own machine and a request most
+# servers would reject anyway. 50 MiB is far above any chart this toolkit
+# renders while keeping that multiple bounded; a destination that accepts more
+# gets it via ``max_payload_bytes``.
+_MAX_PAYLOAD_BYTES = 50 * _MIB
+
+
+class PayloadTooLarge(PermanentDeliveryError):
+    """One item's document exceeds the route's inline-payload bound.
+
+    Permanent, not transient: retrying re-reads the same oversized file. The
+    message names the opaque ``item_key`` and the limit — never a filename
+    (chart filenames embed the patient name and date of service) and never a
+    patient value.
+    """
 
 
 class _NoopSession:
@@ -100,12 +126,15 @@ class FhirApiDestination:
         create_missing_patients: bool = False,
         doc_type_loinc: str = _DEFAULT_DOC_LOINC,
         doc_type_display: str = _DEFAULT_DOC_DISPLAY,
+        max_payload_bytes: int = _MAX_PAYLOAD_BYTES,
     ) -> None:
         self._client = client
         self._name = name
         self._create_missing_patients = create_missing_patients
         self._doc_type_loinc = doc_type_loinc
         self._doc_type_display = doc_type_display
+        # The inline-payload bound, enforced BEFORE the file is read.
+        self._max_payload_bytes = max_payload_bytes
         self._session = _NoopSession(client)
 
     # --- Destination protocol ---
@@ -282,6 +311,10 @@ class FhirApiDestination:
     def _document_reference(
         self, item: UploadItem, patient: DestinationPatient
     ) -> dict[str, object]:
+        # Refuse an oversized document BEFORE it is read: the read, its base64
+        # form, and the serialized request all coexist, so the peak is several
+        # times the file. Checking first is what keeps that bounded.
+        self._check_payload_size(item)
         # attachment.hash is deliberately OMITTED: FHIR R4 defines it as the
         # SHA-1 of the data, but the upload ledger standardizes on sha256, so a
         # SHA-1 here would be a second, conflicting digest. The fingerprint
@@ -313,6 +346,33 @@ class FhirApiDestination:
                 }
             ],
         }
+
+    def _check_payload_size(self, item: UploadItem) -> None:
+        """Raise :class:`PayloadTooLarge` when ``item`` exceeds the bound.
+
+        The bound is measured against the file's ACTUAL size on disk, and only
+        that: the bytes this route is about to read, base64-encode, and
+        serialize are the bytes that set the memory peak. ``item.size_bytes``
+        comes from the upload manifest and is advisory — a stale manifest that
+        UNDERSTATES the file must not wave it past (the stat catches that), and
+        one that OVERSTATES a small file must not refuse a chart this route can
+        perfectly well deliver. The message reports the measured size, so what
+        the operator is told is what was actually weighed.
+
+        Ordering is load-bearing: this runs BEFORE the read, which is the whole
+        point of a preflight.
+        """
+        size = item.file_path.stat().st_size
+        if size <= self._max_payload_bytes:
+            return
+        # PHI: the opaque item_key and the two sizes — never the filename (it
+        # embeds the patient name and date of service) and never a value.
+        raise PayloadTooLarge(
+            f"item {item.item_key} is {size / _MIB:.1f} MiB; this route inlines the "
+            f"document in the request body and refuses payloads over "
+            f"{self._max_payload_bytes / _MIB:.0f} MiB. File it by the browser route, "
+            f"or raise max_payload_bytes if the destination server accepts more."
+        )
 
     # --- MetadataReader (optional capability -> L5) ---
 

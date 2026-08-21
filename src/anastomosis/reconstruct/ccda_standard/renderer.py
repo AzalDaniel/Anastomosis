@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The standard C-CDA render path: a neutral, vendor-faithful view of the payload.
 
 Real EHR-to-EHR migrations move structured C-CDA/FHIR; the rendered PDF is the
@@ -30,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -40,6 +38,7 @@ from lxml import etree
 
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import safe_name
 from anastomosis.deliver.ccda_export.builder import build_ccd
 
 if TYPE_CHECKING:
@@ -112,11 +111,6 @@ class CCDARenderResult:
     failed: list[tuple[str, str]] = field(default_factory=list)
 
 
-def _safe(value: str | None, fallback: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (value or "").strip()).strip("_")
-    return cleaned or fallback
-
-
 def _default_renderer() -> Renderer:
     from anastomosis.reconstruct.chromium import ChromiumRenderer
 
@@ -136,8 +130,8 @@ def _allocate(out_dir: Path, record: PatientRecord) -> Path:
     """
     patient = record.patient
     digest = hashlib.sha256(patient.id.encode("utf-8")).hexdigest()[:12]
-    family = _safe(patient.family_name, "Unknown")
-    given = _safe(patient.given_name, "Unknown")
+    family = safe_name(patient.family_name, "Unknown")
+    given = safe_name(patient.given_name, "Unknown")
     return out_dir / f"{family}_{given}_{digest}_ccda.pdf"
 
 

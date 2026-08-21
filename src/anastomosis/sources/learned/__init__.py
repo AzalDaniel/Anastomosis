@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Learned source adapters: formats taught from an example, executed as data.
 
 When the toolkit meets a structured export it does not recognize, the answer is

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Build the upload manifest from rendered documents, and the operator skiplist.
 
 The manifest is the bridge from reconstruction (:class:`RenderedDoc`) to the
@@ -20,47 +19,30 @@ opaque keys only.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.destinations.base import UploadItem
 from anastomosis.reconstruct.engine import RenderedDoc
 
 __all__ = ["build_manifest", "is_skiplisted", "load_skiplist"]
-
-# 1 MiB: large enough to amortize read syscalls, small enough that a huge PDF
-# never has to be resident all at once.
-_HASH_CHUNK_BYTES = 1024 * 1024
-
-
-def _hash_and_size(path: Path) -> tuple[str, int]:
-    """Stream ``path`` to a sha256 digest and a byte count.
-
-    Raises :class:`FileNotFoundError` if the file is absent — a missing
-    render is a defect the manifest must surface, never silently skip.
-    """
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as handle:
-        while chunk := handle.read(_HASH_CHUNK_BYTES):
-            digest.update(chunk)
-            size += len(chunk)
-    return digest.hexdigest(), size
 
 
 def build_manifest(documents: Iterable[RenderedDoc]) -> list[UploadItem]:
     """Turn rendered documents into upload items, one per document.
 
     For each :class:`RenderedDoc` the file's streaming sha256 and size are
-    computed; ``item_key`` is ``f"{encounter_id}:{sha256[:12]}"`` (the
-    resumability anchor) and ``fingerprint`` defaults via
-    :class:`UploadItem`. A missing render file raises
-    :class:`FileNotFoundError`.
+    computed (via the shared :func:`anastomosis.core.hashutil.hash_and_size`, so
+    the manifest measures a file exactly the way preflight and L0 re-measure
+    it); ``item_key`` is ``f"{encounter_id}:{sha256[:12]}"`` (the resumability
+    anchor) and ``fingerprint`` defaults via :class:`UploadItem`. A missing
+    render file raises :class:`FileNotFoundError` — a defect the manifest must
+    surface, never silently skip.
     """
     items: list[UploadItem] = []
     for doc in documents:
-        sha256, size_bytes = _hash_and_size(doc.path)
+        sha256, size_bytes = hash_and_size(doc.path)
         items.append(
             UploadItem(
                 item_key=f"{doc.encounter_id}:{sha256[:12]}",

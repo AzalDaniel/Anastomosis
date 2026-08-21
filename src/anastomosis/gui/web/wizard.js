@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis Migration Wizard — vanilla JS, no frameworks, no build step.
  *
@@ -237,7 +236,7 @@ async function onDestinationChange() {
 
 // --- step 3b: run the migration -------------------------------------------
 // The event dispatcher the shell (Python side) calls during an async run.
-// Flow guard (P2-5): the wizard owns the "migration" flow. Every event carries a
+// Flow guard: the wizard owns the "migration" flow. Every event carries a
 // `flow`; we early-return on any other flow so navigating to the wizard mid-run
 // can't let it consume the dashboard's pipeline terminal event and announce
 // "migration prepared" for a pipeline run (both emit identical event kinds).
@@ -289,18 +288,10 @@ function showMigrationResult(text) {
   }
 }
 
-// Read the section toggles into the {section: bool} map run_migration expects.
+// Read the section toggles into the {section: bool} map run_migration expects
+// (the Shell mechanic the dashboard shares).
 function gatherSections() {
-  const matrix = el("section-matrix");
-  const sections = {};
-  if (matrix) {
-    // Scope to the section checkboxes (each carries data-section) so a future
-    // non-section checkbox in this container can never pollute the map.
-    for (const box of matrix.querySelectorAll("input[data-section]")) {
-      sections[box.dataset.section] = box.checked;
-    }
-  }
-  return sections;
+  return Shell.gatherSections(el("section-matrix"));
 }
 
 // The render mode that determines which pack's sections apply: "neutral" renders
@@ -313,43 +304,18 @@ function renderPackFor(renderValue) {
   return renderValue === "neutral" ? "generic_soap" : renderValue;
 }
 
-// Rebuild the section matrix for the chosen render pack (the dashboard's
-// renderSectionMatrix pattern). The ccda-standard view exposes none.
+// Rebuild the section matrix for the chosen render pack (the Shell mechanic the
+// dashboard shares). The wizard owns the mapping from render mode to pack and
+// its own empty state: the ccda-standard view exposes no sections at all.
 function renderSectionMatrix(renderValue) {
-  const matrix = el("section-matrix");
-  if (!matrix) {
-    return;
-  }
-  matrix.innerHTML = "";
   const packName = renderPackFor(renderValue);
-  const sections = (packName && SECTIONS_BY_PACK[packName]) || {};
-  const keys = Object.keys(sections);
-  if (keys.length === 0) {
-    matrix.textContent =
-      packName === null
-        ? "The ccda-standard view renders no togglable sections."
-        : "This pack exposes no togglable sections.";
-    matrix.classList.add("empty");
-    return;
-  }
-  matrix.classList.remove("empty");
-  for (const key of keys) {
-    const flag = sections[key];
-    const label = document.createElement("label");
-    label.className = "toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.dataset.section = key;
-    input.checked = flag.default !== false;
-    const track = document.createElement("span");
-    track.className = "track";
-    const text = document.createElement("span");
-    text.textContent = flag.label || key;
-    label.appendChild(input);
-    label.appendChild(track);
-    label.appendChild(text);
-    matrix.appendChild(label);
-  }
+  Shell.renderSectionMatrix(
+    el("section-matrix"),
+    (packName && SECTIONS_BY_PACK[packName]) || {},
+    packName === null
+      ? "The ccda-standard view renders no togglable sections."
+      : "This pack exposes no togglable sections."
+  );
 }
 
 async function onRunMigration() {
@@ -404,117 +370,36 @@ async function onRunMigration() {
 }
 
 // --- per-patient detail (local display; never on an event) ----------------
-async function loadPatients(summaryId) {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    // Pass the run's own summary id (from its `done` event) so a rapid second
-    // run cannot replace the detail this run is about to show (the summary race).
-    const res = await window.pywebview.api.last_run_summary(summaryId);
-    if (res && res.ok) {
-      renderPatients(res.patients || []);
-    }
-  } catch (err) {
-    // The summary is advisory; never block the run roll-up on it.
-  }
+// Both the fetch and the table are Shell mechanics (the dashboard shows the
+// same roll-up after its own run); the page owns only where they land.
+function loadPatients(summaryId) {
+  Shell.loadPatients(el("patients-panel"), el("patients-body"), summaryId);
 }
 
 function clearPatients() {
-  const body = el("patients-body");
-  if (body) {
-    body.innerHTML = "";
-  }
-  const panel = el("patients-panel");
-  if (panel) {
-    panel.hidden = true;
-  }
-}
-
-function renderPatients(patients) {
-  const panel = el("patients-panel");
-  const body = el("patients-body");
-  if (!panel || !body) {
-    return;
-  }
-  body.innerHTML = "";
-  if (!patients.length) {
-    panel.hidden = true;
-    return;
-  }
-  const table = document.createElement("table");
-  table.className = "patients-table";
-  const head = document.createElement("tr");
-  for (const heading of ["patient", "dob", "encounters", "notes"]) {
-    const th = document.createElement("th");
-    th.textContent = heading;
-    head.appendChild(th);
-  }
-  table.appendChild(head);
-  for (const p of patients) {
-    const tr = document.createElement("tr");
-    const cells = [
-      p.display_name || "—",
-      p.birth_date || "—",
-      String(p.encounters),
-      String(p.documents),
-    ];
-    for (const value of cells) {
-      const td = document.createElement("td");
-      td.textContent = value; // textContent: PHI rendered as text, never HTML
-      tr.appendChild(td);
-    }
-    table.appendChild(tr);
-  }
-  body.appendChild(table);
-  panel.hidden = false;
+  Shell.clearPatients(el("patients-panel"), el("patients-body"));
 }
 
 // --- bootstrap ------------------------------------------------------------
+// The wizard's pickers each open with their own prompt entry: an explicit
+// "Select a …" (a migration's source and destination are never guessed), unlike
+// the dashboard's empty-value "auto-detect" sentinel.
 function populateSources(sources) {
-  const select = el("source");
-  if (!select) {
-    return;
-  }
-  select.innerHTML = "";
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Select a source…";
-  select.appendChild(blank);
-  for (const src of sources) {
-    const opt = document.createElement("option");
-    opt.value = src.name;
-    opt.textContent = src.name;
-    select.appendChild(opt);
-  }
+  Shell.fillSelect(el("source"), [
+    { value: "", label: "Select a source…" },
+    ...sources.map((src) => ({ value: src.name, label: src.name })),
+  ]);
 }
 
 // The render picker: the two named modes plus every available pack.
 function populateRender(packs) {
-  const select = el("render");
-  if (!select) {
-    return;
-  }
-  select.innerHTML = "";
-  const named = [
-    ["neutral", "neutral (generic SOAP)"],
-    ["ccda-standard", "ccda-standard (HL7 view)"],
-  ];
-  for (const [value, label] of named) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    select.appendChild(opt);
-  }
-  for (const pack of packs || []) {
-    if (!pack.available) {
-      continue;
-    }
-    const opt = document.createElement("option");
-    opt.value = pack.name;
-    opt.textContent = "pack: " + pack.name;
-    select.appendChild(opt);
-  }
+  Shell.fillSelect(el("render"), [
+    { value: "neutral", label: "neutral (generic SOAP)" },
+    { value: "ccda-standard", label: "ccda-standard (HL7 view)" },
+    ...(packs || [])
+      .filter((pack) => pack.available)
+      .map((pack) => ({ value: pack.name, label: "pack: " + pack.name })),
+  ]);
 }
 
 async function populate() {
@@ -523,6 +408,11 @@ async function populate() {
     setStatus("offline");
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted, so a slow pywebview attach does
+  // not leave the wizard permanently showing "launch via anast gui".
+  el("no-api").classList.remove("show");
+  setStatus("ready");
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -540,18 +430,10 @@ async function populate() {
     }
     const routes = await window.pywebview.api.routes();
     if (routes && routes.ok) {
-      const select = el("destination");
-      select.innerHTML = "";
-      const blank = document.createElement("option");
-      blank.value = "";
-      blank.textContent = "Select a destination…";
-      select.appendChild(blank);
-      for (const r of routes.routes) {
-        const opt = document.createElement("option");
-        opt.value = r.destination;
-        opt.textContent = r.destination;
-        select.appendChild(opt);
-      }
+      Shell.fillSelect(el("destination"), [
+        { value: "", label: "Select a destination…" },
+        ...routes.routes.map((r) => ({ value: r.destination, label: r.destination })),
+      ]);
     }
   } catch (err) {
     showBanner(err);
@@ -594,7 +476,9 @@ function init() {
     }
   });
 
-  populate();
+  // Bootstrap through the shared bridge gate: now, and once more when
+  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
+  Shell.onApiReady(populate);
 }
 
 if (document.readyState === "loading") {

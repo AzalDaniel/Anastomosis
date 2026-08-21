@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """C-CDA export deliverer — the inverse of :mod:`anastomosis.sources.ccda`.
 
 Generates HL7 C-CDA R2.1 / CCD XML from canonical :class:`PatientRecord`

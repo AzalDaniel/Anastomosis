@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Anastomosis canonical model.
 
 FHIR R4-aligned, USCDI-informed, pydantic v2. Every model carries an
@@ -16,11 +15,7 @@ from .clinical import (
     Condition,
     FamilyMemberHistory,
     Goal,
-    HealthConcern,
     Immunization,
-    ImplantableDevice,
-    LabOrder,
-    LabOrderItem,
     MedicationStatement,
     Observation,
     ObservationCategory,
@@ -59,13 +54,9 @@ __all__ = [
     "FamilyMemberHistory",
     "Goal",
     "Guarantor",
-    "HealthConcern",
     "Identifier",
     "IdentifierKind",
     "Immunization",
-    "ImplantableDevice",
-    "LabOrder",
-    "LabOrderItem",
     "MedicationStatement",
     "NoteSection",
     "Observation",

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the PDF→patient render index that the engine writes alongside
 charts — the patient-safety hardening that replaces the old
 ``{family}_{given}_`` filename-prefix guessing with explicit ``patient_id``
@@ -74,14 +73,6 @@ def test_render_index_lookup_by_pdf_name(tmp_path: Path) -> None:
     assert entry.patient_id == "aaaa-0000-0000-0000-000000000001"
     assert entry.encounter_id == "encA-0000-0000"
     assert index.lookup("missing.pdf") is None
-
-
-def test_render_index_unattributed_for_orphan_names(tmp_path: Path) -> None:
-    index = RenderIndex.from_entries(_entries())
-    orphans = index.unattributed(
-        ["Smith_John_05-10-2023_SOAP.pdf", "stray.pdf", "another_stray.pdf"]
-    )
-    assert orphans == ("another_stray.pdf", "stray.pdf")
 
 
 def test_render_index_load_returns_none_for_missing_file(tmp_path: Path) -> None:

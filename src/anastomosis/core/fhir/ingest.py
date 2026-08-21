@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FHIR R4 Bundle → PatientRecord (exact inverse of export)."""
 
 from __future__ import annotations
@@ -27,12 +26,9 @@ from anastomosis.core.model import (
     FamilyMemberHistory,
     Goal,
     Guarantor,
-    HealthConcern,
     Identifier,
     IdentifierKind,
     Immunization,
-    ImplantableDevice,
-    LabOrder,
     MedicationStatement,
     NoteSection,
     Observation,
@@ -57,10 +53,7 @@ _TELECOM_BY_SHAPE = {shape: kind for kind, shape in TELECOM.items()}
 _EXTRA_MODELS: dict[str, type[AnastBase]] = {
     "past_medical_history": PastMedicalHistory,
     "advance_directives": AdvanceDirective,
-    "health_concerns": HealthConcern,
     "goals": Goal,
-    "devices": ImplantableDevice,
-    "lab_orders": LabOrder,
 }
 
 

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared console-glyph selector and the non-UTF-8 console safety net.
 
 These pin the Windows-console crash fix: the status dingbats and arrow the CLI

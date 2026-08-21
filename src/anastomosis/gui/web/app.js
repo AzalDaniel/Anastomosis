@@ -1,4 +1,3 @@
-// AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 /*
  * Anastomosis GUI dashboard — vanilla JS, no frameworks, no build step.
  *
@@ -49,7 +48,7 @@ function el(id) {
 }
 
 // --- the event dispatcher the shell (Python side) calls -------------------
-// Flow guard (P2-5): the dashboard owns the "pipeline" flow. Every event carries
+// Flow guard: the dashboard owns the "pipeline" flow. Every event carries
 // a `flow`; we early-return on any other flow so navigating mid-run can't let the
 // dashboard consume the wizard's migration terminal event (both emit identical
 // stage/progress/done/error kinds).
@@ -63,6 +62,9 @@ window.anastEvent = function anastEvent(e) {
   switch (e.type) {
     case "stage":
       markStage(e.stage, e.state);
+      if (e.state === "start") {
+        setCurrent(e.stage);
+      }
       Shell.logEvent({ kind: "info", msg: `stage ${e.stage}: ${e.state}` });
       break;
     case "progress":
@@ -71,11 +73,13 @@ window.anastEvent = function anastEvent(e) {
       break;
     case "done":
       Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
+      setCurrent("— complete —");
       finishRun();
       loadPatients(e.summary_id);
       break;
     case "error":
       markStage(e.stage, "error");
+      setCurrent("— failed —");
       showBanner(e.error);
       Shell.logEvent({ kind: "error", msg: `error ${e.stage}: ${e.error}` });
       finishRun();
@@ -92,11 +96,25 @@ function markStage(stage, state) {
   }
 }
 
+// Envelope keys that are not counters: the event discriminators plus the run's
+// opaque summary id (a random hex handle for last_run_summary — never a count,
+// and noise in the operator's activity log).
+const NON_COUNTER_KEYS = ["type", "stage", "state", "flow", "summary_id"];
+
 function counterText(e) {
   return Object.keys(e)
-    .filter((k) => k !== "type" && k !== "stage" && k !== "state" && k !== "flow")
+    .filter((k) => !NON_COUNTER_KEYS.includes(k))
     .map((k) => `${k}=${e[k]}`)
     .join(" ");
+}
+
+// The progress frame's headline — which stage is running right now. Driven by
+// the stage/done/error events; reset to idle when a fresh run starts.
+function setCurrent(text) {
+  const current = el("progress-current");
+  if (current) {
+    current.textContent = text;
+  }
 }
 
 function renderCounters(e) {
@@ -145,7 +163,20 @@ function setStatus(text) {
   }
 }
 
+// No bridge (the plain-browser preview, or an attach that has not landed yet):
+// the run button is inert because there is no controller to run against — but
+// it must NOT read "running…", which would claim a run that does not exist.
+function setOffline() {
+  const btn = el("run-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "run pipeline";
+  }
+  setStatus("offline");
+}
+
 function resetRail() {
+  setCurrent("— idle —");
   for (const stage of RAIL) {
     const card = el(`stage-${stage}`);
     if (card) {
@@ -170,57 +201,37 @@ function finishRun() {
   }
 }
 
-// --- the Section-Selection Matrix (item 18b) ------------------------------
+// --- the Section-Selection Matrix -----------------------------------------
 // info().packs[].sections is {key: {label, default}}; cache per pack name so
 // switching packs repaints the matrix without another round-trip.
 let SECTIONS_BY_PACK = {};
 
+// Read the live matrix into the {section: bool} map run_pipeline expects, and
+// repaint it for a pack. Both are Shell mechanics (the wizard paints the same
+// toggles); the dashboard owns only WHICH pack's sections apply.
 function gatherSections() {
-  const sections = {};
-  const boxes = el("section-matrix").querySelectorAll("input[type=checkbox]");
-  for (const box of boxes) {
-    sections[box.dataset.section] = box.checked;
-  }
-  return sections;
+  return Shell.gatherSections(el("section-matrix"));
 }
 
 function renderSectionMatrix(packName) {
-  const matrix = el("section-matrix");
-  matrix.innerHTML = "";
-  const sections = SECTIONS_BY_PACK[packName] || {};
-  const keys = Object.keys(sections);
-  if (keys.length === 0) {
-    matrix.textContent = "This pack exposes no togglable sections.";
-    matrix.classList.add("empty");
-    return;
-  }
-  matrix.classList.remove("empty");
-  for (const key of keys) {
-    const flag = sections[key];
-    const label = document.createElement("label");
-    label.className = "toggle";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.dataset.section = key;
-    input.checked = flag.default !== false;
-    const track = document.createElement("span");
-    track.className = "track";
-    const text = document.createElement("span");
-    text.textContent = flag.label || key;
-    label.appendChild(input);
-    label.appendChild(track);
-    label.appendChild(text);
-    matrix.appendChild(label);
-  }
+  Shell.renderSectionMatrix(
+    el("section-matrix"),
+    SECTIONS_BY_PACK[packName] || {},
+    "This pack exposes no togglable sections."
+  );
 }
 
 async function populateHeader() {
   if (!hasApi()) {
     el("no-api").classList.add("show");
-    setBusy(true); // no controller to run against; keep the button inert
-    setStatus("offline");
+    setOffline();
     return;
   }
+  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
+  // notice this page may already have painted and re-arm the run button, so a
+  // slow pywebview attach doesn't leave a permanently dead dashboard.
+  el("no-api").classList.remove("show");
+  setBusy(false);
   try {
     const info = await window.pywebview.api.info();
     if (info && info.ok) {
@@ -251,21 +262,10 @@ async function populateHeader() {
 // Source picker: "auto-detect" (empty value → null → pipeline sniffs the
 // export) plus every registered adapter from info().sources.
 function populateSources(sources) {
-  const select = el("source");
-  if (!select) {
-    return;
-  }
-  select.innerHTML = "";
-  const auto = document.createElement("option");
-  auto.value = "";
-  auto.textContent = "auto-detect";
-  select.appendChild(auto);
-  for (const src of sources) {
-    const opt = document.createElement("option");
-    opt.value = src.name;
-    opt.textContent = src.name;
-    select.appendChild(opt);
-  }
+  Shell.fillSelect(el("source"), [
+    { value: "", label: "auto-detect" },
+    ...sources.map((src) => ({ value: src.name, label: src.name })),
+  ]);
 }
 
 // --- vendor-change detection toast (pack_freshness) -----------------------
@@ -363,70 +363,14 @@ function gatherDeliver(name) {
 // The `done` event carries counts only; the names/DOB/note-counts are fetched
 // here via last_run_summary() and rendered with textContent (PHI shown locally,
 // never logged). The strict CSP forbids inline anyway.
-async function loadPatients(summaryId) {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    // Pass the run's own summary id (from its `done` event) so a rapid second
-    // run cannot replace the detail this run is about to show (the summary race).
-    const res = await window.pywebview.api.last_run_summary(summaryId);
-    if (res && res.ok) {
-      renderPatients(res.patients || []);
-    }
-  } catch (err) {
-    // The summary is advisory; never block the run roll-up on it.
-  }
+// Both the fetch and the table are Shell mechanics (the wizard shows the same
+// roll-up after its own run); the page owns only where they land.
+function loadPatients(summaryId) {
+  Shell.loadPatients(el("patients-panel"), el("patients-body"), summaryId);
 }
 
 function clearPatients() {
-  const body = el("patients-body");
-  if (body) {
-    body.innerHTML = "";
-  }
-  const panel = el("patients-panel");
-  if (panel) {
-    panel.hidden = true;
-  }
-}
-
-function renderPatients(patients) {
-  const panel = el("patients-panel");
-  const body = el("patients-body");
-  if (!panel || !body) {
-    return;
-  }
-  body.innerHTML = "";
-  if (!patients.length) {
-    panel.hidden = true;
-    return;
-  }
-  const table = document.createElement("table");
-  table.className = "patients-table";
-  const head = document.createElement("tr");
-  for (const heading of ["patient", "dob", "encounters", "notes"]) {
-    const th = document.createElement("th");
-    th.textContent = heading;
-    head.appendChild(th);
-  }
-  table.appendChild(head);
-  for (const p of patients) {
-    const tr = document.createElement("tr");
-    const cells = [
-      p.display_name || "—",
-      p.birth_date || "—",
-      String(p.encounters),
-      String(p.documents),
-    ];
-    for (const value of cells) {
-      const td = document.createElement("td");
-      td.textContent = value; // textContent: PHI rendered as text, never HTML
-      tr.appendChild(td);
-    }
-    table.appendChild(tr);
-  }
-  body.appendChild(table);
-  panel.hidden = false;
+  Shell.clearPatients(el("patients-panel"), el("patients-body"));
 }
 
 function init() {
@@ -447,10 +391,6 @@ function init() {
   Shell.initSegmentToggles(document);
   Shell.initLogStrip();
 
-  // Refresh the mirrored backend constants: now if the api is already up,
-  // and again on pywebviewready (the bridge often lands after DOM ready).
-  loadGuiConfig();
-  window.addEventListener("pywebviewready", loadGuiConfig);
 
   // Command palette: PHI-free dashboard actions only.
   const palette = Shell.initCommandPalette([
@@ -476,7 +416,14 @@ function init() {
     }
   });
 
-  populateHeader();
+  // Bootstrap through the shared bridge gate: run now (painting the offline
+  // notice if this really is a plain browser) and once more when
+  // `pywebviewready` lands, because pywebview attaches the api AFTER DOM ready
+  // — the mirrored constants AND the header/pack pickers both need that retry.
+  Shell.onApiReady(() => {
+    loadGuiConfig();
+    populateHeader();
+  });
 }
 
 function setSegment(name, value) {

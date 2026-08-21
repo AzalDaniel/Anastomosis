@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: "pip"
       - run: python tools/phi_scan.py
 
   lint:
@@ -28,14 +29,20 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: "pip"
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
   # as one of the gates; this lane closes the drift where mypy is a local
-  # gate with no CI lane. The dev extra brings mypy + type stubs and pulls in render+fhir
-  # so the optional-extra imports type-resolve cleanly under --strict.
+  # gate with no CI lane. The dev extra brings mypy + type stubs and pulls in
+  # render+fhir so the optional-extra imports type-resolve cleanly under
+  # --strict. The gui extra is REQUIRED too: without pywebview installed the
+  # mypy override silently masks GUI typing (that gap hid a real
+  # Window|None deref in gui/shell.py that only the documented .[dev,gui]
+  # environment caught). Constraints keep the resolved versions identical to
+  # the package build's.
   type-check:
     name: Type check (mypy)
     runs-on: ubuntu-latest
@@ -44,7 +51,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+          cache: "pip"
+      - run: pip install -e ".[dev,gui]" -c packaging/constraints.txt
       - run: python -m mypy
 
   test:
@@ -60,6 +68,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
+          cache: "pip"
       # pymupdf: the QA stage is core pipeline behavior and must be tested on
       # every OS/Python combo (Chromium itself stays in the e2e lane).
       # fhir.resources: the FHIR bundle schema-validation test must run here.
@@ -77,6 +86,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: "pip"
       # playwright is PINNED via packaging/constraints.txt to the version the
       # rendering goldens were generated with (tests/e2e/goldens/*.json carries
       # the exact browser in _meta) — golden text layers are only stable under
@@ -91,6 +101,25 @@ jobs:
       # keeping the check.sh <-> ci.yml parity contract whole.
       - run: python tools/preflight.py
       - run: pytest -m e2e
+
+  gui-e2e:
+    name: GUI behaviour (headless Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      # Drives the bundled GUI pages (file:// + a generated pywebview-bridge
+      # stub) in headless Chromium — the Linux proxy for the real WebView2
+      # window. The Windows package job's smoke test asserts the SAME
+      # expectations module against the shipped window, so a selector cannot
+      # rot there without going red here first. Chromium is pinned via
+      # packaging/constraints.txt like every rendering lane.
+      - run: pip install -e ".[render]" -c packaging/constraints.txt pytest pytest-socket hypothesis
+      - run: playwright install chromium --with-deps
+      - run: pytest tests/gui_e2e -m gui_e2e
 
   # Separate lane: stands up a live HAPI FHIR R4 server as a service container
   # and runs the fhir_api destination against it. The fhir_integration tests
@@ -110,6 +139,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+          cache: "pip"
       # pymupdf: importing anastomosis.deliver (the engine's parent package)
       # eagerly loads the QA stage, which needs PyMuPDF at import time.
       - run: pip install -e ".[fhir]" pymupdf pytest

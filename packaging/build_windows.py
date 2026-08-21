@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Build the Windows GUI + CLI executables with Nuitka (run on a Windows runner).
 
 Produces two self-contained ``--mode=standalone`` (onedir) builds under ``dist/``,
@@ -63,6 +62,33 @@ def _pack_data_flags() -> list[str]:
     return flags
 
 
+def _pack_ctx_import_flags() -> list[str]:
+    """Force-include every ``anastomosis.*`` module the pack contexts import.
+
+    The contexts are DATA files (exec'd from disk), so Nuitka never follows
+    their imports; any ``anastomosis.*`` module only THEY reference would be
+    left out of the binary and the frozen pack load would die with
+    ``ModuleNotFoundError`` (``anast doctor``: "built-in packs: missing").
+    Deriving the ``--include-module`` list from the contexts' own import
+    statements keeps this in lockstep as the contexts evolve.
+    """
+    import ast
+
+    modules: set[str] = set()
+    for pack in _BUILTIN_PACKS:
+        src = _ROOT / "src" / "anastomosis" / "packs" / pack / "context.py"
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.startswith("anastomosis."):
+                    modules.add(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("anastomosis."):
+                        modules.add(alias.name)
+    return [f"--include-module={m}" for m in sorted(modules)]
+
+
 def _common_flags(version: str) -> list[str]:
     return [
         sys.executable,
@@ -77,15 +103,33 @@ def _common_flags(version: str) -> list[str]:
         # version-suffixed dir name (chromium-NNNN), so a bare "chromium" misses.
         "--playwright-include-browser=all",  # bundle Chromium offline (build-time)
         "--include-package-data=anastomosis",  # the registry/packs/fonts/web/CDA.xsl/etc.
+        # pymupdf ships a ~2.3M-line generated binding module; C-compiling it
+        # exhausts MSVC's heap (fatal C1002) and buys nothing — the hot code is
+        # the native mupdf DLL. Ship the package as bytecode instead.
+        "--noinclude-custom-mode=pymupdf:bytecode",
+        *_pack_ctx_import_flags(),
         "--company-name=Anastomosis",
         "--product-name=Anastomosis",
         f"--product-version={version}",
         f"--file-version={version}",
+        # The product mark: the multi-res .ico generated from the SVG master
+        # by tools/make_icons.py. This is what brands the exe, the taskbar,
+        # the Start menu, and (via UninstallDisplayIcon) Add/Remove Programs.
+        f"--windows-icon-from-ico={_ROOT / 'assets' / 'icon' / 'icon.ico'}",
+        "--copyright=(c) 2026 Azal Daniel. AGPL-3.0-or-later.",
         *_pack_data_flags(),
     ]
 
 
-def _build(main: Path, *, out_subdir: str, exe_name: str, console: str, version: str) -> Path:
+def _build(
+    main: Path,
+    *,
+    out_subdir: str,
+    exe_name: str,
+    console: str,
+    version: str,
+    description: str,
+) -> Path:
     """Run one Nuitka standalone build; return the produced ``.dist`` directory."""
     out_dir = _DIST / "_build" / out_subdir
     if out_dir.exists():
@@ -93,6 +137,7 @@ def _build(main: Path, *, out_subdir: str, exe_name: str, console: str, version:
     cmd = [
         *_common_flags(version),
         f"--windows-console-mode={console}",
+        f"--file-description={description}",
         f"--output-filename={exe_name}",
         f"--output-dir={out_dir}",
         str(main),
@@ -119,6 +164,7 @@ def main() -> None:
         exe_name="Anastomosis.exe",
         console="disable",  # windowed: no console window for the desktop app
         version=version,
+        description="Anastomosis - local-first EHR chart migration and archiving",
     )
     cli_dist = _build(
         packaging / "cli_entry.py",
@@ -126,6 +172,7 @@ def main() -> None:
         exe_name="anast.exe",
         console="force",  # console: the CLI writes to the terminal it ran from
         version=version,
+        description="Anastomosis command-line interface (anast)",
     )
 
     # Lay the two builds out under dist/ with clean directory names for the

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The Tebra (Kareo) browser destination pack — a FLOW SHAPE, not selectors.
 
 Tebra (formerly Kareo + PatientPop) publishes NO document-write API (the

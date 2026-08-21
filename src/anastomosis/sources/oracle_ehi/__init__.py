@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Oracle Health (Cerner Millennium) EHI export adapter.
 
 Reads the single-patient Millennium EHI export — the V500 data model shipped

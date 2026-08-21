@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shortest-path delivery router (pure logic, no I/O).
 
 Given a destination's declared capabilities (the
@@ -143,10 +142,10 @@ def _ccda_option(entry_ccda_kind: str, verified_label: str) -> RouteOption:
 
 
 def _browser_option(entry_browser_kind: str, pack_name: str) -> RouteOption:
-    # For THIS PR, browser viability == (kind == pack). Whether the named pack
-    # is actually importable/registered is checked by the discovery wizard PR;
-    # here a declared pack is treated as viable and the pack name rides in
-    # ``requires`` for the wizard to resolve.
+    # Browser viability is a DECLARATION check, never an import: a destination
+    # declaring ``browser: {kind: pack}`` is routable, and the pack name rides
+    # in ``requires`` so the discovery wizard resolves and validates it there.
+    # Route planning must stay side-effect-free — it never executes pack code.
     if entry_browser_kind == BrowserKind.PACK.value:
         pack_ref = pack_name or "(unnamed pack)"
         return RouteOption(

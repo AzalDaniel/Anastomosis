@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The draft: write a loadable template pack from a :class:`PackAnalysis`.
 
 This is the third packgen stage (M3b). :mod:`extract` harvested the spans and

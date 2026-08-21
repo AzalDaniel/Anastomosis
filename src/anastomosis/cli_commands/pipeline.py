@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast pipeline run`` — ingest an export and reconstruct chart PDFs.
 
 The command body split out of :mod:`anastomosis.cli`; it registers against the

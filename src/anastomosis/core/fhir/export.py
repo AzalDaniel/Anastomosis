@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PatientRecord → FHIR R4 Bundle (type=collection), plain JSON dicts."""
 
 from __future__ import annotations
@@ -121,10 +120,7 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
         for name in (
             "past_medical_history",
             "advance_directives",
-            "health_concerns",
             "goals",
-            "devices",
-            "lab_orders",
         )
         if getattr(record, name)
     }

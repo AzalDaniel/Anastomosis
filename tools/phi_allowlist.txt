@@ -34,6 +34,15 @@ billingpatientrelationshipoption
 1/2/1980
 11/2/1980
 
+# Synthetic near-miss dates for the boundary-anchored identity regression
+# tests (tests/unit/test_identity.py, test_verify_levels.py, test_browserpack.py):
+# the same shape as the 1980 pair above, one octave up. They prove a record DOB
+# of 1/2/1990 does NOT match a chart showing 11/2/1990 (an unpadded DOB hiding
+# inside a longer date) — the wrong-patient collision the shared predicate
+# (anastomosis.core.identity) rejects. Fully synthetic; never a real DOB.
+1/2/1990
+11/2/1990
+
 # Synthetic DOBs for the L0-L6 delivery-verification tests
 # (tests/unit/test_verify_{levels,composite}.py). The synthetic patient
 # "Synthia Testpatient" has DOB 01/02/1990; the tests render that into a fake
@@ -85,3 +94,38 @@ billingpatientrelationshipoption
 # (learn.microsoft.com/microsoft-edge/webview2/concepts/distribution). A vendor
 # constant, not PHI.
 f3017226-fe2a-4295-8bdf-00c3a9a7e4c5
+# Windows installer product identity (packaging/anastomosis.iss AppId) — a
+# generated application GUID, not a record identifier; stable for the life
+# of the product so upgrades find the existing install.
+eec2f7c9-06ad-4bc2-91d4-84bbae937b98
+
+# --- Approved opaque content, by FILE hash (default-deny for everything else) -
+# The scanner cannot read binary/media content, nor a base64-armored payload
+# inside a text file (a `data:...;base64,...` run: the token splitter shreds it
+# and every pattern sails through). Both need the file's hash here WITH
+# provenance; unlisted, either one fails the scan. The digest covers the whole
+# file, so an approval expires the moment the file changes.
+# Regenerate a hash after an intentional change: sha256sum <file>.
+
+# assets/icon/icon.ico — generated from the in-repo assets/icon/icon.svg
+# master via tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:82324091f0b464f5b71ac9f609404a9b2823b7d295e3b334fff054dea79f7f69
+# assets/installer/wizard-small.bmp — generated from assets/icon/icon.svg via
+# tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:0efc9e015446ae3424e9e5e739b9cca715a5575989e293f5a037ee9bb65f4aeb
+# assets/installer/wizard.bmp — generated from assets/icon/icon.svg via
+# tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:3521f68c6bcea421ad8c8d11f93faae576bbfd06559419a9b8144c1743c95308
+# src/anastomosis/gui/web/fonts/JetBrainsMonoVF.woff2 — JetBrains Mono
+# variable font (JetBrains, SIL OFL-1.1; github.com/JetBrains/JetBrainsMono).
+sha256:31ec365b93e4bad6f202ce23352a56d01ca4462b2afc782ed2cf6fa42ca9ac0e
+# src/anastomosis/gui/web/fonts/MonaSansVF.woff2 — Mona Sans variable font
+# (GitHub, SIL OFL-1.1; github.com/github/mona-sans).
+sha256:2affc0f41c81325062c297e46762ebd28effa15a64e56e936403981f3dbd7e7d
+# src/anastomosis/reconstruct/ccda_standard/vendor/CDA.xsl — HL7's official
+# C-CDA stylesheet, vendored UNMODIFIED at tag v4.1.0-beta.2
+# (github.com/HL7/cda-core-xsl, Apache-2.0) and pinned by the same digest in
+# vendor/PINNED.md, which documents the verifiable re-vendor command. The two
+# base64 runs it carries (lines ~2540 and ~6263) are the stylesheet's OWN
+# `data:image/png` toolbar icons, not repository content.
+sha256:f1c32f11186cf69d64f874cc4c94eb51ca8f696b54b4b6833fb54c6afdd7acc1

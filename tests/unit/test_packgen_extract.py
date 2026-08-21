@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Unit tests for the packgen harvest (extract.py).
 
 No Chromium: tiny PDFs are built directly with PyMuPDF (``insert_text`` /
@@ -13,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-fitz = pytest.importorskip("fitz", reason="packgen extract needs the render extra (PyMuPDF)")
+pymupdf = pytest.importorskip("pymupdf", reason="packgen extract needs the render extra (PyMuPDF)")
 
 from anastomosis.packgen.extract import (  # noqa: E402
     DocumentSample,
@@ -31,9 +30,9 @@ _GREY_F1 = (0.9451, 0.9451, 0.9451)  # #f1f1f1
 def _build_pdf(path: Path, *, encrypt: bool = False, with_curve: bool = False) -> None:
     """A single-page synthetic note: a bold heading band, body prose, two
     aligned label columns, and a grey fill rect."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=_W, height=_H)
-    page.draw_rect(fitz.Rect(43, 95, 569, 110), fill=_GREY_F1, color=None)
+    page.draw_rect(pymupdf.Rect(43, 95, 569, 110), fill=_GREY_F1, color=None)
     page.insert_text((43, 90), "SUBJECTIVE", fontsize=10.5, fontname="hebo")
     page.insert_text((43, 130), "Patient reports feeling well.", fontsize=11, fontname="helv")
     # Two label columns at known x0s (left labels, indented values).
@@ -45,7 +44,7 @@ def _build_pdf(path: Path, *, encrypt: bool = False, with_curve: bool = False) -
     if encrypt:
         doc.save(
             str(path),
-            encryption=fitz.PDF_ENCRYPT_AES_256,
+            encryption=pymupdf.PDF_ENCRYPT_AES_256,
             owner_pw="owner",  # synthetic test password (S ignored in tests)
             user_pw="user",
         )

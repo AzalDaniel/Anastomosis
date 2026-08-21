@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Template-pack contract and defensive discovery.
 
 A template pack is a directory:
@@ -11,7 +10,7 @@ A template pack is a directory:
 
 Discovery order (first definition of a name wins, so a user can shadow a
 built-in): explicit ``--pack-dir`` directories → ``anastomosis.packs``
-entry points → built-ins shipped under ``anastomosis/packs/``.
+built-ins shipped under ``anastomosis/packs/``.
 
 Loading is **defensive** — the brain-like modularity invariant. A pack
 with a broken manifest, missing template, or crashing ``context.py`` is
@@ -19,7 +18,7 @@ returned as unavailable *with a diagnosis*; it never raises out of
 discovery and never takes the other packs down. A vendor template rotting
 is a one-pack event.
 
-Trust model: packs from ``--pack-dir`` and entry points execute Python
+Trust model: packs from ``--pack-dir`` execute Python
 (``context.py``), so external packs load only when the caller passes
 ``allow_external=True`` (the CLI flag is explicit consent); built-ins are
 implicitly trusted. On top of that, an optional content-hash pin
@@ -33,12 +32,10 @@ behavior for bare programmatic callers.
 from __future__ import annotations
 
 import importlib.util
-import logging
 import sys
 import types
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -119,7 +116,7 @@ class PackStatus:
     name: str
     pack: LoadedPack | None
     diagnosis: str | None = None
-    origin: str = "builtin"  # "pack-dir" | "entry-point" | "builtin"
+    origin: str = "builtin"  # "pack-dir" | "builtin"
 
     @property
     def available(self) -> bool:
@@ -278,15 +275,6 @@ def _iter_candidate_dirs(pack_dirs: list[Path]) -> list[tuple[Path, str]]:
                 for child in sorted(parent.iterdir())
                 if child.is_dir() and (child / "pack.yaml").is_file()
             )
-    for ep in entry_points(group="anastomosis.packs"):
-        try:
-            located = Path(str(ep.load()))
-        except Exception as exc:  # a broken third-party plugin must not stop discovery
-            logging.getLogger(__name__).warning(
-                "skipping pack entry point %s (%s)", ep.name, type(exc).__name__
-            )
-            continue
-        candidates.append((located, "entry-point"))
     if _BUILTIN_DIR.is_dir():
         candidates.extend(
             (child, "builtin")
@@ -305,7 +293,7 @@ def discover_packs(
 ) -> dict[str, PackStatus]:
     """Discover every reachable pack, loading each defensively.
 
-    External packs (``--pack-dir``, entry points) execute code at load time
+    External packs (``--pack-dir``) execute code at load time
     and are skipped with a diagnosis unless ``allow_external`` is set.
 
     Hash pinning is OPT-IN via ``trust``. When ``trust is None`` the behavior is

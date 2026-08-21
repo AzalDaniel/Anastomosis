@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Session lifecycle management around one destination (M2 item 10).
 
 A real browser session leaks slowly and dies unpredictably — the same two

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """GUI controller tests — headless, no pywebview, no real Chromium.
 
 Drives :class:`anastomosis.gui.controller.GuiController` against a recording
@@ -52,14 +51,14 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_textbox(
-            fitz.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
         )
         doc.save(str(pdf_path))
         doc.close()
@@ -75,12 +74,12 @@ class _PointInsertCcdaChromium(_FakeChromium):
     page that ccda-standard QA correctly fails."""
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import fitz
+        import pymupdf
 
         from anastomosis.core.textutil import html_to_text
 
         lines = (html_to_text(html) or "(empty)").splitlines()
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
         page.insert_text((36, 48), "\n".join(lines[:80]), fontsize=8)
         doc.save(str(pdf_path))
@@ -138,7 +137,7 @@ def test_detect_unknown_dir_is_none(tmp_path: Path) -> None:
 def test_run_pipeline_end_to_end_emits_stage_sequence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -163,7 +162,7 @@ def test_run_pipeline_end_to_end_emits_stage_sequence(
 def test_run_pipeline_progress_carries_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"))
@@ -182,7 +181,7 @@ def test_run_pipeline_returns_per_patient_summary(
 ) -> None:
     """The run return value carries a per-patient roll-up (name, DOB, #notes)
     for local dashboard display — while the event stream stays count-only."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     result = GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"))
@@ -209,7 +208,7 @@ def test_run_pipeline_returns_per_patient_summary(
 def test_last_run_summary_serves_async_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The async path returns started=True; the per-patient detail is fetched
     after the `done` event via last_run_summary (the events carry no names)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -251,7 +250,7 @@ def test_last_run_summary_cleared_after_failed_run(tmp_path: Path) -> None:
 
 
 def test_busy_guard_rejects_concurrent_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -273,7 +272,7 @@ def test_busy_guard_rejects_concurrent_run(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_async_returns_started_then_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="pipeline QA e2e needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="pipeline QA e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -315,7 +314,7 @@ def test_run_pipeline_unknown_pack_is_clean_error(tmp_path: Path) -> None:
 
 
 def test_sections_flag_reaches_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     captured: dict[str, dict[str, bool]] = {}
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
 
@@ -343,7 +342,7 @@ def test_force_and_pack_dirs_reach_the_pipeline(
 ) -> None:
     """force and pack_dirs are no longer hard-coded off — the GUI threads them
     into the same command the CLI builds (review parity gap #1)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     import anastomosis.reconstruct.packtrust as packtrust
 
@@ -383,7 +382,7 @@ def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.M
     The two calls must contend (a barrier releases them together); a sequential
     pair would pass even against the old TOCTOU bug, so it would not pin the fix.
     """
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -476,7 +475,7 @@ def test_gui_rejects_second_long_running_job_while_busy(tmp_path: Path) -> None:
 
 
 def test_deliverers_invoked_when_flagged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "out"
     sink = _RecordingSink()
@@ -537,7 +536,7 @@ def test_run_migration_returns_route_and_per_patient_summary(
 ) -> None:
     """A migration returns ok, the resolved route, and a per-patient summary —
     while the event stream stays count-only (PHI probe holds)."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -625,7 +624,7 @@ def test_run_migration_no_route_surfaces_manual_import_not_done(
     """A KNOWN destination with no viable automated route writes the C-CDA but
     must surface a manual-import (error) event, never a silent `done` — CLI/GUI
     parity with `migrate` exiting 1."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     out = tmp_path / "out"
@@ -692,7 +691,7 @@ def test_run_migration_forwards_all_levers(tmp_path: Path, monkeypatch: pytest.M
 def test_run_migration_busy_guard_rejects_concurrent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
     controller = GuiController(_RecordingSink())
 
@@ -719,7 +718,7 @@ def test_run_migration_busy_guard_rejects_concurrent(
 def test_run_migration_async_started_then_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -744,7 +743,7 @@ def test_run_migration_async_started_then_done(
 def test_no_event_value_contains_a_patient_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     GuiController(sink).run_pipeline(
@@ -755,7 +754,7 @@ def test_no_event_value_contains_a_patient_name(
         assert name not in blob, f"event log leaked patient name {name!r}"
 
 
-# --- info() carries the section matrix (item 18b) -------------------------
+# --- info() carries the section matrix -------------------------------------
 
 
 def test_info_sections_shape_for_generic_soap() -> None:
@@ -771,7 +770,7 @@ def test_info_sections_shape_for_generic_soap() -> None:
     assert set(sections) >= {"vitals", "addenda", "insurance", "social_history"}
 
 
-# --- destination_status (item 18a) -----------------------------------------
+# --- destination_status ----------------------------------------------------
 
 
 def test_destination_status_epic_vendor_api_chosen() -> None:
@@ -786,13 +785,18 @@ def test_destination_status_epic_vendor_api_chosen() -> None:
     assert result["pack"] is None
 
 
-def test_destination_status_tebra_ccda_chosen_no_pack() -> None:
-    """Tebra routes by C-CDA import; its browser capability is `none` for now."""
+def test_destination_status_tebra_ccda_chosen_with_pack_chip() -> None:
+    """Tebra still prefers C-CDA import, but the shipped browser pack shows
+    as a chip — not ready until ``anast destination init tebra`` discovers
+    selectors (the pack.yaml ships DISCOVER placeholders)."""
     result = GuiController(_RecordingSink()).destination_status("tebra")
     assert result["ok"] is True
     assert result["transit"]["chosen"] == "ccda_import"  # type: ignore[index]
-    # tebra's registry browser kind is `none` (pack lands later), so no chip.
-    assert result["pack"] is None
+    pack = result["pack"]
+    assert pack is not None
+    assert pack["name"] == "tebra"  # type: ignore[index]
+    assert pack["builtin"] is True  # type: ignore[index]
+    assert pack["ready"] is False  # type: ignore[index]
 
 
 def test_destination_status_unknown_is_clean_error() -> None:
@@ -1047,7 +1051,7 @@ def test_upload_manifest_preview_missing_dir_is_clean_error(tmp_path: Path) -> N
 
 def _packgen_samples(tmp_path: Path, n: int = 4) -> Path:
     """A directory of distinct-patient synthetic sample PDFs (needs PyMuPDF)."""
-    import fitz
+    import pymupdf
 
     patients = [
         ("Synthia Example", "03/14/1985", "Hypertension follow-up"),
@@ -1059,9 +1063,9 @@ def _packgen_samples(tmp_path: Path, n: int = 4) -> Path:
     samples.mkdir()
     for i in range(n):
         name, dob, complaint = patients[i % len(patients)]
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page(width=612, height=792)
-        page.draw_rect(fitz.Rect(60, 95, 560, 110), fill=(0.9451, 0.9451, 0.9451), color=None)
+        page.draw_rect(pymupdf.Rect(60, 95, 560, 110), fill=(0.9451, 0.9451, 0.9451), color=None)
         page.insert_text((60, 90), "SUBJECTIVE", fontsize=13, fontname="hebo")
         page.insert_text((60, 130), "OBJECTIVE", fontsize=13, fontname="hebo")
         page.insert_text((60, 200), "DOB:", fontsize=11, fontname="helv")
@@ -1075,7 +1079,7 @@ def _packgen_samples(tmp_path: Path, n: int = 4) -> Path:
 
 
 def test_pack_init_happy_writes_draft(tmp_path: Path) -> None:
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     result = GuiController(_RecordingSink()).pack_init(
         str(samples),
@@ -1094,7 +1098,7 @@ def test_pack_init_happy_writes_draft(tmp_path: Path) -> None:
 
 
 def test_pack_init_refuses_without_confirmation(tmp_path: Path) -> None:
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     result = GuiController(_RecordingSink()).pack_init(
         str(samples),
@@ -1113,7 +1117,7 @@ def test_pack_init_refuses_without_confirmation(tmp_path: Path) -> None:
 
 def test_pack_init_single_sample_suppresses_text(tmp_path: Path) -> None:
     """The single-sample text-suppression behavior is inherited from summary_lines."""
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path, n=1)
     result = GuiController(_RecordingSink()).pack_init(
         str(samples), name="acme_soap", confirmed_distinct_patients=False
@@ -1152,7 +1156,7 @@ def test_pack_init_no_samples_is_clean_error(tmp_path: Path) -> None:
 def test_pack_init_async_writes_draft(tmp_path: Path) -> None:
     """The async path returns started=True; the draft result is fetchable via
     last_pack_result once the packgen done event lands."""
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -1187,7 +1191,7 @@ def test_pack_init_async_busy_guard(tmp_path: Path) -> None:
     Acquire the busy flag directly (deterministic), then assert a second
     pack_init_async returns Busy without spawning a worker; release after.
     """
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     controller = GuiController(_RecordingSink())
     assert controller._acquire() is True  # simulate an in-flight run
@@ -1207,7 +1211,7 @@ def test_last_pack_result_empty_before_any_run() -> None:
 def test_pack_init_async_failure_emits_single_packgen_error(tmp_path: Path) -> None:
     """An emit failure on the async path emits exactly ONE error event, on the
     packgen channel — not a doubled, stage-mismatched pair."""
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     out_file = tmp_path / "not_a_dir"
     out_file.write_text("x", encoding="utf-8")  # out_dir is a FILE → emit fails
@@ -2030,7 +2034,7 @@ def test_run_summaries_are_keyed_per_run_no_race(
     """Each run's per-patient detail is keyed by its own summary id, so a rapid
     SECOND run cannot erase the first run's detail before its UI reads it, and a
     bare last_run_summary() (no id) finds no global slot."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -2072,7 +2076,7 @@ def test_run_pipeline_threads_write_manifest(
     assert captured["cmd"].write_manifest is False  # type: ignore[attr-defined]
 
 
-# --- P2-5: per-flow event scoping (each page owns exactly one flow) ------------
+# --- per-flow event scoping (each page owns exactly one flow) ------------------
 #
 # Every event now carries a `flow` naming the operation family the emitting page
 # owns. Two pages emit identical stage/progress/done/error KINDS (the dashboard
@@ -2086,7 +2090,7 @@ def test_run_pipeline_threads_write_manifest(
 def test_pipeline_run_events_all_carry_pipeline_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"), archive=True)
@@ -2097,7 +2101,7 @@ def test_pipeline_run_events_all_carry_pipeline_flow(
 def test_migration_run_events_all_carry_migration_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     sink = _RecordingSink()
     GuiController(sink).run_migration(
@@ -2110,12 +2114,12 @@ def test_migration_run_events_all_carry_migration_flow(
 def test_pipeline_and_migration_flows_are_distinct_so_a_page_guard_filters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The core P2-5 fix: a dashboard pipeline `done` and a wizard migration
+    """Per-flow scoping: a dashboard pipeline `done` and a wizard migration
     `done` carry DISTINCT flows, so the wizard's flow guard (``flow ===
     "migration"``) early-returns on a pipeline done — it can no longer announce
     "migration prepared" for a pipeline run — and the dashboard guard likewise
     filters a migration done."""
-    pytest.importorskip("fitz", reason="needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
 
     pipe_sink = _RecordingSink()
@@ -2170,7 +2174,7 @@ def test_source_async_events_all_carry_source_init_flow(tmp_path: Path) -> None:
 
 
 def test_packgen_async_events_all_carry_pack_init_flow(tmp_path: Path) -> None:
-    pytest.importorskip("fitz", reason="packgen needs PyMuPDF")
+    pytest.importorskip("pymupdf", reason="packgen needs PyMuPDF")
     samples = _packgen_samples(tmp_path)
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -2189,7 +2193,7 @@ def test_packgen_async_events_all_carry_pack_init_flow(tmp_path: Path) -> None:
     assert all(e.get("flow") == "pack_init" for e in sink.events), sink.events
 
 
-# --- P2-5: the window-close barrier surface (busy + join) ---------------------
+# --- the window-close barrier surface (busy + join) ----------------------------
 
 
 def test_busy_and_join_active_job_surface_for_close_barrier(tmp_path: Path) -> None:

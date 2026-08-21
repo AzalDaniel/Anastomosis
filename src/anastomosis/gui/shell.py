@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The pywebview shell: the ONLY module that touches webview (lazy-imported).
 
 Everything testable lives in :mod:`anastomosis.gui.controller`; this file is
@@ -20,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,17 @@ logger = logging.getLogger(__name__)
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 _INDEX = _WEB_DIR / "index.html"
 _WINDOW_TITLE = "Anastomosis"
+
+# An operator's explicit override for the WebView2 profile folder. It is read
+# as a VALUE we hand pywebview, not exported to the runtime — the runtime never
+# reads it in a pywebview app (see :func:`_webview2_user_data_folder`).
+_WEBVIEW2_USER_DATA_ENV = "WEBVIEW2_USER_DATA_FOLDER"
+_WEBVIEW2_USER_DATA_PARTS = ("Anastomosis", "WebView2")
+
+# Diagnostics-only opt-in: the port WebView2's Chromium should open for remote
+# debugging, and the pywebview setting that is the only route to it.
+_REMOTE_DEBUG_PORT_ENV = "ANAST_GUI_REMOTE_DEBUGGING_PORT"
+_REMOTE_DEBUG_SETTING = "REMOTE_DEBUGGING_PORT"
 
 # The close-barrier notice surfaced on whatever page is up when the operator
 # tries to close the window mid-run (see :func:`launch`). PHI-free by
@@ -84,12 +95,129 @@ def _warn_job_running(window: Any) -> None:  # pragma: no cover - needs window
         logger.warning("close-barrier notice failed (%s)", exc_tag(exc))
 
 
+def _claim_windows_taskbar_identity() -> None:
+    """Set the process AppUserModelID before any window exists (Windows only).
+
+    Without an explicit id, Windows derives one from the host process path, so
+    the taskbar may group the app under a generic Python identity and Start-menu
+    pinning misbehaves. The id must match the ``AppUserModelID`` the installer
+    stamps on the Start-menu shortcut (packaging/anastomosis.iss) — one stable
+    identity across shortcut, taskbar, and running window. A failure here is
+    cosmetic, never fatal.
+    """
+    import sys
+
+    if sys.platform == "win32":  # pragma: no cover - windows-only branch
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AzalDaniel.Anastomosis")
+        except Exception as exc:
+            logger.warning("taskbar identity not set (%s)", exc_tag(exc))
+
+
+def _webview2_user_data_folder() -> str | None:
+    """The WebView2 profile folder to hand ``webview.start`` (Windows only).
+
+    Returns ``%LOCALAPPDATA%\\Anastomosis\\WebView2`` — created, parents and all
+    — or the operator's own ``WEBVIEW2_USER_DATA_FOLDER`` value when they set
+    one (a deliberate override is never second-guessed). ``None`` means "say
+    nothing": off Windows there is no WebView2, and on a failure pywebview keeps
+    its own default so the GUI still starts.
+
+    pywebview owns this knob, not the environment. Its Windows backend assigns
+    ``CoreWebView2CreationProperties.UserDataFolder`` on every launch, from the
+    ``storage_path`` argument of ``webview.start``; WebView2's documented
+    ``WEBVIEW2_USER_DATA_FOLDER`` environment variable is never consulted in
+    that arrangement, which is why this helper RETURNS a value for the caller
+    to pass rather than exporting one.
+
+    What we are replacing is not an unwritable folder — the defaults are all
+    writable. Left unset, pywebview picks the folder from its OTHER state:
+    ``%APPDATA%\\pywebview`` (shared with every pywebview app on the machine)
+    when private mode is off, and a fresh ``%TEMP%`` directory per launch —
+    whose name pywebview takes from a ``TemporaryDirectory`` it then drops on
+    the floor — when it is on, which is the default this app runs under. Both
+    are unstable ground for a runtime that keeps state there. Naming one
+    app-owned, per-user folder makes the location stable, reproducible, and
+    something a support request can point at. Private mode is untouched, so
+    what lands there is WebView2's own runtime state, not preserved cookies or
+    local storage.
+
+    Like the taskbar identity above, a failure here is warned about (exception
+    TYPE only) and never fatal.
+    """
+    import os
+    import sys
+
+    # Positive platform test (the shape _claim_windows_taskbar_identity uses):
+    # mypy narrows ``sys.platform`` statically, so an early ``!= "win32"``
+    # return would make everything after it unreachable on the Linux lane.
+    if sys.platform == "win32":
+        try:
+            override = os.environ.get(_WEBVIEW2_USER_DATA_ENV)
+            folder = (
+                Path(override)
+                if override
+                else Path(os.environ["LOCALAPPDATA"], *_WEBVIEW2_USER_DATA_PARTS)
+            )
+            # pywebview is handed a path, not a promise: create it here so a
+            # failure surfaces as this warning, not deep inside the backend.
+            folder.mkdir(parents=True, exist_ok=True)
+            return str(folder)
+        except Exception as exc:
+            logger.warning("webview2 user-data folder not set (%s)", exc_tag(exc))
+    return None
+
+
+def _apply_remote_debugging_port(settings: MutableMapping[str, Any]) -> None:
+    """Opt-in: route ``ANAST_GUI_REMOTE_DEBUGGING_PORT`` into pywebview's setting.
+
+    DIAGNOSTICS ONLY. The packaged-installer smoke test
+    (``packaging/smoke_windows.py``) attaches Playwright over CDP to prove the
+    shipped WebView2 window really rendered the dashboard; nothing else needs
+    this. An open debugging port lets any process on the machine drive the
+    window that is displaying charts, so it must never be set in normal
+    operation — unset (the default) is a no-op, and the port is opt-in for that
+    reason even though Chromium binds it to loopback.
+
+    Why pywebview's setting and not WebView2's environment variable: pywebview
+    assigns ``CoreWebView2CreationProperties.AdditionalBrowserArguments``
+    itself on every launch (``--disable-features=ElasticOverscroll`` and
+    friends), and WebView2 ignores ``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS``
+    whenever the host app supplies that property — so that variable can never
+    open the port in a pywebview app. pywebview appends
+    ``--remote-debugging-port=<n>`` to the same property when its
+    ``REMOTE_DEBUGGING_PORT`` setting is set, and that is the supported route.
+
+    Warn-never-fail like the preparation helpers above: a non-numeric value, an
+    out-of-range port, or a pywebview that no longer carries the key leaves the
+    setting untouched and the GUI starts normally.
+    """
+    import os
+
+    raw = os.environ.get(_REMOTE_DEBUG_PORT_ENV)
+    if not raw:
+        return
+    if not raw.isdigit() or not (1 <= int(raw) <= 65535):
+        logger.warning("remote debugging port ignored (not a valid port number)")
+        return
+    try:
+        settings[_REMOTE_DEBUG_SETTING] = int(raw)
+    except Exception as exc:
+        logger.warning("remote debugging port not set (%s)", exc_tag(exc))
+
+
 def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a display
     """Open the desktop GUI window. Requires the ``gui`` extra (pywebview)."""
     try:
         import webview
     except ImportError as exc:
         raise RuntimeError("pywebview is required for the GUI — install anastomosis[gui]") from exc
+
+    _claim_windows_taskbar_identity()
+    storage_path = _webview2_user_data_folder()
+    _apply_remote_debugging_port(webview.settings)
 
     sink = _WindowSink()
     controller = GuiController(sink)
@@ -104,9 +232,14 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
         height=820,
         min_size=(820, 600),
     )
+    if window is None:
+        # pywebview types create_window as Window | None; a None here means the
+        # backend refused the window and nothing below can work. Fail loudly at
+        # startup rather than crash later on the first attribute access.
+        raise RuntimeError("webview.create_window returned no window — GUI startup failed")
     sink.attach(window)
 
-    # Window-close barrier (P2-5): while a long-running job is in flight, veto the
+    # Window-close barrier: while a long-running job is in flight, veto the
     # close so the window can't interrupt an in-flight PDF/ledger write. pywebview
     # 5.x cancels the close when a `closing` subscriber returns False; the daemon
     # workers stay daemon=True, so this is a GRACEFUL guard (the OS can still
@@ -120,4 +253,10 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
         return False  # veto: pywebview cancels the close on a False return
 
     window.events.closing += _on_closing
-    webview.start(debug=debug)
+    # ``storage_path`` is what pywebview turns into WebView2's UserDataFolder.
+    # Omit the argument entirely when there is nothing to say (off Windows, or
+    # a folder we could not create) so pywebview's own default stands.
+    if storage_path is None:
+        webview.start(debug=debug)
+    else:
+        webview.start(debug=debug, storage_path=storage_path)

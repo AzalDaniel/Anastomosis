@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The reconstruction engine: canonical records → chart PDFs via a pack.
 
 Ported behaviors from the predecessor (which reconstructed 12,906 PDFs at
@@ -22,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +31,7 @@ from jinja2 import Environment, FileSystemLoader
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
+from anastomosis.core.textutil import safe_name
 
 from .packs import LoadedPack
 
@@ -68,11 +67,6 @@ class RenderResult:
     # (encounter_id, exception type name) — never exception text.
     failed: list[tuple[str, str]] = field(default_factory=list)
     documents: list[RenderedDoc] = field(default_factory=list)
-
-
-def _safe_name(value: str | None, fallback: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", (value or "").strip()).strip("_")
-    return cleaned or fallback
 
 
 class ReconstructionEngine:
@@ -126,10 +120,10 @@ class ReconstructionEngine:
     def _filename_for(self, encounter: Encounter, record: PatientRecord) -> str:
         dos = encounter.date_of_service
         fields = {
-            "family": _safe_name(record.patient.family_name, "Unknown"),
-            "given": _safe_name(record.patient.given_name, "Unknown"),
+            "family": safe_name(record.patient.family_name, "Unknown"),
+            "given": safe_name(record.patient.given_name, "Unknown"),
             "dos": dos.strftime("%m-%d-%Y") if dos else "undated",
-            "type": _safe_name(encounter.note_type, "note"),
+            "type": safe_name(encounter.note_type, "note"),
         }
         return self._pack.manifest.filename.pattern.format(**fields)
 

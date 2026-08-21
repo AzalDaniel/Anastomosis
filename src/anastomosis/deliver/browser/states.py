@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The 15-state upload machine and its legal-transition graph.
 
 One :class:`UploadItem` walks this machine from :data:`UploadState.PENDING`
@@ -13,8 +12,9 @@ Non-terminal (work still owed on the item):
 
 * ``PENDING`` — enqueued, not yet started.
 * ``RESOLVING_PATIENT`` — locating the patient in the destination system.
-* ``VERIFYING_PRE`` — pre-upload readback (banner check, the wrong-patient
-  defense) before any bytes are sent.
+* ``VERIFYING_PRE`` — pre-upload readback before any bytes are sent: the
+  wrong-patient banner check FIRST, then the duplicate scan (which is trusted
+  only once the open chart's identity is confirmed), then the L0-L4 ladder.
 * ``UPLOADING`` — the file is being pushed into the destination chart.
 * ``UPLOAD_INTERRUPTED`` — an upload was cut off (crash/disconnect) and may
   or may not have landed; it must re-enter through the duplicate scan.
@@ -91,8 +91,12 @@ TERMINAL_STATES: frozenset[UploadState] = frozenset(
 
 # The complete legal-transition graph. Every state is a key; terminal states
 # map to the empty set (no work owed). UPLOAD_INTERRUPTED is the resume
-# re-entry: it goes back through RESOLVING_PATIENT so the duplicate scan can
-# catch an upload that landed just before a crash.
+# re-entry: it goes back through RESOLVING_PATIENT, and from there through
+# VERIFYING_PRE — where the wrong-patient banner check gates the duplicate scan
+# — so an upload that landed just before a crash is caught only after the open
+# chart's identity is confirmed. The duplicate terminal is reachable from
+# VERIFYING_PRE for that reason; the RESOLVING_PATIENT->DUPLICATE edge is kept
+# legal (a permissive graph) though the engine no longer scans there.
 LEGAL_TRANSITIONS: Mapping[UploadState, frozenset[UploadState]] = {
     UploadState.PENDING: frozenset(
         {
@@ -113,6 +117,7 @@ LEGAL_TRANSITIONS: Mapping[UploadState, frozenset[UploadState]] = {
     UploadState.VERIFYING_PRE: frozenset(
         {
             UploadState.PRE_VERIFY_FAILED,
+            UploadState.DUPLICATE_AT_DESTINATION,
             UploadState.UPLOADING,
             UploadState.RETRY_WAIT,
             UploadState.FAILED,

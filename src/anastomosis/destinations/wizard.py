@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Selector-discovery wizard support (the ``anast destination init`` engine).
 
 Discovering a browser pack means an operator pasting the CSS selector for each
@@ -13,7 +12,7 @@ the CLI command drives:
   Playwright; the real CDP-backed validator (:class:`CdpSelectorValidator`)
   imports Playwright lazily, like
   :func:`anastomosis.deliver.browser.cdp.connect_over_cdp`.
-* :func:`render_selectors_yaml` — the ``selectors.yaml`` text (header comment +
+* ``_render_selectors_yaml`` — the ``selectors.yaml`` text (header comment +
   slots) written into the user directory; and :func:`write_selectors` which
   creates the ``0o700`` directory and writes the file.
 * :func:`registry_overlay_snippet` — the printed (never auto-applied) registry
@@ -40,7 +39,6 @@ __all__ = [
     "CdpSelectorValidator",
     "SelectorValidator",
     "registry_overlay_snippet",
-    "render_selectors_yaml",
     "write_selectors",
 ]
 
@@ -97,7 +95,7 @@ class CdpSelectorValidator:
         return len(self._page.query_selector_all_text(selector))
 
 
-def render_selectors_yaml(
+def _render_selectors_yaml(
     name: str, selectors: Mapping[str, str], *, now: datetime | None = None
 ) -> str:
     """Render the ``selectors.yaml`` overlay text (header comment + slots).
@@ -150,7 +148,7 @@ def write_selectors(
     if os.name == "posix":
         pack_dir.chmod(stat.S_IRWXU)  # 0o700 — owner only
     target = pack_dir / _SELECTORS_FILE
-    target.write_text(render_selectors_yaml(name, selectors, now=now), encoding="utf-8")
+    target.write_text(_render_selectors_yaml(name, selectors, now=now), encoding="utf-8")
     return target
 
 

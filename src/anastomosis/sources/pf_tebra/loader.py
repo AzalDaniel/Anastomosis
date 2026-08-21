@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """TSV loading for PF/Tebra EHI exports.
 
 Kept dumb on purpose: read every TSV in the export into header-keyed rows and
@@ -10,6 +9,8 @@ only :data:`KNOWN_TABLES` — so the mapper can account for all of them. Tables 
 mapper does not map are preserved (patient-keyed rows into each patient's
 ``extensions``) or, when they cannot be attributed to a patient, the run is
 refused (:class:`UnsupportedTablesError`) rather than the data being dropped.
+A row in a table the mapper DOES map is refused the same way when its foreign
+key names no record in the export (:class:`OrphanRowsError`).
 """
 
 from __future__ import annotations
@@ -17,10 +18,13 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+from anastomosis.sources.base import SourceDataError
+
 __all__ = [
     "KNOWN_TABLES",
     "Export",
     "MalformedExportError",
+    "OrphanRowsError",
     "Row",
     "UnsupportedTablesError",
     "read_export",
@@ -31,7 +35,7 @@ Row = dict[str, str | None]
 Export = dict[str, list[Row]]
 
 
-class UnsupportedTablesError(Exception):
+class UnsupportedTablesError(SourceDataError):
     """An export carries tables the adapter can neither map nor losslessly keep.
 
     Raised by the mapper when an unmapped table has no patient key to attribute
@@ -45,6 +49,28 @@ class UnsupportedTablesError(Exception):
             "export contains unmapped tables that cannot be attributed to a patient "
             f"(no PatientPracticeGuid column): {tables}. Map them in the adapter, or "
             "remove them from the export, before migrating."
+        )
+
+
+class OrphanRowsError(SourceDataError):
+    """A KNOWN table carries rows whose foreign key names no record in the export.
+
+    The mapper reads these tables by slicing a per-key grouping with the owning
+    record's guid, so a row keyed to a patient (encounter, allergy,
+    prescription, relative) that is not in the export is grouped once and never
+    read again — it would vanish with no sentinel and no extension. Raised
+    instead, the same fail-closed stance :class:`UnsupportedTablesError` takes
+    for an orphan table. The message names the table(s) and the orphan row
+    COUNTS only — schema names and counts, never row values.
+    """
+
+    def __init__(self, orphans: dict[str, int]) -> None:
+        self.orphans = dict(sorted(orphans.items()))
+        detail = ", ".join(f"{table} ({count} row(s))" for table, count in self.orphans.items())
+        super().__init__(
+            "export contains rows whose foreign key names no record in the export "
+            f"(a missing or dangling key): {detail}. Repair the export, or remove "
+            "the orphaned rows, before migrating."
         )
 
 
@@ -92,7 +118,7 @@ KNOWN_TABLES = (
 _OVERFLOW_KEY = "__overflow__"
 
 
-class MalformedExportError(Exception):
+class MalformedExportError(SourceDataError):
     """A TSV row does not line up with its header (likely an unquoted tab in a
     cell). The message names the file and physical line only — never row values."""
 

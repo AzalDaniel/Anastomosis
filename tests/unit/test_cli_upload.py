@@ -1,11 +1,17 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """`anast upload` CLI driver tests — exercisable with NO browser/Chromium.
 
-The Playwright touch is the single ``cli._make_destination`` seam, monkeypatched
-to a :class:`FakeDestination`. The CDP loopback validation runs for real on a
-loopback URL. A fixture pack dir ships a ready ``selectors.yaml`` so the
-``.ready`` gate passes without the discovery wizard. Synthetic data only
-(``feedface-`` ids, neutral file names).
+Both delivery routes are covered with their live seam monkeypatched, so nothing
+here launches a browser or reaches a FHIR server:
+
+* the BROWSER route's Playwright touch is the single ``cli._make_destination``
+  seam, monkeypatched to a :class:`FakeDestination`. The CDP loopback validation
+  runs for real on a loopback URL, and a fixture pack dir ships a ready
+  ``selectors.yaml`` so the ``.ready`` gate passes without the discovery wizard;
+* the API route's touch is ``cli._make_fhir_destination``, monkeypatched the same
+  way. The FhirEndpoint https-or-loopback gate runs for real, and the bearer
+  token is asserted to come from the ENVIRONMENT (never argv).
+
+Synthetic data only (``feedface-`` ids, neutral file names).
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from anastomosis.deliver.browser.fake import FakeDestination
 from anastomosis.deliver.browser.persist import write_upload_manifest
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.deliver.browser.tracking import TrackingDB
+from anastomosis.deliver.fhir_api.attach import DEFAULT_TOKEN_ENV
 from anastomosis.destinations.browserpack import SelectorMap
 from anastomosis.reconstruct.engine import RenderedDoc
 
@@ -30,6 +37,13 @@ runner = CliRunner()
 
 LOOPBACK = "http://127.0.0.1:9222"
 DEST = "testdest"
+
+# The API route's fixtures. A loopback http base URL is the one cleartext form
+# FhirEndpoint allows (the local-HAPI case); the token is synthetic and only
+# ever reaches the CLI through the environment.
+FHIR_URL = "http://127.0.0.1:8080/fhir"
+FHIR_TOKEN = "feedface-bearer-token"
+ALT_TOKEN_ENV = "ANAST_FHIR_TOKEN_ALT"
 
 # Three patients, three charts — distinct so each resolves to its own chart.
 PATS = [f"feedface-0000-0000-0000-00000000010{i}" for i in range(3)]
@@ -480,3 +494,235 @@ def test_manifest_found_under_charts_subdir(
     result = _invoke(out_dir, pack_root, "--no-verify")  # drive test; stub PDFs
     assert result.exit_code == 0, result.output
     assert _ledger_states(out_dir).get(UploadState.COMPLETED.value) == 2
+
+
+# --- (12) the FHIR API route ------------------------------------------------
+#
+# Same command, same engine, same ledger — only the pre-flight and the attach
+# seam differ. Every test here patches ``cli._make_fhir_destination``, so no
+# request is ever made; the https-or-loopback gate and the env-var token
+# resolution run for real.
+
+
+def _invoke_fhir(out_dir: Path, *extra: str) -> object:
+    return runner.invoke(app, ["upload", str(out_dir), "--fhir", FHIR_URL, *extra])
+
+
+def _fhir_spy(
+    monkeypatch: pytest.MonkeyPatch, dest: FakeDestination | None = None
+) -> list[dict[str, object]]:
+    """Patch the API attach seam, recording the endpoint config it receives.
+
+    Mirrors the browser route's ``cli._make_destination`` monkeypatch: the seam
+    is resolved LATE through the ``cli`` module, so patching the attribute here
+    is what the command actually calls. Returns the (mutable) call log.
+    """
+    calls: list[dict[str, object]] = []
+    made = dest if dest is not None else FakeDestination(_known())
+
+    def _spy(base_url: str, *, bearer_token: str | None, create_missing_patients: bool) -> object:
+        calls.append(
+            {
+                "base_url": base_url,
+                "bearer_token": bearer_token,
+                "create_missing_patients": create_missing_patients,
+            }
+        )
+        return made
+
+    monkeypatch.setattr(cli, "_make_fhir_destination", _spy)
+    return calls
+
+
+def test_fhir_route_drives_the_engine_with_no_browser_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--fhir alone is a complete route: it drives the same engine to the same
+    ledger, and it must NOT show the shared-machine warning or ask for the
+    attach confirmation — there is no browser to attach to."""
+    monkeypatch.delenv(DEFAULT_TOKEN_ENV, raising=False)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    # No --yes: a prompt on this route would abort on the empty stdin.
+    result = _invoke_fhir(out_dir, "--no-verify")  # drive test; stub PDFs
+
+    assert result.exit_code == 0, result.output
+    counts = _ledger_states(out_dir)
+    assert counts.get(UploadState.COMPLETED.value) == 3
+    assert sum(counts.values()) == 3
+    assert "completed=3" in result.output
+    assert "run report" in result.output
+    # The browser route's confirmation flow is absent, not merely auto-accepted.
+    assert "multi-user" not in result.output.lower()
+    assert "attach to this browser" not in result.output.lower()
+    # The seam got the base URL verbatim, exactly once.
+    assert [call["base_url"] for call in calls] == [FHIR_URL]
+
+
+def test_both_routes_exit_2_and_no_seam_is_touched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_dir = _write_manifest(tmp_path)
+    pack_root = _pack_dir(tmp_path)
+    browser_calls = {"n": 0}
+
+    def _browser_spy(cdp: str, loaded: object) -> object:
+        browser_calls["n"] += 1
+        return FakeDestination(_known())
+
+    monkeypatch.setattr(cli, "_make_destination", _browser_spy)
+    fhir_calls = _fhir_spy(monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "upload",
+            str(out_dir),
+            "--to",
+            DEST,
+            "--cdp",
+            LOOPBACK,
+            "--fhir",
+            FHIR_URL,
+            "--pack-dir",
+            str(pack_root),
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "one upload route" in result.output.lower()
+    assert browser_calls["n"] == 0
+    assert fhir_calls == []
+
+
+def test_no_route_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out_dir = _write_manifest(tmp_path)
+    fhir_calls = _fhir_spy(monkeypatch)
+
+    result = runner.invoke(app, ["upload", str(out_dir)])
+
+    assert result.exit_code == 2, result.output
+    assert "choose an upload route" in result.output.lower()
+    assert fhir_calls == []
+
+
+@pytest.mark.parametrize("partial", [["--to", DEST], ["--cdp", LOOPBACK]])
+def test_half_specified_browser_route_exit_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, partial: list[str]
+) -> None:
+    """The browser route needs BOTH --to and --cdp; half of it is a usage error,
+    never a run that guesses the missing half."""
+    out_dir = _write_manifest(tmp_path)
+    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+
+    result = runner.invoke(app, ["upload", str(out_dir), *partial])
+
+    assert result.exit_code == 2, result.output
+    assert "choose an upload route" in result.output.lower()
+
+
+def test_fhir_token_read_from_env_never_from_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bearer token reaches the seam through the ENVIRONMENT (argv is
+    ps-visible), and never surfaces in the command's own output."""
+    monkeypatch.setenv(DEFAULT_TOKEN_ENV, FHIR_TOKEN)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    result = _invoke_fhir(out_dir, "--no-verify")
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["bearer_token"] == FHIR_TOKEN
+    assert FHIR_TOKEN not in result.output
+
+
+def test_fhir_token_env_var_is_selectable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--fhir-token-env picks WHICH variable holds the token; the default one is
+    then ignored (an operator with several destinations keeps them apart)."""
+    monkeypatch.setenv(DEFAULT_TOKEN_ENV, "feedface-wrong-token")
+    monkeypatch.setenv(ALT_TOKEN_ENV, FHIR_TOKEN)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    result = _invoke_fhir(out_dir, "--fhir-token-env", ALT_TOKEN_ENV, "--no-verify")
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["bearer_token"] == FHIR_TOKEN
+
+
+@pytest.mark.parametrize("value", [None, "", "  \n"])
+def test_fhir_absent_or_blank_env_is_unauthenticated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    """An unset (or blank) variable means unauthenticated — fine for a local
+    HAPI. Blank is normalized to None so no empty Authorization header is sent."""
+    if value is None:
+        monkeypatch.delenv(DEFAULT_TOKEN_ENV, raising=False)
+    else:
+        monkeypatch.setenv(DEFAULT_TOKEN_ENV, value)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    result = _invoke_fhir(out_dir, "--no-verify")
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["bearer_token"] is None
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [(None, True), ("--create-patients", True), ("--no-create-patients", False)],
+)
+def test_create_patients_defaults_on_and_is_overridable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str | None, expected: bool
+) -> None:
+    """ON by default: a migration target may not hold the patients yet."""
+    monkeypatch.delenv(DEFAULT_TOKEN_ENV, raising=False)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    extra = ["--no-verify"] if flag is None else [flag, "--no-verify"]
+    result = _invoke_fhir(out_dir, *extra)
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["create_missing_patients"] is expected
+
+
+def test_fhir_cleartext_off_loopback_exit_2_seam_never_called(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FhirEndpoint's https-or-loopback rule runs as a PRE-FLIGHT gate: its
+    ValueError becomes a clean exit 2 before the seam is ever reached."""
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    result = runner.invoke(app, ["upload", str(out_dir), "--fhir", "http://10.0.0.5/fhir"])
+
+    assert result.exit_code == 2, result.output
+    assert "loopback" in result.output.lower()
+    assert calls == []
+
+
+def test_fhir_route_threads_skiplist_and_verify_into_the_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared levers are route-agnostic: --verify (ON by default),
+    --skiplist and --max-attempts reach the SAME UploadCommand on the API
+    route as on the browser one."""
+    monkeypatch.delenv(DEFAULT_TOKEN_ENV, raising=False)
+    out_dir = _write_manifest(tmp_path)
+    skip = tmp_path / "skip.txt"
+    skip.write_text("enc-1\n", encoding="utf-8")
+    _fhir_spy(monkeypatch)
+    captured = _capture_cmd(monkeypatch)
+
+    result = _invoke_fhir(out_dir, "--skiplist", str(skip), "--max-attempts", "5")
+
+    assert result.exit_code == 0, result.output
+    cmd = captured["cmd"]
+    assert cmd.verify is True  # type: ignore[union-attr]  — the SAFE default
+    assert cmd.skiplist == frozenset({"enc-1"})  # type: ignore[union-attr]
+    assert cmd.max_attempts == 5  # type: ignore[union-attr]

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for defensive browser-pack discovery (precedence, overlay, diagnosis).
 
 The user directory is monkeypatched to a tmp path so no test ever touches a real

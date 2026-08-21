@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """FhirApiDestination tests against an in-memory FHIR server (opener seam).
 
 The destination is driven through a REAL :class:`FhirClient` whose transport is
@@ -36,13 +35,13 @@ from anastomosis.deliver.browser.manifest import build_manifest
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.deliver.browser.tracking import TrackingDB
 from anastomosis.deliver.fhir_api.client import FhirClient, FhirEndpoint, FhirResponse
-from anastomosis.deliver.fhir_api.destination import FhirApiDestination
+from anastomosis.deliver.fhir_api.destination import FhirApiDestination, PayloadTooLarge
 from anastomosis.deliver.verify import LayeredVerifier, LevelStatus
 from anastomosis.destinations.base import DestinationPatient, UploadItem
 from anastomosis.reconstruct.engine import RenderedDoc
 
-pytest.importorskip("fitz", reason="end-to-end verify path needs PyMuPDF (render extra)")
-import fitz
+pytest.importorskip("pymupdf", reason="end-to-end verify path needs PyMuPDF (render extra)")
+import pymupdf
 
 PAT = "feedface-0000-0000-0000-0000000000aa"
 ENC = "feedface-e000-0000-0000-0000000000aa"
@@ -204,9 +203,9 @@ def _client(server: _FakeFhirServer) -> FhirClient:
 
 
 def _make_pdf(path: Path, lines: list[str]) -> Path:
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
     return path
@@ -384,6 +383,108 @@ def test_driver_receipt_echoes_size(tmp_path: Path) -> None:
     assert receipt.echoed_size_bytes == item.size_bytes
 
 
+# --- driver: the inline-payload bound -----------------------------------------
+
+
+def test_driver_refuses_oversized_item_without_reading_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound is enforced BEFORE the read: a DocumentReference inlines the
+    PDF, so reading first is exactly the memory spike being prevented."""
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    dest = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes - 1)
+
+    def _explode(self: Path) -> bytes:
+        raise AssertionError("an over-limit file must never be read")
+
+    monkeypatch.setattr(Path, "read_bytes", _explode)
+
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(item, DestinationPatient(destination_patient_id=pid))
+    assert item.item_key in str(excinfo.value)
+    assert not server.docs, "nothing may be filed for a refused item"
+
+
+def test_driver_accepts_an_item_within_the_bound(tmp_path: Path) -> None:
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    # Exactly at the bound passes (the refusal is strictly "over"), and the
+    # default constructor — 50 MiB — passes a normal chart untouched.
+    at_bound = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes)
+    assert at_bound.upload(item, DestinationPatient(destination_patient_id=pid)).destination_doc_id
+    default = FhirApiDestination(_client(server))
+    assert default.upload(item, DestinationPatient(destination_patient_id=pid)).destination_doc_id
+
+
+def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path: Path) -> None:
+    """The preflight weighs the FILE, not the manifest.
+
+    ``size_bytes`` comes from the upload manifest and can be stale; the bytes
+    on disk are the ones read, base64-encoded, and serialized, so they are what
+    set the memory peak. A manifest that understates the file must not wave it
+    past the bound.
+    """
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    lying = replace(honest, size_bytes=1)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes - 1)
+    with pytest.raises(PayloadTooLarge):
+        dest.upload(lying, DestinationPatient(destination_patient_id=pid))
+
+
+def test_driver_delivers_a_small_file_a_stale_manifest_overstates(tmp_path: Path) -> None:
+    """The other direction of the same rule: a manifest that lies LARGE about a
+    small file must NOT refuse it.
+
+    Nothing oversized is ever read here — the file on disk is well inside the
+    bound — so refusing on the manifest's word alone would strand a deliverable
+    chart on a number that describes nothing. The measurement is the stat.
+    """
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    inflated = replace(honest, size_bytes=honest.size_bytes * 100)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes)
+
+    receipt = dest.upload(inflated, DestinationPatient(destination_patient_id=pid))
+
+    assert receipt.destination_doc_id
+    assert len(server.docs) == 1
+
+
+def test_payload_too_large_reports_the_measured_size(tmp_path: Path) -> None:
+    """The message must quote the size that was actually weighed (the stat)."""
+    server = _FakeFhirServer()
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    lying = replace(honest, size_bytes=1)
+    on_disk_mib = honest.file_path.stat().st_size / (1024 * 1024)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes - 1)
+
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(lying, DestinationPatient(destination_patient_id="srv-1"))
+
+    assert f"is {on_disk_mib:.1f} MiB" in str(excinfo.value)
+
+
+def test_payload_too_large_message_carries_no_filename_or_patient_value(tmp_path: Path) -> None:
+    # A chart filename embeds the patient name and the date of service, so the
+    # message names the opaque item_key and the sizes only.
+    server = _FakeFhirServer()
+    chart = tmp_path / "Testpatient_Synthia_05-10-2023_SOAP.pdf"
+    item = _item(_make_pdf(chart, GOOD_LINES))
+    dest = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes - 1)
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(item, DestinationPatient(destination_patient_id="srv-1"))
+    message = str(excinfo.value)
+    for forbidden in (chart.name, str(chart), "Synthia", "Testpatient", "1990", "05-10-2023"):
+        assert forbidden not in message, f"PHI leak in PayloadTooLarge: {forbidden!r}"
+    assert "MiB" in message  # the actionable part: the limit, in human units
+
+
 # --- MetadataReader / DocumentReader ------------------------------------------
 
 
@@ -487,6 +588,58 @@ def test_end_to_end_completes_with_l5_l6_then_duplicate(tmp_path: Path) -> None:
     engine2 = UploadEngine(dest2, tracking2)
     result2 = engine2.run(items, {PAT: _patient()}, run_id2)
     assert result2.counts == {UploadState.DUPLICATE_AT_DESTINATION.value: 1}
+
+
+# --- ID-005: verification must be side-effect-free (never a second POST) ------
+
+
+class _LaggingIndexServer(_FakeFhirServer):
+    """A server whose SEARCH index lags a create: a just-POSTed Patient is not
+    yet returned by search. Counts Patient POSTs so a duplicate create shows."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.patient_post_count = 0
+
+    def _search_patients(self, params: Mapping[str, str]) -> dict[str, object]:
+        return _bundle([])  # the lag: the created patient is never searchable yet
+
+    def _post(self, segments: list[str], body: bytes | None) -> FhirResponse:
+        if segments and segments[0] == "Patient":
+            self.patient_post_count += 1
+        return super()._post(segments, body)
+
+
+def test_verifier_reuses_engine_identity_and_never_creates_a_second_patient(
+    tmp_path: Path,
+) -> None:
+    """ID-005: with ``create_missing_patients`` and a lagging search index, the
+    engine's resolve legitimately POSTs ONE Patient. The verifier must REUSE
+    that identity (threaded in from the engine), never re-resolve through the
+    create-capable resolver — which under the lag would POST a SECOND Patient
+    (the exact side effect the destination's own docstring forbids). Total
+    POST /Patient stays 1, and engine-id == verifier-id."""
+    from anastomosis.deliver.browser.errors import WrongPatientError
+
+    server = _LaggingIndexServer()
+    dest = FhirApiDestination(_client(server), create_missing_patients=True)
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+
+    # The engine's own resolve — the ONE legitimate create.
+    engine_dp = dest.resolve(_patient())
+    assert engine_dp is not None
+    assert server.patient_post_count == 1
+
+    verifier = LayeredVerifier(records={ENC: _encounter()}, destination=dest)
+    # Thread the engine's identity: verify_pre must NOT resolve again. L4's
+    # banner still fails closed on the lagging (empty) search, so verify_pre
+    # raises — but crucially WITHOUT a second POST.
+    with pytest.raises(WrongPatientError):
+        verifier.verify_pre(item, _patient(), engine_dp)
+
+    assert server.patient_post_count == 1, "verifier POSTed a second Patient during verification"
+    captured = verifier._resolved[item.item_key]
+    assert captured.destination_patient_id == engine_dp.destination_patient_id
 
 
 # --- PHI discipline across failing paths --------------------------------------

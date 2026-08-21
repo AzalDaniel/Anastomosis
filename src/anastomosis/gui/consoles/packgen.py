@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The pack-from-samples wizard backend (the packgen console).
 
 A thin adapter over the shared :func:`anastomosis.core.packinit.run_pack_init`
@@ -30,7 +29,7 @@ class PackgenConsole:
     """The pack-from-samples wizard backend."""
 
     # The operation family this console owns; stamped on every event so only the
-    # pack-from-samples wizard page consumes them (the P2-5 per-page flow guard).
+    # pack-from-samples wizard page consumes them (the per-page flow guard).
     # The event STAGE stays "packgen"/"pack_init"; the FLOW is the page-owning
     # family name.
     _FLOW = "pack_init"

@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """The shared browser-upload orchestration core (one engine drive, two frontends).
 
 These pin the shared-core guarantees: a SINGLE retry-budget default for both frontends, the
@@ -216,7 +215,7 @@ def test_run_upload_command_passes_the_stop_flag(tmp_path: Path) -> None:
 # the shared upload path: a verifiable PDF + manifest + readable FakeDestination
 # (the test_verify_composite.py / test_fhir_destination.py fixture pattern) so
 # the ladder runs for real, with no browser. The render extra gates them
-# per-test (NOT module-level — the fitz-free tests above must still run on a
+# per-test (NOT module-level — the pymupdf-free tests above must still run on a
 # machine without the render extra).
 
 # One verifiable patient — synthetic name + DOB the PDF must carry for L2.
@@ -242,13 +241,13 @@ def _write_verifiable_manifest(root: Path, lines: list[str]) -> Path:
     page-1 text; the patient demographics ride the manifest so the verifier sees
     the same canonical patient the engine resolves.
     """
-    import fitz
+    import pymupdf
 
     root.mkdir(parents=True, exist_ok=True)
     path = root / "note.pdf"
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page(width=612, height=792)
-    page.insert_textbox(fitz.Rect(36, 36, 576, 756), "\n".join(lines))
+    page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
     docs = [RenderedDoc(path=path, encounter_id="enc-aa", patient_id=_V_PID)]
@@ -269,7 +268,7 @@ def _readable_dest() -> FakeDestination:
 def test_run_upload_command_verify_true_drives_the_layered_verifier(tmp_path: Path) -> None:
     """verify=True wires the real LayeredVerifier: a good chart passes L0-L6 and
     COMPLETES through the shared upload path (no browser, no engine change)."""
-    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
     out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES)
     result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: _readable_dest())
     assert result.aborted_reason is None
@@ -283,7 +282,7 @@ def test_verify_is_the_safe_default_and_no_verify_is_an_explicit_opt_out(tmp_pat
     and only COMPLETES when the operator EXPLICITLY opts out with verify=False.
     Proves the default swaps in the LayeredVerifier (not the pass-through) and
     that --no-verify is a live escape hatch."""
-    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
     # (a) DEFAULT (verify on): the wrong-identity chart is caught at L2 and routed
     #     to PRE_VERIFY_FAILED before any bytes are sent — nothing is filed.
     out_on = _write_verifiable_manifest(tmp_path / "on", _BAD_LINES)
@@ -313,8 +312,8 @@ def test_verify_on_without_render_extra_fails_closed(
 ) -> None:
     """verify on + PyMuPDF unavailable => the run REFUSES (fail closed), never
     files unverified. Nothing touches the destination."""
-    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES)  # built while fitz is real
-    monkeypatch.setitem(sys.modules, "fitz", None)  # now `import fitz` raises ImportError
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES)  # built while pymupdf is real
+    monkeypatch.setitem(sys.modules, "pymupdf", None)  # now `import pymupdf` raises ImportError
     dest = _readable_dest()
     with pytest.raises(VerificationUnavailableError):
         run_upload_command(UploadCommand(out_dir=out), lambda: dest)
@@ -445,7 +444,7 @@ def test_release_and_close_on_verifier_construction_failure(
     """A LayeredVerifier constructor failure (after attach AND TrackingDB) closes
     the ledger AND releases the destination — both are ExitStack-owned by then,
     so neither leaks, and both fire exactly once."""
-    pytest.importorskip("fitz", reason="verify needs PyMuPDF (the render extra)")
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
     import anastomosis.deliver.browser.tracking as tracking_mod
     import anastomosis.deliver.verify as verify_mod
 

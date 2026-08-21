@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for the Oracle Health (Cerner Millennium) EHI adapter.
 
 Each test asserts one fact the brief (docs/vendor_refs/ORACLE_EHI_SCHEMA.md)
@@ -394,7 +393,7 @@ def test_compressed_blob_logs_type_not_content(
 
 
 def test_e2e_pipeline_renders_and_passes_qa(tmp_path: Path) -> None:
-    fitz = pytest.importorskip("fitz", reason="e2e QA needs PyMuPDF (render extra)")
+    pymupdf = pytest.importorskip("pymupdf", reason="e2e QA needs PyMuPDF (render extra)")
     from anastomosis.qa import Verdict, run_qa
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.engine import ReconstructionEngine
@@ -405,9 +404,9 @@ def test_e2e_pipeline_renders_and_passes_qa(tmp_path: Path) -> None:
 
         def render(self, html: str, pdf_path: Path) -> None:
             text = _visible_text(html)
-            doc = fitz.open()
+            doc = pymupdf.open()
             page = doc.new_page(width=612, height=792)
-            page.insert_textbox(fitz.Rect(36, 36, 576, 756), text)
+            page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), text)
             doc.save(str(pdf_path))
             doc.close()
 

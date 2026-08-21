@@ -10,17 +10,21 @@
 > §170.315(b)(10) EHI-export documentation publicly
 > (<https://healthit.gov/test-method/electronic-health-information-export/>).
 
-This document seeds source adapters (PLAN M6+) and the capability registry
+This document seeds source adapters and the capability registry
 (`destinations/registry.yaml` — the routing entries carry their own
 citations). Statuses: **VERIFIED** = official-source citation; **UNCERTAIN**
 = not confirmable from a primary source, do not build against it.
+
+The twelve vendor rows are joined by one cross-vendor row: FHIR R4 / US Core
+is a standard rather than a vendor, but it is a shipped source adapter and
+belongs in any survey of what the toolkit can ingest.
 
 ## The table
 
 | Vendor | EHI format | Clinical-notes representation | Public non-PHI note sample? | Import path |
 |---|---|---|---|---|
 | **Epic** | TSV tables + RTF/binary sidecars — [open.epic.com/EHITables](https://open.epic.com/EHITables) | Structured fields in TSV (`NOTE_ENC_INFO`, `REG_HX_NOTES`, …); rich text/images as sidecar downloads referenced from rows (VERIFIED) | None found | FHIR R4 DocumentReference POST (in registry) |
-| **Oracle Health (Cerner)** | MySQL SQL dump (DDL + data) — [overview PDFs](https://www.oracle.com/health/regulatory/certified-health-it/) | Notes in `BLOB_REFERENCE` + Document Imaging, exported in original stored format (PDF/TXT/DICOM/audio); no plain-text note column (VERIFIED) | Training manual exists on a public hospital site (UNCERTAIN retrievability) | FHIR R4 [DocumentReference POST](https://docs.oracle.com/en/industries/health/millennium-platform-apis/mfrap/op-documentreference-post.html), unstructured notes (VERIFIED → registry) |
+| **Oracle Health (Cerner)** | MySQL SQL dump (DDL + data) — [certified-health-IT documents](https://www.oracle.com/health/regulatory/certified-health-it/) (the single-patient variant is the shipped `oracle_ehi` adapter's format — EXPERIMENTAL, see below) | Notes in `BLOB_REFERENCE` + Document Imaging, exported in original stored format (PDF/TXT/DICOM/audio); no plain-text note column (VERIFIED) | Training manual exists on a public hospital site (UNCERTAIN retrievability) | FHIR R4 [DocumentReference POST](https://docs.oracle.com/en/industries/health/millennium-platform-apis/mfrap/op-documentreference-post.html), unstructured notes (VERIFIED → registry) |
 | **eClinicalWorks** | CSV via Windows utility — ehi.eclinicalworks.com (cited in the [Nov 2025 disclosure](https://www.eclinicalworks.com/wp-content/uploads/2025/12/ecw-onc-health-it-certification-details-and-additional-costs-disclosures-nov-2025.pdf)) | UNCERTAIN — primary doc 403; note-text shape unconfirmed | YES — [V12 Progress Notes user guide](https://www.scribd.com/document/833425805/360017-V12-EMR-Progress-Notes-User-Guide-Plan-Jan-2025) (vendor training doc) | FHIR R4 read (Connect); proprietary write claimed by third parties only (UNCERTAIN → registry `unverified`) |
 | **NextGen** | Enterprise: C-CDA XML; Office: CSV/multi-format ([extract doc](https://docs.nextgen.com/en-US/file-maintenance-help-for-nextgenc2ae-enterprise-8-3239752/extract-patient-ehi-290684)) | **C-CDA export excludes encounter notes** (vendor-documented); notes only via Print-Chart PDF (VERIFIED) | None found | [Data Share module](https://docs.nextgen.com/en-US/nextgenc2ae-enterprise-ehr-help-3270157/data-share-module-369560) imports C-CDA (VERIFIED → registry); FHIR write scope UNCERTAIN |
 | **athenahealth** | NDJSON (FHIR R4 Bulk) — [clinical EHI export](https://docs.athenahealth.com/athenaone-dataexports/ambulatory/clinical-ehi-export) | DocumentReference-wrapped attachments; human-readable sidecars XML/JPEG/PNG/TIFF/PDF (VERIFIED) | None found | In registry (clinical-document POST + CCDA Upload API) |
@@ -31,18 +35,30 @@ citations). Statuses: **VERIFIED** = official-source citation; **UNCERTAIN**
 | **Greenway** | PrimeSuite: decrypted PDF/C-CDA/image/TXT files; Intergy: CSV — [ehi.greenwayhealth.com](https://ehi.greenwayhealth.com/) | `ClinicalBin_*_Document.ext` files (VERIFIED); column detail UNCERTAIN | None found | FHIR + GAPI exist; write scope UNCERTAIN |
 | **Practice Fusion** | TSV tables — [versioned docs v1–v9](https://www.practicefusion.com/ehi-export-documentation/v9/index/) | `patient-encounters.tsv`, `…-documents.tsv`, `…-addendums.tsv`, `…-observations.tsv` (VERIFIED — this is the shipped `pf_tebra` adapter's format) | None found | In registry (FHIR read-only, cited negative) |
 | **Tebra** | C-CDA XML (.ccda per patient) — [help center](https://helpme.tebra.com/Platform/Practice_Settings/Data_Management/Export_Patient_Clinical_Data) | Notes embedded in C-CDA Summary of Care (VERIFIED); no standalone §(b)(10) spec page found (UNCERTAIN) | None found | In registry (in-product C-CDA import) |
+| *(cross-vendor standard, not a vendor)* **FHIR R4 / US Core** | FHIR R4 Bundle (`Patient/$everything`) or Bulk-Data `$export` NDJSON — [US Core IG](https://hl7.org/fhir/us/core/) | `DocumentReference` + `DiagnosticReport` attachments (base64 or URL); narrative in each resource's `text` div (VERIFIED — this is the shipped `fhir-r4` adapter's format) | Public IG examples | Any destination with a FHIR write scope (in registry per destination) |
 
-## Ranked next-adapter targets
+## Adapter targets (ranked)
 
-1. **Oracle Health (Cerner)** — documented relational schema (SQL dump with
-   DDL), public overview PDFs, and the only formally documented FHIR
-   DocumentReference **write** on this list, with an active developer
-   community. Hospital-side market weight (exact share UNCERTAIN).
-2. **eClinicalWorks** — largest ambulatory footprint (vendor-claimed
+**Shipped since this survey: Oracle Health (Cerner)** — `sources/oracle_ehi/`
+is wired into the registry, auto-detected, and covered by tests, but it is
+**EXPERIMENTAL and deliberately partial**. It reads the seven core tables of
+the *single-patient* V500 export (`v500/{schema,activity,reference}` MySQL
+`INSERT` dumps) plus the `CODE_VALUE` dictionary, and maps Patient,
+Encounter, Observation, Condition, AllergyIntolerance, and DocumentArtifact.
+Medications, procedures, and immunizations are **not** mapped yet; the
+patient-population and HDI export shapes are not read at all; and a
+compressed `CE_BLOB` note is **rejected loudly** rather than guessed at,
+because Oracle's specification documents that `COMPRESSION_CD` exists without
+documenting its code set. Every table, column, and join it relies on is cited
+by section in `docs/vendor_refs/ORACLE_EHI_SCHEMA.md`.
+
+Remaining targets, ranked:
+
+1. **eClinicalWorks** — largest ambulatory footprint (vendor-claimed
    ~180k providers, UNCERTAIN independently); CSV export cited in its own
    certification disclosure; FHIR Connect public. Risk: the EHI schema page
    is 403 — recover the schema via the export utility or partner channels.
-3. **NextGen** — dual product line, public legal PDF + docs pages, public
+2. **NextGen** — dual product line, public legal PDF + docs pages, public
    FHIR portal. The vendor-documented gap (C-CDA export *excludes* notes)
    makes the adapter scope crisp: structured C-CDA + a separate
    unstructured-notes path — the dual pipeline worth building early.

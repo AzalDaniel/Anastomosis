@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """``anast pack init`` / ``anast source init`` — the two learn-from-example wizards.
 
 The two command bodies and the pack-preview helpers (a fully-synthetic record

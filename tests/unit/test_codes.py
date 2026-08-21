@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Tests for core.codes — vital LOINC map, pain answers, BMI math.
 
 These assert the DUAL-MAP truth ported from the predecessor's vitals table:
@@ -10,7 +9,6 @@ from anastomosis.core.codes import (
     PAIN_LA_TO_LEVEL,
     PAIN_SEVERITY_LA,
     VITALS,
-    bmi_imperial,
     bmi_metric,
     pain_display,
 )
@@ -75,20 +73,9 @@ def test_pain_inverse_map_includes_old_and_alias() -> None:
     assert PAIN_LA_TO_LEVEL["LA10137-0"] == 5  # modern alias
 
 
-def test_bmi_imperial_cdc_formula_two_decimals() -> None:
-    # 703 * lb / in^2 — the auto-calc used when a source charts height+weight
-    # but omits BMI. Rounded to 2 decimal places.
-    assert bmi_imperial(150, 65) == 24.96
-    assert bmi_imperial(203, 69) == 29.97
-
-
 def test_bmi_metric_two_decimals() -> None:
     assert bmi_metric(70, 175) == 22.86
 
 
 def test_bmi_not_computable_returns_none() -> None:
-    assert bmi_imperial(None, 65) is None
-    assert bmi_imperial(150, None) is None
-    assert bmi_imperial(150, 0) is None
-    assert bmi_imperial(-150, 65) is None
     assert bmi_metric(0, 175) is None

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Anastomosis mark: two vessels joining into one continuous channel.
+       Colors are the GUI's own accent tokens (tokens.css):
+       accent-warm #FF8474 -> accent-mid #FFBE8A -> accent-cool #76E2E7
+       on the app's dark warm ground. One mark, every rendition. -->
+  <defs>
+    <linearGradient id="fuse" x1="60" y1="128" x2="212" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8474"/>
+      <stop offset="0.5" stop-color="#FFBE8A"/>
+      <stop offset="1" stop-color="#76E2E7"/>
+    </linearGradient>
+    <linearGradient id="warm" x1="44" y1="52" x2="120" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF8474"/>
+      <stop offset="1" stop-color="#FF9C7E"/>
+    </linearGradient>
+    <linearGradient id="cool" x1="44" y1="204" x2="120" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#76E2E7"/>
+      <stop offset="1" stop-color="#9ED3C8"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="#171310"/>
+  <rect width="256" height="256" rx="58" fill="none" stroke="#F9F4EE" stroke-opacity="0.07" stroke-width="2"/>
+  <!-- upper vessel: enters top-left, curves to the junction -->
+  <path d="M 52 60 C 96 60 100 112 128 122" fill="none" stroke="url(#warm)"
+        stroke-width="30" stroke-linecap="round"/>
+  <!-- lower vessel: enters bottom-left, curves to the junction -->
+  <path d="M 52 196 C 96 196 100 144 128 134" fill="none" stroke="url(#cool)"
+        stroke-width="30" stroke-linecap="round"/>
+  <!-- the anastomosis: one fused channel flowing right -->
+  <path d="M 118 128 C 150 128 168 128 206 128" fill="none" stroke="url(#fuse)"
+        stroke-width="34" stroke-linecap="round"/>
+</svg>

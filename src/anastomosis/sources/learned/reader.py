@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Reading a single-file structured export, and recognizing it again.
 
 A learned source targets the long tail of *flat, single-file* exports — one

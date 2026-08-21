@@ -1,30 +1,32 @@
 # Oracle Health EHI export — schema brief
 
-> Distilled from Oracle-published EHI-export specification material committed
-> under `docs/`. **Spec facts only** — every claim cites its source file; no
-> web research, no memory. No patient data appears in the source material or
+> Distilled from Oracle-published EHI-export specification material.
+> **Spec facts only** — every claim cites its source document; no web
+> folklore, no memory. No patient data appears in the source material or
 > here: vendor sample fragments (Appendix C of [POP-OVW]) use placeholder
 > values (e.g. literal `FNAME`/`LNANE`, epoch birthdates) and were not
-> transcribed. Written for the future `sources/oracle_ehi/` adapter
-> (PLAN M6+); see `docs/vendor_refs/README.md` for the provenance rules.
+> transcribed. This brief is the contract for the shipped
+> `sources/oracle_ehi/` adapter, which cites it by section number; see
+> `docs/vendor_refs/README.md` for the provenance rules.
 
 ## 1. Sources
 
-| Tag | File (under `docs/`) | What it is |
+Oracle publishes all six documents from its certified-health-IT page,
+<https://www.oracle.com/health/regulatory/certified-health-it/>. The
+specification packages themselves are **not redistributed here** — the links
+below are the primary sources every citation in this brief resolves against.
+
+| Tag | Document (Oracle Health, publisher) | What it is |
 |---|---|---|
-| [SP-OVW] | `cerner-corp-single-patient-ehi-export-data-overview.pdf` | Single-patient Millennium export overview & user instructions (4 pp., © 2023) |
-| [POP-OVW] | `cerner-corp-patient-population-ehi-export-data-overview.pdf` | Patient-population Millennium export overview & user instructions, with Appendices A–E (28 pp., © 2026) |
-| [HDI-OVW] | `health-data-intelligence-ehi-export-data-overview-user-instructions.pdf` | Health Data Intelligence (HDI) single-patient *and* population export overview (3 pp., © 2024) |
-| [HDI-SPEC] | `health-data-intelligence-ehi-export-data-format-specifications.pdf` | HDI "Poprecord Entity Types" data dictionary (196 pp., 246 entity types) |
-| [SP-ZIP] | `single-patient-ehi-export-data-format-specifications.zip` | Contains `EHI MYSQL DATA MODEL 2026101.zip` (HTML data-model reports, title "Millennium Data Model Reports - 2026.1.01") and `Longitudinal Plan EHI Export - Single Patient.pdf` |
-| [POP-ZIP] | `patient-population-ehi-export-data-format-specifications.zip` | Contains `EHI MYSQL DATA MODEL 2025401.zip`, `EHI ORACLE DATA MODEL 2025401.zip`, `Longitudinal Plan EHI Export - Patient Population.pdf`, plus Multimedia-Storage DICOM/non-DICOM definitions, the Document Imaging content-management schema PDF, and `Oracle Health Document Imaging AxAnnotations.xsd` |
+| [SP-OVW] | [Single Patient EHI Export Data Overview and User Instructions](https://www.oracle.com/a/ocom/docs/industries/healthcare/cerner-corp-single-patient-ehi-export-data-overview.pdf) | Single-patient Millennium export overview & user instructions (4 pp., © 2023) |
+| [POP-OVW] | [Patient Population EHI Export Data Overview and User Instructions](https://www.oracle.com/a/ocom/docs/industries/healthcare/cerner-corp-patient-population-ehi-export-data-overview.pdf) | Patient-population Millennium export overview & user instructions, with Appendices A–E (28 pp., © 2026) |
+| [HDI-OVW] | [Health Data Intelligence EHI Export Data Overview and User Instructions](https://www.oracle.com/a/ocom/docs/industries/healthcare/health-data-intelligence-ehi-export-data-overview-user-instructions.pdf) | Health Data Intelligence (HDI) single-patient *and* population export overview (3 pp., © 2024) |
+| [HDI-SPEC] | [Health Data Intelligence EHI Export Data Format Specifications](https://www.oracle.com/a/ocom/docs/industries/healthcare/health-data-intelligence-ehi-export-data-format-specifications.pdf) | HDI "Poprecord Entity Types" data dictionary (196 pp., 246 entity types) |
+| [SP-ZIP] | [Single Patient EHI Export Data Format Specifications](https://www.oracle.com/a/ocom/docs/industries/healthcare/single-patient-ehi-export-data-format-specifications.zip) (.zip) | Contains `EHI MYSQL DATA MODEL 2026101.zip` (HTML data-model reports, title "Millennium Data Model Reports - 2026.1.01") and `Longitudinal Plan EHI Export - Single Patient.pdf` |
+| [POP-ZIP] | [Patient Population EHI Export Data Format Specifications](https://www.oracle.com/a/ocom/docs/industries/healthcare/patient-population-ehi-export-data-format-specifications.zip) (.zip) | Contains `EHI MYSQL DATA MODEL 2025401.zip`, `EHI ORACLE DATA MODEL 2025401.zip`, `Longitudinal Plan EHI Export - Patient Population.pdf`, plus Multimedia-Storage DICOM/non-DICOM definitions, the Document Imaging content-management schema PDF, and `Oracle Health Document Imaging AxAnnotations.xsd` |
 
-`docs/bulk2.pdf` was a **byte-identical duplicate** of [HDI-OVW]
-(md5 `b8ad38b7ed71b98aa95bdb173e1c470b` for both, re-verified by sha256
-before removal); the duplicate file was deleted from the repo — [HDI-OVW]
-is the sole retained copy and carries every citation.
-
-Zip-internal citations are written
+URLs verified 2026-08-15 (all six return HTTP 200). Zip-internal citations
+are written
 `[SP-ZIP → EHI MYSQL DATA MODEL 2026101.zip → html/<file>]`.
 
 ## 2. Three distinct export systems

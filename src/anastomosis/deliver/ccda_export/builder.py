@@ -1,4 +1,3 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """PatientRecord → C-CDA R2.1 / CCD XML (the inverse of ``sources/ccda``).
 
 This is the export side of the C-CDA round trip. Its single hard contract is
@@ -39,9 +38,11 @@ exporter handles this in two tiers:
    structured emitter consumes — native canonical fields with no CDA slot
    (``Encounter.chief_complaint``, ``Patient.gender_identity``,
    ``Immunization.expires`` …), record-level lists the parser cannot produce
-   (``prescriptions``, ``coverages``, ``family_history`` …), and vendor
-   ``extensions`` namespaces other than the ``ccda:*`` keys this format
-   round-trips natively — is serialized as deterministic ``path = value`` lines
+   (``prescriptions``, ``coverages``, ``family_history`` …), and every
+   ``extensions`` key other than the four this format round-trips natively onto
+   their models (:data:`_NATIVE_EXT_KEYS`) — including the ``ccda:section:*``
+   narratives an earlier CDA ingest captured, which no emitter here re-derives
+   — is serialized as deterministic ``path = value`` lines
    into a namespaced ``<text>`` block on a dedicated extensions section (LOINC
    ``51899-3``). The parser captures that whole block into
    ``patient.extensions["ccda:section:51899-3"]``, so the data is **visible in
@@ -156,8 +157,11 @@ _PHONE_USE: dict[ContactKind, str] = {
 # @displayName first, so the displayName we emit is what actually round-trips).
 _SEX_CODE = {"Female": "F", "Male": "M"}
 
-# Extension keys this format round-trips through native structured slots, so
-# they must NOT be re-emitted into the declared-loss extensions section.
+# Extension keys this format round-trips through native structured slots (each
+# is emitted by the model's own structured entry and read back onto that model
+# by the parser), so they must NOT be re-emitted into the declared-loss
+# extensions section. This is the ONLY extension exemption: a key not listed
+# here is narrated, whatever its namespace.
 _NATIVE_EXT_KEYS = frozenset({"ccda:route", "ccda:dose", "ccda:allergen_code", "ccda:negationInd"})
 
 # The canonical display the parser stamps on the one social-history observation
@@ -192,10 +196,12 @@ DECLARED_LOSSES: dict[str, str] = {
         "ingest provenance (source_system/file/id, ingested_at) is non-clinical, "
         "non-deterministic metadata recreated at parse time; not narrated"
     ),
-    "extensions:ccda:*": (
-        "ccda:route/dose/allergen_code/negationInd round-trip natively onto their "
-        "models; ccda:section:* / documentId / effectiveTime / title are header "
-        "metadata the parser re-derives — neither is a loss"
+    "extensions:ccda:route|dose|allergen_code|negationInd": (
+        "these four round-trip NATIVELY onto their own models (see "
+        "_NATIVE_EXT_KEYS), so they are not narrated — they are not a loss. "
+        "Every OTHER ccda:* key (a captured section narrative, the source "
+        "document's id/effectiveTime/title) is narrated like any vendor "
+        "extension, because this exporter re-emits none of them"
     ),
     "*:narrative-only recovery": (
         "every other populated field with no structured CDA slot (native fields "
@@ -231,7 +237,10 @@ _EXPORTED_FIELDS: dict[str, frozenset[str]] = {
             "ethnicity[]",
             "language",
             "marital_status",
-            "identifiers[].kind",
+            # identifiers[].kind is deliberately absent: only SSN and SOURCE_GUID
+            # re-ingest as themselves. MRN/PRN/OTHER come back as SOURCE_GUID
+            # (their kind rides the id root as urn:anastomosis:id:<kind>), so the
+            # kind has to narrate to survive on its own field.
             "identifiers[].value",
             "identifiers[].system",
             "telecom[].kind",
@@ -899,8 +908,9 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
     subtracts the per-emitter allowlist (:data:`_EXPORTED_FIELDS`) and the
     structural plumbing (:data:`_STRUCTURAL_SKIP`), and serializes the remainder
     — native fields, nested sub-fields, record-level unmappable lists, and
-    ``extensions`` alike (extensions via :func:`_walk_extensions`, which exempts
-    the natively round-tripped ``ccda:*`` keys).
+    ``extensions`` alike, both the patient's and the RECORD's own (extensions
+    via :func:`_walk_extensions`, which exempts the natively round-tripped
+    ``ccda:*`` keys).
 
     Determinism: ``mode="json"`` gives stable scalar forms (dates as ISO
     strings); output lines are sorted. PHI: this builds the document body, not
@@ -920,8 +930,17 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
                 lines += _walk_model(
                     f"{attr}[{_model_index(item)}]", item, _consumed_fields(attr, item)
                 )
+        elif isinstance(value, dict):
+            # The record's OWN dict attrs — `extensions` (vendor namespaces the
+            # sources hang off the record, e.g. pf_tebra:unmapped:<table>) and
+            # `provenance`. Walking them from a synthetic "record" root routes
+            # extensions through _walk_extensions exactly as the patient's are,
+            # and drops provenance via _STRUCTURAL_SKIP. Without this branch a
+            # record-level dict fell through the loop entirely and never reached
+            # the narrative.
+            lines += _walk_value("record", "", {attr: value}, frozenset())
         # scalar top-level attrs (none exist today) would fall through silently;
-        # the record is a fixed set of model/list fields, so there are none.
+        # the record is a fixed set of model/list/dict fields, so there are none.
     return sorted(lines)
 
 
@@ -981,12 +1000,21 @@ def _walk_value(path: str, rel: str, value: Any, consumed: frozenset[str]) -> li
 
 
 def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
-    """Serialize an ``extensions`` dump, exempting the keys CDA round-trips
-    natively (``ccda:route``/``dose``/``allergen_code``/``negationInd``) and the
-    document-metadata keys the parser re-derives from the header."""
+    """Serialize an ``extensions`` dump, exempting ONLY the keys this exporter
+    provably re-emits into structured slots the parser reads back onto the same
+    model (:data:`_NATIVE_EXT_KEYS`).
+
+    Every other key narrates — a vendor namespace, and equally the ``ccda:*``
+    keys an earlier ingest of a CDA document left behind. Those are NOT
+    re-derived: a captured section narrative (``ccda:section:<loinc>``, the only
+    copy of an entry no structural parser could take apart) has no emitter at
+    all, and the header this exporter writes carries its own title, its own
+    deterministic document id and its own effectiveTime — so exempting the
+    ingest-side metadata keys would drop the source document's values. Anything
+    not re-emitted must ride the loss narrative."""
     lines: list[str] = []
     for key in sorted(extensions):
-        if key in _NATIVE_EXT_KEYS or key.startswith("ccda:section:") or key in _META_EXT_KEYS:
+        if key in _NATIVE_EXT_KEYS:
             continue
         lines += _serialize(f"{path}.extensions.{key}", extensions[key])
     return lines
@@ -1013,11 +1041,6 @@ def _serialize(path: str, value: Any) -> list[str]:
     if text == "":
         return []
     return [f"{path} = {text}"]
-
-
-# Document-level extension metadata the parser re-derives from the header; these
-# are not "lost" source fields (covered by DECLARED_LOSSES 'extensions:ccda:*').
-_META_EXT_KEYS = frozenset({"ccda:documentId", "ccda:effectiveTime", "ccda:title"})
 
 
 # --- top-level assembly ------------------------------------------------------

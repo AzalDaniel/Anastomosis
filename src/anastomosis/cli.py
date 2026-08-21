@@ -1,16 +1,18 @@
-# AI-assisted: written with Claude agents under the author's direction and review; see DESIGN.md.
 """Anastomosis command-line interface.
 
 Installed as both ``anast`` (everyday) and ``anastomosis`` (formal).
-Sub-commands appear as their pipeline stages are implemented:
 
-    anast ingest        EHI export / C-CDA  ->  canonical records
-    anast reconstruct   canonical records   ->  rendered documents
-    anast qa            rendered documents  ->  QA report
-    anast archive       full pipeline       ->  searchable offline archive
-    anast bundle        full pipeline       ->  per-patient bundles
-    anast pipeline run  one command, whole pipeline (charts + optional archive/bundle)
-    anast pack init     sample PDFs         ->  a draft template pack
+    anast pipeline run  EHI export  ->  verified charts (+ archive, bundles)
+    anast migrate       EHI export  ->  a prepared cross-EHR move
+    anast upload        prepared charts     ->  a destination EHR
+    anast archive       EHI export  ->  a searchable offline archive
+    anast bundle        EHI export  ->  per-patient record-request bundles
+    anast destination   list destinations, plan a route, or set one up
+    anast pack init     sample PDFs ->  a draft template pack
+    anast source init   one example ->  a learned source-format mapping
+    anast info          installed extras, source adapters, template packs
+    anast doctor        verify every bundled data asset is present
+    anast gui           launch the desktop app
 """
 
 # NB: this module's docstring is the top-level ``anast --help`` text
@@ -38,6 +40,7 @@ import anastomosis.sources.pf_tebra
 from anastomosis.core.logutil import configure_logging
 from anastomosis.core.presentation import Glyphs, terminal_glyphs
 from anastomosis.deliver.browser.attach import attach_destination
+from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,6 +57,13 @@ if TYPE_CHECKING:
 # (``_cli._make_destination``) so that patch is honored. The implementation lives
 # in ``deliver.browser.attach`` so the GUI never needs to import the CLI to reach it.
 _make_destination = attach_destination
+
+# The API route's twin of the seam above: ``anast upload --fhir URL`` builds its
+# destination through ``_cli._make_fhir_destination`` (resolved LATE, same as the
+# browser seam), so ``monkeypatch.setattr(cli, "_make_fhir_destination", ...)``
+# drives the whole upload flow with no FHIR server. The implementation lives in
+# ``deliver.fhir_api.attach`` for the same reason as its browser counterpart.
+_make_fhir_destination = attach_fhir_destination
 
 app = typer.Typer(
     name="anast",
