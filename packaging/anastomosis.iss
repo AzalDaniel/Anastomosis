@@ -83,6 +83,12 @@ Source: "dist\anast\*"; DestDir: "{app}\cli"; \
   Flags: recursesubdirs createallsubdirs ignoreversion
 ; The WebView2 bootstrapper (downloaded at build time), staged for the [Run] step.
 Source: "build\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+; Third-party license texts the installed app redistributes (the HL7 CDA
+; stylesheet is Apache-2.0; the two GUI fonts are OFL-1.1) plus the inventory
+; that maps each asset to its license. The wheel ships the same set under
+; dist-info/licenses/; the installer's copy lives beside the app.
+Source: "THIRD_PARTY_LICENSES.md"; DestDir: "{app}\licenses"; Flags: ignoreversion
+Source: "assets\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion
 
 [Icons]
 ; AppUserModelID matches the id the GUI sets at startup (gui/shell.py), so

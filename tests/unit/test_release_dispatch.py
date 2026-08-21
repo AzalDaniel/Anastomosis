@@ -97,3 +97,47 @@ def test_release_yml_first_step_guards_non_main_dispatch() -> None:
         "release.yml's first build step must refuse a dispatch from any ref but "
         f"main; its guard is {first!r}."
     )
+
+
+def _step_index(steps: list[dict[str, Any]], marker: str) -> int:
+    for i, step in enumerate(steps):
+        if marker in f"{step.get('name', '')} {step.get('run', '')}":
+            return i
+    raise AssertionError(f"no step matching {marker!r}")
+
+
+def test_release_yml_asserts_tag_matches_built_version_before_building() -> None:
+    """A mistyped `v*` tag must fail BEFORE anything is built or published.
+
+    PyPI publishes whatever version the SOURCE carries, so without this guard
+    a stale tag mints a release whose tag, artifacts, and index disagree —
+    the same invariant windows-package.yml already enforces on its path.
+    """
+    data = _load(RELEASE_YML)
+    steps = data["jobs"]["build"]["steps"]
+    guard = _step_index(steps, "tag names the version")
+    build = _step_index(steps, "python -m build")
+    assert guard < build, "the tag/version assert must run before the build"
+    run = steps[guard]["run"]
+    assert "__version__" in run and "github.ref_name" in run, (
+        "the guard must derive the version from the package source and compare "
+        f"it against the triggering tag; its run block is {run!r}"
+    )
+
+
+def test_release_yml_asserts_wheel_carries_third_party_licenses() -> None:
+    """The built wheel must carry the Apache-2.0 and OFL-1.1 full texts.
+
+    The wheel redistributes the HL7 CDA stylesheet and the two GUI fonts;
+    pyproject's license-files places the texts under dist-info/licenses/, and
+    this workflow step is what keeps a packaging-config regression from
+    shipping a wheel stripped of the attributions it owes.
+    """
+    data = _load(RELEASE_YML)
+    steps = data["jobs"]["build"]["steps"]
+    build = _step_index(steps, "python -m build")
+    check = _step_index(steps, "third-party license texts")
+    assert build < check, "the wheel content check must run after the build"
+    run = steps[check]["run"]
+    for needle in ("APACHE-2.0.txt", "OFL-1.1.txt", "THIRD_PARTY_LICENSES.md"):
+        assert needle in run, f"the wheel content check must assert {needle}"

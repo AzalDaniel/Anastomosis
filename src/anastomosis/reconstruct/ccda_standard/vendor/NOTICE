@@ -13,5 +13,8 @@ human-readable view.
 
 These three files are unmodified upstream artifacts (see PINNED.md for the exact
 tag and verified checksums). The Apache-2.0 license header is retained within
-CDA.xsl itself. The remainder of Anastomosis is licensed separately; see the
-repository's top-level license.
+CDA.xsl itself, and the FULL Apache License 2.0 text ships with every built
+artifact (assets/licenses/APACHE-2.0.txt in the repository; dist-info/licenses/
+in the wheel; {app}\licenses in the Windows installer) — inventoried in the
+top-level THIRD_PARTY_LICENSES.md. The remainder of Anastomosis is licensed
+separately; see the repository's top-level license.

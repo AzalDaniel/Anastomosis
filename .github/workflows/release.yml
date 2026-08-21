@@ -52,10 +52,50 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+      - name: Assert the tag names the version this source builds
+        # Every `v*` tag reaches this job, and PyPI publishes whatever version
+        # the SOURCE carries — so a mistyped or stale tag would mint a release
+        # whose tag, artifacts, and PyPI index disagree. Same invariant the
+        # Windows release path enforces (windows-package.yml, "Assert the
+        # release source"): a tag run proceeds only when the tag equals
+        # `v<package version>`. Dispatch runs are main-only (guarded above)
+        # and publish main's version by design.
+        shell: bash
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/anastomosis/__init__.py)"
+          if [ -z "$version" ]; then
+            echo "could not read __version__ from src/anastomosis/__init__.py" >&2
+            exit 1
+          fi
+          expected="v${version}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "dispatch publish from main: version '$version'"
+          elif [ "${{ github.ref_name }}" != "$expected" ]; then
+            echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+            exit 1
+          else
+            echo "tag '${{ github.ref_name }}' matches package version '$expected'"
+          fi
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade build
           python -m build
+      - name: Assert the wheel carries the third-party license texts
+        # The wheel redistributes Apache-2.0 (HL7 CDA stylesheet) and OFL-1.1
+        # (the two GUI fonts) works; PEP 639 license-files in pyproject.toml
+        # places their full texts under dist-info/licenses/. A release whose
+        # wheel lost them (a packaging-config regression) must fail here, not
+        # ship stripped of the attributions it owes.
+        shell: bash
+        run: |
+          wheel="$(ls dist/*.whl)"
+          unzip -p "$wheel" '*/licenses/assets/licenses/APACHE-2.0.txt' | grep -q "Apache License" \
+            || { echo "wheel is missing the Apache-2.0 license text" >&2; exit 1; }
+          unzip -p "$wheel" '*/licenses/assets/licenses/OFL-1.1.txt' | grep -q "SIL OPEN FONT LICENSE" \
+            || { echo "wheel is missing the OFL-1.1 license text" >&2; exit 1; }
+          unzip -p "$wheel" '*/licenses/THIRD_PARTY_LICENSES.md' | grep -q "Third-party material" \
+            || { echo "wheel is missing THIRD_PARTY_LICENSES.md" >&2; exit 1; }
+          echo "wheel carries the third-party license texts"
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:

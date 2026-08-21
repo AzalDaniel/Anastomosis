@@ -36,8 +36,13 @@ jobs:
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
   # as one of the gates; this lane closes the drift where mypy is a local
-  # gate with no CI lane. The dev extra brings mypy + type stubs and pulls in render+fhir
-  # so the optional-extra imports type-resolve cleanly under --strict.
+  # gate with no CI lane. The dev extra brings mypy + type stubs and pulls in
+  # render+fhir so the optional-extra imports type-resolve cleanly under
+  # --strict. The gui extra is REQUIRED too: without pywebview installed the
+  # mypy override silently masks GUI typing (that gap hid a real
+  # Window|None deref in gui/shell.py that only the documented .[dev,gui]
+  # environment caught). Constraints keep the resolved versions identical to
+  # the package build's.
   type-check:
     name: Type check (mypy)
     runs-on: ubuntu-latest
@@ -47,7 +52,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,gui]" -c packaging/constraints.txt
       - run: python -m mypy
 
   test:

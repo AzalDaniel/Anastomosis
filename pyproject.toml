@@ -8,7 +8,17 @@ description = "Reconstruct, verify, and re-home clinical records. An open-source
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+# The wheel must CARRY the third-party license texts it redistributes (the
+# HL7 CDA stylesheet is Apache-2.0; the two GUI fonts are OFL-1.1): PEP 639
+# license-files places every entry under <dist>.dist-info/licenses/. The
+# release workflow greps the built wheel for both headings and fails if
+# either is missing.
+license-files = [
+  "LICENSE",
+  "THIRD_PARTY_LICENSES.md",
+  "assets/licenses/APACHE-2.0.txt",
+  "assets/licenses/OFL-1.1.txt",
+]
 authors = [{ name = "Azal Daniel" }]
 keywords = [
   "ehr",
@@ -54,7 +64,11 @@ fhir = ["fhir.resources>=8.1"]
 # Browser-automation delivery (destination packs).
 deliver-browser = ["playwright>=1.46"]
 # Desktop GUI.
-gui = ["pywebview>=5.0"]
+# Lower bound 6.2: pywebview 6.2.1 fails to import from a Nuitka-frozen
+# Windows build (upstream issue #1817) and 6.2 is the last known good; the
+# package build additionally pins ==6.2 via packaging/constraints.txt. <7.0
+# bounds the major so a future breaking release is a deliberate bump here.
+gui = ["pywebview>=6.2,<7.0"]
 dev = [
   "anastomosis[render,fhir,deliver-browser]",
   "pytest>=8.2",
