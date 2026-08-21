@@ -169,9 +169,12 @@ def test_hash_approved_file_may_carry_a_base64_payload(
     f = tmp_path / "stylesheet.xsl"
     f.write_text(f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n")
     allowlist = tmp_path / "allow.txt"
+    # An approval covers the LF form of a text file (write_text produces CRLF
+    # on Windows; the scanner normalizes before hashing so ONE digest approves
+    # every platform's checkout).
+    lf_digest = hashlib.sha256(f.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     allowlist.write_text(
-        "# synthetic stylesheet, approved for this test only\n"
-        f"sha256:{hashlib.sha256(f.read_bytes()).hexdigest()}\n"
+        f"# synthetic stylesheet, approved for this test only\nsha256:{lf_digest}\n"
     )
     monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
     assert run_scan([f], canary_denylist) == 0
