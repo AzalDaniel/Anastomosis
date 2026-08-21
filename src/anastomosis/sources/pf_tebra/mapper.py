@@ -112,7 +112,9 @@ def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
 
     ``prefix`` qualifies the namespaced key for rows that are NOT the model's
     own source row (a demographics side row, say), so several tables' surplus
-    columns can share one ``extensions`` dict without colliding.
+    columns can share one ``extensions`` dict without colliding. A prefix opens
+    its own sub-namespace (``side:``) rather than starting with a table name, so
+    no prefixed key can ever be spelled by an unprefixed column name.
     """
     return {
         f"{SOURCE}:{prefix}{col}": value
@@ -216,7 +218,12 @@ _GISO_TABLE = "patient-gender-identity-sexual-orientation"
 
 def _side_extensions(groups: _DemographicsGroups, guid: str) -> dict[str, Any]:
     """Surplus cells of the demographics SIDE rows, as
-    ``pf_tebra:<table>:<row index>:<column>``.
+    ``pf_tebra:side:<table>:<row index>:<column>``.
+
+    The ``side:`` segment keeps this namespace disjoint from the demographics
+    row's own ``pf_tebra:<column>`` keys: a future export column literally named
+    ``patient-race:0:FutureColumn`` would otherwise land on the same key as a
+    side-row cell and one would overwrite the other.
 
     `_map_patient` lifts one or two columns out of each side row (``RaceName``,
     ``GenderIdentity``, …) and nothing at all out of the rows it never reaches
@@ -227,7 +234,7 @@ def _side_extensions(groups: _DemographicsGroups, guid: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
 
     def keep(table: str, index: int, row: Row, mapped: frozenset[str]) -> None:
-        out.update(_ext(row, mapped, prefix=f"{table}:{index}:"))
+        out.update(_ext(row, mapped, prefix=f"side:{table}:{index}:"))
 
     for index, row in enumerate(groups.pinned_notes.get(guid, [])):
         # A pinned note with no NoteText never reaches `notes`, so its NoteType

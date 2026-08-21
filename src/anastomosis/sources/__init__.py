@@ -7,6 +7,20 @@ defensively — a broken adapter reports a diagnosis instead of taking the
 toolkit down.
 """
 
-from .base import SourceAdapter, available_sources, detect_source, get_source, register
+from .base import (
+    SourceAdapter,
+    SourceDataError,
+    available_sources,
+    detect_source,
+    get_source,
+    register,
+)
 
-__all__ = ["SourceAdapter", "available_sources", "detect_source", "get_source", "register"]
+__all__ = [
+    "SourceAdapter",
+    "SourceDataError",
+    "available_sources",
+    "detect_source",
+    "get_source",
+    "register",
+]

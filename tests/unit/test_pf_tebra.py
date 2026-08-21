@@ -193,15 +193,16 @@ def test_demographics_side_row_surplus_columns_are_preserved(tmp_path: Path) -> 
         )
     loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
     ext = loaded[P1].patient.extensions
-    assert ext["pf_tebra:patient-race:0:FutureColumn"] == "SENTINEL-patient-race"
-    assert ext["pf_tebra:patient-race:1:FutureColumn"] == "SENTINEL-patient-race"  # 2nd race row
-    assert ext["pf_tebra:patient-ethnicity:0:FutureColumn"] == "SENTINEL-patient-ethnicity"
-    assert ext[f"pf_tebra:{GISO_TABLE}:0:FutureColumn"] == f"SENTINEL-{GISO_TABLE}"
+    assert ext["pf_tebra:side:patient-race:0:FutureColumn"] == "SENTINEL-patient-race"
+    # the second race row keeps its own index
+    assert ext["pf_tebra:side:patient-race:1:FutureColumn"] == "SENTINEL-patient-race"
+    assert ext["pf_tebra:side:patient-ethnicity:0:FutureColumn"] == "SENTINEL-patient-ethnicity"
+    assert ext[f"pf_tebra:side:{GISO_TABLE}:0:FutureColumn"] == f"SENTINEL-{GISO_TABLE}"
     # Columns the fixture already carried beside the mapped one survive too.
-    assert ext["pf_tebra:patient-race:0:CdcUniqueIdentifier"] == "2106-3"
-    assert ext[f"pf_tebra:{GISO_TABLE}:0:GenderIdentityCode"] == "446141000124107"
+    assert ext["pf_tebra:side:patient-race:0:CdcUniqueIdentifier"] == "2106-3"
+    assert ext[f"pf_tebra:side:{GISO_TABLE}:0:GenderIdentityCode"] == "446141000124107"
     # Mapped columns are never duplicated into extensions (the _ext contract).
-    assert "pf_tebra:patient-race:0:RaceName" not in ext
+    assert "pf_tebra:side:patient-race:0:RaceName" not in ext
     assert loaded[P1].patient.race == ["White", "Asian"]  # structural mapping unchanged
 
 

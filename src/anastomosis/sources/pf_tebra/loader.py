@@ -18,6 +18,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+from anastomosis.sources.base import SourceDataError
+
 __all__ = [
     "KNOWN_TABLES",
     "Export",
@@ -33,7 +35,7 @@ Row = dict[str, str | None]
 Export = dict[str, list[Row]]
 
 
-class UnsupportedTablesError(Exception):
+class UnsupportedTablesError(SourceDataError):
     """An export carries tables the adapter can neither map nor losslessly keep.
 
     Raised by the mapper when an unmapped table has no patient key to attribute
@@ -50,7 +52,7 @@ class UnsupportedTablesError(Exception):
         )
 
 
-class OrphanRowsError(Exception):
+class OrphanRowsError(SourceDataError):
     """A KNOWN table carries rows whose foreign key names no record in the export.
 
     The mapper reads these tables by slicing a per-key grouping with the owning
@@ -116,7 +118,7 @@ KNOWN_TABLES = (
 _OVERFLOW_KEY = "__overflow__"
 
 
-class MalformedExportError(Exception):
+class MalformedExportError(SourceDataError):
     """A TSV row does not line up with its header (likely an unquoted tab in a
     cell). The message names the file and physical line only — never row values."""
 

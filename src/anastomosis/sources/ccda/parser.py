@@ -5,7 +5,10 @@ how to take apart becomes discrete canonical models, and **every section** —
 structurally parsed or not — has its title and normalized narrative captured
 into ``patient.extensions["ccda:section:<loinc>"]`` so nothing on the chart is
 ever silently dropped (a known section whose entries the parser cannot take
-apart would otherwise yield nothing at all). Document-level metadata rides
+apart would otherwise yield nothing at all). A document repeating a section
+code — split Problems (Active)/(Resolved) is ordinary C-CDA — keeps each
+occurrence at its own key (``…:<loinc>#2``, ``#3``, … in document order), so a
+second section can never overwrite the first. Document-level metadata rides
 ``patient.extensions`` too.
 
 Parsing is defensive by design: a missing optional element maps to ``None``, a
@@ -309,13 +312,26 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     narrative text adds no key (sentinel discipline — absent stays absent).
     Mutating the model's extensions dict in place persists it on the patient (it
     is the validated dict object, not a fresh copy).
+
+    Documents legitimately repeat a section code (Problems (Active) and Problems
+    (Resolved) are both 11450-4) and may carry several code-less sections, so a
+    key already taken is suffixed ``#2``, ``#3``, … in DOCUMENT order rather than
+    overwritten — one narrative must never silently replace another. The first
+    occurrence keeps the bare key, so a document with one section per code reads
+    exactly as it always has.
     """
     title = _text_content(_find(section, "v3:title"))
     text = _text_content(_find(section, "v3:text"))
     if title is None and text is None:
         return
     key = f"ccda:section:{loinc}" if loinc else "ccda:section:unknown"
-    record.patient.extensions[key] = {"title": title, "text": text}
+    extensions = record.patient.extensions
+    if key in extensions:
+        occurrence = 2
+        while f"{key}#{occurrence}" in extensions:
+            occurrence += 1
+        key = f"{key}#{occurrence}"
+    extensions[key] = {"title": title, "text": text}
 
 
 # --- problems ----------------------------------------------------------------

@@ -597,6 +597,68 @@ def test_addenda_path_line_shape(tmp_path: Path) -> None:
     assert f"encounters[{enc_id}].addenda[0].text = amended note body" in text
 
 
+# A source CCD whose Problems entry is NOT the shape `_conditions` parses, so
+# the section's <text> is the only surviving copy of the clinical statement —
+# and a header whose id/title differ from the ones this exporter writes.
+_UNPARSABLE_ENTRY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda2"/>
+  <title>Unsupported-entry CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems</title>
+      <text>SENTINEL-RESCUED-NARRATIVE (active, onset 2021-02-15)</text>
+      <entry><observation classCode="OBS" moodCode="EVN">
+        <value code="38341003" codeSystem="2.16.840.1.113883.6.96"/>
+      </observation></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_ingested_section_narrative_survives_the_export_round_trip(tmp_path: Path) -> None:
+    """A narrative the C-CDA parser rescued from an entry it could not take
+    apart is the ONLY copy of that clinical statement, and this exporter emits
+    no section narratives of its own — so ``ccda:section:*`` must ride the loss
+    narrative like any other extension key, and come back on re-ingest."""
+    source_doc = tmp_path / "in.xml"
+    source_doc.write_text(_UNPARSABLE_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert ingested.conditions == []  # nothing structural survived the entry shape
+    problems = ingested.patient.extensions["ccda:section:11450-4"]
+    assert "SENTINEL-RESCUED-NARRATIVE" in problems["text"]
+
+    exported = tmp_path / "out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert b"SENTINEL-RESCUED-NARRATIVE" in exported.read_bytes()
+    text = parse_document(exported).patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
+    assert "patient.extensions.ccda:section:11450-4.text = SENTINEL-RESCUED-NARRATIVE" in text
+
+
+def test_source_document_metadata_rides_the_loss_narrative(tmp_path: Path) -> None:
+    """The header this exporter writes carries its own title and its own
+    deterministic id/effectiveTime, so the SOURCE document's metadata is not
+    re-derived on re-ingest — it narrates instead of vanishing."""
+    source_doc = tmp_path / "meta_in.xml"
+    source_doc.write_text(_UNPARSABLE_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    exported = tmp_path / "meta_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reingested = parse_document(exported)
+    text = reingested.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
+    assert "patient.extensions.ccda:documentId = feedface-0000-0000-0000-00000000cda2" in text
+    assert "patient.extensions.ccda:title = Unsupported-entry CCD" in text
+    # The re-derived header keys are the EXPORTER's, not the source's — which is
+    # exactly why the source values had to be narrated.
+    assert reingested.patient.extensions["ccda:title"] == "Continuity of Care Document"
+
+
 def test_declared_losses_is_structured_and_minimal() -> None:
     # NIT 4: DECLARED_LOSSES is now a {field-path pattern: reason} mapping that
     # covers ONLY what cannot ride the loss narrative — the SOAP kind split, the
