@@ -106,15 +106,29 @@ def _has_redacting_handler(logger: logging.Logger) -> bool:
 
 
 def configure_logging(level: int = logging.WARNING) -> None:
-    """Set up root logging with redaction installed on the handler.
+    """Set up root logging with redaction installed on EVERY root handler.
+
+    A host that configures logging before importing anastomosis (a
+    ``logging.basicConfig`` in an embedding application, a test harness's
+    caplog handler) leaves raw handlers on the root; appending our own safe
+    handler beside them is not enough — the pre-existing handler would still
+    emit every record unredacted. So the invariant this function restores is:
+    after it returns, every root-level handler carries the
+    :class:`RedactionFilter`. Pre-existing handlers are brought into the
+    redaction chain in place (their formatting and levels are untouched).
 
     Idempotent: the two application entry points (the CLI callback and the
     GUI launcher) both call this, and a single process can hit both — so if
-    the root logger already carries a redacting handler we return without
-    stacking a second one (which would double-log every line).
+    the root logger already carries a redacting handler we only sweep late
+    arrivals into the chain and return without stacking a second handler of
+    our own (which would double-log every line).
     """
     root = logging.getLogger()
-    if _has_redacting_handler(root):
+    already_configured = _has_redacting_handler(root)
+    for handler in root.handlers:
+        if not any(isinstance(f, RedactionFilter) for f in handler.filters):
+            handler.addFilter(RedactionFilter())
+    if already_configured:
         return
     handler = logging.StreamHandler()
     handler.addFilter(RedactionFilter())

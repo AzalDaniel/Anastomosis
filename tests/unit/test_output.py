@@ -16,6 +16,7 @@ from anastomosis.core.output import (
     _README_NAME,
     _SYSTEM_SID,
     _harden_windows_acl,
+    _windows_dacl_aces,
     _windows_user_sid,
     secure_output_dir,
 )
@@ -61,13 +62,18 @@ def _recording_run(
     *,
     user_sid: str = _FAKE_USER_SID,
     fail_on: str | None = None,
+    fail_on_arg: str | None = None,
     exc: Exception | None = None,
+    sddl: str | None = None,
 ) -> object:
     """Build a fake ``subprocess.run`` that records commands and returns SIDs.
 
     ``whoami.exe`` calls yield stdout containing ``user_sid``; ``icacls.exe``
-    calls succeed. When ``fail_on`` matches an executable's basename, ``exc``
-    is raised for that call instead.
+    calls succeed, and a ``/save`` call writes a compliant SDDL file (override
+    the descriptor with ``sddl`` to simulate a DACL the hardening did NOT
+    produce). ``fail_on`` matches an executable's basename, ``fail_on_arg`` a
+    specific argument (``"/reset"``, ``"/grant:r"``); either raises ``exc``
+    for that call.
     """
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -75,28 +81,40 @@ def _recording_run(
         exe = cmd[0]
         if exc is not None and fail_on is not None and exe.endswith(fail_on):
             raise exc
+        if exc is not None and fail_on_arg is not None and fail_on_arg in cmd:
+            raise exc
         if exe.endswith("whoami.exe"):
             return subprocess.CompletedProcess(cmd, 0, stdout=f"USER INFORMATION\n\n{user_sid}\n")
+        if "/save" in cmd:
+            descriptor = sddl or (f"D:PAI(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+            # icacls writes UTF-16-LE with no BOM: path line, then the SDDL.
+            Path(cmd[-1]).write_bytes(f"out\n{descriptor}\n".encode("utf-16-le"))
         return subprocess.CompletedProcess(cmd, 0, stdout="")
 
     return fake_run
 
 
-def test_harden_acl_exact_two_call_sequence(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_harden_acl_exact_call_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
     monkeypatch.setattr(subprocess, "run", _recording_run(calls))
 
-    root = Path("Z:/phi/out")
+    root = tmp_path / "out"
+    root.mkdir()
     assert _harden_windows_acl(root) is True
 
-    # whoami (SID lookup) then the two icacls calls, in order.
-    assert len(calls) == 3
+    # whoami (SID lookup), then reset -> grant -> strip -> save(verify).
+    assert len(calls) == 5
     whoami_cmd, _ = calls[0]
     assert whoami_cmd[0].endswith("whoami.exe")
     assert whoami_cmd[1] == "/user"
 
-    grant_cmd, _ = calls[1]
-    strip_cmd, _ = calls[2]
+    reset_cmd, _ = calls[1]
+    grant_cmd, _ = calls[2]
+    strip_cmd, _ = calls[3]
+    save_cmd, _ = calls[4]
+    # /reset FIRST: clear pre-existing EXPLICIT entries (neither /grant:r nor
+    # /inheritance:r touches those) before granting the allowlist.
+    assert reset_cmd == [reset_cmd[0], str(root), "/reset"]
     assert grant_cmd[0].endswith("icacls.exe")
     assert grant_cmd[1] == str(root)
     # /grant:r comes before /inheritance:r — explicit ACEs added while the
@@ -110,13 +128,30 @@ def test_harden_acl_exact_two_call_sequence(monkeypatch: pytest.MonkeyPatch) -> 
     assert _SYSTEM_SID == "S-1-5-18"
     assert _ADMINISTRATORS_SID == "S-1-5-32-544"
     assert strip_cmd == [strip_cmd[0], str(root), "/inheritance:r"]
+    # The post-verify reads the DACL back — the return value is a promise.
+    assert save_cmd[2] == "/save"
 
     # Never a shell; always captured, timed out, and check=True.
-    for _, kwargs in (calls[1], calls[2]):
+    for _, kwargs in calls[1:]:
         assert kwargs.get("shell") is not True
         assert kwargs.get("capture_output") is True
         assert kwargs.get("check") is True
         assert "timeout" in kwargs
+
+
+def test_harden_acl_reset_failure_short_circuits_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    fail = _recording_run(
+        calls, fail_on_arg="/reset", exc=subprocess.CalledProcessError(5, "icacls")
+    )
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    assert _harden_windows_acl(Path("Z:/phi/out")) is False
+    # The reset was attempted; neither the grant nor the strip may follow.
+    assert not any("/grant:r" in cmd for cmd, _ in calls)
+    assert not any("/inheritance:r" in cmd for cmd, _ in calls)
 
 
 def test_harden_acl_grant_failure_short_circuits_inheritance(
@@ -124,7 +159,7 @@ def test_harden_acl_grant_failure_short_circuits_inheritance(
 ) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
     fail = _recording_run(
-        calls, fail_on="icacls.exe", exc=subprocess.CalledProcessError(5, "icacls")
+        calls, fail_on_arg="/grant:r", exc=subprocess.CalledProcessError(5, "icacls")
     )
     monkeypatch.setattr(subprocess, "run", fail)
 
@@ -140,6 +175,36 @@ def test_harden_acl_grant_timeout_returns_false(monkeypatch: pytest.MonkeyPatch)
     )
     monkeypatch.setattr(subprocess, "run", fail)
 
+    assert _harden_windows_acl(Path("Z:/phi/out")) is False
+
+
+def test_harden_acl_fails_closed_when_a_foreign_ace_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The return value is a PROMISE: if the read-back DACL still carries an
+    ACE outside the granted set (here Everyone, ``WD``), the function must
+    report failure even though every icacls step exited 0."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    survived = (
+        f"D:PAI(A;OICI;FA;;;{_FAKE_USER_SID})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;WD)"
+    )
+    monkeypatch.setattr(subprocess, "run", _recording_run(calls, sddl=survived))
+
+    root = tmp_path / "out"
+    root.mkdir()
+    assert _harden_windows_acl(root) is False
+
+
+def test_harden_acl_fails_closed_when_the_dacl_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    fail = _recording_run(
+        calls, fail_on_arg="/save", exc=subprocess.CalledProcessError(5, "icacls")
+    )
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    # An unverifiable DACL cannot be reported as hardened.
     assert _harden_windows_acl(Path("Z:/phi/out")) is False
 
 
@@ -187,6 +252,39 @@ def test_secure_output_dir_warns_and_writes_readme_when_hardening_fails(
     assert str(target) not in message
     # README lands regardless of the hardening outcome.
     assert (target / _README_NAME).read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real NTFS ACL mutation (Windows CI lane)")
+def test_windows_real_dacl_survives_a_seeded_broad_ace(tmp_path: Path) -> None:
+    """A pre-existing broad EXPLICIT ACE must not survive the hardening.
+
+    ``/grant:r`` replaces only NAMED trustees' entries and ``/inheritance:r``
+    removes only INHERITED ones, so an explicit Everyone ACE seeded before the
+    call (a sync tool, a helpful admin) used to ride through both steps while
+    the function reported success. The ``/reset`` + post-verify close that:
+    after ``secure_output_dir`` the DACL matches the allowlist exactly.
+    """
+    target = tmp_path / "out"
+    target.mkdir()
+    # Seed the broad explicit ACE by SID (S-1-1-0 = Everyone; locale-safe).
+    subprocess.run(
+        ["icacls", str(target), "/grant", "*S-1-1-0:(OI)(CI)RX"],
+        check=True,
+        capture_output=True,
+    )
+
+    out = secure_output_dir(target)
+
+    aces = _windows_dacl_aces(out)
+    assert aces is not None
+    trustees = {trustee for _kind, trustee in aces}
+    user_sid = _windows_user_sid()
+    assert user_sid is not None
+    allowed = {user_sid, "LA", "OW", "SY", "BA", _SYSTEM_SID, _ADMINISTRATORS_SID}
+    assert trustees <= allowed, f"unexpected ACE trustees: {sorted(trustees - allowed)}"
+    # Everyone (WD / S-1-1-0) is the seeded entry and must be gone.
+    assert not trustees & {"WD", "S-1-1-0", "BU", "AU", "IU"}
+    assert all(kind == "A" for kind, _trustee in aces)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real NTFS ACL inspection (Windows CI lane)")

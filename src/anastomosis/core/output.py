@@ -125,28 +125,91 @@ def _windows_user_sid() -> str | None:
     return match.group(0) if match else None
 
 
+# SDDL trustee tokens ``icacls /save`` may emit for principals inside the
+# granted set: SYSTEM (``SY``), Administrators (``BA``), and the current user
+# when it is the RID-500 admin account (``LA``) or abbreviated to owner-rights
+# (``OW``). Anything else — ``WD`` Everyone, ``BU`` Users, ``AU`` Authenticated
+# Users, a foreign literal SID — is outside the promise and fails the verify.
+_ALLOWED_SDDL_ALIASES = frozenset({"SY", "BA", "LA", "OW"})
+
+_SDDL_ACE_RE = re.compile(r"\(([^)]*)\)")
+
+
+def _windows_dacl_aces(root: Path) -> list[tuple[str, str]] | None:
+    """Read ``root``'s DACL as ``(ace type, trustee token)`` pairs, or ``None``.
+
+    Uses ``icacls /save`` (SDDL — literal SIDs and locale-independent alias
+    tokens, never localized account names) and parses the ``D:`` section only.
+    ``None`` means the ACL could not be read or parsed; the caller must fail
+    closed — an unverifiable DACL cannot be reported as hardened.
+    """
+    icacls = _system32_exe("icacls.exe")
+    sddl_path = root / ".anast-acl-verify.sddl"
+    try:
+        subprocess.run(  # noqa: S603 — absolute exe, shell=False, fixed args
+            [icacls, str(root), "/save", str(sddl_path)],
+            capture_output=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+            check=True,
+        )
+        raw = sddl_path.read_bytes()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        try:
+            sddl_path.unlink(missing_ok=True)
+        except OSError:  # a leftover verify file is cosmetic, never a failure
+            pass
+    # ``icacls /save`` writes UTF-16-LE with NO BOM; decode explicitly and
+    # drop a BOM if a Windows version ever adds one.
+    text = raw.decode("utf-16-le", errors="replace").lstrip("\ufeff")
+    if "D:" not in text:
+        return None
+    dacl = text.split("D:", 1)[1]
+    if "S:" in dacl:
+        dacl = dacl.split("S:", 1)[0]
+    aces: list[tuple[str, str]] = []
+    for ace in _SDDL_ACE_RE.findall(dacl):
+        fields = ace.split(";")
+        if len(fields) < 6:
+            return None  # not the ACE shape we know — unverifiable, fail closed
+        aces.append((fields[0], fields[-1]))
+    return aces
+
+
 def _harden_windows_acl(root: Path) -> bool:
     """Restrict ``root`` to the current user + SYSTEM + Administrators (NTFS).
 
-    Fail-safe ordering — the explicit grants are added *before* inheritance is
-    stripped, so a failure at any step leaves the directory readable by its
-    owner rather than locking everyone out:
+    Reset first, then grant, then strip, then PROVE it — and fail-safe at
+    every step (a failure leaves the directory readable by its owner, never
+    locked out):
 
+    #. ``icacls <root> /reset`` — replace the DACL with the inherited default,
+       clearing any pre-existing EXPLICIT entry. ``/grant:r`` alone replaces
+       only the named trustees' entries and ``/inheritance:r`` removes only
+       inherited ones, so a broad explicit ACE someone (or some sync tool)
+       added earlier would silently survive both.
     #. ``icacls <root> /grant:r *<user>:(OI)(CI)F *SYSTEM:(OI)(CI)F
        *Administrators:(OI)(CI)F`` — add the three explicit full-control ACEs
        while inherited ACEs still exist.
     #. ``icacls <root> /inheritance:r`` — strip inherited ACEs, leaving only
        the explicit grants.
+    #. Read the DACL back (:func:`_windows_dacl_aces`) and verify every ACE is
+       an Allow for a trustee inside the granted set. The function's return
+       value is a PROMISE the caller repeats to the operator, so it reflects
+       the directory's actual state, never just the exit codes of the steps.
 
-    Returns ``True`` only when both calls succeed. If the SID lookup or the
-    grant fails, the inheritance strip is never attempted (directory keeps its
-    inherited permissions — weaker, but never broken). If the strip fails, the
-    explicit grants remain alongside inheritance — still no lockout.
+    Returns ``True`` only when all four steps succeed. A failed reset stops
+    before the grant (inherited permissions remain); a failed grant stops
+    before the strip; a failed strip leaves the grants alongside inheritance;
+    a failed or mismatched verify returns ``False`` even though the steps ran,
+    because the promised state could not be proven.
     """
     user_sid = _windows_user_sid()
     if user_sid is None:
         return False
     icacls = _system32_exe("icacls.exe")
+    reset = [icacls, str(root), "/reset"]
     grant = [
         icacls,
         str(root),
@@ -156,19 +219,18 @@ def _harden_windows_acl(root: Path) -> bool:
         f"*{_ADMINISTRATORS_SID}:(OI)(CI)F",
     ]
     strip = [icacls, str(root), "/inheritance:r"]
-    try:
-        subprocess.run(  # noqa: S603 — absolute exe, shell=False, literal SIDs
-            grant, capture_output=True, timeout=_SUBPROCESS_TIMEOUT, check=True
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False  # grants not applied — leave inheritance in place
-    try:
-        subprocess.run(  # noqa: S603 — absolute exe, shell=False, fixed args
-            strip, capture_output=True, timeout=_SUBPROCESS_TIMEOUT, check=True
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False  # explicit grants remain alongside inheritance — no lockout
-    return True
+    for step in (reset, grant, strip):
+        try:
+            subprocess.run(  # noqa: S603 — absolute exe, shell=False, literal SIDs
+                step, capture_output=True, timeout=_SUBPROCESS_TIMEOUT, check=True
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False  # earlier steps left owner access intact — no lockout
+    aces = _windows_dacl_aces(root)
+    if not aces:
+        return False  # unreadable or empty DACL — the promise is unproven
+    allowed = {user_sid, _SYSTEM_SID, _ADMINISTRATORS_SID} | _ALLOWED_SDDL_ALIASES
+    return all(kind == "A" and trustee in allowed for kind, trustee in aces)
 
 
 def secure_output_dir(path: str | Path) -> Path:

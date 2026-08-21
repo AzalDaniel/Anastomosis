@@ -102,6 +102,58 @@ def test_dob_adjacent_date_fails(tmp_path: Path, canary_denylist: Path) -> None:
     assert run_scan([f], canary_denylist) == 1
 
 
+def test_unapproved_nul_binary_fails(tmp_path: Path, canary_denylist: Path) -> None:
+    """Default-deny: a binary the text passes cannot read must fail, not skip.
+
+    Before this gate, any file with a NUL in its first 8 KiB (or a media
+    suffix) was silently skipped — an unapproved media file could carry
+    sensitive content past the scanner unread.
+    """
+    f = tmp_path / "mystery.pdf"
+    f.write_bytes(b"%PDF-1.4\x00" + b"opaque payload the scanner cannot read")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_unapproved_media_suffix_fails_even_without_nul(
+    tmp_path: Path, canary_denylist: Path
+) -> None:
+    # A media suffix is classified binary even when its bytes happen to look
+    # like text (a mislabeled or crafted file must not dodge the gate).
+    f = tmp_path / "image.png"
+    f.write_bytes(b"not really an image, but the suffix says media")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_allowlisted_binary_hash_passes(
+    tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"\x00approved synthetic binary"
+    f = tmp_path / "approved.woff2"
+    f.write_bytes(payload)
+    allowlist = tmp_path / "allow.txt"
+    allowlist.write_text(
+        "# synthetic test binary, approved for this test only\n"
+        f"sha256:{hashlib.sha256(payload).hexdigest()}\n"
+    )
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    assert run_scan([f], canary_denylist) == 0
+    # The approval is the exact bytes: any change to the file re-fails.
+    f.write_bytes(payload + b"!")
+    assert run_scan([f], canary_denylist) == 1
+
+
+def test_repo_binaries_are_all_hash_approved() -> None:
+    """Every tracked binary's current hash is in the allowlist (drift guard).
+
+    A binary changed without re-approval fails here BEFORE the whole-repo
+    scan does, with a message naming this discipline.
+    """
+    approved = phi_scan.load_binary_allowlist()
+    assert approved, "the binary allowlist must not be empty while binaries ship"
+    for entry in approved:
+        assert len(entry) == 64 and all(c in "0123456789abcdef" for c in entry)
+
+
 def test_repo_denylist_exists_and_is_hashes_only() -> None:
     data = json.loads(phi_scan.DEFAULT_HASHES.read_text())
     assert data["sha256"], "deny-list must not be empty"

@@ -32,29 +32,48 @@ machinery drives an API destination unchanged: 401/403/404 and other 4xx are
 :class:`PermanentDeliveryError`; 408/429/5xx and any transport-level failure
 (timeout, connection refused) are :class:`TransientDeliveryError`.
 
-The single :func:`urllib.request.urlopen` call site is audited: the request URL
-is built only from the endpoint's validated base URL plus caller paths, and the
-scheme is fixed at construction (the ``S310`` concern), so the ``noqa`` there is
-justified. Tests never monkeypatch ``urllib``; the constructor accepts an
-``opener`` seam so an in-process fake transport can be injected.
+The single request call site is audited: the request URL is built only from the
+endpoint's validated base URL plus caller paths, and the scheme is fixed at
+construction (the ``S310`` concern), so the ``noqa`` there is justified. That
+audit only holds if the request stays at the audited URL, so
+:class:`_UrllibOpener` builds its own opener with a redirect handler that
+**refuses every redirect** rather than using urllib's default: urllib's default
+opener follows a 30x and re-attaches the caller's headers — the
+``Authorization`` bearer among them — to a target named by the server, which
+may be an origin the operator never configured. A validated FHIR base URL has
+no business redirecting; when one does, the refusal is loud
+(:class:`RedirectRefusedError`) and the operator's fix is to configure the final
+URL. Same-origin redirects are refused too — narrowing the rule to
+cross-origin would mean trusting a parse of server-controlled text.
+
+Tests never monkeypatch ``urllib``; the constructor accepts an ``opener`` seam
+so an in-process fake transport can be injected.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import IO, Any, NoReturn
 
 from anastomosis.deliver.browser.errors import (
     PermanentDeliveryError,
     TransientDeliveryError,
 )
 
-__all__ = ["FHIR_JSON", "FhirClient", "FhirEndpoint", "FhirResponse", "Opener"]
+__all__ = [
+    "FHIR_JSON",
+    "FhirClient",
+    "FhirEndpoint",
+    "FhirResponse",
+    "Opener",
+    "RedirectRefusedError",
+]
 
 # The FHIR R4 JSON media type used for both Accept and Content-Type.
 FHIR_JSON = "application/fhir+json"
@@ -65,6 +84,29 @@ _TRANSIENT_STATUSES = frozenset({408, 429})
 # The only hosts that are the local loopback — mirrors the cdp.py rule exactly
 # (urlsplit lowercases and unbrackets the host, so the bare forms are compared).
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+class RedirectRefusedError(PermanentDeliveryError):
+    """The server answered with a redirect and the client refused to follow it.
+
+    An authorized request must not follow a redirect. urllib's default opener
+    re-attaches the original request's headers — including the
+    ``Authorization`` bearer — to the redirect target, and that target is
+    server-controlled text that may name an origin the operator never
+    configured. :class:`FhirEndpoint` validates exactly one base URL, and that
+    validation is worth nothing if a 30x can move the audience of a
+    token-bearing request. So every redirect is refused, same-origin ones
+    included: a validated base URL that redirects is a misconfiguration, and
+    guessing which redirects are "safe" would mean trusting the very text the
+    server controls.
+
+    Permanent, not transient: retrying cannot fix it. The operator's fix is to
+    configure the FHIR base URL to point at the final destination.
+
+    PHI rule: the message names the numeric status ONLY. The redirect target is
+    never folded in — it is server-controlled, and a FHIR URL's query string
+    carries patient identifiers.
+    """
 
 
 @dataclass(frozen=True)
@@ -222,9 +264,20 @@ class FhirClient:
         resource = _resource_type(path)
         try:
             response = self._opener(method, url, headers, body)
+        except RedirectRefusedError:
+            # A refused redirect is already a PermanentDeliveryError carrying a
+            # PHI-safe message, and it must reach the caller AS ITSELF: rerouting
+            # it through _route_http_status would relabel a 307 as retryable and
+            # the engine would re-offer the token to the same redirect.
+            raise
         except urllib.error.HTTPError as exc:
             raise _route_http_status(int(exc.code), resource) from None
-        except urllib.error.URLError:
+        except urllib.error.URLError as exc:
+            # urllib re-raises some handler-raised exceptions wrapped in a
+            # URLError (its ``reason``), so unwrap before the transient default —
+            # a refused redirect must never be reported as a retryable hiccup.
+            if isinstance(exc.reason, RedirectRefusedError):
+                raise exc.reason from None
             # Connection refused, DNS failure, timeout — all retryable transport
             # faults. The reason may name a host, so it is not folded in.
             raise TransientDeliveryError(f"transport failure reaching {resource}") from None
@@ -280,17 +333,60 @@ def _id_from_location(location: str | None) -> str | None:
     return None
 
 
+class _RefuseRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """A redirect handler that refuses every redirect instead of following one.
+
+    urllib routes each of 301/302/303/307/308 through ``redirect_request``
+    before it re-issues anything, so overriding that one method covers the
+    whole family — and it fires BEFORE the base class copies the request
+    headers onto the new request, so the ``Authorization`` bearer is never
+    built into a request aimed at a server-named URL.
+
+    Handing an *instance* of this subclass to
+    :func:`urllib.request.build_opener` makes it drop its own default
+    :class:`urllib.request.HTTPRedirectHandler`, so this is the only redirect
+    handler in the chain. Every other default handler (proxy, http, https,
+    error processing) is left exactly as ``urlopen`` would have it.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> NoReturn:
+        # PHI + tainted-input rule: ``newurl`` (the Location header) and ``msg``
+        # are server-controlled and a FHIR URL's query string carries patient
+        # identifiers, so neither is named. The numeric status is safe.
+        raise RedirectRefusedError(
+            f"HTTP {code} redirect refused: an authorized request must not "
+            "follow a redirect, because the Authorization header would be "
+            "re-sent to a destination chosen by the server. Configure the FHIR "
+            "base URL to point at the final destination."
+        )
+
+
 class _UrllibOpener:
-    """The production transport: one audited :func:`urllib.request.urlopen` call.
+    """The production transport: one audited urllib request, redirects refused.
 
     Holds the timeout so the seam signature stays ``(method, url, headers,
     body)``. The scheme is fixed by :class:`FhirEndpoint` validation, so the
     ``S310`` concern (an attacker-chosen ``file://`` scheme) cannot arise; the
-    ``noqa`` at the call site is justified on that basis.
+    ``noqa`` at the call site is justified on that basis. The opener is built
+    once, in ``__init__``, with :class:`_RefuseRedirectHandler` so that audited
+    URL is also the *only* URL the token is ever offered to.
     """
 
     def __init__(self, timeout_s: float) -> None:
         self._timeout_s = timeout_s
+        # Built once and reused. Supplying an instance of an
+        # HTTPRedirectHandler subclass makes build_opener skip its own default
+        # redirect handler, so every 30x lands in _RefuseRedirectHandler and
+        # raises RedirectRefusedError instead of re-sending the bearer token.
+        self._opener = urllib.request.build_opener(_RefuseRedirectHandler())
 
     def __call__(
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None
@@ -298,11 +394,12 @@ class _UrllibOpener:
         # S310: the scheme is fixed to http(s) by FhirEndpoint validation at
         # construction, and ``url`` is the validated base_url + a caller path —
         # never an attacker-chosen file:// or custom scheme. This is the single
-        # audited request site, so the suppression is justified.
+        # audited request site, so the suppression is justified. The opener
+        # refuses redirects, so the request cannot be walked off that URL.
         request = urllib.request.Request(  # noqa: S310
             url, data=body, headers=dict(headers), method=method
         )
-        with urllib.request.urlopen(request, timeout=self._timeout_s) as resp:  # noqa: S310
+        with self._opener.open(request, timeout=self._timeout_s) as resp:
             raw = resp.read()
             location = resp.headers.get("Location")
             status = int(resp.status)

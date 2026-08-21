@@ -6,7 +6,7 @@ real patient data. This scanner enforces the project's first rule:
 **no real PHI ever enters this repository** — not in code, not in docs,
 not in fixtures, not in git history.
 
-Two complementary mechanisms:
+Three complementary mechanisms:
 
 1. Hashed deny-list (``tools/phi_hashes.json``): SHA-256 hashes of tokens
    known to be PHI from the private predecessor (patient/provider names,
@@ -17,6 +17,13 @@ Two complementary mechanisms:
 2. Generic patterns: SSN-shaped strings, GUIDs outside the synthetic
    fixture prefixes, phone numbers outside the 555 exchange, and dates
    adjacent to DOB markers.
+
+3. Binary default-deny: a file the text passes cannot inspect (a binary
+   suffix, or NUL bytes in the first 8 KiB) passes ONLY when its sha256
+   appears as a ``sha256:<hex>`` entry in ``tools/phi_allowlist.txt`` with a
+   provenance comment. The scanner is the repository's no-unapproved-binaries
+   enforcer; skipping what it cannot read would let a media file carry
+   sensitive content past it unread.
 
 Synthetic-data conventions enforced repo-wide:
   * fixture GUIDs must start with ``feedface-`` or ``00000000-``
@@ -46,18 +53,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HASHES = Path(__file__).resolve().parent / "phi_hashes.json"
 ALLOWLIST = Path(__file__).resolve().parent / "phi_allowlist.txt"
 
-# Files the scanner never inspects.
-SKIP_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".pyc"}
+# Suffixes classified as binary/media without sniffing. NOT a skip list: a
+# file with one of these suffixes is checked against the binary allowlist
+# (default-deny), exactly like a NUL-sniffed binary.
+BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".pyc"}
 SKIP_NAMES = {"phi_hashes.json"}
+
+# The prefix marking an approved-binary hash entry in tools/phi_allowlist.txt.
+_BINARY_ALLOW_PREFIX = "sha256:"
 
 # Directories the filesystem-walk fallback prunes: version-control metadata,
 # tool caches, and virtualenvs — intrinsic machine state, never project
 # content. Deliberately NOT pruned: ``dist``/``build`` and other
 # conventionally-gitignored output dirs, because git skips those only via
 # .gitignore and the walk runs precisely when there is no git to consult —
-# scanning extra files is safe (binaries are skipped by the NUL sniff),
-# silently skipping a committable file is not. Any directory whose name
-# ends in ``.egg-info`` is pruned too.
+# scanning extra files is safe (an unlisted binary FAILS the scan rather
+# than slipping through), silently skipping a committable file is not. Any
+# directory whose name ends in ``.egg-info`` is pruned too.
 WALK_PRUNE_DIRS = frozenset(
     {
         ".git",
@@ -100,10 +112,33 @@ def candidate_tokens(text: str) -> set[str]:
 
 
 def load_allowlist() -> set[str]:
+    """Token false-positive entries (every non-comment line that is not a hash)."""
     if not ALLOWLIST.exists():
         return set()
     lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
-    return {ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")}
+    return {
+        ln.strip()
+        for ln in lines
+        if ln.strip() and not ln.startswith("#") and not ln.strip().startswith(_BINARY_ALLOW_PREFIX)
+    }
+
+
+def load_binary_allowlist() -> set[str]:
+    """The sha256 hex digests of APPROVED binary/media files.
+
+    ``sha256:<hex>`` lines in ``tools/phi_allowlist.txt``; each needs a
+    preceding provenance/license comment. Any binary file whose digest is not
+    in this set fails the scan — default-deny for content the text passes
+    cannot read.
+    """
+    if not ALLOWLIST.exists():
+        return set()
+    lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
+    return {
+        ln.strip()[len(_BINARY_ALLOW_PREFIX) :].lower()
+        for ln in lines
+        if ln.strip().startswith(_BINARY_ALLOW_PREFIX)
+    }
 
 
 def is_fixture_path(path: Path) -> bool:
@@ -204,28 +239,37 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     deny: set[str] = set(json.loads(hashes_path.read_text(encoding="utf-8"))["sha256"])
     allow = load_allowlist()
+    approved_binaries = load_binary_allowlist()
 
     all_findings: list[str] = []
     for path in iter_target_files(args.paths):
-        if path.suffix.lower() in SKIP_SUFFIXES or path.name in SKIP_NAMES:
+        if path.name in SKIP_NAMES:
             continue
         try:
             raw = path.read_bytes()
         except OSError:
             continue
-        if b"\x00" in raw[:8192]:  # binary
+        display = (
+            path.relative_to(REPO_ROOT)
+            if path.is_absolute() and path.is_relative_to(REPO_ROOT)
+            else path
+        )
+        if path.suffix.lower() in BINARY_SUFFIXES or b"\x00" in raw[:8192]:
+            # Default-deny for what the text passes cannot read: a binary or
+            # media file passes only by provenance — its sha256 must be
+            # approved in tools/phi_allowlist.txt. The digest (not the
+            # content) is echoed so approving a legitimate file is one
+            # copy-paste with a provenance comment.
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest not in approved_binaries:
+                all_findings.append(
+                    f"{display}: unapproved binary/media file (sha256:{digest}) — the "
+                    "scanner cannot inspect it; add a provenance comment + "
+                    "'sha256:<hex>' entry to tools/phi_allowlist.txt to approve"
+                )
             continue
         text = raw.decode("utf-8", errors="ignore")
-        all_findings.extend(
-            scan_text(
-                path.relative_to(REPO_ROOT)
-                if path.is_absolute() and path.is_relative_to(REPO_ROOT)
-                else path,
-                text,
-                deny,
-                allow,
-            )
-        )
+        all_findings.extend(scan_text(display, text, deny, allow))
 
     if all_findings:
         print("PHI scan FAILED:", file=sys.stderr)

@@ -98,3 +98,24 @@ f3017226-fe2a-4295-8bdf-00c3a9a7e4c5
 # generated application GUID, not a record identifier; stable for the life
 # of the product so upgrades find the existing install.
 eec2f7c9-06ad-4bc2-91d4-84bbae937b98
+
+# --- Approved binary files (sha256, default-deny for everything else) --------
+# The scanner cannot read binary/media content, so every binary in the repo
+# needs its hash here WITH provenance; an unlisted binary fails the scan.
+# Regenerate a hash after an intentional change: sha256sum <file>.
+
+# assets/icon/icon.ico — generated from the in-repo assets/icon/icon.svg
+# master via tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:82324091f0b464f5b71ac9f609404a9b2823b7d295e3b334fff054dea79f7f69
+# assets/installer/wizard-small.bmp — generated from assets/icon/icon.svg via
+# tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:0efc9e015446ae3424e9e5e739b9cca715a5575989e293f5a037ee9bb65f4aeb
+# assets/installer/wizard.bmp — generated from assets/icon/icon.svg via
+# tools/make_icons.py (project asset, AGPL-3.0-or-later).
+sha256:3521f68c6bcea421ad8c8d11f93faae576bbfd06559419a9b8144c1743c95308
+# src/anastomosis/gui/web/fonts/JetBrainsMonoVF.woff2 — JetBrains Mono
+# variable font (JetBrains, SIL OFL-1.1; github.com/JetBrains/JetBrainsMono).
+sha256:31ec365b93e4bad6f202ce23352a56d01ca4462b2afc782ed2cf6fa42ca9ac0e
+# src/anastomosis/gui/web/fonts/MonaSansVF.woff2 — Mona Sans variable font
+# (GitHub, SIL OFL-1.1; github.com/github/mona-sans).
+sha256:2affc0f41c81325062c297e46762ebd28effa15a64e56e936403981f3dbd7e7d
