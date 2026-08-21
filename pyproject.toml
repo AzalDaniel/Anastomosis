@@ -5,7 +5,18 @@
 # workflow greps the built wheel for the Apache-2.0 and OFL-1.1 headings, but a
 # floor that admits a backend which cannot honour the config is a gap the grep
 # only catches after the fact.
-requires = ["hatchling>=1.27"]
+#
+# <1.30 is the CEILING, and it is empirical, not cosmetic: the core-metadata
+# version a hatchling release emits has oscillated (measured on this project,
+# 2026-08-21 — 1.27/1.28/1.29 -> Metadata-Version 2.4; 1.30 -> 2.5; 1.31 -> 2.4;
+# 1.32 -> 2.5). The twine bundled inside the pinned
+# pypa/gh-action-pypi-publish image rejects 2.5 outright
+# ("'2.5' is not a valid metadata version"), which failed a real publish of
+# 0.7.0 at the upload step. 2.4 is what PyPI and that action both accept, and
+# it carries PEP 639 license-files exactly the same way. Re-measure before
+# raising this bound; the release workflow asserts the emitted version too, so
+# a bad backend fails the build rather than the irreversible upload.
+requires = ["hatchling>=1.27,<1.30"]
 build-backend = "hatchling.build"
 
 [project]
