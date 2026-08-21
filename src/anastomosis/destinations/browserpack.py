@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from anastomosis.core.identity import date_token_present, name_present
+from anastomosis.core.identity import date_token_present, name_parts_present
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.deliver.browser.errors import (
     DeliveryError,
@@ -637,16 +637,18 @@ class BrowserPackDestination:
         return [p for p in (patient.family_name, patient.given_name) if p]
 
     def _name_present(self, text: str, patient: Patient) -> bool:
-        """Whether every name part appears in ``text`` as a whole token.
+        """Whether every declared name FIELD appears in ``text`` contiguously.
 
         Boundary-anchored through the shared identity predicate
-        (:func:`anastomosis.core.identity.name_present`), so a short name does
-        NOT match embedded in a longer one ("Li" does not match inside "Liang",
-        "Ann" not inside "Joann") — the wrong-patient name collision the banner
-        and row match must reject. Empty (no name parts) is a fail-closed
-        ``False``.
+        (:func:`anastomosis.core.identity.name_parts_present`), so a short name
+        does NOT match embedded in a longer one ("Li" does not match inside
+        "Liang", "Ann" not inside "Joann" or "Mary-Ann"). Each field
+        (family name, given name) is matched as ONE contiguous phrase — a
+        multi-word family name satisfied word-by-word across the row would let
+        a reordered compound surname pass. Empty (no name parts) is a
+        fail-closed ``False``.
         """
-        return name_present(" ".join(self._name_parts(patient)), text)
+        return name_parts_present(self._name_parts(patient), text)
 
     def _dob_present(self, text: str, patient: Patient) -> bool:
         """Whether the rendered DOB appears in ``text`` as a whole token.

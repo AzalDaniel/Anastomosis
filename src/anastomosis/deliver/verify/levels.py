@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from anastomosis.core.hashutil import hash_and_size
-from anastomosis.core.identity import date_token_present, token_present
+from anastomosis.core.identity import date_token_present, name_fragment_present
 from anastomosis.core.identity import normalize as _normalize
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.timeutil import all_date_spellings
@@ -138,10 +138,12 @@ def fuzzy_contains(needle: str, haystack: str, *, ratio: float = _NAME_RATIO) ->
     # Boundary-anchored fast path (NOT a raw ``n in hay`` substring): the whole
     # name must stand alone in the page. A raw substring returned 1.0 for a
     # short name buried in a longer one ("Ann Li" inside "Joann Liang") — the
-    # wrong-chart false-PASS this predicate exists to reject. A legitimate
-    # rendering variant (middle name, suffix, "Last, First") is not a bounded
-    # whole-name match here and falls through to the calibrated fuzzy window.
-    if token_present(n, hay):
+    # wrong-chart false-PASS this predicate exists to reject. The NAME-boundary
+    # predicate is required here (not the value one): intra-name joiners must
+    # count as embedding, or "Ann Li" scores 1.0 inside "Mary-Ann Li-Wong". A
+    # legitimate rendering variant (middle name, suffix, "Last, First") is not
+    # a bounded whole-name match here and falls through to the fuzzy window.
+    if name_fragment_present(n, hay):
         return 1.0
     matcher = SequenceMatcher(autojunk=False)
     matcher.set_seq2(n)

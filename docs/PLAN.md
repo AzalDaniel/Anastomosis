@@ -210,6 +210,21 @@ Next:
   implementation; vendoring MiniSearch (MIT) waits until the exact build can
   be pinned by hash from a trusted release source. The `index.json` schema is
   forward-compatible either way.
+- **L3 + exact page count on the upload path** — the upload manifest
+  (`deliver/browser/persist.py`, version 1) carries no pack name, per-item
+  expected page count, or encounter (DOS) records, so on `anast upload` /
+  the GUI console L3 skips and L1 checks only "opens, ≥ 1 page, above the
+  size floor". Wiring them is a manifest-schema change (MANIFEST_VERSION
+  bump + render/migrate writers + the upload reader) — see the
+  `TODO(L3-on-upload)` in `core/upload_command.py` and README "Active
+  coverage".
+- **Ideographic-script name matching** — the boundary-anchored identity
+  predicates (`core/identity.py`) cannot anchor in text written without
+  separators (CJK and similar), so a name part rendered flush against other
+  ideographs does not match. Failure direction is safe (patient reads as not
+  found / mismatched; nothing is filed on a boundary-free guess), but
+  practices with unspaced ideographic banners need a script-aware matching
+  mode before the browser route can serve them.
 
 ## PHI scrub map (for porters)
 

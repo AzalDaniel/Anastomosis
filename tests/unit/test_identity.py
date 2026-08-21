@@ -3,16 +3,24 @@
 The wrong-match defense lives in ONE place (:mod:`anastomosis.core.identity`)
 and is reused by the QA integrity check, the L2/L3/L6 delivery verifier, and the
 browser destination pack. These tests pin the boundary-anchored behavior the
-whole cluster depends on: a short name embedded in a longer one, an unpadded
-date embedded in a longer date, a "Last, First" reorder, and a hyphen/space
-swap must all be rejected. Synthetic values only.
+whole cluster depends on: a short name embedded in a longer one (space-joined
+OR hyphen/apostrophe-joined), an unpadded date embedded in a longer date, a
+"Last, First" reorder, and a hyphen/space swap must all be rejected — while a
+cosmetic sentence period after a legitimate value must NOT read as a different
+identity. Synthetic values only.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from anastomosis.core.identity import date_token_present, name_present, token_present
+from anastomosis.core.identity import (
+    date_token_present,
+    name_fragment_present,
+    name_parts_present,
+    name_present,
+    token_present,
+)
 
 # --- token_present: the case-sensitive boundary primitive (the QA _present) ---
 
@@ -40,6 +48,37 @@ def test_token_present_is_case_sensitive() -> None:
     assert token_present("synthia", "Synthia Testpatient") is False
 
 
+@pytest.mark.parametrize(
+    ("needle", "haystack", "present"),
+    [
+        # The '.' in the lookarounds is load-bearing: a bare integer must not
+        # match inside a decimal (the historical "98" false-PASS inside "98.6").
+        ("98", "Temp 98.6 F", False),
+        ("120", "BP 120.5/80 today", False),
+        ("98", "Temp was 98 F", True),
+        # A trailing BARE period is a sentence end, not an embedding: a
+        # cosmetic period after a legitimate value must not read as a
+        # different identity (it aborted whole runs at the banner check).
+        ("98", "Temp was 98.", True),
+        ("1/2/1990", "DOB: 1/2/1990.", True),
+        # ...but a '.' that JOINS into more word characters is an embedding
+        # in both directions (filenames, dotted usernames, decimals).
+        ("1/2/1990", "see 1/2/1990.pdf export", False),
+        ("Li", "see Ann.Li.Smith for details", False),
+    ],
+)
+def test_token_present_period_boundary_is_asymmetric(
+    needle: str, haystack: str, present: bool
+) -> None:
+    assert token_present(needle, haystack) is present
+
+
+def test_token_present_empty_needle_fails_closed() -> None:
+    # A shared primitive must not fail OPEN on a blank value.
+    assert token_present("", "any, text.") is False
+    assert date_token_present("", "DOB 01/02/1990, MRN 555001") is False
+
+
 # --- name_present: every part a whole token, case-insensitive ---
 
 
@@ -64,6 +103,58 @@ def test_name_present_empty_name_matches_nothing() -> None:
     # An identity check must never pass on the absence of a name.
     assert name_present("", "any page text") is False
     assert name_present("   ", "any page text") is False
+
+
+@pytest.mark.parametrize(
+    ("expected", "haystack", "present"),
+    [
+        # Intra-name joiners (-, ', curly apostrophe) count as embedding: the
+        # punctuated compound is the dominant real-world form of the
+        # short-name-inside-a-longer-name collision.
+        ("Ann Li", "Mary-Ann Li-Wong  01/02/1990", False),
+        ("Ann Li", "Ann-Marie Li  01/02/1990", False),
+        ("Brien Sam", "O'Brien, Sam 01/02/1990", False),
+        ("Brien Sam", "O\u2019Brien, Sam 01/02/1990", False),  # curly apostrophe (U+2019)
+        # The legitimate punctuated names themselves still match.
+        ("O'Brien Sam", "O'Brien, Sam 01/02/1990", True),
+        ("Ann-Marie Li", "Li, Ann-Marie  MRN 555002", True),
+        # A cosmetic sentence period after the name must not reject it.
+        ("Ann Li", "Patient: Ann Li.", True),
+        ("Li Ann", "Patient: Ann Li.", True),  # parts are order-independent
+    ],
+)
+def test_name_present_treats_name_joiners_as_embedding(
+    expected: str, haystack: str, present: bool
+) -> None:
+    assert name_present(expected, haystack) is present
+
+
+# --- name_parts_present: each declared FIELD is one contiguous fragment ---
+
+
+@pytest.mark.parametrize(
+    ("parts", "haystack", "present"),
+    [
+        # A multi-word family name must appear contiguously — word-by-word
+        # satisfaction across the row would let a reordered compound surname
+        # (a DIFFERENT patient) pass.
+        (["Dela Testfamily", "Testgiven"], "Testfamily, Testgiven Dela Other", False),
+        (["Dela Testfamily", "Testgiven"], "Dela Testfamily, Testgiven  MRN 555003", True),
+        (["Li", "Ann"], "Li, Ann  MRN 555004", True),  # Last, First across fields
+        (["Li", "Ann"], "Joann Liang  MRN 555005", False),
+        ([], "any row text", False),  # no declared parts: fail closed
+        (["", "  "], "any row text", False),
+    ],
+)
+def test_name_parts_present_requires_contiguous_fields(
+    parts: list[str], haystack: str, present: bool
+) -> None:
+    assert name_parts_present(parts, haystack) is present
+
+
+def test_name_fragment_present_normalizes_case_and_whitespace() -> None:
+    assert name_fragment_present("De  La Cruz", "maria de la cruz gomez") is True
+    assert name_fragment_present("De La Cruz", "maria cruz, de la") is False
 
 
 # --- date_token_present: a rendered date, digit-boundary anchored ---

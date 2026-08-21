@@ -292,6 +292,50 @@ def test_row_and_banner_reject_short_name_embedded_in_longer_name() -> None:
     assert _dest(banner).banner.current_patient_matches(_ann_li()) is False
 
 
+def test_row_and_banner_reject_name_embedded_through_punctuation() -> None:
+    """The punctuated form of the same collision: "Ann"/"Li" joined into a
+    longer name through hyphens or an apostrophe ("Mary-Ann Li-Wong",
+    "O'Brien") must reject exactly like "Joann Liang" — intra-name joiners are
+    part of the name, not a token boundary."""
+    dest = _dest(FakePage())
+    row = "Mary-Ann Li-Wong  DOB 01/02/1990  MRN 555011"  # DOB matches Ann Li's
+    assert dest._row_matches(row, _ann_li()) is False
+    banner = FakePage(
+        texts={"#patient_banner_name": "Mary-Ann Li-Wong", "#patient_banner_dob": "DOB 01/02/1990"}
+    )
+    assert _dest(banner).banner.current_patient_matches(_ann_li()) is False
+
+
+def test_row_requires_each_name_field_contiguously() -> None:
+    """A multi-word family name is ONE field: satisfied word-by-word across the
+    row (a reordered compound surname — a different patient) it must reject;
+    present contiguously it must match."""
+    patient = Patient(
+        id="feedface-0000-0000-0000-000000000011",
+        given_name="Testgiven",
+        family_name="Dela Testfamily",
+        birth_date=date(1990, 1, 2),
+    )
+    dest = _dest(FakePage())
+    reordered = "Testfamily, Testgiven Dela Other  DOB 01/02/1990  MRN 555012"
+    assert dest._name_present(reordered, patient) is False
+    contiguous = "Dela Testfamily, Testgiven  DOB 01/02/1990  MRN 555013"
+    assert dest._row_matches(contiguous, patient) is True
+
+
+def test_banner_trailing_period_still_matches() -> None:
+    """A cosmetic sentence period in the banner must not read as a different
+    patient — a false mismatch here aborts the ENTIRE run (WrongPatientError),
+    the worst possible cost for a punctuation artifact."""
+    banner = FakePage(
+        texts={
+            "#patient_banner_name": "Patient: Ann Li.",
+            "#patient_banner_dob": "DOB: 01/02/1990.",
+        }
+    )
+    assert _dest(banner).banner.current_patient_matches(_ann_li()) is True
+
+
 def test_row_rejects_unpadded_dob_embedded_in_longer_date() -> None:
     """The DOB half of the collision: an unpadded rendered DOB must not match
     inside a longer date run ("1/2/1990" inside "11/2/1990"). Name matches here,

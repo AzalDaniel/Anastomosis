@@ -151,8 +151,14 @@ def test_fuzzy_contains_rejects_short_name_embedded_in_longer_name() -> None:
     ("Ann Li" inside "Joann Liang"). It falls through to the fuzzy window and
     lands well below the 0.88 threshold — the wrong-chart hazard it rejects."""
     assert fuzzy_contains("Ann Li", "Joann Liang reports well DOB 11/2/1990") < 0.88
-    # A genuine standalone occurrence still scores the exact fast-path 1.0.
+    # The punctuated-compound form of the same collision: joined through
+    # hyphens the parts are still embedded, and the fast path must not hand
+    # back 1.0 for them (intra-name joiners count as embedding).
+    assert fuzzy_contains("Ann Li", "Mary-Ann Li-Wong reports well") < 0.88
+    # A genuine standalone occurrence still scores the exact fast-path 1.0 —
+    # including through a cosmetic trailing sentence period.
     assert fuzzy_contains("Ann Li", "Patient Ann Li, seen today") == 1.0
+    assert fuzzy_contains("Ann Li", "Seen today: Ann Li.") == 1.0
 
 
 # The alternate-rendering probes L2IdentityText's docstring cites as the
