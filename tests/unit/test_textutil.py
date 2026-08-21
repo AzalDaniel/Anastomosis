@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from anastomosis.core.textutil import (
+    HASH_TAG_CHARS,
     MAX_NAME_CHARS,
     MAX_PATH_CHARS,
     budgeted_name,
@@ -104,8 +105,23 @@ def test_safe_name_long_values_stay_distinct_past_the_cap() -> None:
     first = safe_name(base + "-one", "unknown")
     second = safe_name(base + "-two", "unknown")
     assert first != second
-    assert first[:-9] == second[:-9]  # same visible prefix, different hash tag
+    # Same visible prefix, different hash tag ("-" + HASH_TAG_CHARS hex).
+    tag = HASH_TAG_CHARS + 1
+    assert first[:-tag] == second[:-tag]
     assert len(first) == len(second) == MAX_NAME_CHARS
+
+
+def test_hash_tag_is_wide_enough_to_be_a_distinctness_promise() -> None:
+    # PIN the width, not just the shape. The tag is the ONLY thing keeping two
+    # cut ids apart, and the deliverers write with exist_ok/overwrite — so the
+    # birthday bound is a patient-safety parameter, not a formatting choice.
+    # 64 bits keeps a 100k-patient delivery below 3e-10; the 32-bit tag this
+    # replaced sat at ~69%.
+    assert HASH_TAG_CHARS == 16
+    cut = safe_name("feedface-" + "e" * 300, "unknown")
+    digest = cut.rsplit("-", 1)[1]
+    assert len(digest) == HASH_TAG_CHARS
+    assert all(char in "0123456789abcdef" for char in digest)
 
 
 def test_safe_name_cut_is_deterministic() -> None:

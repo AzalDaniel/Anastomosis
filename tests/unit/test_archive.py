@@ -509,3 +509,129 @@ def test_archive_delivered_log_never_carries_output_path(
     assert out.name not in blob
     # The PHI-safe delivered-summary count line IS present.
     assert "archive delivered" in blob
+
+
+def test_archive_budgets_the_copied_chart_and_keeps_the_link_true(tmp_path: Path) -> None:
+    """A renderer-length chart name must still be DELIVERED, and the encounter
+    page must link to the file that actually landed.
+
+    The renderer names charts ``{family}_{given}_{dos}_{type}.pdf`` with every
+    component capped at ``MAX_NAME_CHARS`` — up to ~617 characters. Copied into
+    the archive unbudgeted, that raised an OSError the deliverer logged as "pdf
+    copy failed" and continued past: a chart silently missing from the delivered
+    tree. Budgeting the destination fixes it only if the page LINK is budgeted
+    from the same call — otherwise the archive shows a link to nothing.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+    from anastomosis.core.textutil import MAX_PATH_CHARS
+
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    enc_id = "feedface-e000-0000-0000-0000000000aa"
+    record = PatientRecord(
+        patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
+        encounters=[Encounter(id=enc_id, patient_id=pid, date_of_service=date(2023, 5, 10))],
+    )
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    # A renderer-shaped name at the length safe_name permits per component.
+    chart = f"Fixture_Ada_05-10-2023_{'S' * 200}.pdf"
+    (pdfs_dir / chart).write_bytes(b"%PDF-1.7 fake\n")
+    RenderIndex.from_entries([RenderEntry(pdf=chart, patient_id=pid, encounter_id=enc_id)]).write(
+        pdfs_dir
+    )
+
+    out = tmp_path / "archive"
+    result = ArchiveDeliverer().deliver([record], pdfs_dir, out)
+
+    # The chart was DELIVERED, not warned about and skipped.
+    assert result.pdf_count == 1
+    delivered = list((out / "patients" / pid / "pdfs").glob("*.pdf"))
+    assert len(delivered) == 1
+    assert len(str(delivered[0])) <= MAX_PATH_CHARS
+    assert delivered[0].read_bytes() == b"%PDF-1.7 fake\n"
+
+    # ...and the encounter page's link resolves to exactly that file.
+    page = next((out / "patients" / pid / "encounters").glob("*.html"))
+    hrefs = re.findall(r'href="\.\./pdfs/([^"]+)"', page.read_text(encoding="utf-8"))
+    assert hrefs == [delivered[0].name]
+
+
+def test_archive_refuses_a_chart_it_cannot_name(tmp_path: Path) -> None:
+    """An output tree too deep to hold ANY distinct chart name fails loudly.
+
+    This is the ``unattributed/`` route (no render index, so nothing is
+    guessed onto a patient) with an operator-chosen directory deep enough that
+    not even a hash tag fits underneath it. Warn-and-continue here would hand
+    over a tree missing a chart; the budget raises instead.
+    """
+    from anastomosis.core.textutil import MAX_PATH_CHARS
+
+    # Deep enough that ``<out>/unattributed/<name>.pdf`` has no room left.
+    padding = MAX_PATH_CHARS - 30 - len(str(tmp_path)) - len("/archive")
+    out = tmp_path / ("d" * padding) / "archive"
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    (pdfs_dir / "Fixture_Ada_05-10-2023_SOAP.pdf").write_bytes(b"%PDF-1.7 fake\n")
+
+    with pytest.raises(ValueError, match="path budget"):
+        ArchiveDeliverer().deliver([], pdfs_dir, out)
+
+
+def test_archive_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
+    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``.
+
+    Every writer under ``patients/<id>/`` is exist_ok/overwrite, so a silent
+    collision would file the second patient's bundle, pages, and charts into
+    the first patient's directory — a merged chart, the worst outcome the
+    toolkit has. The run must stop instead.
+    """
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    records = [
+        PatientRecord(patient=Patient(id="MRN 1234", family_name="Fixture", given_name="Ada")),
+        PatientRecord(patient=Patient(id="MRN/1234", family_name="Sample", given_name="Boris")),
+    ]
+
+    with pytest.raises(DeliveredNameCollision, match="patient directory"):
+        ArchiveDeliverer().deliver(records, None, tmp_path / "archive")
+
+
+def test_archive_budgeted_chart_is_not_also_routed_to_unattributed(tmp_path: Path) -> None:
+    """A chart delivered under a BUDGETED name is still 'owned'.
+
+    Ownership is tracked by the SOURCE filename, because the unattributed
+    sweep looks at ``pdfs_dir`` where the renderer's own long name still
+    stands. Matching against the shortened DELIVERED name instead would leave
+    the source unclaimed and copy the chart a second time into
+    ``unattributed/`` — the same chart in two places, one of them labelled
+    "we could not attribute this".
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    enc_id = "feedface-e000-0000-0000-0000000000aa"
+    record = PatientRecord(
+        patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
+        encounters=[Encounter(id=enc_id, patient_id=pid, date_of_service=date(2023, 5, 10))],
+    )
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    chart = f"Fixture_Ada_05-10-2023_{'S' * 200}.pdf"
+    (pdfs_dir / chart).write_bytes(b"%PDF-1.7 fake\n")
+    RenderIndex.from_entries([RenderEntry(pdf=chart, patient_id=pid, encounter_id=enc_id)]).write(
+        pdfs_dir
+    )
+
+    out = tmp_path / "archive"
+    ArchiveDeliverer().deliver([record], pdfs_dir, out)
+
+    assert not (out / "unattributed").exists(), "an attributed chart must not be duplicated"
+    assert len(list((out / "patients" / pid / "pdfs").glob("*.pdf"))) == 1

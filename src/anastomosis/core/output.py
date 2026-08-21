@@ -132,7 +132,78 @@ def _windows_user_sid() -> str | None:
 # Users, a foreign literal SID — is outside the promise and fails the verify.
 _ALLOWED_SDDL_ALIASES = frozenset({"SY", "BA", "LA", "OW"})
 
-_SDDL_ACE_RE = re.compile(r"\(([^)]*)\)")
+#: Flag letters an SDDL ACL header may carry between ``D:`` and its first ACE
+#: (``P`` protected, ``AI`` auto-inherited, ``AR`` auto-inherit-req, and the
+#: word forms like ``NO_ACCESS_CONTROL``).
+_SDDL_ACL_FLAGS_RE = re.compile(r"[A-Za-z_]*")
+#: Fields in a plain (non-conditional) ACE:
+#: ``type;flags;rights;object_guid;inherit_object_guid;trustee``.
+_SDDL_ACE_FIELDS = 6
+
+
+def _dacl_section(text: str) -> str | None:
+    """The body of the ``D:`` section of an SDDL string, or ``None``.
+
+    Section markers (``O:`` ``G:`` ``D:`` ``S:``) are located at PAREN DEPTH 0
+    only. A conditional ACE carries its condition inside its own parentheses —
+    ``(XA;;FA;;;WD;(@User.Title=="S:x"))`` — so a naive ``split("S:")`` cuts the
+    DACL in half at a marker that is not a section at all, silently discarding
+    every ACE after the cut while the parse still returns the clean ones. That
+    is a verify that reports ``True`` with an Everyone ACE still on the
+    directory, which is why the depth is tracked rather than assumed.
+
+    ``None`` means no ``D:`` section starts at depth 0 — unverifiable, and the
+    caller fails closed.
+    """
+    depth = 0
+    start: int | None = None
+    for index, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == ":" and depth == 0 and index and text[index - 1] in "OGDS":
+            if start is None:
+                if text[index - 1] == "D":
+                    start = index + 1
+            else:
+                # The next top-level section ends the DACL.
+                return text[start : index - 1]
+    return None if start is None else text[start:]
+
+
+def _parse_dacl_aces(section: str) -> list[tuple[str, str]] | None:
+    """``(ace type, trustee)`` pairs from a DACL section body, or ``None``.
+
+    The section must be a flag header followed by a plain sequence of
+    ``(...)`` groups and nothing else, each group holding exactly
+    :data:`_SDDL_ACE_FIELDS` semicolon-separated fields. Anything else —
+    stray text between groups, an unterminated group, a group whose body
+    contains ``(`` (a conditional ACE, whose condition may embed ``;`` and
+    quotes and cannot be split on field boundaries), or an extra field (a
+    resource-attribute ACE) — returns ``None``. Refusing to interpret an ACE
+    shape this parser does not fully understand is the point: the caller turns
+    ``None`` into a failed verify, never into "no ACEs found, looks fine".
+    """
+    body = section.strip()
+    flags = _SDDL_ACL_FLAGS_RE.match(body)
+    rest = body[flags.end() :] if flags else body
+    aces: list[tuple[str, str]] = []
+    while rest:
+        if not rest.startswith("("):
+            return None
+        end = rest.find(")")
+        if end == -1:
+            return None
+        ace = rest[1:end]
+        if "(" in ace:
+            return None  # conditional ACE — its body is not this shape
+        fields = ace.split(";")
+        if len(fields) != _SDDL_ACE_FIELDS:
+            return None
+        aces.append((fields[0], fields[5]))
+        rest = rest[end + 1 :]
+    return aces
 
 
 def _windows_dacl_aces(root: Path) -> list[tuple[str, str]] | None:
@@ -163,18 +234,10 @@ def _windows_dacl_aces(root: Path) -> list[tuple[str, str]] | None:
     # ``icacls /save`` writes UTF-16-LE with NO BOM; decode explicitly and
     # drop a BOM if a Windows version ever adds one.
     text = raw.decode("utf-16-le", errors="replace").lstrip("\ufeff")
-    if "D:" not in text:
+    section = _dacl_section(text)
+    if section is None:
         return None
-    dacl = text.split("D:", 1)[1]
-    if "S:" in dacl:
-        dacl = dacl.split("S:", 1)[0]
-    aces: list[tuple[str, str]] = []
-    for ace in _SDDL_ACE_RE.findall(dacl):
-        fields = ace.split(";")
-        if len(fields) < 6:
-            return None  # not the ACE shape we know — unverifiable, fail closed
-        aces.append((fields[0], fields[-1]))
-    return aces
+    return _parse_dacl_aces(section)
 
 
 def _harden_windows_acl(root: Path) -> bool:

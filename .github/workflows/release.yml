@@ -43,8 +43,14 @@ jobs:
         # release-bearing ref) — a dispatch from any other ref fails here.
         if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
         shell: bash
+        # Ref names reach the shell as ENVIRONMENT values, never as `${{ }}`
+        # interpolated into the script: git permits `"`, `;`, `$`, and backticks
+        # in a ref name and the `v*` filter accepts them, so an interpolated ref
+        # is shell injection inside a job that holds id-token: write.
+        env:
+          REF: ${{ github.ref }}
         run: |
-          echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+          echo "refusing to publish from '$REF': dispatch publishes are main-only" >&2
           exit 1
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -61,6 +67,12 @@ jobs:
         # `v<package version>`. Dispatch runs are main-only (guarded above)
         # and publish main's version by design.
         shell: bash
+        # Same rule as the dispatch guard above: the tag name is attacker-
+        # shaped text, so it arrives as an environment value and is only ever
+        # referenced quoted ("$REF_NAME"). The comparison logic is unchanged.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/anastomosis/__init__.py)"
           if [ -z "$version" ]; then
@@ -68,13 +80,13 @@ jobs:
             exit 1
           fi
           expected="v${version}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "dispatch publish from main: version '$version'"
-          elif [ "${{ github.ref_name }}" != "$expected" ]; then
-            echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+          elif [ "$REF_NAME" != "$expected" ]; then
+            echo "tag '$REF_NAME' does not match package version '$expected'" >&2
             exit 1
           else
-            echo "tag '${{ github.ref_name }}' matches package version '$expected'"
+            echo "tag '$REF_NAME' matches package version '$expected'"
           fi
       - name: Build sdist and wheel
         run: |

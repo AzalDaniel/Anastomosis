@@ -1,16 +1,22 @@
-"""Mechanics shared by the file-writing deliverers (archive + bundle).
+"""Mechanics shared by the file-writing deliverers (archive, bundle, C-CDA).
 
-Module-private to :mod:`anastomosis.deliver`: the two personas keep their own
+Module-private to :mod:`anastomosis.deliver`: the personas keep their own
 layouts — the archive writes ONE cross-patient tree (index + ``unattributed/``
 routing), the bundle writes one self-contained directory PER patient (QA slice
-+ its own README) — and nothing here merges them. What lives here is only the
-mechanics that are byte-for-byte identical in both today:
++ its own README), the C-CDA export writes one XML per patient — and nothing
+here merges them. What lives here is only the mechanics that are byte-for-byte
+identical across them today:
 
 * :func:`write_fhir_bundle` — the machine-readable rendition every persona
   emits, same filename, same JSON serialization, same PHI-BY-DESIGN guarantee;
 * :func:`copy_delivered_file` — the copy-never-move step, returning the
   PHI-safe exception TYPE name so each caller logs the artifact it was copying
-  with its own module logger and its own message.
+  with its own module logger and its own message;
+* :func:`budgeted_copy_name` — the destination name for a copied chart, cut
+  to fit the path budget of the tree it is being copied INTO;
+* :func:`claim_delivered_name` — the per-run ledger that makes a name
+  collision between two different source ids a loud failure instead of a
+  silent merge of two patients' output.
 
 Deliberately NOT shared: PDF *attribution* (the archive routes unclaimed PDFs
 to ``unattributed/`` and maps encounter→filename for its per-encounter pages;
@@ -26,13 +32,85 @@ import shutil
 from pathlib import Path
 
 from anastomosis.core.fhir import to_bundle
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
+from anastomosis.core.textutil import budgeted_name
 
-__all__ = ["copy_delivered_file", "write_fhir_bundle"]
+__all__ = [
+    "DeliveredNameCollision",
+    "budgeted_copy_name",
+    "claim_delivered_name",
+    "copy_delivered_file",
+    "write_fhir_bundle",
+]
 
 #: The per-patient FHIR rendition's filename, identical across deliverers.
 BUNDLE_FILENAME = "bundle.json"
+
+
+class DeliveredNameCollision(Exception):
+    """Two DIFFERENT source ids resolved to the same delivered name.
+
+    The deliverers write with ``mkdir(exist_ok=True)`` / ``write_bytes`` /
+    ``write_text``, so a collision does not fail — it MERGES, filing one
+    patient's chart into another patient's slot. That is the wrong-patient
+    failure the whole toolkit exists to prevent, so it is raised, never warned:
+    a partial delivery the operator must look at beats a complete-looking one
+    that quietly lost a chart.
+
+    Two sanitizations can produce one name: a value cut by
+    :func:`~anastomosis.core.textutil.safe_name` whose hash tags happen to
+    agree (astronomically unlikely at 64 bits, and never assumed away), and —
+    the reachable one — two ids that differ only in characters the sanitizer
+    collapses (``MRN 1234`` and ``MRN/1234`` both become ``MRN_1234``).
+    """
+
+
+def budgeted_copy_name(target_dir: Path, source_name: str) -> str:
+    """The delivered filename for a chart copied into ``target_dir``.
+
+    ONE definition, shared by every deliverer that copies a rendered chart into
+    the tree it hands the operator — and, within a deliverer, by both the
+    copier (which creates the file) and whatever links to it. A second,
+    differently budgeted derivation would produce a link pointing at nothing: a
+    chart the operator cannot reach.
+
+    Why it must be budgeted at all: the renderer names charts
+    ``{family}_{given}_{dos}_{type}.pdf`` where each component is capped by
+    ``safe_name`` at :data:`~anastomosis.core.textutil.MAX_NAME_CHARS` — up to
+    ~617 characters before a copy even starts. Copying that into a deep
+    delivered tree fails with an OSError that the copy callers log and continue
+    past, which is a chart SILENTLY MISSING from a delivered tree — the
+    losslessness violation the path budget exists to prevent. A name that fits
+    is returned byte-identical (every real chart name); one that cannot be cut
+    to a distinct name raises :class:`ValueError` from ``budgeted_name``, and
+    the run stops loudly.
+    """
+    source = Path(source_name)
+    suffix = source.suffix
+    return budgeted_name(source.stem, "chart", parent=target_dir, suffix=suffix) + suffix
+
+
+def claim_delivered_name(claims: dict[str, str], name: str, source_id: str, *, kind: str) -> None:
+    """Record that ``source_id`` owns the delivered ``name``, or raise.
+
+    ``claims`` is a per-run ledger the caller owns (one dict per delivery run),
+    mirroring the render engine's per-run ``claimed`` set. Re-claiming a name
+    with the SAME source id is a no-op — a record legitimately delivered twice
+    in one run keeps its slot; a claim by a different id raises
+    :class:`DeliveredNameCollision`.
+
+    PHI: the message names the artifact ``kind`` and the two ids as run-scoped
+    :func:`~anastomosis.core.logutil.safe_log_id` surrogates — never the
+    delivered name (built from a source id) and never a patient value.
+    """
+    previous = claims.setdefault(name, source_id)
+    if previous != source_id:
+        raise DeliveredNameCollision(
+            f"two different source ids resolve to the same delivered {kind} name "
+            f"({safe_log_id(previous)} and {safe_log_id(source_id)}); refusing to "
+            "merge two records into one slot"
+        )
 
 
 def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:

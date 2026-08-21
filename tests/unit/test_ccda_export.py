@@ -1329,6 +1329,26 @@ def test_deliverer_never_logs_output_path(caplog: pytest.LogCaptureFixture, tmp_
     assert "1 of 1 patient" in blob
 
 
+def test_deliverer_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
+    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``.
+
+    ``write_bytes`` overwrites, so a silent collision would leave ONE
+    ``MRN_1234.xml`` carrying the second patient's chart over the first — a
+    C-CDA is the artifact most likely to travel, so a merged one is the worst
+    kind of wrong. The batch-continues handler deliberately does NOT swallow
+    this: a collision is not a survivable per-record failure.
+    """
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    first = _rich_record()
+    second = _rich_record()
+    first.patient.id = "MRN 1234"
+    second.patient.id = "MRN/1234"
+
+    with pytest.raises(DeliveredNameCollision, match="C-CDA document"):
+        deliver_ccda([first, second], tmp_path / "export")
+
+
 # --- helpers -----------------------------------------------------------------
 
 

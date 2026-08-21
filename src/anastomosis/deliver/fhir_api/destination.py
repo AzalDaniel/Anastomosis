@@ -350,15 +350,22 @@ class FhirApiDestination:
     def _check_payload_size(self, item: UploadItem) -> None:
         """Raise :class:`PayloadTooLarge` when ``item`` exceeds the bound.
 
-        Both sizes are consulted: ``item.size_bytes`` comes from the upload
-        manifest (advisory — a stale manifest can disagree with disk) while the
-        bytes actually on disk are what set the memory peak. The larger of the
-        two governs, so neither signal alone can wave an oversized item past.
+        The bound is measured against the file's ACTUAL size on disk, and only
+        that: the bytes this route is about to read, base64-encode, and
+        serialize are the bytes that set the memory peak. ``item.size_bytes``
+        comes from the upload manifest and is advisory — a stale manifest that
+        UNDERSTATES the file must not wave it past (the stat catches that), and
+        one that OVERSTATES a small file must not refuse a chart this route can
+        perfectly well deliver. The message reports the measured size, so what
+        the operator is told is what was actually weighed.
+
+        Ordering is load-bearing: this runs BEFORE the read, which is the whole
+        point of a preflight.
         """
-        size = max(item.size_bytes, item.file_path.stat().st_size)
+        size = item.file_path.stat().st_size
         if size <= self._max_payload_bytes:
             return
-        # PHI: the opaque item_key and two sizes — never the filename (it
+        # PHI: the opaque item_key and the two sizes — never the filename (it
         # embeds the patient name and date of service) and never a value.
         raise PayloadTooLarge(
             f"item {item.item_key} is {size / _MIB:.1f} MiB; this route inlines the "

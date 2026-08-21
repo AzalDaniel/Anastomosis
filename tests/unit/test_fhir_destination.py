@@ -420,8 +420,13 @@ def test_driver_accepts_an_item_within_the_bound(tmp_path: Path) -> None:
 
 
 def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path: Path) -> None:
-    """``size_bytes`` comes from the manifest; the bytes on disk set the peak.
-    A manifest that understates the file must not wave it past the bound."""
+    """The preflight weighs the FILE, not the manifest.
+
+    ``size_bytes`` comes from the upload manifest and can be stale; the bytes
+    on disk are the ones read, base64-encoded, and serialized, so they are what
+    set the memory peak. A manifest that understates the file must not wave it
+    past the bound.
+    """
     server = _FakeFhirServer()
     pid = server.add_patient(_patient_resource("srv-1"))
     honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
@@ -429,6 +434,40 @@ def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path:
     dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes - 1)
     with pytest.raises(PayloadTooLarge):
         dest.upload(lying, DestinationPatient(destination_patient_id=pid))
+
+
+def test_driver_delivers_a_small_file_a_stale_manifest_overstates(tmp_path: Path) -> None:
+    """The other direction of the same rule: a manifest that lies LARGE about a
+    small file must NOT refuse it.
+
+    Nothing oversized is ever read here — the file on disk is well inside the
+    bound — so refusing on the manifest's word alone would strand a deliverable
+    chart on a number that describes nothing. The measurement is the stat.
+    """
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    inflated = replace(honest, size_bytes=honest.size_bytes * 100)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes)
+
+    receipt = dest.upload(inflated, DestinationPatient(destination_patient_id=pid))
+
+    assert receipt.destination_doc_id
+    assert len(server.docs) == 1
+
+
+def test_payload_too_large_reports_the_measured_size(tmp_path: Path) -> None:
+    """The message must quote the size that was actually weighed (the stat)."""
+    server = _FakeFhirServer()
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    lying = replace(honest, size_bytes=1)
+    on_disk_mib = honest.file_path.stat().st_size / (1024 * 1024)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes - 1)
+
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(lying, DestinationPatient(destination_patient_id="srv-1"))
+
+    assert f"is {on_disk_mib:.1f} MiB" in str(excinfo.value)
 
 
 def test_payload_too_large_message_carries_no_filename_or_patient_value(tmp_path: Path) -> None:

@@ -14,13 +14,13 @@
 # regenerate the goldens (python tools/regen_goldens.py) in the same change.
 playwright==1.56.0
 
-# Desktop GUI. The library range (pywebview>=5.0) is open and resolves to 6.2.1,
-# which upstream reports as failing to import from a Nuitka-frozen Windows build
-# (pywebview issue #1817); 6.2 is the last known good release for that path, and
-# the frozen GUI exe IS a Nuitka standalone build. Pinned so the packaged app
-# resolves the version that survives freezing rather than whatever is newest.
-# The captured GUI stderr from packaging/smoke_windows.py (the smoke step prints
-# both streams on failure) is the evidence that confirms or refutes this as the
-# cause of the installed Anastomosis.exe exiting immediately; keep the pin either
-# way until a later pywebview is verified against the frozen build.
+# Desktop GUI. The library range (pywebview>=6.2,<7.0) is deliberately narrow
+# but still floats inside 6.x, and floats to 6.2.1 — which upstream reports as
+# failing to import from a Nuitka-frozen Windows build (pywebview issue #1817).
+# 6.2 is the last known good release for that path, and the frozen GUI exe IS a
+# Nuitka standalone build, so this pin is what the packaged app resolves.
+# CONFIRMED by the packaged-installer smoke run on the pin: the installed
+# Anastomosis.exe no longer exits immediately — it stays up for the full launch
+# window with both captured streams empty (a GUI-subsystem exe prints nothing).
+# Keep the pin until a later pywebview is verified against the frozen build.
 pywebview==6.2

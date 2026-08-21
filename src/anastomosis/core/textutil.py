@@ -33,6 +33,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 __all__ = [
+    "HASH_TAG_CHARS",
     "MAX_NAME_CHARS",
     "MAX_PATH_CHARS",
     "budgeted_name",
@@ -103,7 +104,15 @@ MAX_NAME_CHARS = 200
 #: by Explorer and by tools that still use the ANSI APIs.
 MAX_PATH_CHARS = 240
 #: Hex characters of sha256 appended when — and only when — a value is cut.
-_HASH_CHARS = 8
+#: Public because it is also the SHORTEST distinct name :func:`budgeted_name`
+#: can return, which is exactly what a writer must reserve room for when it
+#: budgets a directory against the children it will write underneath.
+#: 16 hex = 64 bits. The tag is the ONLY thing keeping two cut ids apart, and a
+#: collision files one patient's chart on top of another's, so the width is
+#: chosen against the birthday bound rather than for looks: at 8 hex (32 bits)
+#: a delivery of 10k same-prefix ids collides with probability ~1.2% and 100k
+#: with ~69%; at 16 hex the same 100k sits below 3e-10.
+HASH_TAG_CHARS = 16
 
 
 def _hash_tagged(cleaned: str, limit: int) -> str:
@@ -112,7 +121,7 @@ def _hash_tagged(cleaned: str, limit: int) -> str:
     A value already within ``limit`` is returned **byte-identical** — the whole
     point, since every delivered filename and directory in the archive, the
     bundle, and the C-CDA export is built from these components and must not
-    move. Only a value that has to be cut gets ``-<8 hex of sha256>`` appended,
+    move. Only a value that has to be cut gets ``-<16 hex of sha256>`` appended,
     hashing the ORIGINAL (uncut) value so two ids differing only past the cut
     still land on different names: a silent collision here would file one
     patient's chart on top of another's.
@@ -123,13 +132,13 @@ def _hash_tagged(cleaned: str, limit: int) -> str:
     """
     if len(cleaned) <= limit:
         return cleaned
-    if limit < _HASH_CHARS:
+    if limit < HASH_TAG_CHARS:
         raise ValueError(
             f"cannot build a distinct filesystem name in {limit} character(s); "
-            f"at least {_HASH_CHARS} are needed"
+            f"at least {HASH_TAG_CHARS} are needed"
         )
-    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:_HASH_CHARS]
-    kept = cleaned[: limit - _HASH_CHARS - 1].rstrip("_-")
+    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:HASH_TAG_CHARS]
+    kept = cleaned[: limit - HASH_TAG_CHARS - 1].rstrip("_-")
     return f"{kept}-{digest}" if kept else digest
 
 
@@ -143,7 +152,7 @@ def safe_name(value: str | None, fallback: str) -> str:
     yields ``fallback`` rather than an empty name.
 
     The result is never longer than :data:`MAX_NAME_CHARS`: a longer value is
-    cut and tagged with ``-<8 hex of sha256>`` (see :func:`_hash_tagged`), so an
+    cut and tagged with ``-<16 hex of sha256>`` (see :func:`_hash_tagged`), so an
     unbounded source id cannot produce a component the filesystem rejects. A
     value at or under the cap is returned exactly as before this bound existed.
 
@@ -191,7 +200,7 @@ def budgeted_name(
     room = MAX_PATH_CHARS - len(str(parent)) - 1 - len(suffix) - reserve
     if len(name) <= room:
         return name
-    if room < _HASH_CHARS:
+    if room < HASH_TAG_CHARS:
         # PHI: lengths only — an output path can be named after a patient, so
         # it never enters a message or a log line (SECURITY.md).
         raise ValueError(

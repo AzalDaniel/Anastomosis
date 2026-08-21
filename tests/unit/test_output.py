@@ -208,6 +208,100 @@ def test_harden_acl_fails_closed_when_the_dacl_is_unreadable(
     assert _harden_windows_acl(Path("Z:/phi/out")) is False
 
 
+# ---------------------------------------------------------------------------
+# SDDL parsing — the verify's return value is a PROMISE, so every shape this
+# parser does not fully understand must come back as "unverifiable" (None) and
+# turn into a False from _harden_windows_acl. These drive the parse through the
+# real icacls call path with a crafted /save descriptor.
+# ---------------------------------------------------------------------------
+
+
+def _harden_with_sddl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, descriptor: str
+) -> tuple[bool, list[tuple[str, str]] | None]:
+    """Run the hardening + the DACL read-back against a crafted SDDL string."""
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(subprocess, "run", _recording_run(calls, sddl=descriptor))
+    root = tmp_path / "out"
+    root.mkdir(exist_ok=True)
+    return _harden_windows_acl(root), _windows_dacl_aces(root)
+
+
+def test_empty_dacl_is_not_a_hardened_dacl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``D:PAI`` with no ACEs grants nobody anything — and proves nothing.
+
+    An empty ACE list must never read as "every ACE is allowed", which is what
+    ``all(...)`` over an empty list would say.
+    """
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, "D:PAI")
+    assert aces == []
+    assert hardened is False
+
+
+def test_sddl_without_a_dacl_section_is_unverifiable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner and group only: there is no DACL to check, so nothing is proven."""
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, "O:BAG:BA")
+    assert aces is None
+    assert hardened is False
+
+
+def test_short_ace_is_unverifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ACE with fewer than six fields is not a shape this parser knows.
+
+    Reading its LAST field as the trustee would be a guess, and a guess that
+    happens to land on an allowed token would report a directory as hardened
+    on the strength of an ACE nobody parsed.
+    """
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, "D:PAI(A;OICI;FA)")
+    assert aces is None
+    assert hardened is False
+
+
+def test_conditional_ace_is_unverifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A conditional ACE hides a whole ACE from the old parse. Fail closed.
+
+    ``(XA;...;(@User.Title=="S:x"))`` embeds parentheses AND a literal ``S:``
+    in its condition. The old parse cut the DACL at that ``S:`` (thinking it
+    was the SACL section) and matched ACEs with a ``[^)]*`` regex that stopped
+    at the condition's first ``)``: the Everyone ACE after it vanished from the
+    parse while the three clean ACEs remained, so the verify returned True with
+    Everyone still on the directory.
+    """
+    survived = (
+        f"D:PAI(A;OICI;FA;;;{_FAKE_USER_SID})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+        '(XA;OICI;FA;;;S-1-5-21-9;(@User.Title=="S:x"))'
+        "(A;OICI;0x1200a9;;;WD)"
+    )
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, survived)
+    assert aces is None, "a DACL carrying an ACE shape we cannot split must not parse"
+    assert hardened is False
+
+
+def test_sacl_section_is_cut_at_a_top_level_marker_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real SACL after the DACL is dropped; the DACL's own ACEs all survive."""
+    descriptor = (
+        f"O:BAG:BAD:PAI(A;OICI;FA;;;{_FAKE_USER_SID})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+        "S:AI(AU;SAFA;FA;;;WD)"
+    )
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, descriptor)
+    assert aces == [("A", _FAKE_USER_SID), ("A", "SY"), ("A", "BA")]
+    assert hardened is True
+
+
+def test_trailing_text_after_the_aces_is_unverifiable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The section must tokenize as flags + a plain run of ``(...)`` groups."""
+    descriptor = f"D:PAI(A;OICI;FA;;;{_FAKE_USER_SID})junk(A;OICI;FA;;;SY)"
+    hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, descriptor)
+    assert aces is None
+    assert hardened is False
+
+
 def test_harden_acl_sid_lookup_failure_skips_icacls(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
     fail = _recording_run(calls, fail_on="whoami.exe", exc=OSError("boom"))

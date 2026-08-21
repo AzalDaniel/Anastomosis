@@ -1,5 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+# >=1.27 is the floor for PEP 639 support: earlier hatchling parses
+# `license-files` only in its legacy table form and silently ignores the LIST
+# form below, producing a wheel with no dist-info/licenses/ at all. The release
+# workflow greps the built wheel for the Apache-2.0 and OFL-1.1 headings, but a
+# floor that admits a backend which cannot honour the config is a gap the grep
+# only catches after the fact.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]

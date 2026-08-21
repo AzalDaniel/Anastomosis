@@ -26,6 +26,7 @@ from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import budgeted_name
+from anastomosis.deliver._shared import claim_delivered_name
 
 from .builder import build_ccd
 
@@ -42,14 +43,21 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
     why this is stricter than the PDF directory). A record that fails to build
     is logged by exception type only (never its values) and skipped, so one bad
     record never sinks a batch.
+
+    A name COLLISION is not one of those survivable failures: ``write_bytes``
+    overwrites, so two patient ids that sanitize to one filename would deliver
+    one CCD carrying the second patient over the first. The per-run claimed-name
+    ledger makes that a hard stop.
     """
     out = secure_output_dir(out_dir)
     written: list[Path] = []
+    claimed: dict[str, str] = {}
     for index, record in enumerate(records):
         # Budgeted against ``out``: an over-long path would otherwise raise
         # OSError inside the write below, and the batch-continues handler would
         # record that record as merely "failed" — a silently dropped export.
         pid = budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=".xml")
+        claim_delivered_name(claimed, pid, record.patient.id, kind="C-CDA document")
         target = out / f"{pid}.xml"
         try:
             target.write_bytes(build_ccd(record))

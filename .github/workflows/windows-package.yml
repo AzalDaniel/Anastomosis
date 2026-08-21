@@ -188,20 +188,30 @@ jobs:
         #     creates tag v<version> on it below, so publishing from any other ref
         #     would tag the wrong commit.
         shell: bash
+        # Ref names reach the shell as ENVIRONMENT values, never as `${{ }}`
+        # interpolated into the script: git permits `"`, `;`, `$`, and backticks
+        # in a ref name and the `v*` filter accepts them, so an interpolated ref
+        # is shell injection inside a job that holds contents: write. The
+        # comparison logic below is unchanged.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          expected="v${{ needs.build.outputs.version }}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ github.ref }}" != "refs/heads/main" ]; then
-              echo "refusing to publish from '${{ github.ref }}': dispatch publishes are main-only" >&2
+          expected="v${VERSION}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$REF" != "refs/heads/main" ]; then
+              echo "refusing to publish from '$REF': dispatch publishes are main-only" >&2
               exit 1
             fi
             echo "dispatch publish from main; the release action will create tag '$expected'"
           else
-            if [ "${{ github.ref_name }}" != "$expected" ]; then
-              echo "tag '${{ github.ref_name }}' does not match package version '$expected'" >&2
+            if [ "$REF_NAME" != "$expected" ]; then
+              echo "tag '$REF_NAME' does not match package version '$expected'" >&2
               exit 1
             fi
-            echo "tag '${{ github.ref_name }}' matches package version '$expected'"
+            echo "tag '$REF_NAME' matches package version '$expected'"
           fi
 
       - name: Extract this version's CHANGELOG section as the release notes
@@ -209,8 +219,12 @@ jobs:
         # the next `## [` header) so the GitHub release body is the curated notes.
         # generate_release_notes (below) appends GitHub's auto PR list to this.
         shell: bash
+        # Same discipline as the assert above: the job output reaches the script
+        # through the environment, not through `${{ }}` interpolation.
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
-          ver="${{ needs.build.outputs.version }}"
+          ver="${VERSION}"
           awk -v ver="$ver" '
             $0 ~ ("^## \\[" ver "\\]") {flag=1; print; next}
             flag && /^## \[/ {exit}

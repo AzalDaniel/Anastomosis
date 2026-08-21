@@ -54,8 +54,13 @@ from pathlib import Path
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.core.textutil import budgeted_name
-from anastomosis.deliver._shared import copy_delivered_file, write_fhir_bundle
+from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
+from anastomosis.deliver._shared import (
+    budgeted_copy_name,
+    claim_delivered_name,
+    copy_delivered_file,
+    write_fhir_bundle,
+)
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport
 
@@ -70,11 +75,17 @@ _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 # Files copied into out_dir/assets/ on every run. Anything else in the source
 # assets directory is documentation and stays inside the package.
 _ASSET_FILES: tuple[str, ...] = ("anast.css", "anast-index.js")
-# Room kept free under each patient directory for its deepest child, the
-# per-encounter page ``encounters/<encounter-id>.html``. A patient id long
-# enough to consume it is cut (with its hash tag) instead — better a shortened
-# directory name than a tree whose pages cannot be written at all.
-_PATIENT_CHILD_RESERVE = len("/encounters/") + 40 + len(".html")
+# Room kept free under each patient directory for its deepest child. EVERY
+# child is itself budgeted — the per-encounter page ``encounters/<id>.html``
+# and the copied chart ``pdfs/<chart>.pdf`` — so what has to be reserved is not
+# a plausible child NAME but the room a budgeted child needs to still come out
+# DISTINCT: the longest fixed wrapper (``/encounters/`` + ``.html``) plus the
+# shortest distinct name :func:`budgeted_name` can return, its hash tag. Less
+# than that and the child budget raises; more than that and a patient id is cut
+# shorter than it needs to be. A patient id long enough to consume the rest is
+# cut (with its hash tag) instead — better a shortened directory name than a
+# tree whose pages cannot be written at all.
+_PATIENT_CHILD_RESERVE = len("/encounters/") + HASH_TAG_CHARS + len(".html")
 
 
 def _date_iso(value: object) -> str | None:
@@ -133,6 +144,12 @@ class ArchiveDeliverer:
         records_list = list(records)
         qa_lookup = _qa_lookup(qa_report)
         owned_pdfs: set[str] = set()
+        # Per-run ledger of delivered directory name -> the patient id that
+        # claimed it. Two ids that sanitize to ONE name (``MRN 1234`` and
+        # ``MRN/1234`` both collapse to ``MRN_1234``) would otherwise merge into
+        # a single ``patients/<id>/`` slot, because every writer below is
+        # exist_ok/overwrite. A second claimant is a hard failure.
+        claimed_dirs: dict[str, str] = {}
 
         for record in records_list:
             # Budgeted against the tree this writer is about to build: the
@@ -145,6 +162,7 @@ class ArchiveDeliverer:
                 parent=out / "patients",
                 reserve=_PATIENT_CHILD_RESERVE,
             )
+            claim_delivered_name(claimed_dirs, pid, record.patient.id, kind="patient directory")
             patient_dir = out / "patients" / pid
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
@@ -158,8 +176,16 @@ class ArchiveDeliverer:
             # leaked between two same-name patients. With no index present
             # the deliverer routes every PDF into ``unattributed/`` instead
             # of guessing (see :meth:`_route_unattributed_pdfs` below).
-            patient_pdfs = self._copy_patient_pdfs(record, render_index, pdfs_dir, patient_dir)
-            owned_pdfs.update(patient_pdfs.values())
+            # Two different name sets come back: the DELIVERED names (budgeted,
+            # what the pages link to) and the SOURCE names this patient claimed.
+            # Ownership is tracked by SOURCE name because that is what the
+            # unattributed sweep below sees in ``pdfs_dir`` — matching it
+            # against a budgeted-shorter delivered name would re-copy a chart
+            # already filed with its patient into ``unattributed/`` as well.
+            patient_pdfs, claimed_sources = self._copy_patient_pdfs(
+                record, render_index, pdfs_dir, patient_dir
+            )
+            owned_pdfs.update(claimed_sources)
             pdf_count += len(patient_pdfs)
 
             # Per-encounter HTML pages.
@@ -229,26 +255,39 @@ class ArchiveDeliverer:
         render_index: RenderIndex | None,
         pdfs_dir: Path | None,
         patient_dir: Path,
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], set[str]]:
         """Copy this patient's PDFs into the patient's own ``pdfs/`` slot.
 
-        Returns a mapping of ``encounter.id -> pdf filename`` so the
-        per-encounter pages can link to the right file. Attribution is
-        strictly index-based: only PDFs the engine actually wrote for
-        ``record.patient.id`` are copied, and the encounter link comes
+        Returns ``(encounter.id -> DELIVERED pdf filename, the SOURCE filenames
+        this patient claimed)``. The first drives the per-encounter page links;
+        the second is what the caller's unattributed sweep matches against,
+        because that sweep looks at ``pdfs_dir``, where the names are still the
+        renderer's — a budgeted delivered name would not be found there and the
+        chart would be copied a second time into ``unattributed/``.
+
+        Attribution is strictly index-based: only PDFs the engine actually
+        wrote for ``record.patient.id`` are copied, and the encounter link comes
         from the index entry's ``encounter_id`` (not a substring match
         on the date in the filename). A patient with no index entries
         gets no PDFs — never a guess.
+
+        The DELIVERED name is budgeted (``budgeted_copy_name``), because the
+        renderer's ``{family}_{given}_{dos}_{type}.pdf`` is bounded only by
+        ``safe_name`` — far past what the Windows path budget can hold under a
+        deep output tree. An over-budget destination is a hard failure here,
+        never a warn-and-continue: this is the path that carries the charts.
         """
         if render_index is None or pdfs_dir is None or not pdfs_dir.is_dir():
-            return {}
+            return {}, set()
         names = render_index.for_patient(record.patient.id)
         if not names:
-            return {}
+            return {}, set()
 
         out_dir = patient_dir / "pdfs"
         out_dir.mkdir(parents=True, exist_ok=True)
         mapping: dict[str, str] = {}
+        claimed: dict[str, str] = {}
+        claimed_sources: set[str] = set()
         for name in names:
             source = pdfs_dir / name
             if not source.is_file():
@@ -261,16 +300,23 @@ class ArchiveDeliverer:
                     "indexed pdf missing on disk for patient %s", safe_log_id(record.patient.id)
                 )
                 continue
-            failure = copy_delivered_file(source, out_dir / name)
+            # OUTSIDE the copy's warn path on purpose: a destination that
+            # cannot be named distinctly raises (ValueError) rather than
+            # leaving the chart out of the delivered tree (budgeted_copy_name).
+            # Permission/disk failures keep the existing warn-and-continue below.
+            delivered = budgeted_copy_name(out_dir, name)
+            claim_delivered_name(claimed, delivered, name, kind="chart")
+            failure = copy_delivered_file(source, out_dir / delivered)
             if failure is not None:
                 logger.warning("pdf copy failed (%s)", failure)
                 continue
+            claimed_sources.add(name)
             entry = render_index.lookup(name)
             if entry is not None:
                 # First-wins: a doubled encounter→pdf row (corrupted index)
                 # keeps the first assignment, never overwrites.
-                mapping.setdefault(entry.encounter_id, name)
-        return mapping
+                mapping.setdefault(entry.encounter_id, delivered)
+        return mapping, claimed_sources
 
     def _route_unattributed_pdfs(
         self,
@@ -308,8 +354,13 @@ class ArchiveDeliverer:
             return 0
         target = out / "unattributed"
         target.mkdir(parents=True, exist_ok=True)
+        claimed: dict[str, str] = {}
         for source in orphans:
-            failure = copy_delivered_file(source, target / source.name)
+            # Budgeted and claimed exactly like an attributed chart: a PDF that
+            # lands here is still a chart nobody may lose.
+            delivered = budgeted_copy_name(target, source.name)
+            claim_delivered_name(claimed, delivered, source.name, kind="unattributed chart")
+            failure = copy_delivered_file(source, target / delivered)
             if failure is not None:
                 logger.warning("unattributed pdf copy failed (%s)", failure)
         return len(orphans)

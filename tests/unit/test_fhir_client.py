@@ -399,6 +399,46 @@ def test_same_origin_redirect_is_also_refused() -> None:
     assert "302" in str(exc.value)
 
 
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_redirect_without_a_location_header_is_a_clean_permanent_error(status: int) -> None:
+    """A 3xx carrying NO Location must surface as a clean delivery error.
+
+    urllib routes a 30x through the redirect handler only when there is a
+    target to redirect TO; with no ``Location`` (a malformed server, or one
+    stripping the header) the redirect handlers decline and urllib's default
+    error path raises ``HTTPError``. That must land in the delivery taxonomy as
+    a PERMANENT error naming the status and the resource type — not as a raw
+    urllib exception escaping the client, and not as a transient the engine
+    would retry forever against a server that cannot answer.
+    """
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _handle(self) -> None:
+            self.send_response(status)  # deliberately no Location header
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        do_GET = _handle
+        do_POST = _handle
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with _running(Handler) as origin:
+        client = _live_client(origin)
+        with pytest.raises(PermanentDeliveryError) as exc:
+            client.get("Patient")
+
+    error = exc.value
+    assert not isinstance(error, TransientDeliveryError)
+    assert not isinstance(error, RedirectRefusedError)
+    # PHI + transport discipline: status + resource TYPE only.
+    message = str(error)
+    assert f"HTTP {status}" in message and "Patient" in message
+    assert LOOPBACK_TOKEN not in message
+    assert "127.0.0.1" not in message
+
+
 def test_production_opener_still_works_without_a_redirect() -> None:
     # Control: refusing redirects must not break the ordinary path. A plain 200
     # through the production opener parses normally and carries the bearer.
