@@ -17,18 +17,25 @@ Three jobs:
   renders the way the source authored it.
 * **Text → filesystem name** — :func:`safe_name` is the ONE definition of a
   filesystem-safe file/directory component (renderer filenames, archive and
-  bundle patient directories, C-CDA export filenames). Delivered layouts
-  depend on its exact output, so every writer shares it rather than
-  re-deriving the same regex.
+  bundle patient directories, C-CDA export filenames), and
+  :func:`budgeted_name` is the ONE definition of "…and it still fits inside
+  the full path a writer is about to build". Delivered layouts depend on
+  their exact output, so every writer shares them rather than re-deriving the
+  same regex and the same length arithmetic.
 """
 
 from __future__ import annotations
 
+import hashlib
 import html as html_mod
 import re
 from html.parser import HTMLParser
+from pathlib import Path
 
 __all__ = [
+    "MAX_NAME_CHARS",
+    "MAX_PATH_CHARS",
+    "budgeted_name",
     "clean_cell",
     "clean_numeric",
     "format_phone",
@@ -84,6 +91,47 @@ def format_phone(raw: str | None) -> str | None:
 # and never escapes its slot (no ``/``, no ``..``, no drive letters).
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
+#: Longest component :func:`safe_name` will hand back. Windows' per-component
+#: limit is 255 and POSIX ``NAME_MAX`` is usually 255 too; 200 leaves room for
+#: the suffixes writers append (``.html``, ``.xml``, a collision tag) while
+#: staying far enough under both that an unbounded source id cannot produce a
+#: component the filesystem refuses (``ENAMETOOLONG`` / ``FileNotFoundError``).
+MAX_NAME_CHARS = 200
+#: Longest FULL path :func:`budgeted_name` will let a writer build. Windows'
+#: classic ``MAX_PATH`` is 260 including the drive and the NUL terminator, and
+#: long-path support is opt-in per machine; 240 keeps a delivered tree openable
+#: by Explorer and by tools that still use the ANSI APIs.
+MAX_PATH_CHARS = 240
+#: Hex characters of sha256 appended when — and only when — a value is cut.
+_HASH_CHARS = 8
+
+
+def _hash_tagged(cleaned: str, limit: int) -> str:
+    """``cleaned`` cut to ``limit`` characters, the cut tagged with its hash.
+
+    A value already within ``limit`` is returned **byte-identical** — the whole
+    point, since every delivered filename and directory in the archive, the
+    bundle, and the C-CDA export is built from these components and must not
+    move. Only a value that has to be cut gets ``-<8 hex of sha256>`` appended,
+    hashing the ORIGINAL (uncut) value so two ids differing only past the cut
+    still land on different names: a silent collision here would file one
+    patient's chart on top of another's.
+
+    Raises :class:`ValueError` when ``limit`` cannot even hold the hash tag —
+    there is no safe name to return, and inventing a colliding one is the
+    failure mode this whole function exists to prevent.
+    """
+    if len(cleaned) <= limit:
+        return cleaned
+    if limit < _HASH_CHARS:
+        raise ValueError(
+            f"cannot build a distinct filesystem name in {limit} character(s); "
+            f"at least {_HASH_CHARS} are needed"
+        )
+    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:_HASH_CHARS]
+    kept = cleaned[: limit - _HASH_CHARS - 1].rstrip("_-")
+    return f"{kept}-{digest}" if kept else digest
+
 
 def safe_name(value: str | None, fallback: str) -> str:
     """A filesystem-safe file/directory component, or ``fallback`` if nothing survives.
@@ -94,12 +142,63 @@ def safe_name(value: str | None, fallback: str) -> str:
     its slot. An empty/blank input — or one made entirely of unsafe characters —
     yields ``fallback`` rather than an empty name.
 
+    The result is never longer than :data:`MAX_NAME_CHARS`: a longer value is
+    cut and tagged with ``-<8 hex of sha256>`` (see :func:`_hash_tagged`), so an
+    unbounded source id cannot produce a component the filesystem rejects. A
+    value at or under the cap is returned exactly as before this bound existed.
+
     Load-bearing: this is the single definition behind rendered chart filenames
     (:mod:`anastomosis.reconstruct.engine`), archive/bundle patient directories,
     and C-CDA export filenames. Changing it renames delivered output.
     """
     cleaned = _UNSAFE_NAME_RE.sub("_", (value or "").strip()).strip("_")
-    return cleaned or fallback
+    return _hash_tagged(cleaned or fallback, MAX_NAME_CHARS)
+
+
+def budgeted_name(
+    value: str | None,
+    fallback: str,
+    *,
+    parent: Path,
+    suffix: str = "",
+    reserve: int = 0,
+) -> str:
+    """:func:`safe_name`, cut further so ``parent/<name><suffix>`` stays inside
+    :data:`MAX_PATH_CHARS`.
+
+    ``suffix`` (``".html"``, ``".xml"``, …) is *budgeted* but NOT appended: the
+    caller composes the final name exactly as it does with :func:`safe_name`, so
+    a page's filename and the link written to it can share one call site.
+    ``reserve`` is budgeted the same way, for a component that is a DIRECTORY:
+    it is the room the caller needs left over for the deepest child it will
+    write underneath (an archive patient directory reserves its
+    ``encounters/<id>.html`` page). Without it a maximal directory name would
+    fit while none of its contents did.
+
+    ``parent`` is measured as the writer will use it — pass the real output
+    directory (the deliverers pass the
+    :func:`~anastomosis.core.output.secure_output_dir` result), not a display
+    form of it.
+
+    A component that already fits is returned unchanged, so short ids — every
+    real one — keep their delivered names. When the parent is so deep that not
+    even a hash tag fits, this raises rather than returning a name that could
+    collide; the caller's writer fails loudly instead of quietly filing two
+    charts as one.
+    """
+    name = safe_name(value, fallback)
+    # +1 for the separator the caller's ``parent / name`` will insert.
+    room = MAX_PATH_CHARS - len(str(parent)) - 1 - len(suffix) - reserve
+    if len(name) <= room:
+        return name
+    if room < _HASH_CHARS:
+        # PHI: lengths only — an output path can be named after a patient, so
+        # it never enters a message or a log line (SECURITY.md).
+        raise ValueError(
+            f"output directory is {len(str(parent))} characters deep, leaving no room "
+            f"for a distinct name within the {MAX_PATH_CHARS}-character path budget"
+        )
+    return _hash_tagged(name, room)
 
 
 # Paragraph-level tags separate with a blank line; remaining block tags

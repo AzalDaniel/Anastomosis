@@ -44,6 +44,7 @@ import regen_goldens  # noqa: E402 — shared render/extract logic on sys.path
 
 PACK_NAME = "practice_fusion_soap"
 _GOLDEN = regen_goldens.GOLDENS[PACK_NAME]
+_WORD_BOXES = regen_goldens.WORD_BOXES[PACK_NAME]
 _FORENSIC_FILL = (241, 241, 241)  # #f1f1f1 grey heading band (GOLD §1)
 
 
@@ -65,10 +66,26 @@ def golden() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def rendered() -> dict[str, Any]:
-    """Render the fixture once for the whole module (Chromium launch is slow)."""
+def golden_boxes() -> dict[str, Any]:
+    return json.loads(_WORD_BOXES.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def snapshots() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Render the fixture once for the whole module (Chromium launch is slow);
+    text/geometry and page-1 word boxes come from that single render."""
     _chromium_or_skip()
-    return regen_goldens.render_goldens(PACK_NAME)
+    return regen_goldens.render_snapshots(PACK_NAME)
+
+
+@pytest.fixture(scope="module")
+def rendered(snapshots: tuple[dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
+    return snapshots[0]
+
+
+@pytest.fixture(scope="module")
+def rendered_boxes(snapshots: tuple[dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
+    return snapshots[1]
 
 
 def test_golden_has_six_encounter_snapshots(golden: dict[str, Any]) -> None:
@@ -117,6 +134,32 @@ def test_render_matches_golden_geometry_and_text(
                 f"{enc_id}: rendered text differs from golden. If this change is "
                 f"intentional, run `python tools/regen_goldens.py` and review the "
                 f"JSON diff in the PR.\n{diff}"
+            )
+
+
+def test_render_matches_golden_word_boxes(
+    golden: dict[str, Any], golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
+) -> None:
+    """Page 1 of every chart lands where the baseline says it lands.
+
+    The PF pack is a layout REPLICA — its whole claim is spatial — so identical
+    text at shifted coordinates is precisely the regression to catch, and the
+    text/geometry golden above cannot see it.
+    """
+    expected_keys = sorted(k for k in golden_boxes if k != "_meta")
+    assert expected_keys == sorted(k for k in golden if k != "_meta"), (
+        "the word baseline must cover exactly the charts the text golden pins"
+    )
+    for enc_id in expected_keys:
+        assert golden_boxes[enc_id], f"{enc_id}: empty word baseline"
+        differences = regen_goldens.diff_word_boxes(golden_boxes[enc_id], rendered_boxes[enc_id])
+        if differences:
+            # Synthetic fixture text, so the words are PHI-safe to print.
+            pytest.fail(
+                f"{enc_id}: page-1 layout moved (tolerance "
+                f"{regen_goldens.BOX_TOLERANCE}pt). If this change is intentional, run "
+                f"`python tools/regen_goldens.py` and review the JSON diff in the PR.\n"
+                + "\n".join(differences)
             )
 
 

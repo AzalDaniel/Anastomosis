@@ -54,7 +54,7 @@ Anastomosis is the missing last mile, free and open source:
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
-   **structured C-CDA/FHIR payload** for destinations that import C-CDA/FHIR, an
+   **structured C-CDA payload** for destinations that import C-CDA, an
    upload manifest, and a verified route plan — but files nothing itself; `anast
    upload` EXECUTES delivery over **either route**: the destination's web UI
    (`--to PACK --cdp URL`) or its FHIR R4 API (`--fhir URL`), whichever the
@@ -244,7 +244,7 @@ src/anastomosis/
 │   │                 L5 destination metadata, L6 byte/identity round-trip.
 │   ├── fhir_api/     FHIR R4 DocumentReference pusher over stdlib urllib (https, or
 │   │                 http only for loopback); status codes + resource TYPE names in errors.
-│   │                 attach.py: the one construction seam both frontends call
+│   │                 attach.py: the construction seam the CLI upload command calls
 │   │                 (`anast upload --fhir`), twin of deliver/browser/attach.py.
 │   └── ccda_export/  PatientRecord → C-CDA R2.1, for destinations that import C-CDA;
 │   │                 its contract is that THIS repo's own ccda parser reads it back.
@@ -287,7 +287,8 @@ anast upload out/ --fhir https://ehr.example.com/fhir
 
 Exactly one route must be selected: `--to` **and** `--cdp` together, or
 `--fhir` alone. Half a browser route, both routes at once, or neither is a
-usage error (exit 2) rather than a run that guesses.
+usage error (exit 2) rather than a run that guesses. The GUI supports the
+browser route today; use the CLI for the FHIR route.
 
 **Bearer token handling.** The API route never accepts a token on the command
 line — argv is visible to every process on the box (`ps`). It reads the token
@@ -349,7 +350,8 @@ pass/fail/skip counts and the reason for every skip.
 `anast gui` opens the desktop app (the `gui` extra): a pipeline dashboard with
 live ingest/reconstruct/QA/deliver counters, a migration wizard that shows the
 destination transit map and the full set of run levers, a learn-a-source wizard,
-and an upload console that drives the delivery engine over its ledger.
+and an upload console that drives the delivery engine over its ledger. The GUI
+supports the browser route today; use the CLI for the FHIR route.
 
 ## Privacy & safety
 

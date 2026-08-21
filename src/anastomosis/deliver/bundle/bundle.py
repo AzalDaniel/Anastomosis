@@ -30,7 +30,7 @@ from pathlib import Path
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.core.textutil import safe_name
+from anastomosis.core.textutil import budgeted_name
 from anastomosis.deliver._shared import copy_delivered_file, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport, Verdict
@@ -38,6 +38,10 @@ from anastomosis.qa import QAReport, Verdict
 __all__ = ["BundleDeliverer", "BundleResult"]
 
 logger = logging.getLogger(__name__)
+
+# Room kept free under each patient directory for its deepest child, a copied
+# chart at ``pdfs/<family>_<given>_<dos>_<type>.pdf``.
+_PDF_CHILD_RESERVE = len("/pdfs/") + 64 + len(".pdf")
 
 
 _README_TEMPLATE = """\
@@ -140,7 +144,11 @@ class BundleDeliverer:
         qa_report: QAReport | None = None,
     ) -> BundleResult:
         out = secure_output_dir(out_dir)
-        pid = safe_name(record.patient.id, "unknown")
+        # Budgeted against the directory this bundle is written into, so a long
+        # source id cannot produce a patient directory the filesystem refuses,
+        # with room reserved for the deepest child (``pdfs/<chart>.pdf``; the
+        # chart names come from the renderer, themselves capped by safe_name).
+        pid = budgeted_name(record.patient.id, "unknown", parent=out, reserve=_PDF_CHILD_RESERVE)
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
 

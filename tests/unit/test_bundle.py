@@ -212,6 +212,22 @@ def test_bundle_no_qa_report_means_no_qa_file(tmp_path: Path, records: list[Pati
     assert not (out / records[0].patient.id / "qa_report.json").exists()
 
 
+def test_bundle_long_patient_id_stays_writable(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """A source id longer than the filesystem allows still delivers: the
+    directory name is cut (with its hash tag) instead of raising OSError."""
+    long_id = "feedface-0000-0000-0000-0000000000aa" + "z" * 300
+    patient = records[0].patient.model_copy(update={"id": long_id})
+    record = records[0].model_copy(update={"patient": patient})
+
+    out = tmp_path / "bundles"
+    result = BundleDeliverer().deliver(record, None, out)
+    assert result.out_dir.is_dir()
+    assert result.bundle_path.is_file()
+    assert len(result.patient_id) < len(long_id)
+
+
 def test_bundle_handles_missing_pdfs(tmp_path: Path, records: list[PatientRecord]) -> None:
     out = tmp_path / "bundles"
     result = BundleDeliverer().deliver(records[0], None, out)

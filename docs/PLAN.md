@@ -225,6 +225,12 @@ Next:
   found / mismatched; nothing is filed on a boundary-free guess), but
   practices with unspaced ideographic banners need a script-aware matching
   mode before the browser route can serve them.
+- **Streaming Binary upload on the FHIR route** — `DocumentReference` inlines
+  the PDF as base64, so filing one costs several times the file in memory
+  (measured ~4.3x). `deliver/fhir_api/destination.py` refuses an item over
+  `max_payload_bytes` (default 50 MiB) *before* reading it; POSTing the bytes
+  as a streamed `Binary` and referencing it from the DocumentReference is the
+  tracked longer-term path.
 
 ## PHI scrub map (for porters)
 

@@ -25,7 +25,7 @@ from pathlib import Path
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.core.textutil import safe_name
+from anastomosis.core.textutil import budgeted_name
 
 from .builder import build_ccd
 
@@ -46,7 +46,10 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
     out = secure_output_dir(out_dir)
     written: list[Path] = []
     for index, record in enumerate(records):
-        pid = safe_name(record.patient.id, f"patient_{index}")
+        # Budgeted against ``out``: an over-long path would otherwise raise
+        # OSError inside the write below, and the batch-continues handler would
+        # record that record as merely "failed" — a silently dropped export.
+        pid = budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=".xml")
         target = out / f"{pid}.xml"
         try:
             target.write_bytes(build_ccd(record))

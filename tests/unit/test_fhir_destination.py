@@ -35,7 +35,7 @@ from anastomosis.deliver.browser.manifest import build_manifest
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.deliver.browser.tracking import TrackingDB
 from anastomosis.deliver.fhir_api.client import FhirClient, FhirEndpoint, FhirResponse
-from anastomosis.deliver.fhir_api.destination import FhirApiDestination
+from anastomosis.deliver.fhir_api.destination import FhirApiDestination, PayloadTooLarge
 from anastomosis.deliver.verify import LayeredVerifier, LevelStatus
 from anastomosis.destinations.base import DestinationPatient, UploadItem
 from anastomosis.reconstruct.engine import RenderedDoc
@@ -381,6 +381,69 @@ def test_driver_receipt_echoes_size(tmp_path: Path) -> None:
     receipt = dest.upload(item, DestinationPatient(destination_patient_id=pid))
     assert receipt.destination_doc_id is not None
     assert receipt.echoed_size_bytes == item.size_bytes
+
+
+# --- driver: the inline-payload bound -----------------------------------------
+
+
+def test_driver_refuses_oversized_item_without_reading_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound is enforced BEFORE the read: a DocumentReference inlines the
+    PDF, so reading first is exactly the memory spike being prevented."""
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    dest = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes - 1)
+
+    def _explode(self: Path) -> bytes:
+        raise AssertionError("an over-limit file must never be read")
+
+    monkeypatch.setattr(Path, "read_bytes", _explode)
+
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(item, DestinationPatient(destination_patient_id=pid))
+    assert item.item_key in str(excinfo.value)
+    assert not server.docs, "nothing may be filed for a refused item"
+
+
+def test_driver_accepts_an_item_within_the_bound(tmp_path: Path) -> None:
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    # Exactly at the bound passes (the refusal is strictly "over"), and the
+    # default constructor — 50 MiB — passes a normal chart untouched.
+    at_bound = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes)
+    assert at_bound.upload(item, DestinationPatient(destination_patient_id=pid)).destination_doc_id
+    default = FhirApiDestination(_client(server))
+    assert default.upload(item, DestinationPatient(destination_patient_id=pid)).destination_doc_id
+
+
+def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path: Path) -> None:
+    """``size_bytes`` comes from the manifest; the bytes on disk set the peak.
+    A manifest that understates the file must not wave it past the bound."""
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource("srv-1"))
+    honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+    lying = replace(honest, size_bytes=1)
+    dest = FhirApiDestination(_client(server), max_payload_bytes=honest.size_bytes - 1)
+    with pytest.raises(PayloadTooLarge):
+        dest.upload(lying, DestinationPatient(destination_patient_id=pid))
+
+
+def test_payload_too_large_message_carries_no_filename_or_patient_value(tmp_path: Path) -> None:
+    # A chart filename embeds the patient name and the date of service, so the
+    # message names the opaque item_key and the sizes only.
+    server = _FakeFhirServer()
+    chart = tmp_path / "Testpatient_Synthia_05-10-2023_SOAP.pdf"
+    item = _item(_make_pdf(chart, GOOD_LINES))
+    dest = FhirApiDestination(_client(server), max_payload_bytes=item.size_bytes - 1)
+    with pytest.raises(PayloadTooLarge) as excinfo:
+        dest.upload(item, DestinationPatient(destination_patient_id="srv-1"))
+    message = str(excinfo.value)
+    for forbidden in (chart.name, str(chart), "Synthia", "Testpatient", "1990", "05-10-2023"):
+        assert forbidden not in message, f"PHI leak in PayloadTooLarge: {forbidden!r}"
+    assert "MiB" in message  # the actionable part: the limit, in human units
 
 
 # --- MetadataReader / DocumentReader ------------------------------------------

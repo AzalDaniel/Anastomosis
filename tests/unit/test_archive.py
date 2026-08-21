@@ -269,6 +269,46 @@ def test_archive_handles_missing_pdfs_dir(tmp_path: Path, records: list[PatientR
         assert (out / "patients" / record.patient.id / "bundle.json").is_file()
 
 
+def test_archive_long_ids_stay_writable_and_linked(tmp_path: Path) -> None:
+    """A source id far longer than the filesystem allows must still produce a
+    browsable archive: the patient directory and every encounter page are
+    written, and the link on the patient page resolves to the file that was
+    actually created. Unbudgeted, this raised ``OSError``/``FileNotFoundError``
+    mid-delivery; a link that pointed at nothing would be just as bad — a chart
+    the operator cannot reach.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+
+    # Synthetic, absurdly long ids (the shape a vendor export with a composite
+    # key can produce). The two encounters differ ONLY past the cap.
+    long_pid = "feedface-0000-0000-0000-0000000000aa" + "z" * 300
+    enc_base = "feedface-e000-0000-0000-0000000000aa" + "y" * 300
+    record = PatientRecord(
+        patient=Patient(id=long_pid, family_name="Fixture", given_name="Ada"),
+        encounters=[
+            Encounter(id=enc_base + "-one", patient_id=long_pid, date_of_service=date(2023, 5, 10)),
+            Encounter(id=enc_base + "-two", patient_id=long_pid, date_of_service=date(2023, 6, 10)),
+        ],
+    )
+
+    out = tmp_path / "archive"
+    result = ArchiveDeliverer().deliver([record], None, out)
+
+    assert result.patient_count == 1
+    patient_dirs = [p for p in (out / "patients").iterdir() if p.is_dir()]
+    assert len(patient_dirs) == 1
+    patient_dir = patient_dirs[0]
+    pages = sorted((patient_dir / "encounters").glob("*.html"))
+    assert len(pages) == 2, "two encounters must not collapse onto one page"
+
+    # Every link on the patient page resolves to a file that exists.
+    html = (patient_dir / "index.html").read_text(encoding="utf-8")
+    links = re.findall(r'href="(encounters/[^"]+)"', html)
+    assert sorted(links) == sorted(f"encounters/{p.name}" for p in pages)
+
+
 def test_archive_same_name_patients_never_cross_attribute(tmp_path: Path) -> None:
     """The cross-leak failure mode: two distinct patients sharing both
     ``family_name`` and ``given_name`` (different ids, different DOBs) must

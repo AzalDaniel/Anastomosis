@@ -54,7 +54,7 @@ from pathlib import Path
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
-from anastomosis.core.textutil import safe_name
+from anastomosis.core.textutil import budgeted_name
 from anastomosis.deliver._shared import copy_delivered_file, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport
@@ -70,6 +70,11 @@ _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 # Files copied into out_dir/assets/ on every run. Anything else in the source
 # assets directory is documentation and stays inside the package.
 _ASSET_FILES: tuple[str, ...] = ("anast.css", "anast-index.js")
+# Room kept free under each patient directory for its deepest child, the
+# per-encounter page ``encounters/<encounter-id>.html``. A patient id long
+# enough to consume it is cut (with its hash tag) instead — better a shortened
+# directory name than a tree whose pages cannot be written at all.
+_PATIENT_CHILD_RESERVE = len("/encounters/") + 40 + len(".html")
 
 
 def _date_iso(value: object) -> str | None:
@@ -130,7 +135,16 @@ class ArchiveDeliverer:
         owned_pdfs: set[str] = set()
 
         for record in records_list:
-            pid = safe_name(record.patient.id, "unknown")
+            # Budgeted against the tree this writer is about to build: the
+            # component is capped AND the full path stays inside the Windows
+            # path budget, so a long source id can never turn a delivered
+            # chart into a FileNotFoundError halfway through the archive.
+            pid = budgeted_name(
+                record.patient.id,
+                "unknown",
+                parent=out / "patients",
+                reserve=_PATIENT_CHILD_RESERVE,
+            )
             patient_dir = out / "patients" / pid
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
@@ -308,7 +322,7 @@ class ArchiveDeliverer:
     ) -> None:
         encounters_ctx = [
             {
-                "safe_id": safe_name(enc.id, "encounter"),
+                "safe_id": _encounter_page_id(patient_dir, enc),
                 "label": _encounter_label(enc),
                 "chief_complaint": enc.chief_complaint,
             }
@@ -370,7 +384,8 @@ class ArchiveDeliverer:
             generator=self.generator,
             generated_at=generated_at,
         )
-        encounter_file = patient_dir / "encounters" / f"{safe_name(encounter.id, 'encounter')}.html"
+        page_id = _encounter_page_id(patient_dir, encounter)
+        encounter_file = patient_dir / "encounters" / f"{page_id}.html"
         encounter_file.write_text(html, encoding="utf-8")
 
     def _write_index(
@@ -419,6 +434,19 @@ class ArchiveDeliverer:
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _encounter_page_id(patient_dir: Path, encounter: Encounter) -> str:
+    """The encounter page's filename stem, budgeted for its full path.
+
+    ONE definition, called by both the patient page (which links
+    ``encounters/<id>.html``) and the encounter writer (which creates that
+    file): a second, differently-budgeted derivation would produce a link that
+    points at nothing — a chart the operator cannot reach from the archive.
+    """
+    return budgeted_name(
+        encounter.id, "encounter", parent=patient_dir / "encounters", suffix=".html"
+    )
 
 
 def _qa_lookup(qa_report: QAReport | None) -> dict[str, str]:
