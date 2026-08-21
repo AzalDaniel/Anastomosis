@@ -126,6 +126,11 @@ def launch(debug: bool = False) -> None:  # pragma: no cover - needs webview + a
         height=820,
         min_size=(820, 600),
     )
+    if window is None:
+        # pywebview types create_window as Window | None; a None here means the
+        # backend refused the window and nothing below can work. Fail loudly at
+        # startup rather than crash later on the first attribute access.
+        raise RuntimeError("webview.create_window returned no window — GUI startup failed")
     sink.attach(window)
 
     # Window-close barrier: while a long-running job is in flight, veto the
