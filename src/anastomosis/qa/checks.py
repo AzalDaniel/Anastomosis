@@ -7,13 +7,13 @@ doesn't ship.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import pymupdf
 
+from anastomosis.core.identity import token_present
 from anastomosis.core.model import ObservationCategory
 from anastomosis.core.timeutil import all_date_spellings
 
@@ -115,8 +115,13 @@ def _present(needle: str, text: str) -> bool:
     inside a longer name, an unpadded date inside a different date. The
     lookarounds reject matches embedded in adjacent word characters or
     number runs.
+
+    This is the SINGLE shared predicate (:func:`anastomosis.core.identity.token_present`)
+    — the same one the L2/L3/L6 delivery verifier and the browser destination
+    pack match through — so the wrong-match defense cannot drift into a
+    substring-loose variant in one place and not another.
     """
-    return re.search(rf"(?<![\w.]){re.escape(needle)}(?![\w.])", text) is not None
+    return token_present(needle, text)
 
 
 def _date_spellings(value: date) -> set[str]:

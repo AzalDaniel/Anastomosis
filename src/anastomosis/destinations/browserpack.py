@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from anastomosis.core.identity import date_token_present, name_present
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.deliver.browser.errors import (
     DeliveryError,
@@ -120,8 +121,13 @@ class PageLike(Protocol):
         """Type ``value`` into the element matched by ``selector``."""
         ...
 
-    def click(self, selector: str) -> None:
-        """Click the element matched by ``selector``."""
+    def click(self, selector: str, *, nth: int | None = None) -> None:
+        """Click the element matched by ``selector``.
+
+        With ``nth`` given, click the ``nth`` (0-based) element the selector
+        matches rather than the first — the resolver uses it to open the row it
+        actually matched, not row 0.
+        """
         ...
 
     def text_content(self, selector: str) -> str | None:
@@ -166,8 +172,16 @@ class PlaywrightPageAdapter:
     def fill(self, selector: str, value: str) -> None:  # pragma: no cover - needs playwright
         self._page.fill(selector, value)
 
-    def click(self, selector: str) -> None:  # pragma: no cover - needs playwright
-        self._page.click(selector)
+    def click(
+        self, selector: str, *, nth: int | None = None
+    ) -> None:  # pragma: no cover - needs playwright
+        if nth is None:
+            self._page.click(selector)
+        else:
+            # Click the specific matched row: Playwright's bare page.click()
+            # targets the FIRST match, so a non-zero matched index needs the
+            # locator's nth() to open the right chart.
+            self._page.locator(selector).nth(nth).click()
 
     def text_content(self, selector: str) -> str | None:  # pragma: no cover - needs playwright
         result = self._page.text_content(selector)
@@ -487,8 +501,10 @@ class BrowserPackDestination:
             )
 
         index = matches[0]
-        # Open the chart so the banner readback can confirm the patient.
-        self._page.click(self._selectors.patient_result_row)
+        # Open the MATCHED chart so the banner readback confirms the right
+        # patient. Clicking the bare selector would open row 0 regardless of
+        # which row matched — a wrong-chart open when the match is not row 0.
+        self._page.click(self._selectors.patient_result_row, nth=index)
         # A row index is not a stable identity (re-rendered lists reorder), so
         # the id is a hash of the matched row's full text — stable for the same
         # rendered row, and PHI-safe because it is a one-way digest, never the
@@ -621,22 +637,31 @@ class BrowserPackDestination:
         return [p for p in (patient.family_name, patient.given_name) if p]
 
     def _name_present(self, text: str, patient: Patient) -> bool:
-        """Whether every (case-insensitive) name part appears in ``text``."""
-        parts = self._name_parts(patient)
-        if not parts:
-            return False
-        hay = text.lower()
-        return all(p.lower() in hay for p in parts)
+        """Whether every name part appears in ``text`` as a whole token.
+
+        Boundary-anchored through the shared identity predicate
+        (:func:`anastomosis.core.identity.name_present`), so a short name does
+        NOT match embedded in a longer one ("Li" does not match inside "Liang",
+        "Ann" not inside "Joann") — the wrong-patient name collision the banner
+        and row match must reject. Empty (no name parts) is a fail-closed
+        ``False``.
+        """
+        return name_present(" ".join(self._name_parts(patient)), text)
 
     def _dob_present(self, text: str, patient: Patient) -> bool:
-        """Whether the rendered DOB appears in ``text`` (always required)."""
+        """Whether the rendered DOB appears in ``text`` as a whole token.
+
+        Boundary-anchored (:func:`anastomosis.core.identity.date_token_present`)
+        so an unpadded DOB does not match inside a longer date run ("1/2/1990"
+        does not satisfy "11/2/1990").
+        """
         dob = self._render_dob(patient)
         if not dob:
             # No DOB to match means the exact-name-dob contract cannot be met:
             # fail closed rather than match on name alone (a name collision is
             # exactly what the DOB gate defends against).
             return False
-        return dob in text
+        return date_token_present(dob, text)
 
     def _row_matches(self, row_text: str, patient: Patient) -> bool:
         """A result row matches when BOTH name parts AND DOB are present in it."""

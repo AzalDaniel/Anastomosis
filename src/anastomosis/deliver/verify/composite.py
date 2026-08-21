@@ -26,14 +26,17 @@ whole table) *except* a wrong-patient, which aborts immediately for safety.
 Stateful read-back resolution (documented carefully because it is subtle):
 the engine's ``verify_post(item, receipt)`` does not carry the
 :class:`Patient` or the :class:`DestinationPatient`, but L5/L6 need the
-destination patient to read a document back. The Verifier protocol is the
-engine seam and must NOT change (changing it breaks the pre/post pairing). So
-when a destination is set, ``verify_pre`` resolves the destination patient once
-(``destination.resolver.resolve(patient)``) and remembers it keyed by
-``item_key``; ``verify_post`` looks it up. In standalone mode (no destination)
-the map is empty and L5/L6 skip. The state lives on the *instance* and is per
-patient-item, not shared across workers: the parallel runner builds one
-verifier per worker via ``verifier_factory``, so no two workers share this map.
+destination patient to read a document back. So ``verify_pre`` remembers the
+destination patient keyed by ``item_key`` and ``verify_post`` looks it up. It
+gets that identity from the engine, which threads the ``DestinationPatient`` it
+ALREADY resolved into ``verify_pre`` — the verifier does NOT re-resolve, because
+a second resolve on a create-capable destination could POST a duplicate patient
+(the destination's own docstring requires verification to be side-effect-free).
+Only a standalone caller that threads nothing falls back to the destination's
+resolver. In standalone mode (no destination) the map is empty and L5/L6 skip.
+The state lives on the *instance* and is per patient-item, not shared across
+workers: the parallel runner builds one verifier per worker via
+``verifier_factory``, so no two workers share this map.
 """
 
 from __future__ import annotations
@@ -132,7 +135,9 @@ class LayeredVerifier:
 
     # --- Verifier protocol ---
 
-    def verify_pre(self, item: UploadItem, patient: Patient) -> None:
+    def verify_pre(
+        self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None = None
+    ) -> None:
         """Run L0-L4; raise on the first failure (after collecting all results).
 
         A :class:`WrongPatientError` from L4's live-banner readback propagates
@@ -140,9 +145,13 @@ class LayeredVerifier:
         the rest of the table. Any *failing* level (including L2's DOB hard-fail)
         is recorded, the rest still run, then the first failure is raised as a
         PRE_VERIFY error (one item to ``PRE_VERIFY_FAILED``).
+
+        ``dest_patient`` is the identity the ENGINE already resolved for this
+        item; when present it is reused verbatim for the L5/L6 read-back rather
+        than re-resolving (see :meth:`_capture_dest_patient`).
         """
         # Capture the destination patient once (feeds L5/L6 read-back later).
-        self._capture_dest_patient(item, patient)
+        self._capture_dest_patient(item, patient, dest_patient)
         encounter = self._records.get(item.encounter_id)
         # One parse of the local PDF for the whole pre phase: L1 wants the page
         # count, L2 and L3 want page-1 text. Lazy, so L1's sub-KiB size floor
@@ -302,16 +311,29 @@ class LayeredVerifier:
             self._record(item_key, results, append=append)
         return first_failure
 
-    def _capture_dest_patient(self, item: UploadItem, patient: Patient) -> None:
-        """Resolve and remember the destination patient (for post read-back).
+    def _capture_dest_patient(
+        self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None
+    ) -> None:
+        """Remember the destination patient (for post read-back) side-effect-free.
 
-        Mirrors the engine's own resolve so L5/L6 can read a document back
-        without the Verifier protocol carrying the patient into ``verify_post``.
-        A ``None`` resolution (patient not found) just leaves L5/L6 to skip.
-        The canonical patient is remembered unconditionally — L6's identity
-        re-assertion needs it even when destination resolution fails.
+        Verification MUST NOT mutate the state it verifies. The engine already
+        resolved this item's destination patient (that resolve is the one place
+        a create-missing-patients destination legitimately POSTs a Patient), so
+        when it threads that ``dest_patient`` in, it is remembered verbatim — no
+        second resolve, and therefore no risk of a create-capable re-resolve
+        POSTing a DUPLICATE Patient when the server's search index lags the
+        create.
+
+        Only when no ``dest_patient`` is threaded (a standalone caller that ran
+        no prior resolve) does this fall back to the destination's own resolver,
+        so direct/standalone use of the verifier is unchanged. The canonical
+        patient is remembered unconditionally — L6's identity re-assertion needs
+        it even when destination resolution is unavailable.
         """
         self._patients[item.item_key] = patient
+        if dest_patient is not None:
+            self._resolved[item.item_key] = dest_patient
+            return
         if self._destination is None:
             return
         try:

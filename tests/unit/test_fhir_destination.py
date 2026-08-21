@@ -488,6 +488,58 @@ def test_end_to_end_completes_with_l5_l6_then_duplicate(tmp_path: Path) -> None:
     assert result2.counts == {UploadState.DUPLICATE_AT_DESTINATION.value: 1}
 
 
+# --- ID-005: verification must be side-effect-free (never a second POST) ------
+
+
+class _LaggingIndexServer(_FakeFhirServer):
+    """A server whose SEARCH index lags a create: a just-POSTed Patient is not
+    yet returned by search. Counts Patient POSTs so a duplicate create shows."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.patient_post_count = 0
+
+    def _search_patients(self, params: Mapping[str, str]) -> dict[str, object]:
+        return _bundle([])  # the lag: the created patient is never searchable yet
+
+    def _post(self, segments: list[str], body: bytes | None) -> FhirResponse:
+        if segments and segments[0] == "Patient":
+            self.patient_post_count += 1
+        return super()._post(segments, body)
+
+
+def test_verifier_reuses_engine_identity_and_never_creates_a_second_patient(
+    tmp_path: Path,
+) -> None:
+    """ID-005: with ``create_missing_patients`` and a lagging search index, the
+    engine's resolve legitimately POSTs ONE Patient. The verifier must REUSE
+    that identity (threaded in from the engine), never re-resolve through the
+    create-capable resolver — which under the lag would POST a SECOND Patient
+    (the exact side effect the destination's own docstring forbids). Total
+    POST /Patient stays 1, and engine-id == verifier-id."""
+    from anastomosis.deliver.browser.errors import WrongPatientError
+
+    server = _LaggingIndexServer()
+    dest = FhirApiDestination(_client(server), create_missing_patients=True)
+    item = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
+
+    # The engine's own resolve — the ONE legitimate create.
+    engine_dp = dest.resolve(_patient())
+    assert engine_dp is not None
+    assert server.patient_post_count == 1
+
+    verifier = LayeredVerifier(records={ENC: _encounter()}, destination=dest)
+    # Thread the engine's identity: verify_pre must NOT resolve again. L4's
+    # banner still fails closed on the lagging (empty) search, so verify_pre
+    # raises — but crucially WITHOUT a second POST.
+    with pytest.raises(WrongPatientError):
+        verifier.verify_pre(item, _patient(), engine_dp)
+
+    assert server.patient_post_count == 1, "verifier POSTed a second Patient during verification"
+    captured = verifier._resolved[item.item_key]
+    assert captured.destination_patient_id == engine_dp.destination_patient_id
+
+
 # --- PHI discipline across failing paths --------------------------------------
 
 

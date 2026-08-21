@@ -281,22 +281,34 @@ class UploadEngine:
                 self._to(item, UploadState.PATIENT_NOT_FOUND, run_id)
                 return True
 
-            # (c) duplicate scan — the resume double-file defense.
+            # (c) VERIFYING_PRE — the wrong-patient banner readback runs FIRST,
+            #     BEFORE the duplicate scan. A chart's existing-docs list must
+            #     never be trusted until the open chart is confirmed to be the
+            #     right patient: a wrong chart that happens to carry this item's
+            #     fingerprint must abort here, not resolve to a clean
+            #     DUPLICATE_AT_DESTINATION with the banner never read.
+            self._to(item, UploadState.VERIFYING_PRE, run_id)
+            if not self._dest.banner.current_patient_matches(patient):
+                raise WrongPatientError
+
+            # (d) duplicate scan — the resume double-file defense, trusted only
+            #     now that the banner has confirmed the open chart's identity.
             if item.fingerprint in self._dest.scanner.existing_fingerprints(dest_patient):
                 self._to(item, UploadState.DUPLICATE_AT_DESTINATION, run_id)
                 return True
 
-            # (d) VERIFYING_PRE — banner readback FIRST, then the verifier.
-            self._to(item, UploadState.VERIFYING_PRE, run_id)
-            if not self._dest.banner.current_patient_matches(patient):
-                raise WrongPatientError
-            self._verifier.verify_pre(item, patient)
+            # (e) the rest of the pre-upload verifier ladder (L0-L4). The
+            #     engine's already-resolved dest_patient is threaded in so the
+            #     verifier does not RE-resolve (a second, CREATE-capable resolve
+            #     would POST a duplicate Patient on a create_missing_patients
+            #     destination with a lagging index).
+            self._verifier.verify_pre(item, patient, dest_patient)
 
-            # (e) UPLOADING.
+            # (f) UPLOADING.
             self._to(item, UploadState.UPLOADING, run_id)
             receipt = self._dest.driver.upload(item, dest_patient)
 
-            # (f) VERIFYING_POST — size echo check, then the verifier.
+            # (g) VERIFYING_POST — size echo check, then the verifier.
             self._to(item, UploadState.VERIFYING_POST, run_id)
             if (
                 receipt.echoed_size_bytes is not None

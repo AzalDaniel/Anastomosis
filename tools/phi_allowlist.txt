@@ -34,6 +34,15 @@ billingpatientrelationshipoption
 1/2/1980
 11/2/1980
 
+# Synthetic near-miss dates for the boundary-anchored identity regression
+# tests (tests/unit/test_identity.py, test_verify_levels.py, test_browserpack.py):
+# the same shape as the 1980 pair above, one octave up. They prove a record DOB
+# of 1/2/1990 does NOT match a chart showing 11/2/1990 (an unpadded DOB hiding
+# inside a longer date) — the wrong-patient collision the shared predicate
+# (anastomosis.core.identity) rejects. Fully synthetic; never a real DOB.
+1/2/1990
+11/2/1990
+
 # Synthetic DOBs for the L0-L6 delivery-verification tests
 # (tests/unit/test_verify_{levels,composite}.py). The synthetic patient
 # "Synthia Testpatient" has DOB 01/02/1990; the tests render that into a fake

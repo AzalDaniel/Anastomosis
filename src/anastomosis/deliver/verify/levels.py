@@ -38,6 +38,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from anastomosis.core.hashutil import hash_and_size
+from anastomosis.core.identity import date_token_present, token_present
+from anastomosis.core.identity import normalize as _normalize
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.timeutil import all_date_spellings
 from anastomosis.deliver.browser.errors import WrongPatientError
@@ -133,7 +135,13 @@ def fuzzy_contains(needle: str, haystack: str, *, ratio: float = _NAME_RATIO) ->
     hay = _normalize(haystack)
     if not hay:
         return 0.0
-    if n in hay:
+    # Boundary-anchored fast path (NOT a raw ``n in hay`` substring): the whole
+    # name must stand alone in the page. A raw substring returned 1.0 for a
+    # short name buried in a longer one ("Ann Li" inside "Joann Liang") — the
+    # wrong-chart false-PASS this predicate exists to reject. A legitimate
+    # rendering variant (middle name, suffix, "Last, First") is not a bounded
+    # whole-name match here and falls through to the calibrated fuzzy window.
+    if token_present(n, hay):
         return 1.0
     matcher = SequenceMatcher(autojunk=False)
     matcher.set_seq2(n)
@@ -159,11 +167,6 @@ def fuzzy_contains(needle: str, haystack: str, *, ratio: float = _NAME_RATIO) ->
     return best
 
 
-def _normalize(text: str) -> str:
-    """Lowercase and collapse all whitespace runs to single spaces."""
-    return " ".join(text.split()).lower()
-
-
 def date_renderings(value: date) -> set[str]:
     """Every chart spelling a pack might render ``value`` as (L2/L3 verify).
 
@@ -175,9 +178,14 @@ def date_renderings(value: date) -> set[str]:
 
 
 def _date_present(value: date, text: str) -> bool:
-    """Whether any candidate rendering of ``value`` appears in ``text``."""
-    haystack = _normalize(text)
-    return any(_normalize(s) in haystack for s in date_renderings(value))
+    """Whether any candidate rendering of ``value`` appears in ``text``.
+
+    Boundary-anchored per spelling (:func:`anastomosis.core.identity.date_token_present`),
+    so an unpadded DOB does not match inside a longer date run ("1/2/1990" does
+    not satisfy a page showing "11/2/1990") — the wrong-patient DOB collision
+    this hard gate exists to catch.
+    """
+    return any(date_token_present(s, text) for s in date_renderings(value))
 
 
 # --- the lazy PyMuPDF gate ---

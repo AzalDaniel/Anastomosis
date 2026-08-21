@@ -39,13 +39,18 @@ Anastomosis is the missing last mile, free and open source:
    (data-integrity, layout, and identity checks), and guard every upload with the
    L0–L6 verification ladder — on by default (`--no-verify` to skip; the run
    report names exactly which levels ran) — plus a live wrong-patient banner
-   check that runs regardless. **Active coverage** depends on the destination:
-   L0/L1 (file integrity, page count) and L2/L4 (patient identity + live banner
-   readback) run on every upload; L3 (pack-driven header fields) runs when the
-   upload carries pack context; L5/L6 (destination metadata + byte/identity
-   round-trip) run when the destination supports read-back. Levels that don't
-   apply skip with a reason recorded in the run report, so the claim never
-   exceeds the coverage.
+   check that runs regardless. **Active coverage** depends on the destination
+   AND the route. On the upload path (`anast upload` / the GUI console): L0
+   (file integrity) and L2/L4 (patient identity + live banner readback) run on
+   every upload; L1 runs but only checks that the PDF opens, has ≥1 page, and
+   clears the sub‑KiB floor — its *exact* expected‑page‑count check is **not
+   active** here; L3 (pack‑driven header/DOS fields) is **not active** here
+   either. Both are inactive because the upload manifest carries no pack name,
+   per‑item expected page count, or encounter records to check against (wiring
+   them is a tracked manifest‑schema follow‑up). L5/L6 (destination metadata +
+   byte/identity round‑trip) run when the destination supports read‑back. Every
+   level that does not apply skips with a reason recorded in the run report, so
+   the claim never exceeds the coverage.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
