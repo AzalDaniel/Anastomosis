@@ -135,8 +135,26 @@ def test_budgeted_name_passes_through_when_the_path_fits(tmp_path: Path) -> None
     assert budgeted_name(_SYNTHETIC_ID, "unknown", parent=tmp_path, suffix=".html") == _SYNTHETIC_ID
 
 
+def _deep_parent(tmp_path: Path, target_len: int = 200) -> Path:
+    """A parent whose ABSOLUTE length lands near ``target_len`` on any host.
+
+    ``tmp_path`` itself varies wildly by platform (a Windows runner's temp
+    dir is ~90 characters before a test adds anything; Linux's is ~45), so a
+    fixed filler leaves a different amount of budget room per host — on
+    Windows it left less than a hash tag and the helper (correctly) refused
+    where these tests expected a shortened name. Computing the filler from
+    the real ``tmp_path`` pins the room the arithmetic under test gets.
+    """
+    filler = max(1, target_len - len(str(tmp_path)) - 1)
+    parent = tmp_path / ("d" * filler)
+    # If a host's temp dir were ever deep enough to break the target, fail
+    # with a clear reason instead of silently testing something else.
+    assert len(str(parent)) <= target_len + 1, "temp dir too deep for this test's budget"
+    return parent
+
+
 def test_budgeted_name_shortens_for_a_deep_parent(tmp_path: Path) -> None:
-    parent = tmp_path / ("d" * 120)
+    parent = _deep_parent(tmp_path)
     name = budgeted_name("feedface-" + "c" * 300, "unknown", parent=parent, suffix=".html")
     full = parent / f"{name}.html"
     assert len(str(full)) <= MAX_PATH_CHARS
@@ -147,7 +165,7 @@ def test_budgeted_name_shortens_for_a_deep_parent(tmp_path: Path) -> None:
 
 
 def test_budgeted_name_stays_distinct_when_shortened(tmp_path: Path) -> None:
-    parent = tmp_path / ("d" * 120)
+    parent = _deep_parent(tmp_path)
     base = "feedface-" + "d" * 300
     first = budgeted_name(base + "-one", "unknown", parent=parent, suffix=".html")
     second = budgeted_name(base + "-two", "unknown", parent=parent, suffix=".html")

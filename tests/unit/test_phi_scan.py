@@ -180,6 +180,31 @@ def test_hash_approved_file_may_carry_a_base64_payload(
     assert run_scan([f], canary_denylist) == 1
 
 
+def test_armor_approval_is_line_ending_independent(
+    tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One approval hash covers the LF and CRLF checkouts of a text file.
+
+    git checks text files out with CRLF on Windows runners (autocrlf), so the
+    raw bytes of the SAME committed file hash differently per platform; the
+    armor gate therefore hashes the LF form. Without this, an approval
+    computed on Linux failed every Windows run of the whole-repo scan.
+    """
+    lf_content = f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n"
+    allowlist = tmp_path / "allow.txt"
+    allowlist.write_text(
+        "# synthetic stylesheet, approved for this test only\n"
+        f"sha256:{hashlib.sha256(lf_content.encode()).hexdigest()}\n"
+    )
+    monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)
+    lf = tmp_path / "lf.xsl"
+    lf.write_bytes(lf_content.encode())
+    crlf = tmp_path / "crlf.xsl"
+    crlf.write_bytes(lf_content.replace("\n", "\r\n").encode())
+    assert run_scan([lf], canary_denylist) == 0
+    assert run_scan([crlf], canary_denylist) == 0
+
+
 def test_short_base64_runs_do_not_trip_the_armor_gate(
     tmp_path: Path, canary_denylist: Path
 ) -> None:

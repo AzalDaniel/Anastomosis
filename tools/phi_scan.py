@@ -298,7 +298,13 @@ def main(argv: list[str] | None = None) -> int:
         # of the surrounding text continues either way — an armored blob must
         # not shield the readable part of the file from the rest of the gate.
         if BASE64_ARMOR_RE.search(text):
-            digest = hashlib.sha256(raw).hexdigest()
+            # The approval digest is computed over the LF form of the file:
+            # git checks TEXT files out with CRLF on Windows (autocrlf), so
+            # the raw bytes of the same committed file hash differently per
+            # platform, and a Linux-computed approval would fail every
+            # Windows run. Binary files never get eol conversion, so the
+            # binary branch above hashes raw bytes.
+            digest = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
             if digest not in approved_files:
                 all_findings.append(
                     f"{display}: base64-armored payload of {BASE64_ARMOR_MIN_CHARS}+ "
