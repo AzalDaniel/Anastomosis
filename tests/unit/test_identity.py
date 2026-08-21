@@ -65,6 +65,13 @@ def test_token_present_is_case_sensitive() -> None:
         # in both directions (filenames, dotted usernames, decimals).
         ("1/2/1990", "see 1/2/1990.pdf export", False),
         ("Li", "see Ann.Li.Smith for details", False),
+        # The LOOKBEHIND '.' is load-bearing too: the fraction digit after a
+        # decimal point must not read as a standalone value.
+        ("6", "Temp 98.6 F", False),
+        # A two-dot run or an ellipsis is TRUNCATION, not a sentence end: the
+        # full value is unknown, so it must reject.
+        ("1/2/1990", "DOB 1/2/1990... more", False),
+        ("1/2/1990", "DOB 1/2/1990\u2026", False),
     ],
 )
 def test_token_present_period_boundary_is_asymmetric(
@@ -121,6 +128,22 @@ def test_name_present_empty_name_matches_nothing() -> None:
         # A cosmetic sentence period after the name must not reject it.
         ("Ann Li", "Patient: Ann Li.", True),
         ("Li Ann", "Patient: Ann Li.", True),  # parts are order-independent
+        # PDF extraction and EHR DOMs render compound-name hyphens as ANY of
+        # the Unicode hyphen/dash family — each must reject like ASCII '-'.
+        ("Ann Li", "Mary\u2010Ann Li\u2010Wong  01/02/1990", False),  # U+2010 hyphen
+        ("Ann Li", "Mary\u2011Ann Li\u2011Wong  01/02/1990", False),  # non-breaking hyphen
+        ("Ann Li", "Mary\u2013Ann Li\u2013Wong  01/02/1990", False),  # en dash
+        ("Ann Li", "Mary\u00adAnn Li\u00adWong  01/02/1990", False),  # soft hyphen
+        ("Brien Sam", "O\u2018Brien, Sam 01/02/1990", False),  # left single quote
+        # The possessive is the SAME patient; a punctuation hyphen (no word
+        # character after it) is a separator, not a joiner. Neither may
+        # false-reject — at the banner that aborts the whole run.
+        ("Ann Li", "Ann Li's Chart  DOB 01/02/1990", True),
+        ("Ann Li", "Ann Li\u2019s Chart  DOB 01/02/1990", True),
+        ("Ann Li", "Ann Li- DOB 01/02/1990", True),
+        # A truncated cell has an UNKNOWN identity — reject, never guess.
+        ("Ann Li", "Ann Li... (truncated cell)", False),
+        ("Ann Li", "Ann Li\u2026 (truncated cell)", False),
     ],
 )
 def test_name_present_treats_name_joiners_as_embedding(

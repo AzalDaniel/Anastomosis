@@ -23,10 +23,14 @@ Two boundary definitions, deliberately distinct:
   or ``"1980"``. A trailing bare period (``"1/2/1990."`` at sentence end) is
   NOT an embedding — the value stands alone there.
 * **Name boundaries** (:func:`name_fragment_present`) — names additionally
-  treat the intra-name joiners ``-``, ``'``, and the curly apostrophe
-  (U+2019) as word characters, so ``"Ann"`` does not stand alone in
-  ``"Mary-Ann"``, nor ``"Brien"`` in ``"O'Brien"`` — the punctuated-compound
-  form of the short-name-inside-a-longer-name collision.
+  treat the intra-name joiners (the whole Unicode hyphen/dash family and all
+  three apostrophes — see ``_NAME_HYPHENS`` / ``_NAME_APOSTROPHES``) as word
+  characters on the lookbehind side, so ``"Ann"`` does not stand alone in
+  ``"Mary-Ann"`` (any hyphen codepoint), nor ``"Brien"`` in ``"O'Brien"`` —
+  the punctuated-compound form of the short-name-inside-a-longer-name
+  collision. The trailing side is narrower: a hyphen rejects only when it
+  joins into a word character, a possessive (``"Ann Li's Chart"``) matches,
+  and truncation (``"Ann Li..."``) rejects — see ``_NAME_TRAILING``.
 
 Known conservative limitation: scripts written without separators (CJK and
 other ideographic text) offer no boundary to anchor on, so an expected name
@@ -65,6 +69,13 @@ def normalize(text: str) -> str:
     return " ".join(text.split()).lower()
 
 
+# Truncation on the trailing side is NOT a boundary: a server-clipped cell
+# ("Ann Li..." — Ann Lithgow? Ann Li-Wong?) has an UNKNOWN identity, so an
+# ASCII two-dot run or the ellipsis character rejects exactly like a joined
+# word character. A single bare period (sentence end) still matches.
+_VALUE_TRAILING = r"(?!\w|\.\w|\.\.|\u2026)"
+
+
 def token_present(needle: str, haystack: str) -> bool:
     """Boundary-anchored, case-sensitive presence: ``needle`` must stand alone.
 
@@ -75,20 +86,37 @@ def token_present(needle: str, haystack: str) -> bool:
     ``"1/2/1990"`` does not match inside ``"11/2/1990"`` or ``"1/2/1990.pdf"``.
     A trailing *bare* period (sentence end: ``"seen Ann Li."``,
     ``"DOB: 1/2/1990."``) is not an embedding and matches — a cosmetic period
-    must not read as a different identity. An empty needle matches nothing
-    (fail closed). Callers that need case-insensitivity normalize their inputs
-    first (see :func:`name_fragment_present`, :func:`date_token_present`).
+    must not read as a different identity — but a two-dot run or an ellipsis
+    is TRUNCATION (``"DOB 1/2/1990..."``): the full value is unknown, so it
+    rejects. An empty needle matches nothing (fail closed). Callers that need
+    case-insensitivity normalize their inputs first (see
+    :func:`name_fragment_present`, :func:`date_token_present`).
     """
     if not needle:
         return False
-    return re.search(rf"(?<![\w.]){re.escape(needle)}(?!\w|\.\w)", haystack) is not None
+    return re.search(rf"(?<![\w.]){re.escape(needle)}{_VALUE_TRAILING}", haystack) is not None
 
 
 # Characters that join fragments into ONE name: a match must not cross them.
-# ``"Ann"`` is embedded in ``"Mary-Ann"`` exactly as it is in ``"Joann"``.
-# The last entry is the curly apostrophe (U+2019) many EHR UIs render for
-# a typed ' (the re module resolves the escape inside the pattern).
-_NAME_BOUNDARY = r"[\w.\-'\u2019]"
+# ``"Ann"`` is embedded in ``"Mary-Ann"`` exactly as it is in ``"Joann"`` —
+# and PDF text extraction and EHR DOM text render the hyphen as any of the
+# Unicode hyphen/dash family, so the whole family is listed: U+2010 hyphen,
+# U+2011 non-breaking hyphen, U+2012 figure dash, U+2013 en dash, U+2014 em
+# dash, U+2015 horizontal bar, U+2212 minus, U+00AD soft hyphen. Apostrophes
+# likewise: ASCII ' plus the curly U+2018/U+2019 pair. (The re module
+# resolves the escapes inside the pattern.)
+_NAME_HYPHENS = r"\-\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u00ad"
+_NAME_APOSTROPHES = r"'\u2018\u2019"
+_NAME_BOUNDARY = rf"[\w.{_NAME_HYPHENS}{_NAME_APOSTROPHES}]"
+
+# The trailing side is narrower than the lookbehind, deliberately:
+# * a hyphen/dash rejects only when it JOINS into a word character
+#   ("Li-Wong" embeds; "Ann Li- DOB" is punctuation and matches);
+# * an apostrophe never rejects on the trailing side — the possessive
+#   ("Ann Li's Chart") is the same patient, and the O'Brien-style embedding
+#   is caught by the LOOKBEHIND on the next fragment;
+# * truncation (.. / ellipsis) rejects as in the value rule.
+_NAME_TRAILING = rf"(?!\w|\.\w|\.\.|\u2026|[{_NAME_HYPHENS}]\w)"
 
 
 def name_fragment_present(fragment: str, haystack: str) -> bool:
@@ -96,17 +124,19 @@ def name_fragment_present(fragment: str, haystack: str) -> bool:
 
     Case-insensitive and whitespace-normalized on both sides, so a multi-word
     fragment (a compound family name: ``"De La Cruz"``) must appear as that
-    contiguous phrase. Boundaries are the name-joiner-aware class: adjacent
-    word characters AND the intra-name joiners (``-``, ``'``, the curly
-    apostrophe) reject the match, so ``"Ann Li"`` matches in neither ``"Joann Liang"`` nor
-    ``"Mary-Ann Li-Wong"`` nor ``"Ann-Marie Li"``. A trailing bare period
-    still matches (``"Patient: Ann Li."``). Empty fragments match nothing.
+    contiguous phrase. Boundaries are the name-joiner-aware classes
+    (``_NAME_BOUNDARY`` behind, ``_NAME_TRAILING`` ahead): ``"Ann Li"``
+    matches in neither ``"Joann Liang"`` nor ``"Mary-Ann Li-Wong"`` (any
+    hyphen codepoint) nor ``"Ann-Marie Li"``, while the possessive
+    (``"Ann Li's Chart"``), a punctuation hyphen (``"Ann Li- DOB"``), and a
+    bare sentence period (``"Patient: Ann Li."``) all still match, and a
+    truncated cell (``"Ann Li..."``) rejects. Empty fragments match nothing.
     """
     cleaned = normalize(fragment)
     if not cleaned:
         return False
     hay = normalize(haystack)
-    pattern = rf"(?<!{_NAME_BOUNDARY}){re.escape(cleaned)}(?![\w\-'\u2019]|\.\w)"
+    pattern = rf"(?<!{_NAME_BOUNDARY}){re.escape(cleaned)}{_NAME_TRAILING}"
     return re.search(pattern, hay) is not None
 
 
