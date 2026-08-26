@@ -44,13 +44,27 @@ exporter handles this in two tiers:
    narratives an earlier CDA ingest captured, which no emitter here re-derives
    — is serialized as deterministic ``path = value`` lines
    into a namespaced ``<text>`` block on a dedicated extensions section (LOINC
-   ``51899-3``). The parser captures that whole block into
-   ``patient.extensions["ccda:section:51899-3"]``, so the data is **visible in
-   the document and recoverable from re-ingest** — just as narrative text, NOT
-   back onto its original typed models. The set of fields each structured
-   emitter *does* consume is declared in :data:`_EXPORTED_FIELDS`, kept adjacent
-   to each emitter so drift is caught in review; everything outside that
-   allowlist flows to the narrative automatically (no per-field whack-a-mole).
+   ``51899-3``), one ``<paragraph>`` per entry. The section is stamped with
+   :data:`LOSS_NARRATIVE_TEMPLATE_ROOT` so a later ingest can tell THIS tool's
+   loss ledger from a third party's 51899-3 section; ``sources/ccda`` reads a
+   stamped section back into ``patient.extensions["ccda:prior_loss_narrative"]``
+   as discrete entries, so the data is **visible in the document and recoverable
+   from re-ingest** — just as narrative text, NOT back onto its original typed
+   models. The set of fields each structured emitter *does* consume is declared
+   in :data:`_EXPORTED_FIELDS`, kept adjacent to each emitter so drift is caught
+   in review; everything outside that allowlist flows to the narrative
+   automatically (no per-field whack-a-mole).
+
+   **Generations.** Export → ingest → export is a loop a migration legitimately
+   runs more than once, and the ledger must not grow without bound around it.
+   Re-ingesting a stamped section as ONE ``ccda:section:51899-3`` narrative made
+   generation N's ledger swallow generation N-1's whole text as a single line —
+   an ever-growing blob that drowned the real entries. Instead the entries come
+   back discrete and are re-emitted as a carry-forward appendix, deduplicated
+   against this generation's own entries by :func:`_carried_forward`: identical
+   entries collapse, distinct ones all survive at their multiplicity, and the
+   document carries exactly one 51899-3 section stamped with its generation
+   number. The ledger therefore reaches a fixed point at generation 2.
 
 2. **Truly unrecoverable losses (:data:`DECLARED_LOSSES`).** A small mapping of
    field-path patterns to reasons, covering only what cannot even ride the
@@ -69,6 +83,8 @@ produces a fixed document). Non-deterministic fields (``provenance.ingested_at``
 from __future__ import annotations
 
 import logging
+import re
+from collections import Counter
 from datetime import UTC, date, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -128,10 +144,28 @@ LOINC_RESULTS = "30954-2"
 LOINC_SOCIAL = "29762-2"
 LOINC_ENCOUNTERS = "46240-8"
 LOINC_NOTES = "34109-9"
-# The parser does not structurally parse this section; it captures the
-# narrative into patient.extensions["ccda:section:51899-3"]. We use it as the
-# declared home for vendor extension namespaces CDA has no structured slot for.
+# The parser does not structurally parse this section; it captures the entries
+# of a section STAMPED as ours into patient.extensions["ccda:prior_loss_narrative"]
+# and any other 51899-3 section into ccda:section:51899-3 like ordinary foreign
+# narrative. We use it as the declared home for source fields CDA has no
+# structured slot for.
 LOINC_EXTENSIONS = "51899-3"
+
+# The stamp that makes THIS tool's loss ledger self-identifying, so a re-ingest
+# can carry its entries forward instead of re-narrating the whole block as one
+# ever-growing line — and so a third party's 51899-3 section (unstamped) stays
+# ordinary foreign narrative. Non-OID roots are this exporter's existing
+# convention for anastomosis-private identifiers (see _patient_ids); the module
+# docstring's scope note covers why XSD-OID discipline does not apply here.
+# These four must mirror sources/ccda/parser.py exactly.
+LOSS_NARRATIVE_TEMPLATE_ROOT = "urn:anastomosis:ccda:loss-narrative"
+LOSS_NARRATIVE_TEMPLATE_VERSION = "1"
+LOSS_NARRATIVE_GENERATION_ROOT = "urn:anastomosis:ccda:loss-narrative:generation"
+# The pre-stamp marker: documents exported before the templateId existed carry
+# only this title, and the parser still recognizes them by it.
+LOSS_NARRATIVE_TITLE = "Anastomosis Preserved Source Fields"
+# Where a re-ingest parks a stamped section's entries (mirrors the parser).
+EXT_PRIOR_LOSS_NARRATIVE = "ccda:prior_loss_narrative"
 
 # Template ids the parser keys on (allergy severity, social tobacco).
 TPL_SEVERITY = "2.16.840.1.113883.10.20.22.4.8"
@@ -199,9 +233,12 @@ DECLARED_LOSSES: dict[str, str] = {
     "extensions:ccda:route|dose|allergen_code|negationInd": (
         "these four round-trip NATIVELY onto their own models (see "
         "_NATIVE_EXT_KEYS), so they are not narrated — they are not a loss. "
-        "Every OTHER ccda:* key (a captured section narrative, the source "
-        "document's id/effectiveTime/title) is narrated like any vendor "
-        "extension, because this exporter re-emits none of them"
+        "patient.extensions['ccda:prior_loss_narrative'] is likewise not "
+        "narrated and not a loss: it IS a previous generation's loss ledger, "
+        "re-emitted entry-by-entry as the deduplicated carry-forward appendix "
+        "(_carried_forward). Every OTHER ccda:* key (a captured section "
+        "narrative, the source document's id/effectiveTime/title) is narrated "
+        "like any vendor extension, because this exporter re-emits none of them"
     ),
     "*:narrative-only recovery": (
         "every other populated field with no structured CDA slot (native fields "
@@ -483,10 +520,27 @@ def _patient_demographics(role: etree._Element, patient: Patient) -> None:
 # --- section scaffold --------------------------------------------------------
 
 
-def _section(body: etree._Element, loinc: str, title: str, display_name: str) -> etree._Element:
+def _section(
+    body: etree._Element,
+    loinc: str,
+    title: str,
+    display_name: str,
+    *,
+    template_id: tuple[str, str] | None = None,
+    section_id: tuple[str, str] | None = None,
+) -> etree._Element:
     """Open a ``<component><section>`` with the LOINC code the parser dispatches
-    on and a title, returning the ``<section>`` for entries to attach to."""
+    on and a title, returning the ``<section>`` for entries to attach to.
+
+    ``template_id``/``section_id`` are ``(root, extension)`` pairs emitted BEFORE
+    ``<code>`` (CDA element order). Only the loss narrative uses them — that is
+    the one section this tool must be able to recognize as its own on re-ingest.
+    """
     section = _el(_el(body, "component"), "section")
+    if template_id is not None:
+        _el(section, "templateId", root=template_id[0], extension=template_id[1])
+    if section_id is not None:
+        _el(section, "id", root=section_id[0], extension=section_id[1])
     _el(
         section,
         "code",
@@ -849,21 +903,105 @@ def _midnight_utc(value: date) -> datetime:
 
 
 def _extensions_section(body: etree._Element, record: PatientRecord) -> None:
-    """Emit the loss ledger as narrative on a single 51899-3 section.
+    """Emit the loss ledger as narrative on a single, stamped 51899-3 section.
 
     This is the no-silent-drop mechanism, systematic rather than whack-a-mole:
     every populated source field with no structured CDA slot — native canonical
     fields, record-level lists the parser cannot produce, and vendor extension
     namespaces alike — is serialized here as deterministic ``path = value``
-    lines. The parser captures the whole block into
-    patient.extensions["ccda:section:51899-3"], so the data is preserved in the
-    document and recoverable on re-ingest, just not back on its original typed
-    models (a declared, audited loss)."""
-    lines = _collect_lost_fields(record)
+    lines, one per ``<paragraph>``. A re-ingest reads a stamped section's entries
+    back into patient.extensions["ccda:prior_loss_narrative"], so the data is
+    preserved in the document and recoverable on re-ingest, just not back on its
+    original typed models (a declared, audited loss).
+
+    Round trip N of the same chart appends that prior ledger here as a
+    deduplicated carry-forward (:func:`_carried_forward`) rather than as one
+    swallowed blob, and stamps the generation, so the section stays a readable
+    ledger instead of growing without bound. Exactly ONE 51899-3 section is ever
+    emitted.
+    """
+    current = _collect_lost_fields(record)
+    prior = _prior_narrative(record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE))
+    generation, prior_entries = prior if prior is not None else (None, [])
+    lines = current + _carried_forward(prior_entries, current)
     if not lines:
         return
-    section = _section(body, LOINC_EXTENSIONS, "Anastomosis Preserved Source Fields", "Note")
+    section = _section(
+        body,
+        LOINC_EXTENSIONS,
+        LOSS_NARRATIVE_TITLE,
+        "Note",
+        template_id=(LOSS_NARRATIVE_TEMPLATE_ROOT, LOSS_NARRATIVE_TEMPLATE_VERSION),
+        # A ledger with no readable generation restarts the count at 1; the
+        # counter is provenance, never clinical content, so a reset is not a loss.
+        section_id=(LOSS_NARRATIVE_GENERATION_ROOT, str((generation or 0) + 1)),
+    )
     _narrative(section, lines)
+
+
+def _prior_narrative(value: Any) -> tuple[int | None, list[str]] | None:
+    """The ``(generation, entries)`` a re-ingest parked under
+    :data:`EXT_PRIOR_LOSS_NARRATIVE`, or ``None`` when ``value`` is not the shape
+    this exporter writes.
+
+    ``None`` is the honest answer for an unrecognized shape: the caller then
+    leaves the key to :func:`_walk_extensions`, which narrates it like any other
+    vendor extension. A key this exporter cannot re-emit must never be BOTH
+    skipped here and exempted there — that is the silent drop.
+    """
+    if not isinstance(value, dict):
+        return None
+    entries = value.get("entries")
+    if not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries):
+        return None
+    generation = value.get("generation")
+    if generation is not None and not isinstance(generation, int):
+        return None
+    return generation, list(entries)
+
+
+# A path's per-object index: `medications[<uuid4>]`, `addenda[0]`, `race[]`.
+_INDEX_RE = re.compile(r"\[[^\]]*\]")
+
+
+def _entry_key(line: str) -> str:
+    """A loss entry with the per-object indices erased from its PATH only.
+
+    The value is left untouched (it may legitimately contain brackets), and a
+    line with no ``" = "`` separator is its own key. Paths never contain
+    ``" = "``, so the first separator is the right split.
+    """
+    path, sep, value = line.partition(" = ")
+    if not sep:
+        return line
+    return f"{_INDEX_RE.sub('[]', path)} = {value}"
+
+
+def _carried_forward(prior: list[str], current: list[str]) -> list[str]:
+    """The prior generation's entries this generation does not already state.
+
+    Dedupe is a MULTISET difference keyed on :func:`_entry_key` — the entry with
+    per-object indices erased. A canonical id is a DECLARED loss, regenerated on
+    every re-ingest, so ``medications[<old id>].patient_id = X`` and
+    ``medications[<new id>].patient_id = X`` are the same statement wearing two
+    dead ids; leaving both in would grow the ledger by one line per object per
+    generation. Multiset (not set) difference is what keeps that safe: two
+    distinct objects that genuinely share a field value contribute two entries
+    and only as many as the current narrative restates are dropped, so an entry
+    describing a REAL loss is never collapsed away — the ledger's per-entry count
+    is monotone across generations and settles at generation 2.
+
+    Prior document order is preserved, so output stays deterministic.
+    """
+    restated = Counter(_entry_key(line) for line in current)
+    out: list[str] = []
+    for line in prior:
+        key = _entry_key(line)
+        if restated[key]:
+            restated[key] -= 1
+            continue
+        out.append(line)
+    return out
 
 
 def _observation_consumed(item: dict[str, Any]) -> frozenset[str]:
@@ -1004,6 +1142,14 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
     provably re-emits into structured slots the parser reads back onto the same
     model (:data:`_NATIVE_EXT_KEYS`).
 
+    The patient's ``ccda:prior_loss_narrative`` is exempt too, but only when
+    :func:`_prior_narrative` recognizes its shape — :func:`_extensions_section`
+    re-emits those entries one by one as the carry-forward appendix, and
+    narrating them here as well would restore the swallowed-blob growth this key
+    exists to end. The exemption is scoped to the patient (the only model a
+    re-ingest writes it onto) and to a shape the exporter can actually re-emit,
+    so an unrecognized value still narrates rather than vanishing.
+
     Every other key narrates — a vendor namespace, and equally the ``ccda:*``
     keys an earlier ingest of a CDA document left behind. Those are NOT
     re-derived: a captured section narrative (``ccda:section:<loinc>``, the only
@@ -1015,6 +1161,12 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     for key in sorted(extensions):
         if key in _NATIVE_EXT_KEYS:
+            continue
+        if (
+            path == "patient"
+            and key == EXT_PRIOR_LOSS_NARRATIVE
+            and _prior_narrative(extensions[key]) is not None
+        ):
             continue
         lines += _serialize(f"{path}.extensions.{key}", extensions[key])
     return lines
