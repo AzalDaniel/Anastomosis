@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 _ROOT = Path(__file__).resolve().parent.parent
 _SVG = _ROOT / "assets" / "icon" / "icon.svg"
+_SVG_SMALL = _ROOT / "assets" / "icon" / "icon-small.svg"
+_SVG_GLYPH = _ROOT / "assets" / "icon" / "icon-glyph.svg"
 _ICO = _ROOT / "assets" / "icon" / "icon.ico"
 _WIZARD = _ROOT / "assets" / "installer" / "wizard.bmp"
 _WIZARD_SMALL = _ROOT / "assets" / "installer" / "wizard-small.bmp"
@@ -47,12 +49,38 @@ _WIZARD_SMALL_SIZE = (55, 58)
 _GROUND = (0x17, 0x13, 0x10)
 
 
+def _master_for(size: int) -> Path:
+    """The right master per rendition size — the vessel mark is generated in
+    three detail tiers (tools/make_vessel.py) because the full canopy
+    rasterises to mush below ~48 px while the bold glyph looks crude above it.
+    """
+    if size <= 32:
+        return _SVG_GLYPH
+    if size <= 64:
+        return _SVG_SMALL
+    return _SVG
+
+
 def _render(size: int) -> PILImage:
     import cairosvg  # type: ignore[import-untyped]
     from PIL import Image
 
-    png = cairosvg.svg2png(url=str(_SVG), output_width=size, output_height=size)
+    png = cairosvg.svg2png(url=str(_master_for(size)), output_width=size, output_height=size)
     return Image.open(io.BytesIO(png)).convert("RGBA")
+
+
+def _rounded(image: PILImage, radius_frac: float = 0.22) -> PILImage:
+    """The tile shape: the porcelain ground clipped to a rounded square, so
+    the exe/taskbar icon reads as an app tile rather than a raw screenshot."""
+    from PIL import Image, ImageDraw
+
+    mask = Image.new("L", image.size, 0)
+    draw = ImageDraw.Draw(mask)
+    radius = int(min(image.size) * radius_frac)
+    draw.rounded_rectangle((0, 0, image.size[0] - 1, image.size[1] - 1), radius, fill=255)
+    out = image.copy()
+    out.putalpha(mask)
+    return out
 
 
 def _flatten(image: PILImage) -> PILImage:
@@ -67,7 +95,7 @@ def _flatten(image: PILImage) -> PILImage:
 def _banner(size: tuple[int, int], mark_px: int) -> PILImage:
     from PIL import Image
 
-    mark = _render(mark_px)
+    mark = _rounded(_render(mark_px))
     canvas = Image.new("RGBA", size, (*_GROUND, 255))
     canvas.paste(mark, ((size[0] - mark.width) // 2, (size[1] - mark.height) // 2), mark)
     return _flatten(canvas)
@@ -78,7 +106,7 @@ def main() -> int:
         print(f"missing SVG master: {_SVG}", file=sys.stderr)
         return 2
 
-    renditions = [_render(s) for s in _ICO_SIZES]
+    renditions = [_rounded(_render(s)) for s in _ICO_SIZES]
     _ICO.parent.mkdir(parents=True, exist_ok=True)
     renditions[-1].save(
         _ICO,
