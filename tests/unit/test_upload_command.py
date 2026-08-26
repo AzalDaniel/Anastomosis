@@ -10,14 +10,17 @@ no browser. Synthetic data only (``feedface-`` ids, neutral file names).
 from __future__ import annotations
 
 import datetime
+import json
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from anastomosis.core.locking import OutputLockedError, output_lock
-from anastomosis.core.model import Patient, PatientRecord
+from anastomosis.core.model import Encounter, Patient, PatientRecord
 from anastomosis.core.upload_command import (
     DEFAULT_MAX_ATTEMPTS,
     LEDGER_NAME,
@@ -127,15 +130,15 @@ def test_run_upload_command_locks_before_reading_or_attaching(
     out = _write_manifest(tmp_path / "out")
     calls = {"read": 0, "attach": 0}
 
-    real_read = persist.read_upload_manifest
+    real_read = persist.load_upload_manifest
 
     def _counting_read(root: Path) -> object:
         calls["read"] += 1
         return real_read(root)
 
-    # run_upload_command imports read_upload_manifest lazily FROM persist, so the
+    # run_upload_command imports load_upload_manifest lazily FROM persist, so the
     # patch must live on persist (the source), not on upload_command's namespace.
-    monkeypatch.setattr(persist, "read_upload_manifest", _counting_read)
+    monkeypatch.setattr(persist, "load_upload_manifest", _counting_read)
 
     def _attach() -> FakeDestination:
         calls["attach"] += 1
@@ -220,8 +223,11 @@ def test_run_upload_command_passes_the_stop_flag(tmp_path: Path) -> None:
 
 # One verifiable patient — synthetic name + DOB the PDF must carry for L2.
 _V_PID = "feedface-0000-0000-0000-0000000000aa"
+_V_ENC = "feedface-e000-0000-0000-0000000000aa"
 _V_DEST = "dest-aa"
 _V_DOB = datetime.date(1990, 1, 2)
+# The date of service the chart below renders — what L3's "dos" field checks.
+_V_DOS = datetime.date(2023, 5, 10)
 _V_NAME = "Synthia Testpatient"  # = the patient's display_name below
 _FILLER = [f"Clinical note body line {i} for archival padding." for i in range(20)]
 _GOOD_LINES = [_V_NAME, "DOB 01/02/1990", "Date of service: May 10, 2023", *_FILLER]
@@ -234,12 +240,14 @@ def _verifiable_patient() -> Patient:
     return Patient(id=_V_PID, given_name="Synthia", family_name="Testpatient", birth_date=_V_DOB)
 
 
-def _write_verifiable_manifest(root: Path, lines: list[str]) -> Path:
+def _write_verifiable_manifest(root: Path, lines: list[str], *, pack: str | None = None) -> Path:
     """Write a manifest of ONE real PDF carrying ``lines`` into ``root``.
 
     The PDF is a genuine (PyMuPDF-rendered) chart so L0/L1 pass and L2 reads its
     page-1 text; the patient demographics ride the manifest so the verifier sees
-    the same canonical patient the engine resolves.
+    the same canonical patient the engine resolves. ``pack`` names the template
+    pack the manifest records, and the record carries the encounter whose date of
+    service ``_GOOD_LINES`` renders — together, what L3 verifies against.
     """
     import pymupdf
 
@@ -250,10 +258,38 @@ def _write_verifiable_manifest(root: Path, lines: list[str]) -> Path:
     page.insert_textbox(pymupdf.Rect(36, 36, 576, 756), "\n".join(lines))
     doc.save(str(path))
     doc.close()
-    docs = [RenderedDoc(path=path, encounter_id="enc-aa", patient_id=_V_PID)]
-    records = [PatientRecord(id=_V_PID, patient=_verifiable_patient())]
-    write_upload_manifest(docs, records, root)
+    docs = [RenderedDoc(path=path, encounter_id=_V_ENC, patient_id=_V_PID)]
+    records = [
+        PatientRecord(
+            id=_V_PID,
+            patient=_verifiable_patient(),
+            encounters=[Encounter(id=_V_ENC, patient_id=_V_PID, date_of_service=_V_DOS)],
+        )
+    ]
+    write_upload_manifest(docs, records, root, pack=pack)
     return root
+
+
+def _coverage(report_path: Path) -> dict[str, dict[str, object]]:
+    """The run report's per-level verification coverage table."""
+    report: dict[str, dict[str, dict[str, object]]] = json.loads(
+        report_path.read_text(encoding="utf-8")
+    )
+    return report["verification_coverage"]
+
+
+def _edit_manifest(root: Path, mutate: Callable[[dict[str, Any]], None]) -> Path:
+    """Rewrite ``root``'s manifest after ``mutate`` edits its parsed JSON.
+
+    Editing the written file (rather than the inputs) is what isolates the level
+    under test: the PDF and its hash are untouched, so only the field the edit
+    changed can decide the outcome.
+    """
+    path = root / MANIFEST_NAME
+    data = json.loads(path.read_text(encoding="utf-8"))
+    mutate(data)
+    path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def _readable_dest() -> FakeDestination:
@@ -300,6 +336,95 @@ def test_verify_is_the_safe_default_and_no_verify_is_an_explicit_opt_out(tmp_pat
     off = run_upload_command(UploadCommand(out_dir=out_off, verify=False), lambda: _readable_dest())
     assert off.aborted_reason is None
     assert off.counts.get(UploadState.COMPLETED.value) == 1
+
+
+# --- the manifest's own record drives L3 and L1's exact page count ----------
+#
+# The upload path used to skip both: nothing threaded a pack, an encounter, or
+# an expected page count, so L3 had nothing to check and L1 checked only the
+# floor. These drive the SAME artifacts the migrate-path verifier tests drive (a
+# real PDF + a readable FakeDestination) through `run_upload_command`, and read
+# the outcome off the run report's coverage table — the operator-visible claim.
+
+
+def test_v2_manifest_runs_l3_against_the_pack_it_records(tmp_path: Path) -> None:
+    """L3 verifies the header fields ``generic_soap`` declares (patient_name, dob,
+    dos) — so the pack name AND the encounter DOS both reached the ladder from
+    the manifest, with no pipeline re-run."""
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES, pack="generic_soap")
+
+    result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: _readable_dest())
+
+    assert result.counts.get(UploadState.COMPLETED.value) == 1
+    coverage = _coverage(result.report_path)
+    assert coverage["L3"] == {
+        "pass_count": 1,
+        "fail_count": 0,
+        "skip_count": 0,
+        "skip_reasons": [],
+    }
+
+
+def test_v2_manifest_without_a_dos_fails_l3_loudly(tmp_path: Path) -> None:
+    """A pack declaring ``dos`` and a manifest carrying none is a FAILED item, not
+    a quiet pass: the level names the field it could not find and nothing files."""
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES, pack="generic_soap")
+    _edit_manifest(out, lambda data: data["items"][0].update(date_of_service=None))
+    dest = _readable_dest()
+
+    result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: dest)
+
+    assert result.counts.get(UploadState.PRE_VERIFY_FAILED.value) == 1
+    assert dest.uploads == []  # caught before any bytes were sent
+    assert _coverage(result.report_path)["L3"]["fail_count"] == 1
+
+
+def test_v2_expected_page_mismatch_fails_the_item(tmp_path: Path) -> None:
+    """L1's EXACT page check runs on the upload path: an item whose rendered page
+    count no longer matches what the render run recorded fails, even though its
+    bytes are intact (L0 passes — only the declared count disagrees)."""
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES, pack="generic_soap")
+    # Only the declared count is changed; sha256/size still describe the file, so
+    # L0 passes and L1 is the level that must catch this.
+    _edit_manifest(out, lambda data: data["items"][0].update(expected_pages=5))
+    dest = _readable_dest()
+
+    result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: dest)
+
+    assert result.counts.get(UploadState.PRE_VERIFY_FAILED.value) == 1
+    assert dest.uploads == []
+    coverage = _coverage(result.report_path)
+    assert coverage["L0"]["pass_count"] == 1
+    assert coverage["L1"]["fail_count"] == 1
+
+
+def test_v1_manifest_uploads_with_l3_and_the_exact_page_check_skipped(tmp_path: Path) -> None:
+    """A pre-v2 tree still files — never refused — with L3 skipped for want of a
+    pack and L1 back to its floor check. The reasons are recorded in the report,
+    so the coverage claim matches what ran."""
+    pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
+    out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES, pack="generic_soap")
+
+    def _to_v1(data: dict[str, object]) -> None:
+        data["version"] = 1
+        del data["pack"]
+        for entry in data["items"]:  # type: ignore[attr-defined]
+            del entry["expected_pages"]
+            del entry["date_of_service"]
+
+    _edit_manifest(out, _to_v1)
+
+    result = run_upload_command(UploadCommand(out_dir=out, verify=True), lambda: _readable_dest())
+
+    assert result.counts.get(UploadState.COMPLETED.value) == 1
+    coverage = _coverage(result.report_path)
+    assert coverage["L3"]["skip_count"] == 1
+    assert coverage["L3"]["skip_reasons"] == ["no pack provided"]
+    # L1 still runs — it just has no exact count to assert against.
+    assert coverage["L1"]["pass_count"] == 1
 
 
 def test_verify_defaults_on() -> None:

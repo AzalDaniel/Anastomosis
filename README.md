@@ -40,17 +40,18 @@ Anastomosis is the missing last mile, free and open source:
    L0–L6 verification ladder — on by default (`--no-verify` to skip; the run
    report names exactly which levels ran) — plus a live wrong-patient banner
    check that runs regardless. **Active coverage** depends on the destination
-   AND the route. On the upload path (`anast upload` / the GUI console): L0
-   (file integrity) and L2/L4 (patient identity + live banner readback) run on
-   every upload; L1 runs but only checks that the PDF opens, has ≥1 page, and
-   clears the sub‑KiB floor — its *exact* expected‑page‑count check is **not
-   active** here; L3 (pack‑driven header/DOS fields) is **not active** here
-   either. Both are inactive because the upload manifest carries no pack name,
-   per‑item expected page count, or encounter records to check against (wiring
-   them is a tracked manifest‑schema follow‑up). L5/L6 (destination metadata +
-   byte/identity round‑trip) run when the destination supports read‑back. Every
-   level that does not apply skips with a reason recorded in the run report, so
-   the claim never exceeds the coverage.
+   AND the route. On the upload path (`anast upload` / the GUI console) a
+   current (version‑2) upload manifest carries what the ladder checks against —
+   the pack that rendered each chart, each chart's page count as rendered, and
+   each chart's date of service — so L0–L4 all run for real: file integrity,
+   an **exact** page count, patient identity, the pack's declared header/DOS
+   fields, and the live banner readback. L5/L6 (destination metadata +
+   byte/identity round‑trip) run when the destination supports read‑back. A
+   manifest written before that schema still uploads — an already‑rendered tree
+   is never refused — with L3 skipped and L1 back to "opens, ≥1 page, above the
+   sub‑KiB floor", announced by a loud warning rather than a silent downgrade.
+   Every level that does not apply skips with a reason recorded in the run
+   report, so the claim never exceeds the coverage.
 4. **Deliver** by the shortest available path: a vendor API where one exists,
    C-CDA import where supported, or verified browser automation where neither
    does. `migrate` PREPARES a cross-EHR move — it writes verified charts, the
