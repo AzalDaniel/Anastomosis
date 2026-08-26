@@ -7,11 +7,14 @@ template or engine regression is caught as a byte-for-byte text/geometry diff
 rather than slipping out as a silently-wrong chart.
 
 Two baselines per pack, written together from one render: the text/geometry
-golden (``<pack>.json``) and the page-1 word-box baseline
-(``<pack>.words.json``). The second exists because identical text can be laid
-out wrongly — a CSS regression that slides a value under the neighbouring
-label leaves the text layer untouched, and a chart that reads the wrong value
-under the right label is exactly the failure this project refuses to ship.
+golden (``<pack>.json``) and the per-page word-box baseline
+(``<pack>.words.json``, one entry per page of every chart). The second exists
+because identical text can be laid out wrongly — a CSS regression that slides
+a value under the neighbouring label leaves the text layer untouched, and a
+chart that reads the wrong value under the right label is exactly the failure
+this project refuses to ship. Every page is covered, not just the first: a
+multi-page pack (e.g. ``practice_fusion_soap``) can regress on page 4 while
+page 1 stays pixel-perfect.
 
 Regenerating the goldens is a **deliberate act**. Run this tool only when a
 template, pack, or engine change *intentionally* alters the rendered output;
@@ -63,10 +66,11 @@ GOLDENS: dict[str, Path] = {
     "practice_fusion_soap": _GOLDEN_DIR / "pf_tebra_v9_practice_fusion_soap.json",
 }
 
-# The spatial companion to each golden: the page-1 word bounding boxes, keyed
-# by the same pack name. The text golden pins WHICH words were rendered; this
-# pins WHERE they landed, so a CSS regression that slides a value under the
-# wrong label fails instead of passing with identical text.
+# The spatial companion to each golden: every page's word bounding boxes,
+# keyed by the same pack name. The text golden pins WHICH words were
+# rendered; this pins WHERE they landed, on EVERY page, so a CSS regression
+# that slides a value under the wrong label fails instead of passing with
+# identical text — even when the shift is on page 2+.
 WORD_BOXES: dict[str, Path] = {
     pack: path.with_suffix(".words.json") for pack, path in GOLDENS.items()
 }
@@ -97,8 +101,8 @@ __all__ = [
     "PdfProps",
     "diff_word_boxes",
     "dump_word_boxes",
-    "extract_page_boxes",
     "extract_pdf_props",
+    "extract_word_boxes",
     "meta_block",
     "normalize_text",
     "render_goldens",
@@ -153,71 +157,97 @@ def extract_pdf_props(pdf_path: Path) -> PdfProps:
         )
 
 
-def extract_page_boxes(pdf_path: Path, page_number: int = 0) -> list[list[object]]:
-    """The word bounding boxes on one page: ``[x0, y0, x1, y1, word]`` each.
+def extract_word_boxes(pdf_path: Path) -> list[list[list[object]]]:
+    """Every page's word bounding boxes: one page per outer element, each an
+    ``[x0, y0, x1, y1, word]`` list.
 
     PyMuPDF's ``page.get_text("words")`` yields one tuple per word in block →
-    line → word order, which is stable for a given PDF, so the baseline is
-    compared positionally. Page 1 is the pragmatic choice: it carries the
-    header block — patient, DOB, date of service, facility — where a value
-    sliding under the wrong label is the failure with clinical consequences.
+    line → word order, which is stable for a given PDF, so each page's
+    baseline is compared positionally. ALL pages are covered, not just the
+    header page: a chart's header (patient, DOB, date of service, facility)
+    carries the clearest clinical consequence if a value slides under the
+    wrong label, but a diagnosis or medication sliding under the wrong
+    heading on page 4 is exactly as unsafe.
     """
     import pymupdf  # provided by the render extra.
 
     with pymupdf.open(str(pdf_path)) as doc:
-        words = doc[page_number].get_text("words")
-    return [
-        [
-            round(x0, _BOX_PRECISION),
-            round(y0, _BOX_PRECISION),
-            round(x1, _BOX_PRECISION),
-            round(y1, _BOX_PRECISION),
-            word,
+        return [
+            [
+                [
+                    round(x0, _BOX_PRECISION),
+                    round(y0, _BOX_PRECISION),
+                    round(x1, _BOX_PRECISION),
+                    round(y1, _BOX_PRECISION),
+                    word,
+                ]
+                for x0, y0, x1, y1, word, *_rest in page.get_text("words")
+            ]
+            for page in doc
         ]
-        for x0, y0, x1, y1, word, *_rest in words
-    ]
 
 
 def diff_word_boxes(
-    expected: list[list[object]],
-    actual: list[list[object]],
+    expected: list[list[list[object]]],
+    actual: list[list[list[object]]],
     *,
     tolerance: float = BOX_TOLERANCE,
     limit: int = _DIFF_LIMIT,
 ) -> list[str]:
-    """Human-readable mismatch lines; empty when the two layouts agree.
+    """Human-readable mismatch lines; empty when every page's layout agrees.
 
-    Names the word and both boxes for every disagreement, because "the layout
-    changed" is not actionable — "``DOB`` moved 31pt down" is. A word-count
-    change is reported first, then the positional comparison walks the common
-    prefix so the first divergence is visible rather than a wall of shifted
-    rows.
+    Names the page, the word, and both boxes for every disagreement, because
+    "the layout changed" is not actionable — "page 3: ``DOB`` moved 31pt
+    down" is. A page-count change is reported first, then each page's
+    positional comparison walks its common word prefix so the first
+    divergence is visible rather than a wall of shifted rows.
     """
     lines: list[str] = []
     if len(expected) != len(actual):
-        lines.append(f"word count {len(actual)} != {len(expected)}")
-    for index in range(min(len(expected), len(actual))):
-        want, got = expected[index], actual[index]
-        if want[4] != got[4]:
-            lines.append(f"word {index}: {got[4]!r} != {want[4]!r}")
-        elif any(
-            abs(float(g) - float(w)) > tolerance  # type: ignore[arg-type]
-            for w, g in zip(want[:4], got[:4], strict=True)
-        ):
-            lines.append(
-                f"word {index} {want[4]!r} moved: expected {tuple(want[:4])} got {tuple(got[:4])}"
-            )
-        if len(lines) >= limit:
-            lines.append("… (further differences not listed)")
-            break
+        lines.append(f"page count {len(actual)} != {len(expected)}")
+    for page_index in range(min(len(expected), len(actual))):
+        want_page, got_page = expected[page_index], actual[page_index]
+        if len(want_page) != len(got_page):
+            lines.append(f"page {page_index}: word count {len(got_page)} != {len(want_page)}")
+        for word_index in range(min(len(want_page), len(got_page))):
+            want, got = want_page[word_index], got_page[word_index]
+            if want[4] != got[4]:
+                lines.append(f"page {page_index} word {word_index}: {got[4]!r} != {want[4]!r}")
+            elif any(
+                abs(float(g) - float(w)) > tolerance  # type: ignore[arg-type]
+                for w, g in zip(want[:4], got[:4], strict=True)
+            ):
+                lines.append(
+                    f"page {page_index} word {word_index} {want[4]!r} moved: "
+                    f"expected {tuple(want[:4])} got {tuple(got[:4])}"
+                )
+            if len(lines) >= limit:
+                lines.append("… (further differences not listed)")
+                return lines
     return lines
 
 
+def _dump_pages(pages: list[object]) -> str:
+    """Render one encounter's per-page word boxes as ``[page, page, ...]``
+    with one box per line inside each page — see :func:`dump_word_boxes`."""
+    if not pages:
+        return "[]"
+    page_blocks: list[str] = []
+    for page in pages:
+        assert isinstance(page, list), f"expected a page (list of boxes), got {type(page).__name__}"
+        if not page:
+            page_blocks.append("    []")
+            continue
+        rows = ",\n".join(f"      {json.dumps(box)}" for box in page)
+        page_blocks.append(f"    [\n{rows}\n    ]")
+    return "[\n" + ",\n".join(page_blocks) + "\n  ]"
+
+
 def dump_word_boxes(word_boxes: dict[str, object]) -> str:
-    """Serialize a word-box baseline with ONE word per line.
+    """Serialize a word-box baseline with ONE word per line, grouped by page.
 
     ``json.dumps(indent=2)`` spreads every box over seven lines, which turns a
-    six-page baseline into thousands of unreviewable lines — and an
+    multi-page baseline into tens of thousands of unreviewable lines — and an
     unreviewable baseline is one that gets re-generated instead of read. Each
     ``[x0, y0, x1, y1, word]`` is emitted compactly, so one word that moved is
     one line that changed. Keys are sorted, exactly like the text golden.
@@ -226,8 +256,7 @@ def dump_word_boxes(word_boxes: dict[str, object]) -> str:
     for key in sorted(word_boxes):
         value = word_boxes[key]
         if isinstance(value, list):
-            rows = ",\n".join(f"    {json.dumps(box)}" for box in value)
-            chunks.append(f"  {json.dumps(key)}: [\n{rows}\n  ]" if value else f'  "{key}": []')
+            chunks.append(f"  {json.dumps(key)}: {_dump_pages(value)}")
         else:
             chunks.append(f"  {json.dumps(key)}: {json.dumps(value, sort_keys=True)}")
     return "{\n" + ",\n".join(chunks) + "\n}\n"
@@ -271,8 +300,9 @@ def render_snapshots(pack_name: str = PACK_NAME) -> tuple[dict[str, object], dic
 
     * the golden mapping ``{"_meta": {...}, "<encounter_id>": {pages, width,
       height, text}, ...}``;
-    * the word-box baseline ``{"_meta": {...}, "<encounter_id>": [[x0, y0, x1,
-      y1, word], ...], ...}`` for page 1 of each chart.
+    * the word-box baseline ``{"_meta": {...}, "<encounter_id>": [[[x0, y0,
+      x1, y1, word], ...], ...], ...}`` — one page per outer element, for
+      EVERY page of each chart.
 
     One render feeds both, because launching Chromium twice to snapshot the
     same PDFs would double the slowest part of the e2e lane — and could
@@ -311,7 +341,7 @@ def render_snapshots(pack_name: str = PACK_NAME) -> tuple[dict[str, object], dic
         boxes: dict[str, object] = {}
         for doc in sorted(result.documents, key=lambda d: d.encounter_id):
             props[doc.encounter_id] = dict(extract_pdf_props(doc.path))
-            boxes[doc.encounter_id] = extract_page_boxes(doc.path)
+            boxes[doc.encounter_id] = extract_word_boxes(doc.path)
 
     meta = meta_block()  # one Chromium probe, shared by both baselines
     golden: dict[str, object] = {"_meta": meta}
@@ -346,8 +376,8 @@ def main() -> int:
         print(f"regen_goldens: cannot regenerate — {reason}", file=sys.stderr)
         return EXIT_NO_RENDERER
     # Regenerate every registered pack's golden (generic_soap + practice_fusion_soap),
-    # text/geometry and page-1 word boxes together — a Chromium bump re-baselines
-    # both from the same render, never one without the other.
+    # text/geometry and every-page word boxes together — a Chromium bump
+    # re-baselines both from the same render, never one without the other.
     for pack_name, golden_path in GOLDENS.items():
         golden, word_boxes = render_snapshots(pack_name)
         golden_path.parent.mkdir(parents=True, exist_ok=True)
