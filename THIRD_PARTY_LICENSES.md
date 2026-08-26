@@ -51,6 +51,19 @@ packaged into the wheel (`*.dist-info/licenses/`) and the Windows installer
 - License: SIL Open Font License, Version 1.1 — full text at
   [`assets/licenses/OFL-1.1.txt`](assets/licenses/OFL-1.1.txt).
 
+## Fraunces — SIL Open Font License 1.1
+
+| File | Role |
+| --- | --- |
+| `src/anastomosis/gui/web/fonts/FrauncesVF.woff2` | GUI editorial/display typeface (variable) |
+
+- Copyright 2018 The Fraunces Project Authors
+  (<https://github.com/undercasetype/Fraunces>). No Reserved Font Name is
+  declared, so this WOFF2 repackaging of the upstream variable TTF (format
+  conversion only — no glyph changes) keeps the family name.
+- License: SIL Open Font License, Version 1.1 — full text at
+  [`assets/licenses/OFL-1.1.txt`](assets/licenses/OFL-1.1.txt).
+
 ## Provenance discipline
 
 Every binary file in this repository is additionally hash-approved in
