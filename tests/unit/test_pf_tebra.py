@@ -346,6 +346,32 @@ def test_encounter_link_tables_grouped_once_preserve_per_encounter_order() -> No
     assert by_id[e2].diagnosis_ids == ["dx-b1", "dx-b2"]
 
 
+def test_encounter_diagnosis_link_surplus_columns_preserved(tmp_path: Path) -> None:
+    """A column beyond EncounterGuid/DiagnosisGuid on a diagnosis-link row
+    survives on the encounter it links, not just the ones the mapper reads."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    path = dst / "patient-encounter-diagnoses.tsv"
+    header, *rows = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        "\n".join(
+            [f"{header}\tZZExtraColumn", *(f"{row}\tSENTINEL-{i}" for i, row in enumerate(rows))]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
+    e1 = next(e for e in loaded[P1].encounters if e.id == E1)
+    ext = e1.extensions
+    assert ext["pf_tebra:side:patient-encounter-diagnoses:0:ZZExtraColumn"] == "SENTINEL-0"
+    # The link row's own (redundant) PatientPracticeGuid survives alongside it.
+    assert ext["pf_tebra:side:patient-encounter-diagnoses:0:PatientPracticeGuid"] == P1
+    # Mapped columns are never duplicated into extensions.
+    assert "pf_tebra:side:patient-encounter-diagnoses:0:DiagnosisGuid" not in ext
+    # structural mapping unchanged
+    assert e1.diagnosis_ids == ["feedface-d000-0000-0000-000000000001"]
+
+
 def test_bmi_auto_calc_trigger(records: dict[str, PatientRecord]) -> None:
     obs_e1 = records[P1].observations_for(E1)
     bmi = next(o for o in obs_e1 if o.code == "39156-5")
@@ -408,6 +434,31 @@ def test_allergies_with_joined_reactions(records: dict[str, PatientRecord]) -> N
     assert penicillin.category.value == "drug"
     assert penicillin.severity == "Severe"
     assert penicillin.reactions == ["Hives", "Anaphylaxis"]
+
+
+def test_allergy_reaction_link_surplus_columns_preserved(tmp_path: Path) -> None:
+    """A column beyond AllergyGuid/Reaction on a reaction-link row survives on
+    the allergy it links, not just the ones the mapper reads."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    path = dst / "patient-allergy-reactions.tsv"
+    header, *rows = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        "\n".join(
+            [f"{header}\tZZExtraColumn", *(f"{row}\tSENTINEL-{i}" for i, row in enumerate(rows))]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
+    penicillin = loaded[P1].allergies[0]
+    ext = penicillin.extensions
+    assert ext["pf_tebra:side:patient-allergy-reactions:0:ZZExtraColumn"] == "SENTINEL-0"
+    assert ext["pf_tebra:side:patient-allergy-reactions:1:ZZExtraColumn"] == "SENTINEL-1"
+    # ReactionSnomedCode was dropped before this fix; now preserved too.
+    assert ext["pf_tebra:side:patient-allergy-reactions:0:ReactionSnomedCode"] == "247472004"
+    assert "pf_tebra:side:patient-allergy-reactions:0:Reaction" not in ext  # mapped, not duplicated
+    assert penicillin.reactions == ["Hives", "Anaphylaxis"]  # structural mapping unchanged
 
 
 def test_medication_activity_and_prescription_links(
@@ -483,6 +534,70 @@ def test_plan_type_superbill_join_with_regex_fallback(
     assert medicare.plan_type == "Medicare"
     assert medicare.coverage_type == "Medical"
     assert records[P3].coverages == []  # self-pay
+
+
+def test_superbill_insurance_surplus_columns_preserved_on_joined_coverage(
+    tmp_path: Path,
+) -> None:
+    """Every superbill-insurances column beyond the PIPG/name/PlanType join
+    survives on the coverage its join actually won — proven for both the exact
+    PIPG tier (Medicare) and the plan-name tier (Evergreen Basic), not just the
+    columns _PlanTypeLookup itself reads."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    path = dst / "superbill-insurances.tsv"
+    header, *rows = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(
+        "\n".join(
+            [f"{header}\tZZExtraColumn", *(f"{row}\tSENTINEL-{i}" for i, row in enumerate(rows))]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
+    medicare = loaded[P2].coverages[0]  # row 0: PIPG tier-1 join
+    assert medicare.extensions["pf_tebra:side:superbill-insurances:ZZExtraColumn"] == "SENTINEL-0"
+    # row 1: name tier-2 join
+    basic = next(c for c in loaded[P1].coverages if c.plan_name == "Evergreen Basic")
+    assert basic.extensions["pf_tebra:side:superbill-insurances:ZZExtraColumn"] == "SENTINEL-1"
+    # Columns the join itself reads are never duplicated into the residual.
+    assert "pf_tebra:side:superbill-insurances:PlanType" not in basic.extensions
+    assert medicare.plan_type == "Medicare"  # typed slot unchanged by the added residual
+
+
+def test_superbill_insurance_unjoined_row_preserved_non_attributingly(tmp_path: Path) -> None:
+    """A superbill row whose PIPG/plan-name/payer-name join wins no coverage at
+    all must still survive — non-attributingly (the record, not a nonexistent
+    Coverage), per the table's read-in-full/never-orphaned convention."""
+    dst = tmp_path / "export"
+    shutil.copytree(FIXTURE, dst)
+    path = dst / "superbill-insurances.tsv"
+    orphan_row = "\t".join(
+        [
+            "feedface-5b11-0000-0000-000000000099",  # SuperbillGuid
+            "",  # PatientInsurancePlanGuid — matches no coverage
+            P3,  # PatientPracticeGuid — Cleo is self-pay, no coverages at all
+            "Acme Indemnity",  # PayerName — matches no coverage payer
+            "Acme Catastrophic",  # PlanName — matches no coverage plan name
+            "EPO",  # PlanType
+            "6/2/2023 1:45:09 PM",  # LastModifiedDateTimeUtc
+        ]
+    )
+    path.write_text(path.read_text(encoding="utf-8") + orphan_row + "\n", encoding="utf-8")
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(dst)}
+    assert loaded[P3].coverages == []  # still self-pay: the orphan row joins nothing
+    assert loaded[P3].extensions["pf_tebra:unjoined_superbill_insurances"] == [
+        {
+            "pf_tebra:SuperbillGuid": "feedface-5b11-0000-0000-000000000099",
+            "pf_tebra:PayerName": "Acme Indemnity",
+            "pf_tebra:PlanName": "Acme Catastrophic",
+            "pf_tebra:PlanType": "EPO",
+            "pf_tebra:LastModifiedDateTimeUtc": "6/2/2023 1:45:09 PM",
+        }
+    ]
+    # The two real fixture rows still join (P1, P2 unaffected by the orphan add).
+    assert "pf_tebra:unjoined_superbill_insurances" not in loaded[P1].extensions
+    assert "pf_tebra:unjoined_superbill_insurances" not in loaded[P2].extensions
 
 
 def test_family_history_immunizations_directives(

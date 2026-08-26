@@ -399,6 +399,14 @@ _SOAP_COLUMNS = (
     ("Plan", SectionKind.PLAN, "Plan"),
 )
 
+# patient-encounter-diagnoses columns read: EncounterGuid groups the link rows onto
+# their encounter (see map_export's hoist), DiagnosisGuid feeds diagnosis_ids. The
+# table's own PatientPracticeGuid (redundant with the encounter's patient_id) is
+# read by neither — it and any future column ride the encounter's extensions via
+# _map_encounter's per-row `side:` loop, same discipline as the demographics side
+# rows in _side_extensions.
+_ENCOUNTER_DX_MAPPED = frozenset({"EncounterGuid", "DiagnosisGuid"})
+
 
 def _note_section(kind: SectionKind, raw: str | None, title: str | None) -> NoteSection:
     """One SOAP/narrative section: rich HTML for rendering, text shadow for QA.
@@ -449,9 +457,13 @@ def _map_encounter(
         for add in addenda_by_encounter.get(guid, [])
     ]
 
-    diagnosis_ids = [
-        dx for link in dx_by_encounter.get(guid, []) if (dx := _s(link, "DiagnosisGuid"))
-    ]
+    dx_links = dx_by_encounter.get(guid, [])
+    diagnosis_ids = [dx for link in dx_links if (dx := _s(link, "DiagnosisGuid"))]
+    dx_extensions: dict[str, Any] = {}
+    for index, link in enumerate(dx_links):
+        dx_extensions.update(
+            _ext(link, _ENCOUNTER_DX_MAPPED, prefix=f"side:patient-encounter-diagnoses:{index}:")
+        )
 
     return Encounter(
         id=guid,
@@ -468,7 +480,7 @@ def _map_encounter(
         sections=sections,
         addenda=addenda,
         diagnosis_ids=diagnosis_ids,
-        extensions=_ext(row, _ENCOUNTER_MAPPED),
+        extensions=_ext(row, _ENCOUNTER_MAPPED) | dx_extensions,
         provenance=_prov("patient-encounters", guid),
     )
 
@@ -710,9 +722,20 @@ _ALLERGY_CATEGORIES = {
     "environment": AllergyCategory.ENVIRONMENT,
 }
 
+# patient-allergy-reactions columns read: AllergyGuid groups the link rows onto
+# their allergy, Reaction feeds `reactions`. ReactionSnomedCode and the table's
+# own (redundant) PatientPracticeGuid survive on the allergy's extensions instead.
+_REACTION_MAPPED = frozenset({"AllergyGuid", "Reaction"})
+
 
 def _map_allergy(row: Row, reactions_by_allergy: dict[str, list[Row]]) -> AllergyIntolerance:
     guid = _s(row, "AllergyGuid") or ""
+    reaction_rows = reactions_by_allergy.get(guid, [])
+    reaction_extensions: dict[str, Any] = {}
+    for index, r in enumerate(reaction_rows):
+        reaction_extensions.update(
+            _ext(r, _REACTION_MAPPED, prefix=f"side:patient-allergy-reactions:{index}:")
+        )
     return AllergyIntolerance(
         id=guid,
         patient_id=_s(row, "PatientPracticeGuid") or "",
@@ -720,13 +743,11 @@ def _map_allergy(row: Row, reactions_by_allergy: dict[str, list[Row]]) -> Allerg
         category=_ALLERGY_CATEGORIES.get(
             (_s(row, "AllergenCategory") or "").lower(), AllergyCategory.OTHER
         ),
-        reactions=[
-            reaction for r in reactions_by_allergy.get(guid, []) if (reaction := _s(r, "Reaction"))
-        ],
+        reactions=[reaction for r in reaction_rows if (reaction := _s(r, "Reaction"))],
         severity=_s(row, "Severity"),
         onset=_d(row, "StartDate"),
         active=_b(row, "IsActive"),
-        extensions=_ext(row, _ALLERGY_MAPPED),
+        extensions=_ext(row, _ALLERGY_MAPPED) | reaction_extensions,
         provenance=_prov("patient-allergy", guid),
     )
 
@@ -853,6 +874,14 @@ _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
 # Quaternary→3, Other→99 extend the primary/secondary/tertiary benefit ordering.
 _BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2, "quaternary": 3, "other": 99}
 
+# superbill-insurances columns a WINNING join actually reads (see _matched_row):
+# the PIPG/plan-name join keys and the PlanType value they resolve. A row's own
+# PatientPracticeGuid is read by neither tier — it and every other column ride
+# the coverage's extensions via `residual` below (a row that wins no coverage at
+# all has NOTHING read from it; see `unjoined`, which keeps only its
+# PatientPracticeGuid as the placement key).
+_SUPERBILL_JOINED_MAPPED = frozenset({"PatientInsurancePlanGuid", "PlanName", "PlanType"})
+
 
 class _PlanTypeLookup:
     """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...) three-tier join.
@@ -862,21 +891,30 @@ class _PlanTypeLookup:
     carries the generic "Medical" coverage type. Resolve by
     PatientInsurancePlanGuid first, then lowercased plan name, then payer name.
     The plan-name "(PPO)" regex is the last-resort fallback only.
+
+    superbill-insurances is read in FULL (never sliced by a foreign key — see
+    _FOREIGN_KEYS), so a row's home is decided here rather than by
+    _check_key_closure: `residual` parks a row's surplus columns on the coverage
+    its join actually won, and `unjoined` hands back every row whose join won
+    nothing, for the caller to preserve non-attributingly instead of dropping.
     """
 
     def __init__(self, superbill_rows: list[Row]) -> None:
-        self._by_pipg: dict[str, str] = {}
-        self._by_name: dict[str, str] = {}
+        self._by_pipg: dict[str, Row] = {}
+        self._by_name: dict[str, Row] = {}
         for row in superbill_rows:  # build PIPG- and plan-name-keyed lookups
             pipg = _s(row, "PatientInsurancePlanGuid")
             plan_type = _s(row, "PlanType")
             name = (_s(row, "PlanName") or "").lower()
             if pipg and plan_type and pipg not in self._by_pipg:
-                self._by_pipg[pipg] = plan_type
+                self._by_pipg[pipg] = row
             if name and plan_type and name not in self._by_name:
-                self._by_name[name] = plan_type
+                self._by_name[name] = row
 
-    def resolve(self, ins_row: Row) -> str | None:
+    def _matched_row(self, ins_row: Row) -> Row | None:
+        """The superbill row, if any, whose PIPG/name/payer tier wins for
+        ``ins_row`` — shared by `resolve` (the TYPE value) and `residual` (that
+        row's surplus columns), so the two never disagree on which row won."""
         pipg = _s(ins_row, "PatientInsurancePlanGuid")  # tier 1: exact plan GUID
         if pipg and pipg in self._by_pipg:
             return self._by_pipg[pipg]
@@ -886,11 +924,35 @@ class _PlanTypeLookup:
         payer = (_s(ins_row, "PayerName") or "").lower()  # tier 3: payer name
         if payer and payer in self._by_name:
             return self._by_name[payer]
+        return None
+
+    def resolve(self, ins_row: Row) -> str | None:
+        if (row := self._matched_row(ins_row)) is not None:
+            return _s(row, "PlanType")
         # Last resort: the "(PPO)"-style suffix some practices embed in the plan
         # name (the predecessor's heuristic of last resort; never guess from
-        # the payer name itself).
+        # the payer name itself). No superbill row informs this branch.
         match = _PLAN_TYPE_RE.search(_s(ins_row, "InsurancePlanName") or "")
         return match.group(1).upper() if match else None
+
+    def residual(self, ins_row: Row) -> dict[str, Any]:
+        """Surplus columns of the superbill row that resolved this coverage's
+        TYPE — empty when the regex fallback resolved it (reads no superbill
+        row) or when no superbill row informed this coverage at all."""
+        row = self._matched_row(ins_row)
+        if row is None:
+            return {}
+        return _ext(row, _SUPERBILL_JOINED_MAPPED, prefix="side:superbill-insurances:")
+
+    def unjoined(self, insurance_rows: list[Row], superbill_rows: list[Row]) -> list[Row]:
+        """Superbill rows whose PIPG/plan-name/payer-name join won no coverage
+        at all, across every patient's insurance rows."""
+        used = {
+            id(matched)
+            for ins_row in insurance_rows
+            if (matched := self._matched_row(ins_row)) is not None
+        }
+        return [row for row in superbill_rows if id(row) not in used]
 
 
 def _map_coverage(row: Row, plan_types: _PlanTypeLookup) -> Coverage:
@@ -913,7 +975,7 @@ def _map_coverage(row: Row, plan_types: _PlanTypeLookup) -> Coverage:
         start=_d(row, "EffectiveFromDate"),
         end=_d(row, "EffectiveToDate"),
         active=_b(row, "InsurancePlanIsActive"),
-        extensions=_ext(row, _INSURANCE_MAPPED),
+        extensions=_ext(row, _INSURANCE_MAPPED) | plan_types.residual(row),
         provenance=_prov("patient-insurances", _s(row, "PatientInsurancePlanGuid")),
     )
 
@@ -1137,6 +1199,14 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     practitioners = _map_practitioners(export)
     facilities = _map_facilities(export)
     plan_types = _PlanTypeLookup(export["superbill-insurances"])
+    # superbill-insurances is read in full (never sliced by a foreign key — see
+    # _FOREIGN_KEYS), so a row that joins no coverage at all is found here, once,
+    # rather than through _check_key_closure; preserved per patient below instead
+    # of being dropped (see _PlanTypeLookup.unjoined).
+    unjoined_superbill_by_patient = _by(
+        plan_types.unjoined(export["patient-insurances"], export["superbill-insurances"]),
+        _PATIENT_KEY,
+    )
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
     # Encounter-keyed link tables, grouped once for the whole run and threaded into
@@ -1202,6 +1272,15 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
         # name, so no field the adapter does not yet map is dropped.
         for table_name, table_rows in unmapped_by_patient.get(guid, {}).items():
             record_extensions[f"{SOURCE}:unmapped:{table_name}"] = table_rows
+
+        # A superbill-insurances row whose PIPG/plan-name/payer-name join won no
+        # coverage: non-attributing (it fed no typed object), so it lands on the
+        # record rather than a specific Coverage. _KEY_ONLY keeps only the
+        # PatientPracticeGuid that placed it here; every other column survives.
+        if unjoined_superbill := unjoined_superbill_by_patient.get(guid, []):
+            record_extensions[f"{SOURCE}:unjoined_superbill_insurances"] = [
+                _ext(row, _KEY_ONLY) for row in unjoined_superbill
+            ]
 
         observations = [_map_observation(row) for row in obs_by_patient.get(guid, [])]
         # Single-pass index: build encounter_id -> observations once instead of
