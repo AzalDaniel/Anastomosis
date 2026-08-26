@@ -120,14 +120,35 @@ jobs:
             2.1|2.2|2.3|2.4) echo "wheel core metadata version $meta is publishable" ;;
             *) echo "wheel core metadata version '$meta' is not accepted by the publish path (expected <= 2.4)" >&2; exit 1 ;;
           esac
+      - name: Generate the wheel's runtime SBOM (CycloneDX)
+        # The dependency tree a `pip install anastomosis` actually resolves to
+        # today: the wheel is installed into a clean venv and THAT environment
+        # is inventoried. The tool runs from a second venv so cyclonedx-bom and
+        # its own deps never pollute the inventory. Kept OUT of dist/ — the
+        # publish job uploads dist/* to PyPI, which accepts only sdists/wheels.
+        shell: bash
+        run: |
+          python -m venv target && target/bin/pip install --quiet dist/*.whl
+          python -m venv tool && tool/bin/pip install --quiet "cyclonedx-bom==7.3.1"
+          mkdir -p sbom
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/anastomosis/__init__.py)"
+          tool/bin/cyclonedx-py environment --pyproject pyproject.toml --output-reproducible \
+            --of JSON -o "sbom/anastomosis-${version}-sbom.cdx.json" target/bin/python
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
-          subject-path: dist/*
+          subject-path: |
+            dist/*
+            sbom/*.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: sbom/
           if-no-files-found: error
 
   publish:
