@@ -34,10 +34,23 @@ UninstallDisplayIcon={app}\gui\Anastomosis.exe
 SetupIconFile=assets\icon\icon.ico
 WizardImageFile=assets\installer\wizard.bmp
 WizardSmallImageFile=assets\installer\wizard-small.bmp
+; The wizard chrome runs the native dark style (Inno >= 6.6): the same warm
+; near-black ground the wizard bitmaps and the app itself use, so the install
+; experience is one surface with the product, not a beige dialog handing off
+; to a dark app. windows11 is the built-in custom style closest to the GUI's
+; rounded, flat-control language. Colors are BGR ($BBGGRR): $10 13 17 is the
+; brand ground #171310.
+WizardStyle=modern dark windows11
+WizardBackColor=$101317
+WizardImageBackColor=$101317
 ; Repo-root LICENSE, resolved via SourceDir (=..) at compile time; shown on the
 ; wizard's license page.
 LicenseFile=LICENSE
 DisableProgramGroupPage=yes
+; Upgrades keep the existing directory without asking again — re-running the
+; installer over an install is the normal update path, and re-prompting for a
+; directory it must not change is a trap.
+DisableDirPage=auto
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2/max
@@ -49,7 +62,6 @@ SolidCompression=yes
 SourceDir=..
 OutputDir=dist\installer
 OutputBaseFilename=Anastomosis-Setup-{#AppVersion}
-WizardStyle=modern
 ; A per-machine install under Program Files (the "normal Windows app" layout):
 ; elevation is required, and the optional CLI-on-PATH task therefore writes the
 ; MACHINE PATH (see [Registry]) — writing the per-user HKCU PATH under elevation
