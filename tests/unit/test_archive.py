@@ -601,6 +601,66 @@ def test_archive_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> 
         ArchiveDeliverer().deliver(records, None, tmp_path / "archive")
 
 
+def test_archive_two_patient_ids_past_truncation_get_distinct_dirs(tmp_path: Path) -> None:
+    """Two patient ids sharing every character up to the truncation cut,
+    differing only in the tail that gets cut away, must not collapse onto one
+    ``patients/<id>/`` slot. ``budgeted_name`` hashes the FULL original value
+    (not the kept prefix), so the two land on distinct hash-tagged names —
+    the ``_shared`` discipline's expected path, confirmed rather than assumed.
+    """
+    from anastomosis.core.model import Patient, PatientRecord
+
+    base = "feedface-0000-0000-0000-0000000000aa" + "z" * 300
+    records = [
+        PatientRecord(patient=Patient(id=base + "-one", family_name="Fixture", given_name="Ada")),
+        PatientRecord(patient=Patient(id=base + "-two", family_name="Sample", given_name="Bo")),
+    ]
+
+    out = tmp_path / "archive"
+    result = ArchiveDeliverer().deliver(records, None, out)
+
+    assert result.patient_count == 2
+    patient_dirs = [p for p in (out / "patients").iterdir() if p.is_dir()]
+    assert len(patient_dirs) == 2, "two ids differing only past the cut must not collapse"
+
+
+def test_archive_two_encounter_ids_that_sanitize_alike_raise_without_patient_values(
+    tmp_path: Path,
+) -> None:
+    """Two encounters within ONE patient whose ids differ only in characters
+    ``safe_name`` strips (``enc 0001`` and ``enc/0001`` both become
+    ``enc_0001``) must not silently overwrite one encounter's page with the
+    other's — the same discipline the patient-directory ledger already
+    enforces, now applied to encounter pages (``encounters/`` writes are
+    ``exist_ok``, so without a claim this merges the two into one file). The
+    refusal must carry no patient- or encounter-derived value.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    record = PatientRecord(
+        patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
+        encounters=[
+            Encounter(id="enc 0001", patient_id=pid, date_of_service=date(2023, 5, 10)),
+            Encounter(id="enc/0001", patient_id=pid, date_of_service=date(2023, 6, 10)),
+        ],
+    )
+
+    with pytest.raises(DeliveredNameCollision, match="encounter page") as excinfo:
+        ArchiveDeliverer().deliver([record], None, tmp_path / "archive")
+
+    message = str(excinfo.value)
+    assert "enc 0001" not in message
+    assert "enc/0001" not in message
+    assert "enc_0001" not in message
+    assert pid not in message
+    assert "Fixture" not in message
+    assert "Ada" not in message
+
+
 def test_archive_budgeted_chart_is_not_also_routed_to_unattributed(tmp_path: Path) -> None:
     """A chart delivered under a BUDGETED name is still 'owned'.
 
