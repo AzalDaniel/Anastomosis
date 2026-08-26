@@ -303,6 +303,14 @@ def _redirecting_handler(status: int, location: str) -> type[http.server.BaseHTT
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _handle(self) -> None:
+            # Drain the request body BEFORE answering. Responding to a POST
+            # with its body still unread makes Windows reset the connection
+            # on close (WinError 10053) before the client can read the
+            # redirect — an intermittent CI-only failure with nothing to do
+            # with the behavior under test.
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
             self.send_response(status)
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
