@@ -34,13 +34,8 @@ import typer
 from rich.console import Console
 
 import anastomosis
-import anastomosis.sources.ccda
-import anastomosis.sources.oracle_ehi
-import anastomosis.sources.pf_tebra
 from anastomosis.core.logutil import configure_logging
 from anastomosis.core.presentation import Glyphs, terminal_glyphs
-from anastomosis.deliver.browser.attach import attach_destination
-from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -48,22 +43,45 @@ if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome, PipelineCommand
     from anastomosis.pipeline import StageEvent
 
-# NB: ``_make_destination`` is re-published from THIS module as an alias of
+
+# NB: ``_make_destination`` is re-published from THIS module as a wrapper around
 # :func:`anastomosis.deliver.browser.attach.attach_destination` — a genuine,
-# mypy-visible module attribute (an explicit assignment, NOT a bare import alias)
-# so long-standing tests that
+# mypy-visible module attribute (a real ``def``, NOT a bare import alias) so
+# long-standing tests that
 # ``monkeypatch.setattr("anastomosis.cli._make_destination", ...)`` keep working,
 # and the moved ``anast upload`` command resolves it LATE through this module
 # (``_cli._make_destination``) so that patch is honored. The implementation lives
-# in ``deliver.browser.attach`` so the GUI never needs to import the CLI to reach it.
-_make_destination = attach_destination
+# in ``deliver.browser.attach`` so the GUI never needs to import the CLI to reach
+# it. The import is INSIDE the body (not at module top) because
+# ``anastomosis.deliver.browser`` eagerly pulls in the whole upload-engine
+# package on import; every other ``anast`` command pays nothing for it.
+def _make_destination(cdp_url: str, loaded: object) -> object:
+    from anastomosis.deliver.browser.attach import attach_destination
+
+    return attach_destination(cdp_url, loaded)
+
 
 # The API route's twin of the seam above: ``anast upload --fhir URL`` builds its
 # destination through ``_cli._make_fhir_destination`` (resolved LATE, same as the
 # browser seam), so ``monkeypatch.setattr(cli, "_make_fhir_destination", ...)``
 # drives the whole upload flow with no FHIR server. The implementation lives in
-# ``deliver.fhir_api.attach`` for the same reason as its browser counterpart.
-_make_fhir_destination = attach_fhir_destination
+# ``deliver.fhir_api.attach`` for the same reason as its browser counterpart, and
+# the import is lazy for the same reason too (``deliver.fhir_api`` pulls in the
+# client + destination modules at package import).
+def _make_fhir_destination(
+    base_url: str,
+    *,
+    bearer_token: str | None = None,
+    create_missing_patients: bool = False,
+) -> object:
+    from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
+
+    return attach_fhir_destination(
+        base_url,
+        bearer_token=bearer_token,
+        create_missing_patients=create_missing_patients,
+    )
+
 
 app = typer.Typer(
     name="anast",
