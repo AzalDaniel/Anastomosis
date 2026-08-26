@@ -198,3 +198,38 @@ def test_date_token_present_is_boundary_anchored(
     rendering: str, haystack: str, present: bool
 ) -> None:
     assert date_token_present(rendering, haystack) is present
+
+
+# --- unseparated scripts: the joined-name fallback ---
+
+
+@pytest.mark.parametrize(
+    ("parts", "haystack", "present"),
+    [
+        # The gap the fallback closes: family+given render flush, so neither
+        # part can stand alone — the joined name must match when delimited.
+        (["李", "明"], "姓名: 李明", True),  # 李+明 in 姓名: 李明
+        (["明", "李"], "姓名: 李明", True),  # reversed part order
+        # Punctuation delimits: ideographic full stop / comma are boundaries.
+        (["李", "明"], "李明。", True),  # 李明。 sentence-final
+        # Flush inside a LONGER name = a different patient — must refuse.
+        (["李", "明"], "李明华", False),  # 李明 inside 李明华
+        (["李", "明"], "王李明", False),  # 李明 inside 王李明
+        # Flush inside running prose — adjacency is indistinguishable from
+        # more-of-the-name, so it refuses (the safe direction).
+        (["李", "明"], "患者李明的记录", False),
+        # Spaced rendering still passes through the ordinary part-wise rule.
+        (["李", "明"], "李 明", True),
+        # Hangul renders flush the same way.
+        (["김", "민준"], "김민준 (DOB 1/2/1990)", True),
+        (["김", "민준"], "김민준수", False),  # longer name
+        # A mixed-script pair never joins: Latin names are spaced-script names.
+        (["Smith", "明"], "Smith明", False),
+        # A single ideographic part has nothing to join with — flush stays refused.
+        (["李"], "李明", False),
+    ],
+)
+def test_name_parts_present_joins_unseparated_scripts(
+    parts: list[str], haystack: str, present: bool
+) -> None:
+    assert name_parts_present(parts, haystack) is present

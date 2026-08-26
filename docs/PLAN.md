@@ -226,13 +226,15 @@ Next:
   bump + render/migrate writers + the upload reader) — see the
   `TODO(L3-on-upload)` in `core/upload_command.py` and README "Active
   coverage".
-- **Ideographic-script name matching** — the boundary-anchored identity
-  predicates (`core/identity.py`) cannot anchor in text written without
-  separators (CJK and similar), so a name part rendered flush against other
-  ideographs does not match. Failure direction is safe (patient reads as not
-  found / mismatched; nothing is filed on a boundary-free guess), but
-  practices with unspaced ideographic banners need a script-aware matching
-  mode before the browser route can serve them.
+- **Ideographic-script name matching, flush-prose case** — the identity
+  predicates (`core/identity.py`) accept an unseparated-script name as the
+  flush-joined form of its parts when it is delimited by punctuation or
+  whitespace (`姓名: 李明`), but a name flush inside running prose or a
+  longer name still refuses: an adjacent ideograph is indistinguishable
+  from more-of-the-name without a lexicon. Failure direction is safe
+  (patient reads as not found; nothing is filed on a boundary-free guess);
+  practices whose banners render the name with NO delimiter at all still
+  cannot be served by the browser route.
 - **Streaming Binary upload on the FHIR route** — `DocumentReference` inlines
   the PDF as base64, so filing one costs several times the file in memory
   (measured ~4.3x). `deliver/fhir_api/destination.py` refuses an item over
