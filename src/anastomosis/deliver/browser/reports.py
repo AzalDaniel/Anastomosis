@@ -27,6 +27,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.output import secure_output_dir
 
 # Imported from .verify.types (a leaf module with no project imports) rather
@@ -130,8 +131,5 @@ def write_run_report(
             for level, data in verification_coverage.items()
         }
     path = out / f"run-report-{run_id}.json"
-    path.write_text(
-        json.dumps(report, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_text(path, json.dumps(report, sort_keys=True, indent=2) + "\n")
     return path

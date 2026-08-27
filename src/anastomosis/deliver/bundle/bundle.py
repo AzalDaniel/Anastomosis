@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -262,7 +263,7 @@ class BundleDeliverer:
             ],
         }
         target = patient_dir / "qa_report.json"
-        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_text(target, json.dumps(payload, indent=2))
         return target
 
     def _write_readme(self, patient_id: str, patient_dir: Path) -> Path:
@@ -271,12 +272,12 @@ class BundleDeliverer:
         # secure_output_dir hardening as write_fhir_bundle (_shared.py); see
         # SECURITY.md.
         # codeql[py/clear-text-storage-sensitive-data]
-        target.write_text(
+        atomic_write_text(
+            target,
             _README_TEMPLATE.format(
                 patient_id=patient_id,
                 generated_at=datetime.now(UTC).isoformat(),
                 generator=self.generator,
             ),
-            encoding="utf-8",
         )
         return target

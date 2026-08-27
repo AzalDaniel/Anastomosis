@@ -63,6 +63,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.output import secure_output_dir
@@ -303,7 +304,7 @@ def write_upload_manifest(
     # PHI-warning README, never logged and never committed. See SECURITY.md,
     # "Code scanning & suppression policy (auditable)".
     # codeql[py/clear-text-storage-sensitive-data]
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, sort_keys=True, indent=2) + "\n")
     # PHI: log COUNTS only — never a name, a DOB, a date of service, or a path
     # under out_dir. The page-count tally is the honest measure of how much of
     # L1 an upload over this manifest can actually run.

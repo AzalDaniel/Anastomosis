@@ -45,12 +45,12 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_copy, atomic_write_text
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -239,12 +239,12 @@ class ArchiveDeliverer:
                 # Loud failure — a missing asset is a packaging bug, not a
                 # silent fallback. The archive must be self-contained.
                 raise FileNotFoundError(f"archive asset missing from package: {name}")
-            shutil.copyfile(source, assets_dir / name)
+            atomic_copy(source, assets_dir / name)
         notice = _ASSETS_DIR / "NOTICE.txt"
         if notice.is_file():
             licenses_dir = out / "LICENSES"
             licenses_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(notice, licenses_dir / "NOTICE.txt")
+            atomic_copy(notice, licenses_dir / "NOTICE.txt")
 
     def _copy_patient_pdfs(
         self,
@@ -400,7 +400,7 @@ class ArchiveDeliverer:
             generator=self.generator,
             generated_at=generated_at,
         )
-        (patient_dir / "index.html").write_text(html, encoding="utf-8")
+        atomic_write_text(patient_dir / "index.html", html)
 
     def _write_encounter_page(
         self,
@@ -444,7 +444,7 @@ class ArchiveDeliverer:
         # overwrite one encounter's page with another's (exist_ok write below).
         claim_delivered_name(claimed_pages, page_id, encounter.id, kind="encounter page")
         encounter_file = patient_dir / "encounters" / f"{page_id}.html"
-        encounter_file.write_text(html, encoding="utf-8")
+        atomic_write_text(encounter_file, html)
 
     def _write_index(
         self,
@@ -474,18 +474,18 @@ class ArchiveDeliverer:
         # the offline search box works; same secure_output_dir hardening as
         # write_fhir_bundle (_shared.py); see SECURITY.md.
         # codeql[py/clear-text-storage-sensitive-data]
-        index_path.write_text(html, encoding="utf-8")
+        atomic_write_text(index_path, html)
         # PHI-BY-DESIGN: same hardened-directory guarantee as the index above
         # (see SECURITY.md, "Code scanning & suppression policy (auditable)").
         # codeql[py/clear-text-storage-sensitive-data]
-        (out / "index.json").write_text(
-            json.dumps(manifest_entries, indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_text(
+            out / "index.json", json.dumps(manifest_entries, indent=2, sort_keys=True)
         )
         return index_path
 
     def _write_readme(self, out: Path) -> None:
         readme = out / "README.txt"
-        readme.write_text(README_TEXT, encoding="utf-8")
+        atomic_write_text(readme, README_TEXT)
 
 
 # --- helpers ----------------------------------------------------------------
