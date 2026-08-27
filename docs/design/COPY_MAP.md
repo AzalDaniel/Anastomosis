@@ -26,7 +26,7 @@ and format names keep their proper casing (C-CDA, FHIR).
 | Source format | Export format — “Which system this export came from. ‘Detect’ works for all built-in formats.” |
 | Template pack | Chart layout — “How the finished chart pages are laid out.” |
 | Extra pack directory | (Advanced) Additional layout folder |
-| qa on / qa off | Double-check results: on / off — “Re-reads every finished chart and confirms names, dates, and values landed on the right patient.” |
+| qa on / qa off | Double-check results — a switch, so the label names what it turns on and the states are not spelled out. “Re-reads every finished chart and confirms names, dates, and values landed on the right patient.” |
 | trust new pack code | (Advanced) Allow this new layout to run — “Layouts contain code. Anastomosis refuses layouts it has not seen before unless you allow them once here.” |
 | write upload manifest | Prepare for upload — “Also writes the files the Uploads screen needs to file these charts into another system.” |
 | force re-render | Rebuild pages even if unchanged |

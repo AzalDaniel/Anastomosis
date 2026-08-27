@@ -56,7 +56,7 @@ def test_run_button_dispatches_the_async_call(gui) -> None:
 
     page.fill("#charts-export-dir", "/synthetic/export")
     page.fill("#charts-out-dir", "/synthetic/out")
-    page.click('[data-view="charts"] .segment-option[data-value="off"]')  # by mouse
+    page.click("label.toggle:has(#charts-qa)")  # by mouse, on the switch's label row
     page.click("#charts-run")
     page.wait_for_timeout(120)
 

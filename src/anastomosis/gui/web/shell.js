@@ -356,15 +356,9 @@
   // stretch; pointer-down + drag follows the cursor and snaps to the nearest
   // slot on release. --segment-count/--segment-index are written through the
   // CSSOM because the strict `style-src 'self'` CSP refuses a markup style="".
-  // Two vocabularies, one mechanism. A group of peer DESTINATIONS is a tablist
-  // (the view nav); a binary or small either/or SETTING is a radiogroup. They
-  // slide, drag and key identically, and assistive tech has to be told which is
-  // which — so the pattern is declared in the markup and only the ARIA differs.
-  const PATTERNS = {
-    tabs: { option: "tab", selected: "aria-selected" },
-    radios: { option: "radio", selected: "aria-pressed" },
-  };
-
+  // One caller: the view nav. A sliding pill means "peer destinations", so it is
+  // a tablist and nothing else in the app wears it — a binary setting is a
+  // switch (see makeSwitchField) and one of N is a chooser.
   // Setting a toggle from outside, WITHOUT calling back: the view nav has to
   // follow a view change that started somewhere else (Migrate's "Continue on
   // Uploads"), and a notify here would bounce straight back into showView.
@@ -381,7 +375,6 @@
       const options = $$(".segment-option", toggle);
       if (!options.length) return;
       const count = options.length;
-      const pattern = PATTERNS[toggle.dataset.pattern] || PATTERNS.radios;
       toggle.style.setProperty("--segment-count", String(count));
 
       const activate = (nextIdxRaw, opts) => {
@@ -409,10 +402,7 @@
         toggle.style.setProperty("--segment-index", String(nextIdx));
         options.forEach((o, i) => {
           const selected = i === nextIdx;
-          o.setAttribute(pattern.selected, selected ? "true" : "false");
-          if (pattern.option === "radio") {
-            o.setAttribute("aria-checked", selected ? "true" : "false");
-          }
+          o.setAttribute("aria-selected", selected ? "true" : "false");
           o.classList.toggle("is-live", selected);
           o.tabIndex = selected ? 0 : -1;
         });
@@ -498,7 +488,7 @@
       toggle.addEventListener("pointercancel", (e) => finishDrag(e, { canceled: true }));
 
       options.forEach((opt, i) => {
-        opt.setAttribute("role", pattern.option);
+        opt.setAttribute("role", "tab");
         opt.addEventListener("click", (e) => {
           if (drag.moved) {
             e.preventDefault();
@@ -540,14 +530,6 @@
       const startIdx = options.findIndex((o) => o.dataset.value === toggle.dataset.value);
       activate(startIdx >= 0 ? startIdx : 0, { animate: false });
     });
-  }
-
-  function segmentValue(name, fallback, root) {
-    const host = $(`.segment-toggle[data-name="${name}"]`, root);
-    if (!host) return fallback;
-    if (host.dataset && host.dataset.value) return host.dataset.value;
-    const pressed = $('.segment-option[aria-pressed="true"]', host);
-    return pressed ? pressed.dataset.value : fallback;
   }
 
   // ─── Small DOM builders shared by the views ───────────────────
@@ -672,10 +654,13 @@
     return field;
   }
 
-  function makeInput(id, placeholder) {
+  // `face` is the §4.4 opt-in for machine-shaped content ("is-path", "is-id"):
+  // the caller knows what kind of string the field holds, the builder does not.
+  function makeInput(id, placeholder, face) {
     const input = document.createElement("input");
     input.type = "text";
     input.id = id;
+    if (face) input.className = face;
     if (placeholder) input.placeholder = placeholder;
     return input;
   }
@@ -691,12 +676,13 @@
     return wrap;
   }
 
-  function makeToggle(id, labelText) {
+  function makeToggle(id, labelText, checked) {
     const label = document.createElement("label");
     label.className = "toggle";
     const input = document.createElement("input");
     input.type = "checkbox";
     input.id = id;
+    input.checked = !!checked;
     const track = document.createElement("span");
     track.className = "track";
     const text = document.createElement("span");
@@ -707,39 +693,12 @@
     return label;
   }
 
-  function makeSegment(name, labelText, helpText, options) {
-    const row = document.createElement("div");
-    row.className = "segment-row";
-    const caption = document.createElement("span");
-    caption.className = "field-help";
-    caption.textContent = labelText;
-    const toggle = document.createElement("div");
-    toggle.className = "segment-toggle";
-    toggle.setAttribute("role", "radiogroup");
-    toggle.dataset.pattern = "radios";
-    toggle.setAttribute("aria-label", labelText);
-    toggle.dataset.name = name;
-    toggle.dataset.value = options[0].value;
-    const goo = document.createElement("div");
-    goo.className = "segment-goo";
-    goo.setAttribute("aria-hidden", "true");
-    const indicator = document.createElement("div");
-    indicator.className = "segment-indicator";
-    goo.appendChild(indicator);
-    toggle.appendChild(goo);
-    for (const opt of options) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "segment-option";
-      btn.dataset.value = opt.value;
-      btn.textContent = opt.label;
-      toggle.appendChild(btn);
-    }
-    row.appendChild(toggle);
-    row.appendChild(caption);
+  // A switch plus the sentence explaining what it turns on. The label names the
+  // thing being enabled, never "on/off" — that is what a switch already says.
+  function makeSwitchField(id, labelText, helpText, checked) {
     const wrap = document.createElement("div");
     wrap.className = "stack";
-    wrap.appendChild(row);
+    wrap.appendChild(makeToggle(id, labelText, checked));
     if (helpText) {
       const help = document.createElement("div");
       help.className = "field-help";
@@ -763,7 +722,7 @@
         id("export-dir"),
         "Export folder",
         "The folder your EHR gave you when you exported your records.",
-        makeInput(id("export-dir"), "C:\\Users\\you\\Downloads\\ehr-export")
+        makeInput(id("export-dir"), "C:\\Users\\you\\Downloads\\ehr-export", "is-path")
       )
     );
     if (migrate) {
@@ -793,7 +752,7 @@
         id("out-dir"),
         "Where results go",
         "The folder Anastomosis writes the finished charts into.",
-        makeInput(id("out-dir"), "C:\\Users\\you\\Documents\\anastomosis-charts")
+        makeInput(id("out-dir"), "C:\\Users\\you\\Documents\\anastomosis-charts", "is-path")
       )
     );
     host.appendChild(
@@ -818,14 +777,11 @@
     host.appendChild(makeField(id("sections"), "Chart sections", "Which sections each chart page includes.", matrix));
 
     host.appendChild(
-      makeSegment(
-        "qa",
+      makeSwitchField(
+        id("qa"),
         "Double-check results",
         "Re-reads every finished chart and confirms names, dates, and values landed on the right patient.",
-        [
-          { value: "on", label: "On" },
-          { value: "off", label: "Off" },
-        ]
+        true
       )
     );
 
@@ -864,7 +820,7 @@
         id("pack-dir"),
         "Additional layout folder",
         "Only needed for a chart layout that did not ship with Anastomosis.",
-        makeInput(id("pack-dir"), "C:\\Users\\you\\Documents\\layouts")
+        makeInput(id("pack-dir"), "C:\\Users\\you\\Documents\\layouts", "is-path")
       )
     );
     const trustWrap = document.createElement("div");
@@ -937,7 +893,7 @@
           pack: migrate ? null : value("pack"),
           render: migrate ? value("render") || "neutral" : null,
           sections: gatherSections(matrix),
-          qa: segmentValue("qa", "on", host) === "on",
+          qa: checked("qa"),
           archive: checked("archive"),
           bundle: checked("bundle"),
           ccda: checked("ccda"),
@@ -1153,7 +1109,6 @@
     hideBanner,
     stageLabel,
     initSegmentToggles,
-    segmentValue,
     fillSelect,
     renderSectionMatrix,
     gatherSections,

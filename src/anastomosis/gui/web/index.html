@@ -45,7 +45,7 @@
          panel edge from colliding with a chrome label at the two boundaries. -->
     <nav class="navbar" aria-label="Views">
       <div class="segment-toggle navpill" id="nav-pill" role="tablist"
-           aria-label="Views" data-pattern="tabs" data-name="view" data-value="charts">
+           aria-label="Views" data-name="view" data-value="charts">
         <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
         <button type="button" class="segment-option" id="tab-charts"
                 data-value="charts" data-view-target="charts" aria-controls="view-charts">Charts</button>
@@ -160,12 +160,12 @@
           <div class="safety-warning" id="uploads-safety" role="alert"></div>
           <div class="field">
             <label for="uploads-results-dir">Results folder</label>
-            <input type="text" id="uploads-results-dir" placeholder="C:\Users\you\Documents\anastomosis-charts" />
+            <input class="is-path" type="text" id="uploads-results-dir" placeholder="C:\Users\you\Documents\anastomosis-charts" />
             <div class="field-help">The folder Anastomosis wrote the finished charts into.</div>
           </div>
           <div class="field">
             <label for="uploads-assistant">Filing assistant</label>
-            <input type="text" id="uploads-assistant" placeholder="tebra" />
+            <input class="is-id" type="text" id="uploads-assistant" placeholder="tebra" />
             <div class="field-help">The destination system Anastomosis files into. Migrate fills this in for you.</div>
           </div>
           <div class="toggles">
@@ -185,7 +185,7 @@
             <div class="advanced-body">
               <div class="field">
                 <label for="uploads-browser">Browser connection</label>
-                <input type="text" id="uploads-browser" value="127.0.0.1:9222" spellcheck="false" />
+                <input class="is-endpoint" type="text" id="uploads-browser" value="127.0.0.1:9222" spellcheck="false" />
                 <div class="field-help">
                   Anastomosis files charts through a browser window it controls on
                   this computer. Leave this as suggested unless support asks you to
@@ -194,7 +194,7 @@
               </div>
               <div class="field">
                 <label for="uploads-skiplist">Skip these</label>
-                <textarea id="uploads-skiplist" rows="3" spellcheck="false" placeholder="visit-1234"></textarea>
+                <textarea class="is-id" id="uploads-skiplist" rows="3" spellcheck="false" placeholder="visit-1234"></textarea>
                 <div class="field-help">
                   One visit id per line. Lines starting with # are notes to yourself
                   and are ignored.
@@ -202,12 +202,12 @@
               </div>
               <div class="field">
                 <label for="uploads-assistant-folder">Additional filing-assistant folder</label>
-                <input type="text" id="uploads-assistant-folder" placeholder="C:\Users\you\Documents\assistants" />
+                <input class="is-path" type="text" id="uploads-assistant-folder" placeholder="C:\Users\you\Documents\assistants" />
                 <div class="field-help">Only needed for an assistant that did not ship with Anastomosis.</div>
               </div>
               <div class="field">
                 <label for="uploads-record">Record file</label>
-                <input type="text" id="uploads-record" spellcheck="false" />
+                <input class="is-path" type="text" id="uploads-record" spellcheck="false" />
                 <div class="field-help">
                   Only needed if the record of what has been filed is not in the
                   results folder. Support will tell you what to put here.
@@ -251,7 +251,7 @@
           <div class="meta-row" id="uploads-meta"></div>
           <div class="field search-field">
             <span class="icon" data-icon="search"></span>
-            <input type="search" id="uploads-search" autocomplete="off" spellcheck="false"
+            <input class="is-id" type="search" id="uploads-search" autocomplete="off" spellcheck="false"
                    placeholder="Find an upload — search by visit id." aria-label="Find an upload — search by visit id." />
           </div>
           <div class="search-results" id="uploads-search-results"></div>
@@ -304,12 +304,12 @@
             <div class="step-line" id="layout-step">Step 1 of 2 — look at the samples.</div>
             <div class="field">
               <label for="layout-samples">Sample documents folder</label>
-              <input type="text" id="layout-samples" placeholder="C:\Users\you\Documents\samples" />
+              <input class="is-path" type="text" id="layout-samples" placeholder="C:\Users\you\Documents\samples" />
               <div class="field-help">A folder of finished PDFs from the system you want matched.</div>
             </div>
             <div class="field">
               <label for="layout-name">Layout name</label>
-              <input type="text" id="layout-name" placeholder="acme_soap" />
+              <input class="is-id" type="text" id="layout-name" placeholder="acme_soap" />
               <div class="field-help">Lowercase letters and underscores, e.g. acme_soap.</div>
             </div>
             <div class="field">
@@ -353,12 +353,12 @@
             <div class="step-line" id="format-step">Step 1 of 2 — look at the example.</div>
             <div class="field">
               <label for="format-example">Example file</label>
-              <input type="text" id="format-example" placeholder="C:\Users\you\Downloads\export.csv" />
+              <input class="is-path" type="text" id="format-example" placeholder="C:\Users\you\Downloads\export.csv" />
               <div class="field-help">A .csv, .tsv or .json file — or the folder holding it.</div>
             </div>
             <div class="field">
               <label for="format-name">Format name</label>
-              <input type="text" id="format-name" placeholder="acme_csv" />
+              <input class="is-id" type="text" id="format-name" placeholder="acme_csv" />
               <div class="field-help">Lowercase letters and underscores, e.g. acme_csv.</div>
             </div>
             <div class="field">

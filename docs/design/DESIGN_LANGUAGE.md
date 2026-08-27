@@ -90,9 +90,11 @@ Rules:
 ## 5. Shape and space
 
 * Radius by role, never one token: panels 14 px, controls 8 px, chips 6 px.
-  The pill (999) exists in exactly two places: the gooey segment toggle and
-  a status badge. Everything else that used to be a capsule becomes a
-  bordered control or plain text.
+  The pill (999) belongs to one control — the view nav — because a sliding
+  pill means "peer destinations" and the app has one such choice. A binary
+  setting is a switch; one of N is a chooser. (The switch track, the progress
+  bar and the activity strip are round-ended shapes, not pills.) Everything
+  else that used to be a capsule is a bordered control or plain text.
 * Spacing on the 4-px scale: 4/8 inside a group, 24+ between groups —
   whitespace itself encodes structure (the Craft rhythm).
 * One accent signal per row: status is a 3 px left border or one badge,
