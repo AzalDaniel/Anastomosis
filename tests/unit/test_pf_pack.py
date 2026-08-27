@@ -624,3 +624,75 @@ def test_record_static_context_built_once_and_merge_preserves_output(
     no_cache_ctx = pack.build_context(record.encounters[0], record, _cfg(pack))
     assert set(no_cache_ctx) == set(ctx0)  # the cached and uncached paths agree on keys
     assert build_record_context(record, cfg, cache) is static_first  # idempotent + cached
+
+
+def test_the_flowsheet_shows_blood_pressure_like_the_per_encounter_rows_do() -> None:
+    """A vitals flowsheet exists to show a trend, and BP is the trend.
+
+    Observations arrive as two separate LOINC codes (8480-6 systolic, 8462-4
+    diastolic) and `_VITAL_ORDER` names only the combined "Blood Pressure" row,
+    so a path that does not fold them renders neither. The per-encounter rows
+    folded them; the flowsheet did not, and every prior-encounter blood
+    pressure was dropped from the archival copy of the chart with the run
+    reporting pass.
+
+    The flowsheet also lacked the per-encounter path's documented lossless
+    fallback, so a vital with no order slot vanished the same way.
+
+    Every value here is invented.
+    """
+    import datetime as dt
+
+    from anastomosis.core.model import (
+        Encounter,
+        Observation,
+        ObservationCategory,
+        Patient,
+        PatientRecord,
+    )
+    from anastomosis.packs.practice_fusion_soap.context import build_context
+
+    patient = Patient(
+        id="feedface-0000-0000-0000-000000000001",
+        given_name="Fixture",
+        family_name="Patient",
+        birth_date=dt.date(1980, 1, 2),
+    )
+    early = Encounter(
+        id="feedface-enc-1", patient_id=patient.id, date_of_service=dt.date(2023, 1, 10)
+    )
+    later = Encounter(
+        id="feedface-enc-2", patient_id=patient.id, date_of_service=dt.date(2023, 6, 1)
+    )
+
+    def vital(enc: Encounter, code: str, value: str, unit: str | None = None) -> Observation:
+        return Observation(
+            id=f"feedface-obs-{code}-{enc.id}",
+            patient_id=patient.id,
+            encounter_id=enc.id,
+            category=ObservationCategory.VITAL_SIGNS,
+            code=code,
+            value=value,
+            unit=unit,
+        )
+
+    record = PatientRecord(
+        patient=patient,
+        encounters=[early, later],
+        observations=[
+            vital(early, "8480-6", "162", "mmHg"),
+            vital(early, "8462-4", "104", "mmHg"),
+            vital(early, "29463-7", "180", "lb"),
+            vital(later, "8480-6", "118", "mmHg"),
+            vital(later, "8462-4", "76", "mmHg"),
+        ],
+    )
+
+    rows = build_context(later, record, {})["flowsheet_rows"]
+    by_name = {row["name"]: row["vals"] for row in rows}
+    assert "Blood Pressure" in by_name, (
+        f"the prior encounter's blood pressure is not in the flowsheet: {rows}"
+    )
+    assert by_name["Blood Pressure"] == ["162/104"]
+    # The declared display order puts BP between Weight and Temperature.
+    assert [row["name"] for row in rows] == ["Weight", "Blood Pressure"]
