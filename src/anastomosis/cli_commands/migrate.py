@@ -1,11 +1,6 @@
 """``anast migrate`` — EHR-to-EHR migration (PF->Tebra is one instance).
 
-The command body and its two helpers (saved-profile resolution and the
-migration run wrapper) split out of :mod:`anastomosis.cli`. It registers against
-the top-level ``app`` defined there; ``console`` / ``_glyphs`` and the shared
-pipeline machinery (``_make_event_printer`` / ``_print_delivery`` /
-``_report_pipeline_error`` / ``_sections_or_exit``) resolve late through the
-``cli`` module. See :mod:`anastomosis.cli_commands` for the facade rationale.
+See :mod:`anastomosis.cli_commands` for the split/registration rationale.
 """
 
 from __future__ import annotations
@@ -154,14 +149,15 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
         )
         _cli.console.print(f"[green]saved migration profile[/green] {save_profile!r}")
 
-    # No viable AUTOMATED route to the destination (a known destination whose
-    # capabilities offer none). The structured C-CDA + charts ARE written (the
-    # C-CDA is the universal manual-import format), but make the gap loud and
-    # exit 1 — consistent with `destination route`, never a silent exit-0 — and
-    # point at the discovery wizard for a browser route. The verdict comes from
-    # the SAME shared classifier the GUI consumes, so the frontends never drift.
+    # The verdict below comes from the SAME shared classifier the GUI consumes,
+    # so the frontends never drift.
     status = classify_migration(result)
     if status.needs_manual_import:
+        # No viable AUTOMATED route to the destination (a known destination whose
+        # capabilities offer none). The structured C-CDA + charts ARE written (the
+        # C-CDA is the universal manual-import format), but make the gap loud and
+        # exit 1 — consistent with `destination route`, never a silent exit-0 —
+        # and point at the discovery wizard for a browser route.
         _cli.console.print(f"[yellow]{manual_import_notice(status)}[/yellow]")
         raise typer.Exit(code=status.exit_code)
 
@@ -169,10 +165,8 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     # `migrate` executes no delivery route — a chosen route is a plan, not proof
     # a chart landed. Print the prepared notice (neutral, not the success-silent
     # path) so the operator sees delivery is still theirs to run, and keep exit 0
-    # (preparation succeeded — the exit contract scripts rely on). The verdict
-    # comes from the SAME shared classifier the GUI consumes, so the frontends
-    # never drift, and it is NEVER `delivered` (that needs a receipt no executor
-    # yet produces).
+    # (preparation succeeded — the exit contract scripts rely on), and it is
+    # NEVER `delivered` (that needs a receipt no executor yet produces).
     _cli.console.print(f"[cyan]{prepared_notice(status)}[/cyan]")
 
 

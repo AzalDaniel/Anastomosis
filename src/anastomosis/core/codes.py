@@ -5,11 +5,10 @@ exporter agree on one spelling of each concept. Units are the UCUM codes US
 ambulatory exports chart in by convention — adapters override them when a
 source declares its own.
 
-The PRIMARY LOINC for each vital is the one the battle-tested predecessor
-charted against (the predecessor'sthe ``LOINC`` table that ran on
-12,906 real documents). Modern C-CDA / Synthea editions legitimately chart
-some vitals under newer LOINC siblings, so those ride along as ``aliases``
-that resolve to the same vital kind (dual-map, old code first).
+Each vital's PRIMARY LOINC is the one PF/Tebra exports chart against. Modern
+C-CDA / Synthea editions legitimately chart some vitals under newer LOINC
+siblings, so those ride along as ``aliases`` that resolve to the same vital
+kind (dual-map, old code first).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class VitalCode:
-    loinc: str  # PRIMARY code (predecessor-verified primary code)
+    loinc: str  # PRIMARY code — the one real exports chart against
     display: str
     unit: str  # default UCUM unit; adapters override from source metadata
     aliases: tuple[str, ...] = field(default=())  # newer C-CDA/Synthea editions
@@ -67,8 +66,8 @@ VITALS: Mapping[str, VitalCode] = MappingProxyType(
 )
 
 # LOINC answer codes for the 0-10 pain scale (answer list for 72514-3).
-# 0-4 = LA6111-4…LA6115-5 and 5-10 = LA6116-3…LA6121-3 are the predecessor's
-# _PAIN_LA_MAP (the predecessor's) — the LA61xx run PF actually emits.
+# 0-4 = LA6111-4…LA6115-5 and 5-10 = LA6116-3…LA6121-3 — the LA61xx run is
+# what PF actually emits.
 # 5-10 also carry the modern LA10137-0… answer list as aliases (see
 # PAIN_LA_TO_LEVEL) so newer exports still translate.
 PAIN_SEVERITY_LA: Mapping[int, str] = MappingProxyType(
@@ -87,12 +86,11 @@ PAIN_SEVERITY_LA: Mapping[int, str] = MappingProxyType(
     }
 )
 
-# Inverse map (answer code → numeric level), the predecessor's _PAIN_LA_MAP
-# direction (the predecessor's). The LA61xx run is primary (old-first);
-# the LA10137-0… run is kept as accepted aliases for 5-10 AFTER the old codes.
+# Inverse map (answer code → numeric level). The LA61xx run is primary
+# (old-first); LA10137-0… is kept as an accepted alias for 5-10, AFTER the
+# old codes — lookup order matters for which one a collision resolves to.
 PAIN_LA_TO_LEVEL: Mapping[str, int] = MappingProxyType(
     {
-        # predecessor _PAIN_LA_MAP — the codes PF charts pain against
         "LA6111-4": 0,
         "LA6112-2": 1,
         "LA6113-0": 2,
@@ -118,9 +116,9 @@ PAIN_LA_TO_LEVEL: Mapping[str, int] = MappingProxyType(
 def pain_display(value: str | None) -> str | None:
     """Convert a pain answer code or numeric string to its 0-10 display value.
 
-    Ports the predecessor's ``_pain_conv`` (the predecessor's): strip an
-    optional ``LOINC:`` prefix, translate a known LA answer code to its number,
-    accept a raw 0-10 numeric, else fall back to the raw value (lossless).
+    Strips an optional ``LOINC:`` prefix, translates a known LA answer code
+    to its number, accepts a raw 0-10 numeric, else falls back to the raw
+    value (lossless).
     """
     if not value:
         return None
@@ -139,11 +137,7 @@ def pain_display(value: str | None) -> str | None:
 
 
 def bmi_metric(weight_kg: float | None, height_cm: float | None) -> float | None:
-    """BMI (kg/m², 2 decimals) from metric vitals; ``None`` when not computable.
-
-    Two decimals matches the predecessor's BMI rendering (the predecessor's
-    ``f"{float(v):.2f}"`` and the auto-calc at :592).
-    """
+    """BMI (kg/m², 2 decimals) from metric vitals; ``None`` when not computable."""
     if not weight_kg or not height_cm or weight_kg <= 0 or height_cm <= 0:
         return None
     return round(weight_kg / (height_cm / 100.0) ** 2, 2)

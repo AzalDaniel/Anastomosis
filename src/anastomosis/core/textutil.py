@@ -274,7 +274,7 @@ def html_to_text(html: str | None) -> str | None:
 
 
 # Empty filler blocks PF leaves behind — stripped so a blank <p></p> never
-# renders as a stray gap (the predecessor's empty-block patterns).
+# renders as a stray gap.
 _EMPTY_BLOCK_PATTERNS = (
     r"<p[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</p>",
     r"<div[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</div>",
@@ -531,8 +531,7 @@ class _SoapHtmlSanitizer(HTMLParser):
 def sanitize_soap_html(raw_html: str | None) -> str:
     """Allowlist-clean PF semantic HTML, then apply the PF rendering repairs.
 
-    Ported from the predecessor's ``sanitize_soap_html``
-    with an added :class:`_SoapHtmlSanitizer` allowlist pass at the front so
+    Adds a :class:`_SoapHtmlSanitizer` allowlist pass at the front so
     script/style/event handlers/non-allowlist URL attributes cannot reach the
     local-Chromium PDF renderer (the section is templated with Jinja's
     ``| safe``, autoescape off, *by design* — exactly so legitimate inline

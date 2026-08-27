@@ -1,14 +1,12 @@
 """``anast upload`` — drive the resumable upload engine over ONE delivery route.
 
-The command body and its exit-code rule split out of :mod:`anastomosis.cli`. It
-registers against the top-level ``app`` defined there; ``console`` / ``_glyphs``
-resolve late through the ``cli`` module, and BOTH attach seams are resolved LATE
-through it too — the browser route's ``_cli._make_destination`` (Playwright over
-CDP) and the API route's ``_cli._make_fhir_destination`` (FHIR R4 over HTTPS) —
-so ``monkeypatch.setattr(cli, "_make_destination", ...)`` and
+See :mod:`anastomosis.cli_commands` for the split/registration rationale. Both
+attach seams are resolved LATE through the ``cli`` module — the browser route's
+``_cli._make_destination`` (Playwright over CDP) and the API route's
+``_cli._make_fhir_destination`` (FHIR R4 over HTTPS) — so
+``monkeypatch.setattr(cli, "_make_destination", ...)`` and
 ``monkeypatch.setattr(cli, "_make_fhir_destination", ...)`` keep driving this
-command with no browser and no server. See :mod:`anastomosis.cli_commands` for
-the rationale.
+command with no browser and no server.
 
 Exactly ONE route runs per invocation: ``--to PACK --cdp URL`` (browser) or
 ``--fhir URL`` (API). Only the pre-flight differs — the loopback gate, the
