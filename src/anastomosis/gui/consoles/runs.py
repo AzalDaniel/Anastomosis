@@ -283,7 +283,11 @@ class PipelineConsole(_RunConsole):
             run_pipeline_command,
             summarize_patients,
         )
-        from anastomosis.core.output import OutputPathError, require_output_dir
+        from anastomosis.core.output import (
+            OutputPathError,
+            clean_typed_path,
+            require_output_dir,
+        )
         from anastomosis.pipeline import PipelineError
 
         # The blankness of an empty field only survives until Path() sees it, so
@@ -312,7 +316,7 @@ class PipelineConsole(_RunConsole):
         try:
             result = run_pipeline_command(
                 PipelineCommand(
-                    export_dir=Path(export_dir),
+                    export_dir=Path(clean_typed_path(export_dir)),
                     charts_dir=out,
                     source=source,
                     pack=pack,
@@ -482,16 +486,26 @@ class MigrationConsole(_RunConsole):
             manual_import_notice,
             prepared_notice,
         )
+        from anastomosis.core.output import OutputPathError, clean_typed_path, require_output_dir
         from anastomosis.pipeline import PipelineError
 
+        # Same boundary discipline as the rebuild: a pasted Windows path keeps
+        # its quotes, and a blank folder is not a folder anybody chose.
+        try:
+            out = require_output_dir(out_dir)
+        except OutputPathError as exc:
+            # _fail reports the exception TYPE (its PHI contract). This message
+            # is PHI-free and tells the person what to do, so it is surfaced.
+            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
+            return {"ok": False, "error": str(exc)}
         rollup: dict[str, int] = {}
         _on_event = self._stage_emitter(rollup)
 
         try:
             result = run_migration(
                 MigrationCommand(
-                    export_dir=Path(export_dir),
-                    out_dir=Path(out_dir),
+                    export_dir=Path(clean_typed_path(export_dir)),
+                    out_dir=out,
                     source=source,
                     destination=destination,
                     render=render,
