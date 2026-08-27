@@ -12,6 +12,8 @@ patient-derived data appears anywhere.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -83,6 +85,28 @@ def test_emit_writes_all_four_files(analysis: PackAnalysis, tmp_path: Path) -> N
     assert pack_dir == tmp_path / "acme_soap"
     for filename in ("pack.yaml", "template.html", "context.py", "DRAFT.md"):
         assert (pack_dir / filename).is_file(), filename
+
+
+def test_the_draft_pack_is_hardened_like_anything_else_holding_phi(
+    analysis: PackAnalysis, tmp_path: Path
+) -> None:
+    """It can hold PHI, and this module's own caveat is why.
+
+    Hand the tool three copies of ONE patient's chart — the mistake
+    `SAME_PATIENT_CAVEAT` exists to warn about — and that patient's name, DOB
+    and MRN recur in 100% of samples, become indistinguishable from template
+    text, and are written into template.html and DRAFT.md as "static labels".
+    This directory used to take the process umask (0755, files 0644) with no
+    PHI README, while both sibling wizards hardened theirs to 0700.
+    """
+    pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
+
+    assert (pack_dir / "_PHI_WARNING_README.txt").is_file(), (
+        "the folder does not explain itself to whoever finds it later"
+    )
+    if os.name == "posix":
+        mode = stat.S_IMODE(pack_dir.stat().st_mode)
+        assert mode == 0o700, f"the draft pack is {mode:o}, not owner-only"
 
 
 def test_emitted_pack_loads_through_discover(analysis: PackAnalysis, tmp_path: Path) -> None:
