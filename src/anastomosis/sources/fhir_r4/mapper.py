@@ -258,38 +258,102 @@ def _resolve_patient(
     return None, False
 
 
-def _codings(concept: Any) -> list[dict[str, Any]]:
+def _indexed_codings(concept: Any) -> list[tuple[int, dict[str, Any]]]:
+    """Every ``coding`` entry of a CodeableConcept with its RAW list position.
+
+    A consumed sub-path must name the element a read actually came from, and the
+    dict-filtered view renumbers past a non-dict entry — so the position travels
+    with the coding rather than being recovered by counting afterwards.
+    """
     if not isinstance(concept, dict):
         return []
-    return [c for c in concept.get("coding", []) if isinstance(c, dict)]
+    return [(i, c) for i, c in enumerate(concept.get("coding", [])) if isinstance(c, dict)]
+
+
+def _codings(concept: Any) -> list[dict[str, Any]]:
+    return [coding for _index, coding in _indexed_codings(concept)]
+
+
+def _first_coding(concept: Any) -> tuple[int | None, dict[str, Any]]:
+    """The first ``coding`` with its raw index; ``(None, {})`` when there is none."""
+    codings = _indexed_codings(concept)
+    return codings[0] if codings else (None, {})
+
+
+def _code_in_consumed(
+    concept: Any, systems: tuple[str, ...], base: str
+) -> tuple[str | None, set[str]]:
+    """``(code, sub-paths read)`` for :func:`_code_in`, rooted at ``base``.
+
+    Only the coding that MATCHED is consumed — its ``system`` (the discriminator
+    this matched on) and its ``code``. The codings scanned past, and the matched
+    coding's own ``display``/``version``, are siblings nothing read: they stay in
+    the residue. A concept that matches nothing consumes nothing.
+    """
+    for index, coding in _indexed_codings(concept):
+        if coding.get("system") in systems and coding.get("code"):
+            return str(coding["code"]), {
+                f"{base}.coding[{index}].system",
+                f"{base}.coding[{index}].code",
+            }
+    return None, set()
 
 
 def _code_in(concept: Any, systems: tuple[str, ...]) -> str | None:
     """The first ``code`` whose ``system`` is one of ``systems`` (None if absent)."""
-    for coding in _codings(concept):
-        if coding.get("system") in systems and coding.get("code"):
-            return str(coding["code"])
-    return None
+    return _code_in_consumed(concept, systems, "")[0]
+
+
+def _concept_text_consumed(concept: Any, base: str) -> tuple[str | None, set[str]]:
+    """``(text, sub-paths read)`` for :func:`_concept_text`, rooted at ``base``.
+
+    ``{base}.text`` when ``text`` supplied the label, else the
+    ``{base}.coding[i].display`` of the one coding that did — never the codings
+    behind a ``text`` this preferred, and never the code beside the display.
+    """
+    if not isinstance(concept, dict):
+        return None, set()
+    if concept.get("text"):
+        return str(concept["text"]), {f"{base}.text"}
+    for index, coding in _indexed_codings(concept):
+        if coding.get("display"):
+            return str(coding["display"]), {f"{base}.coding[{index}].display"}
+    return None, set()
 
 
 def _concept_text(concept: Any) -> str | None:
     """Human label of a CodeableConcept: ``text`` first, else a coding display."""
-    if not isinstance(concept, dict):
-        return None
-    if concept.get("text"):
-        return str(concept["text"])
-    for coding in _codings(concept):
-        if coding.get("display"):
-            return str(coding["display"])
-    return None
+    return _concept_text_consumed(concept, "")[0]
+
+
+def _ref_id_consumed(ref: Any, base: str) -> tuple[str | None, set[str]]:
+    """``(id, sub-paths read)`` for :func:`_ref_id`: ``{base}.reference`` alone.
+
+    A Reference's ``display``, ``type`` and logical ``identifier`` are siblings
+    the id lift never reads; a reference that yields no id consumes nothing.
+    """
+    rid = _ref_id(ref)
+    return rid, {f"{base}.reference"} if rid is not None else set()
+
+
+def _status_active_consumed(resource: dict[str, Any], field: str) -> tuple[bool, set[str]]:
+    """``(active, sub-paths read)`` for a clinical-status CodeableConcept.
+
+    Only a coding that SAYS active is consumed. ``False`` is this lift finding no
+    such coding, so whatever code is actually there (``resolved``, ``refuted``,
+    ``entered-in-error``) was never lifted and must stay in the residue —
+    dropping it would silently reverse the record's clinical meaning.
+    """
+    concept = resource.get(field)
+    for index, coding in _indexed_codings(concept):
+        if coding.get("code") == "active":
+            return True, {f"{field}.coding[{index}].code"}
+    return False, set()
 
 
 def _status_active(resource: dict[str, Any], field: str) -> bool:
     """Whether a clinical-status CodeableConcept (``clinicalStatus``) reads active."""
-    for coding in _codings(resource.get(field)):
-        if coding.get("code") == "active":
-            return True
-    return False
+    return _status_active_consumed(resource, field)[0]
 
 
 def _num_str(value: Any) -> str | None:
@@ -558,18 +622,34 @@ def _address(a: dict[str, Any]) -> Any:
 
 
 def _practitioner(resource: dict[str, Any], source_file: str | None) -> Practitioner:
-    name = next((n for n in resource.get("name", []) if isinstance(n, dict)), {})
+    names = resource.get("name", [])
+    name_index = next((i for i, n in enumerate(names) if isinstance(n, dict)), None)
+    name: dict[str, Any] = names[name_index] if name_index is not None else {}
     given = [g for g in name.get("given", []) if g]
-    npi = next(
-        (i.get("value") for i in resource.get("identifier", []) if i.get("system") == _NPI), None
-    )
+    # `name` and `identifier` are consumed only in PART: a second name entry, the
+    # selected entry's prefix/suffix/use/period, the given entries past the first,
+    # and every non-NPI identifier are siblings this lift never reads.
+    consumed: set[str] = set()
+    if name_index is not None:
+        consumed |= {f"name[{name_index}].family", f"name[{name_index}].text"}
+        given_index = next((i for i, g in enumerate(name.get("given", [])) if g), None)
+        if given_index is not None:
+            consumed.add(f"name[{name_index}].given[{given_index}]")
+    npi: str | None = None
+    for index, ident in enumerate(resource.get("identifier", [])):
+        if ident.get("system") == _NPI:
+            value = ident.get("value")
+            if value:
+                npi = str(value)
+                consumed |= {f"identifier[{index}].system", f"identifier[{index}].value"}
+            break
     return Practitioner(
         id=resource["id"],
         given_name=given[0] if given else None,
         family_name=name.get("family"),
         display_name=name.get("text"),
-        npi=str(npi) if npi else None,
-        extensions=_residual(resource, frozenset({"name", "identifier"})),
+        npi=npi,
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -577,11 +657,37 @@ def _practitioner(resource: dict[str, Any], source_file: str | None) -> Practiti
 def _facility(resource: dict[str, Any], source_file: str | None) -> Facility:
     """A canonical Facility from a Location or Organization resource."""
     address = resource.get("address")
+    address_base = "address"
     if isinstance(address, list):  # Organization.address is a list; Location's is single
+        address_base = "address[0]"
         address = address[0] if address else {}
     address = address or {}
-    lines = [ln for ln in address.get("line", []) if ln]
-    telecom = {t.get("system"): t.get("value") for t in resource.get("telecom", [])}
+    raw_lines = address.get("line", [])
+    lines = [ln for ln in raw_lines if ln]
+    # Last-wins per system, exactly as the dict comprehension this replaces: a
+    # vendor listing two phones lands the LAST one, so that is the entry read.
+    telecom: dict[Any, Any] = {}
+    telecom_at: dict[Any, int] = {}
+    for index, tel in enumerate(resource.get("telecom", [])):
+        system = tel.get("system")
+        telecom[system] = tel.get("value")
+        telecom_at[system] = index
+    # Only the address elements printed on a header, and only the two telecom
+    # entries that supplied phone/fax, are read: an address district/country/
+    # period, a third address line, a second address, an email or url entry, and
+    # every telecom use/rank are siblings that stay in the residue.
+    line_indices = [i for i, ln in enumerate(raw_lines) if ln][:2]  # the two that land
+    consumed = {
+        "name",
+        *(f"{address_base}.{sub}" for sub in ("city", "state", "postalCode")),
+        *(f"{address_base}.line[{i}]" for i in line_indices),
+    }
+    for system in ("phone", "fax"):
+        if telecom.get(system) is not None:
+            consumed |= {
+                f"telecom[{telecom_at[system]}].system",
+                f"telecom[{telecom_at[system]}].value",
+            }
     return Facility(
         id=resource["id"],
         name=resource.get("name"),
@@ -592,9 +698,34 @@ def _facility(resource: dict[str, Any], source_file: str | None) -> Facility:
         postal_code=address.get("postalCode"),
         phone=telecom.get("phone"),
         fax=telecom.get("fax"),
-        extensions=_residual(resource, frozenset({"name", "address", "telecom"})),
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
+
+
+# The exact sub-paths the two reference lifts below read. The consumed-path
+# bookkeeping in :func:`_encounter` must name the same elements those lifts
+# navigate, so the paths live beside the navigation rather than apart from it.
+_PROVIDER_REF_PATH = "participant[0].individual.reference"
+_FACILITY_REF_PATH = "location[0].location.reference"
+
+
+def _encounter_provider_id(resource: dict[str, Any]) -> str | None:
+    """The Practitioner id an Encounter's FIRST participant cites, or None.
+
+    Shared by :func:`_encounter` and the reference pre-pass in
+    :func:`records_from_resources`, so the two can never disagree about which
+    Practitioner a record cites — a disagreement would drop the resource from
+    both the typed slot and the bundle-level key.
+    """
+    participants = resource.get("participant", [])
+    return _ref_id(participants[0].get("individual")) if participants else None
+
+
+def _encounter_facility_id(resource: dict[str, Any]) -> str | None:
+    """The Location id an Encounter's FIRST location cites, or None (see above)."""
+    locations = resource.get("location", [])
+    return _ref_id(locations[0].get("location")) if locations else None
 
 
 def _encounter(
@@ -606,27 +737,41 @@ def _encounter(
     period = resource.get("period") or {}
     types = resource.get("type", [])
     reasons = resource.get("reasonCode", [])
-    participants = resource.get("participant", [])
-    locations = resource.get("location", [])
+    encounter_class = resource.get("class")
+    class_text, consumed = _concept_text_consumed(encounter_class, "class")
+    encounter_type = class_text or (encounter_class or {}).get("code")
+    if class_text is None and encounter_type:
+        consumed = {"class.code"}  # the Coding's own code, not its system/display
+    provider_id = _encounter_provider_id(resource)
+    facility_id = _encounter_facility_id(resource)
+    if provider_id is not None:
+        consumed.add(_PROVIDER_REF_PATH)
+    if facility_id is not None:
+        consumed.add(_FACILITY_REF_PATH)
+    diagnosis_ids: list[str] = []
+    for index, dx in enumerate(resource.get("diagnosis", [])):
+        rid, paths = _ref_id_consumed(dx.get("condition"), f"diagnosis[{index}].condition")
+        if rid:
+            diagnosis_ids.append(rid)
+            consumed |= paths
     return Encounter(
         id=resource["id"],
         patient_id=patient_id,
         date_of_service=_date(period.get("start")),
         chief_complaint=_concept_text(reasons[0]) if reasons else None,
-        encounter_type=_concept_text(resource.get("class"))
-        or (resource.get("class") or {}).get("code"),
+        encounter_type=encounter_type,
         note_type=_concept_text(types[0]) if types else None,
-        provider_id=_ref_id(participants[0].get("individual")) if participants else None,
-        facility_id=_ref_id(locations[0].get("location")) if locations else None,
+        provider_id=provider_id,
+        facility_id=facility_id,
         sections=notes.get(resource["id"], []),
-        diagnosis_ids=[
-            rid for dx in resource.get("diagnosis", []) if (rid := _ref_id(dx.get("condition")))
-        ],
+        diagnosis_ids=diagnosis_ids,
         # status, the full period (end), and any reasonCode/type beyond the
         # first ride along; the typed fields capture the primary elements.
-        extensions=_residual(
-            resource, frozenset({"class", "participant", "location", "diagnosis"})
-        ),
+        # class/participant/location/diagnosis are consumed only in PART: a
+        # participant's type and period, a second participant or location, a
+        # location's own status/period/physicalType, and a diagnosis use/rank
+        # are elements nothing above reads.
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -640,118 +785,169 @@ def _observations(
     pressure shape) expands to one canonical Observation per component, so the
     systolic/diastolic LOINCs land as discrete vitals the packs render.
     """
+    consumed: set[str] = set()
     category = ObservationCategory.OTHER
-    for cat in resource.get("category", []):
-        code = (_codings(cat) or [{}])[0].get("code")
+    for cat_index, cat in enumerate(resource.get("category", [])):
+        coding_index, coding = _first_coding(cat)
+        code = coding.get("code")
         if code in _OBS_CATEGORY:
             category = _OBS_CATEGORY[code]
+            # Only the coding that matched is read: the categories scanned past,
+            # the codings behind this one, and its system/display stay behind.
+            consumed.add(f"category[{cat_index}].coding[{coding_index}].code")
             break
     code_concept = resource.get("code", {})
-    loinc = _code_in(code_concept, _LOINC)
+    loinc, loinc_paths = _code_in_consumed(code_concept, _LOINC, "code")
+    code_text, code_text_paths = _concept_text_consumed(code_concept, "code")
+    loinc_landed = False
     if category is ObservationCategory.OTHER and loinc == _SMOKING_LOINC:
         category = ObservationCategory.SOCIAL_HISTORY
-    encounter_id = _ref_id(resource.get("encounter"))
-    effective = _datetime(
-        resource.get("effectiveDateTime") or (resource.get("effectivePeriod") or {}).get("start")
-    )
+        loinc_landed = True
+    encounter_id, encounter_paths = _ref_id_consumed(resource.get("encounter"), "encounter")
+    consumed |= encounter_paths
+    # Only the instant that supplied the effective time is read; a period's `end`
+    # is a sibling nothing lifts, and an unparseable value lands nowhere at all.
+    effective_source = resource.get("effectiveDateTime")
+    effective_path = "effectiveDateTime"
+    if not effective_source:
+        effective_source = (resource.get("effectivePeriod") or {}).get("start")
+        effective_path = "effectivePeriod.start"
+    effective = _datetime(effective_source)
+    if effective is not None:
+        consumed.add(effective_path)
 
-    def _value_unit(node: dict[str, Any]) -> tuple[str | None, str | None]:
+    def _value_unit(node: dict[str, Any]) -> tuple[str | None, str | None, set[str]]:
+        """``(value, unit, sub-paths read)``, the paths RELATIVE to ``node``.
+
+        Only the value[x] shape that supplied the value is consumed, so a sibling
+        value[x] a vendor also set — or a Quantity's system/comparator — is never
+        dropped alongside it.
+        """
         qty = node.get("valueQuantity")
         if isinstance(qty, dict):
-            return _num_str(qty.get("value")), (qty.get("unit") or qty.get("code"))
+            value = _num_str(qty.get("value"))
+            paths: set[str] = {"valueQuantity.value"} if value is not None else set()
+            if qty.get("unit"):
+                paths.add("valueQuantity.unit")
+            elif qty.get("code"):
+                paths.add("valueQuantity.code")
+            return value, (qty.get("unit") or qty.get("code")), paths
         concept = node.get("valueCodeableConcept")
         if isinstance(concept, dict):
-            return _concept_text(concept), None
+            text, text_paths = _concept_text_consumed(concept, "valueCodeableConcept")
+            return text, None, text_paths
         if node.get("valueString") is not None:
-            return str(node["valueString"]), None
+            return str(node["valueString"]), None, {"valueString"}
         if node.get("valueBoolean") is not None:
-            return str(node["valueBoolean"]), None
-        return None, None
+            return str(node["valueBoolean"]), None, {"valueBoolean"}
+        return None, None, set()
 
-    residual = _residual(
-        resource,
-        frozenset(
-            {
-                "category",
-                "code",
-                "valueQuantity",
-                "valueCodeableConcept",
-                "valueString",
-                "valueBoolean",
-                "effectiveDateTime",
-                "effectivePeriod",
-                "encounter",
-                "component",
-            }
-        ),
-    )
-
-    def _make(
-        obs_id: str, code: str | None, display: str | None, value: Any, unit: Any
-    ) -> Observation:
-        return Observation(
-            id=obs_id,
-            patient_id=patient_id,
-            encounter_id=encounter_id,
-            category=category,
-            code=code,
-            display=display,
-            value=value,
-            unit=unit,
-            effective_at=effective,
-            extensions=dict(residual),
-            provenance=_prov(source_file, resource["id"]),
-        )
-
-    fallback_code = loinc or (_codings(code_concept) or [{}])[0].get("code")
-    components = [c for c in resource.get("component", []) if isinstance(c, dict)]
-    top_value, top_unit = _value_unit(resource)
-    out: list[Observation] = []
+    fallback_index, fallback_coding = _first_coding(code_concept)
+    fallback_code = loinc or fallback_coding.get("code")
+    components = [
+        (index, comp)
+        for index, comp in enumerate(resource.get("component", []))
+        if isinstance(comp, dict)
+    ]
+    top_value, top_unit, top_paths = _value_unit(resource)
     # Emit the panel's own value when it has one, AND every component (the US
     # Core BP shape is a value-less panel + systolic/diastolic components; a
     # panel may legitimately carry both). Component ids are index-qualified so
-    # two components sharing a LOINC never collide.
+    # two components sharing a LOINC never collide. The emissions are settled
+    # before the residue is computed: an element counts as consumed only once it
+    # has actually LANDED on an observation this returns.
+    emitted: list[tuple[str, Any, str | None, str | None, Any]] = []
+    panel_code_landed = False
     if top_value is not None:
-        out.append(
-            _make(resource["id"], fallback_code, _concept_text(code_concept), top_value, top_unit)
-        )
-    for index, comp in enumerate(components):
-        comp_loinc = _code_in(comp.get("code"), _LOINC) or loinc
-        value, unit = _value_unit(comp)
-        out.append(
-            _make(
-                f"{resource['id']}:{index}:{comp_loinc or 'c'}",
-                comp_loinc,
-                _concept_text(comp.get("code")),
+        emitted.append((resource["id"], fallback_code, code_text, top_value, top_unit))
+        consumed |= top_paths
+        panel_code_landed = True
+    for position, (index, comp) in enumerate(components):
+        base = f"component[{index}].code"
+        comp_loinc, comp_loinc_paths = _code_in_consumed(comp.get("code"), _LOINC, base)
+        comp_text, comp_text_paths = _concept_text_consumed(comp.get("code"), base)
+        value, unit, value_paths = _value_unit(comp)
+        consumed |= comp_text_paths | {f"component[{index}].{path}" for path in value_paths}
+        if comp_loinc is not None:
+            consumed |= comp_loinc_paths
+        elif loinc is not None:
+            loinc_landed = True  # the panel's LOINC is the code this component carries
+        emitted.append(
+            (
+                f"{resource['id']}:{position}:{comp_loinc or loinc or 'c'}",
+                comp_loinc or loinc,
+                comp_text,
                 value,
                 unit,
             )
         )
-    if not out:  # neither a value nor components (e.g. a dataAbsentReason obs)
-        out.append(_make(resource["id"], fallback_code, _concept_text(code_concept), None, None))
-    return out
+    if not emitted:  # neither a value nor components (e.g. a dataAbsentReason obs)
+        emitted.append((resource["id"], fallback_code, code_text, None, None))
+        panel_code_landed = True
+    if panel_code_landed:
+        if code_text is not None:
+            consumed |= code_text_paths
+        if loinc is not None:
+            loinc_landed = True
+        elif fallback_code is not None and fallback_index is not None:
+            consumed.add(f"code.coding[{fallback_index}].code")
+    if loinc_landed:
+        consumed |= loinc_paths
+    residual = _residual(resource, frozenset(consumed))
+    return [
+        Observation(
+            id=obs_id,
+            patient_id=patient_id,
+            encounter_id=encounter_id,
+            category=category,
+            code=obs_code,
+            display=obs_display,
+            value=obs_value,
+            unit=obs_unit,
+            effective_at=effective,
+            extensions=dict(residual),
+            provenance=_prov(source_file, resource["id"]),
+        )
+        for obs_id, obs_code, obs_display, obs_value, obs_unit in emitted
+    ]
 
 
 def _condition(resource: dict[str, Any], patient_id: str, source_file: str | None) -> Condition:
     code = resource.get("code", {})
+    icd10, icd10_paths = _code_in_consumed(code, _ICD10, "code")
+    snomed, snomed_paths = _code_in_consumed(code, _SNOMED, "code")
+    display, display_paths = _concept_text_consumed(code, "code")
+    active, status_paths = _status_active_consumed(resource, "clinicalStatus")
+    onset = _date(resource.get("onsetDateTime"))
+    stopped = _date(resource.get("abatementDateTime"))
+    recorded_at = _datetime(resource.get("recordedDate"))
+    consumed = icd10_paths | snomed_paths | display_paths | status_paths
+    consumed |= {
+        key
+        for key, value in (
+            ("onsetDateTime", onset),
+            ("abatementDateTime", stopped),
+            ("recordedDate", recorded_at),
+        )
+        if value is not None
+    }
     return Condition(
         id=resource["id"],
         patient_id=patient_id,
-        icd10=_code_in(code, _ICD10),
-        snomed=_code_in(code, _SNOMED),
-        display=_concept_text(code),
-        onset=_date(resource.get("onsetDateTime")),
-        stopped=_date(resource.get("abatementDateTime")),
-        recorded_at=_datetime(resource.get("recordedDate")),
-        active=_status_active(resource, "clinicalStatus"),
+        icd10=icd10,
+        snomed=snomed,
+        display=display,
+        onset=onset,
+        stopped=stopped,
+        recorded_at=recorded_at,
+        active=active,
         # verificationStatus (refuted/entered-in-error), category, severity,
-        # bodySite, note, etc. are preserved so meaning is never reversed.
-        extensions=_residual(
-            resource,
-            frozenset(
-                {"code", "clinicalStatus", "onsetDateTime", "abatementDateTime", "recordedDate"}
-            ),
-        ),
+        # bodySite, note, etc. are preserved so meaning is never reversed — and
+        # so is a clinicalStatus that does NOT read active: `active=False` is
+        # this lift finding no active coding, so the code that IS there
+        # (`resolved`, `remission`) was never lifted and must stay whole. The
+        # codings beside the ones ICD-10/SNOMED matched stay too.
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -768,33 +964,43 @@ def _medication(
     via the residual catch-all.
     """
     concept = resource.get("medicationCodeableConcept", {})
+    display_name, consumed = _concept_text_consumed(concept, "medicationCodeableConcept")
+    rxnorm, rxnorm_paths = _code_in_consumed(concept, _RXNORM, "medicationCodeableConcept")
+    consumed |= rxnorm_paths
+    # Whichever of the two dosage spellings the vendor used, and only its FIRST
+    # entry's `text`: a second dosage line, and the route/timing/doseAndRate
+    # beside the sig, are elements nothing here reads.
+    dosage_key = "dosageInstruction" if resource.get("dosageInstruction") else "dosage"
     dosage = resource.get("dosageInstruction") or resource.get("dosage") or []
+    sig = dosage[0].get("text") if dosage and isinstance(dosage[0], dict) else None
+    if sig is not None:
+        consumed.add(f"{dosage_key}[0].text")
     period = resource.get("effectivePeriod") or {}
-    start = _date(period.get("start") or resource.get("authoredOn") or resource.get("dateAsserted"))
+    # The first of the three start spellings that is present supplies the date;
+    # the others were never consulted, so they stay.
+    start_source, start_path = period.get("start"), "effectivePeriod.start"
+    if not start_source:
+        start_source, start_path = resource.get("authoredOn"), "authoredOn"
+    if not start_source:
+        start_source, start_path = resource.get("dateAsserted"), "dateAsserted"
+    start = _date(start_source)
+    if start is not None:
+        consumed.add(start_path)
+    stop = _date(period.get("end"))
+    if stop is not None:
+        consumed.add("effectivePeriod.end")
     extensions: dict[str, Any] = {
         f"{_EXT}resource_type": resource["resourceType"],
-        **_residual(
-            resource,
-            frozenset(
-                {
-                    "medicationCodeableConcept",
-                    "dosageInstruction",
-                    "dosage",
-                    "effectivePeriod",
-                    "authoredOn",
-                    "dateAsserted",
-                }
-            ),
-        ),
+        **_residual(resource, frozenset(consumed)),
     }
     return MedicationStatement(
         id=resource["id"],
         patient_id=patient_id,
-        display_name=_concept_text(concept),
-        rxnorm=_code_in(concept, _RXNORM),
-        sig=dosage[0].get("text") if dosage and isinstance(dosage[0], dict) else None,
+        display_name=display_name,
+        rxnorm=rxnorm,
+        sig=sig,
         start=start,
-        stop=_date(period.get("end")),
+        stop=stop,
         active=resource.get("status") in ("active", "completed"),
         extensions=extensions,
         provenance=_prov(source_file, resource["id"]),
@@ -804,37 +1010,50 @@ def _medication(
 def _allergy(
     resource: dict[str, Any], patient_id: str, source_file: str | None
 ) -> AllergyIntolerance:
-    categories = resource.get("category") or []
+    consumed: set[str] = set()
     category = AllergyCategory.OTHER
-    for c in categories:
+    for index, c in enumerate(resource.get("category") or []):
         if c in _ALLERGY_CATEGORY:
             category = _ALLERGY_CATEGORY[c]
+            consumed.add(f"category[{index}]")  # the entries scanned past stay
             break
-    reactions = [
-        text
-        for r in resource.get("reaction", [])
-        for m in r.get("manifestation", [])
-        if (text := _concept_text(m))
-    ]
-    severity = next(
-        (r.get("severity") for r in resource.get("reaction", []) if r.get("severity")),
-        resource.get("criticality"),
-    )
+    reactions: list[str] = []
+    severity: Any = None
+    severity_path: str | None = None
+    for r_index, r in enumerate(resource.get("reaction", [])):
+        for m_index, m in enumerate(r.get("manifestation", [])):
+            base = f"reaction[{r_index}].manifestation[{m_index}]"
+            text, text_paths = _concept_text_consumed(m, base)
+            if text:
+                reactions.append(text)
+                consumed |= text_paths
+        if severity_path is None and r.get("severity"):
+            severity, severity_path = r.get("severity"), f"reaction[{r_index}].severity"
+    if severity_path is not None:
+        consumed.add(severity_path)
+    else:
+        severity = resource.get("criticality")
+    substance, substance_paths = _concept_text_consumed(resource.get("code"), "code")
+    consumed |= substance_paths
+    onset = _date(resource.get("onsetDateTime"))
+    if onset is not None:
+        consumed.add("onsetDateTime")
+    active, status_paths = _status_active_consumed(resource, "clinicalStatus")
+    consumed |= status_paths
     return AllergyIntolerance(
         id=resource["id"],
         patient_id=patient_id,
-        substance=_concept_text(resource.get("code")),
+        substance=substance,
         category=category,
         reactions=reactions,
         severity=severity,
-        onset=_date(resource.get("onsetDateTime")),
-        active=_status_active(resource, "clinicalStatus"),
-        # criticality (when a reaction severity shadowed it), verificationStatus,
-        # type, recordedDate, note are preserved rather than dropped.
-        extensions=_residual(
-            resource,
-            frozenset({"code", "category", "reaction", "clinicalStatus", "onsetDateTime"}),
-        ),
+        onset=onset,
+        active=active,
+        # criticality (read only as the severity fallback), verificationStatus,
+        # type, recordedDate, note are preserved rather than dropped — as are
+        # the category entries, manifestation codings, reaction onset/note and a
+        # non-active clinicalStatus code that no lift above reads.
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -843,62 +1062,118 @@ def _immunization(
     resource: dict[str, Any], patient_id: str, source_file: str | None
 ) -> Immunization:
     notes = resource.get("note", [])
-    extensions: dict[str, Any] = _residual(
-        resource,
-        frozenset({"vaccineCode", "occurrenceDateTime", "lotNumber", "expirationDate", "note"}),
-    )
-    cvx = _code_in(resource.get("vaccineCode"), _CVX)
+    vaccine, consumed = _concept_text_consumed(resource.get("vaccineCode"), "vaccineCode")
+    cvx, cvx_paths = _code_in_consumed(resource.get("vaccineCode"), _CVX, "vaccineCode")
+    if cvx:
+        consumed |= cvx_paths  # the CVX lands under its own extensions key below
+    administered_on = _date(resource.get("occurrenceDateTime"))
+    if administered_on is not None:
+        consumed.add("occurrenceDateTime")
+    expires = _date(resource.get("expirationDate"))
+    if expires is not None:
+        consumed.add("expirationDate")
+    if resource.get("lotNumber") is not None:
+        consumed.add("lotNumber")
+    # Only the FIRST note's text becomes the comment: a second note, and the
+    # time/author beside the text, are siblings this never reads.
+    comment = notes[0].get("text") if notes and isinstance(notes[0], dict) else None
+    if comment is not None:
+        consumed.add("note[0].text")
+    extensions: dict[str, Any] = _residual(resource, frozenset(consumed))
     if cvx:
         extensions[f"{_EXT}cvx"] = cvx
     return Immunization(
         id=resource["id"],
         patient_id=patient_id,
-        vaccine=_concept_text(resource.get("vaccineCode")),
-        administered_on=_date(resource.get("occurrenceDateTime")),
+        vaccine=vaccine,
+        administered_on=administered_on,
         lot_number=resource.get("lotNumber"),
-        expires=_date(resource.get("expirationDate")),
-        comment=notes[0].get("text") if notes and isinstance(notes[0], dict) else None,
+        expires=expires,
+        comment=comment,
         extensions=extensions,
         provenance=_prov(source_file, resource["id"]),
     )
 
 
 def _coverage(resource: dict[str, Any], patient_id: str, source_file: str | None) -> Coverage:
+    consumed: set[str] = set()
     payors = resource.get("payor") or []
+    payer = payors[0].get("display") if payors and isinstance(payors[0], dict) else None
+    if payer is not None:
+        consumed.add("payor[0].display")  # its reference, and payor[1:], stay
     period = resource.get("period") or {}
-    classes = {
-        (_codings(c.get("type")) or [{}])[0].get("code"): c for c in resource.get("class", [])
-    }
+    start, end = _date(period.get("start")), _date(period.get("end"))
+    consumed |= {f"period.{sub}" for sub, value in (("start", start), ("end", end)) if value}
+    # Last-wins per class type code, exactly as the dict comprehension this
+    # replaces; each entry's position rides along so a consumed sub-path names
+    # the entry the value actually came from.
+    classes: dict[Any, dict[str, Any]] = {}
+    class_paths: dict[Any, tuple[str, set[str]]] = {}
+    for index, cls in enumerate(resource.get("class", [])):
+        coding_index, coding = _first_coding(cls.get("type"))
+        base = f"class[{index}]"
+        classes[coding.get("code")] = cls
+        class_paths[coding.get("code")] = (
+            base,
+            {f"{base}.type.coding[{coding_index}].code"} if coding_index is not None else set(),
+        )
+    plan_code = "group" if classes.get("group") else "plan"
+    plan_name = (classes.get(plan_code) or {}).get("name")
+    group_number = (classes.get("group") or {}).get("value")
+    for key, sub, value in (("group", "value", group_number), (plan_code, "name", plan_name)):
+        if value is not None and key in class_paths:
+            base, discriminator = class_paths[key]
+            consumed |= {f"{base}.{sub}"} | discriminator
+    if resource.get("subscriberId") is not None:
+        consumed.add("subscriberId")
     order = resource.get("order")
+    # FHIR order is a positiveInt (1 = primary) → canonical 0-based; guard a
+    # non-conformant 0 so it never becomes a nonsense -1.
+    order_of_benefits = (order - 1) if isinstance(order, int) and order >= 1 else None
+    if order_of_benefits is not None:
+        consumed.add("order")  # a non-conformant order lands nowhere, so it stays
+    active = resource.get("status") == "active"
+    if active:
+        # A status that is not active (`cancelled`, `entered-in-error`) is never
+        # lifted: dropping it would migrate a cancelled policy as merely inactive.
+        consumed.add("status")
     return Coverage(
         id=resource["id"],
         patient_id=patient_id,
-        payer=(payors[0].get("display") if payors and isinstance(payors[0], dict) else None),
-        plan_name=(classes.get("group") or classes.get("plan") or {}).get("name"),
-        group_number=(classes.get("group") or {}).get("value"),
+        payer=payer,
+        plan_name=plan_name,
+        group_number=group_number,
         member_id=resource.get("subscriberId"),
-        # FHIR order is a positiveInt (1 = primary) → canonical 0-based; guard a
-        # non-conformant 0 so it never becomes a nonsense -1.
-        order_of_benefits=(order - 1) if isinstance(order, int) and order >= 1 else None,
-        start=_date(period.get("start")),
-        end=_date(period.get("end")),
-        active=resource.get("status") == "active",
-        extensions=_residual(
-            resource,
-            frozenset({"payor", "period", "class", "subscriberId", "order", "status"}),
-        ),
+        order_of_benefits=order_of_benefits,
+        start=start,
+        end=end,
+        active=active,
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
 
 def _goal(resource: dict[str, Any], patient_id: str, source_file: str | None) -> Goal:
+    consumed: set[str] = set()
+    description = (resource.get("description") or {}).get("text")
+    if description is not None:
+        consumed.add("description.text")  # the concept's codings are never read
+    effective = _date(resource.get("startDate"))
+    if effective is not None:
+        consumed.add("startDate")
+    active = resource.get("lifecycleStatus") in ("active", "accepted", "in-progress")
+    if active:
+        # A lifecycleStatus outside that set (`cancelled`, `entered-in-error`) is
+        # never lifted: dropping it would migrate an abandoned goal as merely
+        # inactive, which is the same meaning reversal a status field always is.
+        consumed.add("lifecycleStatus")
     return Goal(
         id=resource["id"],
         patient_id=patient_id,
-        description=(resource.get("description") or {}).get("text"),
-        effective=_date(resource.get("startDate")),
-        active=resource.get("lifecycleStatus") in ("active", "accepted", "in-progress"),
-        extensions=_residual(resource, frozenset({"description", "startDate", "lifecycleStatus"})),
+        description=description,
+        effective=effective,
+        active=active,
+        extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
 
@@ -906,16 +1181,30 @@ def _goal(resource: dict[str, Any], patient_id: str, source_file: str | None) ->
 def _family_history(
     resource: dict[str, Any], patient_id: str, source_file: str | None
 ) -> FamilyMemberHistory:
-    condition = next((c for c in resource.get("condition", []) if isinstance(c, dict)), {})
-    extensions: dict[str, Any] = _residual(resource, frozenset({"relationship", "condition"}))
-    if condition.get("onsetString"):
-        extensions[f"{_EXT}onset_string"] = condition["onsetString"]
+    conditions = resource.get("condition", [])
+    # Only the FIRST condition entry is lifted; a second one, and this one's
+    # note/contributedToDeath/outcome, ride the residue rather than vanish.
+    condition_index = next((i for i, c in enumerate(conditions) if isinstance(c, dict)), None)
+    condition: dict[str, Any] = conditions[condition_index] if condition_index is not None else {}
+    base = f"condition[{condition_index}]"
+    relation, consumed = _concept_text_consumed(resource.get("relationship"), "relationship")
+    diagnosis, diagnosis_paths = _concept_text_consumed(condition.get("code"), f"{base}.code")
+    consumed |= diagnosis_paths
+    onset_date = _date(condition.get("onsetDateTime"))
+    if onset_date is not None:
+        consumed.add(f"{base}.onsetDateTime")
+    onset_string = condition.get("onsetString")
+    if onset_string:
+        consumed.add(f"{base}.onsetString")
+    extensions: dict[str, Any] = _residual(resource, frozenset(consumed))
+    if onset_string:
+        extensions[f"{_EXT}onset_string"] = onset_string
     return FamilyMemberHistory(
         id=resource["id"],
         patient_id=patient_id,
-        diagnosis=_concept_text(condition.get("code")),
-        relation=_concept_text(resource.get("relationship")),
-        onset_date=_date(condition.get("onsetDateTime")),
+        diagnosis=diagnosis,
+        relation=relation,
+        onset_date=onset_date,
         extensions=extensions,
         provenance=_prov(source_file, resource["id"]),
     )
@@ -1091,6 +1380,11 @@ def records_from_resources(
       ``extensions["fhir_r4:shared"]`` on EVERY record — no attribution is
       claimed by that key, nothing is dropped, and an ordinary multi-patient
       bundle is never refused over it.
+
+    ``fhir_r4:shared`` also carries the reference resources themselves when no
+    record cites them: a Practitioner, Location or Organization that no
+    patient-anchored Encounter names reaches no typed slot, and that key is the
+    bundle-level home the lossless guarantee requires for it.
     """
     patients = [r for r in resources if r.get("resourceType") == "Patient" and r.get("id")]
     if not patients:
@@ -1129,6 +1423,32 @@ def records_from_resources(
             docrefs_by_patient[pid].append(resource)
             continue
         by_patient[pid][rtype].append(resource)
+
+    # Which reference resources a record will actually attach, decided from the
+    # PATIENT-ANCHORED encounters alone and through the same two lifts _encounter
+    # uses. An encounter that never becomes a typed record (a dangling one) cites
+    # nobody, so the Practitioner it names is uncited and must be preserved.
+    cited_providers: set[str] = set()
+    cited_facilities: set[str] = set()
+    for groups in by_patient.values():
+        for encounter in groups.get("Encounter", []):
+            provider = _encounter_provider_id(encounter)
+            if provider is not None:
+                cited_providers.add(provider)
+            facility = _encounter_facility_id(encounter)
+            if facility is not None:
+                cited_facilities.add(facility)
+    # An uncited Practitioner/Location/Organization reaches neither a typed slot
+    # nor any extensions key on its own, so it rides the bundle-level key beside
+    # the patient-less resources. Bundle order, and only the entries the records
+    # themselves draw on (an id shadowed by a later duplicate is not one), so
+    # nothing is duplicated into shared and nothing cited lands there.
+    for resource in resources:
+        rid = resource.get("id")
+        if (practitioners.get(rid) is resource and rid not in cited_providers) or (
+            facilities.get(rid) is resource and rid not in cited_facilities
+        ):
+            shared.append(resource)
 
     # Dangling resources are preserved only when there is exactly one patient to
     # attribute them to (see the docstring); with several, neither attaching nor

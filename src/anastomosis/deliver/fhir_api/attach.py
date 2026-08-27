@@ -12,7 +12,16 @@ here — not in ``cli.py`` — for the same reason: the CLI's ``anast upload
 helper. ``anastomosis.cli`` re-publishes it as ``_make_fhir_destination`` so
 tests can monkeypatch the whole seam and drive the upload flow with no server.
 
-Two properties are deliberate:
+``.client``/``.destination`` are imported LAZILY, inside the function body
+(mirroring :func:`anastomosis.deliver.browser.attach.attach_destination`):
+both reach into :mod:`anastomosis.deliver.browser.errors` for the shared
+delivery-error taxonomy, which drags in the whole browser-upload package on
+import. ``DEFAULT_TOKEN_ENV`` below stays a bare module-level constant so
+``cli_commands/upload.py`` can import just it (a Typer option default,
+needed at command-definition time) without paying for that chain — the
+plain ``anast --help`` path never touches a FHIR client or destination.
+
+Two more properties are deliberate:
 
 * **The token is a PARAMETER, never read from the environment here.** The
   frontend owns the "which variable holds the token" policy (``anast upload
@@ -29,8 +38,10 @@ Two properties are deliberate:
 
 from __future__ import annotations
 
-from .client import FhirClient, FhirEndpoint
-from .destination import FhirApiDestination
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .destination import FhirApiDestination
 
 __all__ = ["DEFAULT_TOKEN_ENV", "attach_fhir_destination"]
 
@@ -58,5 +69,8 @@ def attach_fhir_destination(
     ``release()``; :func:`~anastomosis.core.upload_command.run_upload_command`
     duck-types that hook and simply skips it.
     """
+    from .client import FhirClient, FhirEndpoint
+    from .destination import FhirApiDestination
+
     endpoint = FhirEndpoint(base_url, bearer_token=bearer_token)
     return FhirApiDestination(FhirClient(endpoint), create_missing_patients=create_missing_patients)

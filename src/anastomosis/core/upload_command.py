@@ -27,6 +27,7 @@ runs regardless of this flag — it is the engine's own guard, not a verifier le
 
 from __future__ import annotations
 
+import logging
 import threading
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -35,6 +36,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from anastomosis.reconstruct.packs import LoadedPack
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
@@ -185,6 +190,41 @@ def resolve_manifest_root(out_dir: Path) -> Path:
     return out_dir if (out_dir / MANIFEST_NAME).is_file() else out_dir / "charts"
 
 
+def _verification_pack(name: str | None) -> LoadedPack | None:
+    """The template pack L3 reads ``verify_header_fields`` from, by manifest name.
+
+    The manifest records WHICH pack rendered its charts; the pack itself is not
+    copied into the output tree, so it is re-discovered here by that name.
+    Built-ins only — an external ``--pack-dir`` pack executes its own
+    ``context.py``, and an upload run holds no operator consent for that, so
+    discovery stays at its default (``allow_external=False``).
+
+    Never a silent downgrade: a manifest naming no pack (a v1 file, or the
+    ccda-standard whole-patient view, which renders through no Jinja pack) and a
+    named pack that is not discoverable here BOTH log the reason, so an operator
+    reading a report where L3 skipped can see WHY instead of trusting a level
+    that checked nothing. Pack names are identifiers, never patient-derived, so
+    naming one in a log line is safe.
+    """
+    if name is None:
+        logger.warning(
+            "upload manifest names no template pack: L3 (pack header/DOS fields) SKIPS for this run"
+        )
+        return None
+    from anastomosis.reconstruct.packs import discover_packs
+
+    status = discover_packs().get(name)
+    if status is None or status.pack is None:
+        logger.warning(
+            "template pack %r from the upload manifest is not available here (%s): "
+            "L3 (pack header/DOS fields) SKIPS for this run",
+            name,
+            status.diagnosis if status is not None else "not discovered",
+        )
+        return None
+    return status.pack
+
+
 def run_upload_command(
     cmd: UploadCommand,
     attach: Callable[[], object],
@@ -214,13 +254,18 @@ def run_upload_command(
     :class:`~anastomosis.deliver.verify.LayeredVerifier` (lazily imported so the
     ``render`` extra it needs stays off the default path); otherwise the engine
     falls back to its pass-through :class:`NullVerifier` and behavior is
-    unchanged.
+    unchanged. The ladder verifies against the manifest's own record of the
+    render run — the template pack, the per-item expected page count, and the
+    per-item date of service — so an upload checks what the render produced, not
+    what the upload machine happens to hold today. A pre-v2 manifest carries
+    none of those; it still uploads, with the levels that need them degraded and
+    said so out loud.
     """
     from anastomosis.core.locking import output_lock
     from anastomosis.core.output import secure_output_dir
     from anastomosis.deliver.browser.engine import UploadEngine
     from anastomosis.deliver.browser.manager import ManagedDestination
-    from anastomosis.deliver.browser.persist import read_upload_manifest
+    from anastomosis.deliver.browser.persist import load_upload_manifest
     from anastomosis.deliver.browser.reports import write_run_report
     from anastomosis.deliver.browser.tracking import TrackingDB
     from anastomosis.destinations.base import Destination
@@ -251,7 +296,10 @@ def run_upload_command(
         for target in sorted({cmd.out_dir.resolve(), manifest_root.resolve()}):
             stack.enter_context(output_lock(target))
         # Lock-then-read: the authoritative manifest is the one under the lock.
-        items, patients = read_upload_manifest(manifest_root)
+        # The FULL read (not the (items, patients) projection): the ladder below
+        # verifies against the rest of it, and a v1 file announces its degraded
+        # coverage from inside this read.
+        manifest = load_upload_manifest(manifest_root)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol
         # Register each resource with the ExitStack the INSTANT we own it, so a
@@ -280,25 +328,14 @@ def run_upload_command(
         # access (L4/L5/L6) — so it takes the UNwrapped Destination, while the
         # engine takes the ManagedDestination.
         #
-        # NOT active on the upload path (both `anast upload` and the GUI
-        # console), stated plainly so the coverage claim never exceeds reality:
-        #   * L3 (pack-driven header/DOS fields) SKIPs — no `pack`/`records` is
-        #     threaded, so it has nothing to check.
-        #   * L1's EXACT expected-page-count check is inactive — no
-        #     `expected_pages` is threaded, so L1 verifies only "opens, >= 1
-        #     page, above the sub-KiB floor", not "exactly N pages".
-        # Active levels here are L0/L1(sans exact page count)/L2/L4 (+ L5/L6 when
-        # the destination supports read-back). The reason is the upload manifest
-        # (`deliver/browser/persist.py`, version 1) carries item_key/encounter_id/
-        # patient_id/sha256/size/fingerprint + patient demographics only — NOT the
-        # pack name, per-item expected page count, or encounter (DOS) records L3
-        # and the exact-page check need. Wiring them is a manifest-schema change
-        # (a MANIFEST_VERSION bump + render/migrate writers + this reader), tracked
-        # as a follow-up rather than rushed into a patient-safety fix.
-        # TODO(L3-on-upload): extend the manifest to carry pack name, per-item
-        # expected page count, and encounter records, then pass pack/records/
-        # expected_pages here so L3 and L1's exact-page check run on the upload
-        # path. See README "Active coverage".
+        # The whole ladder runs here, against what the render run itself recorded
+        # in the manifest: `pack` is the template pack whose declared header
+        # fields L3 checks, `records` are the DOS-only encounters L3's `dos`
+        # field reads, and `expected_pages` is each PDF's page count as rendered,
+        # which turns L1's ">= 1 page" into "exactly N pages". Whatever the
+        # manifest could not supply degrades to a SKIP that names its reason in
+        # the run report (and, for a pre-v2 manifest or an unavailable pack, a
+        # warning in the log) — never to a level that passes without checking.
         #
         # If this constructor raises, the stack already owns both the
         # destination release and the ledger close, so neither leaks.
@@ -306,14 +343,19 @@ def run_upload_command(
         if cmd.verify:
             from anastomosis.deliver.verify import LayeredVerifier
 
-            verifier = LayeredVerifier(destination=destination)
+            verifier = LayeredVerifier(
+                destination=destination,
+                pack=_verification_pack(manifest.pack),
+                records=manifest.encounters,
+                expected_pages=manifest.expected_pages,
+            )
         run_id = tracking.begin_run(managed.name)
         # The engine contract: the CALLER recovers any mid-flight items from a
         # prior killed run before driving (a re-start resumes cleanly).
         tracking.recover(run_id)
         result = UploadEngine(
             managed, tracking, verifier=verifier, max_attempts=cmd.max_attempts
-        ).run(items, patients, run_id, skiplist=cmd.skiplist, stop=stop)
+        ).run(manifest.items, manifest.patients, run_id, skiplist=cmd.skiplist, stop=stop)
         # On a clean finish stamp the run done; an abort already stamped its
         # own finish_run inside the engine (manage_run defaults True).
         if result.aborted_reason is None:

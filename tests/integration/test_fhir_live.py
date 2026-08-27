@@ -45,8 +45,9 @@ from anastomosis.deliver.browser.manifest import build_manifest
 from anastomosis.deliver.browser.persist import write_upload_manifest
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.deliver.browser.tracking import TrackingDB
-from anastomosis.deliver.fhir_api import FhirApiDestination, FhirClient, FhirEndpoint
 from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
+from anastomosis.deliver.fhir_api.client import FhirClient, FhirEndpoint
+from anastomosis.deliver.fhir_api.destination import FhirApiDestination
 from anastomosis.destinations.base import UploadItem
 from anastomosis.reconstruct.engine import RenderedDoc
 

@@ -194,6 +194,8 @@ def _write_manifest_with_event(
     records: list[PatientRecord],
     charts_dir: Path,
     emit: Callable[[StageEvent], None],
+    *,
+    pack: str | None,
 ) -> None:
     """Persist the upload manifest next to the charts and emit MANIFEST.
 
@@ -202,11 +204,16 @@ def _write_manifest_with_event(
     posture for migrations). The event count payload — ``items`` — is the
     same shape ``run_pipeline_command`` emits, so a parity test on the stage
     contract sees identical payloads from both render modes.
+
+    ``pack`` names the Jinja pack the charts were rendered through, so the later
+    ``anast upload`` can run L3 against the header fields it declares. It is
+    ``None`` in ccda-standard mode, where the HL7 stylesheet renders the view and
+    no pack declares anything for L3 to check.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(docs, records, charts_dir)
+    write_upload_manifest(docs, records, charts_dir, pack=pack)
     emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
 
 
@@ -467,7 +474,9 @@ def _run_ccda_standard(
             # deliver). The whole-patient view has no RenderedDoc list, so the
             # path:patient association is recovered from the records via the
             # renderer's public allocator; the per-patient view has no encounter,
-            # so the patient id stands in for the item_key's encounter slot.
+            # so the patient id stands in for the item_key's encounter slot — and
+            # therefore no date of service, which is the truth about a
+            # whole-patient document rather than a lost field.
             manifest_docs = [
                 RenderedDoc(
                     path=ccda_standard_doc_path(charts, record),
@@ -476,7 +485,7 @@ def _run_ccda_standard(
                 )
                 for record in records
             ]
-            _write_manifest_with_event(manifest_docs, records, charts, emit)
+            _write_manifest_with_event(manifest_docs, records, charts, emit, pack=None)
 
             paths = deliver_ccda(records, ccda)
     except OutputLockedError as exc:

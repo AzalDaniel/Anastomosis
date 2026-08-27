@@ -218,14 +218,20 @@ Next:
   implementation; vendoring MiniSearch (MIT) waits until the exact build can
   be pinned by hash from a trusted release source. The `index.json` schema is
   forward-compatible either way.
-- **L3 + exact page count on the upload path** — the upload manifest
-  (`deliver/browser/persist.py`, version 1) carries no pack name, per-item
-  expected page count, or encounter (DOS) records, so on `anast upload` /
-  the GUI console L3 skips and L1 checks only "opens, ≥ 1 page, above the
-  size floor". Wiring them is a manifest-schema change (MANIFEST_VERSION
-  bump + render/migrate writers + the upload reader) — see the
-  `TODO(L3-on-upload)` in `core/upload_command.py` and README "Active
-  coverage".
+- **L3 + exact page count on the upload path** — closed for current trees:
+  the upload manifest (`deliver/browser/persist.py`) is version 2 and carries
+  the pack name, the per-item page count as rendered, and the per-item date of
+  service, so `anast upload` / the GUI console run the full ladder — L3 against
+  the pack's `verify_header_fields`, L1 against an exact page count. A version-1
+  manifest still loads (an already-rendered tree is never refused) with L3
+  skipped and L1 back to its page floor, announced by one loud, PHI-free warning
+  per read. Two residues remain: a run rendered through an external
+  `--pack-dir` pack records a name the upload side cannot re-discover (discovery
+  there is built-ins only — an upload run holds no consent to execute external
+  pack code), so L3 skips with a logged reason; and a chart whose page count the
+  render run could not measure (no PyMuPDF, or a PDF that will not parse) is
+  written with a null count and logged as a count, leaving L1 at its floor for
+  that item.
 - **Ideographic-script name matching, flush-prose case** — the identity
   predicates (`core/identity.py`) accept an unseparated-script name as the
   flush-joined form of its parts when it is delimited by punctuation or

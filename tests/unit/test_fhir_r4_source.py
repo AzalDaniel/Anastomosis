@@ -810,6 +810,465 @@ def test_minimal_patient_grouped_independently() -> None:
     assert rec.medications == [] and rec.coverages == []
 
 
+# --- reference resources (Practitioner / Location / Organization) ----------
+
+PRAC_A = "feedface-000c-0000-0000-00000000000a"
+PRAC_B = "feedface-000c-0000-0000-00000000000b"
+LOC_A = "feedface-000d-0000-0000-00000000000a"
+ORG_B = "feedface-000d-0000-0000-00000000000b"
+ENC_ID = "feedface-0002-0000-0000-00000000000e"
+NPI_SYSTEM = "http://hl7.org/fhir/sid/us-npi"
+
+
+def _encounter_resource(**extra: object) -> dict:
+    return {
+        "resourceType": "Encounter",
+        "id": ENC_ID,
+        "subject": _SUBJECT,
+        "period": {"start": "2023-05-10"},
+        **extra,
+    }
+
+
+def _practitioner_resource(pid: str, family: str) -> dict:
+    return {
+        "resourceType": "Practitioner",
+        "id": pid,
+        "name": [{"family": family, "given": ["Avery"]}],
+    }
+
+
+def test_uncited_reference_resources_ride_shared() -> None:
+    """A Practitioner/Location/Organization no record's encounter cites reaches
+    no typed slot; without the bundle-level key it would vanish from the load
+    entirely. The CITED ones stay attached and are not duplicated into it."""
+    prac_a = _practitioner_resource(PRAC_A, "Cited")
+    prac_b = _practitioner_resource(PRAC_B, "Uncited")
+    loc_a = {"resourceType": "Location", "id": LOC_A, "name": "Example Family Clinic"}
+    org_b = {"resourceType": "Organization", "id": ORG_B, "name": "Example Health System"}
+    enc = _encounter_resource(
+        participant=[{"individual": {"reference": f"Practitioner/{PRAC_A}"}}],
+        location=[{"location": {"reference": f"Location/{LOC_A}"}}],
+    )
+    rec = _record_with(prac_a, prac_b, loc_a, org_b, enc)
+    assert [p.id for p in rec.practitioners] == [PRAC_A]
+    assert [f.id for f in rec.facilities] == [LOC_A]
+    assert rec.extensions["fhir_r4:shared"] == [prac_b, org_b]  # verbatim, bundle order
+
+
+def test_uncited_practitioner_rides_shared_on_every_record() -> None:
+    """The key claims no attribution, so an uncited reference resource is
+    preserved on BOTH records rather than guessed onto one of them."""
+    prac = _practitioner_resource(PRAC_B, "Uncited")
+    records = list(
+        records_from_resources(
+            [_patient_resource(), _patient_resource(family="Placeholder", pid=PID2), prac]
+        )
+    )
+    assert len(records) == 2
+    for record in records:
+        assert record.extensions["fhir_r4:shared"] == [prac]
+        assert record.practitioners == []
+
+
+def test_practitioner_cited_only_by_a_dangling_encounter_is_preserved() -> None:
+    """A dangling encounter never becomes a typed record, so it cites nobody: the
+    practitioner it names must be treated as UNCITED and ride the shared key,
+    not counted as attached and then dropped for want of a record to attach to."""
+    prac = _practitioner_resource(PRAC_B, "Ghostcited")
+    enc = {
+        "resourceType": "Encounter",
+        "id": ENC_ID,
+        "subject": {"reference": "Patient/does-not-exist"},
+        "participant": [{"individual": {"reference": f"Practitioner/{PRAC_B}"}}],
+    }
+    rec = _record_with(prac, enc)
+    assert rec.practitioners == []
+    assert rec.extensions["fhir_r4:shared"] == [prac]
+    assert [r["id"] for r in rec.extensions["fhir_r4:unanchored"]] == [ENC_ID]
+
+
+# --- partial consumption: siblings of a read element ------------------------
+
+
+def test_practitioner_non_npi_identifier_and_second_name_ride_residual() -> None:
+    """The lift reads one name entry's family/given[0]/text and the NPI alone —
+    a second name, the prefix/use beside the one it read, and every non-NPI
+    identifier are siblings that must survive at a namespaced path."""
+    prac = {
+        "resourceType": "Practitioner",
+        "id": PRAC_A,
+        "name": [
+            {"family": "Marrow", "given": ["Avery"], "prefix": ["Dr"], "use": "official"},
+            {"family": "SENTINEL-Maiden", "use": "maiden"},
+        ],
+        "identifier": [
+            {"system": NPI_SYSTEM, "value": "1234567893"},
+            {"system": "http://example.com/fhir/staff-id", "value": "SENTINEL-STAFF-77"},
+        ],
+    }
+    enc = _encounter_resource(participant=[{"individual": {"reference": f"Practitioner/{PRAC_A}"}}])
+    obj = _record_with(prac, enc).practitioners[0]
+    assert (obj.given_name, obj.family_name, obj.npi) == ("Avery", "Marrow", "1234567893")
+    assert obj.extensions["fhir_r4:identifier"] == [
+        {"system": "http://example.com/fhir/staff-id", "value": "SENTINEL-STAFF-77"}
+    ]
+    assert obj.extensions["fhir_r4:name"] == [
+        {"prefix": ["Dr"], "use": "official"},
+        {"family": "SENTINEL-Maiden", "use": "maiden"},
+    ]
+
+
+def test_location_telecom_email_and_address_siblings_ride_residual() -> None:
+    """The header lift reads two address lines, city/state/postalCode and the
+    phone/fax telecom values; an email entry, the .use/.rank beside the phone it
+    read, a third address line and the address country are not read at all."""
+    loc = {
+        "resourceType": "Location",
+        "id": LOC_A,
+        "name": "Example Family Clinic",
+        "address": {
+            "line": ["200 Clinic Way", "Suite 3", "SENTINEL-Line-3"],
+            "city": "Springfield",
+            "state": "IL",
+            "postalCode": "60001",
+            "country": "US",
+        },
+        "telecom": [
+            {"system": "phone", "value": "555-555-0100", "use": "work", "rank": 1},
+            {"system": "email", "value": "records@example.com"},
+        ],
+    }
+    enc = _encounter_resource(location=[{"location": {"reference": f"Location/{LOC_A}"}}])
+    fac = _record_with(loc, enc).facilities[0]
+    assert (fac.phone, fac.address_line1, fac.address_line2) == (
+        "555-555-0100",
+        "200 Clinic Way",
+        "Suite 3",
+    )
+    assert fac.extensions["fhir_r4:telecom"] == [
+        {"use": "work", "rank": 1},
+        {"system": "email", "value": "records@example.com"},
+    ]
+    assert fac.extensions["fhir_r4:address"] == {"line": ["SENTINEL-Line-3"], "country": "US"}
+
+
+def test_encounter_participant_and_location_siblings_ride_residual() -> None:
+    """Only the first participant's individual reference, the first location's
+    reference and each diagnosis condition are read — a participant's type and
+    period, a second participant or location, a location status and a diagnosis
+    rank ride the residue rather than leaving with the reference that was."""
+    enc = _encounter_resource(
+        participant=[
+            {
+                "individual": {
+                    "reference": f"Practitioner/{PRAC_A}",
+                    "display": "SENTINEL-Display",
+                },
+                "type": [{"text": "primary performer"}],
+                "period": {"start": "2023-05-10T09:00:00Z"},
+            },
+            {"individual": {"reference": f"Practitioner/{PRAC_B}"}},
+        ],
+        location=[
+            {"location": {"reference": f"Location/{LOC_A}"}, "status": "completed"},
+            {"location": {"reference": f"Location/{ORG_B}"}},
+        ],
+        diagnosis=[{"condition": {"reference": "Condition/dx-1"}, "rank": 1}],
+    )
+    obj = _record_with(enc).encounters[0]
+    assert (obj.provider_id, obj.facility_id, obj.diagnosis_ids) == (PRAC_A, LOC_A, ["dx-1"])
+    assert obj.extensions["fhir_r4:participant"] == [
+        {
+            "individual": {"display": "SENTINEL-Display"},
+            "type": [{"text": "primary performer"}],
+            "period": {"start": "2023-05-10T09:00:00Z"},
+        },
+        {"individual": {"reference": f"Practitioner/{PRAC_B}"}},
+    ]
+    assert obj.extensions["fhir_r4:location"] == [
+        {"status": "completed"},
+        {"location": {"reference": f"Location/{ORG_B}"}},
+    ]
+    assert obj.extensions["fhir_r4:diagnosis"] == [{"rank": 1}]
+
+
+def test_observation_effective_period_end_and_code_siblings_ride_residual() -> None:
+    """``effectivePeriod.end`` is never lifted (only ``.start`` is), and neither
+    is an unmatched category entry, the display beside the LOINC that matched, a
+    Quantity's system, or a referenceRange."""
+    category_system = "http://terminology.hl7.org/CodeSystem/observation-category"
+    obs = {
+        "resourceType": "Observation",
+        "id": "feedface-0003-0000-0000-00000000000e",
+        "status": "final",
+        "subject": _SUBJECT,
+        "category": [
+            {"coding": [{"system": category_system, "code": "SENTINEL-vendor"}]},
+            {"coding": [{"system": category_system, "code": "laboratory"}]},
+        ],
+        "code": {
+            "text": "Glucose",
+            "coding": [
+                {
+                    "system": "http://loinc.org",
+                    "code": "2339-0",
+                    "display": "Glucose [Mass/volume] in Blood",
+                }
+            ],
+        },
+        "effectivePeriod": {"start": "2023-05-10T09:40:00", "end": "2023-05-10T10:00:00"},
+        "valueQuantity": {"value": 99, "unit": "mg/dL", "system": "http://unitsofmeasure.org"},
+        "referenceRange": [{"text": "70-110 mg/dL"}],
+    }
+    obj = _record_with(obs).observations[0]
+    assert (obj.code, obj.display, obj.value, obj.unit) == ("2339-0", "Glucose", "99", "mg/dL")
+    assert obj.category is ObservationCategory.LABORATORY
+    assert obj.effective_at.isoformat() == "2023-05-10T09:40:00"
+    ext = obj.extensions
+    assert ext["fhir_r4:effectivePeriod"] == {"end": "2023-05-10T10:00:00"}
+    assert ext["fhir_r4:code"] == {"coding": [{"display": "Glucose [Mass/volume] in Blood"}]}
+    assert ext["fhir_r4:valueQuantity"] == {"system": "http://unitsofmeasure.org"}
+    assert ext["fhir_r4:category"] == [
+        {"coding": [{"system": category_system, "code": "SENTINEL-vendor"}]},
+        {"coding": [{"system": category_system}]},
+    ]
+    assert ext["fhir_r4:referenceRange"] == [{"text": "70-110 mg/dL"}]
+
+
+def test_allergy_resolved_status_and_unmatched_category_ride_residual() -> None:
+    """A clinicalStatus that does NOT read active was never lifted: losing
+    "resolved" would migrate a resolved allergy as merely inactive. The category
+    entry the match scanned past, and the reaction onset, are unread too."""
+    allergy = {
+        "resourceType": "AllergyIntolerance",
+        "id": "feedface-0006-0000-0000-00000000000e",
+        "patient": _SUBJECT,
+        "clinicalStatus": {
+            "coding": [
+                {
+                    "code": "resolved",
+                    "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+                }
+            ]
+        },
+        "category": ["biologic", "medication"],
+        "criticality": "high",
+        "code": {
+            "text": "Penicillin",
+            "coding": [
+                {"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "7980"},
+            ],
+        },
+        "reaction": [
+            {"manifestation": [{"text": "Hives"}], "severity": "moderate", "onset": "2023-01-02"}
+        ],
+    }
+    obj = _record_with(allergy).allergies[0]
+    assert (obj.substance, obj.severity, obj.reactions) == ("Penicillin", "moderate", ["Hives"])
+    assert obj.category is AllergyCategory.DRUG and obj.active is False
+    ext = obj.extensions
+    assert ext["fhir_r4:clinicalStatus"]["coding"][0]["code"] == "resolved"
+    assert ext["fhir_r4:category"] == ["biologic"]
+    assert ext["fhir_r4:reaction"] == [{"onset": "2023-01-02"}]
+    assert ext["fhir_r4:code"] == {
+        "coding": [{"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "7980"}]
+    }
+
+
+def test_coverage_cancelled_status_and_second_class_ride_residual() -> None:
+    """A cancelled policy must not migrate as merely inactive, so the status it
+    was never lifted from rides; so do a second `class` entry and the payor
+    reference beside the display the lift read."""
+    cov = {
+        "resourceType": "Coverage",
+        "id": "feedface-0007-0000-0000-00000000000e",
+        "status": "cancelled",
+        "beneficiary": _SUBJECT,
+        "subscriberId": "MEMBER-000999",
+        "order": 1,
+        "payor": [{"display": "Acme Health Plan", "reference": "Organization/acme"}],
+        "period": {"start": "2023-01-01", "end": "2023-12-31"},
+        "class": [
+            {"type": {"coding": [{"code": "group"}]}, "value": "GRP-0001", "name": "Acme PPO"},
+            {"type": {"coding": [{"code": "subplan"}]}, "value": "SENTINEL-SUBPLAN"},
+        ],
+    }
+    obj = _record_with(cov).coverages[0]
+    assert (obj.payer, obj.plan_name, obj.group_number) == (
+        "Acme Health Plan",
+        "Acme PPO",
+        "GRP-0001",
+    )
+    assert obj.order_of_benefits == 0 and obj.active is False
+    ext = obj.extensions
+    assert ext["fhir_r4:status"] == "cancelled"
+    assert ext["fhir_r4:payor"] == [{"reference": "Organization/acme"}]
+    assert ext["fhir_r4:class"] == [
+        {"type": {"coding": [{"code": "subplan"}]}, "value": "SENTINEL-SUBPLAN"}
+    ]
+
+
+def test_condition_resolved_status_and_unmatched_codings_ride_residual() -> None:
+    """The meaning-reversal case: `active=False` is the lift finding no active
+    coding, so the code that IS there must stay whole. The codings beside the
+    ones ICD-10/SNOMED matched are unread siblings too."""
+    cond = {
+        "resourceType": "Condition",
+        "id": "feedface-0004-0000-0000-00000000000e",
+        "subject": _SUBJECT,
+        "clinicalStatus": {"coding": [{"code": "resolved"}]},
+        "code": {
+            "text": "Essential hypertension",
+            "coding": [
+                {"system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "I10"},
+                {"system": "http://example.com/fhir/local-codes", "code": "SENTINEL-LOCAL"},
+            ],
+        },
+        "recordedDate": "SENTINEL-unparseable",
+    }
+    obj = _record_with(cond).conditions[0]
+    assert (obj.icd10, obj.display, obj.active) == ("I10", "Essential hypertension", False)
+    assert obj.recorded_at is None
+    ext = obj.extensions
+    assert ext["fhir_r4:clinicalStatus"] == {"coding": [{"code": "resolved"}]}
+    assert ext["fhir_r4:code"] == {
+        "coding": [{"system": "http://example.com/fhir/local-codes", "code": "SENTINEL-LOCAL"}]
+    }
+    assert ext["fhir_r4:recordedDate"] == "SENTINEL-unparseable"  # parsed to nothing, so kept
+
+
+def test_medication_second_dosage_line_and_route_ride_residual() -> None:
+    """Only ``dosageInstruction[0].text`` becomes the sig — the route beside it
+    and a second dosage line are instructions a chart would otherwise lose."""
+    med = {
+        "resourceType": "MedicationRequest",
+        "id": "feedface-0008-0000-0000-00000000000e",
+        "status": "active",
+        "subject": _SUBJECT,
+        "authoredOn": "2023-05-10",
+        "medicationCodeableConcept": {
+            "text": "Metformin 500 MG Oral Tablet",
+            "coding": [
+                {"system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "860975"},
+            ],
+        },
+        "dosageInstruction": [
+            {"text": "Take 1 tablet by mouth twice daily", "route": {"text": "Oral"}},
+            {"text": "SENTINEL-TAPER-LINE"},
+        ],
+    }
+    obj = _record_with(med).medications[0]
+    assert (obj.sig, obj.rxnorm) == ("Take 1 tablet by mouth twice daily", "860975")
+    assert obj.start.isoformat() == "2023-05-10"
+    assert obj.extensions["fhir_r4:dosageInstruction"] == [
+        {"route": {"text": "Oral"}},
+        {"text": "SENTINEL-TAPER-LINE"},
+    ]
+
+
+def test_immunization_second_note_and_vaccine_display_ride_residual() -> None:
+    """The comment comes from ``note[0].text`` alone, and the vaccineCode display
+    beside the CVX the lift matched is never read."""
+    imm = {
+        "resourceType": "Immunization",
+        "id": "feedface-0009-0000-0000-00000000000e",
+        "status": "completed",
+        "patient": _SUBJECT,
+        "occurrenceDateTime": "2023-10-01",
+        "vaccineCode": {
+            "text": "Influenza, seasonal",
+            "coding": [
+                {"system": "http://hl7.org/fhir/sid/cvx", "code": "140", "display": "SENTINEL-CVX"}
+            ],
+        },
+        "note": [
+            {"text": "Left deltoid.", "time": "2023-10-01T11:00:00Z"},
+            {"text": "SENTINEL-SECOND-NOTE"},
+        ],
+    }
+    obj = _record_with(imm).immunizations[0]
+    assert (obj.vaccine, obj.comment) == ("Influenza, seasonal", "Left deltoid.")
+    assert obj.extensions["fhir_r4:cvx"] == "140"
+    assert obj.extensions["fhir_r4:note"] == [
+        {"time": "2023-10-01T11:00:00Z"},
+        {"text": "SENTINEL-SECOND-NOTE"},
+    ]
+    assert obj.extensions["fhir_r4:vaccineCode"] == {"coding": [{"display": "SENTINEL-CVX"}]}
+
+
+def test_goal_cancelled_lifecycle_and_description_codings_ride_residual() -> None:
+    """A lifecycleStatus outside the active set was never lifted: an abandoned
+    goal must not migrate as merely inactive. The description codings behind the
+    ``text`` the lift preferred are unread siblings too."""
+    goal = {
+        "resourceType": "Goal",
+        "id": "feedface-000a-0000-0000-00000000000e",
+        "lifecycleStatus": "cancelled",
+        "subject": _SUBJECT,
+        "description": {
+            "text": "Lower blood pressure to below 130/80",
+            "coding": [{"system": "http://snomed.info/sct", "code": "SENTINEL-GOAL-CODE"}],
+        },
+    }
+    obj = _record_with(goal).goals[0]
+    assert obj.description == "Lower blood pressure to below 130/80" and obj.active is False
+    assert obj.extensions["fhir_r4:lifecycleStatus"] == "cancelled"
+    assert obj.extensions["fhir_r4:description"] == {
+        "coding": [{"system": "http://snomed.info/sct", "code": "SENTINEL-GOAL-CODE"}]
+    }
+
+
+def test_family_history_second_condition_and_note_ride_residual() -> None:
+    """Only the first condition entry is lifted; a second one and the note beside
+    the code must not leave with it."""
+    fam = {
+        "resourceType": "FamilyMemberHistory",
+        "id": "feedface-000b-0000-0000-00000000000e",
+        "status": "completed",
+        "patient": _SUBJECT,
+        "relationship": {"text": "Father"},
+        "condition": [
+            {
+                "code": {"text": "Type 2 diabetes mellitus"},
+                "onsetString": "age 55",
+                "note": [{"text": "SENTINEL-FAMILY-NOTE"}],
+            },
+            {"code": {"text": "SENTINEL-SECOND-CONDITION"}},
+        ],
+    }
+    obj = _record_with(fam).family_history[0]
+    assert (obj.relation, obj.diagnosis) == ("Father", "Type 2 diabetes mellitus")
+    assert obj.extensions["fhir_r4:onset_string"] == "age 55"
+    assert obj.extensions["fhir_r4:condition"] == [
+        {"note": [{"text": "SENTINEL-FAMILY-NOTE"}]},
+        {"code": {"text": "SENTINEL-SECOND-CONDITION"}},
+    ]
+
+
+def test_fully_read_elements_leave_no_residual_key() -> None:
+    """Sentinel discipline: an element whose every sub-field was lifted yields no
+    empty placeholder — partial consumption adds residue, it does not invent it."""
+    prac = {
+        "resourceType": "Practitioner",
+        "id": PRAC_A,
+        "name": [{"family": "Marrow", "given": ["Avery"], "text": "Avery Marrow, MD"}],
+        "identifier": [{"system": NPI_SYSTEM, "value": "1234567893"}],
+    }
+    enc = _encounter_resource(participant=[{"individual": {"reference": f"Practitioner/{PRAC_A}"}}])
+    rec = _record_with(prac, enc)
+    obj = rec.practitioners[0]
+    assert (obj.given_name, obj.family_name, obj.display_name, obj.npi) == (
+        "Avery",
+        "Marrow",
+        "Avery Marrow, MD",
+        "1234567893",
+    )
+    assert "fhir_r4:name" not in obj.extensions
+    assert "fhir_r4:identifier" not in obj.extensions
+    assert "fhir_r4:participant" not in rec.encounters[0].extensions
+
+
 # --- NDJSON ($export) path -------------------------------------------------
 
 

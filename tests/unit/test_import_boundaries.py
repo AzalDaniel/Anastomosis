@@ -69,6 +69,37 @@ def test_gui_does_not_import_cli_commands() -> None:
     )
 
 
+def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
+    """``anastomosis.cli`` backs ``anast --help`` / ``doctor`` / ``gui`` — none
+    of which touch a source export or a destination. Each source adapter pulls
+    in ``core.model`` + ``destinations`` + ``yaml``; the browser/FHIR-API
+    attach seams pull in their whole delivery packages. All of that must stay
+    lazy (per-command, inside a function body) so a plain ``anast --help``
+    startup cost doesn't scale with every adapter and destination this toolkit
+    ships.
+
+    ``anastomosis.deliver.fhir_api`` itself (the bare package) is NOT in the
+    forbidden set: ``cli_commands.upload`` imports its ``DEFAULT_TOKEN_ENV``
+    constant from ``.attach`` at module load (a Typer option default, needed
+    at command-definition time), and any submodule import always runs the
+    parent package's ``__init__`` — that package init is deliberately kept to
+    near-nothing (no ``.client``/``.destination`` re-export) so this stays
+    cheap. Its heavy children must still never appear.
+    """
+    loaded = _modules_after_import("anastomosis.cli")
+    forbidden = {
+        "anastomosis.sources.ccda",
+        "anastomosis.sources.fhir_r4",
+        "anastomosis.sources.oracle_ehi",
+        "anastomosis.sources.pf_tebra",
+        "anastomosis.deliver.browser",
+        "anastomosis.deliver.fhir_api.client",
+        "anastomosis.deliver.fhir_api.destination",
+    }
+    leaked = forbidden & loaded
+    assert not leaked, f"anastomosis.cli eagerly imported: {sorted(leaked)}"
+
+
 def test_browser_attach_module_loads_without_playwright_extra() -> None:
     """The attach module is a thin shell — importing the module must not
     require the optional ``deliver-browser`` extra. The Playwright imports
@@ -81,15 +112,27 @@ def test_browser_attach_module_loads_without_playwright_extra() -> None:
     assert "playwright.sync_api" not in loaded
 
 
-def test_cli_make_destination_aliases_attach_destination() -> None:
+def test_cli_make_destination_delegates_to_attach_destination() -> None:
     """Long-standing tests monkeypatch ``anastomosis.cli._make_destination``;
-    the alias is kept so that contract still holds. The alias must point
-    at the canonical :func:`attach_destination` (not a stale re-implementation).
+    that contract still holds with a thin lazy-import wrapper (a plain
+    module-level assignment would force ``anastomosis.cli`` to eagerly import
+    ``anastomosis.deliver.browser.attach``, which pulls in the whole
+    upload-engine package — dead weight for every command that never uploads).
+    The wrapper must delegate straight through to the canonical
+    :func:`attach_destination`, not a stale re-implementation.
     """
-    from anastomosis.cli import _make_destination
-    from anastomosis.deliver.browser.attach import attach_destination
+    from unittest.mock import patch
 
-    assert _make_destination is attach_destination
+    from anastomosis.cli import _make_destination
+
+    sentinel = object()
+    with patch(
+        "anastomosis.deliver.browser.attach.attach_destination", return_value=sentinel
+    ) as mock_attach:
+        result = _make_destination("http://127.0.0.1:9222", "loaded")
+
+    mock_attach.assert_called_once_with("http://127.0.0.1:9222", "loaded")
+    assert result is sentinel
 
 
 # --- public verification imports (circular-import regression) --------------

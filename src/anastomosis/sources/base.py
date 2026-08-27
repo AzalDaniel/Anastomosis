@@ -70,6 +70,38 @@ class SourceAdapter(Protocol):
 
 _REGISTRY: dict[str, SourceAdapter] = {}
 
+# The built-in adapters, as module paths rather than eager imports: each one
+# pulls in core.model + destinations + yaml (a real chunk of startup cost), so
+# nothing outside this module imports them directly anymore — CLI startup
+# (--help, doctor, gui) must not pay for a registry no one has asked for yet.
+_builtins_loaded = False
+
+
+def _ensure_builtin_adapters() -> None:
+    """Import each built-in adapter module once (each ``register()``\\ s itself).
+
+    Idempotent and cheap after the first call, so every registry entry point
+    below can call it unconditionally — no caller can observe an unpopulated
+    registry just because it happened to be first.
+
+    These MUST be literal ``import`` statements, never importlib over strings:
+    the frozen Windows build includes only statically-reachable modules
+    (packaging/build_windows.py ships package DATA wholesale, code
+    selectively), and these calls are the adapters' only remaining reference —
+    a string-based import here compiles fine and then strips every adapter
+    out of the shipped app. ``sources.learned`` is deliberately absent: it
+    self-registers only through ``register_learned_sources()``.
+    """
+    global _builtins_loaded
+    if _builtins_loaded:
+        return
+    import anastomosis.sources.ccda
+    import anastomosis.sources.fhir_r4
+    import anastomosis.sources.oracle_ehi
+    import anastomosis.sources.pf_tebra  # noqa: F401
+
+    _builtins_loaded = True
+
 
 def register(adapter: SourceAdapter) -> SourceAdapter:
     """Add an adapter to the registry (idempotent re-registration is an error)."""
@@ -81,6 +113,7 @@ def register(adapter: SourceAdapter) -> SourceAdapter:
 
 def get_source(name: str) -> SourceAdapter:
     """Look up an adapter by name, with a diagnosis listing what exists."""
+    _ensure_builtin_adapters()
     try:
         return _REGISTRY[name]
     except KeyError:
@@ -89,6 +122,7 @@ def get_source(name: str) -> SourceAdapter:
 
 
 def available_sources() -> list[SourceAdapter]:
+    _ensure_builtin_adapters()
     return [_REGISTRY[name] for name in sorted(_REGISTRY)]
 
 
@@ -98,5 +132,6 @@ def detect_source(path: Path) -> SourceAdapter | None:
     Ambiguity (two adapters claiming one folder) returns ``None`` rather
     than guessing — the caller asks the user instead.
     """
+    _ensure_builtin_adapters()
     matches = [adapter for adapter in available_sources() if adapter.detect(path)]
     return matches[0] if len(matches) == 1 else None

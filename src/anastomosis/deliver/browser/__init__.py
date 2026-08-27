@@ -14,8 +14,9 @@ hours-long batch), so the design is built around resumability:
   stopped without double-filing any chart.
 * :mod:`.manifest` — build the upload manifest from rendered documents and
   parse the operator skiplist.
-* :mod:`.persist` — write/read the on-disk upload manifest (items + patient
-  demographics) that bridges a render run to a later ``anast upload``.
+* :mod:`.persist` — write/read the on-disk upload manifest (items, patient
+  demographics, and what the L0-L6 ladder verifies against) that bridges a
+  render run to a later ``anast upload``.
 * :mod:`.verify` — the pre/post verification seam for the L0-L6 ladder.
 * :mod:`.engine` — the sequential driver that walks each item through the
   state machine.
@@ -48,7 +49,10 @@ from .manifest import build_manifest, is_skiplisted, load_skiplist
 from .persist import (
     MANIFEST_NAME,
     MANIFEST_VERSION,
+    SUPPORTED_MANIFEST_VERSIONS,
     ManifestError,
+    UploadManifest,
+    load_upload_manifest,
     read_upload_manifest,
     write_upload_manifest,
 )
@@ -69,6 +73,7 @@ __all__ = [
     "MANIFEST_NAME",
     "MANIFEST_VERSION",
     "SHARED_MACHINE_WARNING",
+    "SUPPORTED_MANIFEST_VERSIONS",
     "TERMINAL_STATES",
     "CdpEndpoint",
     "DeliveryError",
@@ -82,6 +87,7 @@ __all__ = [
     "TrackingDB",
     "TransientDeliveryError",
     "UploadEngine",
+    "UploadManifest",
     "UploadState",
     "Verifier",
     "WrongPatientError",
@@ -89,6 +95,7 @@ __all__ = [
     "connect_over_cdp",
     "is_skiplisted",
     "load_skiplist",
+    "load_upload_manifest",
     "read_upload_manifest",
     "summary_line",
     "validate_transition",

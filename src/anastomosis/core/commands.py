@@ -270,7 +270,7 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
             # before deliveries, so `anast upload` can drive the browser engine
             # later. Additive — the event fires ONLY when requested.
             if cmd.write_manifest:
-                _write_pipeline_manifest(result, cmd.charts_dir, on_event)
+                _write_pipeline_manifest(result, cmd.charts_dir, cmd.pack, on_event)
             deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
             return CommandResult(pipeline=result, deliveries=deliveries)
     except OutputLockedError as exc:
@@ -278,18 +278,23 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
 
 
 def _write_pipeline_manifest(
-    result: PipelineResult, charts_dir: Path, on_event: EventSink | None
+    result: PipelineResult, charts_dir: Path, pack: str, on_event: EventSink | None
 ) -> None:
     """Write the upload manifest and emit the PHI-safe ``manifest`` stage event.
 
     The manifest carries demographics, so it lands ONLY in the hardened
     ``charts_dir`` (the writer enforces that); the emitted event carries the item
     COUNT only — never a name, DOB, or path.
+
+    ``pack`` is the pack this run rendered through — the run resolved it before
+    rendering, so a manifest written here always names a real pack — and is what
+    lets the later ``anast upload`` run L3 against the header fields that pack
+    declares.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(result.render_result.documents, result.records, charts_dir)
+    write_upload_manifest(result.render_result.documents, result.records, charts_dir, pack=pack)
     if on_event is not None:
         on_event(StageEvent(STAGE_MANIFEST, counts={"items": len(result.render_result.documents)}))
 
