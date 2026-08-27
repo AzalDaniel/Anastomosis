@@ -59,8 +59,15 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.patient import Address
 from anastomosis.deliver.ccda_export import DECLARED_LOSSES, build_ccd, deliver_ccda
-from anastomosis.deliver.ccda_export.builder import LOINC_EXTENSIONS
-from anastomosis.sources.ccda.parser import parse_document
+from anastomosis.deliver.ccda_export.builder import (
+    LOINC_EXTENSIONS,
+    LOSS_NARRATIVE_GENERATION_ROOT,
+    LOSS_NARRATIVE_TEMPLATE_ROOT,
+    LOSS_NARRATIVE_TITLE,
+    _carried_forward,
+    _entry_key,
+)
+from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, parse_document
 
 V3 = "urn:hl7-org:v3"
 XSI = "http://www.w3.org/2001/XMLSchema-instance"
@@ -72,6 +79,39 @@ runner = CliRunner()
 PF_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 # A wall-clock instant with a fixed offset (proves tz survives the TS round trip).
 _AT = datetime(2023, 5, 10, 14, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
+
+
+def _loss_entries(record: PatientRecord) -> list[str]:
+    """The 51899-3 loss-ledger entries recovered from a re-ingest.
+
+    The exporter STAMPS its own loss section, so the parser hands its entries
+    back discretely under ``ccda:prior_loss_narrative`` — one per emitted
+    paragraph, no re-splitting heuristic needed. A third party's 51899-3 section
+    is not stamped and lands under ``ccda:section:51899-3`` instead.
+    """
+    prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if prior is None:
+        return []
+    entries: list[str] = list(prior["entries"])
+    return entries
+
+
+def _loss_text(record: PatientRecord) -> str:
+    """The recovered loss ledger as one blob, for substring assertions."""
+    return " ".join(_loss_entries(record))
+
+
+def _loss_sections(document: bytes) -> list[etree._Element]:
+    """Every 51899-3 section in an exported document — stamped or not. The
+    export contract is that there is exactly ONE, however many generations of
+    export → ingest → export the chart has been through."""
+    root = etree.fromstring(document, _PARSER)
+    return [
+        section
+        for section in root.iter(f"{{{V3}}}section")
+        if (code := section.find(f"{{{V3}}}code")) is not None
+        and code.get("code") == LOINC_EXTENSIONS
+    ]
 
 
 def _rich_record() -> PatientRecord:
@@ -403,10 +443,10 @@ def test_nontobacco_social_obs_never_reingest_as_tobacco(tmp_path: Path) -> None
     assert social == [], f"non-tobacco social obs leaked as structured: {social}"
     assert not any(o.display == "Tobacco use" for o in rt.observations)
     # The charted values are preserved — in the loss narrative, not as tobacco.
-    section = rt.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]
-    assert "Carpenter" in section["text"]
-    assert "Construction" in section["text"]
-    assert "Tobacco" not in section["text"]
+    text = _loss_text(rt)
+    assert "Carpenter" in text
+    assert "Construction" in text
+    assert "Tobacco" not in text
 
 
 def test_tobacco_and_nontobacco_social_obs_split_correctly(tmp_path: Path) -> None:
@@ -439,8 +479,7 @@ def test_tobacco_and_nontobacco_social_obs_split_correctly(tmp_path: Path) -> No
     assert len(social) == 1
     assert social[0].display == "Tobacco use"
     assert social[0].value == "Former smoker"
-    section = rt.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]
-    assert "Welder" in section["text"]
+    assert "Welder" in _loss_text(rt)
 
 
 def test_social_history_round_trip(reingested: PatientRecord) -> None:
@@ -496,12 +535,12 @@ def test_nonnative_extensions_land_in_declared_loss_section(tmp_path: Path) -> N
     out = tmp_path / "v.xml"
     out.write_bytes(build_ccd(rec))
     rt = parse_document(out)
-    section = rt.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]
-    assert "pf_tebra:PatientStatusCode = A" in section["text"]
-    assert "pf_tebra:RxControlled = no" in section["text"]
+    text = _loss_text(rt)
+    assert "pf_tebra:PatientStatusCode = A" in text
+    assert "pf_tebra:RxControlled = no" in text
     # ccda:route is a NATIVE round-trip; it stays on the model, not the loss section.
     assert rt.medications[0].extensions["ccda:route"] == "Oral"
-    assert "ccda:route" not in section["text"]
+    assert "ccda:route" not in text
 
 
 def test_populated_native_fields_land_in_loss_narrative(tmp_path: Path) -> None:
@@ -555,7 +594,7 @@ def test_populated_native_fields_land_in_loss_narrative(tmp_path: Path) -> None:
     )
     out = tmp_path / "loss.xml"
     out.write_bytes(build_ccd(rec))
-    text = parse_document(out).patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
+    text = _loss_text(parse_document(out))
     for expected in (
         "Genderqueer",
         "Riverstone",
@@ -593,8 +632,8 @@ def test_addenda_path_line_shape(tmp_path: Path) -> None:
     )
     out = tmp_path / "path.xml"
     out.write_bytes(build_ccd(rec))
-    text = parse_document(out).patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
-    assert f"encounters[{enc_id}].addenda[0].text = amended note body" in text
+    entries = _loss_entries(parse_document(out))
+    assert f"encounters[{enc_id}].addenda[0].text = amended note body" in entries
 
 
 # A source CCD whose Problems entry is NOT the shape `_conditions` parses, so
@@ -637,7 +676,7 @@ def test_ingested_section_narrative_survives_the_export_round_trip(tmp_path: Pat
     exported = tmp_path / "out.xml"
     exported.write_bytes(build_ccd(ingested))
     assert b"SENTINEL-RESCUED-NARRATIVE" in exported.read_bytes()
-    text = parse_document(exported).patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
+    text = _loss_text(parse_document(exported))
     assert "patient.extensions.ccda:section:11450-4.text = SENTINEL-RESCUED-NARRATIVE" in text
 
 
@@ -651,12 +690,327 @@ def test_source_document_metadata_rides_the_loss_narrative(tmp_path: Path) -> No
     exported = tmp_path / "meta_out.xml"
     exported.write_bytes(build_ccd(ingested))
     reingested = parse_document(exported)
-    text = reingested.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"]["text"]
+    text = _loss_text(reingested)
     assert "patient.extensions.ccda:documentId = feedface-0000-0000-0000-00000000cda2" in text
     assert "patient.extensions.ccda:title = Unsupported-entry CCD" in text
     # The re-derived header keys are the EXPORTER's, not the source's — which is
     # exactly why the source values had to be narrated.
     assert reingested.patient.extensions["ccda:title"] == "Continuity of Care Document"
+
+
+# --- export → ingest generations ---------------------------------------------
+#
+# A migration legitimately runs export → ingest → export more than once. Before
+# the stamp existed, the parser read the exporter's OWN 51899-3 section back as
+# an ordinary `ccda:section:51899-3` narrative, so generation N re-narrated
+# generation N-1's ENTIRE ledger as one line inside its own — measured growth of
+# ~1.2 KB per generation, forever, with the real entries buried inside a blob
+# nobody can read. The exporter now stamps the section and the parser recovers
+# its entries discretely, so each generation carries its own entries plus the
+# prior ledger DEDUPLICATED: identical entries collapse, distinct ones all
+# survive, and the ledger reaches a fixed point.
+
+
+def _generation_record() -> PatientRecord:
+    """A chart whose canonical ids survive re-ingest verbatim (GUID-shaped, per
+    the parser's ``_GUID_RE``), carrying one loss of every class the ledger has
+    to hold across generations: a native patient field with no CDA slot, a vendor
+    extension namespace, a native encounter field, and TWO medications sharing
+    one strength value (the multiplicity the dedupe must not collapse)."""
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    return PatientRecord(
+        patient=Patient(
+            id=pid,
+            given_name="Gene",
+            family_name="Ration",
+            gender_identity="GENSENTINEL",
+            identifiers=[
+                Identifier(
+                    kind=IdentifierKind.SOURCE_GUID, value=pid, system="2.16.840.1.113883.19.5"
+                )
+            ],
+            telecom=[ContactPoint(kind=ContactKind.PHONE_HOME, value="(206) 555-0188")],
+            extensions={"pf_tebra:PatientStatusCode": "A"},
+        ),
+        medications=[
+            MedicationStatement(
+                patient_id=pid, display_name="Metformin", rxnorm="6809", strength="500 mg"
+            ),
+            MedicationStatement(
+                patient_id=pid, display_name="Aspirin", rxnorm="1191", strength="500 mg"
+            ),
+        ],
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e9",
+                patient_id=pid,
+                date_of_service=date(2023, 1, 2),
+                encounter_type="Office visit",
+                note_type="Office visit",
+                chief_complaint="CHIEFSENTINEL",
+            )
+        ],
+    )
+
+
+def _generations(record: PatientRecord, count: int, tmp_path: Path) -> list[bytes]:
+    """``count`` rounds of export → ingest, returning each generation's document.
+
+    One stable file name per round: the deliverer names a document after the
+    patient id, and the parser's fallback ids are derived from the file name, so
+    re-exporting under a churning name would inject churn the real path lacks.
+    """
+    out = tmp_path / f"{record.patient.id}.xml"
+    documents: list[bytes] = []
+    for _ in range(count):
+        document = build_ccd(record)
+        out.write_bytes(document)
+        documents.append(document)
+        record = parse_document(out)
+    return documents
+
+
+def test_three_generations_keep_exactly_one_loss_narrative_section(tmp_path: Path) -> None:
+    for generation, document in enumerate(_generations(_generation_record(), 3, tmp_path), start=1):
+        sections = _loss_sections(document)
+        assert len(sections) == 1, (
+            f"generation {generation} emitted {len(sections)} 51899-3 sections; "
+            "the loss ledger must be exactly one section per document"
+        )
+        section = sections[0]
+        # Stamped as ours, with the generation counter a later ingest reads back.
+        template = section.find(f"{{{V3}}}templateId")
+        assert template is not None
+        assert template.get("root") == LOSS_NARRATIVE_TEMPLATE_ROOT
+        stamp = section.find(f"{{{V3}}}id")
+        assert stamp is not None
+        assert stamp.get("root") == LOSS_NARRATIVE_GENERATION_ROOT
+        assert stamp.get("extension") == str(generation)
+
+
+def test_three_generations_keep_every_distinct_loss_entry(tmp_path: Path) -> None:
+    """Distinct entries from generation 1 must still be readable at generation 3
+    — the whole point of a carry-forward ledger."""
+    documents = _generations(_generation_record(), 3, tmp_path)
+    entries = _entries_of(documents[-1])
+    for expected in (
+        "encounters[feedface-0000-0000-0000-0000000000e9].chief_complaint = CHIEFSENTINEL",
+        "patient.gender_identity = GENSENTINEL",
+        "patient.extensions.pf_tebra:PatientStatusCode = A",
+    ):
+        assert expected in entries, f"generation-1 loss entry dropped by generation 3: {expected!r}"
+    # Two medications share one strength; BOTH entries survive — dedupe collapses
+    # identical entries, never the cardinality of two genuinely distinct objects.
+    assert sum(entry.endswith(".strength = 500 mg") for entry in entries) == 2
+
+
+def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path) -> None:
+    """Identical entries must not multiply: once the chart has been through one
+    full round trip the ledger stops growing. An unbounded ledger is the
+    regression this guards."""
+    documents = _generations(_generation_record(), 3, tmp_path)
+    counts = [len(_entries_of(document)) for document in documents]
+    assert counts[1] == counts[2], f"loss ledger still growing across generations: {counts}"
+    # Entry for entry, not just in count. The only text that moves between the
+    # two is the regenerated canonical id inside a path — a DECLARED loss, and
+    # precisely what the dedupe key erases.
+    assert sorted(_entry_key(entry) for entry in _entries_of(documents[1])) == sorted(
+        _entry_key(entry) for entry in _entries_of(documents[2])
+    )
+    # And nothing swallowed a whole prior ledger as a single line.
+    assert not any("ccda:section:51899-3" in entry for entry in _entries_of(documents[2]))
+    assert not any(EXT_PRIOR_LOSS_NARRATIVE in entry for entry in _entries_of(documents[2]))
+
+
+def _entries_of(document: bytes) -> list[str]:
+    """The loss-ledger entries of an exported document, read straight off the
+    emitted paragraphs (no re-ingest — this is what the document SAYS)."""
+    sections = _loss_sections(document)
+    return [
+        text
+        for section in sections
+        for node in section.findall(f"{{{V3}}}text/{{{V3}}}paragraph")
+        if (text := node.text)
+    ]
+
+
+# A third party's 51899-3 section: same LOINC, no anastomosis stamp, its own
+# title. It is ordinary foreign content and must keep round-tripping as such.
+_FOREIGN_LOSS_CODE_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda3"/>
+  <title>Third-party CCD</title>
+  <recordTarget><patientRole>
+    <id root="2.16.840.1.113883.19.5" extension="feedface-0000-0000-0000-0000000000f0"/>
+    <patient><name><given>Bea</given><family>Foreign</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Vendor Supplemental Data</title>
+      <text>FOREIGN-51899-NARRATIVE kept verbatim</text>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_foreign_51899_section_is_not_claimed_as_ours(tmp_path: Path) -> None:
+    """51899-3 is a public LOINC. An UNSTAMPED section under it belongs to
+    whoever wrote the document, so it lands under ``ccda:section:51899-3`` like
+    any other foreign narrative and rides the loss narrative on re-export —
+    exactly as a foreign Problems narrative does. Claiming it would let a third
+    party's text be re-emitted as this tool's own loss ledger."""
+    source_doc = tmp_path / "foreign.xml"
+    source_doc.write_text(_FOREIGN_LOSS_CODE_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert ingested.patient.extensions[f"ccda:section:{LOINC_EXTENSIONS}"] == {
+        "title": "Vendor Supplemental Data",
+        "text": "FOREIGN-51899-NARRATIVE kept verbatim",
+    }
+    assert EXT_PRIOR_LOSS_NARRATIVE not in ingested.patient.extensions
+
+    exported = tmp_path / "foreign_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    entries = _loss_entries(parse_document(exported))
+    assert (
+        "patient.extensions.ccda:section:51899-3.text = FOREIGN-51899-NARRATIVE kept verbatim"
+        in entries
+    )
+    assert "patient.extensions.ccda:section:51899-3.title = Vendor Supplemental Data" in entries
+    # Still one ledger section in the document this tool wrote.
+    assert len(_loss_sections(exported.read_bytes())) == 1
+
+
+def test_legacy_titled_loss_section_is_recognized_without_the_stamp(tmp_path: Path) -> None:
+    """Documents exported before the templateId stamp existed carry only the
+    generator's own section title. That title names this tool outright, so it
+    stays a valid marker — otherwise every already-delivered document would take
+    one more generation of blob growth before the fix could bite."""
+    legacy = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda4"/>
+  <recordTarget><patientRole>
+    <id root="2.16.840.1.113883.19.5" extension="feedface-0000-0000-0000-0000000000f1"/>
+    <patient><name><given>Leg</given><family>Acy</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>{LOSS_NARRATIVE_TITLE}</title>
+      <text><paragraph>patient.gender_identity = LEGACYSENTINEL</paragraph></text>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+    source_doc = tmp_path / "legacy.xml"
+    source_doc.write_text(legacy, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _loss_entries(ingested) == ["patient.gender_identity = LEGACYSENTINEL"]
+    # No stamped generation to read: the counter restarts, the entries do not.
+    assert ingested.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]["generation"] is None
+    assert f"ccda:section:{LOINC_EXTENSIONS}" not in ingested.patient.extensions
+
+    exported = tmp_path / "legacy_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert "patient.gender_identity = LEGACYSENTINEL" in _entries_of(exported.read_bytes())
+
+
+def test_two_stamped_ledgers_in_one_document_merge_rather_than_overwrite(tmp_path: Path) -> None:
+    """A document assembled from two exports can carry two stamped ledgers.
+    Neither may overwrite the other: the entries concatenate into the one
+    carry-forward key so the next export dedupes a single ledger."""
+    section = f"""    <component><section>
+      <templateId root="{LOSS_NARRATIVE_TEMPLATE_ROOT}" extension="1"/>
+      <id root="{LOSS_NARRATIVE_GENERATION_ROOT}" extension="{{gen}}"/>
+      <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>{LOSS_NARRATIVE_TITLE}</title>
+      <text><paragraph>patient.notes = {{sentinel}}</paragraph></text>
+    </section></component>"""
+    merged = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda5"/>
+  <recordTarget><patientRole>
+    <id root="2.16.840.1.113883.19.5" extension="feedface-0000-0000-0000-0000000000f2"/>
+    <patient><name><given>Mer</given><family>Ged</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+{section.format(gen=2, sentinel="MERGE-A")}
+{section.format(gen=5, sentinel="MERGE-B")}
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+    source_doc = tmp_path / "merged.xml"
+    source_doc.write_text(merged, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _loss_entries(ingested) == ["patient.notes = MERGE-A", "patient.notes = MERGE-B"]
+    # Highest generation wins — the counter must not walk backwards.
+    assert ingested.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]["generation"] == 5
+    exported = _loss_sections(build_ccd(ingested))
+    assert len(exported) == 1
+    assert exported[0].find(f"{{{V3}}}id").get("extension") == "6"
+
+
+def test_carried_forward_collapses_repeats_and_keeps_distinct_entries() -> None:
+    """The dedupe rule, stated directly: a prior entry the current narrative
+    already restates is a repeat and drops; every distinct entry survives, and
+    multiplicity survives with it (two objects sharing one value keep two
+    entries, minus however many the current narrative restates)."""
+    prior = [
+        "medications[feedface-0000-0000-0000-00000000ab01].strength = 500 mg",
+        "medications[feedface-0000-0000-0000-00000000ab02].strength = 500 mg",
+        "medications[feedface-0000-0000-0000-00000000ab03].strength = 250 mg",
+        "patient.gender_identity = Genderqueer",
+    ]
+    current = ["medications[feedface-0000-0000-0000-00000000ab99].strength = 500 mg"]
+    assert _carried_forward(prior, current) == [
+        # Only ONE of the two 500 mg entries is a repeat of the current one.
+        "medications[feedface-0000-0000-0000-00000000ab02].strength = 500 mg",
+        "medications[feedface-0000-0000-0000-00000000ab03].strength = 250 mg",
+        "patient.gender_identity = Genderqueer",
+    ]
+    assert _carried_forward(prior, []) == prior  # nothing restated → nothing dropped
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # Per-object indices are erased from the PATH: a canonical id is a
+        # declared loss, regenerated on every re-ingest.
+        (
+            "medications[feedface-0000-0000-0000-00000000ab01].strength = 500 mg",
+            "medications[].strength = 500 mg",
+        ),
+        ("encounters[e1].addenda[0].text = amended", "encounters[].addenda[].text = amended"),
+        # ...and NEVER from the value, which may carry brackets or its own " = ".
+        ("patient.notes = dose [2] = 5 mg", "patient.notes = dose [2] = 5 mg"),
+        # A line with no separator at all is its own key (never silently reshaped).
+        ("no separator here", "no separator here"),
+    ],
+)
+def test_entry_key_erases_indices_from_the_path_only(line: str, expected: str) -> None:
+    assert _entry_key(line) == expected
+
+
+def test_unrecognized_prior_narrative_value_narrates_instead_of_vanishing(tmp_path: Path) -> None:
+    """The carry-forward exemption is scoped to a value this exporter can
+    actually re-emit. A hand-set value of any other shape must narrate like any
+    vendor extension — skipping it in both places is the silent drop."""
+    rec = PatientRecord(
+        patient=Patient(
+            given_name="Odd",
+            family_name="Shape",
+            extensions={EXT_PRIOR_LOSS_NARRATIVE: "MALFORMEDSENTINEL"},
+        ),
+        extensions={EXT_PRIOR_LOSS_NARRATIVE: {"entries": ["record.notes = RECORDLEVELSENTINEL"]}},
+    )
+    out = tmp_path / "odd.xml"
+    out.write_bytes(build_ccd(rec))
+    entries = _entries_of(out.read_bytes())
+    assert f"patient.extensions.{EXT_PRIOR_LOSS_NARRATIVE} = MALFORMEDSENTINEL" in entries
+    # The key is only ever written onto the PATIENT by a re-ingest, so a
+    # record-level one is an ordinary vendor extension and narrates too.
+    assert any("RECORDLEVELSENTINEL" in entry for entry in entries)
 
 
 def test_declared_losses_is_structured_and_minimal() -> None:
@@ -1056,25 +1410,17 @@ def _collapse(text: str) -> str:
     return " ".join(text.split())
 
 
-# The narrative comes back from re-ingest as ONE whitespace-collapsed blob (the
-# parser reads a section's <text> as flat text), so the `path = value` lines are
-# re-split here. A path never contains a space, which makes the split
-# unambiguous for any value that does not itself read as " <path> = ".
-_NARRATIVE_SPLIT = re.compile(r" (?=[A-Za-z_][^\s=]* = )")
-
-
 def _narrated_values(record: PatientRecord) -> dict[str, set[str]]:
     """``field path -> values`` for every line of the recovered 51899-3 loss
     narrative — the declared, path-carrying home for what CDA cannot structure.
 
+    The entries come back already split (one per emitted paragraph, recovered
+    under ``ccda:prior_loss_narrative``), so no re-splitting heuristic is needed.
     The narrative roots the record's own dict attrs at a synthetic ``record.``
     (there is no model to name); the dump paths root them at the attribute, so
     that prefix is normalized away here."""
     out: dict[str, set[str]] = {}
-    section = record.patient.extensions.get(f"ccda:section:{LOINC_EXTENSIONS}")
-    if not section or not section.get("text"):
-        return out
-    for line in _NARRATIVE_SPLIT.split(section["text"]):
+    for line in _loss_entries(record):
         path, sep, value = line.partition(" = ")
         if not sep:
             continue

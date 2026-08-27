@@ -117,6 +117,11 @@ sha256:d124b6d56bbfd7608bfe3a8abf8574b9b62db8ab78e189afee3b84db7e2bda5d
 # assets/installer/wizard.bmp — generated from assets/icon/icon.svg via
 # tools/make_icons.py (project asset, AGPL-3.0-or-later).
 sha256:4e7d9edd619f9cd9f739177dd69544eb17ec292977737572de3fb7468a13c178
+# src/anastomosis/gui/web/fonts/FrauncesVF.woff2 — Fraunces variable font
+# (The Fraunces Project Authors, SIL OFL-1.1, no Reserved Font Name;
+# github.com/undercasetype/Fraunces, fetched via github.com/google/fonts and
+# repackaged TTF->WOFF2 with fontTools — format conversion only).
+sha256:670cd935300bef81a5e635aabbbd044d99c17a6231086f2713c7abe77666862b
 # src/anastomosis/gui/web/fonts/JetBrainsMonoVF.woff2 — JetBrains Mono
 # variable font (JetBrains, SIL OFL-1.1; github.com/JetBrains/JetBrainsMono).
 sha256:31ec365b93e4bad6f202ce23352a56d01ca4462b2afc782ed2cf6fa42ca9ac0e
