@@ -35,16 +35,12 @@ __all__ = [
     "RUN_BUTTON_LABEL",
     "VERSION_PLACEHOLDER",
     "VIEWS",
-    "VIEW_BAND",
     "WINDOW_TITLE",
     "check_dashboard",
 ]
 
 #: The product name appears exactly ONCE, on the window itself (§10.7).
 WINDOW_TITLE = "Anastomosis"
-
-#: The band under the window frame names the CURRENT VIEW — never the app.
-VIEW_BAND = "Charts"
 
 #: The first view's heading.
 CHARTS_HEADING = "Charts"
@@ -96,16 +92,12 @@ def check_dashboard(page: Page) -> list[str]:
     if page.title() != WINDOW_TITLE:
         problems.append(f"window title reads {page.title()!r}, expected {WINDOW_TITLE!r}")
 
-    band = _text(page, ".title-bar .title-text")
-    if band != VIEW_BAND:
-        problems.append(f"title band reads {band!r}, expected the view name {VIEW_BAND!r}")
-
     heading = _text(page, '[data-view="charts"] .view-head h1')
     if heading != CHARTS_HEADING:
         problems.append(f"charts heading reads {heading!r}, expected {CHARTS_HEADING!r}")
 
     # --- the four views, and only the first one showing ----------------------
-    buttons = page.locator("nav.nav [data-view-target]")
+    buttons = page.locator(".navpill [data-view-target]")
     if buttons.count() != len(NAV_VIEWS):
         problems.append(f"nav has {buttons.count()} views, expected {len(NAV_VIEWS)}")
     else:
@@ -118,8 +110,8 @@ def check_dashboard(page: Page) -> list[str]:
                     f"nav[{index}] is ({actual_label!r} -> {actual_name!r}), "
                     f"expected ({label!r} -> {name!r})"
                 )
-        if buttons.nth(0).get_attribute("aria-current") != "true":
-            problems.append("the Charts nav button does not mark itself current")
+        if buttons.nth(0).get_attribute("aria-selected") != "true":
+            problems.append("the Charts tab does not mark itself selected")
 
     for name in VIEWS:
         section = page.locator(f'[data-view="{name}"]')

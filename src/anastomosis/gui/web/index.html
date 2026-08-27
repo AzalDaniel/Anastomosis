@@ -40,28 +40,31 @@
       </defs>
     </svg>
 
-    <!-- The backdrop: flat ground (body) plus ONE oversized blurred rendering of
-         the vessel mark, bottom-right, 5% opacity. The trunk-and-canopy strokes
-         are taken from assets/icon/icon-small.svg's line work; at blur(60px)
-         the fine capillaries add nothing, so only the load-bearing vessels are
-         carried. Fixed and non-interactive: it never repaints on a view switch. -->
-
-    <!-- The band under the window frame names the CURRENT VIEW, never the app. -->
-    <header class="title-bar" role="presentation">
-      <span class="title-text" id="view-band">Charts</span>
-    </header>
+    <!-- The chrome floats OVER the scrolling content, which is the only thing
+         that gives its material anything to refract. The scrims keep a bright
+         panel edge from colliding with a chrome label at the two boundaries. -->
+    <nav class="navbar" aria-label="Views">
+      <div class="segment-toggle navpill" id="nav-pill" role="tablist"
+           aria-label="Views" data-pattern="tabs" data-name="view" data-value="charts">
+        <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
+        <button type="button" class="segment-option" id="tab-charts"
+                data-value="charts" data-view-target="charts" aria-controls="view-charts">Charts</button>
+        <button type="button" class="segment-option" id="tab-migrate"
+                data-value="migrate" data-view-target="migrate" aria-controls="view-migrate">Migrate</button>
+        <button type="button" class="segment-option" id="tab-uploads"
+                data-value="uploads" data-view-target="uploads" aria-controls="view-uploads">Uploads</button>
+        <button type="button" class="segment-option" id="tab-teach"
+                data-value="teach" data-view-target="teach" aria-controls="view-teach">Teach</button>
+      </div>
+      <button type="button" class="about-round" id="about-btn" aria-label="About Anastomosis"
+              aria-expanded="false" aria-controls="about-popover">
+        <span class="icon" data-icon="info"></span>
+      </button>
+    </nav>
+    <div class="scrim scrim-top" aria-hidden="true"></div>
+    <div class="scrim scrim-bottom" aria-hidden="true"></div>
 
     <main class="app-shell">
-      <nav class="nav" aria-label="Views">
-        <button type="button" class="nav-btn" data-view-target="charts" aria-current="true">Charts</button>
-        <button type="button" class="nav-btn" data-view-target="migrate">Migrate</button>
-        <button type="button" class="nav-btn" data-view-target="uploads">Uploads</button>
-        <button type="button" class="nav-btn" data-view-target="teach">Teach</button>
-        <span class="nav-spacer"></span>
-        <button type="button" class="about-btn" id="about-btn" aria-expanded="false" aria-controls="about-popover">
-          <span class="icon" data-icon="info"></span>About
-        </button>
-      </nav>
 
       <!-- Shown only when opened without the desktop bridge. -->
       <div class="no-api" id="no-api">
@@ -76,7 +79,7 @@
       </div>
 
       <!-- ───────────────────────── Charts ───────────────────────── -->
-      <section class="view" data-view="charts" aria-label="Charts">
+      <section class="view" id="view-charts" data-view="charts" role="tabpanel" aria-labelledby="tab-charts">
         <div class="view-head">
           <h1>Charts</h1>
           <div class="lede">Turn an EHR export into complete, verified charts.</div>
@@ -108,7 +111,7 @@
       </section>
 
       <!-- ───────────────────────── Migrate ──────────────────────── -->
-      <section class="view" data-view="migrate" aria-label="Migrate" hidden>
+      <section class="view" id="view-migrate" data-view="migrate" role="tabpanel" aria-labelledby="tab-migrate" hidden>
         <div class="view-head">
           <h1>Migrate</h1>
           <div class="lede">Move charts from one system into another.</div>
@@ -143,7 +146,7 @@
       </section>
 
       <!-- ───────────────────────── Uploads ──────────────────────── -->
-      <section class="view" data-view="uploads" aria-label="Uploads" hidden>
+      <section class="view" id="view-uploads" data-view="uploads" role="tabpanel" aria-labelledby="tab-uploads" hidden>
         <div class="view-head">
           <h1>Uploads</h1>
           <div class="lede">Watch charts being filed into the destination, and start or stop the work.</div>
@@ -281,7 +284,7 @@
       </section>
 
       <!-- ────────────────────────── Teach ───────────────────────── -->
-      <section class="view" data-view="teach" aria-label="Teach" hidden>
+      <section class="view" id="view-teach" data-view="teach" role="tabpanel" aria-labelledby="tab-teach" hidden>
         <div class="view-head">
           <h1>Teach</h1>
           <div class="lede">Show Anastomosis a document layout or an export format it does not know yet.</div>

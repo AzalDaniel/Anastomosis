@@ -102,6 +102,14 @@
   /* glass — the chrome tiers. Ambient chrome is translucent; anything floating
      above it is near-opaque, because two stacked backdrop-filters read as mud
      and legibility outranks prettiness (§3). */
+  /* The floating chrome: the view pill, the About circle, the activity strip.
+     Border alpha is 0.36 because that is the first value whose boundary clears
+     WCAG's 3:1 over BOTH the ground and a bright panel scrolled beneath it —
+     0.32 left the strip at 2.81:1. */
+  --glass-bg:        rgba(244, 238, 228, 0.10);
+  --glass-blur:      saturate(150%) blur(24px);
+  --glass-border:    1px solid rgba(244, 238, 228, 0.36);
+  --glass-shadow:    0 10px 30px rgba(0, 0, 0, 0.46);
   --glass-veil-blur:   saturate(130%) blur(24px);
   --glass-modal-blur:  saturate(170%) blur(48px);
   --glass-veil-bg:     rgba(244, 238, 228, 0.05);
@@ -114,7 +122,7 @@
   --glass-modal-border: 1px solid rgba(244, 238, 228, 0.24);
   /* Glass catches light through an inset top highlight, never an outer glow.
      Shadow belongs to true floaters only; in-flow panels get the hairline. */
-  --glass-highlight: inset 0 1px 0 rgba(255, 250, 240, 0.12);
+  --glass-highlight: inset 0 1px 0 rgba(255, 250, 240, 0.16);
   --shadow-float:    0 24px 64px rgba(0, 0, 0, 0.35);
 
   /* fills for hovers and highlights — porcelain at low alpha */
@@ -122,6 +130,10 @@
   --fill:         rgba(244, 238, 228, 0.10);
   --fill-strong:  rgba(244, 238, 228, 0.16);
   --hairline:     rgba(244, 238, 228, 0.14);
+  /* The selected-view lozenge. Porcelain, not oxblood: WCAG 1.4.11 asks 3:1 for
+     the state indicator itself against the material it sits on, and oxblood
+     measured 2.49:1 there. Porcelain reads 12.48:1. */
+  --lozenge:      rgba(246, 240, 231, 0.94);
 
   /* spacing — the 4px scale: 4/8 inside a group, 24+ between groups (§5) */
   --space-1: 4px;

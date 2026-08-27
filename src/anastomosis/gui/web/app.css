@@ -54,71 +54,105 @@ svg { display: block; }
    standing in for a content layer that had never been designed. */
 
 
-/* ─── 3. Chrome: title band, nav, about ──────────────────────── */
-/* The window keeps its OS title bar, which carries the product name exactly
-   once (§10.7). This band names the CURRENT VIEW and nothing else. */
-.title-bar {
+/* ─── 3. Chrome: the floating nav ────────────────────────────── */
+/* One glass pill for the four views, one detached round control for the one
+   thing that is not a view. This is the app's ONLY glass, and it floats over
+   the scrolling content — which is what gives it something to refract: the
+   same pill samples #2a201c over the bare ground and #3d332e with a panel
+   passing beneath it, a x2.21 lift in luminance from the content alone.
+   It replaces four opaque bordered boxes whose "material" measured 1.00:1
+   against the ground, and a title band that printed the view name a second
+   time. The pill names the view in the chrome layer; the h1 names it in the
+   content layer. One name per layer. */
+.navbar {
   position: fixed;
-  top: 0; left: 0; right: 0;
-  height: 34px;
+  top: 12px;
+  left: var(--space-5);
+  z-index: 200;
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 100;
-  user-select: none;
-  background: var(--glass-veil-bg);
-  -webkit-backdrop-filter: var(--glass-veil-blur);
-  backdrop-filter: var(--glass-veil-blur);
-  border-bottom: var(--glass-veil-border);
+  gap: var(--space-3);
 }
-.title-text {
-  font-size: var(--text-caption);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ink-muted);
+/* Written as .segment-toggle.navpill on purpose: a bare .navpill ties on
+   specificity with the .segment-toggle base below it, and source order would
+   hand the pill that rule's hairline border and soft fill instead of glass. */
+.segment-toggle.navpill {
+  padding: 4px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
 }
-
-.nav {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-5);
-}
-.nav-btn {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-control);
-  border: 1px solid var(--hairline);
-  background: var(--fill-soft);
-  color: var(--ink-secondary);
+.navpill .segment-option {
+  flex: 1 1 0;
+  min-width: 104px;
+  height: 44px;
   font-size: var(--text-label);
-  font-weight: 560;
-  transition: background var(--t-snap) var(--ease-quart),
-              color var(--t-snap) var(--ease-quart),
-              border-color var(--t-snap) var(--ease-quart);
+  font-weight: 580;
 }
-.nav-btn:hover { background: var(--fill); color: var(--ink); }
-.nav-btn[aria-current="true"] {
-  background: color-mix(in oklab, var(--brand-bright) 26%, transparent);
-  border-color: color-mix(in oklab, var(--brand-bright) 58%, transparent);
-  color: var(--ink);
+.navpill .segment-indicator { background: var(--lozenge); }
+.navpill .segment-option[aria-selected="true"] {
+  color: var(--ink-inverse);
+  font-weight: 640;
 }
-.nav-spacer { flex: 1 1 auto; }
+.navpill .segment-option:hover { color: var(--ink); }
+.navpill .segment-option[aria-selected="true"]:hover { color: var(--ink-inverse); }
+/* The ring hugs the lozenge shape, so it goes on the OPTION and turns inward. */
+.navpill:focus-within { outline: none; }
+.navpill .segment-option:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -3px;
+  border-radius: var(--radius-pill);
+}
 
-.about-btn {
+.about-round {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-control);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-muted);
-  font-size: var(--text-caption);
-  transition: color var(--t-snap) var(--ease-quart),
-              background var(--t-snap) var(--ease-quart);
+  justify-content: center;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  color: var(--ink-secondary);
+  transition: color var(--t-snap) var(--ease-quart);
 }
-.about-btn:hover { color: var(--ink); background: var(--fill-soft); }
-.about-btn svg { width: 16px; height: 16px; }
+.about-round:hover { color: var(--ink); }
+.about-round .icon { width: 18px; height: 18px; }
+
+/* Content scrolls UNDER the chrome, so the two boundaries get an alpha ramp of
+   the ground — a panel edge arriving behind a label must not collide with it.
+   A single-hue ramp of one token, not a decorative gradient. */
+.scrim {
+  position: fixed;
+  left: 0; right: 0;
+  z-index: 150;
+  pointer-events: none;
+}
+.scrim-top {
+  top: 0;
+  height: 64px;
+  background: linear-gradient(
+    to bottom,
+    oklch(0.16 0.013 50 / 0.98) 0%,
+    oklch(0.16 0.013 50 / 0.86) 45%,
+    oklch(0.16 0.013 50 / 0.30) 80%,
+    oklch(0.16 0.013 50 / 0) 100%);
+}
+.scrim-bottom {
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(
+    to top,
+    oklch(0.16 0.013 50 / 0.98) 0%,
+    oklch(0.16 0.013 50 / 0.86) 45%,
+    oklch(0.16 0.013 50 / 0.30) 80%,
+    oklch(0.16 0.013 50 / 0) 100%);
+}
 
 /* The About popover floats over cards, so it takes the modal tier + its own
    isolation (the mud fix) and the float shadow. */
@@ -148,7 +182,9 @@ svg { display: block; }
 .app-shell {
   position: relative;
   height: 100vh;
-  padding: 46px 0 var(--space-2);
+  /* Room for the floating chrome at both ends: content scrolls under it, but
+     at rest the first and last panels are clear of it. */
+  padding: 80px 0 60px;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -387,7 +423,7 @@ svg { display: block; }
   outline-offset: 3px;
   border-radius: var(--radius-control);
 }
-.nav-btn:focus-visible, .btn:focus-visible { border-radius: var(--radius-control); }
+.btn:focus-visible { border-radius: var(--radius-control); }
 .segment-toggle:focus-within, .status-badge:focus-visible { border-radius: var(--radius-pill); }
 .chip:focus-visible, .mode-tab:focus-visible { border-radius: var(--radius-chip); }
 .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
@@ -395,12 +431,14 @@ svg { display: block; }
 }
 
 
-/* ─── 8. Segment toggle (the gooey pill — one of two pills) ──── */
+/* ─── 8. The sliding pill (gooey) ───────────────────────────── */
 /* Carried from the Tebra reference: the SVG gooey filter (blur → alpha
    threshold → composite) applies ONLY to the isolated .segment-goo wrapper, so
    the blob edges smear elastically between slots while the option text above
    stays crisp. --segment-count/--segment-index are written through the CSSOM
-   by shell.js: the strict `style-src 'self'` CSP refuses a markup style="". */
+   by shell.js: the strict `style-src 'self'` CSP refuses a markup style="".
+   The view nav is this same mechanism wearing .navpill — one implementation,
+   two callers, two role vocabularies (tablist and radiogroup). */
 .segment-toggle {
   position: relative;
   display: inline-flex;
@@ -442,6 +480,7 @@ svg { display: block; }
 .segment-toggle.is-stretching .segment-indicator {
   animation: segment-stretch 280ms var(--ease-quart);
 }
+@keyframes segment-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes segment-stretch {
   0%   { transform: translate3d(calc(var(--segment-from) * 100%), 0, 0) scaleX(1); }
   50%  { transform: translate3d(calc(((var(--segment-from) + var(--segment-index)) / 2) * 100%), 0, 0) scaleX(1.45); }
@@ -463,6 +502,9 @@ svg { display: block; }
 }
 .segment-option:focus { outline: none; }
 .segment-option[aria-pressed="true"] { color: var(--ink); }
+/* The blob arrives before the commit does, so the label under it brightens on
+   the DRAG position while the selection still describes the committed view. */
+.segment-option.is-live { color: var(--ink-inverse); }
 .segment-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .segment-row > .field-help { flex: 1 1 260px; }
 
@@ -1098,5 +1140,12 @@ svg { display: block; }
   }
   .segment-goo { filter: none; }
   .segment-toggle.is-stretching .segment-indicator { animation: none; }
+  /* Travel is replaced by a fade, not deleted (HIG: "replacing transitions in
+     x-, y-, and z-axes with fades"). A state change that simply teleports is
+     harder to follow than one that moves. */
+  .segment-toggle.is-settling .segment-indicator {
+    animation: segment-fade 140ms linear !important;
+  }
+  .view, .log-drawer { transition-duration: 140ms !important; }
   .progress-bar-fill { animation: none; }
 }
