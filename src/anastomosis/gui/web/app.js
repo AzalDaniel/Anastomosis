@@ -211,7 +211,8 @@
     if (!FORM) return;
     FORM.setSections(
       SECTIONS_BY_PACK[packName] || {},
-      "This layout has no sections to choose from."
+      "This layout has no sections to choose from.",
+      packName
     );
   }
 

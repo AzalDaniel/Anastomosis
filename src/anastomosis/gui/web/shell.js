@@ -509,7 +509,7 @@
     }
   }
 
-  function renderSectionMatrix(matrix, sections, emptyText) {
+  function renderSectionMatrix(matrix, sections, emptyText, remembered) {
     if (!matrix) return;
     matrix.innerHTML = "";
     const keys = Object.keys(sections || {});
@@ -526,7 +526,11 @@
       const input = document.createElement("input");
       input.type = "checkbox";
       input.dataset.section = key;
-      input.checked = flag.default !== false;
+      // The layout's default, unless this person already said otherwise for
+      // this layout. Reinstating the default over a deliberate choice would
+      // put a section back into the chart that they had turned off.
+      input.checked =
+        remembered && key in remembered ? !!remembered[key] : flag.default !== false;
       const track = document.createElement("span");
       track.className = "track";
       const text = document.createElement("span");
@@ -836,14 +840,28 @@
 
     initSegmentToggles(host);
     const pick = (name) => el(id(name));
+    // What this person actually chose, per layout. Without it, switching layout
+    // and back silently reinstated the new layout's defaults — and those
+    // defaults were what the run was built from.
+    const chosenByLayout = Object.create(null);
+    let sectionsKey = null;
     if (typeof opts.onRun === "function") run.addEventListener("click", opts.onRun);
 
     return {
       root: host,
       id,
       el: pick,
-      setSections(sections, emptyText) {
-        renderSectionMatrix(matrix, sections, emptyText);
+      setSections(sections, emptyText, key) {
+        // Remember what was chosen for the layout being left, so coming back to
+        // it restores those choices rather than the layout's defaults.
+        if (sectionsKey !== null) chosenByLayout[sectionsKey] = gatherSections(matrix);
+        sectionsKey = key === undefined || key === null ? null : String(key);
+        renderSectionMatrix(
+          matrix,
+          sections,
+          emptyText,
+          sectionsKey === null ? null : chosenByLayout[sectionsKey]
+        );
       },
       setBusy(busy) {
         run.disabled = busy;
