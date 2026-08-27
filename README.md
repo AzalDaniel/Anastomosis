@@ -136,6 +136,14 @@ installing, you can verify the install is intact with `anast doctor`.
 
 ## Quickstart
 
+Not sure which command you want? Run `anast` with no arguments in a terminal and
+it walks you through it: a numbered menu (rebuild charts, move charts, file
+charts, teach a new format, check the install), one prompt at a time with
+pre-filled defaults, and a plain-English confirmation of exactly what will run
+before it runs. It then executes the very same command documented below. Bare
+`anast` outside an interactive terminal — a pipe, a script, CI — prints the help
+page exactly as it always has and never waits for input.
+
 One command takes a raw EHI export to verified chart PDFs and a searchable
 offline archive:
 
