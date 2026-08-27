@@ -86,7 +86,12 @@ def _make_fhir_destination(
 app = typer.Typer(
     name="anast",
     help=__doc__,
-    no_args_is_help=True,
+    # Typer's built-in no-args help short-circuits inside argument parsing, before
+    # any callback runs. Turning it OFF lets bare ``anast`` reach the callback
+    # below (``invoke_without_command``), which offers a person at a terminal the
+    # guided session — and prints this exact help page, with the same exit code,
+    # for every non-interactive caller.
+    no_args_is_help=False,
     rich_markup_mode="rich",
 )
 pipeline_app = typer.Typer(help="Run pipeline stages end to end.")
@@ -116,8 +121,9 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -132,6 +138,19 @@ def main(
     # logger otherwise falls back to an unredacted lastResort handler). Wired
     # here at the entry point, never at import time; the call is idempotent.
     configure_logging(logging.WARNING)
+    if ctx.invoked_subcommand is not None:
+        return
+    # Bare ``anast``. A person at a terminal gets the guided session; every other
+    # caller — a pipe, a script, CI — gets exactly the help page and exit code
+    # this has always printed, so nothing can hang on a prompt it cannot answer.
+    # The whole guide lives in cli_commands.guide, imported only on this path so
+    # no command (and no ``--help``) pays for it.
+    from anastomosis.cli_commands.guide import is_interactive_terminal, run_guide
+
+    if not is_interactive_terminal(console):
+        ctx.get_help()  # Typer's Rich formatter prints the page as a side effect
+        raise typer.Exit(code=2)
+    raise typer.Exit(code=run_guide(console))
 
 
 @app.command()
