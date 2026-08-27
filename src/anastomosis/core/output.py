@@ -36,6 +36,7 @@ __all__ = [
     "clean_typed_path",
     "require_output_dir",
     "secure_output_dir",
+    "typed_path",
     "validate_output_target",
 ]
 
@@ -65,6 +66,17 @@ def clean_typed_path(raw: str) -> str:
             cleaned = cleaned[1:-1].strip()
             break
     return cleaned
+
+
+def typed_path(raw: str) -> Path:
+    """A Path from a string a person typed or pasted into a field.
+
+    Every frontend field that names a folder or a file goes through here, so the
+    quote-wrapping rule above is a property of the app rather than of whichever
+    screen someone remembered to apply it on. `tests/unit/test_gui_console_paths.py`
+    holds that line: it walks each console's AST and refuses a bare `Path(arg)`.
+    """
+    return Path(clean_typed_path(raw))
 
 
 def require_output_dir(raw: str) -> Path:

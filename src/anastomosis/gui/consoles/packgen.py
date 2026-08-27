@@ -74,6 +74,7 @@ class PackgenConsole:
         count is). Returns JSON-safe data; never raises.
         """
         try:
+            from anastomosis.core.output import typed_path
             from anastomosis.core.packinit import PackInitCommand, run_pack_init
 
             result = run_pack_init(
@@ -81,7 +82,7 @@ class PackgenConsole:
                     samples=[samples_dir],
                     name=name,
                     display=display,
-                    out_dir=Path(out_dir) if out_dir is not None else Path("packs"),
+                    out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
                     confirmed=confirmed_distinct_patients,
                 )
             )
@@ -165,6 +166,7 @@ class PackgenConsole:
 
         def _worker() -> None:
             try:
+                from anastomosis.core.output import typed_path
                 from anastomosis.core.packinit import PackInitCommand, run_pack_init
 
                 result_dict = self._pack_init_result_dict(
@@ -173,7 +175,7 @@ class PackgenConsole:
                             samples=[samples_dir],
                             name=name,
                             display=display,
-                            out_dir=Path(out_dir) if out_dir is not None else Path("packs"),
+                            out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
                             confirmed=confirmed_distinct_patients,
                         )
                     ),
