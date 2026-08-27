@@ -243,3 +243,41 @@ def test_section_choices_survive_a_layout_round_trip(gui) -> None:
         )
     }
     assert back == chosen, f"the layout's defaults came back over the choice: {back}"
+
+
+def test_the_rail_shows_only_the_stages_this_run_will_perform(gui) -> None:
+    """A stage that will not run must not sit grey under "Finished.".
+
+    On the shipped defaults no deliverer is on, so the pipeline emits no
+    `deliver` events at all — yet the rail advertised "Saving results" and left
+    it grey forever while the charts had in fact been written. With the
+    double-check off, "Double-checking" joined it. Two permanent grey ticks
+    under a finished run read as "these did not happen".
+    """
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+
+    def rail_ids() -> list[str]:
+        return page.evaluate(
+            "() => [...document.querySelectorAll('#charts-rail .stage')].map(c => c.id)"
+        )
+
+    # Defaults: the double-check is on, no extra artifact is requested.
+    page.click("#charts-run")
+    ids = rail_ids()
+    assert "charts-stage-qa" in ids, ids
+    assert "charts-stage-deliver" not in ids, ids
+    assert "charts-stage-ingest" in ids and "charts-stage-reconstruct" in ids, ids
+
+    # Asking for an archive brings the saving stage back.
+    app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=1, rendered=1))
+    archive = page.locator("#charts-archive")
+    if archive.count():
+        page.evaluate(
+            "() => { const b = document.getElementById('charts-archive');"
+            " b.checked = true; b.dispatchEvent(new Event('change', {bubbles: true})); }"
+        )
+        page.click("#charts-run")
+        assert "charts-stage-deliver" in rail_ids(), rail_ids()

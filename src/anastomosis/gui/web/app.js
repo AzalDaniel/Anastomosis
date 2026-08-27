@@ -48,11 +48,22 @@
   }
 
   // --- the stage rail -------------------------------------------------------
-  function renderRail() {
-    const rail = el("charts-rail");
-    if (!rail) return;
-    rail.innerHTML = "";
-    for (const stage of RAIL) {
+  // Which stages THIS run will actually perform. The double-check only runs when
+  // it is on, and "Saving results" only when an extra artifact was asked for —
+  // so advertising all four regardless left one stage (two, with the
+  // double-check off) sitting grey forever under a status line reading
+  // "Finished.", which reads as "your charts were not saved" when they were.
+  // Called with no config before a run, where the full shape is the preview.
+  function stagesFor(config) {
+    if (!config) return RAIL;
+    return RAIL.filter((stage) => {
+      if (stage === "qa") return config.qa !== false;
+      if (stage === "deliver") return !!(config.archive || config.bundle || config.ccda);
+      return true;
+    });
+  }
+
+  function makeStageCard(stage) {
       const card = document.createElement("div");
       card.className = "stage";
       card.id = `charts-stage-${stage}`;
@@ -71,12 +82,31 @@
       counts.className = "stage-counts";
       card.appendChild(head);
       card.appendChild(counts);
-      rail.appendChild(card);
-    }
+      return card;
+  }
+
+  function renderRail(config) {
+    const rail = el("charts-rail");
+    if (!rail) return;
+    rail.innerHTML = "";
+    for (const stage of stagesFor(config)) rail.appendChild(makeStageCard(stage));
+  }
+
+  // The rail is built from what the run SAID it would do; an event is what it
+  // actually did. If they disagree, reality wins — a stage that reports itself
+  // gets a card rather than having its counts vanish into a missing element.
+  function ensureStageCard(stage) {
+    const existing = el(`charts-stage-${stage}`);
+    if (existing) return existing;
+    const rail = el("charts-rail");
+    if (!rail) return null;
+    const card = makeStageCard(stage);
+    rail.appendChild(card);
+    return card;
   }
 
   function markStage(stage, state) {
-    const card = el(`charts-stage-${stage}`);
+    const card = ensureStageCard(stage);
     if (!card) return;
     card.dataset.state = state;
     const mark = card.querySelector(".stage-icon");
@@ -112,10 +142,10 @@
   };
   let skippedStages = [];
 
-  function resetRun() {
+  function resetRun(config) {
     skippedStages = [];
     setCurrent("Rebuilding…");
-    renderRail();
+    renderRail(config);
     const fill = el("charts-fill");
     if (fill) fill.style.width = "0%";
   }
@@ -137,13 +167,13 @@
           // and again in the banner: a physician who asked for the double-check
           // and saw only a quiet rail would believe their charts were checked.
           skippedStages.push(Shell.stageLabel(event.stage));
-          const card = el(`charts-stage-${event.stage}`);
+          const card = ensureStageCard(event.stage);
           const counts = card && card.querySelector(".stage-counts");
           if (counts) counts.textContent = SKIPPED_NOTE[event.stage] || "did not run";
         }
         break;
       case "progress": {
-        const card = el(`charts-stage-${event.stage}`);
+        const card = ensureStageCard(event.stage);
         const counts = card && card.querySelector(".stage-counts");
         if (counts) counts.textContent = countsText(event);
         break;
@@ -174,9 +204,11 @@
     if (!hasApi() || !FORM) return;
     Shell.hideBanner();
     Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
-    resetRun();
-    setBusy(true);
+    // Read the form BEFORE painting the rail: the rail is built from what this
+    // run will do, not from what a run could do.
     const v = FORM.values();
+    resetRun(v);
+    setBusy(true);
     try {
       // Fire-and-forget on a worker thread; results stream back as events.
       const started = await window.pywebview.api.run_pipeline_async(
