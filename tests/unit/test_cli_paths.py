@@ -16,6 +16,7 @@ rather than in someone's working directory.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,16 @@ from anastomosis.cli_commands._paths import out_dir
 CLI_COMMANDS = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "cli_commands"
 
 runner = CliRunner()
+
+#: CI sets GITHUB_ACTIONS, which makes Typer's rich integration force a terminal
+#: (typer/rich_utils.py) — so an option name comes back with escape codes
+#: threaded through it and a plain `"--out" in output` misses. Strip first.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI.sub("", text)
+
 
 #: (argv, the option that must refuse). Each is a real invocation shape.
 BLANKABLE = [
@@ -51,9 +62,10 @@ def test_a_blank_output_is_refused_not_read_as_here(
     before = sorted(p.name for p in tmp_path.iterdir())
     result = runner.invoke(app, filled)
 
-    assert result.exit_code != 0, f"{option} accepted a blank value:\n{result.output}"
-    assert option in result.output, result.output
-    assert "no output" in result.output.lower(), result.output
+    plain = _plain(result.output)
+    assert result.exit_code != 0, f"{option} accepted a blank value:\n{plain}"
+    assert option in plain, plain
+    assert "no output" in plain.lower(), plain
     # And nothing was written on the way to refusing.
     assert sorted(p.name for p in tmp_path.iterdir()) == before
 
