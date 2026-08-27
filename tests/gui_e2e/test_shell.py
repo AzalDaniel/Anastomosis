@@ -236,3 +236,40 @@ def test_about_popover_carries_the_version_and_licence(gui) -> None:
     # The name appears exactly once inside the views: it does not.
     for view in VIEWS:
         assert "Anastomosis 0" not in app.view_text(view)
+
+
+def test_bridge_attaching_without_the_ready_event_still_goes_live(_browser) -> None:
+    """The frozen app's race: pywebview can attach the api and fire its one-shot
+    ready event BEFORE shell.js registers a listener. A missed event must not
+    strand the app offline — the boot poll has to see the late api on its own,
+    with no `pywebviewready` ever dispatched."""
+    import time
+
+    from anastomosis.gui.shell import _WEB_DIR
+
+    page = _browser.new_page(bypass_csp=True)
+    try:
+        page.goto((_WEB_DIR / "index.html").as_uri())
+
+        def _bridge() -> str | None:
+            return page.get_attribute("html", "data-bridge")
+
+        deadline = time.monotonic() + 5.0
+        while _bridge() != "offline":
+            assert time.monotonic() < deadline, f"never offline: {_bridge()!r}"
+            time.sleep(0.05)
+        page.evaluate(
+            """() => {
+              window.pywebview = { api: { info: () => Promise.resolve({
+                version: '0.0-test', sources: [], packs: [], destinations: [],
+              }) } };
+            }"""
+        )
+        deadline = time.monotonic() + 5.0
+        while _bridge() != "live":
+            assert time.monotonic() < deadline, (
+                f"the boot poll never saw the late api: bridge={_bridge()!r}"
+            )
+            time.sleep(0.05)
+    finally:
+        page.close()

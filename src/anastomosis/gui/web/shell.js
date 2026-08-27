@@ -995,17 +995,38 @@
 
   // ─── Boot ─────────────────────────────────────────────────────
   // Runs immediately (painting the offline notice when there is genuinely no
-  // bridge — the plain-browser preview) and ONCE more when `pywebviewready`
-  // lands, because pywebview attaches the api asynchronously after DOM ready.
-  // This is the app's ONLY bridge bootstrap; no view re-races it.
+  // bridge — the plain-browser preview) and again when the api lands, because
+  // pywebview attaches it asynchronously after DOM ready. The `pywebviewready`
+  // event alone is NOT a safe wake-up: in the frozen app the bridge can attach
+  // and fire it before this script's listener exists, and a missed one-shot
+  // event would strand a healthy app on the offline notice — so a poll backs
+  // the event, and whichever sees the api first wins. This is the app's ONLY
+  // bridge bootstrap; no view re-races it.
+  let bootedLive = false;
+  let bootPoll = null;
   function boot() {
     const live = hasApi();
+    if (live) {
+      if (bootedLive) return; // event + poll may both land; boot live once
+      bootedLive = true;
+      if (bootPoll) {
+        clearInterval(bootPoll);
+        bootPoll = null;
+      }
+    }
     document.documentElement.dataset.bridge = live ? "live" : "offline";
     const notice = el("no-api");
     if (notice) notice.classList.toggle("show", !live);
     if (live) loadInfo();
     for (const cb of READY) cb(live);
-    if (!live) window.addEventListener("pywebviewready", boot, { once: true });
+    if (!live) {
+      window.addEventListener("pywebviewready", boot, { once: true });
+      if (!bootPoll) {
+        bootPoll = setInterval(() => {
+          if (hasApi()) boot();
+        }, 150);
+      }
+    }
   }
 
   function init() {
