@@ -28,6 +28,7 @@ import typer
 
 from anastomosis.cli import app
 from anastomosis.cli_commands._paths import in_file
+from anastomosis.core.outcome import declined
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.fhir_api.attach import DEFAULT_TOKEN_ENV
 
@@ -243,6 +244,7 @@ def upload_cmd(
         prompt = "Connect to this browser and start filing?"
         if not yes and not typer.confirm(prompt, default=False):
             _cli.console.print("aborted")
+            declined("No charts were filed.")
             raise typer.Exit(code=0)
 
         # 3d. Load the destination pack and gate on readiness (selectors found).

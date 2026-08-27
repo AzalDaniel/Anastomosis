@@ -142,7 +142,9 @@ def _dispatch(argv: Sequence[str]) -> int:
     is what turns "the command ran" back into a value the guide can talk about.
     """
     from anastomosis.cli import app
+    from anastomosis.core.outcome import take_declined
 
+    take_declined()  # clear any outcome from an earlier command in this session
     try:
         app(args=list(argv))
     except SystemExit as exc:
@@ -653,8 +655,26 @@ def _report(console: Console, plan: Plan, exit_code: int) -> None:
 
     A refusal keeps every word the command printed; all this adds is one
     sentence framing it, so nobody has to guess whether anything was written.
+
+    Exit 0 alone cannot say which happened. A command that ends because the
+    operator answered "no" to its own confirmation has not failed, so it exits
+    0 too — and this used to read that as done and print "Filing has finished."
+    in the success style, immediately after the operator's own refusal. The
+    command records the refusal itself (`core.outcome`); anything else here
+    would be the guide guessing.
     """
+    from anastomosis.core.outcome import take_declined
+
     console.print()
+    refusal = take_declined()
+    if refusal is not None:
+        _say(console, refusal, style=BRAND_PALETTE.attention)
+        _say(
+            console,
+            "Nothing was changed. Re-run when you are ready.",
+            style=BRAND_PALETTE.ink_muted,
+        )
+        return
     if exit_code == 0:
         _say(console, plan.finished, style=BRAND_PALETTE.ok)
         if plan.next_step:
