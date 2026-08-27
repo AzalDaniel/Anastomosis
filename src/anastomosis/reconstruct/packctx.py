@@ -5,9 +5,8 @@ The engine allocates ONE ``record_cache`` dict per record and passes it in
 so a pack can build a record-level grouping once instead of once per encounter.
 Two things about that seam are pack-independent — reading the cache out of
 ``cfg`` at all, and the observations-by-encounter grouping every SOAP pack
-needs for its vitals — and both were re-typed identically in each built-in
-pack. They live here so a third pack inherits the same semantics (and the same
-fallback) instead of re-deriving them.
+needs for its vitals. They live here so a third pack inherits the same
+semantics instead of re-deriving them.
 
 CONTRACT (load-bearing, repeated at every call site): a ``record_cache`` is
 **per record**. The engine allocates a fresh dict for each record; a caller that
@@ -15,18 +14,33 @@ shares one across DIFFERENT records mis-renders the second. A pack invoked
 without a cache (a direct ``build_context`` call in a test or a tool) still
 works — it just builds its groupings locally, on a throwaway dict.
 
+A third pack-independent helper lives here too: :func:`format_local_dt`, the
+practice-local datetime formatter every built-in SOAP pack's ``signed_at``
+field uses, re-typed identically in each before it moved here.
+
 Packs are exec'd from file paths but import :mod:`anastomosis` freely; this
-module deliberately depends on nothing but the canonical model, so importing it
-from a pack cannot drag the engine or the registry into a pack's namespace.
+module deliberately depends on nothing but the canonical model and
+:mod:`anastomosis.core.timeutil` — both leaf modules — so importing it from a
+pack cannot drag the engine or the registry into a pack's namespace.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from anastomosis.core.model import Observation, PatientRecord
+from anastomosis.core.timeutil import to_local
 
-__all__ = ["observations_by_encounter", "record_cache_of"]
+__all__ = ["format_local_dt", "observations_by_encounter", "record_cache_of"]
+
+
+def format_local_dt(value: datetime | None, tz: str) -> str | None:
+    """Datetime in practice-local time, no leading zeros (e.g. "Aug 3, 2026 9:05 AM")."""
+    if value is None:
+        return None
+    local = to_local(value, tz)
+    return local.strftime("%b %d, %Y %I:%M %p").replace(" 0", " ")
 
 
 def record_cache_of(cfg: dict[str, Any]) -> dict[str, Any]:

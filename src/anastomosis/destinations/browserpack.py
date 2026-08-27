@@ -1,4 +1,4 @@
-"""Generic, selector-driven destination pack machinery (PLAN item 12b).
+"""Generic, selector-driven destination pack machinery.
 
 A *browser pack* teaches Anastomosis how to file a reconstructed chart into one
 foreign EHR through its web UI — the route taken when no vendor API and no
@@ -432,8 +432,6 @@ class BrowserPackDestination:
         return None
 
     def close(self) -> None:
-        # Deliberately a no-op: we never own the operator's browser, and this is
-        # the manager's per-recycle hook (see release() for owned teardown).
         return None
 
     def release(self) -> None:
