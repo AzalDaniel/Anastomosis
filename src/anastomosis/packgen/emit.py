@@ -42,6 +42,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from anastomosis.core.output import secure_output_dir
+
 from .infer import PackAnalysis, PageGeometry, SectionCandidate
 
 __all__ = [
@@ -751,8 +753,13 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     ``name`` must be a manifest-safe identifier (the pack name and directory
     name); the caller (CLI) validates it before reaching here.
     """
-    pack_dir = out_dir / name
-    pack_dir.mkdir(parents=True, exist_ok=True)
+    # Hardened like anything else that can hold PHI, because it can. This
+    # module's own caveat says so: hand the tool three copies of ONE patient's
+    # chart and that patient's values recur in 100% of samples, are
+    # indistinguishable from template text, and are written into template.html
+    # and DRAFT.md as "static labels". This wrote 0755/0644 with no PHI README
+    # while both sibling wizards hardened to 0700.
+    pack_dir = secure_output_dir(out_dir / name)
     (pack_dir / "pack.yaml").write_text(
         _render_pack_yaml(analysis, name=name, display=display), encoding="utf-8"
     )
