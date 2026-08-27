@@ -277,17 +277,40 @@ class FhirApiDestination:
         Lists ``DocumentReference?subject=Patient/{id}`` and reads each entry's
         ``content[0].attachment.title`` — the same field the driver writes — so
         a document filed on a prior (possibly crashed) run is found and skipped.
+
+        EVERY page. A FHIR search returns a searchset the SERVER pages, and
+        advertises the continuation as ``Bundle.link[relation="next"]``. Reading
+        only the first page means a patient with more documents than the
+        server's page size has fingerprints this scan cannot see — so a resumed
+        run re-files a chart already in their record, which is the one thing
+        this scan exists to prevent. A patient with 21 documents behind a
+        20-per-page server had exactly one invisible fingerprint, and it was the
+        most recently filed one: the likeliest to be the crashed run's.
         """
-        bundle = self._client.get(
-            "DocumentReference",
-            {"subject": f"Patient/{patient.destination_patient_id}"},
-        )
         fingerprints: set[str] = set()
-        for entry in bundle.get("entry", []) or []:
-            title = _attachment_title(entry.get("resource", {}))
-            if title:
-                fingerprints.add(title)
-        logger.info("scanned %d existing fingerprint(s)", len(fingerprints))
+        path: str | None = "DocumentReference"
+        params: dict[str, str] | None = {"subject": f"Patient/{patient.destination_patient_id}"}
+        pages = 0
+        while path is not None:
+            bundle = self._client.get(path, params)
+            pages += 1
+            for entry in bundle.get("entry", []) or []:
+                title = _attachment_title(entry.get("resource", {}))
+                if title:
+                    fingerprints.add(title)
+            next_url = _next_page_url(bundle)
+            if next_url is None:
+                break
+            if pages >= _MAX_SCAN_PAGES:
+                # Loudly, not quietly: a truncated scan is indistinguishable
+                # from a clean one, and the consequence of the difference is a
+                # doubled chart. Count only — never a patient id.
+                raise PermanentDeliveryError(
+                    f"the existing-document scan did not finish after {pages} pages; "
+                    "refusing to file rather than risk duplicating this chart"
+                )
+            path, params = self._same_origin_path(next_url, "search next link")
+        logger.info("scanned %d existing fingerprint(s) over %d page(s)", len(fingerprints), pages)
         return fingerprints
 
     # --- UploadDriver ---
@@ -415,15 +438,20 @@ class FhirApiDestination:
             return self._read_attachment_url(url)
         raise PermanentDeliveryError("DocumentReference attachment has neither data nor url")
 
-    def _read_attachment_url(self, url: str) -> bytes:
-        """Fetch a by-reference attachment, refusing a cross-origin URL.
+    def _same_origin_path(self, url: str, what: str) -> tuple[str, dict[str, str]]:
+        """A server-supplied URL, checked and turned into (path, params).
 
-        Same-origin rule: the attachment URL must share the base URL's scheme,
-        host, and port. A relative path is resolved against the base. The fetch
-        reuses the client's GET, which returns parsed JSON — a Binary resource
-        carries the bytes in its base64 ``data`` field.
+        Same-origin rule: the URL must share the base URL's scheme, host and
+        port. A relative path resolves against the base. This is the same
+        reasoning that makes the client refuse redirects — the Authorization
+        header must never travel to a host the operator did not configure — and
+        it applies to every URL the SERVER chooses, which is both a
+        by-reference attachment and a search's `next` page link.
+
+        ``what`` names the URL in the refusal, so the operator is told which one
+        pointed off-origin.
         """
-        from urllib.parse import urlsplit
+        from urllib.parse import parse_qsl, urlsplit
 
         base = urlsplit(self._client.base_url)
         target = urlsplit(url)
@@ -434,7 +462,7 @@ class FhirApiDestination:
                 and target.port == base.port
             )
             if not same_origin:
-                raise PermanentDeliveryError("attachment url is cross-origin; refusing to follow")
+                raise PermanentDeliveryError(f"{what} is cross-origin; refusing to follow")
             # The client re-joins onto the base URL, so hand it a path relative
             # to the base — strip the base path prefix from the absolute path.
             path = target.path
@@ -443,19 +471,52 @@ class FhirApiDestination:
         elif url.startswith("/"):
             # Scheme-less absolute path (same server by construction): still
             # strip the base path so the client doesn't double-prefix it.
-            path = url
+            path = target.path
             if base.path and path.startswith(base.path):
                 path = path[len(base.path) :]
         else:
-            path = url  # already relative to the base
-        resource = self._client.get(path)
+            path = target.path  # already relative to the base
+        return path, dict(parse_qsl(target.query))
+
+    def _read_attachment_url(self, url: str) -> bytes:
+        """Fetch a by-reference attachment, refusing a cross-origin URL.
+
+        The fetch reuses the client's GET, which returns parsed JSON — a Binary
+        resource carries the bytes in its base64 ``data`` field.
+        """
+        path, params = self._same_origin_path(url, "attachment url")
+        resource = self._client.get(path, params or None)
         data = resource.get("data")
         if isinstance(data, str):
             return base64.b64decode(data)
         raise PermanentDeliveryError("by-reference attachment returned no data")
 
 
+#: How many search pages the duplicate scan will walk before refusing. A server
+#: whose `next` link never terminates would otherwise loop forever; at typical
+#: page sizes this is tens of thousands of documents for one patient.
+_MAX_SCAN_PAGES = 200
+
+
 # --- module helpers (PHI-safe: shape readers only, never log values) ---------
+
+
+def _next_page_url(bundle: Mapping[str, object]) -> str | None:
+    """The searchset's continuation link, or None on the last page.
+
+    Shape-tolerant like its siblings here: a server that answers with something
+    other than a list of link objects gets treated as "no more pages", not a
+    crash — but the caller's page cap is what stops a malformed `next` looping.
+    """
+    links = bundle.get("link")
+    if not isinstance(links, list):
+        return None
+    for link in links:
+        if isinstance(link, Mapping) and link.get("relation") == "next":
+            url = link.get("url")
+            if isinstance(url, str) and url:
+                return url
+    return None
 
 
 def _entry_ids(bundle: Mapping[str, object]) -> list[str]:
