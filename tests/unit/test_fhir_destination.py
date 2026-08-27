@@ -63,11 +63,17 @@ class _FakeFhirServer:
     Stores Patients and DocumentReferences; serves identifier/demographic
     Patient search, read-by-id, DocumentReference subject search and read, and
     create (assigning sequential ids, returning a Location header).
+
+    ``page_size`` makes the DocumentReference search page the way a real server
+    does — a window plus a ``Bundle.link[next]``. None means one page, which is
+    what every test here assumed until a client that only read the first page
+    turned out to be filing duplicates.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, page_size: int | None = None) -> None:
         self.patients: dict[str, dict[str, object]] = {}
         self.docs: dict[str, dict[str, object]] = {}
+        self.page_size = page_size
         self._seq = 0
 
     def add_patient(self, resource: dict[str, object]) -> str:
@@ -148,15 +154,30 @@ class _FakeFhirServer:
     def _search_docs(self, params: Mapping[str, str]) -> dict[str, object]:
         subject = params.get("subject")
         matches = [d for d in self.docs.values() if d.get("subject") == {"reference": subject}]
-        return _bundle(matches)
+        if self.page_size is None:
+            return _bundle(matches)
+        # Page like a real server: hand back a window and advertise the rest as
+        # Bundle.link[next], which is the ONLY way a client learns there is more.
+        offset = int(params.get("_offset", "0"))
+        window = matches[offset : offset + self.page_size]
+        next_offset = offset + self.page_size
+        next_url = None
+        if next_offset < len(matches):
+            next_url = f"{BASE}/DocumentReference?subject={subject}&_offset={next_offset}"
+        return _bundle(window, next_url=next_url)
 
 
-def _bundle(resources: list[dict[str, object]]) -> dict[str, object]:
-    return {
+def _bundle(
+    resources: list[dict[str, object]], *, next_url: str | None = None
+) -> dict[str, object]:
+    bundle: dict[str, object] = {
         "resourceType": "Bundle",
         "type": "searchset",
         "entry": [{"resource": r} for r in resources],
     }
+    if next_url is not None:
+        bundle["link"] = [{"relation": "next", "url": next_url}]
+    return bundle
 
 
 def _has_identifier(resource: Mapping[str, object], token: str) -> bool:
@@ -657,3 +678,74 @@ def test_no_phi_in_logs_on_failure(caplog: pytest.LogCaptureFixture) -> None:
     blob = caplog.text + str(exc.value)
     for forbidden in ("Synthia", "Testpatient", "1990", "01/02", "srv-1", "srv-2"):
         assert forbidden not in blob, f"PHI/id leak: {forbidden!r}"
+
+
+def test_the_duplicate_scan_reads_every_page_of_the_searchset() -> None:
+    """A resumed run must not re-file a chart the destination already holds.
+
+    A FHIR search returns a searchset the SERVER pages, advertising the
+    continuation as `Bundle.link[relation="next"]`. The scan read one page and
+    stopped, so a patient with more documents than the server's page size had
+    fingerprints it could not see — and the invisible ones are the most
+    recently filed, which is exactly where a crashed run's last upload sits.
+
+    `destinations/base.py` states the contract this holds: "re-filing would
+    double a patient's chart."
+    """
+    server = _FakeFhirServer(page_size=20)
+    pid = server.add_patient(_patient_resource(PAT))
+    subject = {"reference": f"Patient/{pid}"}
+    for n in range(1, 22):  # 21 documents behind a 20-per-page server
+        did = server._next_id()
+        server.docs[did] = {
+            "resourceType": "DocumentReference",
+            "id": did,
+            "subject": subject,
+            "content": [{"attachment": {"title": f"fingerprint-{n:04d}"}}],
+        }
+
+    destination = FhirApiDestination(_client(server))
+    found = destination.existing_fingerprints(
+        DestinationPatient(destination_patient_id=pid, matched_on="identifier")
+    )
+
+    assert len(found) == 21, f"the scan stopped early and saw {len(found)} of 21"
+    assert "fingerprint-0021" in found, (
+        "the last-filed document is invisible to the duplicate scan — a resumed "
+        "run would file it a second time"
+    )
+
+
+def test_the_duplicate_scan_refuses_a_cross_origin_next_link() -> None:
+    """The `next` URL is chosen by the server, so it gets the redirect rule.
+
+    The client refuses redirects because the Authorization header must never
+    travel to a host the operator did not configure. A `next` link pointing
+    off-origin is the same request wearing different clothes.
+    """
+    server = _FakeFhirServer()
+    pid = server.add_patient(_patient_resource(PAT))
+    subject = {"reference": f"Patient/{pid}"}
+    did = server._next_id()
+    server.docs[did] = {
+        "resourceType": "DocumentReference",
+        "id": did,
+        "subject": subject,
+        "content": [{"attachment": {"title": "fingerprint-0001"}}],
+    }
+    original = server._search_docs
+
+    def _evil(params: Mapping[str, str]) -> dict[str, object]:
+        bundle = original(params)
+        bundle["link"] = [
+            {"relation": "next", "url": "https://elsewhere.example/DocumentReference?p=2"}
+        ]
+        return bundle
+
+    server._search_docs = _evil  # type: ignore[method-assign]
+
+    destination = FhirApiDestination(_client(server))
+    with pytest.raises(PermanentDeliveryError, match="cross-origin"):
+        destination.existing_fingerprints(
+            DestinationPatient(destination_patient_id=pid, matched_on="identifier")
+        )
