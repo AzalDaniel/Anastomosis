@@ -440,8 +440,12 @@ def test_the_handoff_carries_context_from_migrate_to_uploads() -> None:
     migrate, uploads = _read("wizard.js"), _read("console.js")
     assert 'id="migrate-continue"' in html
     assert 'Shell.showView("uploads"' in migrate
-    assert 'Shell.store("handoff"' in migrate and 'Shell.store("handoff")' in uploads
     assert "uploads-assistant" in uploads
+    # The handoff travels ONLY as showView's context. It used to be written to a
+    # shell-global as well, which Uploads read on every arrival — so the offer
+    # never expired and kept reverting fields the operator had retyped since.
+    for source, name in ((migrate, "wizard.js"), (uploads, "console.js")):
+        assert "Shell.store(" not in source, f"{name} brought the handoff global back"
 
 
 # --- the bundled OFL fonts -------------------------------------------------
