@@ -311,11 +311,17 @@
     // "neutral" renders through the generic layout; anything else IS a layout.
     const layout =
       renderValue === "ccda-standard" ? null : renderValue === "neutral" ? "generic_soap" : renderValue;
+    // The third argument is what makes a choice stick. Without it this view
+    // remembered nothing, so every change of the "Chart pages" picker put the
+    // layout's defaults back — and the run was submitted from the reinstated
+    // values, not the physician's. Charts got this in #129; Migrate calls the
+    // same form and needs the same key.
     FORM.setSections(
       (layout && SECTIONS_BY_PACK[layout]) || {},
       layout === null
         ? "Data-only transfer documents have no sections to choose from."
-        : "This layout has no sections to choose from."
+        : "This layout has no sections to choose from.",
+      layout
     );
   }
 

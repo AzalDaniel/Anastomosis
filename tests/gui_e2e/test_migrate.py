@@ -288,3 +288,71 @@ def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> No
     banner = app.text("#banner")
     assert "Busy" not in banner, f"the sentinel reached the screen: {banner!r}"
     assert "already working on something else" in banner, banner
+
+
+def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
+    """The fix for #129 landed on Charts and never reached this view.
+
+    Both views compose the SAME run form, and its section memory is keyed by
+    layout — but the key is an argument, and Migrate was calling `setSections`
+    with two of the three. So nothing was ever remembered here: every change of
+    the "Chart pages" picker put the layout's defaults back, and the run was
+    submitted from the reinstated values. A physician who turned Vitals off got
+    a transfer document with Vitals in it.
+
+    This asserts the end that matters — what reaches the controller — not just
+    what the checkboxes look like afterwards.
+    """
+    app = _open(gui)
+    page = app.page
+    page.select_option("#migrate-source", CANNED_SOURCE)
+    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    page.wait_for_timeout(200)
+
+    layouts = [
+        value
+        for value in page.evaluate(
+            "() => [...document.querySelectorAll('#migrate-render option')]"
+            ".map(o => o.value).filter(Boolean)"
+        )
+        if value != "ccda-standard"  # a data-only document has no sections
+    ]
+    assert len(layouts) >= 2, f"need two layouts to switch between, got {layouts}"
+
+    def sections() -> dict[str, bool]:
+        return {
+            b["k"]: b["v"]
+            for b in page.evaluate(
+                "() => [...document.querySelectorAll('#migrate-sections input[data-section]')]"
+                ".map(i => ({k: i.dataset.section, v: i.checked}))"
+            )
+        }
+
+    page.select_option("#migrate-render", layouts[0])
+    page.wait_for_timeout(150)
+    labels = page.locator("#migrate-sections label.toggle")
+    boxes = page.locator("#migrate-sections input[data-section]")
+    assert boxes.count() >= 1
+    for i in range(boxes.count()):
+        if boxes.nth(i).is_checked():
+            labels.nth(i).click()
+    chosen = sections()
+    assert chosen and not any(chosen.values()), chosen
+
+    page.select_option("#migrate-render", layouts[1])
+    page.wait_for_timeout(150)
+    page.select_option("#migrate-render", layouts[0])
+    page.wait_for_timeout(150)
+    assert sections() == chosen, f"the layout's defaults came back over the choice: {sections()}"
+
+    # And the run is built from what is on screen.
+    page.fill("#migrate-export-dir", "/synthetic/export")
+    page.fill("#migrate-out-dir", "/synthetic/out")
+    page.click("#migrate-run")
+    page.wait_for_timeout(300)
+    sent = app.last_args("run_migration_async")
+    assert sent, "the run never reached the controller"
+    submitted = next(a for a in sent if isinstance(a, dict))
+    assert not any(submitted.values()), (
+        f"the run was submitted with sections the physician turned off: {submitted}"
+    )
