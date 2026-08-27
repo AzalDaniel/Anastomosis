@@ -165,7 +165,9 @@
       assistant: ASSISTANT ? ASSISTANT.name : "",
       outDir: FORM ? FORM.values().outDir : "",
     };
-    Shell.store("handoff", context);
+    // The context IS the handoff. It used to be written to a shell-global as
+    // well, and Uploads read that global on every arrival — so the offer never
+    // expired and kept overwriting fields the operator had since retyped.
     Shell.showView("uploads", context);
   }
 

@@ -434,11 +434,31 @@
 
   // The Migrate handoff: the destination's filing assistant and the folder the
   // charts were written to, so nothing is typed twice.
-  function onEnter(context) {
-    const handoff = context || Shell.store("handoff");
+  //
+  // Only ever what this arrival was handed. `onEnter` runs on EVERY arrival at
+  // this view, and the handoff also used to live in a shell-global that was
+  // never cleared — so an operator who retargeted these two fields by hand for
+  // a second batch, looked at another view and came back had them silently
+  // reverted to the migration's, and "Start filing" then drove the wrong folder
+  // into the wrong destination. Overwriting a field the operator can see is
+  // also worth a line in the strip.
+  function onEnter(handoff) {
     if (!handoff) return;
-    if (handoff.assistant) el("uploads-assistant").value = handoff.assistant;
-    if (handoff.outDir) el("uploads-results-dir").value = handoff.outDir;
+    const changed = [];
+    if (handoff.assistant && el("uploads-assistant").value !== handoff.assistant) {
+      el("uploads-assistant").value = handoff.assistant;
+      changed.push("filing assistant");
+    }
+    if (handoff.outDir && el("uploads-results-dir").value !== handoff.outDir) {
+      el("uploads-results-dir").value = handoff.outDir;
+      changed.push("results folder");
+    }
+    if (changed.length) {
+      Shell.logEvent({
+        kind: "ok",
+        msg: `Uploads: ${changed.join(" and ")} taken from the migration you just ran.`,
+      });
+    }
   }
 
   function init() {

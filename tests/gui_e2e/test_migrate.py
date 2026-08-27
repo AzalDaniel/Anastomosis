@@ -122,6 +122,48 @@ def test_continue_on_uploads_carries_the_context(gui) -> None:
     assert app.visible("uploads") and not app.visible("migrate")
     assert page.locator("#uploads-assistant").input_value() == CANNED_DESTINATION
     assert page.locator("#uploads-results-dir").input_value() == "/synthetic/out"
+    # It overwrote two fields the operator can see, so it says so once.
+    assert "taken from the migration" in app.text("#log-strip")
+
+
+def test_a_spent_handoff_never_retargets_uploads_again(gui) -> None:
+    """The offer is made once. Coming back to Uploads must not re-apply it.
+
+    The handoff used to live in a shell-global that was never cleared, and
+    Uploads re-read it on EVERY arrival. An operator who retargeted the results
+    folder and the filing assistant by hand for a second batch, glanced at
+    another view and came back had both silently reverted to the migration's —
+    and "Start filing" then drove the wrong folder into the wrong destination,
+    with no banner and no line in the strip. That is the promise this product
+    makes first: never silently misfile a chart.
+    """
+    app = _open(gui)
+    page = app.page
+    page.fill("#migrate-out-dir", "/synthetic/batch-a")
+    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    page.wait_for_timeout(200)
+    page.click("#migrate-continue")
+    page.wait_for_timeout(400)
+    assert page.locator("#uploads-results-dir").input_value() == "/synthetic/batch-a"
+
+    # The operator retargets Uploads by hand, for a different batch.
+    page.fill("#uploads-results-dir", "/synthetic/batch-b")
+    page.evaluate(
+        "() => { const a = document.getElementById('uploads-assistant');"
+        " a.value = ''; a.dispatchEvent(new Event('change', {bubbles: true})); }"
+    )
+
+    # ... glances at another view, and comes back.
+    app.show("charts")
+    app.show("uploads")
+    page.wait_for_timeout(300)
+
+    assert page.locator("#uploads-results-dir").input_value() == "/synthetic/batch-b", (
+        "a spent handoff reverted the folder the charts would be filed from"
+    )
+    assert page.locator("#uploads-assistant").input_value() == "", (
+        "a spent handoff reverted the destination the charts would be filed into"
+    )
 
 
 def test_run_migration_dispatches_and_reports_the_honest_verdict(gui) -> None:

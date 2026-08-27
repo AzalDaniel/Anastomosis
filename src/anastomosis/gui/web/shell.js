@@ -180,15 +180,6 @@
     // must never overwrite the last thing a run said.
   }
 
-  // A tiny shared store: the Migrate → Uploads handoff carries its context
-  // through here instead of asking the operator to retype it.
-  const STORE = {};
-  function store(key, value) {
-    if (value === undefined) return STORE[key];
-    STORE[key] = value;
-    return value;
-  }
-
   // ─── The event dispatcher (one, for every flow) ───────────────
   const FLOW_LABEL = {
     pipeline: "Charts",
@@ -1102,7 +1093,6 @@
     registerFlow,
     showView,
     currentView: () => CURRENT,
-    store,
     logEvent,
     openLogDrawer,
     closeLogDrawer,
