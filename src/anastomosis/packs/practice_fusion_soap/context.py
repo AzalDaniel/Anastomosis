@@ -309,6 +309,27 @@ def _logo_data_uri(cfg_tokens: dict[str, str], pack_root: Path) -> str:
 # --- vitals views --------------------------------------------------------------
 
 
+def _fold_blood_pressure(by_label: dict[str, str]) -> None:
+    """Fold the two BP components into the one row the layout declares.
+
+    RULES.md §Vitals: "Systolic + Diastolic combine into one `Blood Pressure`
+    `{sys}/{dia}` row." The observations arrive as separate LOINC codes
+    (8480-6 / 8462-4) and `_VITAL_ORDER` names only the combined row, so a path
+    that skips this fold renders neither — which is what the flowsheet did to
+    every prior-encounter blood pressure.
+
+    In place: both callers build a label -> value map and want the same single
+    key out of it.
+    """
+    systolic = by_label.pop("Systolic BP", None)
+    diastolic = by_label.pop("Diastolic BP", None)
+    if systolic or diastolic:
+        # strip units off the BP components for the combined "sys/dia" cell
+        sys_v = (systolic or "").split(" ")[0]
+        dia_v = (diastolic or "").split(" ")[0]
+        by_label["Blood Pressure"] = f"{sys_v}/{dia_v}".strip("/")
+
+
 def _encounter_vital_rows(vitals: list[Observation]) -> list[dict[str, str]]:
     """Build the per-encounter vitals rows in VITAL_ORDER, combining BP into a
     single ``Blood Pressure`` row (GOLD §8)."""
@@ -320,13 +341,7 @@ def _encounter_vital_rows(vitals: list[Observation]) -> list[dict[str, str]]:
             continue
         unit = obs.unit or ""
         by_label[label] = f"{value} {unit}".strip() if unit else str(value)
-    systolic = by_label.pop("Systolic BP", None)
-    diastolic = by_label.pop("Diastolic BP", None)
-    if systolic or diastolic:
-        # strip units off the BP components for the combined "sys/dia" cell
-        sys_v = (systolic or "").split(" ")[0]
-        dia_v = (diastolic or "").split(" ")[0]
-        by_label["Blood Pressure"] = f"{sys_v}/{dia_v}".strip("/")
+    _fold_blood_pressure(by_label)
     rows: list[dict[str, str]] = []
     for label in _VITAL_ORDER:
         if label in by_label:
@@ -865,6 +880,8 @@ def _flowsheet_record_index(
             continue
         cols.setdefault(enc.id, {})[label] = str(obs.value)
         col_dates[enc.id] = enc.date_of_service
+    for by_label in cols.values():
+        _fold_blood_pressure(by_label)
     return cols, col_dates
 
 
@@ -896,6 +913,18 @@ def _build_flowsheet(
     columns = [{"date": _fmt_date_short(col_dates[eid]), "time": None} for eid in ordered]
     rows: list[dict[str, Any]] = []
     for label in _VITAL_ORDER:
+        vals = [all_cols[eid].get(label, "") for eid in ordered]
+        if any(vals):
+            rows.append({"name": label, "vals": vals})
+    # Any vital we did not have an order slot for still renders (lossless), the
+    # same guarantee the per-encounter rows carry. First-seen order across the
+    # shown columns, so the row order is stable for the goldens.
+    extra: list[str] = []
+    for eid in ordered:
+        for label in all_cols[eid]:
+            if label not in _VITAL_ORDER and label not in extra:
+                extra.append(label)
+    for label in extra:
         vals = [all_cols[eid].get(label, "") for eid in ordered]
         if any(vals):
             rows.append({"name": label, "vals": vals})
