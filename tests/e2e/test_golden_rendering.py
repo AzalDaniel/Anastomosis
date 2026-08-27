@@ -10,10 +10,10 @@ against the committed golden snapshot in
 Text and geometry alone cannot catch a *spatial* regression: a stylesheet
 change that slides a value out from under its label leaves the page count, the
 page size, and the extracted words all identical, and ships a chart that reads
-the wrong value against the right heading. So page 1 of every golden chart also
-pins the word bounding boxes PyMuPDF reports (``page.get_text("words")``)
-against ``tests/e2e/goldens/pf_tebra_v9_generic_soap.words.json``, compared with
-a few points of slack rather than exact floats.
+the wrong value against the right heading. So EVERY page of every golden chart
+also pins the word bounding boxes PyMuPDF reports (``page.get_text("words")``)
+against ``tests/e2e/goldens/pf_tebra_v9_generic_soap.words.json`` (one entry
+per page), compared with a few points of slack rather than exact floats.
 
 A mismatch means the rendered output changed. That is either a regression to
 fix, or — if the template/pack/engine changed *intentionally* — a deliberate
@@ -144,36 +144,45 @@ def test_render_matches_golden_geometry_and_text(
             )
 
 
-def test_golden_boxes_cover_every_encounter(
+def test_golden_boxes_cover_every_page(
     golden: dict[str, Any], golden_boxes: dict[str, Any]
 ) -> None:
-    # A spatial baseline that silently stopped covering a chart would pass
-    # forever; pin that both files describe the same encounters.
+    # A spatial baseline that silently stopped covering a chart — or quietly
+    # dropped back to page 1 only — would pass forever; pin that the word
+    # baseline names the same encounters as the text golden AND the same
+    # page count each, and that no page is an empty word list.
     assert sorted(k for k in golden_boxes if k != "_meta") == sorted(
         k for k in golden if k != "_meta"
     )
-    assert all(golden_boxes[k] for k in golden_boxes if k != "_meta"), "an empty word baseline"
+    for enc_id, pages in golden_boxes.items():
+        if enc_id == "_meta":
+            continue
+        assert len(pages) == golden[enc_id]["pages"], (
+            f"{enc_id}: word baseline covers {len(pages)} page(s), "
+            f"golden text layer has {golden[enc_id]['pages']}"
+        )
+        assert all(pages), f"{enc_id}: a page has an empty word baseline"
 
 
 def test_render_matches_golden_word_boxes(
     golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
 ) -> None:
-    """Page 1 of every chart lands where it landed when the baseline was cut.
+    """Every page of every chart lands where it landed when the baseline was cut.
 
     This is the check the text/geometry golden cannot make: same words, same
-    page size, different POSITIONS — a value slid under the neighbouring label.
-    Compared with :data:`regen_goldens.BOX_TOLERANCE` points of slack, so
-    sub-pixel rounding never fails the suite but a visible move always does.
+    page size, different POSITIONS — a value slid under the neighbouring label,
+    on any page, not just the first. Compared with
+    :data:`regen_goldens.BOX_TOLERANCE` points of slack, so sub-pixel rounding
+    never fails the suite but a visible move always does.
     """
     for enc_id in sorted(k for k in golden_boxes if k != "_meta"):
-        assert enc_id in rendered_boxes, f"{enc_id}: no page-1 word boxes were rendered"
+        assert enc_id in rendered_boxes, f"{enc_id}: no word boxes were rendered"
         differences = regen_goldens.diff_word_boxes(golden_boxes[enc_id], rendered_boxes[enc_id])
         if differences:
             # Synthetic fixture text, so the words are PHI-safe to print.
             detail = "\n".join(differences)
             pytest.fail(
-                f"{enc_id}: page-1 layout moved (tolerance "
-                f"{regen_goldens.BOX_TOLERANCE}pt). If this change is intentional, run "
-                f"`python tools/regen_goldens.py` and review the JSON diff in the PR.\n"
-                f"{detail}"
+                f"{enc_id}: layout moved (tolerance {regen_goldens.BOX_TOLERANCE}pt). "
+                f"If this change is intentional, run `python tools/regen_goldens.py` "
+                f"and review the JSON diff in the PR.\n{detail}"
             )

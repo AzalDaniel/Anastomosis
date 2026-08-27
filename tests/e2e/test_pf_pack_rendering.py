@@ -7,6 +7,9 @@ Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through the
   forensic page size (GOLD_STANDARD §1);
 * compares the stable text/geometry layer byte-for-byte against the committed
   golden ``tests/e2e/goldens/pf_tebra_v9_practice_fusion_soap.json``;
+* compares every page's word bounding boxes against the companion
+  ``.words.json`` baseline, so a value sliding under the wrong label fails
+  even when it happens on page 4 of this six-page pack;
 * verifies the #f1f1f1 heading-band fill is actually painted in the PDF (via
   PyMuPDF ``get_drawings()`` fill colors — the §1 forensic-token check) and
   that every PF section heading + the social-history labels survived to the
@@ -73,7 +76,7 @@ def golden_boxes() -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def snapshots() -> tuple[dict[str, Any], dict[str, Any]]:
     """Render the fixture once for the whole module (Chromium launch is slow);
-    text/geometry and page-1 word boxes come from that single render."""
+    text/geometry and every-page word boxes come from that single render."""
     _chromium_or_skip()
     return regen_goldens.render_snapshots(PACK_NAME)
 
@@ -140,26 +143,31 @@ def test_render_matches_golden_geometry_and_text(
 def test_render_matches_golden_word_boxes(
     golden: dict[str, Any], golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
 ) -> None:
-    """Page 1 of every chart lands where the baseline says it lands.
+    """Every page of every chart lands where the baseline says it lands.
 
     The PF pack is a layout REPLICA — its whole claim is spatial — so identical
     text at shifted coordinates is precisely the regression to catch, and the
-    text/geometry golden above cannot see it.
+    text/geometry golden above cannot see it. Every page is checked (this pack
+    renders six), not just the header page: a value sliding under the wrong
+    label on page 4 is exactly as unsafe as one sliding on page 1.
     """
     expected_keys = sorted(k for k in golden_boxes if k != "_meta")
     assert expected_keys == sorted(k for k in golden if k != "_meta"), (
         "the word baseline must cover exactly the charts the text golden pins"
     )
     for enc_id in expected_keys:
-        assert golden_boxes[enc_id], f"{enc_id}: empty word baseline"
+        assert len(golden_boxes[enc_id]) == golden[enc_id]["pages"], (
+            f"{enc_id}: word baseline covers {len(golden_boxes[enc_id])} page(s), "
+            f"golden text layer has {golden[enc_id]['pages']}"
+        )
+        assert all(golden_boxes[enc_id]), f"{enc_id}: a page has an empty word baseline"
         differences = regen_goldens.diff_word_boxes(golden_boxes[enc_id], rendered_boxes[enc_id])
         if differences:
             # Synthetic fixture text, so the words are PHI-safe to print.
             pytest.fail(
-                f"{enc_id}: page-1 layout moved (tolerance "
-                f"{regen_goldens.BOX_TOLERANCE}pt). If this change is intentional, run "
-                f"`python tools/regen_goldens.py` and review the JSON diff in the PR.\n"
-                + "\n".join(differences)
+                f"{enc_id}: layout moved (tolerance {regen_goldens.BOX_TOLERANCE}pt). "
+                f"If this change is intentional, run `python tools/regen_goldens.py` "
+                f"and review the JSON diff in the PR.\n" + "\n".join(differences)
             )
 
 

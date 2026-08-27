@@ -38,15 +38,18 @@ __all__ = [
 
 # Locked-down CSP. Inline JSON via <script type="application/json"> is treated
 # as data and does not need 'unsafe-inline'; the only executable script must
-# be served from the archive's own assets directory.
+# be served from the archive's own assets directory. frame-ancestors is
+# deliberately absent: the CSP spec ignores it in a <meta> element, and these
+# pages are opened from file:// where no server can send it as a header —
+# declaring it here would claim an embedding protection the archive cannot
+# actually provide.
 CSP_META_CONTENT = (
     "default-src 'none'; "
     "script-src 'self'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data:; "
     "font-src 'self'; "
-    "connect-src 'none'; "
-    "frame-ancestors 'none'"
+    "connect-src 'none'"
 )
 
 

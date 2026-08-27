@@ -32,12 +32,17 @@ Two boundary definitions, deliberately distinct:
   joins into a word character, a possessive (``"Ann Li's Chart"``) matches,
   and truncation (``"Ann Li..."``) rejects — see ``_NAME_TRAILING``.
 
-Known conservative limitation: scripts written without separators (CJK and
-other ideographic text) offer no boundary to anchor on, so an expected name
-part rendered flush against other ideographs (``"李"`` against ``"李明"``)
-does NOT match. The failure direction is safe — the patient reads as not
-found / mismatched and the run stops loudly; a chart is never filed on a
-boundary-free guess. Tracked in ``docs/PLAN.md`` (Open work).
+Unseparated scripts (Han, kana, Hangul) write a full name flush — family and
+given concatenated with no space — so the record's separate name parts can
+never each "stand alone" the way spaced scripts do. For parts that are wholly
+ideographic, :func:`name_parts_present` therefore also accepts the JOINED
+name (both part orders) as one boundary-anchored fragment: ``"李" + "明"``
+matches ``"姓名: 李明"``. The boundaries themselves never loosen — ``"李明"``
+embedded in ``"李明华"`` (a longer name: a different patient) or flush inside
+running prose (``"患者李明的记录"``) still refuses, because an adjacent
+ideograph is indistinguishable from more-of-the-name. That residual refusal
+is the safe direction: the patient reads as not found and the run stops
+loudly; a chart is never filed on a boundary-free guess.
 
 PHI rule: these functions receive patient-derived values (names, DOBs) to do
 their job but never log — a caller logs the boolean/count, never the value.
@@ -140,6 +145,39 @@ def name_fragment_present(fragment: str, haystack: str) -> bool:
     return re.search(pattern, hay) is not None
 
 
+# Scripts whose names render with no separator between family and given parts:
+# Han (URO + extension A + compatibility + supplementary planes), the two kana
+# blocks, and Hangul syllables. A part must consist WHOLLY of these for the
+# joined-name fallback below to apply — one Latin character makes it a spaced-
+# script name that must satisfy the part-wise rule.
+_UNSEPARATED_SCRIPT = re.compile(
+    r"^["
+    r"\u3040-\u30ff"  # hiragana + katakana
+    r"\u3400-\u4dbf"  # CJK unified ideographs extension A
+    r"\u4e00-\u9fff"  # CJK unified ideographs
+    r"\uf900-\ufaff"  # CJK compatibility ideographs
+    r"\uac00-\ud7a3"  # Hangul syllables
+    r"\U00020000-\U0002ffff"  # CJK unified ideographs extensions B and beyond
+    r"]+$"
+)
+
+
+def _joined_name_candidates(parts: list[str]) -> list[str]:
+    """The flush-concatenated forms an unseparated-script name renders as.
+
+    Both part orders (family-given and given-family), because the record does
+    not say which order the destination renders. Only the two declared orders —
+    never every permutation, which would loosen the contiguity guarantee for
+    three-part names. Empty when any part carries a non-ideographic character.
+    """
+    stripped = [part.strip() for part in parts]
+    if len(stripped) < 2 or not all(_UNSEPARATED_SCRIPT.match(part) for part in stripped):
+        return []
+    joined = "".join(stripped)
+    reverse = "".join(reversed(stripped))
+    return [joined] if joined == reverse else [joined, reverse]
+
+
 def name_parts_present(parts: Iterable[str], haystack: str) -> bool:
     """Every declared name part appears in ``haystack`` as a contiguous fragment.
 
@@ -150,11 +188,22 @@ def name_parts_present(parts: Iterable[str], haystack: str) -> bool:
     Parts themselves are order-independent (``"Li, Ann"`` matches family
     ``"Li"`` + given ``"Ann"``). No parts at all is a fail-closed ``False`` —
     an identity check must not pass on the absence of a name.
+
+    Wholly-ideographic parts get one extra chance: the flush-joined name in
+    either part order, matched as ONE fragment under the same boundaries
+    (see :func:`_joined_name_candidates`) — ``["李", "明"]`` matches
+    ``"姓名: 李明"``, where neither part can stand alone because the other is
+    its immediate neighbour. ``"李明"`` inside ``"李明华"`` or flush inside
+    prose still refuses: an adjacent ideograph may be more of the name.
     """
     cleaned = [part for part in parts if part and part.strip()]
     if not cleaned:
         return False
-    return all(name_fragment_present(part, haystack) for part in cleaned)
+    if all(name_fragment_present(part, haystack) for part in cleaned):
+        return True
+    return any(
+        name_fragment_present(candidate, haystack) for candidate in _joined_name_candidates(cleaned)
+    )
 
 
 def name_present(expected_name: str, haystack: str) -> bool:

@@ -257,6 +257,25 @@ def check_layout() -> None:
     print(f"start menu: {group} -> {shortcuts}")
 
 
+def measure_footprint() -> None:
+    """Report the on-disk cost of the install — the number users actually pay.
+
+    The installer's download size is public on the Releases page, but what it
+    expands TO was never measured anywhere. Printed here (and into the CI job
+    summary when available) so every build records it; informational only — a
+    size regression is a review conversation, not a broken install.
+    """
+    app = _app_dir()
+    files = [p for p in app.rglob("*") if p.is_file()]
+    total = sum(p.stat().st_size for p in files)
+    line = f"installed footprint: {total / 1_000_000_000:.2f} GB across {len(files)} files ({app})"
+    print(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"**{line}**\n")
+
+
 def check_installed_doctor() -> None:
     """The INSTALLED CLI self-check: assets + Chromium survived the install."""
     cli = _app_dir() / "cli" / "anast.exe"
@@ -558,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
     if not _failures:
         with step("installed layout"):
             check_layout()
+        with step("installed footprint"):
+            measure_footprint()
         with step("installed 'anast doctor'"):
             check_installed_doctor()
         with step("the dashboard renders in the shipped WebView2 window"):
