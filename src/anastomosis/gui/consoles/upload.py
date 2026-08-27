@@ -65,6 +65,7 @@ def _upload_preflight(
     """
     # The deliver-browser imports are lazy so this module loads without the
     # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
+    from anastomosis.core.output import typed_path
     from anastomosis.core.upload_command import resolve_manifest_root
     from anastomosis.deliver.browser.cdp import CdpEndpoint
     from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
@@ -82,7 +83,7 @@ def _upload_preflight(
     #    missing/malformed. The AUTHORITATIVE read happens inside
     #    run_upload_command under the output lock (lock-then-read), so this
     #    early copy is validation only.
-    out = Path(out_dir)
+    out = typed_path(out_dir)
     try:
         read_upload_manifest(resolve_manifest_root(out))
     except (ManifestError, OSError):
@@ -90,7 +91,7 @@ def _upload_preflight(
 
     # 3. Load the destination pack and gate on readiness (selectors found).
     try:
-        loaded = load_destination_pack(pack_name, [Path(p) for p in pack_dirs or []])
+        loaded = load_destination_pack(pack_name, [typed_path(p) for p in pack_dirs or []])
     except BrowserPackError as exc:
         return {"ok": False, "error": exc_tag(exc)}
     if not loaded.ready:
@@ -142,9 +143,10 @@ class UploadConsole:
 
         tracking = None
         try:
+            from anastomosis.core.output import typed_path
             from anastomosis.deliver.browser.tracking import TrackingDB
 
-            path = Path(db_path)
+            path = typed_path(db_path)
             if not path.is_file():
                 return {"ok": False, "error": "FileNotFoundError"}
             tracking = TrackingDB(path)
@@ -181,9 +183,10 @@ class UploadConsole:
         """
         tracking = None
         try:
+            from anastomosis.core.output import typed_path
             from anastomosis.deliver.browser.tracking import TrackingDB
 
-            path = Path(db_path)
+            path = typed_path(db_path)
             if not path.is_file():
                 return {"ok": False, "error": "FileNotFoundError"}
             tracking = TrackingDB(path)
@@ -206,7 +209,9 @@ class UploadConsole:
         only; never a filename. A missing directory is a clean error.
         """
         try:
-            path = Path(out_dir)
+            from anastomosis.core.output import typed_path
+
+            path = typed_path(out_dir)
             if not path.is_dir():
                 return {"ok": False, "error": "NotADirectoryError"}
             pdfs = sorted(path.glob("*.pdf"))

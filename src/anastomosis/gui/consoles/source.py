@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from anastomosis.core.logutil import exc_tag
@@ -126,6 +125,7 @@ class SourceConsole:
         diverge; this method only marshals its result into the wizard's dict.
         """
         try:
+            from anastomosis.core.output import typed_path
             from anastomosis.core.source_init_command import (
                 SourceInitCommand,
                 run_source_init_command,
@@ -133,10 +133,10 @@ class SourceConsole:
 
             result = run_source_init_command(
                 SourceInitCommand(
-                    example=Path(example_path),
+                    example=typed_path(example_path),
                     name=name,
                     display=display,
-                    out_dir=Path(out_dir) if out_dir is not None else None,
+                    out_dir=typed_path(out_dir) if out_dir is not None else None,
                     confirmed=confirmed,
                 )
             )
@@ -172,6 +172,7 @@ class SourceConsole:
 
         def _worker() -> None:
             try:
+                from anastomosis.core.output import typed_path
                 from anastomosis.core.source_init_command import (
                     SourceInitCommand,
                     run_source_init_command,
@@ -180,10 +181,10 @@ class SourceConsole:
                 result_dict = _source_result_dict(
                     run_source_init_command(
                         SourceInitCommand(
-                            example=Path(example_path),
+                            example=typed_path(example_path),
                             name=name,
                             display=display,
-                            out_dir=Path(out_dir) if out_dir is not None else None,
+                            out_dir=typed_path(out_dir) if out_dir is not None else None,
                             confirmed=confirmed,
                         )
                     )
