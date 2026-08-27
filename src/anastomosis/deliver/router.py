@@ -123,7 +123,10 @@ def _capability_option(
         return RouteOption(
             kind=kind,
             viable=False,
-            why=f"{field} unverified — run re-verification or contribute evidence",
+            why=(
+                f"{field} is not verified yet — this route opens once its "
+                "capability has verified evidence"
+            ),
         )
     return RouteOption(kind=kind, viable=False, why=f"{field}={entry}")
 

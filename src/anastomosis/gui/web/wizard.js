@@ -1,488 +1,358 @@
 /*
- * Anastomosis Migration Wizard — vanilla JS, no frameworks, no build step.
+ * Anastomosis GUI — the Migrate view: move charts from one system into another.
  *
- * Talks to the headless controller over pywebview's bridge:
- *   - info()                 → version + sources + packs (the from/render pickers)
- *   - detect(dir)            → step 1 auto-detect
- *   - routes()               → the destination list for the picker
- *   - destination_status(n)  → the transit map, pack readiness, route choice
- *   - run_migration_async(…) → run the migration (charts + structured C-CDA)
- *   - last_run_summary()     → the per-patient roll-up, fetched after `done`
+ * Owns the "migration" flow. It composes the SAME run form Charts uses
+ * (shell.js buildRunForm) beside a destination picker — there is no second
+ * implementation of the run fields — and adds what only a migration needs: the
+ * routes into the destination, in plain language, and the handoff that carries
+ * the chosen route's context to Uploads instead of asking for it twice.
  *
- * The transit map is the centerpiece: three route cards (vendor API / C-CDA
- * import / browser) drawn from destination_status(); the chosen route is
- * highlighted with the coral halo accent. Step 3's guidance is route-specific.
- * The run flow (step 3b) issues run_migration_async and streams progress back
- * via window.anastEvent, then fetches last_run_summary on `done`. The visual
- * layer (glass cards, route cards, command palette) is carried from the
- * predecessor via window.AnastShell. The controller seam is untouched.
- *
- * PHI discipline: events carry counts/stage names only; the per-patient detail
- * (names/DOB) is fetched via last_run_summary and rendered with textContent —
- * shown locally, never logged, never put on an event (the controller's rule).
- * Guarded so opening in a plain browser shows the "launch via anast gui" notice.
+ * Controller seam: detect / routes / destination_status / run_migration_async /
+ * last_run_summary. PHI discipline: events carry counts and stage names; the
+ * per-patient roll-up is fetched separately and painted with textContent.
  */
 "use strict";
 
-const Shell = window.AnastShell;
+(function () {
+  const Shell = window.AnastShell;
+  const el = (id) => document.getElementById(id);
 
-// Per-pack section matrices (name -> {section: {label, default}}), from
-// info().packs — the same data the dashboard uses to build its section toggles.
-let SECTIONS_BY_PACK = {};
+  let SECTIONS_BY_PACK = {};
+  let FORM = null;
+  //: The destination's filing assistant, from destination_status() — the thing
+  //: the Uploads handoff pre-fills.
+  let ASSISTANT = null;
 
-function hasApi() {
-  return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
-}
+  // Route kinds in the operator's language. The registry's own `why` evidence
+  // is kept verbatim, but under a "Technical detail" disclosure — nothing is
+  // dropped, and nothing engineering-shaped leads.
+  const ROUTE_NAME = {
+    vendor_api: "Direct connection",
+    ccda_import: "Transfer document (C-CDA)",
+    browser: "Filing assistant",
+  };
+  const ROUTE_WHAT = {
+    vendor_api: "Sends charts straight into the destination's own interface.",
+    ccda_import: "Creates one transfer document per patient that the destination can import.",
+    browser: "Anastomosis files each chart into the destination itself, through a browser window it controls.",
+  };
 
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setStatus(text) {
-  const t = el("status-text");
-  if (t) {
-    t.textContent = text;
+  function hasApi() {
+    return Shell.hasApi();
   }
-}
 
-function showBanner(message) {
-  const banner = el("banner");
-  if (banner) {
-    banner.textContent = String(message);
-    banner.classList.add("show");
-  }
-}
+  // --- the routes into a destination ---------------------------------------
+  function renderRoutes(transit) {
+    const list = el("migrate-routes");
+    list.innerHTML = "";
+    for (const opt of transit.options) {
+      const card = document.createElement("div");
+      card.className = "route-card";
+      card.dataset.available = String(opt.viable);
+      card.dataset.chosen = String(opt.kind === transit.chosen);
+      card.dataset.route = opt.kind;
 
-function setStep(n) {
-  for (let i = 1; i <= 3; i++) {
-    const dot = el("step-" + i);
-    if (dot) {
-      dot.setAttribute("data-active", i <= n ? "true" : "false");
-    }
-  }
-}
+      const name = document.createElement("div");
+      name.className = "route-name";
+      name.textContent = ROUTE_NAME[opt.kind] || opt.kind;
+      card.appendChild(name);
 
-// --- step 1: source auto-detect -------------------------------------------
-async function onDetect() {
-  if (!hasApi()) {
-    return;
-  }
-  const dir = el("export-dir").value;
-  const result = el("detect-result");
-  result.hidden = false;
-  try {
-    const res = await window.pywebview.api.detect(dir);
-    if (res && res.ok && res.source) {
-      result.textContent = "Detected source format: " + res.source;
-      // Pre-select the detected source in the migrate FROM picker (the operator
-      // can still override it — a migration's source is always explicit).
-      const sel = el("source");
-      if (sel) {
-        sel.value = res.source;
+      const what = document.createElement("div");
+      what.className = "route-why";
+      what.textContent = ROUTE_WHAT[opt.kind] || "";
+      card.appendChild(what);
+
+      const mark = document.createElement("div");
+      mark.className = "route-mark";
+      mark.textContent = opt.viable
+        ? opt.kind === transit.chosen
+          ? "Available — recommended"
+          : "Available"
+        : "Not available";
+      card.appendChild(mark);
+
+      // The registry's evidence, verbatim and reachable, but never the headline.
+      const detail = document.createElement("details");
+      detail.className = "route-detail";
+      const summary = document.createElement("summary");
+      summary.textContent = "Technical detail";
+      detail.appendChild(summary);
+      const why = document.createElement("div");
+      why.textContent = opt.why;
+      detail.appendChild(why);
+      for (const req of opt.requires || []) {
+        const line = document.createElement("div");
+        line.textContent = req;
+        detail.appendChild(line);
       }
-      setStep(2);
-    } else if (res && res.ok) {
-      result.textContent = "No known source format detected in that directory.";
-    } else {
-      result.textContent = "Detection failed: " + (res ? res.error : "no response");
+      card.appendChild(detail);
+      list.appendChild(card);
     }
-  } catch (err) {
-    showBanner(err);
   }
-}
 
-// --- step 2: destination + transit map ------------------------------------
-const ROUTE_LABEL = {
-  vendor_api: "Vendor API",
-  ccda_import: "C-CDA import",
-  browser: "Browser automation",
-};
-
-function renderTransitMap(transit) {
-  const map = el("transit-map");
-  map.innerHTML = "";
-  for (const opt of transit.options) {
-    const card = document.createElement("div");
-    card.className = "route-card";
-    card.setAttribute("data-viable", String(opt.viable));
-    card.setAttribute("data-chosen", String(opt.kind === transit.chosen));
-
-    const kind = document.createElement("div");
-    kind.className = "kind";
-    kind.textContent = ROUTE_LABEL[opt.kind] || opt.kind;
-    card.appendChild(kind);
-
-    const why = document.createElement("div");
-    why.className = "why";
-    why.textContent = opt.why;
-    card.appendChild(why);
-
-    const mark = document.createElement("div");
-    mark.className = "mark";
-    mark.textContent = opt.viable ? "viable" : "not viable";
-    card.appendChild(mark);
-
-    if (opt.requires && opt.requires.length) {
-      const ul = document.createElement("ul");
-      ul.className = "requires";
-      for (const req of opt.requires) {
-        const li = document.createElement("li");
-        li.textContent = req;
-        ul.appendChild(li);
-      }
-      card.appendChild(ul);
+  function paragraphs(host, lines) {
+    host.innerHTML = "";
+    for (const line of lines) {
+      const p = document.createElement("p");
+      p.textContent = line;
+      host.appendChild(p);
     }
-    map.appendChild(card);
   }
-}
 
-function renderPackChip(pack) {
-  const chip = el("pack-chip");
-  if (!pack) {
-    chip.hidden = true;
-    return;
-  }
-  chip.hidden = false;
-  chip.setAttribute("data-ready", String(!!pack.ready));
-  chip.textContent = pack.ready
-    ? "Browser pack " + pack.name + " ready (selectors discovered)"
-    : "Browser pack " + pack.name + " needs discovery";
-}
-
-function renderAction(transit, pack) {
-  const guidance = el("action-guidance");
-  guidance.innerHTML = "";
-  const chosen = transit.chosen;
-  const lines = [];
-  if (chosen === "ccda_import") {
-    lines.push(
-      "Recommended route: C-CDA import. Run the pipeline with the C-CDA " +
-        "deliverer to generate the document the destination ingests:"
-    );
-    lines.push("    anast pipeline run <export> -o out --ccda");
-    lines.push(
-      "Then follow the destination's in-product import instructions " +
-        "(see the route card evidence above)."
-    );
-  } else if (chosen === "vendor_api") {
-    lines.push(
-      "Recommended route: vendor API (the chosen card names which API). " +
-        "API push wiring lives in deliver/fhir_api — credentials required."
-    );
-    lines.push(
-      "The full API-run UI is part of a later milestone; for now this is text " +
-        "guidance only — no live push from this screen."
-    );
-  } else if (chosen === "browser") {
-    lines.push(
-      "Recommended route: browser automation. Open the Upload console to " +
-        "stage and review the run."
-    );
-    if (pack && !pack.ready) {
+  function renderGuidance(transit, pack) {
+    const guidance = el("migrate-guidance");
+    const chosen = transit.chosen;
+    const lines = [];
+    if (chosen === "ccda_import") {
       lines.push(
-        "This destination's browser pack still needs discovery — run " +
-          "anast destination init before driving uploads."
+        "This route creates a C-CDA transfer document the destination can import. " +
+          "“Rebuild charts” below produces it."
+      );
+      lines.push("Then follow the destination's own import instructions.");
+    } else if (chosen === "vendor_api") {
+      lines.push(
+        "This route sends charts directly to the destination's FHIR interface. It " +
+          "needs sign-in credentials from your destination system, and runs from " +
+          "the Uploads screen."
+      );
+      lines.push("Direct sending is not available from this screen yet.");
+    } else if (chosen === "browser") {
+      lines.push(
+        "Anastomosis can file these charts into the destination itself. Rebuild the " +
+          "charts below, then continue on the Uploads screen."
+      );
+    } else {
+      lines.push(
+        "No route to this destination is available yet. Routes appear here once " +
+          "they have been verified to work."
       );
     }
-  } else {
-    lines.push(
-      "No viable route: every option is unverified or unsupported. " +
-        "Contribute evidence or re-run the registry re-verification ritual."
-    );
+    if (pack) {
+      lines.push(
+        pack.ready
+          ? `Filing assistant for ${pack.name} is ready.`
+          : "The filing assistant for this system has not been set up on this " +
+            "computer yet. Set it up from the Teach screen."
+      );
+    }
+    paragraphs(guidance, lines);
+    // The handoff is offered whenever a filing assistant exists for this
+    // destination — that is the context Uploads would otherwise ask for again.
+    el("migrate-handoff-actions").hidden = !pack;
   }
-  for (const line of lines) {
-    const p = document.createElement("div");
-    p.textContent = line;
-    guidance.appendChild(p);
-  }
-  if (chosen === "vendor_api") {
-    const tag = document.createElement("span");
-    tag.className = "deferred";
-    tag.textContent = "live API push: later milestone";
-    guidance.appendChild(tag);
-  }
-  if (chosen === "browser") {
-    const link = document.createElement("a");
-    link.className = "nav-link";
-    link.href = "console.html";
-    link.textContent = "Open Upload console";
-    guidance.appendChild(link);
-  }
-}
 
-async function onDestinationChange() {
-  if (!hasApi()) {
-    return;
+  async function onDestinationChange() {
+    if (!hasApi()) return;
+    const name = el("migrate-destination").value;
+    if (!name) return;
+    try {
+      const res = await window.pywebview.api.destination_status(name);
+      if (!res || !res.ok) {
+        Shell.showBanner(res ? res.error : "The destination could not be read.");
+        return;
+      }
+      ASSISTANT = res.pack || null;
+      renderRoutes(res.transit);
+      renderGuidance(res.transit, res.pack);
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
   }
-  const name = el("destination").value;
-  if (!name) {
-    return;
+
+  function onContinueOnUploads() {
+    const context = {
+      destination: el("migrate-destination").value,
+      assistant: ASSISTANT ? ASSISTANT.name : "",
+      outDir: FORM ? FORM.values().outDir : "",
+    };
+    Shell.store("handoff", context);
+    Shell.showView("uploads", context);
   }
-  try {
-    const res = await window.pywebview.api.destination_status(name);
-    if (!res || !res.ok) {
-      showBanner(res ? res.error : "no response");
+
+  // --- detect the export format --------------------------------------------
+  async function onDetect() {
+    if (!hasApi() || !FORM) return;
+    const dir = FORM.values().exportDir;
+    try {
+      const res = await window.pywebview.api.detect(dir);
+      if (res && res.ok && res.source) {
+        FORM.el("source").value = res.source;
+        Shell.logEvent({ kind: "ok", msg: `Migrate: this export looks like ${res.source}.` });
+      } else if (res && res.ok) {
+        Shell.logEvent({ kind: "warn", msg: "Migrate: this folder is not a format Anastomosis knows." });
+      } else {
+        Shell.showBanner(
+          `The export folder could not be read: ${res ? res.error : "no answer from the app"}`
+        );
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
+  }
+
+  // --- running --------------------------------------------------------------
+  function showResult(text) {
+    const box = el("migrate-result");
+    box.hidden = false;
+    box.innerHTML = "";
+    const p = document.createElement("p");
+    p.textContent = text;
+    box.appendChild(p);
+  }
+
+  async function onRun() {
+    if (!hasApi() || !FORM) return;
+    const v = FORM.values();
+    const destination = el("migrate-destination").value;
+    if (!v.source) {
+      Shell.showBanner("Choose the export format these charts are coming from.");
       return;
     }
-    renderTransitMap(res.transit);
-    renderPackChip(res.pack);
-    renderAction(res.transit, res.pack);
-    setStep(3);
-    setStatus("route: " + (res.transit.chosen || "none"));
-  } catch (err) {
-    showBanner(err);
-  }
-}
-
-// --- step 3b: run the migration -------------------------------------------
-// The event dispatcher the shell (Python side) calls during an async run.
-// Flow guard: the wizard owns the "migration" flow. Every event carries a
-// `flow`; we early-return on any other flow so navigating to the wizard mid-run
-// can't let it consume the dashboard's pipeline terminal event and announce
-// "migration prepared" for a pipeline run (both emit identical event kinds).
-window.anastEvent = function anastEvent(e) {
-  if (!e || typeof e !== "object") {
-    return;
-  }
-  if (e.flow !== "migration") {
-    return;
-  }
-  switch (e.type) {
-    case "stage":
-      setStatus("stage " + e.stage + ": " + e.state);
-      break;
-    case "progress":
-      setStatus("progress " + e.stage);
-      break;
-    case "done":
-      setRunBusy(false);
-      showMigrationResult(
-        e.notice ||
-          "migration prepared — charts + C-CDA payload written; delivery not yet executed."
+    if (!destination) {
+      Shell.showBanner("Choose the system these charts are going to.");
+      return;
+    }
+    Shell.hideBanner();
+    Shell.clearPatients(el("migrate-patients"), el("migrate-patients-body"));
+    FORM.setBusy(true);
+    showResult("Rebuilding…");
+    try {
+      const started = await window.pywebview.api.run_migration_async(
+        v.exportDir,
+        v.outDir,
+        v.source,
+        destination,
+        v.render,
+        v.sections,
+        v.qa,
+        v.force,
+        v.packDirs,
+        v.trustNew
       );
-      loadPatients(e.summary_id);
-      break;
-    case "error":
-      setRunBusy(false);
-      showBanner("Run failed: " + e.error);
-      break;
-    default:
-      break;
-  }
-};
-
-function setRunBusy(busy) {
-  const btn = el("run-migration-btn");
-  if (btn) {
-    btn.disabled = busy;
-    btn.textContent = busy ? "running…" : "run migration";
-  }
-  setStatus(busy ? "running" : "ready");
-}
-
-function showMigrationResult(text) {
-  const box = el("migration-result");
-  if (box) {
-    box.hidden = false;
-    box.textContent = text;
-  }
-}
-
-// Read the section toggles into the {section: bool} map run_migration expects
-// (the Shell mechanic the dashboard shares).
-function gatherSections() {
-  return Shell.gatherSections(el("section-matrix"));
-}
-
-// The render mode that determines which pack's sections apply: "neutral" renders
-// through generic_soap, "ccda-standard" is the HL7 view (no Jinja sections), and
-// anything else is a Jinja pack name — mirrors core.migrate's mapping.
-function renderPackFor(renderValue) {
-  if (renderValue === "ccda-standard") {
-    return null;
-  }
-  return renderValue === "neutral" ? "generic_soap" : renderValue;
-}
-
-// Rebuild the section matrix for the chosen render pack (the Shell mechanic the
-// dashboard shares). The wizard owns the mapping from render mode to pack and
-// its own empty state: the ccda-standard view exposes no sections at all.
-function renderSectionMatrix(renderValue) {
-  const packName = renderPackFor(renderValue);
-  Shell.renderSectionMatrix(
-    el("section-matrix"),
-    (packName && SECTIONS_BY_PACK[packName]) || {},
-    packName === null
-      ? "The ccda-standard view renders no togglable sections."
-      : "This pack exposes no togglable sections."
-  );
-}
-
-async function onRunMigration() {
-  if (!hasApi()) {
-    return;
-  }
-  const source = el("source") ? el("source").value : "";
-  const destination = el("destination") ? el("destination").value : "";
-  const render = el("render") ? el("render").value : "neutral";
-  const exportDir = el("export-dir") ? el("export-dir").value : "";
-  const outDir = el("out-dir") ? el("out-dir").value : "";
-  if (!source) {
-    showBanner("Pick a source EHR (migrate FROM) first.");
-    return;
-  }
-  if (!destination) {
-    showBanner("Pick a destination EHR (migrate TO) first.");
-    return;
-  }
-  const packDir = el("pack-dir") ? el("pack-dir").value.trim() : "";
-  const payload = {
-    sections: gatherSections(),
-    qa: Shell.segmentValue("qa", "on") === "on",
-    force: !!(el("force") && el("force").checked),
-    pack_dirs: packDir ? [packDir] : [],
-    trust_new: !!(el("trust-pack") && el("trust-pack").checked),
-  };
-  clearPatients();
-  setRunBusy(true);
-  showMigrationResult("running…");
-  try {
-    const started = await window.pywebview.api.run_migration_async(
-      exportDir,
-      outDir,
-      source,
-      destination,
-      render,
-      payload.sections,
-      payload.qa,
-      payload.force,
-      payload.pack_dirs,
-      payload.trust_new
-    );
-    if (started && started.ok === false) {
-      showBanner(started.error);
-      setRunBusy(false);
-    }
-  } catch (err) {
-    showBanner(err);
-    setRunBusy(false);
-  }
-}
-
-// --- per-patient detail (local display; never on an event) ----------------
-// Both the fetch and the table are Shell mechanics (the dashboard shows the
-// same roll-up after its own run); the page owns only where they land.
-function loadPatients(summaryId) {
-  Shell.loadPatients(el("patients-panel"), el("patients-body"), summaryId);
-}
-
-function clearPatients() {
-  Shell.clearPatients(el("patients-panel"), el("patients-body"));
-}
-
-// --- bootstrap ------------------------------------------------------------
-// The wizard's pickers each open with their own prompt entry: an explicit
-// "Select a …" (a migration's source and destination are never guessed), unlike
-// the dashboard's empty-value "auto-detect" sentinel.
-function populateSources(sources) {
-  Shell.fillSelect(el("source"), [
-    { value: "", label: "Select a source…" },
-    ...sources.map((src) => ({ value: src.name, label: src.name })),
-  ]);
-}
-
-// The render picker: the two named modes plus every available pack.
-function populateRender(packs) {
-  Shell.fillSelect(el("render"), [
-    { value: "neutral", label: "neutral (generic SOAP)" },
-    { value: "ccda-standard", label: "ccda-standard (HL7 view)" },
-    ...(packs || [])
-      .filter((pack) => pack.available)
-      .map((pack) => ({ value: pack.name, label: "pack: " + pack.name })),
-  ]);
-}
-
-async function populate() {
-  if (!hasApi()) {
-    el("no-api").classList.add("show");
-    setStatus("offline");
-    return;
-  }
-  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
-  // notice this page may already have painted, so a slow pywebview attach does
-  // not leave the wizard permanently showing "launch via anast gui".
-  el("no-api").classList.remove("show");
-  setStatus("ready");
-  try {
-    const info = await window.pywebview.api.info();
-    if (info && info.ok) {
-      el("version").textContent = info.version;
-      populateSources(info.sources || []);
-      populateRender(info.packs || []);
-      SECTIONS_BY_PACK = {};
-      for (const pack of info.packs || []) {
-        if (pack.available) {
-          SECTIONS_BY_PACK[pack.name] = pack.sections || {};
-        }
+      if (started && started.ok === false) {
+        Shell.showBanner(started.error);
+        FORM.setBusy(false);
       }
-      // Build the matrix for the default render mode ("neutral" → generic_soap).
-      renderSectionMatrix(el("render") ? el("render").value : "neutral");
+    } catch (err) {
+      Shell.showBanner(String(err));
+      FORM.setBusy(false);
     }
-    const routes = await window.pywebview.api.routes();
-    if (routes && routes.ok) {
-      Shell.fillSelect(el("destination"), [
-        { value: "", label: "Select a destination…" },
-        ...routes.routes.map((r) => ({ value: r.destination, label: r.destination })),
-      ]);
-    }
-  } catch (err) {
-    showBanner(err);
-  }
-}
-
-function init() {
-  const detect = el("detect-btn");
-  if (detect) {
-    detect.addEventListener("click", onDetect);
-  }
-  const dest = el("destination");
-  if (dest) {
-    dest.addEventListener("change", onDestinationChange);
-  }
-  const runBtn = el("run-migration-btn");
-  if (runBtn) {
-    runBtn.addEventListener("click", onRunMigration);
-  }
-  const renderSelect = el("render");
-  if (renderSelect) {
-    renderSelect.addEventListener("change", () => renderSectionMatrix(renderSelect.value));
-  }
-  // The QA segment toggle (gooey iOS-style) — same control as the dashboard.
-  if (Shell && Shell.initSegmentToggles) {
-    Shell.initSegmentToggles(document);
   }
 
-  const palette = Shell.initCommandPalette([
-    { id: "detect", label: "Auto-detect source", hint: "step 1", action: () => onDetect() },
-    { id: "run-migration", label: "Run migration", hint: "run", action: () => onRunMigration() },
-    { id: "dashboard", label: "Open dashboard", hint: "go", action: () => { window.location.href = "index.html"; } },
-    { id: "console", label: "Open upload console", hint: "go", action: () => { window.location.href = "console.html"; } },
-    { id: "packgen", label: "Open pack from samples", hint: "go", action: () => { window.location.href = "packgen.html"; } },
-  ]);
-  document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
-      e.preventDefault();
-      palette.toggle();
+  function onEvent(event) {
+    switch (event.type) {
+      case "done":
+        FORM.setBusy(false);
+        // The controller's own `notice` is written for the terminal; the honest
+        // verdict in this register is fixed, so it is said here instead.
+        showResult(
+          "Charts and the transfer document are written. Nothing has been sent yet " +
+            "— review the results, then continue on the Uploads screen."
+        );
+        Shell.loadPatients(el("migrate-patients"), el("migrate-patients-body"), event.summary_id);
+        break;
+      case "error":
+        FORM.setBusy(false);
+        // A deliver-stage error in this flow is the no-automatic-route verdict:
+        // the charts and the transfer document WERE written (the console emits
+        // it in place of `done`), so it is reported as an outcome, not a crash.
+        if (event.stage === "deliver") {
+          showResult(
+            "No automatic route to this destination is available. The charts and the " +
+              "transfer document are written — import the transfer document into the " +
+              "destination yourself, or set up a filing assistant from the Teach screen."
+          );
+          Shell.showBanner("The migration finished without sending anything. See the note below.");
+        } else {
+          Shell.showBanner(
+            `The migration stopped during ${Shell.stageLabel(event.stage)}: ${event.error}`
+          );
+        }
+        break;
+      default:
+        break;
     }
+  }
+
+  // --- populating -----------------------------------------------------------
+  function renderSections(renderValue) {
+    // "ccda-standard" is the HL7 data view (no page layout, so no sections);
+    // "neutral" renders through the generic layout; anything else IS a layout.
+    const layout =
+      renderValue === "ccda-standard" ? null : renderValue === "neutral" ? "generic_soap" : renderValue;
+    FORM.setSections(
+      (layout && SECTIONS_BY_PACK[layout]) || {},
+      layout === null
+        ? "Data-only transfer documents have no sections to choose from."
+        : "This layout has no sections to choose from."
+    );
+  }
+
+  function populate(info) {
+    if (!FORM) return;
+    Shell.fillSelect(FORM.el("source"), [
+      { value: "", label: "Choose the export format…" },
+      ...(info.sources || []).map((src) => ({ value: src.name, label: src.name })),
+    ]);
+    SECTIONS_BY_PACK = {};
+    const layouts = [];
+    for (const layout of info.packs || []) {
+      if (!layout.available) continue;
+      SECTIONS_BY_PACK[layout.name] = layout.sections || {};
+      layouts.push({ value: layout.name, label: `Rendered pages — ${layout.name}` });
+    }
+    Shell.fillSelect(FORM.el("render"), [
+      { value: "neutral", label: "Rendered pages — standard layout" },
+      { value: "ccda-standard", label: "Data only — C-CDA" },
+      ...layouts,
+    ]);
+    renderSections(FORM.el("render").value);
+  }
+
+  async function loadRoutes() {
+    try {
+      const routes = await window.pywebview.api.routes();
+      if (routes && routes.ok) {
+        Shell.fillSelect(el("migrate-destination"), [
+          { value: "", label: "Choose a destination…" },
+          ...routes.routes.map((r) => ({ value: r.destination, label: r.destination })),
+        ]);
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
+  }
+
+  function init() {
+    FORM = Shell.buildRunForm(el("migrate-form"), {
+      prefix: "migrate",
+      mode: "migrate",
+      runLabel: "Rebuild charts",
+      onRun,
+    });
+    const detect = FORM.el("detect");
+    if (detect) detect.addEventListener("click", onDetect);
+    const render = FORM.el("render");
+    if (render) render.addEventListener("change", () => renderSections(render.value));
+    el("migrate-destination").addEventListener("change", onDestinationChange);
+    el("migrate-continue").addEventListener("click", onContinueOnUploads);
+
+    Shell.onInfo(populate);
+    Shell.onReady((live) => {
+      if (!live) {
+        FORM.setOffline();
+        return;
+      }
+      FORM.setBusy(false);
+      loadRoutes();
+    });
+  }
+
+  Shell.registerView({
+    name: "migrate",
+    title: "Migrate",
+    flow: "migration",
+    onEvent,
   });
-
-  // Bootstrap through the shared bridge gate: now, and once more when
-  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
-  Shell.onApiReady(populate);
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
   init();
-}
+})();

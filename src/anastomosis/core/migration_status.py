@@ -129,12 +129,12 @@ def prepared_notice(status: MigrationStatus) -> str:
             "manually or use the browser route"
         ),
         RouteKind.CCDA_IMPORT.value: "import the C-CDA in the destination's UI",
-        RouteKind.BROWSER.value: "run 'anast upload' to file the charts via the browser route",
+        RouteKind.BROWSER.value: "file the charts from the Uploads screen (or 'anast upload')",
     }
     tail = tails.get(status.chosen_route or "", "import the C-CDA into the destination")
     return (
         f"migration artifacts prepared for {status.destination!r} — C-CDA at "
-        f"{status.ccda_dir}, charts + upload manifest written; route plan: "
+        f"{status.ccda_dir}, charts and upload files written; route plan: "
         f"{status.chosen_route}. Delivery has NOT been executed: {tail}."
     )
 

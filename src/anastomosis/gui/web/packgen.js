@@ -1,235 +1,146 @@
 /*
- * Anastomosis Pack-from-samples wizard — vanilla JS, no frameworks, no build.
+ * Anastomosis GUI — Teach, mode 1: teach a document layout from samples.
  *
- * Talks to the headless controller's pack_init_async(), which wraps packgen
- * analyze+emit on a daemon thread (the GUI stays responsive). The result is
- * fetched after the `packgen` `done`/`error` event via last_pack_result(). The
- * same-patient guard from the CLI is ported as a REQUIRED checkbox (the
- * controller's confirmed_distinct_patients argument):
- *   - "Analyze samples" calls pack_init_async(confirmed=false): the controller
- *     refuses to emit but stashes the PHI-safe summary + the caveat, so the
- *     operator sees exactly what they are confirming.
- *   - the checkbox enables "Write draft pack", which calls pack_init_async(
- *     confirmed=true) to emit and stash the draft path + DRAFT.md text.
+ * Owns the "pack_init" flow and registers the Teach view itself (mode 2,
+ * export formats, lives in source.js and registers only its own flow).
  *
- * Both steps are fire-and-forget: the call returns {started:true} and the real
- * result arrives via window.anastEvent → last_pack_result(). A
- * ConfirmationRequired result routes to renderSummary; an ok result routes to
- * the draft-render branch — exactly as the old await-return path did.
+ * Two steps, gated the way the CLI gates them:
+ *   1. "Look at the samples" calls pack_init_async(confirmed=false) — the
+ *      controller refuses to write and stashes the summary, so the operator
+ *      sees exactly what they are confirming;
+ *   2. the confirmation enables "Write the draft layout", which calls
+ *      pack_init_async(confirmed=true) to emit the draft.
+ * Both are fire-and-forget: the call returns {started:true} and the real result
+ * arrives via the shell's dispatcher → last_pack_result().
  *
- * The visual layer (glass cards, the liquid confirm toggle) is carried from the
- * predecessor. The controller seam is untouched.
- *
- * PHI discipline: summary lines carry only static template text (recurring
- * across distinct samples) and counts; sample paths are never echoed. The
- * single-sample text suppression is inherited from the controller/summary.
+ * PHI discipline: the summary carries static template text (recurring across
+ * distinct samples) and counts only; sample paths are never echoed.
  */
 "use strict";
 
-// Only the bridge gate is needed from the shared shell here (this wizard hosts
-// no segment toggle, palette, or log strip of its own).
-const Shell = window.AnastShell;
+(function () {
+  const Shell = window.AnastShell;
+  const el = (id) => document.getElementById(id);
 
-function hasApi() {
-  return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
-}
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setStatus(text) {
-  const t = el("status-text");
-  if (t) {
-    t.textContent = text;
+  function hasApi() {
+    return Shell.hasApi();
   }
-}
 
-function showBanner(message) {
-  const banner = el("banner");
-  if (banner) {
-    banner.textContent = String(message);
-    banner.classList.add("show");
+  function setStep(text) {
+    el("layout-step").textContent = text;
   }
-}
 
-function hideBanner() {
-  const banner = el("banner");
-  if (banner) {
-    banner.classList.remove("show");
+  function renderProposal(res) {
+    el("layout-summary").textContent = (res.summary || []).join("\n");
+    el("layout-caveat").textContent = res.caveat
+      ? `About the samples: ${res.caveat}`
+      : "";
+    el("layout-proposal").hidden = false;
+    // Consent is per-analysis, never sticky: a fresh look re-arms the gate.
+    el("layout-confirm").checked = false;
+    el("layout-write").disabled = true;
+    setStep("Step 2 of 2 — review and confirm.");
   }
-}
 
-function renderSummary(res) {
-  el("summary").textContent = (res.summary || []).join("\n");
-  if (res.caveat) {
-    el("caveat").textContent = "Same-patient caveat: " + res.caveat;
+  function renderWritten(res) {
+    el("layout-result-path").textContent = `The draft layout was written to ${res.pack_dir}`;
+    el("layout-result-md").textContent = res.draft_md || "";
+    el("layout-result").hidden = false;
+    setStep("Done. Review the draft against an original sample before using it.");
   }
-  el("summary-panel").hidden = false;
-  // Reset the confirmation for each fresh analysis.
-  el("confirm-distinct").checked = false;
-  el("emit-btn").disabled = true;
-}
 
-function renderDraft(res) {
-  el("draft-path").textContent = "Wrote draft pack to " + res.pack_dir;
-  el("draft-md").textContent = res.draft_md || "";
-  el("draft-panel").hidden = false;
-  setStatus("draft written");
-}
+  // ConfirmationRequired is the EXPECTED outcome of step 1 (it carries the
+  // summary to confirm); ok is the written draft; anything else is a failure.
+  function route(res) {
+    if (res && res.ok) {
+      renderWritten(res);
+    } else if (res && res.error === "ConfirmationRequired") {
+      renderProposal(res);
+    } else {
+      Shell.showBanner(
+        `The samples could not be turned into a layout: ${res ? res.error : "no answer from the app"}`
+      );
+    }
+  }
 
-// Route a fetched pack_init result to the right panel — shared by the analyze
-// and emit steps, since the async call returns {started:true} and the real
-// result lands via the event handler. ConfirmationRequired is the EXPECTED
-// outcome of the analyze step (it carries the summary to confirm); ok is the
-// written draft; anything else is a real failure.
-function renderPackResult(res) {
-  if (res && res.ok) {
-    renderDraft(res);
-  } else if (res && res.error === "ConfirmationRequired") {
-    renderSummary(res);
-    setStatus("review and confirm");
-  } else {
-    showBanner("Pack init failed: " + (res ? res.error : "no response"));
-    setStatus("failed");
+  async function fetchResult() {
+    if (!hasApi()) return;
+    try {
+      route(await window.pywebview.api.last_pack_result());
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
   }
-}
 
-// The event dispatcher the shell (Python side) calls during an async pack-init.
-// On a packgen `done` (or a generic `done`) we fetch the stashed result and
-// route it; an `error` shows the banner. Other stages just update the status.
-// Flow guard: the pack-from-samples wizard owns the "pack_init" flow. Every
-// event carries a `flow`; we early-return on any other flow so a run from another
-// page can't drive this wizard's terminal handlers.
-window.anastEvent = function anastEvent(e) {
-  if (!e || typeof e !== "object") {
-    return;
+  function onEvent(event) {
+    if (event.type === "stage" && event.stage === "packgen" && event.state === "done") {
+      fetchResult();
+    } else if (event.type === "done") {
+      fetchResult();
+    } else if (event.type === "error") {
+      Shell.showBanner(`The samples could not be turned into a layout: ${event.error}`);
+    }
   }
-  if (e.flow !== "pack_init") {
-    return;
+
+  function values() {
+    return {
+      samples: el("layout-samples").value,
+      name: el("layout-name").value,
+      display: el("layout-display").value || null,
+    };
   }
-  switch (e.type) {
-    case "stage":
-      if (e.stage === "packgen" && e.state === "done") {
-        fetchPackResult();
-      } else {
-        setStatus("stage " + e.stage + ": " + e.state);
+
+  async function onAnalyze() {
+    if (!hasApi()) return;
+    Shell.hideBanner();
+    el("layout-result").hidden = true;
+    const v = values();
+    setStep("Step 1 of 2 — looking at the samples…");
+    try {
+      const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, false);
+      if (started && started.ok === false) {
+        Shell.showBanner(`The samples could not be read: ${started.error}`);
+        setStep("Step 1 of 2 — look at the samples.");
       }
-      break;
-    case "done":
-      fetchPackResult();
-      break;
-    case "error":
-      showBanner("Pack init failed: " + e.error);
-      setStatus("failed");
-      break;
-    default:
-      break;
-  }
-};
-
-async function fetchPackResult() {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    const res = await window.pywebview.api.last_pack_result();
-    renderPackResult(res);
-  } catch (err) {
-    showBanner(err);
-  }
-}
-
-// Step 1: analyze (confirmed_distinct_patients=false → summary + caveat, no
-// emit). Fire-and-forget: the result arrives via the event → last_pack_result.
-async function onAnalyze() {
-  if (!hasApi()) {
-    return;
-  }
-  hideBanner();
-  el("draft-panel").hidden = true;
-  const samplesDir = el("samples-dir").value;
-  const name = el("pack-name").value;
-  const display = el("pack-display").value || null;
-  setStatus("analyzing…");
-  try {
-    const started = await window.pywebview.api.pack_init_async(samplesDir, name, display, false);
-    if (started && started.ok === false) {
-      showBanner("Analysis failed: " + started.error);
-      setStatus("analysis failed");
+    } catch (err) {
+      Shell.showBanner(String(err));
     }
-  } catch (err) {
-    showBanner(err);
   }
-}
 
-// Step 2: emit (confirmed_distinct_patients=true → write draft). Fire-and-forget:
-// the draft path + DRAFT.md arrive via the event → last_pack_result.
-async function onEmit() {
-  if (!hasApi() || !el("confirm-distinct").checked) {
-    return;
-  }
-  hideBanner();
-  const samplesDir = el("samples-dir").value;
-  const name = el("pack-name").value;
-  const display = el("pack-display").value || null;
-  setStatus("writing draft…");
-  try {
-    const started = await window.pywebview.api.pack_init_async(samplesDir, name, display, true);
-    if (started && started.ok === false) {
-      showBanner("Emit failed: " + started.error);
-      setStatus("emit failed");
+  async function onWrite() {
+    if (!hasApi() || !el("layout-confirm").checked) return;
+    Shell.hideBanner();
+    const v = values();
+    setStep("Step 2 of 2 — writing the draft…");
+    try {
+      const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, true);
+      if (started && started.ok === false) {
+        Shell.showBanner(`The draft layout could not be written: ${started.error}`);
+        setStep("Step 2 of 2 — review and confirm.");
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
     }
-  } catch (err) {
-    showBanner(err);
   }
-}
 
-function onConfirmToggle() {
-  el("emit-btn").disabled = !el("confirm-distinct").checked;
-}
+  function init() {
+    el("layout-analyze").addEventListener("click", onAnalyze);
+    el("layout-write").addEventListener("click", onWrite);
+    el("layout-confirm").addEventListener("change", () => {
+      el("layout-write").disabled = !el("layout-confirm").checked;
+    });
+    Shell.onReady((live) => {
+      el("layout-analyze").disabled = !live;
+    });
+  }
 
-async function populate() {
-  if (!hasApi()) {
-    el("no-api").classList.add("show");
-    setStatus("offline");
-    return;
-  }
-  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
-  // notice this page may already have painted, so a slow pywebview attach does
-  // not leave the wizard permanently showing "launch via anast gui".
-  el("no-api").classList.remove("show");
-  setStatus("ready");
-  try {
-    const info = await window.pywebview.api.info();
-    if (info && info.ok) {
-      el("version").textContent = info.version;
-    }
-  } catch (err) {
-    showBanner(err);
-  }
-}
-
-function init() {
-  const analyze = el("analyze-btn");
-  if (analyze) {
-    analyze.addEventListener("click", onAnalyze);
-  }
-  const emit = el("emit-btn");
-  if (emit) {
-    emit.addEventListener("click", onEmit);
-  }
-  const confirm = el("confirm-distinct");
-  if (confirm) {
-    confirm.addEventListener("change", onConfirmToggle);
-  }
-  // Bootstrap through the shared bridge gate: now, and once more when
-  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
-  Shell.onApiReady(populate);
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
+  // The Teach VIEW is registered here (one workspace, two modes); source.js
+  // registers only the second mode's flow.
+  Shell.registerView({
+    name: "teach",
+    title: "Teach",
+    flow: "pack_init",
+    onEvent,
+  });
   init();
-}
+})();

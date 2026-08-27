@@ -1,451 +1,269 @@
 /*
- * Anastomosis GUI dashboard — vanilla JS, no frameworks, no build step.
+ * Anastomosis GUI — the Charts view: turn an EHR export into complete,
+ * verified charts.
  *
- * Talks to the headless controller (anastomosis.gui.controller.GuiController)
- * over pywebview's bridge: every call is `window.pywebview.api.<method>(...)`,
- * returning a Promise of a JSON-safe dict. Progress arrives the other way,
- * pushed by the shell as `window.anastEvent(<event>)`.
+ * Owns the "pipeline" flow. The run form is the SHARED component built by
+ * shell.js (Migrate composes the same one); this file owns only what is
+ * specific to a plain rebuild: which layout's sections apply, the four stages,
+ * and the per-patient roll-up after a run.
  *
- * The visual layer + interaction patterns (gooey segment toggle, command
- * palette, log strip/drawer) are carried from the predecessor GUI via
- * window.AnastShell. The controller seam is untouched.
+ * Talks to the headless controller over pywebview's bridge; progress arrives
+ * the other way through the shell's one `window.anastEvent` dispatcher.
  *
- * PHI discipline mirrors the controller: this UI renders counts, stage names,
- * ids, and exception type names. It never receives — and so cannot show —
- * patient field values or rendered filenames.
- *
- * Guarded so opening index.html in a PLAIN browser (no pywebview) shows the
- * "launch via anast gui" notice instead of throwing.
+ * PHI discipline mirrors the controller: this view renders counts, stage names
+ * and exception type names. The per-patient detail is fetched separately and
+ * painted with textContent — shown locally, never logged, never on an event.
  */
 "use strict";
 
-// The dashboard stage rail. The FALLBACK below is only for the api-less
-// browser preview; the live list is refreshed from the Python-canonical
-// gui_config() endpoint (controller._STAGE_RAIL) on load, and the drift test
-// (tests/unit/test_frontend_constants.py) pins this fallback to the Python
-// list so neither side can drift alone.
-let RAIL = ["ingest", "reconstruct", "qa", "deliver"];
-const Shell = window.AnastShell;
+(function () {
+  const Shell = window.AnastShell;
+  const el = (id) => document.getElementById(id);
 
-function hasApi() {
-  return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
-}
+  // The stage rail. This FALLBACK is only for the api-less browser preview; the
+  // live list is refreshed from the Python-canonical gui_config() endpoint, and
+  // tests/unit/test_frontend_constants.py pins the fallback to the Python list
+  // so neither side can drift alone.
+  let RAIL = ["ingest", "reconstruct", "qa", "deliver"];
 
-async function loadGuiConfig() {
-  if (!hasApi() || typeof window.pywebview.api.gui_config !== "function") return;
-  try {
-    const cfg = await window.pywebview.api.gui_config();
-    if (cfg && cfg.ok && Array.isArray(cfg.stage_rail) && cfg.stage_rail.length) {
-      RAIL = cfg.stage_rail.map(String);
-    }
-  } catch (e) {
-    /* keep the fallback */
+  // Per-layout section maps (name -> {section: {label, default}}), from info().
+  let SECTIONS_BY_PACK = {};
+  let FORM = null;
+
+  function hasApi() {
+    return Shell.hasApi();
   }
-}
 
-function el(id) {
-  return document.getElementById(id);
-}
-
-// --- the event dispatcher the shell (Python side) calls -------------------
-// Flow guard: the dashboard owns the "pipeline" flow. Every event carries
-// a `flow`; we early-return on any other flow so navigating mid-run can't let the
-// dashboard consume the wizard's migration terminal event (both emit identical
-// stage/progress/done/error kinds).
-window.anastEvent = function anastEvent(e) {
-  if (!e || typeof e !== "object") {
-    return;
-  }
-  if (e.flow !== "pipeline") {
-    return;
-  }
-  switch (e.type) {
-    case "stage":
-      markStage(e.stage, e.state);
-      if (e.state === "start") {
-        setCurrent(e.stage);
+  async function loadGuiConfig() {
+    if (!hasApi() || typeof window.pywebview.api.gui_config !== "function") return;
+    try {
+      const cfg = await window.pywebview.api.gui_config();
+      if (cfg && cfg.ok && Array.isArray(cfg.stage_rail) && cfg.stage_rail.length) {
+        RAIL = cfg.stage_rail.map(String);
+        renderRail();
       }
-      Shell.logEvent({ kind: "info", msg: `stage ${e.stage}: ${e.state}` });
-      break;
-    case "progress":
-      renderCounters(e);
-      Shell.logEvent({ kind: "info", msg: `progress ${e.stage}: ${counterText(e)}` });
-      break;
-    case "done":
-      Shell.logEvent({ kind: "ok", msg: `done: ${counterText(e)}` });
-      setCurrent("— complete —");
-      finishRun();
-      loadPatients(e.summary_id);
-      break;
-    case "error":
-      markStage(e.stage, "error");
-      setCurrent("— failed —");
-      showBanner(e.error);
-      Shell.logEvent({ kind: "error", msg: `error ${e.stage}: ${e.error}` });
-      finishRun();
-      break;
-    default:
-      break;
-  }
-};
-
-function markStage(stage, state) {
-  const card = el(`stage-${stage}`);
-  if (card) {
-    card.setAttribute("data-state", state);
-  }
-}
-
-// Envelope keys that are not counters: the event discriminators plus the run's
-// opaque summary id (a random hex handle for last_run_summary — never a count,
-// and noise in the operator's activity log).
-const NON_COUNTER_KEYS = ["type", "stage", "state", "flow", "summary_id"];
-
-function counterText(e) {
-  return Object.keys(e)
-    .filter((k) => !NON_COUNTER_KEYS.includes(k))
-    .map((k) => `${k}=${e[k]}`)
-    .join(" ");
-}
-
-// The progress frame's headline — which stage is running right now. Driven by
-// the stage/done/error events; reset to idle when a fresh run starts.
-function setCurrent(text) {
-  const current = el("progress-current");
-  if (current) {
-    current.textContent = text;
-  }
-}
-
-function renderCounters(e) {
-  const card = el(`stage-${e.stage}`);
-  if (!card) {
-    return;
-  }
-  const counters = card.querySelector(".counters");
-  if (counters) {
-    counters.textContent = counterText(e);
-  }
-}
-
-function showBanner(message) {
-  const banner = el("banner");
-  if (banner) {
-    banner.textContent = "Run failed: " + message;
-    banner.classList.add("show");
-  }
-}
-
-function hideBanner() {
-  const banner = el("banner");
-  if (banner) {
-    banner.classList.remove("show");
-  }
-}
-
-function setBusy(busy) {
-  const btn = el("run-btn");
-  if (btn) {
-    btn.disabled = busy;
-    btn.textContent = busy ? "running…" : "run pipeline";
-  }
-  const frame = document.querySelector(".progress-frame");
-  if (frame) {
-    frame.classList.toggle("is-running", busy);
-  }
-  setStatus(busy ? "running" : "ready");
-}
-
-function setStatus(text) {
-  const t = el("status-text");
-  if (t) {
-    t.textContent = text;
-  }
-}
-
-// No bridge (the plain-browser preview, or an attach that has not landed yet):
-// the run button is inert because there is no controller to run against — but
-// it must NOT read "running…", which would claim a run that does not exist.
-function setOffline() {
-  const btn = el("run-btn");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "run pipeline";
-  }
-  setStatus("offline");
-}
-
-function resetRail() {
-  setCurrent("— idle —");
-  for (const stage of RAIL) {
-    const card = el(`stage-${stage}`);
-    if (card) {
-      card.removeAttribute("data-state");
-      const counters = card.querySelector(".counters");
-      if (counters) {
-        counters.textContent = "";
-      }
+    } catch (_) {
+      /* keep the fallback */
     }
   }
-  const fill = el("progress-bar-fill");
-  if (fill) {
-    fill.style.width = "0%";
-  }
-}
 
-function finishRun() {
-  setBusy(false);
-  const fill = el("progress-bar-fill");
-  if (fill) {
-    fill.style.width = "100%";
-  }
-}
-
-// --- the Section-Selection Matrix -----------------------------------------
-// info().packs[].sections is {key: {label, default}}; cache per pack name so
-// switching packs repaints the matrix without another round-trip.
-let SECTIONS_BY_PACK = {};
-
-// Read the live matrix into the {section: bool} map run_pipeline expects, and
-// repaint it for a pack. Both are Shell mechanics (the wizard paints the same
-// toggles); the dashboard owns only WHICH pack's sections apply.
-function gatherSections() {
-  return Shell.gatherSections(el("section-matrix"));
-}
-
-function renderSectionMatrix(packName) {
-  Shell.renderSectionMatrix(
-    el("section-matrix"),
-    SECTIONS_BY_PACK[packName] || {},
-    "This pack exposes no togglable sections."
-  );
-}
-
-async function populateHeader() {
-  if (!hasApi()) {
-    el("no-api").classList.add("show");
-    setOffline();
-    return;
-  }
-  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
-  // notice this page may already have painted and re-arm the run button, so a
-  // slow pywebview attach doesn't leave a permanently dead dashboard.
-  el("no-api").classList.remove("show");
-  setBusy(false);
-  try {
-    const info = await window.pywebview.api.info();
-    if (info && info.ok) {
-      el("version").textContent = info.version;
-      const select = el("pack");
-      select.innerHTML = "";
-      SECTIONS_BY_PACK = {};
-      for (const pack of info.packs) {
-        if (!pack.available) {
-          continue;
-        }
-        SECTIONS_BY_PACK[pack.name] = pack.sections || {};
-        const opt = document.createElement("option");
-        opt.value = pack.name;
-        opt.textContent = pack.name;
-        select.appendChild(opt);
-      }
-      renderSectionMatrix(select.value);
-      populateSources(info.sources || []);
-      setStatus("ready");
+  // --- the stage rail -------------------------------------------------------
+  function renderRail() {
+    const rail = el("charts-rail");
+    if (!rail) return;
+    rail.innerHTML = "";
+    for (const stage of RAIL) {
+      const card = document.createElement("div");
+      card.className = "stage";
+      card.id = `charts-stage-${stage}`;
+      const head = document.createElement("div");
+      head.className = "stage-name";
+      const mark = document.createElement("span");
+      mark.className = "icon stage-icon";
+      mark.appendChild(Shell.icon("waiting"));
+      const name = document.createElement("span");
+      // Plain-English stage names; the technical id rides the tooltip.
+      name.textContent = Shell.stageLabel(stage);
+      card.title = stage;
+      head.appendChild(mark);
+      head.appendChild(name);
+      const counts = document.createElement("div");
+      counts.className = "stage-counts";
+      card.appendChild(head);
+      card.appendChild(counts);
+      rail.appendChild(card);
     }
-  } catch (err) {
-    showBanner(String(err));
   }
-  checkFreshness();
-}
 
-// Source picker: "auto-detect" (empty value → null → pipeline sniffs the
-// export) plus every registered adapter from info().sources.
-function populateSources(sources) {
-  Shell.fillSelect(el("source"), [
-    { value: "", label: "auto-detect" },
-    ...sources.map((src) => ({ value: src.name, label: src.name })),
-  ]);
-}
-
-// --- vendor-change detection toast (pack_freshness) -----------------------
-async function checkFreshness() {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    const res = await window.pywebview.api.pack_freshness();
-    if (!res || !res.ok || !Array.isArray(res.stale) || res.stale.length === 0) {
-      return;
+  function markStage(stage, state) {
+    const card = el(`charts-stage-${stage}`);
+    if (!card) return;
+    card.dataset.state = state;
+    const mark = card.querySelector(".stage-icon");
+    if (mark) {
+      mark.textContent = "";
+      mark.appendChild(Shell.icon(state === "done" ? "ok" : state === "error" ? "error" : "waiting"));
     }
-    const names = res.stale.map((s) => s.destination).join(", ");
-    const advice = res.stale[0].advice;
-    el("freshness-body").textContent =
-      "Local selectors may be stale (>" +
-      res.stale_after_days +
-      " days vs verified evidence): " +
-      names +
-      ". Re-validate: " +
-      advice;
-    el("freshness-toast").classList.add("show");
-  } catch (err) {
-    // A freshness probe is advisory; never block the dashboard on it.
   }
-}
 
-function dismissFreshness() {
-  el("freshness-toast").classList.remove("show");
-}
-
-async function onRun() {
-  if (!hasApi()) {
-    return;
+  const NON_COUNT_KEYS = ["type", "stage", "state", "flow", "summary_id", "notice", "outcome"];
+  function countsText(event) {
+    return Object.keys(event)
+      .filter((k) => !NON_COUNT_KEYS.includes(k))
+      .map((k) => `${k.replace(/_/g, " ")} ${event[k]}`)
+      .join(" · ");
   }
-  hideBanner();
-  resetRail();
-  clearPatients();
-  setBusy(true);
-  Shell.logEvent({ kind: "info", msg: "run requested" });
-  const qa = Shell.segmentValue("qa", "on") === "on";
-  const sourceValue = el("source") ? el("source").value : "";
-  const packDir = el("pack-dir") ? el("pack-dir").value.trim() : "";
-  const payload = {
-    export_dir: el("export-dir").value,
-    out_dir: el("out-dir").value,
-    pack: el("pack").value,
-    // empty selection → auto-detect (the controller treats null as "sniff").
-    source: sourceValue || null,
-    sections: gatherSections(),
-    qa: qa,
-    archive: gatherDeliver("archive"),
-    bundle: gatherDeliver("bundle"),
-    ccda: gatherDeliver("ccda"),
-    force: !!(el("force") && el("force").checked),
-    pack_dirs: packDir ? [packDir] : [],
-    trust_new: !!(el("trust-pack") && el("trust-pack").checked),
-    // Write the upload manifest the upload console consumes (GUI parity for the
-    // CLI's `pipeline run --upload-manifest`); off unless the operator asks.
-    write_manifest: !!(el("write-manifest") && el("write-manifest").checked),
-  };
-  try {
-    // Fire-and-forget on a worker thread; results stream back via anastEvent.
-    const started = await window.pywebview.api.run_pipeline_async(
-      payload.export_dir,
-      payload.out_dir,
-      payload.pack,
-      payload.source,
-      payload.sections,
-      payload.qa,
-      payload.archive,
-      payload.bundle,
-      payload.ccda,
-      payload.force,
-      payload.pack_dirs,
-      payload.trust_new,
-      payload.write_manifest
-    );
-    if (started && started.ok === false) {
-      showBanner(started.error);
-      setBusy(false);
-    }
-  } catch (err) {
-    showBanner(String(err));
+
+  function setCurrent(text) {
+    const current = el("charts-current");
+    if (current) current.textContent = text;
+  }
+
+  function setBusy(busy) {
+    if (FORM) FORM.setBusy(busy);
+    const frame = el("charts-progress");
+    if (frame) frame.classList.toggle("is-running", busy);
+  }
+
+  function resetRun() {
+    setCurrent("Rebuilding…");
+    renderRail();
+    const fill = el("charts-fill");
+    if (fill) fill.style.width = "0%";
+  }
+
+  function finishRun() {
     setBusy(false);
-  }
-}
-
-function gatherDeliver(name) {
-  const box = el(`deliver-${name}`);
-  return !!(box && box.checked);
-}
-
-// --- per-patient detail (local display; never on an event) ----------------
-// The `done` event carries counts only; the names/DOB/note-counts are fetched
-// here via last_run_summary() and rendered with textContent (PHI shown locally,
-// never logged). The strict CSP forbids inline anyway.
-// Both the fetch and the table are Shell mechanics (the wizard shows the same
-// roll-up after its own run); the page owns only where they land.
-function loadPatients(summaryId) {
-  Shell.loadPatients(el("patients-panel"), el("patients-body"), summaryId);
-}
-
-function clearPatients() {
-  Shell.clearPatients(el("patients-panel"), el("patients-body"));
-}
-
-function init() {
-  // wallpaper title text already neutral; wire the controls.
-  const btn = el("run-btn");
-  if (btn) {
-    btn.addEventListener("click", onRun);
-  }
-  const pack = el("pack");
-  if (pack) {
-    pack.addEventListener("change", () => renderSectionMatrix(pack.value));
-  }
-  const dismiss = el("freshness-dismiss");
-  if (dismiss) {
-    dismiss.addEventListener("click", dismissFreshness);
+    const fill = el("charts-fill");
+    if (fill) fill.style.width = "100%";
   }
 
-  Shell.initSegmentToggles(document);
-  Shell.initLogStrip();
-
-
-  // Command palette: PHI-free dashboard actions only.
-  const palette = Shell.initCommandPalette([
-    { id: "run", label: "Run pipeline", hint: "run", action: () => onRun() },
-    { id: "qa-on", label: "Enable QA", hint: "toggle", action: () => setSegment("qa", "on") },
-    { id: "qa-off", label: "Disable QA", hint: "toggle", action: () => setSegment("qa", "off") },
-    { id: "archive", label: "Toggle archive output", hint: "deliver", action: () => toggleDeliver("archive") },
-    { id: "log", label: "Toggle activity log", hint: "view", action: () => Shell.toggleLogDrawer() },
-    { id: "wizard", label: "Open migration wizard", hint: "go", action: () => { window.location.href = "wizard.html"; } },
-    { id: "console", label: "Open upload console", hint: "go", action: () => { window.location.href = "console.html"; } },
-    { id: "packgen", label: "Open pack from samples", hint: "go", action: () => { window.location.href = "packgen.html"; } },
-  ]);
-  document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
-      e.preventDefault();
-      palette.toggle();
-    } else if (e.key === "l" || e.key === "L") {
-      const tag = (document.activeElement && document.activeElement.tagName) || "";
-      if (tag !== "INPUT" && tag !== "TEXTAREA" && !palette.isOpen()) {
-        e.preventDefault();
-        Shell.toggleLogDrawer();
+  // --- the event handler for the "pipeline" flow ---------------------------
+  function onEvent(event) {
+    switch (event.type) {
+      case "stage":
+        markStage(event.stage, event.state);
+        if (event.state === "start") setCurrent(`${Shell.stageLabel(event.stage)}…`);
+        break;
+      case "progress": {
+        const card = el(`charts-stage-${event.stage}`);
+        const counts = card && card.querySelector(".stage-counts");
+        if (counts) counts.textContent = countsText(event);
+        break;
       }
+      case "done":
+        setCurrent("Finished.");
+        finishRun();
+        Shell.loadPatients(el("charts-patients"), el("charts-patients-body"), event.summary_id);
+        break;
+      case "error":
+        markStage(event.stage, "error");
+        setCurrent("Stopped.");
+        Shell.showBanner(`The rebuild stopped during ${Shell.stageLabel(event.stage)}: ${event.error}`);
+        finishRun();
+        break;
+      default:
+        break;
     }
+  }
+
+  // --- running --------------------------------------------------------------
+  async function onRun() {
+    if (!hasApi() || !FORM) return;
+    Shell.hideBanner();
+    Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
+    resetRun();
+    setBusy(true);
+    const v = FORM.values();
+    try {
+      // Fire-and-forget on a worker thread; results stream back as events.
+      const started = await window.pywebview.api.run_pipeline_async(
+        v.exportDir,
+        v.outDir,
+        v.pack,
+        v.source,
+        v.sections,
+        v.qa,
+        v.archive,
+        v.bundle,
+        v.ccda,
+        v.force,
+        v.packDirs,
+        v.trustNew,
+        v.writeManifest
+      );
+      if (started && started.ok === false) {
+        Shell.showBanner(started.error);
+        setBusy(false);
+        setCurrent("Ready.");
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
+      setBusy(false);
+      setCurrent("Ready.");
+    }
+  }
+
+  // --- populating from info() ----------------------------------------------
+  function renderSections(packName) {
+    if (!FORM) return;
+    FORM.setSections(
+      SECTIONS_BY_PACK[packName] || {},
+      "This layout has no sections to choose from."
+    );
+  }
+
+  function populate(info) {
+    if (!FORM) return;
+    const pack = FORM.el("pack");
+    SECTIONS_BY_PACK = {};
+    const entries = [];
+    for (const layout of info.packs || []) {
+      if (!layout.available) continue;
+      SECTIONS_BY_PACK[layout.name] = layout.sections || {};
+      entries.push({ value: layout.name, label: layout.name });
+    }
+    Shell.fillSelect(pack, entries);
+    renderSections(pack ? pack.value : "");
+    Shell.fillSelect(FORM.el("source"), [
+      { value: "", label: "Detect" },
+      ...(info.sources || []).map((src) => ({ value: src.name, label: src.name })),
+    ]);
+  }
+
+  // --- the out-of-date filing-assistant notice ------------------------------
+  async function checkFreshness() {
+    if (!hasApi()) return;
+    try {
+      const res = await window.pywebview.api.pack_freshness();
+      if (!res || !res.ok || !Array.isArray(res.stale) || res.stale.length === 0) return;
+      const names = res.stale.map((s) => s.destination).join(", ");
+      // The controller's `advice` is a terminal command — never shown here.
+      el("freshness-body").textContent =
+        `The filing assistant for ${names} was last checked more than ` +
+        `${res.stale_after_days} days ago and may no longer match the destination. ` +
+        "Set it up again before filing charts there.";
+      el("freshness-toast").classList.add("show");
+    } catch (_) {
+      /* advisory only; never block the view on it */
+    }
+  }
+
+  function init() {
+    FORM = Shell.buildRunForm(el("charts-form"), {
+      prefix: "charts",
+      mode: "charts",
+      runLabel: "Rebuild charts",
+      onRun,
+    });
+    renderRail();
+    const pack = FORM.el("pack");
+    if (pack) pack.addEventListener("change", () => renderSections(pack.value));
+    const dismiss = el("freshness-dismiss");
+    if (dismiss) {
+      dismiss.addEventListener("click", () => el("freshness-toast").classList.remove("show"));
+    }
+
+    Shell.onInfo(populate);
+    Shell.onReady((live) => {
+      if (!live) {
+        // No bridge: the run button is inert because there is no controller to
+        // run against — but it must never claim a run that does not exist.
+        FORM.setOffline();
+        return;
+      }
+      FORM.setBusy(false);
+      setCurrent("Ready.");
+      loadGuiConfig();
+      checkFreshness();
+    });
+  }
+
+  Shell.registerView({
+    name: "charts",
+    title: "Charts",
+    flow: "pipeline",
+    onEvent,
   });
-
-  // Bootstrap through the shared bridge gate: run now (painting the offline
-  // notice if this really is a plain browser) and once more when
-  // `pywebviewready` lands, because pywebview attaches the api AFTER DOM ready
-  // — the mirrored constants AND the header/pack pickers both need that retry.
-  Shell.onApiReady(() => {
-    loadGuiConfig();
-    populateHeader();
-  });
-}
-
-function setSegment(name, value) {
-  const host = document.querySelector(`.segment-toggle[data-name="${name}"]`);
-  if (!host) {
-    return;
-  }
-  const btn = host.querySelector(`.segment-option[data-value="${value}"]`);
-  if (btn) {
-    btn.click();
-  }
-}
-
-function toggleDeliver(name) {
-  const box = el(`deliver-${name}`);
-  if (box) {
-    box.checked = !box.checked;
-  }
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
   init();
-}
+})();

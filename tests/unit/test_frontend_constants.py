@@ -36,7 +36,7 @@ def test_frontend_backend_retry_constants_do_not_drift() -> None:
     the api-less preview and must not drift either.)
     """
     source = _CONSOLE_JS.read_text(encoding="utf-8")
-    match = re.search(r"^let DEFAULT_MAX_ATTEMPTS\s*=\s*(\d+)\s*;", source, re.MULTILINE)
+    match = re.search(r"^\s*let DEFAULT_MAX_ATTEMPTS\s*=\s*(\d+)\s*;", source, re.MULTILINE)
     assert match is not None, (
         f"could not find 'let DEFAULT_MAX_ATTEMPTS = <int>;' in {_CONSOLE_JS} — "
         "if the constant moved, update this test to the new source of truth."
@@ -53,7 +53,7 @@ def test_frontend_backend_retry_constants_do_not_drift() -> None:
 def test_frontend_stage_rail_fallback_does_not_drift() -> None:
     """app.js's fallback RAIL must equal the Python-canonical _STAGE_RAIL."""
     source = _APP_JS.read_text(encoding="utf-8")
-    match = re.search(r"^let RAIL\s*=\s*(\[[^\]]*\])\s*;", source, re.MULTILINE)
+    match = re.search(r"^\s*let RAIL\s*=\s*(\[[^\]]*\])\s*;", source, re.MULTILINE)
     assert match is not None, f"could not find 'let RAIL = [...];' in {_APP_JS}"
     js_rail = json.loads(match.group(1))
     assert js_rail == list(_STAGE_RAIL), (

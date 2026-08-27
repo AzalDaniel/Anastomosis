@@ -74,12 +74,15 @@ def test_rejects_no_scheme() -> None:
 # --- shared-machine warning text ---
 
 
-def test_shared_machine_warning_mentions_multiuser_and_no_credentials() -> None:
+def test_shared_machine_warning_keeps_its_security_facts() -> None:
+    """The advisory's substance, not its exact phrasing: the shared-computer
+    risk and the never-stores-your-sign-in promise must both survive any
+    rewording of the operator-facing text."""
     text = SHARED_MACHINE_WARNING.lower()
-    assert "multi-user" in text
-    # Never stores credentials — the central promise of the browser route.
-    assert "credential" in text
-    assert "never" in text
+    assert "other people" in text or "multi-user" in text
+    assert "never stores" in text
+    assert "sign-in" in text or "credential" in text
+    assert "close the browser" in text
 
 
 # --- lazy-import error path (no playwright installed) ---

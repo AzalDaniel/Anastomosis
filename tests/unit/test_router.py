@@ -99,7 +99,7 @@ def test_unverified_never_viable() -> None:
     assert tm.chosen is None
     # unverified options say so, not a generic "not viable".
     why = next(o.why for o in tm.options if o.kind is RouteKind.VENDOR_API)
-    assert "unverified" in why
+    assert "not verified" in why
 
 
 def test_vendor_rest_is_viable() -> None:

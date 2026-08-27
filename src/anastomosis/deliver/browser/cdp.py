@@ -43,12 +43,13 @@ _ALLOWED_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 SHARED_MACHINE_WARNING = (
-    "SECURITY: attaching to a browser debug port. On a multi-user machine, "
-    "ANY local user can reach this port and drive the attached browser — "
-    "including the EHR session you are logged into. Anastomosis NEVER stores "
-    "your EHR credentials: you log in yourself in the browser you launched, "
-    "and the attachment ends when that browser closes. Only attach on a "
-    "machine you trust, and close the browser when the run is done."
+    "Filing runs through a browser window on this computer, over a local "
+    "diagnostic connection. On a computer other people can sign in to, anyone "
+    "signed in could reach that connection and act in that browser — "
+    "including the EHR you are signed in to there. Anastomosis never stores "
+    "your EHR sign-in: you sign in yourself, in that browser, and the "
+    "connection ends when the browser closes. Only run this on a computer "
+    "you trust, and close the browser when the run is done."
 )
 
 
