@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from anastomosis.cli import app
+from anastomosis.cli_commands._paths import in_file
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.fhir_api.attach import DEFAULT_TOKEN_ENV
 
@@ -87,7 +88,11 @@ def upload_cmd(
     ] = True,
     skiplist: Annotated[
         Path | None,
-        typer.Option("--skiplist", help="File of item_key/encounter_id lines to exclude."),
+        typer.Option(
+            "--skiplist",
+            parser=in_file,
+            help="File of item_key/encounter_id lines to exclude.",
+        ),
     ] = None,
     max_attempts: Annotated[
         int, typer.Option("--max-attempts", help="Retry budget per item before FAILED.")

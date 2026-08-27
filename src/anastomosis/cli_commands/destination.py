@@ -14,6 +14,7 @@ from typing import Annotated
 import typer
 
 from anastomosis.cli import destination_app
+from anastomosis.cli_commands._paths import in_file, out_dir
 
 
 def _load_registry(registry: Path | None) -> object:
@@ -77,7 +78,11 @@ def _local_pack_status(name: str) -> str:
 def destination_list(
     registry: Annotated[
         Path | None,
-        typer.Option("--registry", help="Overlay registry file (replaces packaged entries)."),
+        typer.Option(
+            "--registry",
+            parser=in_file,
+            help="Overlay registry file (replaces packaged entries).",
+        ),
     ] = None,
 ) -> None:
     """List registered destinations and their declared capabilities."""
@@ -118,7 +123,11 @@ def destination_route(
     name: Annotated[str, typer.Argument(help="Destination name (see `anast destination list`).")],
     registry: Annotated[
         Path | None,
-        typer.Option("--registry", help="Overlay registry file (replaces packaged entries)."),
+        typer.Option(
+            "--registry",
+            parser=in_file,
+            help="Overlay registry file (replaces packaged entries).",
+        ),
     ] = None,
 ) -> None:
     """Print the shortest-path transit map; exit 1 if no viable route exists."""
@@ -209,7 +218,11 @@ def destination_init(
     name: Annotated[str, typer.Argument(help="Destination pack name, e.g. tebra.")],
     out_dir: Annotated[
         Path | None,
-        typer.Option("--out-dir", help="Where to write selectors.yaml (default: user dir)."),
+        typer.Option(
+            "--out-dir",
+            help="Where to write selectors.yaml (default: user dir).",
+            parser=out_dir,
+        ),
     ] = None,
     validate: Annotated[
         bool,
