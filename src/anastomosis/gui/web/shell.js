@@ -1,51 +1,363 @@
 /*
- * Anastomosis GUI — shared shell interactions (carried from the predecessor).
+ * Anastomosis GUI — the shell: router, bridge, event bus, shared components.
  *
- * The Liquid Glass interaction patterns the predecessor hand-built, re-typed
- * and trimmed to the four pages we ship: the iOS-26 gooey segment toggle (with
- * pointer-drag + stretch physics), the Raycast-style command palette
- * (navigation + scoring), the activity log strip + drawer, and the calendar
- * grid builder (halo cells + count badges). Exposed as `window.AnastShell` so
- * each page's own script can wire them to OUR controller seam.
+ * ONE document, four views (DESIGN_LANGUAGE §7/§9). Everything that used to be
+ * duplicated across five pages lives here exactly once: the pywebview bridge
+ * bootstrap, the `window.anastEvent` dispatcher, the activity strip, the icon
+ * set, the gooey segment toggle, the calendar, and the run form that Charts and
+ * Migrate both instantiate.
  *
- * No frameworks, no build step. PHI discipline: nothing in here ships a value —
- * the calendar paints counts, the palette paints whatever ids its host feeds
- * it, the log strip paints whatever PHI-free text its host hands `logEvent`.
- * The host pages never pass it a patient-derived value.
+ * Event routing: every controller event carries a `flow` naming the operation
+ * family that raised it. The dispatcher paints the GLOBAL activity strip for
+ * every event and then hands it to the ONE view that registered that flow — so
+ * a run keeps reporting from whichever view is on screen, and no view can
+ * consume another's terminal event.
+ *
+ * PHI discipline: nothing here ships a value. Events carry counts, stage names,
+ * ids and exception TYPE names; the per-patient roll-up is fetched over the
+ * bridge and painted with textContent for local display only, never logged.
  */
 "use strict";
 
 (function () {
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const el = (id) => document.getElementById(id);
+  const prefersReduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function prefersReduced() {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // ─── Icons ────────────────────────────────────────────────────
+  // One set: 20×20, stroke currentColor, 1.5, no fills (§8). Replaces the
+  // ✓ ⚠ ✗ · glyph constants; no emoji anywhere, ever.
+  const ICON_PATHS = {
+    ok: ["M4 10.5l4 4 8-9"],
+    warn: ["M10 3.5 2.8 16.5h14.4L10 3.5Z", "M10 8.5v3.2", "M10 14.2h.01"],
+    error: ["M6 6l8 8", "M14 6l-8 8"],
+    info: ["M10 9v5", "M10 6h.01", "M10 17.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z"],
+    waiting: ["M10 17.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z", "M10 6v4.2l2.8 1.7"],
+    search: ["M9 15.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13Z", "M17.5 17.5l-3.9-3.9"],
+    close: ["M5 5l10 10", "M15 5L5 15"],
+    "chevron-left": ["M12.5 4L6.5 10l6 6"],
+    "chevron-right": ["M7.5 4l6 6-6 6"],
+  };
+
+  // Assembled from the table above and parsed as markup — the only innerHTML in
+  // the app that is not a value, and the strings are entirely internal (a name
+  // this set does not carry falls back to `info`; nothing from a controller,
+  // a file, or a person ever reaches here). Parsing rather than
+  // createElementNS also keeps the bundled assets free of any URL, including
+  // the SVG namespace one, which the offline scan greps for.
+  function iconMarkup(name) {
+    const paths = (ICON_PATHS[name] || ICON_PATHS.info)
+      .map((d) => `<path d="${d}" />`)
+      .join("");
+    return (
+      '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+      `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`
+    );
   }
 
-  // ─── Liquid physics segment toggles (iOS 26 style) ────────────
-  // Wires every .segment-toggle on the page. Each toggle tracks:
-  //   data-name        — logical group name
-  //   data-value       — currently selected option value
-  //   --segment-index  — CSS var driving the coral indicator (float while
-  //                      dragging, integer at rest)
-  //   --segment-from   — previous index, used by the stretch keyframe
-  // Interaction model: click / arrow-keys snap with the scaleX(1.45) stretch;
-  // pointer-down + drag follows the cursor in real time, then snaps to the
-  // closest slot on release. The gooey filter on .segment-goo smears the blob
-  // edges mid-slide so it reads as a single elastic bubble.
+  function icon(name) {
+    const host = document.createElement("span");
+    host.innerHTML = iconMarkup(name);
+    return host.firstElementChild;
+  }
+
+  // Fill every <span class="icon" data-icon="…"> in `root` from the set above,
+  // so the markup never carries a second copy of the path data.
+  function paintIcons(root) {
+    for (const host of $$("[data-icon]", root || document)) {
+      host.innerHTML = iconMarkup(host.dataset.icon);
+    }
+  }
+
+  // ─── The bridge ───────────────────────────────────────────────
+  function hasApi() {
+    return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
+  }
+
+  const READY = [];
+  //: Callbacks run once now and once more if pywebview attaches late. Each gets
+  //: `live` (whether the bridge answered) and must be idempotent.
+  function onReady(cb) {
+    READY.push(cb);
+  }
+
+  let VERSION = "";
+
+  // info() answers once for the whole app: the version for About, and the
+  // source/layout lists every run form needs.
+  let INFO = null;
+  const INFO_CBS = [];
+  function onInfo(cb) {
+    INFO_CBS.push(cb);
+    if (INFO) cb(INFO);
+  }
+  async function loadInfo() {
+    if (!hasApi()) return;
+    try {
+      const info = await window.pywebview.api.info();
+      if (!info || !info.ok) return;
+      INFO = info;
+      VERSION = String(info.version || "");
+      const line = el("about-version");
+      if (line) {
+        // The attribute is the machine-readable proof the bridge round-tripped;
+        // an empty one means info() never answered.
+        line.dataset.version = VERSION;
+        line.textContent = `Anastomosis ${VERSION} · AGPL-3.0`;
+      }
+      for (const cb of INFO_CBS) cb(info);
+    } catch (err) {
+      showBanner(String(err));
+    }
+  }
+
+  // ─── Views and the router ─────────────────────────────────────
+  const VIEWS = {};
+  const BY_FLOW = {};
+  let CURRENT = "charts";
+
+  //: A view registers its section name, the event flow it owns, and optional
+  //: hooks: onEvent(event), onEnter(context), onLeave().
+  function registerView(spec) {
+    VIEWS[spec.name] = spec;
+    if (spec.flow) BY_FLOW[spec.flow] = spec;
+  }
+
+  //: A second flow for a view that hosts two of them (Teach: a document layout
+  //: and an export format are separate controller flows in one workspace).
+  function registerFlow(flow, onEvent) {
+    BY_FLOW[flow] = { onEvent };
+  }
+
+  function section(name) {
+    return $(`[data-view="${name}"]`);
+  }
+
+  // Crossfade: opacity + 2px of travel, 240ms, `hidden` toggled at the
+  // boundaries so an inactive view costs no layout. Reduced motion zeroes it.
+  function showView(name, context) {
+    const incoming = section(name);
+    if (!incoming) return;
+    const spec = VIEWS[name];
+    if (name === CURRENT) {
+      if (spec && spec.onEnter) spec.onEnter(context || null);
+      return;
+    }
+    const outgoing = section(CURRENT);
+    const leaving = VIEWS[CURRENT];
+    CURRENT = name;
+
+    for (const btn of $$("[data-view-target]")) {
+      btn.setAttribute("aria-current", btn.dataset.viewTarget === name ? "true" : "false");
+    }
+    const band = el("view-band");
+    if (band) band.textContent = (spec && spec.title) || name;
+
+    const swap = () => {
+      if (outgoing) {
+        outgoing.hidden = true;
+        outgoing.classList.remove("view--leaving");
+      }
+      if (leaving && leaving.onLeave) leaving.onLeave();
+      incoming.hidden = false;
+      incoming.classList.add("view--entering");
+      if (spec && spec.onEnter) spec.onEnter(context || null);
+      // Two frames: the first commits the entering state, the second animates
+      // out of it. One frame is not enough — the browser would coalesce both.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => incoming.classList.remove("view--entering"))
+      );
+    };
+
+    if (prefersReduced()) {
+      swap();
+    } else {
+      if (outgoing) outgoing.classList.add("view--leaving");
+      window.setTimeout(swap, 240);
+    }
+    // Deliberately NOT logged: the strip belongs to the runs, and a view switch
+    // must never overwrite the last thing a run said.
+  }
+
+  // A tiny shared store: the Migrate → Uploads handoff carries its context
+  // through here instead of asking the operator to retype it.
+  const STORE = {};
+  function store(key, value) {
+    if (value === undefined) return STORE[key];
+    STORE[key] = value;
+    return value;
+  }
+
+  // ─── The event dispatcher (one, for every flow) ───────────────
+  const FLOW_LABEL = {
+    pipeline: "Charts",
+    migration: "Migrate",
+    upload: "Uploads",
+    pack_init: "Teach",
+    source_init: "Teach",
+    query: "Anastomosis",
+  };
+  const STAGE_LABEL = {
+    ingest: "Reading records",
+    reconstruct: "Building charts",
+    qa: "Double-checking",
+    deliver: "Saving results",
+    upload: "Filing charts",
+    packgen: "Reading the samples",
+    source: "Reading the example",
+  };
+  function stageLabel(stage) {
+    return STAGE_LABEL[stage] || String(stage || "");
+  }
+
+  // Envelope keys that are not counts: the discriminators plus the run's opaque
+  // summary handle (noise in an operator's activity list).
+  const NON_COUNT_KEYS = ["type", "stage", "state", "flow", "summary_id", "notice", "outcome"];
+  function countsText(event) {
+    return Object.keys(event)
+      .filter((k) => !NON_COUNT_KEYS.includes(k))
+      .map((k) => `${k.replace(/_/g, " ")} ${event[k]}`)
+      .join(" · ");
+  }
+
+  function describe(event) {
+    const who = FLOW_LABEL[event.flow] || String(event.flow || "");
+    switch (event.type) {
+      case "stage":
+        return {
+          kind: "info",
+          msg: `${who}: ${stageLabel(event.stage)}${event.state === "done" ? " — done" : "…"}`,
+        };
+      case "progress": {
+        const counts = countsText(event);
+        return {
+          kind: "info",
+          msg: `${who}: ${stageLabel(event.stage)}${counts ? ` · ${counts}` : ""}`,
+        };
+      }
+      case "done": {
+        const counts = countsText(event);
+        return { kind: "ok", msg: `${who}: finished${counts ? ` · ${counts}` : ""}` };
+      }
+      case "error":
+        return { kind: "error", msg: `${who}: stopped — ${event.error}` };
+      default:
+        return null;
+    }
+  }
+
+  // The ONE dispatcher the Python sink calls. Paints the shared strip for every
+  // event, then routes to the view that owns the flow.
+  window.anastEvent = function anastEvent(event) {
+    if (!event || typeof event !== "object") return;
+    const line = describe(event);
+    if (line) logEvent(line);
+    const owner = BY_FLOW[event.flow];
+    if (owner && owner.onEvent) owner.onEvent(event);
+  };
+
+  // ─── Activity strip + drawer ──────────────────────────────────
+  const MAX_LOG_ROWS = 200;
+  const KIND_ICON = { ok: "ok", warn: "warn", error: "error", info: "info" };
+
+  function fmtTime(d) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  // entry: {kind, msg, quiet}. `quiet` entries (view switches) update the strip
+  // but are not worth a history row. The message is whatever PHI-free text the
+  // caller built — stage names, counts, exception type names.
+  function logEvent(entry) {
+    const kind = entry.kind || "info";
+    const msg = entry.msg == null ? "" : String(entry.msg);
+    const ts = fmtTime(new Date());
+
+    const strip = el("log-strip");
+    if (strip) {
+      strip.dataset.kind = kind;
+      const stripTs = el("log-strip-ts");
+      if (stripTs) stripTs.textContent = ts;
+      const stripIcon = el("log-strip-icon");
+      if (stripIcon) {
+        stripIcon.textContent = "";
+        stripIcon.appendChild(icon(KIND_ICON[kind] || "info"));
+      }
+      const stripMsg = el("log-strip-msg");
+      if (stripMsg) stripMsg.textContent = msg;
+    }
+    if (entry.quiet) return;
+
+    const rows = el("log-rows");
+    if (!rows) return;
+    const row = document.createElement("div");
+    row.className = `log-row log-row--${kind}`;
+    const tsEl = document.createElement("span");
+    tsEl.className = "log-ts";
+    tsEl.textContent = ts;
+    const iconEl = document.createElement("span");
+    iconEl.className = "icon log-icon";
+    iconEl.appendChild(icon(KIND_ICON[kind] || "info"));
+    const msgEl = document.createElement("span");
+    msgEl.className = "log-msg";
+    msgEl.textContent = msg;
+    row.appendChild(tsEl);
+    row.appendChild(iconEl);
+    row.appendChild(msgEl);
+    rows.appendChild(row);
+    while (rows.childElementCount > MAX_LOG_ROWS) rows.removeChild(rows.firstChild);
+    const drawer = el("log-drawer");
+    if (drawer && !drawer.hidden) rows.scrollTop = rows.scrollHeight;
+  }
+
+  function openLogDrawer() {
+    const drawer = el("log-drawer");
+    if (!drawer) return;
+    drawer.hidden = false;
+    const strip = el("log-strip");
+    if (strip) strip.setAttribute("aria-expanded", "true");
+    const rows = el("log-rows");
+    if (rows) rows.scrollTop = rows.scrollHeight;
+  }
+  function closeLogDrawer() {
+    const drawer = el("log-drawer");
+    if (!drawer) return;
+    drawer.hidden = true;
+    const strip = el("log-strip");
+    if (strip) strip.setAttribute("aria-expanded", "false");
+  }
+  function toggleLogDrawer() {
+    const drawer = el("log-drawer");
+    if (!drawer) return;
+    if (drawer.hidden) openLogDrawer();
+    else closeLogDrawer();
+  }
+
+  // ─── Banner ───────────────────────────────────────────────────
+  function showBanner(message) {
+    const banner = el("banner");
+    if (!banner) return;
+    banner.textContent = String(message);
+    banner.classList.add("show");
+  }
+  function hideBanner() {
+    const banner = el("banner");
+    if (banner) banner.classList.remove("show");
+  }
+
+  // ─── Segment toggles (the gooey pill) ─────────────────────────
+  // Carried from the Tebra reference: click/arrow-keys snap with a scaleX(1.45)
+  // stretch; pointer-down + drag follows the cursor and snaps to the nearest
+  // slot on release. --segment-count/--segment-index are written through the
+  // CSSOM because the strict `style-src 'self'` CSP refuses a markup style="".
   function initSegmentToggles(root, onChange) {
     $$(".segment-toggle", root).forEach((toggle) => {
+      if (toggle.dataset.wired === "true") return;
+      toggle.dataset.wired = "true";
       const options = $$(".segment-option", toggle);
       if (!options.length) return;
       const count = options.length;
-
-      // --segment-count drives the indicator's slot width in app.css. It MUST be
-      // set here, not as a `style="--segment-count: 2"` markup attribute: the
-      // pages ship a strict `style-src 'self'` CSP with no 'unsafe-inline', so
-      // the browser REFUSES an inline style attribute (console error + the var
-      // never lands, leaving the indicator at width:0). CSSOM writes like this
-      // one are not inline styles and are unaffected by the policy.
       toggle.style.setProperty("--segment-count", String(count));
 
       const activate = (nextIdxRaw, opts) => {
@@ -55,23 +367,17 @@
         const fromIdx = Math.round(fromFloat);
         const opt = options[nextIdx];
         if (!opt) return;
-
-        // Early-out only when re-activating the same slot AND still animating
-        // AND not coming off a drag (float != int). Init calls always run.
         const sameSlot = nextIdx === fromIdx && Math.abs(fromFloat - fromIdx) < 0.001;
         if (animate && sameSlot) return;
 
         const changed = opt.dataset.value !== toggle.dataset.value;
         toggle.dataset.value = opt.dataset.value;
-
-        // Trigger the stretch keyframe on a real slot-change with motion on.
         if (animate && nextIdx !== fromIdx && !prefersReduced()) {
           toggle.style.setProperty("--segment-from", String(fromIdx));
           toggle.classList.remove("is-stretching");
           void toggle.offsetWidth; // force reflow so the restart registers
           toggle.classList.add("is-stretching");
         }
-
         toggle.style.setProperty("--segment-index", String(nextIdx));
         options.forEach((o, i) => {
           const selected = i === nextIdx;
@@ -84,21 +390,18 @@
         }
       };
 
-      // ── Drag gesture state — pointer X mapped to a fractional index ──
       const drag = { active: false, pointerId: null, startX: 0, startIdx: 0, moved: false, slotWidth: 0, originX: 0 };
-
       const measure = () => {
         const rect = toggle.getBoundingClientRect();
         drag.slotWidth = (rect.width - 8) / count; // 8px = 2×4px padding
         drag.originX = rect.left + 4;
       };
       const xToIndex = (clientX) => {
-        const x = clientX - drag.originX;
-        const idx = x / drag.slotWidth - 0.5; // pointer at slot center → that index
+        const idx = (clientX - drag.originX) / drag.slotWidth - 0.5;
         return Math.max(0, Math.min(count - 1, idx));
       };
 
-      const onPointerDown = (e) => {
+      toggle.addEventListener("pointerdown", (e) => {
         if (e.button !== undefined && e.button !== 0) return;
         drag.active = true;
         drag.pointerId = e.pointerId;
@@ -106,12 +409,15 @@
         drag.startX = e.clientX;
         measure();
         drag.startIdx = parseFloat(toggle.style.getPropertyValue("--segment-index") || "0");
-        try { toggle.setPointerCapture(e.pointerId); } catch (_) { /* capture optional */ }
-      };
-      const onPointerMove = (e) => {
+        try {
+          toggle.setPointerCapture(e.pointerId);
+        } catch (_) {
+          /* capture is optional */
+        }
+      });
+      toggle.addEventListener("pointermove", (e) => {
         if (!drag.active || e.pointerId !== drag.pointerId) return;
-        const dx = Math.abs(e.clientX - drag.startX);
-        if (!drag.moved && dx < 4) return; // 4px deadzone before committing to a drag
+        if (!drag.moved && Math.abs(e.clientX - drag.startX) < 4) return; // 4px deadzone
         if (!drag.moved) {
           drag.moved = true;
           toggle.classList.add("is-dragging");
@@ -119,66 +425,61 @@
         }
         toggle.style.setProperty("--segment-index", String(xToIndex(e.clientX)));
         e.preventDefault();
-      };
+      });
       const finishDrag = (e, opts) => {
         const canceled = opts && opts.canceled;
         if (!drag.active || (e && e.pointerId !== drag.pointerId)) return;
         const wasMoved = drag.moved;
         drag.active = false;
         drag.moved = false;
-        try { toggle.releasePointerCapture(drag.pointerId); } catch (_) { /* release optional */ }
+        try {
+          toggle.releasePointerCapture(drag.pointerId);
+        } catch (_) {
+          /* release is optional */
+        }
         drag.pointerId = null;
+        toggle.classList.remove("is-dragging");
         if (!wasMoved) {
-          toggle.classList.remove("is-dragging");
-          // A plain tap, and it must be resolved HERE. pointerdown took pointer
-          // capture on the TOGGLE, and the browser then retargets the following
-          // click to the capture element — so the per-option click listener
-          // below never fires for a real mouse/touch press, and the toggle
-          // would look dead to anything but the keyboard. Activate the slot
-          // under the pointer instead. The option listener still serves
-          // SYNTHETIC clicks (the command palette's setSegment → btn.click(),
-          // which produces no pointer sequence at all), and activate() early-
-          // outs on an unchanged slot, so the two paths cannot double-fire.
+          // A plain tap resolves HERE: pointerdown took capture on the TOGGLE,
+          // so the browser retargets the following click to the capture element
+          // and the per-option click listener never fires for a real press.
           if (!canceled && e && typeof e.clientX === "number") activate(xToIndex(e.clientX));
           return;
         }
         const finalFloat = parseFloat(toggle.style.getPropertyValue("--segment-index") || "0");
-        const target = canceled ? Math.round(drag.startIdx) : Math.round(finalFloat);
-        toggle.classList.remove("is-dragging");
-        void toggle.offsetWidth; // reflow so the snap transition kicks in
-        activate(target, { animate: false });
+        void toggle.offsetWidth;
+        activate(canceled ? Math.round(drag.startIdx) : Math.round(finalFloat), { animate: false });
       };
-
-      toggle.addEventListener("pointerdown", onPointerDown);
-      toggle.addEventListener("pointermove", onPointerMove);
       toggle.addEventListener("pointerup", finishDrag);
       toggle.addEventListener("pointercancel", (e) => finishDrag(e, { canceled: true }));
 
       options.forEach((opt, i) => {
         opt.setAttribute("role", "radio");
         opt.addEventListener("click", (e) => {
-          if (drag.moved) { e.preventDefault(); e.stopPropagation(); return; }
+          if (drag.moved) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           activate(i);
         });
         opt.addEventListener("keydown", (e) => {
           if (e.key === "ArrowRight" || e.key === "ArrowDown") {
             e.preventDefault();
             const next = (i + 1) % count;
-            activate(next); options[next].focus();
+            activate(next);
+            options[next].focus();
           } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
             e.preventDefault();
             const prev = (i - 1 + count) % count;
-            activate(prev); options[prev].focus();
-          } else if (e.key === "Home") {
-            e.preventDefault(); activate(0); options[0].focus();
-          } else if (e.key === "End") {
-            e.preventDefault(); activate(count - 1); options[count - 1].focus();
+            activate(prev);
+            options[prev].focus();
           } else if (e.key === " " || e.key === "Enter") {
-            e.preventDefault(); activate(i);
+            e.preventDefault();
+            activate(i);
           }
         });
       });
-
       toggle.addEventListener("animationend", (e) => {
         if (e.animationName === "segment-stretch") toggle.classList.remove("is-stretching");
       });
@@ -196,258 +497,7 @@
     return pressed ? pressed.dataset.value : fallback;
   }
 
-  // ─── Command palette (Raycast-style ⌘K / Ctrl+K) ──────────────
-  // Host passes an array of commands: {id, label, hint, icon, disabled?, action}.
-  // Returns a controller with open/close/toggle; the host owns Ctrl+K binding.
-  function commandScore(cmd, query) {
-    if (!query) return 0;
-    const q = query.toLowerCase();
-    const label = cmd.label.toLowerCase();
-    const hint = (cmd.hint || "").toLowerCase();
-    if (label.startsWith(q)) return 100 - (label.length - q.length);
-    if (label.includes(q)) return 60 - (label.length - q.length);
-    if (hint.includes(q)) return 30;
-    let qi = 0; // subsequence fallback
-    for (let i = 0; i < label.length && qi < q.length; i++) {
-      if (label[i] === q[qi]) qi++;
-    }
-    return qi === q.length ? 10 : -1;
-  }
-
-  function initCommandPalette(commands) {
-    const overlay = $("#cmd-palette");
-    const input = $("#cmd-palette-search");
-    const list = $("#cmd-palette-list");
-    if (!overlay || !input || !list) return { open() {}, close() {}, toggle() {}, isOpen: () => false };
-
-    const st = { open: false, items: [], selected: 0 };
-
-    const filter = (query) =>
-      commands
-        .map((cmd) => ({ cmd, score: commandScore(cmd, query) }))
-        .filter((x) => x.score >= 0)
-        .sort((a, b) => b.score - a.score)
-        .map((x) => x.cmd);
-
-    const render = () => {
-      list.innerHTML = "";
-      if (st.items.length === 0) {
-        const empty = document.createElement("li");
-        empty.className = "cmd-palette-empty";
-        empty.textContent = "no commands match";
-        list.appendChild(empty);
-        return;
-      }
-      st.items.forEach((cmd, idx) => {
-        const li = document.createElement("li");
-        li.className = "cmd-palette-item";
-        li.setAttribute("role", "option");
-        li.dataset.cmdId = cmd.id;
-        li.setAttribute("aria-selected", idx === st.selected ? "true" : "false");
-        if (cmd.disabled && cmd.disabled()) {
-          li.setAttribute("aria-disabled", "true");
-          li.style.opacity = "0.4";
-        }
-        if (cmd.icon) {
-          const iconWrap = document.createElement("span");
-          iconWrap.className = "cmd-palette-item-icon";
-          iconWrap.innerHTML = cmd.icon; // trusted static SVG strings from the host
-          li.appendChild(iconWrap);
-        }
-        const label = document.createElement("span");
-        label.className = "cmd-palette-item-label";
-        label.textContent = cmd.label;
-        const hint = document.createElement("span");
-        hint.className = "cmd-palette-item-hint";
-        hint.textContent = cmd.hint || "";
-        li.appendChild(label);
-        li.appendChild(hint);
-        li.addEventListener("mouseenter", () => { st.selected = idx; updateSel(); });
-        li.addEventListener("click", () => execute());
-        list.appendChild(li);
-      });
-    };
-
-    const updateSel = () => {
-      $$("[role=option]", list).forEach((li, i) =>
-        li.setAttribute("aria-selected", i === st.selected ? "true" : "false")
-      );
-      const sel = $('[aria-selected="true"]', list);
-      if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
-    };
-
-    const execute = () => {
-      const cmd = st.items[st.selected];
-      if (!cmd) return;
-      if (cmd.disabled && cmd.disabled()) return;
-      close();
-      try { cmd.action(); } catch (_) { /* a command's side-effect must not crash the palette */ }
-    };
-
-    function open() {
-      overlay.hidden = false;
-      st.open = true;
-      st.selected = 0;
-      input.value = "";
-      st.items = filter("");
-      render();
-      requestAnimationFrame(() => input.focus());
-    }
-    function close() { overlay.hidden = true; st.open = false; }
-    function toggle() { if (st.open) close(); else open(); }
-
-    input.addEventListener("input", () => {
-      st.items = filter(input.value);
-      st.selected = 0;
-      render();
-    });
-    input.addEventListener("keydown", (e) => {
-      if (!st.open) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        if (st.items.length) { st.selected = (st.selected + 1) % st.items.length; updateSel(); }
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        if (st.items.length) { st.selected = (st.selected - 1 + st.items.length) % st.items.length; updateSel(); }
-      } else if (e.key === "Enter") {
-        e.preventDefault(); execute();
-      } else if (e.key === "Escape") {
-        e.preventDefault(); close();
-      }
-    });
-    overlay.addEventListener("click", (e) => {
-      if (e.target.dataset && e.target.dataset.cmdDismiss === "true") close();
-    });
-
-    return { open, close, toggle, isOpen: () => st.open };
-  }
-
-  // ─── Activity log strip + drawer ──────────────────────────────
-  const MAX_LOG_ROWS = 200;
-
-  function fmtTime(d) {
-    const pad = (n) => n.toString().padStart(2, "0");
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
-
-  // Host calls logEvent({kind, glyph, msg}) — kind ∈ ok|warn|error|info. The
-  // msg is whatever PHI-free text the host built (stage names, counts, type
-  // names). Updates the always-visible strip AND appends to the drawer ring.
-  function logEvent(entry) {
-    const kind = entry.kind || "info";
-    const glyph = entry.glyph || GLYPH[kind] || "·";
-    const msg = entry.msg == null ? "" : String(entry.msg);
-    const ts = fmtTime(new Date());
-
-    const strip = $("#log-strip");
-    if (strip) {
-      strip.dataset.kind = kind;
-      const sTs = $("#log-strip-ts"); if (sTs) sTs.textContent = ts;
-      const sGlyph = $("#log-strip-glyph"); if (sGlyph) sGlyph.textContent = glyph;
-      const sMsg = $("#log-strip-msg"); if (sMsg) sMsg.textContent = msg;
-    }
-
-    const rows = $("#log-rows");
-    if (!rows) {
-      // Pages without the activity strip (the wizard and the two learn wizards)
-      // would otherwise SWALLOW the entry entirely — including the shell's
-      // close-barrier notice, which is the operator's only explanation for a
-      // window close that was vetoed mid-run. Fall back to the page banner for
-      // the entries that carry a problem; informational chatter stays dropped.
-      if (kind === "error" || kind === "warn") bannerFallback(msg);
-      return;
-    }
-    const row = document.createElement("div");
-    row.className = `log-row log-row--${kind}`;
-    const tsEl = document.createElement("span"); tsEl.className = "log-ts"; tsEl.textContent = ts;
-    const g = document.createElement("span"); g.className = "log-glyph"; g.textContent = glyph;
-    const m = document.createElement("span"); m.className = "log-msg"; m.textContent = msg;
-    row.appendChild(tsEl); row.appendChild(g); row.appendChild(m);
-    rows.appendChild(row);
-    while (rows.childElementCount > MAX_LOG_ROWS) rows.removeChild(rows.firstChild);
-    const drawer = $("#log-drawer");
-    if (drawer && !drawer.hidden) {
-      const atBottom = rows.scrollHeight - rows.scrollTop - rows.clientHeight < 20;
-      if (atBottom) rows.scrollTop = rows.scrollHeight;
-    }
-  }
-
-  const GLYPH = { ok: "✓", warn: "⚠", error: "✗", info: "·" };
-
-  // The log strip's stand-in on pages that don't host one: every page ships a
-  // #banner, so a problem entry still reaches the operator. textContent (never
-  // innerHTML) — the host's text is PHI-free but never trusted as markup.
-  function bannerFallback(msg) {
-    const banner = $("#banner");
-    if (!banner) return;
-    banner.textContent = msg;
-    banner.classList.add("show");
-  }
-
-  function openLogDrawer() {
-    const drawer = $("#log-drawer"); const strip = $("#log-strip");
-    if (!drawer) return;
-    drawer.hidden = false;
-    if (strip) strip.setAttribute("aria-expanded", "true");
-    const rows = $("#log-rows"); if (rows) rows.scrollTop = rows.scrollHeight;
-  }
-  function closeLogDrawer() {
-    const drawer = $("#log-drawer"); const strip = $("#log-strip");
-    if (!drawer) return;
-    drawer.hidden = true;
-    if (strip) strip.setAttribute("aria-expanded", "false");
-  }
-  function toggleLogDrawer() {
-    const drawer = $("#log-drawer");
-    if (!drawer) return;
-    if (drawer.hidden) openLogDrawer(); else closeLogDrawer();
-  }
-  function initLogStrip() {
-    const strip = $("#log-strip");
-    const closeBtn = $("#log-drawer-close");
-    if (strip) strip.addEventListener("click", toggleLogDrawer);
-    if (closeBtn) closeBtn.addEventListener("click", closeLogDrawer);
-    document.addEventListener("mousedown", (e) => {
-      const drawer = $("#log-drawer");
-      if (!drawer || drawer.hidden) return;
-      if (drawer.contains(e.target)) return;
-      if (strip && strip.contains(e.target)) return;
-      closeLogDrawer();
-    });
-  }
-
-  // ─── Controller bridge helpers (shared by the run pages) ──────
-  // The dashboard and the migration wizard drive different flows but present
-  // their results the same way, so the presentation lives here once. PHI rule
-  // (unchanged): the per-patient detail below is fetched over the bridge and
-  // painted with textContent for LOCAL display only — it never rides an event
-  // and is never logged.
-
-  function hasApi() {
-    return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
-  }
-
-  // Run a page's bootstrap now AND again if the bridge lands late.
-  //
-  // pywebview injects `window.pywebview.api` asynchronously and announces it
-  // with a `pywebviewready` window event, so a page that only probes hasApi()
-  // at DOMContentLoaded can lose the race and paint its "launch via anast gui"
-  // notice over a bridge that is about to arrive — permanently, because nothing
-  // re-runs the bootstrap. Every page bootstraps through here instead: `boot`
-  // runs immediately (painting the offline notice when there is genuinely no
-  // bridge — the plain-browser preview) and ONCE more when `pywebviewready`
-  // fires, at which point the page's own populate clears the notice. A page
-  // that already has the bridge does not re-register: the event is either
-  // already past or would only repeat work.
-  function onApiReady(boot) {
-    boot();
-    if (hasApi()) return;
-    window.addEventListener("pywebviewready", () => boot(), { once: true });
-  }
-
-  // Fill a <select> with [{value, label}] entries, replacing what was there.
-  // Each page supplies its own leading entry (the dashboard's "auto-detect"
-  // sentinel vs the wizard's "Select a source…" prompt are different contracts).
+  // ─── Small DOM builders shared by the views ───────────────────
   function fillSelect(select, entries) {
     if (!select) return;
     select.innerHTML = "";
@@ -459,10 +509,6 @@
     }
   }
 
-  // Build the section-selection checkbox matrix into `matrix` from a
-  // {key: {label, default}} map. The host owns WHICH map applies (the dashboard
-  // keys off the chosen pack, the wizard off the render mode) and the
-  // empty-state wording; the toggle markup is identical on both pages.
   function renderSectionMatrix(matrix, sections, emptyText) {
     if (!matrix) return;
     matrix.innerHTML = "";
@@ -492,20 +538,15 @@
     }
   }
 
-  // Read a section matrix back into the {section: bool} map the run calls take.
   // Scoped to inputs carrying data-section so a future non-section checkbox in
   // the same container can never pollute the map.
   function gatherSections(matrix) {
     const sections = {};
     if (!matrix) return sections;
-    for (const box of $$("input[data-section]", matrix)) {
-      sections[box.dataset.section] = box.checked;
-    }
+    for (const box of $$("input[data-section]", matrix)) sections[box.dataset.section] = box.checked;
     return sections;
   }
 
-  // The per-patient roll-up table (patient / dob / encounters / notes).
-  // `panel` hides itself when there is nothing to show.
   function renderPatients(panel, body, patients) {
     if (!panel || !body) return;
     body.innerHTML = "";
@@ -516,7 +557,7 @@
     const table = document.createElement("table");
     table.className = "patients-table";
     const head = document.createElement("tr");
-    for (const heading of ["patient", "dob", "encounters", "notes"]) {
+    for (const heading of ["Patient", "Date of birth", "Visits", "Notes"]) {
       const th = document.createElement("th");
       th.textContent = heading;
       head.appendChild(th);
@@ -524,15 +565,9 @@
     table.appendChild(head);
     for (const p of patients) {
       const tr = document.createElement("tr");
-      const cells = [
-        p.display_name || "—",
-        p.birth_date || "—",
-        String(p.encounters),
-        String(p.documents),
-      ];
-      for (const value of cells) {
+      for (const value of [p.display_name || "—", p.birth_date || "—", String(p.encounters), String(p.documents)]) {
         const td = document.createElement("td");
-        td.textContent = value; // textContent: PHI rendered as text, never HTML
+        td.textContent = value; // textContent: patient data as text, never markup
         tr.appendChild(td);
       }
       table.appendChild(tr);
@@ -546,10 +581,9 @@
     if (panel) panel.hidden = true;
   }
 
-  // Fetch a finished run's per-patient detail and paint it. `summaryId` is the
-  // run's OWN id (from its `done` event), so a rapid second run cannot replace
-  // the detail this run is about to show (the summary race). The summary is
-  // advisory: a failure never blocks the run roll-up.
+  // `summaryId` is the run's OWN id (from its `done` event), so a rapid second
+  // run cannot replace the detail this run is about to show. Advisory: a
+  // failure never blocks the run roll-up.
   async function loadPatients(panel, body, summaryId) {
     if (!hasApi()) return;
     try {
@@ -560,35 +594,313 @@
     }
   }
 
-  // ─── Calendar grid builder (halo cells + count badges) ────────
+  // ─── The shared run form ──────────────────────────────────────
+  // Charts owns the plain rebuild; Migrate composes the same component beside a
+  // destination picker. There is exactly one implementation of these fields —
+  // the two views differ only in `mode`.
+  function makeField(id, labelText, helpText, control) {
+    const field = document.createElement("div");
+    field.className = "field";
+    const label = document.createElement("label");
+    label.setAttribute("for", id);
+    label.textContent = labelText;
+    field.appendChild(label);
+    field.appendChild(control);
+    if (helpText) {
+      const help = document.createElement("div");
+      help.className = "field-help";
+      help.textContent = helpText;
+      field.appendChild(help);
+    }
+    return field;
+  }
+
+  function makeInput(id, placeholder) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = id;
+    if (placeholder) input.placeholder = placeholder;
+    return input;
+  }
+
+  // A select ships inside its wrapper: the chevron is drawn on the wrapper,
+  // because a <select> takes no pseudo-element of its own.
+  function makeSelect(id) {
+    const wrap = document.createElement("div");
+    wrap.className = "select-wrap";
+    const select = document.createElement("select");
+    select.id = id;
+    wrap.appendChild(select);
+    return wrap;
+  }
+
+  function makeToggle(id, labelText) {
+    const label = document.createElement("label");
+    label.className = "toggle";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    const track = document.createElement("span");
+    track.className = "track";
+    const text = document.createElement("span");
+    text.textContent = labelText;
+    label.appendChild(input);
+    label.appendChild(track);
+    label.appendChild(text);
+    return label;
+  }
+
+  function makeSegment(name, labelText, helpText, options) {
+    const row = document.createElement("div");
+    row.className = "segment-row";
+    const caption = document.createElement("span");
+    caption.className = "field-help";
+    caption.textContent = labelText;
+    const toggle = document.createElement("div");
+    toggle.className = "segment-toggle";
+    toggle.setAttribute("role", "radiogroup");
+    toggle.setAttribute("aria-label", labelText);
+    toggle.dataset.name = name;
+    toggle.dataset.value = options[0].value;
+    const goo = document.createElement("div");
+    goo.className = "segment-goo";
+    goo.setAttribute("aria-hidden", "true");
+    const indicator = document.createElement("div");
+    indicator.className = "segment-indicator";
+    goo.appendChild(indicator);
+    toggle.appendChild(goo);
+    for (const opt of options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "segment-option";
+      btn.dataset.value = opt.value;
+      btn.textContent = opt.label;
+      toggle.appendChild(btn);
+    }
+    row.appendChild(toggle);
+    row.appendChild(caption);
+    const wrap = document.createElement("div");
+    wrap.className = "stack";
+    wrap.appendChild(row);
+    if (helpText) {
+      const help = document.createElement("div");
+      help.className = "field-help";
+      help.textContent = helpText;
+      wrap.appendChild(help);
+    }
+    return wrap;
+  }
+
+  // opts: {prefix, mode: "charts" | "migrate", runLabel, onRun}
+  function buildRunForm(host, opts) {
+    if (!host) return null;
+    const prefix = opts.prefix;
+    const migrate = opts.mode === "migrate";
+    const id = (name) => `${prefix}-${name}`;
+    host.innerHTML = "";
+    host.className = "stack";
+
+    host.appendChild(
+      makeField(
+        id("export-dir"),
+        "Export folder",
+        "The folder your EHR gave you when you exported your records.",
+        makeInput(id("export-dir"), "C:\\Users\\you\\Downloads\\ehr-export")
+      )
+    );
+    if (migrate) {
+      // Migrate detects the format from the export before anything else runs.
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const detect = document.createElement("button");
+      detect.type = "button";
+      detect.className = "btn btn-secondary";
+      detect.id = id("detect");
+      detect.textContent = "Detect the format";
+      actions.appendChild(detect);
+      host.appendChild(actions);
+    }
+    host.appendChild(
+      makeField(
+        id("source"),
+        "Export format",
+        migrate
+          ? "Which system this export came from. Detect fills this in for you."
+          : "Which system this export came from. 'Detect' works for all built-in formats.",
+        makeSelect(id("source"))
+      )
+    );
+    host.appendChild(
+      makeField(
+        id("out-dir"),
+        "Where results go",
+        "The folder Anastomosis writes the finished charts into.",
+        makeInput(id("out-dir"), "C:\\Users\\you\\Documents\\anastomosis-charts")
+      )
+    );
+    host.appendChild(
+      migrate
+        ? makeField(
+            id("render"),
+            "Chart pages",
+            "Rendered pages (PDF) or data only.",
+            makeSelect(id("render"))
+          )
+        : makeField(
+            id("pack"),
+            "Chart layout",
+            "How the finished chart pages are laid out.",
+            makeSelect(id("pack"))
+          )
+    );
+
+    const matrix = document.createElement("div");
+    matrix.className = "section-matrix";
+    matrix.id = id("sections");
+    host.appendChild(makeField(id("sections"), "Chart sections", "Which sections each chart page includes.", matrix));
+
+    host.appendChild(
+      makeSegment(
+        "qa",
+        "Double-check results",
+        "Re-reads every finished chart and confirms names, dates, and values landed on the right patient.",
+        [
+          { value: "on", label: "On" },
+          { value: "off", label: "Off" },
+        ]
+      )
+    );
+
+    const toggles = document.createElement("div");
+    toggles.className = "toggles";
+    if (!migrate) {
+      toggles.appendChild(makeToggle(id("archive"), "Save an archive copy"));
+      toggles.appendChild(makeToggle(id("bundle"), "Save the data files"));
+      toggles.appendChild(makeToggle(id("ccda"), "Save a C-CDA transfer document"));
+    }
+    toggles.appendChild(makeToggle(id("force"), "Rebuild pages even if unchanged"));
+    host.appendChild(toggles);
+
+    if (!migrate) {
+      const upload = document.createElement("div");
+      upload.className = "toggles";
+      upload.appendChild(makeToggle(id("write-manifest"), "Prepare for upload"));
+      host.appendChild(upload);
+      const uploadHelp = document.createElement("div");
+      uploadHelp.className = "field-help";
+      uploadHelp.textContent =
+        "Also writes the files the Uploads screen needs to file these charts into another system.";
+      host.appendChild(uploadHelp);
+    }
+
+    // One Advanced disclosure per form, closed by default (§10.8).
+    const advanced = document.createElement("details");
+    advanced.className = "advanced";
+    const summary = document.createElement("summary");
+    summary.textContent = "Advanced";
+    advanced.appendChild(summary);
+    const body = document.createElement("div");
+    body.className = "advanced-body";
+    body.appendChild(
+      makeField(
+        id("pack-dir"),
+        "Additional layout folder",
+        "Only needed for a chart layout that did not ship with Anastomosis.",
+        makeInput(id("pack-dir"), "C:\\Users\\you\\Documents\\layouts")
+      )
+    );
+    const trustWrap = document.createElement("div");
+    trustWrap.className = "stack";
+    const trustToggles = document.createElement("div");
+    trustToggles.className = "toggles";
+    trustToggles.appendChild(makeToggle(id("trust-pack"), "Allow this new layout to run"));
+    trustWrap.appendChild(trustToggles);
+    const trustHelp = document.createElement("div");
+    trustHelp.className = "field-help";
+    trustHelp.textContent =
+      "Layouts contain code. Anastomosis refuses layouts it has not seen before unless you allow them once here.";
+    trustWrap.appendChild(trustHelp);
+    body.appendChild(trustWrap);
+    advanced.appendChild(body);
+    host.appendChild(advanced);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.className = "btn btn-primary";
+    run.id = id("run");
+    run.textContent = opts.runLabel || "Rebuild charts";
+    actions.appendChild(run);
+    host.appendChild(actions);
+
+    initSegmentToggles(host);
+    const pick = (name) => el(id(name));
+    if (typeof opts.onRun === "function") run.addEventListener("click", opts.onRun);
+
+    return {
+      root: host,
+      id,
+      el: pick,
+      setSections(sections, emptyText) {
+        renderSectionMatrix(matrix, sections, emptyText);
+      },
+      setBusy(busy) {
+        run.disabled = busy;
+        run.textContent = busy ? "Rebuilding…" : opts.runLabel || "Rebuild charts";
+      },
+      setOffline() {
+        run.disabled = true;
+        run.textContent = opts.runLabel || "Rebuild charts";
+      },
+      values() {
+        const packDir = pick("pack-dir") ? pick("pack-dir").value.trim() : "";
+        const checked = (name) => !!(pick(name) && pick(name).checked);
+        const value = (name) => (pick(name) ? pick(name).value : "");
+        return {
+          exportDir: value("export-dir"),
+          outDir: value("out-dir"),
+          // An empty pick means "detect" — the controller reads null as "sniff".
+          source: value("source") || null,
+          pack: migrate ? null : value("pack"),
+          render: migrate ? value("render") || "neutral" : null,
+          sections: gatherSections(matrix),
+          qa: segmentValue("qa", "on", host) === "on",
+          archive: checked("archive"),
+          bundle: checked("bundle"),
+          ccda: checked("ccda"),
+          force: checked("force"),
+          packDirs: packDir ? [packDir] : [],
+          trustNew: checked("trust-pack"),
+          writeManifest: checked("write-manifest"),
+        };
+      },
+    };
+  }
+
+  // ─── Calendar (halo cells + count badges) ─────────────────────
   const MONTH_NAMES = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
   ];
-  const isoDate = (y, m, d) =>
-    `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const isoDate = (y, m, d) => `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   const daysInMonth = (year, monthIdx) => new Date(year, monthIdx + 1, 0).getDate();
 
-  // Renders a Mon-first month grid into `gridEl`/`titleEl`. `histogram` is a
-  // map of ISO date → {pending, done, errors} (counts only). The halo colour
-  // follows the original priority: errors > pending > done. A total > 1 paints
-  // the count badge. `onPick(iso)` (optional) fires on an in-month click.
+  // Mon-first month grid. `histogram` maps ISO date → {pending, done, errors}
+  // (counts only). Halo priority: errors > pending > done; a total above 1
+  // paints the count badge.
   function renderCalendar(opts) {
     const grid = opts.gridEl;
-    const title = opts.titleEl;
+    if (!grid) return;
+    if (opts.titleEl) opts.titleEl.textContent = `${MONTH_NAMES[opts.month]} ${opts.year}`;
+    grid.innerHTML = "";
     const year = opts.year;
     const month = opts.month;
     const histogram = opts.histogram || {};
-    if (!grid) return;
-    if (title) title.textContent = `${MONTH_NAMES[month]} ${year}`;
-    grid.innerHTML = "";
-
-    const firstOfMonth = new Date(year, month, 1);
-    const leading = (firstOfMonth.getDay() + 6) % 7; // shift Sun-first → Mon-first
+    const leading = (new Date(year, month, 1).getDay() + 6) % 7; // Sun-first → Mon-first
     const total = daysInMonth(year, month);
     const now = new Date();
     const todayIso = isoDate(now.getFullYear(), now.getMonth(), now.getDate());
-
     const prevMonth = month === 0 ? 11 : month - 1;
     const prevYear = month === 0 ? year - 1 : year;
     const prevTotal = daysInMonth(prevYear, prevMonth);
@@ -603,63 +915,186 @@
     let trailing = 1;
     while (cells.length < 42) cells.push({ outside: true, y: nextYear, m: nextMonth, d: trailing++ });
 
-    cells.forEach((cell) => {
+    for (const cell of cells) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "calendar-cell";
       btn.setAttribute("role", "gridcell");
       const iso = isoDate(cell.y, cell.m, cell.d);
       btn.dataset.iso = iso;
-      const labelSpan = document.createElement("span");
-      labelSpan.textContent = String(cell.d);
-      btn.appendChild(labelSpan);
+      const label = document.createElement("span");
+      label.textContent = String(cell.d);
+      btn.appendChild(label);
       if (cell.outside) btn.classList.add("calendar-cell--outside");
       if (iso === todayIso) btn.classList.add("calendar-cell--today");
-
       if (!cell.outside) {
         const hit = histogram[iso];
         if (hit) {
           const pending = hit.pending || 0;
           const done = hit.done || 0;
           const errors = hit.errors || 0;
-          const t = pending + done + errors;
           btn.classList.add("calendar-cell--has-data");
           if (errors > 0) btn.classList.add("calendar-cell--halo-errors");
           else if (pending > 0) btn.classList.add("calendar-cell--halo-pending");
           else if (done > 0) btn.classList.add("calendar-cell--halo-done");
-          if (t > 1) {
+          const sum = pending + done + errors;
+          if (sum > 1) {
             const badge = document.createElement("span");
             badge.className = "calendar-count-badge";
-            badge.textContent = t > 99 ? "99+" : String(t);
+            badge.textContent = sum > 99 ? "99+" : String(sum);
             btn.appendChild(badge);
           }
         }
-        if (typeof opts.onPick === "function") {
-          btn.addEventListener("click", () => opts.onPick(iso, hit || null));
-        }
       }
       grid.appendChild(btn);
+    }
+  }
+
+  // ─── Tabs (one workspace, several modes) ─────────────────────
+  // Generic chrome: every [role="tab"] in a .mode-tabs group shows the panel
+  // named by its aria-controls and hides its siblings'.
+  function initTabs(root) {
+    for (const group of $$(".mode-tabs", root || document)) {
+      const tabs = $$('[role="tab"]', group);
+      const show = (chosen) => {
+        for (const tab of tabs) {
+          const selected = tab === chosen;
+          tab.setAttribute("aria-selected", selected ? "true" : "false");
+          const panel = el(tab.getAttribute("aria-controls"));
+          if (panel) panel.hidden = !selected;
+        }
+      };
+      for (const tab of tabs) tab.addEventListener("click", () => show(tab));
+    }
+  }
+
+  // ─── About popover ────────────────────────────────────────────
+  function initAbout() {
+    const btn = el("about-btn");
+    const popover = el("about-popover");
+    if (!btn || !popover) return;
+    const close = () => {
+      popover.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+    };
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = popover.hidden;
+      popover.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
     });
+    document.addEventListener("mousedown", (e) => {
+      if (popover.hidden) return;
+      if (popover.contains(e.target) || btn.contains(e.target)) return;
+      close();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close();
+    });
+  }
+
+  // ─── Boot ─────────────────────────────────────────────────────
+  // Runs immediately (painting the offline notice when there is genuinely no
+  // bridge — the plain-browser preview) and again when the api lands, because
+  // pywebview attaches it asynchronously after DOM ready. The `pywebviewready`
+  // event alone is NOT a safe wake-up: in the frozen app the bridge can attach
+  // and fire it before this script's listener exists, and a missed one-shot
+  // event would strand a healthy app on the offline notice — so a poll backs
+  // the event, and whichever sees the api first wins. This is the app's ONLY
+  // bridge bootstrap; no view re-races it.
+  let bootedLive = false;
+  let bootPoll = null;
+  function boot() {
+    const live = hasApi();
+    if (live) {
+      if (bootedLive) return; // event + poll may both land; boot live once
+      bootedLive = true;
+      if (bootPoll) {
+        clearInterval(bootPoll);
+        bootPoll = null;
+      }
+    }
+    document.documentElement.dataset.bridge = live ? "live" : "offline";
+    const notice = el("no-api");
+    if (notice) notice.classList.toggle("show", !live);
+    if (live) loadInfo();
+    for (const cb of READY) cb(live);
+    if (!live) {
+      window.addEventListener("pywebviewready", boot, { once: true });
+      if (!bootPoll) {
+        bootPoll = setInterval(() => {
+          if (hasApi()) boot();
+        }, 150);
+      }
+    }
+  }
+
+  function init() {
+    paintIcons(document);
+    initAbout();
+    initTabs(document);
+    for (const btn of $$("[data-view-target]")) {
+      btn.addEventListener("click", () => showView(btn.dataset.viewTarget));
+    }
+    const band = el("view-band");
+    const first = VIEWS[CURRENT];
+    if (band && first) band.textContent = first.title || CURRENT;
+    const strip = el("log-strip");
+    if (strip) strip.addEventListener("click", toggleLogDrawer);
+    const closeBtn = el("log-drawer-close");
+    if (closeBtn) closeBtn.addEventListener("click", closeLogDrawer);
+    document.addEventListener("mousedown", (e) => {
+      const drawer = el("log-drawer");
+      if (!drawer || drawer.hidden) return;
+      if (drawer.contains(e.target) || (strip && strip.contains(e.target))) return;
+      closeLogDrawer();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "l" && e.key !== "L") return;
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      e.preventDefault();
+      toggleLogDrawer();
+    });
+    boot();
   }
 
   window.AnastShell = {
     hasApi,
-    onApiReady,
-    initSegmentToggles,
-    segmentValue,
-    initCommandPalette,
-    initLogStrip,
+    onReady,
+    onInfo,
+    icon,
+    paintIcons,
+    registerView,
+    registerFlow,
+    showView,
+    currentView: () => CURRENT,
+    store,
     logEvent,
     openLogDrawer,
     closeLogDrawer,
     toggleLogDrawer,
-    renderCalendar,
+    showBanner,
+    hideBanner,
+    stageLabel,
+    initSegmentToggles,
+    segmentValue,
     fillSelect,
     renderSectionMatrix,
     gatherSections,
+    buildRunForm,
     renderPatients,
     clearPatients,
     loadPatients,
+    renderCalendar,
     MONTH_NAMES,
   };
+
+  // The view scripts parse after this file and register synchronously, so they
+  // are all present by the time DOMContentLoaded fires and boot() runs.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    window.setTimeout(init, 0);
+  }
 })();

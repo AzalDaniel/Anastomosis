@@ -1,281 +1,186 @@
 /*
- * Anastomosis Learn-a-source wizard — vanilla JS, no frameworks, no build.
+ * Anastomosis GUI — Teach, mode 2: teach an export format from one example.
  *
- * Talks to the headless controller's source_init_async(), which wraps the
- * shared sourcelearn analyze -> build -> round_trip -> save flow on a daemon
- * thread (the GUI stays responsive). Both steps are fire-and-forget: the call
- * returns {started:true} and the real result arrives via window.anastEvent ->
- * last_source_result(). The two-step shape mirrors the pack-from-samples wizard:
- *   - "Analyze example" calls source_init_async(confirmed=false): the controller
- *     refuses to write but stashes the PHI-safe proposed mapping (grouping +
- *     per-column suggestions + analysis), so the operator sees exactly what they
- *     are confirming (ConfirmationRequired routes to renderProposal).
- *   - the "I reviewed this mapping" checkbox enables "Save mapping", which calls
- *     source_init_async(confirmed=true) to build the mapping, prove it drops no
- *     column (round-trip), save it owner-only, and stash the path + MAPPING.md.
+ * Owns the "source_init" flow; the Teach view itself is registered by
+ * packgen.js (one workspace, two modes, the same two-step shape).
  *
- * PHI discipline: the proposed mapping carries column NAMES, inferred type
- * labels, counts, and digit/letter-masked shapes only — never a cell value.
+ *   1. "Look at the example" calls source_init_async(confirmed=false) — the
+ *      controller refuses to write and stashes the proposed match-up;
+ *   2. the confirmation enables "Save this format", which calls
+ *      source_init_async(confirmed=true): it proves no column would be lost,
+ *      then stores the format for this user account only.
+ *
+ * PHI discipline: the proposal carries column NAMES, inferred type labels,
+ * counts and masked shapes only — never a cell value.
  */
 "use strict";
 
-// Only the bridge gate is needed from the shared shell here (this wizard hosts
-// no segment toggle, palette, or log strip of its own).
-const Shell = window.AnastShell;
+(function () {
+  const Shell = window.AnastShell;
+  const el = (id) => document.getElementById(id);
 
-function hasApi() {
-  return typeof window.pywebview !== "undefined" && !!window.pywebview.api;
-}
-
-function el(id) {
-  return document.getElementById(id);
-}
-
-function setStatus(text) {
-  const t = el("status-text");
-  if (t) {
-    t.textContent = text;
+  function hasApi() {
+    return Shell.hasApi();
   }
-}
 
-function showBanner(message) {
-  const banner = el("banner");
-  if (banner) {
-    banner.textContent = String(message);
-    banner.classList.add("show");
+  function setStep(text) {
+    el("format-step").textContent = text;
   }
-}
 
-function hideBanner() {
-  const banner = el("banner");
-  if (banner) {
-    banner.classList.remove("show");
+  function keyNames(key) {
+    const names = Array.isArray(key) ? key : key ? [key] : [];
+    return names.length ? names.join(" and ") : "nothing yet";
   }
-}
 
-function renderProposal(res) {
-  el("grouping").textContent =
-    "format " +
-    res.format +
-    " · " +
-    res.columns +
-    " columns · patient key " +
-    JSON.stringify(res.patient_key) +
-    " · encounter key " +
-    JSON.stringify(res.encounter_key) +
-    " · row scope " +
-    res.row_scope +
-    " · " +
-    res.mapped +
-    " mapped";
+  function renderProposal(res) {
+    // Prose, not a key=value dump: what the file is, and how it is grouped.
+    el("format-grouping").textContent =
+      `${String(res.format).toUpperCase()} file · ${res.columns} columns · ` +
+      `patients identified by ${keyNames(res.patient_key)} · ` +
+      `one row per ${res.row_scope}.`;
 
-  // Build the suggestions table with the DOM API + textContent (never innerHTML)
-  // so a column name can never be interpreted as markup.
-  const table = el("suggestions");
-  table.textContent = "";
-  const header = ["source column", "canonical field", "transform", "confidence"];
-  const head = document.createElement("div");
-  head.className = "suggestion-row suggestion-head";
-  header.forEach((label) => {
-    const cell = document.createElement("span");
-    cell.textContent = label;
-    head.appendChild(cell);
-  });
-  table.appendChild(head);
-  (res.suggestions || []).forEach((s) => {
-    const row = document.createElement("div");
-    row.className = "suggestion-row";
-    const cells = [
-      s.source,
-      s.target || "(unmapped → extensions)",
-      s.transform,
-      Math.round((s.confidence || 0) * 100) + "%",
-    ];
-    cells.forEach((value) => {
+    // Built with the DOM API and textContent (never innerHTML) so a column name
+    // can never be interpreted as markup.
+    const table = el("format-mapping");
+    table.textContent = "";
+    const head = document.createElement("div");
+    head.className = "mapping-row mapping-head";
+    for (const label of ["Column in your file", "Goes to", "How it is read", "Confidence"]) {
       const cell = document.createElement("span");
-      cell.textContent = String(value);
-      row.appendChild(cell);
-    });
-    table.appendChild(row);
-  });
-
-  el("summary").textContent = (res.summary || []).join("\n");
-  el("proposal-panel").hidden = false;
-  // Reset the review confirmation for each fresh analysis.
-  el("confirm-review").checked = false;
-  el("save-btn").disabled = true;
-}
-
-function renderSaved(res) {
-  el("result-path").textContent = "Saved learned source to " + res.mapping_dir;
-  el("mapping-md").textContent = res.mapping_md || "";
-  el("result-panel").hidden = false;
-  setStatus("saved");
-}
-
-// Route a fetched source_init result — shared by the analyze and save steps,
-// since the async call returns {started:true} and the real result lands via the
-// event handler. ConfirmationRequired is the EXPECTED analyze outcome (it
-// carries the proposal); ok is the saved mapping; WouldDropColumns /
-// MappingLoadFailed carry their own actionable detail; anything else is a plain
-// failure.
-function renderSourceResult(res) {
-  if (res && res.ok) {
-    renderSaved(res);
-  } else if (res && res.error === "ConfirmationRequired") {
-    renderProposal(res);
-    setStatus("review and confirm");
-  } else if (res && res.error === "WouldDropColumns") {
-    showBanner("Refusing to save — these columns would be dropped: " + (res.dropped || []).join(", "));
-    setStatus("would drop columns");
-  } else if (res && res.error === "MappingLoadFailed") {
-    showBanner("Cannot load with this mapping — fix a column transform: " + (res.detail || ""));
-    setStatus("mapping load failed");
-  } else {
-    showBanner("Source init failed: " + (res ? res.error : "no response"));
-    setStatus("failed");
-  }
-}
-
-async function fetchSourceResult() {
-  if (!hasApi()) {
-    return;
-  }
-  try {
-    const res = await window.pywebview.api.last_source_result();
-    renderSourceResult(res);
-  } catch (err) {
-    showBanner(err);
-  }
-}
-
-// The event dispatcher the shell (Python side) calls during an async run. On a
-// `source` done OR a `source` error we fetch the stashed result and route it
-// (the result carries the outcome-specific detail the banner needs); other
-// stages just update the status.
-// Flow guard: the learn-a-source wizard owns the "source_init" flow. Every
-// event carries a `flow`; we early-return on any other flow so a run from another
-// page can't drive this wizard's terminal handlers.
-window.anastEvent = function anastEvent(e) {
-  if (!e || typeof e !== "object") {
-    return;
-  }
-  if (e.flow !== "source_init") {
-    return;
-  }
-  switch (e.type) {
-    case "stage":
-      if (e.stage === "source" && e.state === "done") {
-        fetchSourceResult();
-      } else {
-        setStatus("stage " + e.stage + ": " + e.state);
+      cell.textContent = label;
+      head.appendChild(cell);
+    }
+    table.appendChild(head);
+    for (const s of res.suggestions || []) {
+      const row = document.createElement("div");
+      row.className = "mapping-row";
+      const cells = [
+        s.source,
+        s.target || "(kept, unmatched — nothing is dropped)",
+        s.transform,
+        `${Math.round((s.confidence || 0) * 100)}%`,
+      ];
+      for (const value of cells) {
+        const cell = document.createElement("span");
+        cell.textContent = String(value);
+        row.appendChild(cell);
       }
-      break;
-    case "done":
-      fetchSourceResult();
-      break;
-    case "error":
-      fetchSourceResult();
-      break;
-    default:
-      break;
-  }
-};
-
-function formValues() {
-  return {
-    example: el("example-path").value,
-    name: el("source-name").value,
-    display: el("source-display").value || null,
-  };
-}
-
-// Step 1: analyze (confirmed=false → proposed mapping, no write). Fire-and-forget:
-// the proposal arrives via the event → last_source_result.
-async function onAnalyze() {
-  if (!hasApi()) {
-    return;
-  }
-  hideBanner();
-  el("result-panel").hidden = true;
-  const { example, name, display } = formValues();
-  setStatus("analyzing…");
-  try {
-    const started = await window.pywebview.api.source_init_async(example, name, display, false);
-    if (started && started.ok === false) {
-      showBanner("Analysis failed: " + started.error);
-      setStatus("analysis failed");
+      table.appendChild(row);
     }
-  } catch (err) {
-    showBanner(err);
-  }
-}
 
-// Step 2: save (confirmed=true → round-trip + write). Fire-and-forget: the path +
-// MAPPING.md (or a drop/load refusal) arrive via the event → last_source_result.
-async function onSave() {
-  if (!hasApi() || !el("confirm-review").checked) {
-    return;
+    el("format-summary").textContent = (res.summary || []).join("\n");
+    el("format-proposal").hidden = false;
+    // Consent is per-analysis, never sticky.
+    el("format-confirm").checked = false;
+    el("format-save").disabled = true;
+    setStep("Step 2 of 2 — review and confirm.");
   }
-  hideBanner();
-  const { example, name, display } = formValues();
-  setStatus("verifying and saving…");
-  try {
-    const started = await window.pywebview.api.source_init_async(example, name, display, true);
-    if (started && started.ok === false) {
-      showBanner("Save failed: " + started.error);
-      setStatus("save failed");
+
+  function renderSaved(res) {
+    el("format-result-path").textContent = `The format was saved to ${res.mapping_dir}`;
+    el("format-result-md").textContent = res.mapping_md || "";
+    el("format-result").hidden = false;
+    setStep("Done. This export format is now available when you rebuild charts.");
+  }
+
+  // ConfirmationRequired is the EXPECTED outcome of step 1. The two refusals
+  // keep their loud semantics — in plain language, always saying what to do.
+  function route(res) {
+    if (res && res.ok) {
+      renderSaved(res);
+    } else if (res && res.error === "ConfirmationRequired") {
+      renderProposal(res);
+    } else if (res && res.error === "WouldDropColumns") {
+      Shell.showBanner(
+        `Cannot save yet — these columns would be lost: ${(res.dropped || []).join(", ")}. ` +
+          "Every column must have a home before the format is saved."
+      );
+      setStep("Step 2 of 2 — review and confirm.");
+    } else if (res && res.error === "MappingLoadFailed") {
+      Shell.showBanner(
+        `This file cannot be read with the proposed match-up yet: ${res.detail || ""}. ` +
+          "Change how one of the columns is read, then look at the example again."
+      );
+      setStep("Step 2 of 2 — review and confirm.");
+    } else {
+      Shell.showBanner(
+        `The example could not be turned into a format: ${res ? res.error : "no answer from the app"}`
+      );
     }
-  } catch (err) {
-    showBanner(err);
   }
-}
 
-function onConfirmToggle() {
-  el("save-btn").disabled = !el("confirm-review").checked;
-}
-
-async function populate() {
-  if (!hasApi()) {
-    el("no-api").classList.add("show");
-    setStatus("offline");
-    return;
-  }
-  // The bridge is up — possibly LATE (see Shell.onApiReady): clear the offline
-  // notice this page may already have painted, so a slow pywebview attach does
-  // not leave the wizard permanently showing "launch via anast gui".
-  el("no-api").classList.remove("show");
-  setStatus("ready");
-  try {
-    const info = await window.pywebview.api.info();
-    if (info && info.ok) {
-      el("version").textContent = info.version;
+  async function fetchResult() {
+    if (!hasApi()) return;
+    try {
+      route(await window.pywebview.api.last_source_result());
+    } catch (err) {
+      Shell.showBanner(String(err));
     }
-  } catch (err) {
-    showBanner(err);
   }
-}
 
-function init() {
-  const analyze = el("analyze-btn");
-  if (analyze) {
-    analyze.addEventListener("click", onAnalyze);
+  // Both the terminal stage AND an error fetch the stashed result: the result
+  // carries the outcome-specific detail (which columns, which transform) that a
+  // bare error string does not.
+  function onEvent(event) {
+    if (event.type === "stage" && event.stage === "source" && event.state === "done") {
+      fetchResult();
+    } else if (event.type === "done" || event.type === "error") {
+      fetchResult();
+    }
   }
-  const save = el("save-btn");
-  if (save) {
-    save.addEventListener("click", onSave);
-  }
-  const confirm = el("confirm-review");
-  if (confirm) {
-    confirm.addEventListener("change", onConfirmToggle);
-  }
-  // Bootstrap through the shared bridge gate: now, and once more when
-  // `pywebviewready` lands (pywebview attaches the api after DOM ready).
-  Shell.onApiReady(populate);
-}
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
+  function values() {
+    return {
+      example: el("format-example").value,
+      name: el("format-name").value,
+      display: el("format-display").value || null,
+    };
+  }
+
+  async function onAnalyze() {
+    if (!hasApi()) return;
+    Shell.hideBanner();
+    el("format-result").hidden = true;
+    const v = values();
+    setStep("Step 1 of 2 — looking at the example…");
+    try {
+      const started = await window.pywebview.api.source_init_async(v.example, v.name, v.display, false);
+      if (started && started.ok === false) {
+        Shell.showBanner(`The example could not be read: ${started.error}`);
+        setStep("Step 1 of 2 — look at the example.");
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
+  }
+
+  async function onSave() {
+    if (!hasApi() || !el("format-confirm").checked) return;
+    Shell.hideBanner();
+    const v = values();
+    setStep("Step 2 of 2 — checking that no column would be lost…");
+    try {
+      const started = await window.pywebview.api.source_init_async(v.example, v.name, v.display, true);
+      if (started && started.ok === false) {
+        Shell.showBanner(`The format could not be saved: ${started.error}`);
+        setStep("Step 2 of 2 — review and confirm.");
+      }
+    } catch (err) {
+      Shell.showBanner(String(err));
+    }
+  }
+
+  function init() {
+    el("format-analyze").addEventListener("click", onAnalyze);
+    el("format-save").addEventListener("click", onSave);
+    el("format-confirm").addEventListener("change", () => {
+      el("format-save").disabled = !el("format-confirm").checked;
+    });
+    Shell.onReady((live) => {
+      el("format-analyze").disabled = !live;
+    });
+  }
+
+  Shell.registerFlow("source_init", onEvent);
   init();
-}
+})();

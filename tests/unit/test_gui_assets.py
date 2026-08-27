@@ -1,13 +1,16 @@
-"""GUI web-asset tests — offline guarantee, parse sanity, packaging, design system.
+"""GUI web-asset tests — offline guarantee, one document, design system, packaging.
 
 The desktop GUI's html/css/js/fonts ship bundled and must be network-free (the
 archive's offline rule applies — fonts are LOCAL files served under a strict
-``font-src 'self'`` CSP). These tests scan the assets for network references,
-check the CSS parses (balanced braces), confirm pages reference only local
-files, that ``anastEvent`` is defined, that the carried Liquid Glass token
-sheet keeps its REAL values, that the gooey SVG filter is present wherever the
-segment toggle lives, that the OFL fonts + attribution ship, and that a built
-wheel actually contains ``gui/web`` and the fonts (the registry.yaml precedent).
+``font-src 'self'`` CSP). These tests scan the shipped assets for network
+references, check the CSS parses, confirm the app is ONE document with four
+views (DESIGN_LANGUAGE §7/§9), pin the Porcelain & Oxblood token sheet to its
+real values, hold the anti-slop ledger (§12) to what it removed, and confirm a
+built wheel actually contains ``gui/web`` and the fonts (the registry.yaml
+precedent).
+
+Behaviour lives in ``tests/gui_e2e`` (the pages driven in a real browser); these
+are the static guarantees that must hold before a browser is ever opened.
 """
 
 from __future__ import annotations
@@ -22,36 +25,45 @@ import pytest
 
 WEB = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "gui" / "web"
 FONTS = WEB / "fonts"
+
+#: The shipped assets: ONE document, the two stylesheets, the shell, and one
+#: script per view (Teach hosts two modes, so two of them).
 ASSETS = (
     "index.html",
     "tokens.css",
     "app.css",
     "shell.js",
     "app.js",
-    "wizard.html",
     "wizard.js",
-    "console.html",
     "console.js",
-    "packgen.html",
     "packgen.js",
-    "source.html",
     "source.js",
 )
 
-# The bundled SIL OFL variable fonts (carried verbatim from the predecessor).
-FONT_FILES = ("MonaSansVF.woff2", "JetBrainsMonoVF.woff2")
+#: The per-view scripts and the event flow each one owns.
+VIEW_SCRIPTS = (
+    ("app.js", "pipeline"),
+    ("wizard.js", "migration"),
+    ("console.js", "upload"),
+    ("packgen.js", "pack_init"),
+    ("source.js", "source_init"),
+)
 
-# Every page (index + the four workspaces).
-ALL_PAGES = ("index.html", "wizard.html", "console.html", "packgen.html", "source.html")
-# The workspace pages (html + their page JS).
-NEW_PAGES = ("wizard.html", "console.html", "packgen.html", "source.html")
-NEW_SCRIPTS = ("wizard.js", "console.js", "packgen.js", "source.js")
-# Pages that host a segment toggle and therefore must define the gooey filter.
-GOOEY_PAGES = ("index.html", "console.html", "wizard.html", "packgen.html", "source.html")
+#: The bundled SIL OFL variable fonts.
+FONT_FILES = ("MonaSansVF.woff2", "JetBrainsMonoVF.woff2", "FrauncesVF.woff2")
+
+#: The four views the single document ships.
+VIEWS = ("charts", "migrate", "uploads", "teach")
 
 # The exact forbidden-substring set the archive's offline scan uses. Fonts are
-# local, so no network reference may appear in ANY asset.
+# local, so no network reference may appear in ANY asset — not even a namespace
+# URL, which is why the icons are parsed from markup and the select chevron is
+# drawn in CSS.
 _FORBIDDEN = ("https://", "http://", "//cdn", 'src="//', "fonts.googleapis", "cdnjs")
+
+
+def _read(name: str) -> str:
+    return (WEB / name).read_text(encoding="utf-8")
 
 
 def test_all_assets_exist() -> None:
@@ -59,9 +71,20 @@ def test_all_assets_exist() -> None:
         assert (WEB / name).is_file(), f"missing GUI asset {name}"
 
 
+def test_the_gui_is_exactly_one_document() -> None:
+    """Five pages became four views inside one document (§7).
+
+    The legacy pages are DELETED, not merely unlinked: a stray wizard.html would
+    still be reachable, would re-race the bridge, and would re-parse everything
+    the single document exists to parse once.
+    """
+    pages = sorted(path.name for path in WEB.glob("*.html"))
+    assert pages == ["index.html"], f"the GUI must ship exactly one document, found {pages}"
+
+
 @pytest.mark.parametrize("name", ASSETS)
 def test_asset_has_no_network_reference(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
+    text = _read(name)
     for needle in _FORBIDDEN:
         # The CSP meta legitimately names schemes inside http-equiv content;
         # those are policy directives ('self'/'none'), not fetched URLs. Guard
@@ -71,80 +94,357 @@ def test_asset_has_no_network_reference(name: str) -> None:
 
 @pytest.mark.parametrize("name", ("tokens.css", "app.css"))
 def test_css_braces_balanced(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
+    text = _read(name)
     assert text.count("{") == text.count("}"), f"{name} has unbalanced braces"
     assert text.count("{") > 0, f"{name} defined no rules"
 
 
-# --- the carried Liquid Glass design system -------------------------------
+# --- the design system (docs/design/DESIGN_LANGUAGE.md §1-§6) --------------
 
 
-def test_tokens_carry_the_real_design_system() -> None:
-    """tokens.css carries the predecessor's REAL :root sheet + @font-face.
+def test_tokens_carry_the_porcelain_and_oxblood_system() -> None:
+    """tokens.css IS §1-§6, spot-pinned so a restyle cannot drift it silently."""
+    text = _read("tokens.css")
+    # §1 ground and ink: warm, never navy.
+    for token in (
+        "--ground:        oklch(0.18 0.012 55)",
+        "--ground-deep:   oklch(0.14 0.010 55)",
+        "--ink:           oklch(0.96 0.010 80)",
+        "--brand:        oklch(0.44 0.13 30)",
+        "--brand-bright: oklch(0.56 0.15 30)",
+    ):
+        assert token in text, f"tokens.css lost {token!r}"
+    # §1 clinical signals are their own family.
+    for signal in ("--ok:", "--attention:", "--stop:"):
+        assert signal in text, f"tokens.css missing the {signal!r} signal"
+    # §3 three glass tiers that scale together, with the near-opaque modal.
+    assert "--glass-veil-blur:   saturate(130%) blur(24px)" in text
+    assert "--glass-card-blur:   saturate(150%) blur(32px)" in text
+    assert "--glass-modal-blur:  saturate(170%) blur(48px)" in text
+    assert "--glass-modal-bg:    rgba(24, 20, 16, 0.94)" in text, "the mud fix is gone"
+    # §5 radius BY ROLE, not one token.
+    for radius in ("--radius-panel:   14px", "--radius-control:  8px", "--radius-chip:     6px"):
+        assert radius in text, f"tokens.css lost {radius!r}"
+    # §6 four durations, one curve.
+    assert "--ease-quart: cubic-bezier(0.32, 0.72, 0, 1)" in text
+    for duration in ("--t-snap: 120ms", "--t-move: 240ms", "--t-soft: 480ms", "--t-fill: 800ms"):
+        assert duration in text, f"tokens.css lost {duration!r}"
+    # The dark form-control palette, so the OS-drawn select popup is not white.
+    assert "color-scheme: dark" in text
 
-    Spot-pins a few load-bearing values so a re-styled fork can't silently
-    drift the design language: the quartic ease curve, the coral OKLCH
-    primary, the dichroic accent fill, the glass elevations, and the local
-    Mona Sans / JetBrains Mono @font-face declarations.
-    """
-    text = (WEB / "tokens.css").read_text(encoding="utf-8")
-    # The motion curve, verbatim.
-    assert "--ease-quart:        cubic-bezier(0.32, 0.72, 0, 1);" in text
-    # The coral primary in OKLCH (carried value).
-    assert "--primary:        oklch(0.78 0.18 28);" in text
-    assert "--primary-glow:   oklch(0.78 0.18 28 / 0.40);" in text
-    # The dichroic progress fill and glass elevations.
-    assert "--accent-fill:" in text and "linear-gradient(90deg" in text
-    for prop in ("--glass-card-bg", "--glass-card-blur", "--glass-modal-blur"):
-        assert f"{prop}:" in text, f"tokens.css missing {prop}"
-    assert "--glass-card-border:" in text
-    # Surfaces, ink, signals, spacing, radii — the full sheet shape.
-    for prop in ("--surface-card", "--ink-primary", "--signal-success", "--space-4", "--radius-lg"):
-        assert f"{prop}:" in text, f"tokens.css missing {prop}"
-    # The local @font-face for both families (no second italic file for Mona).
-    assert "@font-face {" in text
-    assert 'font-family: "Mona Sans";' in text
-    assert 'src: url("fonts/MonaSansVF.woff2") format("woff2-variations");' in text
-    assert 'font-family: "JetBrains Mono";' in text
-    assert 'src: url("fonts/JetBrainsMonoVF.woff2") format("woff2-variations");' in text
+
+def test_three_local_font_faces_never_block_text() -> None:
+    """All three families are local, and none of them can cause a text flash."""
+    text = _read("tokens.css")
+    for family, file in (
+        ("Mona Sans", "MonaSansVF.woff2"),
+        ("JetBrains Mono", "JetBrainsMonoVF.woff2"),
+        ("Fraunces", "FrauncesVF.woff2"),
+    ):
+        assert f'font-family: "{family}";' in text
+        assert f'src: url("fonts/{file}") format("woff2-variations");' in text
+    assert text.count("@font-face {") == 3
+    assert text.count("font-display: fallback;") == 3, "a blocking face is a flash of no text"
 
 
-def test_app_css_carries_core_components() -> None:
-    """app.css carries the original component classes (the visual layer)."""
-    text = (WEB / "app.css").read_text(encoding="utf-8")
+def test_type_never_goes_below_twelve_px() -> None:
+    """§4: nothing below 12px, ever — the smallest text carries audit facts."""
+    small = [
+        (name, size)
+        for name in ("tokens.css", "app.css")
+        for size in re.findall(r"font-size:\s*(\d+)px", _read(name))
+        if int(size) < 12
+    ]
+    assert not small, f"type below the 12px floor: {small}"
+
+
+def test_app_css_carries_the_components() -> None:
+    text = _read("app.css")
     for cls in (
-        ".glass-card",
+        ".panel",
         ".segment-toggle",
         ".segment-goo",
         ".segment-indicator",
-        ".cmd-palette",
         ".calendar-cell",
         ".log-strip",
         ".progress-bar-fill",
         ".counter-tile",
+        ".watermark",
+        ".view--leaving",
+        ".btn-primary",
+        ".btn-secondary",
+        ".btn-quiet",
     ):
-        assert cls in text, f"app.css missing carried component {cls}"
-    # The gooey filter is referenced by the segment goo layer.
+        assert cls in text, f"app.css is missing {cls}"
+    # The gooey filter is referenced by the segment's isolated goo layer.
     assert "filter: url(#gooey);" in text
-    # The dichroic shimmer animation drives the progress fill.
-    assert "@keyframes shimmer" in text
-    # Reduced-motion handling is carried.
+    # Reduced motion zeroes every animation (§6).
     assert "prefers-reduced-motion: reduce" in text
+    # The open native dropdown is styled dark, not left to the OS default.
+    assert ".field select option" in text
+    assert "background-color: #241d18" in text
+    # A textarea is styled with the inputs, not left as a native white box.
+    assert ".field textarea" in text
 
 
-def test_wallpaper_is_procedural_not_a_bundled_image() -> None:
-    """The provenance-unknown wallpaper.jpg is NOT shipped; the layer is CSS."""
-    assert not (WEB / "wallpaper.jpg").exists(), "wallpaper.jpg must not ship (unknown provenance)"
-    text = (WEB / "app.css").read_text(encoding="utf-8")
-    assert ".wallpaper {" in text
-    # The dark fallback base and a procedural gradient (no live image url).
-    assert "#0a0a0c" in text
-    assert "radial-gradient" in text
-    # An operator can drop their own wallpaper.jpg — the override is documented.
-    assert "wallpaper.jpg" in text
+def test_the_anti_slop_ledger_stays_removed() -> None:
+    """§12: what was deleted must stay deleted."""
+    css = _read("app.css")
+    gone = {
+        ".wallpaper {": "the gradient wallpaper layer",
+        ".wallpaper-veil": "the second full-viewport gradient",
+        "--accent-fill": "the dichroic progress gradient",
+        "@keyframes shimmer": "the 8s progress shimmer",
+        ".pill {": "the dead filter-bar component",
+        ".cmd-palette": "the command palette",
+    }
+    for needle, what in gone.items():
+        assert needle not in css, f"{what} came back ({needle!r})"
+    # The pill radius survives in exactly two places: the segment toggle and the
+    # status badge (§5).
+    pill_users = [
+        line.strip()
+        for line in css.splitlines()
+        if "var(--radius-pill)" in line and "--radius-pill:" not in line
+    ]
+    assert pill_users, "the pill radius vanished entirely"
+    for line in pill_users:
+        assert "radius-pill" in line
+    # The glyph icon constants are gone from the shipped markup (§8).
+    html = _read("index.html")
+    for glyph in ("✓", "⚠", "✗"):
+        assert glyph not in html, f"the {glyph!r} glyph icon is back in the markup"
+    assert "const GLYPH" not in _read("shell.js"), "the glyph table is back"
 
 
-# --- the bundled OFL fonts ------------------------------------------------
+def test_the_four_status_buckets_have_their_own_grid_cells() -> None:
+    """The counter tiles no longer collide, and only Filed is green (§10.5)."""
+    css = _read("app.css")
+    areas = re.search(r"grid-template-areas:(.+?);", css, re.DOTALL)
+    assert areas is not None, "the counter grid lost its template areas"
+    named = set(re.findall(r"[a-z]+", areas.group(1)))
+    assert named == {"filed", "attention", "progress", "waiting"}
+    placed = dict(re.findall(r'\[data-bucket="(\w+)"\]\s*\{\s*grid-area:\s*(\w+);', css))
+    assert placed == {
+        "filed": "filed",
+        "attention": "attention",
+        "progress": "progress",
+        "waiting": "waiting",
+    }, f"two tiles share a cell: {placed}"
+    assert '[data-bucket="filed"] .counter-value     { color: var(--ok); }' in css
+    assert '[data-bucket="attention"] .counter-value { color: var(--stop); }' in css
+
+
+# --- the single document ---------------------------------------------------
+
+
+def test_index_has_strict_csp_with_font_src() -> None:
+    text = _read("index.html")
+    assert "Content-Security-Policy" in text
+    for directive in (
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "connect-src 'none'",
+        "font-src 'self'",
+    ):
+        assert directive in text, f"index.html lost the {directive!r} directive"
+
+
+def test_index_references_only_local_files_that_ship() -> None:
+    text = _read("index.html")
+    refs = re.findall(r'(?:href|src)="([^"]+)"', text)
+    assert refs, "index.html referenced no assets"
+    for ref in refs:
+        assert not ref.startswith(("http://", "https://", "//")), f"non-local ref {ref!r}"
+        assert (WEB / ref).is_file(), f"index.html references a missing local file {ref!r}"
+    assert 'href="tokens.css"' in text and 'href="app.css"' in text
+
+
+def test_index_ships_the_four_views_and_their_nav() -> None:
+    text = _read("index.html")
+    for view in VIEWS:
+        assert f'data-view="{view}"' in text, f"the {view!r} view section is missing"
+        assert f'data-view-target="{view}"' in text, f"the {view!r} nav button is missing"
+    # Only the first view paints on load; the rest ship hidden, so the first
+    # frame is the Charts skeleton rather than four stacked views.
+    for view in VIEWS:
+        tag = re.search(rf'<section class="view" data-view="{view}"[^>]*>', text)
+        assert tag is not None, f"the {view!r} section is not a plain view section"
+        is_hidden = "hidden" in tag.group(0)
+        assert is_hidden is (view != "charts"), (
+            f"the {view!r} view ships {'hidden' if is_hidden else 'visible'}"
+        )
+    # Every script the document loads is loaded exactly once.
+    for script in ("shell.js", *[name for name, _flow in VIEW_SCRIPTS]):
+        assert text.count(f'src="{script}"') == 1, f"{script} is not loaded exactly once"
+
+
+def test_the_gooey_filter_is_declared_once_for_the_whole_app() -> None:
+    """The filter defs used to be re-declared (and re-registered) per page."""
+    text = _read("index.html")
+    assert text.count('filter id="gooey"') == 1
+    assert "feColorMatrix" in text and "feGaussianBlur" in text
+
+
+def test_the_app_name_appears_once_in_the_chrome() -> None:
+    """§10.7: the product name is the window's, and the version lives in About."""
+    text = _read("index.html")
+    assert "<title>Anastomosis</title>" in text
+    # The in-page band carries the CURRENT VIEW, not the app name.
+    assert '<span class="title-text" id="view-band">Charts</span>' in text
+    assert 'id="about-version"' in text and "AGPL-3.0" in text
+    # No <h1> repeats the product name.
+    assert not re.search(r"<h1>\s*Anastomosis\s*</h1>", text)
+
+
+def test_nothing_navigates_the_document() -> None:
+    """A view switch is a class toggle, never a document load (§7)."""
+    for name in ASSETS:
+        text = _read(name)
+        assert "window.location" not in text, f"{name} navigates the document"
+    html = _read("index.html")
+    assert not re.search(r'href="[^"]*\.html"', html), "index.html links to a page"
+
+
+# --- the JS seam -----------------------------------------------------------
+
+
+def test_one_event_dispatcher_lives_in_the_shell() -> None:
+    """One `window.anastEvent`, in shell.js, routing by flow (§7).
+
+    Each page used to define its own, filtered to its own flow — which is what
+    orphaned a run's event stream the moment the operator changed page.
+    """
+    shell = _read("shell.js")
+    assert "window.anastEvent = function anastEvent" in shell
+    assert "BY_FLOW[event.flow]" in shell, "the dispatcher no longer routes by flow"
+    for script, _flow in VIEW_SCRIPTS:
+        # An assignment, not a mention: the view headers may point at the shell's.
+        assert "window.anastEvent =" not in _read(script), (
+            f"{script} defines a second dispatcher — the shell owns the only one"
+        )
+
+
+@pytest.mark.parametrize(("script", "flow"), VIEW_SCRIPTS)
+def test_each_view_registers_the_flow_it_owns(script: str, flow: str) -> None:
+    """Flow scoping: the dispatcher hands an event to the ONE view that owns it.
+
+    Two views emit identical stage/progress/done/error kinds (a Charts rebuild
+    and a migration), so the flow registration is what stops one finishing the
+    other's run.
+    """
+    text = _read(script)
+    assert f'"{flow}"' in text, f"{script} does not name its {flow!r} flow"
+    assert "registerView" in text or "registerFlow" in text, f"{script} registers nothing"
+
+
+@pytest.mark.parametrize("script", [name for name, _flow in VIEW_SCRIPTS])
+def test_view_script_uses_the_bridge_through_the_shell_guard(script: str) -> None:
+    text = _read(script)
+    assert "pywebview" in text and "hasApi" in text
+    # The bridge bootstrap happens ONCE, in the shell: a view waits on it.
+    assert "Shell.onReady" in text or "Shell.onInfo" in text
+
+
+def test_the_run_form_is_built_once_and_composed_twice() -> None:
+    """Charts and Migrate share one form component, not two implementations."""
+    shell = _read("shell.js")
+    assert "function buildRunForm(" in shell
+    charts, migrate = _read("app.js"), _read("wizard.js")
+    assert "Shell.buildRunForm(" in charts and "Shell.buildRunForm(" in migrate
+    assert 'mode: "charts"' in charts and 'mode: "migrate"' in migrate
+    # The field labels exist in exactly one place across every shipped asset.
+    for label in ("Export folder", "Where results go", "Double-check results"):
+        hits = sum(_read(name).count(label) for name in ASSETS)
+        assert hits == 1, f"{label!r} is written {hits} times — the form was duplicated"
+
+
+def test_uploads_drives_only_through_the_controller() -> None:
+    """Filing is wired live, but ONLY through the controller seam.
+
+    Driving is SAFE because the JS goes only through the controller — it must
+    never reach into the upload record's write surface, so the controller stays
+    the single owner of every write.
+    """
+    js = _read("console.js")
+    html = _read("index.html")
+    assert "upload_start" in js and "upload_stop" in js
+    assert "upload_safety_notice" in js, "console.js must fetch the safety warning"
+    assert 'id="uploads-safety"' in html, "the safety warning has nowhere to land"
+    for call in ("run_pipeline", "transition", "begin_run", "recover"):
+        assert call not in js, f"console.js must not invoke {call!r} (the controller owns writes)"
+
+
+def test_uploads_double_check_ships_on_and_reaches_the_drive_call() -> None:
+    """The verification ladder is ON by default; unchecking is the opt-out."""
+    html = _read("index.html")
+    checkbox = re.search(r'<input[^>]*id="uploads-verify"[^>]*>', html)
+    assert checkbox is not None and "checked" in checkbox.group(0)
+    js = _read("console.js")
+    assert "uploads-verify" in js and "verify" in js
+
+
+def test_uploads_replaced_the_palette_with_a_visible_search() -> None:
+    """The one real use of the ⌘K palette became a field an operator can see."""
+    html = _read("index.html")
+    js = _read("console.js")
+    assert 'id="uploads-search"' in html
+    assert "upload_item_keys" in js, "the search is fed by the controller's id list"
+    # No accessor that would surface a patient name exists.
+    assert "patient_name" not in js and "patient_name" not in html
+
+
+def test_uploads_states_render_as_plain_english_with_the_id_on_the_tooltip() -> None:
+    """Raw snake_case state ids were unreadable as prose to a clinician."""
+    js = _read("console.js")
+    for state, label in (
+        ("pre_verify_failed", "Stopped before filing"),
+        ("duplicate_at_destination", "Already in the destination"),
+        ("skipped_skiplist", "Skipped at your request"),
+    ):
+        assert state in js and label in js, f"{state!r} lost its plain label"
+    assert "cell.title = state" in js, "the technical id must stay available on the tooltip"
+
+
+def test_teach_hosts_both_modes_behind_a_required_confirmation() -> None:
+    """Two mirrored wizards became two modes of one view, gate intact."""
+    html = _read("index.html")
+    assert 'data-mode="layout"' in html and 'data-mode="format"' in html
+    assert 'id="layout-confirm"' in html and 'id="format-confirm"' in html
+    # Both write buttons ship disabled; only the confirmation arms them.
+    for button in ("layout-write", "format-save"):
+        markup = re.search(rf'<button[^>]*id="{button}"[^>]*>', html)
+        assert markup is not None and "disabled" in markup.group(0)
+    layout, fmt = _read("packgen.js"), _read("source.js")
+    assert "api.pack_init_async(" in layout and "api.last_pack_result(" in layout
+    assert "api.source_init_async(" in fmt and "api.last_source_result(" in fmt
+    # The synchronous variants would block the bridge thread; they are not used.
+    assert "api.source_init(" not in fmt and "api.pack_init(" not in layout
+    for call in ("run_pipeline", "begin_run", "transition", "recover"):
+        assert call not in fmt and call not in layout
+
+
+def test_charts_keeps_its_freshness_notice_and_section_matrix() -> None:
+    html = _read("index.html")
+    js = _read("app.js")
+    assert 'id="freshness-toast"' in html
+    assert "pack_freshness" in js  # the vendor-change probe
+    assert "renderSectionMatrix" in _read("shell.js")
+    assert "setSections" in js, "the layout's sections must repaint when it changes"
+
+
+def test_the_handoff_carries_context_from_migrate_to_uploads() -> None:
+    """The wizard used to end by telling the operator to retype what it knew."""
+    html = _read("index.html")
+    migrate, uploads = _read("wizard.js"), _read("console.js")
+    assert 'id="migrate-continue"' in html
+    assert 'Shell.showView("uploads"' in migrate
+    assert 'Shell.store("handoff"' in migrate and 'Shell.store("handoff")' in uploads
+    assert "uploads-assistant" in uploads
+
+
+# --- the bundled OFL fonts -------------------------------------------------
 
 
 @pytest.mark.parametrize("name", FONT_FILES)
@@ -160,220 +460,14 @@ def test_fonts_ship_ofl_attribution_readme() -> None:
     assert readme.is_file(), "fonts/README.md (OFL attribution) is missing"
     text = readme.read_text(encoding="utf-8")
     assert "OFL" in text and "Open Font License" in text
-    # Both upstream sources are cited.
+    # Every bundled upstream is cited.
     assert "github/mona-sans" in text
     assert "JetBrains/JetBrainsMono" in text
+    assert "Fraunces" in text
     assert "Mona Sans" in text and "JetBrains Mono" in text
 
 
-# --- CSP + local-only references (every page) -----------------------------
-
-
-@pytest.mark.parametrize("name", ALL_PAGES)
-def test_page_has_strict_csp_with_font_src(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
-    assert "Content-Security-Policy" in text
-    assert "default-src 'self'" in text
-    assert "script-src 'self'" in text
-    assert "style-src 'self'" in text
-    assert "connect-src 'none'" in text  # zero network at read time
-    # Fonts are local files served under the strict policy.
-    assert "font-src 'self'" in text
-
-
-@pytest.mark.parametrize("name", ALL_PAGES)
-def test_page_references_only_local_files(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
-    hrefs = re.findall(r'(?:href|src)="([^"]+)"', text)
-    assert hrefs, f"{name} referenced no assets"
-    for ref in hrefs:
-        assert not ref.startswith(("http://", "https://", "//")), f"{name}: non-local ref {ref!r}"
-        # Each referenced local asset must actually ship.
-        assert (WEB / ref).is_file(), f"{name} references missing local file {ref!r}"
-
-
-@pytest.mark.parametrize("name", ALL_PAGES)
-def test_page_links_shared_tokens_and_app_css(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
-    # All pages reuse the single source of truth (tokens.css) + the composition
-    # layer (app.css) — no per-page stylesheet drift.
-    assert 'href="tokens.css"' in text
-    assert 'href="app.css"' in text
-
-
-@pytest.mark.parametrize("name", GOOEY_PAGES)
-def test_page_with_segment_toggle_defines_gooey_filter(name: str) -> None:
-    """Every page that hosts the gooey segment toggle ships the SVG filter def."""
-    text = (WEB / name).read_text(encoding="utf-8")
-    assert 'filter id="gooey"' in text, f"{name} missing the gooey SVG filter def"
-    assert "feColorMatrix" in text and "feGaussianBlur" in text
-
-
-# --- JS bridge guards ------------------------------------------------------
-
-
-def test_anast_event_dispatcher_defined() -> None:
-    text = (WEB / "app.js").read_text(encoding="utf-8")
-    assert "window.anastEvent" in text
-    # The plain-browser guard so opening in a browser does not throw.
-    assert "pywebview" in text and "hasApi" in text
-
-
-@pytest.mark.parametrize(
-    ("script", "flow"),
-    [
-        ("app.js", "pipeline"),
-        ("wizard.js", "migration"),
-        ("console.js", "upload"),
-        ("source.js", "source_init"),
-        ("packgen.js", "pack_init"),
-    ],
-)
-def test_page_anast_event_has_flow_guard(script: str, flow: str) -> None:
-    """Flow scoping: each page's event dispatcher early-returns on events from other
-    flows, so navigating mid-run can't let one page consume another page's
-    terminal event (the dashboard pipeline and the wizard migration emit
-    identical stage/progress/done/error kinds). The guard is the flow check."""
-    text = (WEB / script).read_text(encoding="utf-8")
-    assert f'e.flow !== "{flow}"' in text, f"{script} missing its {flow!r} flow guard"
-
-
-def test_shell_exposes_carried_interaction_patterns() -> None:
-    """shell.js carries the segment-drag, palette, log-drawer, calendar code."""
-    text = (WEB / "shell.js").read_text(encoding="utf-8")
-    assert "window.AnastShell" in text
-    for fn in ("initSegmentToggles", "initCommandPalette", "initLogStrip", "renderCalendar"):
-        assert fn in text, f"shell.js missing carried helper {fn}"
-    # The drag physics: pointer follow + nearest-slot snap + stretch.
-    assert "pointermove" in text and "--segment-index" in text
-    # The calendar halo treatment (counts only).
-    assert "calendar-cell--halo-" in text and "calendar-count-badge" in text
-
-
-@pytest.mark.parametrize("name", NEW_SCRIPTS)
-def test_new_script_uses_pywebview_bridge_with_guard(name: str) -> None:
-    text = (WEB / name).read_text(encoding="utf-8")
-    # Each page talks to the headless controller over the pywebview bridge and
-    # guards against a plain browser (no fake behavior, shows the launch notice).
-    assert "pywebview" in text and "hasApi" in text
-
-
-def test_console_lists_item_keys_never_names() -> None:
-    """The item-key command palette lists opaque item KEYS, never patient names."""
-    html = (WEB / "console.html").read_text(encoding="utf-8")
-    js = (WEB / "console.js").read_text(encoding="utf-8")
-    assert "Cmd/Ctrl+K" in html or "Ctrl+K" in html
-    # The palette is fed by upload_item_keys (ids only).
-    assert "upload_item_keys" in js
-    # No accessor that would surface a patient name exists.
-    assert "patient_name" not in js and "patient_name" not in html
-
-
-@pytest.mark.parametrize(
-    ("page", "needle"),
-    [
-        # The wizard labels the deferred live API push. (The console's live
-        # driving is no longer deferred — it is wired live, asserted by
-        # test_console_drives_uploads_only_through_controller below.)
-        ("wizard.js", "later milestone"),
-    ],
-)
-def test_deferred_functionality_is_labeled(page: str, needle: str) -> None:
-    text = (WEB / page).read_text(encoding="utf-8")
-    assert needle in text, f"{page} must loudly label deferred functionality"
-
-
-def test_console_drives_uploads_only_through_controller() -> None:
-    """The console drives real uploads, but ONLY through the controller seam.
-
-    Live driving is wired: the JS must call the controller's drive methods
-    (upload_start / upload_stop) and surface the shared-machine safety warning.
-    Driving is SAFE because the JS goes only through the controller — it must
-    never reach into the ledger's write surface (no transition/begin_run/recover
-    from the browser), so the controller stays the single owner of every write.
-    """
-    html = (WEB / "console.html").read_text(encoding="utf-8")
-    js = (WEB / "console.js").read_text(encoding="utf-8")
-    # Real driving is wired (no fakery): the JS calls the controller seam.
-    assert "upload_start" in js, "console.js must drive uploads via upload_start"
-    assert "upload_stop" in js, "console.js must offer a cooperative stop via upload_stop"
-    # The shared-machine safety warning is surfaced before any attach is possible.
-    assert "upload_safety_notice" in js, "console.js must fetch the safety warning"
-    assert 'id="safety-warning"' in html, "console.html must host the safety warning element"
-    # But the JS NEVER touches the ledger's write surface — every write goes
-    # through the controller, never directly from the browser.
-    forbidden_calls = ("run_pipeline", "transition", "begin_run", "recover")
-    for call in forbidden_calls:
-        assert call not in js, f"console.js must not invoke {call!r} (controller owns writes)"
-
-
-def test_console_verify_checkbox_defaults_on() -> None:
-    """The console exposes the L0-L6 verification ladder as a checkbox.
-
-    The lever is ON by default (a pre-checked checkbox — verifying is the safe
-    default; unchecking is the explicit `--no-verify` opt-out) and its value is
-    passed as the `verify` argument to upload_start — the GUI parity for the CLI.
-    """
-    html = (WEB / "console.html").read_text(encoding="utf-8")
-    js = (WEB / "console.js").read_text(encoding="utf-8")
-    assert 'id="verify-uploads"' in html, "console.html must host the verify checkbox"
-    # Default ON: the checkbox input ships pre-checked.
-    checkbox = re.search(r'<input[^>]*id="verify-uploads"[^>]*>', html)
-    assert checkbox is not None and "checked" in checkbox.group(0)
-    # The checkbox value is read and threaded into the drive call.
-    assert "verify-uploads" in js
-    assert "verify" in js
-
-
-def test_packgen_requires_confirmation_checkbox() -> None:
-    """The same-patient guard is a REQUIRED checkbox (ported from the CLI)."""
-    html = (WEB / "packgen.html").read_text(encoding="utf-8")
-    js = (WEB / "packgen.js").read_text(encoding="utf-8")
-    assert 'id="confirm-distinct"' in html
-    # The emit button starts disabled and only the confirmation enables it.
-    assert "disabled" in html
-    assert "confirmed_distinct_patients" in js or "true)" in js
-    assert "pack_init" in js
-
-
-def test_source_wizard_drives_via_controller_async() -> None:
-    """The learn-a-source wizard drives the responsive async path through the
-    controller seam only — source_init_async + last_source_result — and never the
-    synchronous source_init nor any pipeline/engine-write method."""
-    html = (WEB / "source.html").read_text(encoding="utf-8")
-    js = (WEB / "source.js").read_text(encoding="utf-8")
-    assert "api.source_init_async(" in js, "source.js must drive via source_init_async"
-    assert "api.last_source_result(" in js, "source.js must fetch via last_source_result"
-    # The synchronous source_init is NOT called from the wizard (it stays a tested
-    # backend, but the GUI uses the responsive async variant).
-    assert "api.source_init(" not in js, "the wizard must use the async variant"
-    # The two-step review checkpoint: a required confirmation gates the save.
-    assert 'id="confirm-review"' in html
-    # The JS never reaches a pipeline/engine write surface (the controller owns it).
-    for call in ("run_pipeline", "begin_run", "transition", "recover"):
-        assert call not in js, f"source.js must not invoke {call!r} (controller owns writes)"
-
-
-def test_dashboard_links_to_new_pages() -> None:
-    text = (WEB / "index.html").read_text(encoding="utf-8")
-    for page in NEW_PAGES:
-        assert f'href="{page}"' in text, f"dashboard must link to {page}"
-
-
-def test_dashboard_freshness_toast_wired() -> None:
-    html = (WEB / "index.html").read_text(encoding="utf-8")
-    js = (WEB / "app.js").read_text(encoding="utf-8")
-    assert 'id="freshness-toast"' in html
-    assert "pack_freshness" in js  # the vendor-change detection probe
-
-
-def test_dashboard_section_matrix_wired() -> None:
-    html = (WEB / "index.html").read_text(encoding="utf-8")
-    js = (WEB / "app.js").read_text(encoding="utf-8")
-    assert 'id="section-matrix"' in html
-    # gatherSections() reads the live matrix (no longer a hardcoded {}).
-    assert "section-matrix" in js
-    assert "renderSectionMatrix" in js
+# --- packaging -------------------------------------------------------------
 
 
 def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
@@ -399,24 +493,3 @@ def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
         assert any(n.endswith(f"gui/web/fonts/{font}") for n in names), (
             f"wheel is missing gui/web/fonts/{font}"
         )
-
-
-def test_console_offers_pack_dir_parity() -> None:
-    """The upload console exposes an extra-pack-dir input and threads it into
-    upload_start (was hard-coded null) — GUI parity for `--pack-dir`."""
-    html = (WEB / "console.html").read_text(encoding="utf-8")
-    js = (WEB / "console.js").read_text(encoding="utf-8")
-    assert 'id="upload-pack-dir"' in html
-    assert "upload-pack-dir" in js
-    # the upload_start call passes packDirs (not a hard-coded null for that arg).
-    assert "packDirs" in js
-
-
-def test_dashboard_offers_write_manifest_toggle() -> None:
-    """The dashboard run form offers a 'write upload manifest' toggle and threads
-    it into run_pipeline_async — GUI parity for `pipeline run --upload-manifest`,
-    so a GUI run can produce the manifest the upload console needs."""
-    html = (WEB / "index.html").read_text(encoding="utf-8")
-    js = (WEB / "app.js").read_text(encoding="utf-8")
-    assert 'id="write-manifest"' in html
-    assert "write_manifest" in js

@@ -1,16 +1,22 @@
-"""What a live Anastomosis dashboard must look like — asserted by BOTH lanes.
+"""What a live Anastomosis window must look like — asserted by BOTH lanes.
 
-Lane 1 (``tests/gui_e2e``) drives the bundled pages in headless Chromium behind
-a stubbed bridge; lane 2 (``packaging/smoke_windows.py``) drives the INSTALLED
+Lane 1 (``tests/gui_e2e``) drives the bundled app in headless Chromium behind a
+stubbed bridge; lane 2 (``packaging/smoke_windows.py``) drives the INSTALLED
 Windows app in its real WebView2 window over CDP. Both end up holding a
 Playwright ``Page``, so the DOM expectations live here once and are checked in
 both places: a selector this file names cannot rot in the installed app without
 lane 1 — which runs on every CI push — going red first.
 
+The GUI is ONE document with four views (DESIGN_LANGUAGE §7), so these are the
+expectations for the document as it first paints: the chrome, the nav, and the
+Charts view. :func:`check_dashboard` keeps its name and signature because lane 2
+loads this module by path and calls exactly that.
+
 Everything here must hold with the REAL controller behind the bridge, not just
-the stub, so the checks stay to (a) static markup the pages ship and (b) the
+the stub, so the checks stay to (a) static markup the app ships and (b) the
 handful of live signals that prove the bridge round-tripped: the version filled
-in, the "no bridge" notice cleared, the run button armed, the pickers populated.
+in, the "not connected" notice cleared, the run button armed, the pickers
+populated.
 
 Deliberately dependency-free (stdlib + a duck-typed ``page``): lane 2 loads this
 module by path from a checkout, with no pytest and no package install.
@@ -24,36 +30,44 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from playwright.sync_api import Page
 
 __all__ = [
-    "DASHBOARD_HEADING",
-    "NAV_LINKS",
-    "PAGES",
-    "TITLE_BAND",
+    "CHARTS_HEADING",
+    "NAV_VIEWS",
+    "RUN_BUTTON_LABEL",
     "VERSION_PLACEHOLDER",
+    "VIEWS",
+    "VIEW_BAND",
+    "WINDOW_TITLE",
     "check_dashboard",
 ]
 
-#: The frameless title band's text (the window's own identity strip).
-TITLE_BAND = "Anastomosis"
+#: The product name appears exactly ONCE, on the window itself (§10.7).
+WINDOW_TITLE = "Anastomosis"
 
-#: The dashboard's page heading.
-DASHBOARD_HEADING = "Anastomosis"
+#: The band under the window frame names the CURRENT VIEW — never the app.
+VIEW_BAND = "Charts"
 
-#: The workspace nav, in order: (href, link label). Every page ships this same
-#: nav, so a renamed page file breaks the check on whichever page dropped it.
-NAV_LINKS: tuple[tuple[str, str], ...] = (
-    ("index.html", "Dashboard"),
-    ("wizard.html", "Migration wizard"),
-    ("console.html", "Upload console"),
-    ("packgen.html", "Pack from samples"),
-    ("source.html", "Learn a source"),
+#: The first view's heading.
+CHARTS_HEADING = "Charts"
+
+#: The view nav, in order: (view name, button label).
+NAV_VIEWS: tuple[tuple[str, str], ...] = (
+    ("charts", "Charts"),
+    ("migrate", "Migrate"),
+    ("uploads", "Uploads"),
+    ("teach", "Teach"),
 )
 
-#: The bundled page files, in nav order.
-PAGES: tuple[str, ...] = tuple(href for href, _label in NAV_LINKS)
+#: The four view sections the single document ships.
+VIEWS: tuple[str, ...] = tuple(name for name, _label in NAV_VIEWS)
 
-#: What ``#version`` reads before ``info()`` answers. Seeing it after load means
-#: the bridge never round-tripped (in the packaged app: a dead GUI).
-VERSION_PLACEHOLDER = "—"
+#: The primary action of the Charts view.
+RUN_BUTTON_LABEL = "Rebuild charts"
+
+#: What ``#about-version``'s ``data-version`` reads before ``info()`` answers.
+#: Seeing it after load means the bridge never round-tripped (in the packaged
+#: app: a dead GUI). The About line's visible text carries no dangling dash —
+#: the ATTRIBUTE is the machine-readable liveness signal.
+VERSION_PLACEHOLDER = ""
 
 
 def _text(page: Page, selector: str) -> str:
@@ -64,75 +78,96 @@ def _text(page: Page, selector: str) -> str:
     return (node.text_content() or "").strip()
 
 
+def _attr(page: Page, selector: str, name: str) -> str:
+    node: Any = page.locator(selector).first
+    if node.count() == 0:
+        return ""
+    return node.get_attribute(name) or ""
+
+
 def check_dashboard(page: Page) -> list[str]:
-    """Every dashboard expectation, as a list of failures (empty list = good).
+    """Every first-paint expectation, as a list of failures (empty = good).
 
     Returns human-readable problems rather than raising, so lane 2 can print one
     PASS/FAIL line per finding and still report the rest.
     """
     problems: list[str] = []
 
+    if page.title() != WINDOW_TITLE:
+        problems.append(f"window title reads {page.title()!r}, expected {WINDOW_TITLE!r}")
+
     band = _text(page, ".title-bar .title-text")
-    if band != TITLE_BAND:
-        problems.append(f"title band reads {band!r}, expected {TITLE_BAND!r}")
+    if band != VIEW_BAND:
+        problems.append(f"title band reads {band!r}, expected the view name {VIEW_BAND!r}")
 
-    heading = _text(page, "main.app-shell h1")
-    if heading != DASHBOARD_HEADING:
-        problems.append(f"page heading reads {heading!r}, expected {DASHBOARD_HEADING!r}")
+    heading = _text(page, '[data-view="charts"] .view-head h1')
+    if heading != CHARTS_HEADING:
+        problems.append(f"charts heading reads {heading!r}, expected {CHARTS_HEADING!r}")
 
-    links = page.locator("nav.nav a.nav-link")
-    if links.count() != len(NAV_LINKS):
-        problems.append(f"nav has {links.count()} links, expected {len(NAV_LINKS)}")
+    # --- the four views, and only the first one showing ----------------------
+    buttons = page.locator("nav.nav [data-view-target]")
+    if buttons.count() != len(NAV_VIEWS):
+        problems.append(f"nav has {buttons.count()} views, expected {len(NAV_VIEWS)}")
     else:
-        for index, (href, label) in enumerate(NAV_LINKS):
-            link = links.nth(index)
-            actual_href = link.get_attribute("href") or ""
-            actual_label = (link.text_content() or "").strip()
-            if actual_href != href or actual_label != label:
+        for index, (name, label) in enumerate(NAV_VIEWS):
+            button = buttons.nth(index)
+            actual_name = button.get_attribute("data-view-target") or ""
+            actual_label = (button.text_content() or "").strip()
+            if actual_name != name or actual_label != label:
                 problems.append(
-                    f"nav[{index}] is ({actual_label!r} -> {actual_href!r}), "
-                    f"expected ({label!r} -> {href!r})"
+                    f"nav[{index}] is ({actual_label!r} -> {actual_name!r}), "
+                    f"expected ({label!r} -> {name!r})"
                 )
-        current = links.nth(0).get_attribute("aria-current")
-        if current != "page":
-            problems.append(f"dashboard nav link aria-current is {current!r}, expected 'page'")
+        if buttons.nth(0).get_attribute("aria-current") != "true":
+            problems.append("the Charts nav button does not mark itself current")
 
-    # --- the live signals: the bridge answered and the page came alive -------
-    version = _text(page, "#version")
-    if not version or version == VERSION_PLACEHOLDER:
+    for name in VIEWS:
+        section = page.locator(f'[data-view="{name}"]')
+        if section.count() != 1:
+            problems.append(f"the {name!r} view section is missing")
+            continue
+        hidden = section.first.get_attribute("hidden") is not None
+        if name == "charts" and hidden:
+            problems.append("the Charts view is hidden on first paint")
+        if name != "charts" and not hidden:
+            problems.append(f"the {name!r} view is showing before it was asked for")
+
+    # --- the live signals: the bridge answered and the app came alive --------
+    version = _attr(page, "#about-version", "data-version")
+    if version == VERSION_PLACEHOLDER:
         problems.append(
-            f"#version still reads {version!r} — info() never reached the page "
-            "(the bridge did not attach, or the page never retried after it did)"
+            "#about-version carries no data-version — info() never reached the page "
+            "(the bridge did not attach, or the app never retried after it did)"
         )
+    if _attr(page, "html", "data-bridge") != "live":
+        problems.append("the document does not report a live bridge")
 
-    no_api_class = page.locator("#no-api").first.get_attribute("class") or ""
+    no_api_class = _attr(page, "#no-api", "class")
     if "show" in no_api_class.split():
         problems.append(
-            "the 'runs inside the desktop app' notice is showing even though the "
-            "bridge is live — the page bootstrapped before pywebview attached and "
+            "the 'desktop app is not connected' notice is showing even though the "
+            "bridge is live — the app bootstrapped before pywebview attached and "
             "never recovered"
         )
 
-    run_button = page.locator("#run-btn").first
+    run_button = page.locator("#charts-run").first
     if run_button.count() == 0:
-        problems.append("#run-btn is missing")
+        problems.append("#charts-run is missing")
     else:
         if run_button.is_disabled():
-            problems.append("#run-btn is disabled with a live bridge")
+            problems.append("#charts-run is disabled with a live bridge")
         label = (run_button.text_content() or "").strip()
-        if label != "run pipeline":
-            problems.append(f"#run-btn reads {label!r}, expected 'run pipeline'")
+        if label != RUN_BUTTON_LABEL:
+            problems.append(f"#charts-run reads {label!r}, expected {RUN_BUTTON_LABEL!r}")
 
-    packs = page.locator("#pack option").count()
-    if packs < 1:
-        problems.append("the template-pack picker is empty — info().packs never rendered")
+    if page.locator("#charts-pack option").count() < 1:
+        problems.append("the chart-layout picker is empty — info().packs never rendered")
 
-    sources = page.locator("#source option").all_text_contents()
-    if not sources or sources[0].strip() != "auto-detect":
-        problems.append(f"the source picker does not lead with 'auto-detect' (got {sources!r})")
+    sources = page.locator("#charts-source option").all_text_contents()
+    if not sources or sources[0].strip() != "Detect":
+        problems.append(f"the export-format picker does not lead with 'Detect' (got {sources!r})")
 
-    status = _text(page, "#status-text")
-    if status != "ready":
-        problems.append(f"status bar reads {status!r}, expected 'ready'")
+    if not _text(page, "#log-strip-msg"):
+        problems.append("the activity strip says nothing at all")
 
     return problems

@@ -494,7 +494,7 @@ def test_destination_init_validate_found(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.exit_code == 0, result.output
     assert "found 1 element" in result.output
     # --cdp surfaces the shared-machine warning.
-    assert "multi-user" in result.output.lower()
+    assert "other people" in result.output.lower()
     assert (out_dir / "tebra" / "selectors.yaml").is_file()
 
 

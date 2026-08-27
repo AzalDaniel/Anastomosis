@@ -134,16 +134,12 @@ def _check_gui_web() -> AssetCheck:
         from anastomosis.gui.shell import _WEB_DIR
 
         pages = (
+            # The single-document shell plus every view script it loads once —
+            # a freezer that drops one script leaves that view dead inside a
+            # window that otherwise opens, so each is checked by name.
             "index.html",
-            "wizard.html",
-            "console.html",
-            "packgen.html",
-            "source.html",
             "app.js",
             "shell.js",
-            # The per-page scripts each workspace HTML loads — a freezer that drops
-            # one while keeping its .html leaves that page non-functional, so check
-            # them too (not just the shared app.js/shell.js).
             "wizard.js",
             "console.js",
             "packgen.js",

@@ -343,9 +343,14 @@ def _assert_dashboard_rendered(expectations: ModuleType) -> None:
         browser = playwright.chromium.connect_over_cdp(_CDP_URL)
         try:
             page = _dashboard_page(browser)
+            # The app's machine liveness signals (mirrors expectations.py's
+            # contract): the bridge reports live AND info() answered — the
+            # About popover carries a non-empty data-version only after the
+            # real round-trip.
             page.wait_for_function(
-                "() => { const v = document.querySelector('#version');"
-                " return v && v.textContent.trim() && v.textContent.trim() !== '—'; }",
+                "() => document.documentElement.dataset.bridge === 'live'"
+                " && !!(document.querySelector('#about-version')"
+                " && document.querySelector('#about-version').dataset.version)",
                 timeout=_DASHBOARD_TIMEOUT_MS,
             )
             problems = expectations.check_dashboard(page)
