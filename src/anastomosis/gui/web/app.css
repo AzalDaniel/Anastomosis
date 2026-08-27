@@ -651,6 +651,12 @@ svg { display: block; }
   animation-play-state: paused;
 }
 .progress-frame.is-running .progress-bar-fill { animation-play-state: running; }
+/* A run that stopped keeps the width it reached — the bar is the record of how
+   far it got — but not the colour that means "going fine". */
+.progress-frame.is-stopped .progress-bar-fill {
+  background: var(--stop);
+  animation: none;
+}
 @keyframes progress-pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.72; }

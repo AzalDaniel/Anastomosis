@@ -335,6 +335,21 @@
   }
 
   // ─── Banner ───────────────────────────────────────────────────
+  // The controller answers a submit it cannot take with a short machine-readable
+  // sentinel, not a message — `Busy` is pinned by name across the controller
+  // tests and has to stay a sentinel. This is the one place it becomes something
+  // a physician can act on. Anything unrecognised is passed through as-is; a
+  // `prefix` is only used on those, because "the samples could not be read:
+  // Busy" describes a failure that never happened.
+  const REFUSALS = {
+    Busy: "Anastomosis is already working on something else. Wait for that to finish, then try again.",
+  };
+  function refusalText(error, prefix) {
+    const sentinel = String(error == null ? "" : error);
+    if (sentinel in REFUSALS) return REFUSALS[sentinel];
+    return prefix ? `${prefix}: ${sentinel}` : sentinel;
+  }
+
   function showBanner(message) {
     const banner = el("banner");
     if (!banner) return;
@@ -1103,6 +1118,7 @@
     buildRunForm,
     renderPatients,
     clearPatients,
+    refusalText,
     loadPatients,
     renderCalendar,
     MONTH_NAMES,

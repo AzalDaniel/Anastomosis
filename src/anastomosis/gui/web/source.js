@@ -146,7 +146,7 @@
     try {
       const started = await window.pywebview.api.source_init_async(v.example, v.name, v.display, false);
       if (started && started.ok === false) {
-        Shell.showBanner(`The example could not be read: ${started.error}`);
+        Shell.showBanner(Shell.refusalText(started.error, "The example could not be read"));
         setStep("Step 1 of 2 — look at the example.");
       }
     } catch (err) {
@@ -162,7 +162,7 @@
     try {
       const started = await window.pywebview.api.source_init_async(v.example, v.name, v.display, true);
       if (started && started.ok === false) {
-        Shell.showBanner(`The format could not be saved: ${started.error}`);
+        Shell.showBanner(Shell.refusalText(started.error, "The format could not be saved"));
         setStep("Step 2 of 2 — review and confirm.");
       }
     } catch (err) {

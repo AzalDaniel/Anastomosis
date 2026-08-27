@@ -264,8 +264,11 @@ def test_the_rail_shows_only_the_stages_this_run_will_perform(gui) -> None:
             "() => [...document.querySelectorAll('#charts-rail .stage')].map(c => c.id)"
         )
 
+    # The rail is painted by the run's first event, not by the click — a submit
+    # the controller refuses must leave the last run's results standing.
     # Defaults: the double-check is on, no extra artifact is requested.
     page.click("#charts-run")
+    app.emit(stage_event(_FLOW, "ingest", "start"))
     ids = rail_ids()
     assert "charts-stage-qa" in ids, ids
     assert "charts-stage-deliver" not in ids, ids
@@ -280,4 +283,94 @@ def test_the_rail_shows_only_the_stages_this_run_will_perform(gui) -> None:
             " b.checked = true; b.dispatchEvent(new Event('change', {bubbles: true})); }"
         )
         page.click("#charts-run")
+        app.emit(stage_event(_FLOW, "ingest", "start"))
         assert "charts-stage-deliver" in rail_ids(), rail_ids()
+
+
+def test_a_run_that_stopped_does_not_leave_a_full_progress_bar(gui) -> None:
+    """A failure used to finish the bar, in the colour that means "going fine".
+
+    Three signals describe a run: the headline, the rail and the bar. The bar was
+    driven from a single `finishRun()` called on BOTH the finish and the failure
+    branch, so a run that died on stage two showed "Stopped." and a red cross on
+    the rail above a full brand-coloured bar. Now the bar measures stages settled
+    out of stages planned, so where it stops IS how far the run got.
+    """
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+
+    def bar() -> tuple[str, str | None, bool]:
+        return (
+            page.locator("#charts-fill").evaluate("n => n.style.width"),
+            page.locator("#charts-progress .progress-bar").get_attribute("aria-valuenow"),
+            page.locator("#charts-progress").evaluate("n => n.classList.contains('is-stopped')"),
+        )
+
+    page.click("#charts-run")
+    app.emit(stage_event(_FLOW, "ingest", "start"))
+    assert bar() == ("0%", "0", False)
+
+    # One of the three planned stages settles (the double-check is on by default,
+    # no deliverer is, so the plan is ingest + reconstruct + qa).
+    app.emit(stage_event(_FLOW, "ingest", "done"))
+    width, aria, stopped = bar()
+    assert width.startswith("33"), width
+    assert aria == "33", aria
+    assert not stopped
+
+    app.emit(stage_event(_FLOW, "reconstruct", "start"))
+    app.emit(error_event(_FLOW, "reconstruct", "RenderFailed"))
+    width, aria, stopped = bar()
+    assert width.startswith("33"), f"the failed run filled the bar to {width}"
+    assert aria == "33", aria
+    assert stopped, "a stopped run kept the running colour"
+    assert app.text("#charts-current") == "Stopped."
+
+
+def test_a_finished_run_survives_a_click_the_controller_refuses(gui) -> None:
+    """One busy guard covers every view, so this click is live but rejected.
+
+    It used to wipe the rail counts and the whole patient table before asking,
+    restore nothing, and report the refusal as the bare word `Busy` under a
+    status line reading "Ready." — while the work it was refused for was still
+    running somewhere else.
+    """
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+
+    page.click("#charts-run")
+    app.emit(stage_event(_FLOW, "ingest", "start"))
+    app.emit(progress_event(_FLOW, "ingest", patients=3, encounters=7))
+    app.emit(stage_event(_FLOW, "ingest", "done"))
+    app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=3, rendered=7))
+    page.wait_for_selector("#charts-patients:not([hidden])")
+
+    def snapshot() -> dict[str, object]:
+        return {
+            "current": app.text("#charts-current"),
+            "rail": page.evaluate(
+                "() => [...document.querySelectorAll('#charts-rail .stage')]"
+                ".map(c => [c.id, c.dataset.state || '', c.querySelector('.stage-counts')"
+                ".textContent])"
+            ),
+            "patients": page.locator("#charts-patients").get_attribute("hidden"),
+            "fill": page.locator("#charts-fill").evaluate("n => n.style.width"),
+        }
+
+    before = snapshot()
+    page.evaluate(
+        "() => { window.pywebview.api.run_pipeline_async ="
+        " () => Promise.resolve({ok: false, error: 'Busy'}); }"
+    )
+    page.click("#charts-run")
+    page.wait_for_selector("#banner.show")
+
+    assert snapshot() == before, "a refused click changed the finished run on screen"
+    assert not page.locator("#charts-run").is_disabled()
+    banner = app.text("#banner")
+    assert "Busy" not in banner, f"the sentinel reached the screen: {banner!r}"
+    assert "already working on something else" in banner, banner
