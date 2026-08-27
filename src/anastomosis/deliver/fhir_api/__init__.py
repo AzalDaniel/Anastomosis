@@ -16,8 +16,16 @@ that give the verifier L5/L6).
   defense, a title-fingerprint duplicate scan, and the DocumentReference driver.
 * :mod:`.attach` — ``attach_fhir_destination``, the one construction seam the
   frontends call (``anast upload --fhir``); the API counterpart to
-  :mod:`anastomosis.deliver.browser.attach`. Deliberately NOT re-exported here,
-  mirroring that module: a frontend imports the seam by its module path.
+  :mod:`anastomosis.deliver.browser.attach`.
+
+None of the three are re-exported here — a frontend imports each by its module
+path (``from anastomosis.deliver.fhir_api.client import FhirEndpoint``, etc.).
+``.client`` and ``.destination`` both reach into
+:mod:`anastomosis.deliver.browser.errors` for the shared delivery-error
+taxonomy, and that package eagerly loads the whole browser-upload stack
+(engine, WAL-SQLite tracking, …) on import — a package-level re-export here
+would make importing this package (and therefore ``anast --help``, which loads
+``.attach`` for its ``DEFAULT_TOKEN_ENV`` default) pay for that stack too.
 
 The runtime modules work WITHOUT ``fhir.resources`` installed — resources are
 built as plain stdlib dicts. The ``fhir`` extra is used only by the tests, to
@@ -25,8 +33,3 @@ validate the constructed DocumentReference against the real R4 schema.
 """
 
 from __future__ import annotations
-
-from .client import FhirClient, FhirEndpoint
-from .destination import FhirApiDestination
-
-__all__ = ["FhirApiDestination", "FhirClient", "FhirEndpoint"]
