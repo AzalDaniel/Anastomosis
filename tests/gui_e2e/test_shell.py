@@ -380,3 +380,37 @@ def test_reduced_motion_fades_the_lozenge_rather_than_teleporting_it(gui) -> Non
     assert any("is-settling" in c for c in seen), f"no fade was used: {seen}"
     assert not any("is-stretching" in c for c in seen), f"the stretch ran anyway: {seen}"
     assert app.visible("teach"), "the view did not switch under reduced motion"
+
+
+def test_the_activity_strip_floats_instead_of_landing_on_the_last_panel(gui) -> None:
+    """Sticky kept the strip in the scroll flow, so it parked on the content.
+
+    At the end of a view it settled ON TOP of the last panel and painted a
+    translucent film over it. That is not only ugly: it was the sole cause of
+    five WCAG failures — the strip's own timestamp and hint, and the help line
+    underneath it, measured 4.04:1 on a surface that reads 4.58:1 when nothing
+    covers it. It is chrome, so it floats like the rest of the chrome, and the
+    shell's bottom padding is the gutter that keeps content clear of it.
+    """
+    app = gui()
+    page = app.page
+
+    for view, _label in NAV_VIEWS:
+        app.show(view)
+        page.evaluate(
+            "() => { const s = document.querySelector('.app-shell');"
+            " s.scrollTo(0, s.scrollHeight); }"
+        )
+        page.wait_for_timeout(200)
+        gap = page.evaluate(
+            "() => { const strip = document.querySelector('.log-strip').getBoundingClientRect();"
+            " const panels = [...document.querySelectorAll('.view:not([hidden]) .panel')];"
+            " const last = panels.length"
+            "   ? Math.max(...panels.map(p => p.getBoundingClientRect().bottom)) : 0;"
+            " return Math.round(strip.top - last); }"
+        )
+        assert gap >= 20, f"the strip sits {-gap}px into the last panel on {view}"
+
+    strip = page.locator(".log-strip").bounding_box()
+    assert strip is not None
+    assert strip["height"] >= 44, f"the strip is {strip['height']}px tall"

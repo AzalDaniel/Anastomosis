@@ -402,19 +402,19 @@
         </div>
       </section>
 
-      <div class="shell-spacer"></div>
-
-      <!-- The activity strip is GLOBAL: it shows the latest event from any run,
-           in any view, and expands into the full history. -->
-      <button type="button" class="log-strip" id="log-strip"
-              aria-label="Activity — click or press L for the full list"
-              aria-expanded="false" aria-controls="log-drawer">
-        <span class="log-ts" id="log-strip-ts">--:--:--</span>
-        <span class="icon log-icon" id="log-strip-icon" data-icon="info"></span>
-        <span class="log-msg" id="log-strip-msg">Ready.</span>
-        <span class="log-hint" aria-hidden="true">L</span>
-      </button>
     </main>
+
+    <!-- The activity strip is GLOBAL: it shows the latest event from any run,
+         in any view, and expands into the full history. It floats above the
+         shell rather than riding at the end of it. -->
+    <button type="button" class="log-strip" id="log-strip"
+            aria-label="Activity — click or press L for the full list"
+            aria-expanded="false" aria-controls="log-drawer">
+      <span class="log-ts" id="log-strip-ts">--:--:--</span>
+      <span class="icon log-icon" id="log-strip-icon" data-icon="info"></span>
+      <span class="log-msg" id="log-strip-msg">Ready.</span>
+      <span class="log-hint" aria-hidden="true">L</span>
+    </button>
 
     <div class="log-drawer" id="log-drawer" role="dialog" aria-label="Activity" aria-modal="false" hidden>
       <header class="log-drawer-header">

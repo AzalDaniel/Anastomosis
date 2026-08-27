@@ -184,7 +184,7 @@ svg { display: block; }
   height: 100vh;
   /* Room for the floating chrome at both ends: content scrolls under it, but
      at rest the first and last panels are clear of it. */
-  padding: 80px 0 60px;
+  padding: 80px 0 76px;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -217,8 +217,6 @@ svg { display: block; }
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  /* The bottom gutter clears the 28px sticky activity strip, so the last panel
-     of a view is never parked underneath it. */
   padding: 0 var(--space-5) var(--space-5);
   opacity: 1;
   transform: translateY(0);
@@ -229,7 +227,6 @@ svg { display: block; }
 
 /* A group of panels inside a view: 24px between groups is the structure (§5). */
 .stack { display: flex; flex-direction: column; gap: var(--space-4); }
-.shell-spacer { flex: 1 1 auto; min-height: var(--space-2); }
 
 
 /* ─── 5. Panels ──────────────────────────────────────────────── */
@@ -503,8 +500,10 @@ svg { display: block; }
 .segment-option:focus { outline: none; }
 .segment-option[aria-pressed="true"] { color: var(--ink); }
 /* The blob arrives before the commit does, so the label under it brightens on
-   the DRAG position while the selection still describes the committed view. */
-.segment-option.is-live { color: var(--ink-inverse); }
+   the DRAG position while the selection still describes the committed view.
+   Scoped to the nav: only the nav's lozenge is porcelain, and dark ink on the
+   oxblood indicator of a settings toggle measures 3.77:1. */
+.navpill .segment-option.is-live { color: var(--ink-inverse); }
 .segment-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .segment-row > .field-help { flex: 1 1 260px; }
 
@@ -1001,29 +1000,41 @@ svg { display: block; }
 
 
 /* ─── 14. Activity strip + drawer (global, all flows) ────────── */
-/* 28px of always-visible latest event; click or press L for the history. It is
-   GLOBAL: a run started in one view keeps reporting from every view (§7). */
+/* The latest event from any run, always visible; click or press L for the
+   history. It is GLOBAL: a run started in one view keeps reporting from every
+   view (§7).
+
+   It FLOATS rather than sticking. Sticky kept it in the scroll flow, so at the
+   end of a view it settled ON TOP of the last panel and painted a translucent
+   film over it — which is what put the strip's own labels and the help line
+   beneath them under the WCAG floor at 4.04:1, on a surface that reads 4.58:1
+   when nothing covers it. Same chrome tier as the nav pill, because it is the
+   same kind of thing: chrome floating over content, with a gutter in the
+   shell's padding that keeps content clear of it at rest. */
 .log-strip {
-  position: sticky;
-  bottom: 0;
-  margin: 0 var(--space-5);
-  height: 28px;
+  position: fixed;
+  left: var(--space-5);
+  right: var(--space-5);
+  bottom: 12px;
+  z-index: 190;
+  height: 44px;
   display: grid;
   grid-template-columns: 66px 20px 1fr auto;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-3);
-  background: var(--glass-veil-bg);
-  -webkit-backdrop-filter: var(--glass-veil-blur);
-  backdrop-filter: var(--glass-veil-blur);
-  border: var(--glass-veil-border);
-  border-radius: var(--radius-control);
+  padding: 0 var(--space-4);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  border-radius: var(--radius-pill);
   font-size: var(--text-caption);
   color: var(--ink-secondary);
   text-align: left;
-  transition: background var(--t-snap) var(--ease-quart);
+  transition: color var(--t-snap) var(--ease-quart);
 }
-.log-strip:hover { background: var(--fill); color: var(--ink); }
+.log-strip:hover { color: var(--ink); }
 .log-ts { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink-muted); }
 .log-icon { width: 16px; height: 16px; color: var(--ink-muted); }
 .log-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
