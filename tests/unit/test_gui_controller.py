@@ -2228,3 +2228,34 @@ def test_busy_and_join_active_job_surface_for_close_barrier(tmp_path: Path) -> N
     # It finishes: the join returns True and the guard releases (not wedged).
     assert controller.join_active_job(5.0) is True
     assert controller.busy is False
+
+
+def test_a_downgraded_stage_reaches_the_page_as_skipped_not_done() -> None:
+    """The bridge must not close a stage that never ran as "done".
+
+    The pipeline downgrades QA to a no-op when PyMuPDF is missing and says so
+    on the StageEvent. The bridge forwarded only ``counts``, so the page saw
+    start → done and painted a verification tick over a check that read nothing.
+    """
+    from anastomosis.gui.consoles.runs import PipelineConsole, SummaryStore
+    from anastomosis.pipeline import STAGE_QA, StageEvent
+
+    class _Jobs:
+        def acquire(self) -> bool:
+            return True
+
+        def release(self) -> None:
+            pass
+
+    emitted: list[dict[str, object]] = []
+    console = PipelineConsole(emitted.append, _Jobs(), SummaryStore())
+    on_event = console._stage_emitter({})
+
+    on_event(StageEvent(STAGE_QA, detail="skipped: …", skipped=True))
+    states = [e["state"] for e in emitted if e.get("type") == "stage"]
+    assert states == ["start", "skipped"], states
+
+    emitted.clear()
+    on_event(StageEvent(STAGE_QA, counts={"pass": 6, "warn": 0, "fail": 0}))
+    states = [e["state"] for e in emitted if e.get("type") == "stage"]
+    assert states == ["start", "done"], states

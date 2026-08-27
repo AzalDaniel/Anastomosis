@@ -105,7 +105,15 @@
     if (frame) frame.classList.toggle("is-running", busy);
   }
 
+  // What a stage that could not run tells the person who asked for it.
+  // COPY_MAP.md prescribes this sentence for the double-check.
+  const SKIPPED_NOTE = {
+    qa: "This installation cannot double-check charts. Reinstall the full package to enable it.",
+  };
+  let skippedStages = [];
+
   function resetRun() {
+    skippedStages = [];
     setCurrent("Rebuilding…");
     renderRail();
     const fill = el("charts-fill");
@@ -124,6 +132,15 @@
       case "stage":
         markStage(event.stage, event.state);
         if (event.state === "start") setCurrent(`${Shell.stageLabel(event.stage)}…`);
+        if (event.state === "skipped") {
+          // A stage that did not run must say so where the tick would have been,
+          // and again in the banner: a physician who asked for the double-check
+          // and saw only a quiet rail would believe their charts were checked.
+          skippedStages.push(Shell.stageLabel(event.stage));
+          const card = el(`charts-stage-${event.stage}`);
+          const counts = card && card.querySelector(".stage-counts");
+          if (counts) counts.textContent = SKIPPED_NOTE[event.stage] || "did not run";
+        }
         break;
       case "progress": {
         const card = el(`charts-stage-${event.stage}`);
@@ -132,7 +149,12 @@
         break;
       }
       case "done":
-        setCurrent("Finished.");
+        setCurrent(
+          skippedStages.length
+            ? `Finished, but ${skippedStages.join(" and ")} did not run.`
+            : "Finished."
+        );
+        if (skippedStages.length) Shell.showBanner(SKIPPED_NOTE.qa);
         finishRun();
         Shell.loadPatients(el("charts-patients"), el("charts-patients-body"), event.summary_id);
         break;

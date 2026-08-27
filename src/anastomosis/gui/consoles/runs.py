@@ -116,7 +116,10 @@ class _RunConsole:
                 return  # the detect stage has no rail of its own
             self._emit(stage_event(self._FLOW, stage, "start"))
             self._emit(progress_event(self._FLOW, stage, **event.counts))
-            self._emit(stage_event(self._FLOW, stage, "done"))
+            # A downgraded stage closes as "skipped", never "done": the rail
+            # paints a tick for "done", and a tick over a verification that
+            # never ran is the app telling the physician something untrue.
+            self._emit(stage_event(self._FLOW, stage, "skipped" if event.skipped else "done"))
             rollup.update(event.counts)
 
         return _on_event
