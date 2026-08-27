@@ -17,6 +17,7 @@ import pytest
 
 from anastomosis.core.sourcelearn import (
     FuzzyNameScorer,
+    _mask,
     analyze_source,
     build_mapping,
     detect_format,
@@ -51,6 +52,45 @@ def test_profile_columns_infers_types_and_masks_values() -> None:
     assert "900-12-3456" not in profiles["SSN"].sample_shape
     # patient id repeats across visit rows (distinct < non_null).
     assert profiles["PatientID"].distinct < profiles["PatientID"].non_null
+
+
+def test_the_mask_hides_every_script_not_just_ascii() -> None:
+    """A name is a name in every writing system, and this mask promises "no
+    values shown" in a literal on-screen sentence.
+
+    The old mask was `[A-Za-z] -> A` and `[0-9] -> N`, both ASCII-only classes,
+    so a value in any other script survived unchanged: a Han, Cyrillic, Arabic,
+    kana or Hangul name was printed verbatim to the console and shipped over the
+    GUI bridge — as was the accented letter in a Latin one. The mask now allows
+    the separators it keeps rather than denying the characters it hides, so a
+    script nobody anticipated is masked instead of shown.
+
+    Every value below is invented for this test.
+    """
+    # A separator-only allow-list means the shape survives, in any script.
+    assert _mask("John Smith") == "AAAA AAAAA"
+    assert _mask("2024-01-15") == "NNNN-NN-NN"
+    assert _mask("(555) 555-0123") == "(NNN) NNN-NNNN"
+
+    for value in (
+        "\u674e\u660e\u534e",  # Han
+        "\u041e\u043b\u044c\u0433\u0430",  # Cyrillic
+        "\u0645\u062d\u0645\u062f",  # Arabic
+        "M\u00fcller",  # Latin with a diacritic
+        "\u30e4\u30de\u30c0",  # katakana
+        "\uae40\ubbfc\uc900",  # Hangul
+        "\u0391\u03b8\u03b7\u03bd\u03ac",  # Greek
+    ):
+        shape = _mask(value)
+        assert set(shape) <= set("AN "), f"{value!r} masked to {shape!r}"
+        for char in value:
+            if char.isalpha():
+                assert char not in shape, f"{char!r} survived the mask"
+
+    # Non-ASCII digits are digits.
+    assert _mask("\u0663\u0664\u0665") == "NNN"
+    # And the length cap still holds.
+    assert len(_mask("a" * 40)) == 24
 
 
 def test_analysis_summary_is_phi_safe() -> None:

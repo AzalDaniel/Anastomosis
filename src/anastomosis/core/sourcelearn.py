@@ -22,7 +22,9 @@ the whole safety story.
 PHI (the load-bearing rule of this module): inference runs entirely locally and
 NO patient value ever leaves it — not to a log, not to an event, not into the
 analysis summary. The only strings that surface are column NAMES, inferred type
-labels, counts, and digit/letter-masked shapes.
+labels, counts, and masked shapes. The mask allow-lists the separators it keeps
+rather than deny-listing the characters it hides, so a script nobody thought of
+is masked rather than shown.
 """
 
 from __future__ import annotations
@@ -178,10 +180,27 @@ class ColumnProfile:
     sample_shape: str
 
 
+#: The only characters a masked shape may show as themselves: the ASCII
+#: separators that give a value its form. Everything else is content until
+#: proven otherwise, which is why this is an allow-list. A deny-list of
+#: "letters and digits" was the bug: `[A-Za-z]` and `[0-9]` are ASCII-only, so
+#: a name in any other script — CJK, Cyrillic, Arabic, Greek, Hebrew, kana,
+#: Hangul — passed through the mask unchanged and was printed to the console
+#: under the words "PHI-safe — no values shown".
+_SHAPE_PUNCTUATION = frozenset(" \t!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
 def _mask(value: str) -> str:
-    """A digit/letter-masked shape of a value — carries form, never content."""
-    masked = re.sub(r"[0-9]", "N", re.sub(r"[A-Za-z]", "A", value))
-    return masked[:24]
+    """A digit/letter-masked shape of a value — carries form, never content.
+
+    Fails closed: a character this function does not recognise as a separator
+    becomes `A`, so an unfamiliar script is masked rather than shown.
+    """
+    shape = [
+        char if char in _SHAPE_PUNCTUATION else "N" if char.isdigit() or char.isnumeric() else "A"
+        for char in value
+    ]
+    return "".join(shape)[:24]
 
 
 def _infer_type(values: Sequence[str]) -> str:
