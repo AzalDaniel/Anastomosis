@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from anastomosis.cli import app
+from anastomosis.cli_commands._paths import out_dir
 
 if TYPE_CHECKING:
     from anastomosis.core.migrate import MigrationCommand
@@ -173,7 +174,10 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
 @app.command("migrate")
 def migrate_cmd(
     export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
-    out: Annotated[Path, typer.Option("--out", "-o", help="Output directory (created 0700).")],
+    out: Annotated[
+        Path,
+        typer.Option("--out", "-o", help="Output directory (created 0700).", parser=out_dir),
+    ],
     source: Annotated[
         str | None,
         typer.Option(

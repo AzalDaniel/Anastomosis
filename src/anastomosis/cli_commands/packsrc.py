@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from anastomosis.cli import pack_app, source_app
+from anastomosis.cli_commands._paths import out_dir
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
@@ -188,7 +189,11 @@ def pack_init(
     ],
     out_dir: Annotated[
         Path,
-        typer.Option("--out-dir", help="Directory to write the pack into (default: ./packs)."),
+        typer.Option(
+            "--out-dir",
+            help="Directory to write the pack into (default: ./packs).",
+            parser=out_dir,
+        ),
     ] = Path("packs"),
     render_preview: Annotated[
         bool,
@@ -317,7 +322,11 @@ def source_init(
     ] = None,
     out_dir: Annotated[
         Path | None,
-        typer.Option("--out-dir", help="Where to save (default: ~/.anastomosis/sources)."),
+        typer.Option(
+            "--out-dir",
+            help="Where to save (default: ~/.anastomosis/sources).",
+            parser=out_dir,
+        ),
     ] = None,
     yes: Annotated[
         bool,

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from anastomosis.cli import app
+from anastomosis.cli_commands._paths import out_dir
 
 if TYPE_CHECKING:
     # Type-only: the runtime import stays inside the command body so `anast
@@ -39,7 +40,7 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
 
     def command(
         export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
-        out: Annotated[Path, typer.Option("--out", "-o", help=out_help)],
+        out: Annotated[Path, typer.Option("--out", "-o", help=out_help, parser=out_dir)],
         source: Annotated[
             str | None,
             typer.Option("--source", "-s", help="Source adapter name (default: auto-detect)."),
@@ -73,7 +74,7 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
         ] = True,
         charts_dir: Annotated[
             Path | None,
-            typer.Option("--charts-dir", help=charts_help),
+            typer.Option("--charts-dir", help=charts_help, parser=out_dir),
         ] = None,
     ) -> None:
         from anastomosis import cli as _cli

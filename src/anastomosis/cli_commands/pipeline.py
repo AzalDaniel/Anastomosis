@@ -14,12 +14,16 @@ from typing import Annotated
 import typer
 
 from anastomosis.cli import pipeline_app
+from anastomosis.cli_commands._paths import out_dir
 
 
 @pipeline_app.command("run")
 def pipeline_run(
     export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
-    out: Annotated[Path, typer.Option("--out", "-o", help="Output directory (created 0700).")],
+    out: Annotated[
+        Path,
+        typer.Option("--out", "-o", help="Output directory (created 0700).", parser=out_dir),
+    ],
     source: Annotated[
         str | None,
         typer.Option("--source", "-s", help="Source adapter name (default: auto-detect)."),
@@ -50,17 +54,27 @@ def pipeline_run(
     ] = True,
     archive: Annotated[
         Path | None,
-        typer.Option("--archive", help="Also emit an offline browsable archive in this directory."),
+        typer.Option(
+            "--archive",
+            help="Also emit an offline browsable archive in this directory.",
+            parser=out_dir,
+        ),
     ] = None,
     bundle: Annotated[
         Path | None,
         typer.Option(
-            "--bundle", help="Also emit one per-patient bundle subdirectory in this directory."
+            "--bundle",
+            help="Also emit one per-patient bundle subdirectory in this directory.",
+            parser=out_dir,
         ),
     ] = None,
     ccda: Annotated[
         Path | None,
-        typer.Option("--ccda", help="Also emit one C-CDA / CCD XML per patient in this directory."),
+        typer.Option(
+            "--ccda",
+            help="Also emit one C-CDA / CCD XML per patient in this directory.",
+            parser=out_dir,
+        ),
     ] = None,
     upload_manifest: Annotated[
         bool,
