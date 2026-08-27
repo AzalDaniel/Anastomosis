@@ -196,3 +196,50 @@ def test_a_skipped_double_check_is_never_painted_as_done(gui) -> None:
     app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=3, rendered=7))
     current = app.text("#charts-current")
     assert "Finished" in current and "did not run" in current
+
+
+def test_section_choices_survive_a_layout_round_trip(gui) -> None:
+    """A section the physician turned off must not come back on its own.
+
+    The section matrix was rebuilt from each layout's defaults on every change
+    of the layout picker, with no memory of what had been chosen. Turning a
+    section off, looking at another layout and coming back silently reinstated
+    it — and the reinstated value was what the run was built from, so a chart
+    could carry a section that had been deliberately excluded.
+    """
+    app = gui()
+    page = app.page
+    packs = page.locator("#charts-pack option").all_text_contents()
+    assert len(packs) >= 2, f"need two layouts to switch between, got {packs}"
+
+    first, second = packs[0], packs[1]
+    page.select_option("#charts-pack", label=first)
+    boxes = page.locator("#charts-sections input[data-section]")
+    assert boxes.count() >= 1
+
+    # Turn every section off for this layout by clicking the toggle the way a
+    # person does — the custom track sits over the checkbox itself.
+    labels = page.locator("#charts-sections label.toggle")
+    for i in range(boxes.count()):
+        if boxes.nth(i).is_checked():
+            labels.nth(i).click()
+    chosen = {
+        b["k"]: b["v"]
+        for b in page.evaluate(
+            "() => [...document.querySelectorAll('#charts-sections input[data-section]')]"
+            ".map(i => ({k: i.dataset.section, v: i.checked}))"
+        )
+    }
+    assert chosen and not any(chosen.values()), chosen
+
+    page.select_option("#charts-pack", label=second)
+    page.select_option("#charts-pack", label=first)
+
+    back = {
+        b["k"]: b["v"]
+        for b in page.evaluate(
+            "() => [...document.querySelectorAll('#charts-sections input[data-section]')]"
+            ".map(i => ({k: i.dataset.section, v: i.checked}))"
+        )
+    }
+    assert back == chosen, f"the layout's defaults came back over the choice: {back}"
