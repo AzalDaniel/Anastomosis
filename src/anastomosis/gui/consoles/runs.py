@@ -280,9 +280,18 @@ class PipelineConsole(_RunConsole):
             run_pipeline_command,
             summarize_patients,
         )
+        from anastomosis.core.output import OutputPathError, require_output_dir
         from anastomosis.pipeline import PipelineError
 
-        out = Path(out_dir)
+        # The blankness of an empty field only survives until Path() sees it, so
+        # it is caught here rather than in validate_output_target: Path("") is
+        # Path("."), which would write patient-named charts into whatever folder
+        # the app was launched from and report success.
+        try:
+            out = require_output_dir(out_dir)
+        except OutputPathError as exc:
+            self._emit(error_event(self._FLOW, _failed_stage(str(exc)), str(exc)))
+            return {"ok": False, "error": str(exc)}
         rollup: dict[str, int] = {}
         _on_event = self._stage_emitter(rollup)
 
