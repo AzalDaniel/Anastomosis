@@ -116,6 +116,7 @@ __all__ = [
 # one render-day token (every other date — DOB, encounter, escript — is real
 # data and stays, so a genuine date regression is still caught).
 _RENDER_DAY_RE = re.compile(r"\(as of \d{1,2}/\d{1,2}/\d{4}\)")
+_RENDER_DAY_WORD_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{4}\)")
 _RENDER_DAY_PLACEHOLDER = "(as of <render-day>)"
 
 
@@ -172,19 +173,38 @@ def extract_word_boxes(pdf_path: Path) -> list[list[list[object]]]:
     import pymupdf  # provided by the render extra.
 
     with pymupdf.open(str(pdf_path)) as doc:
-        return [
-            [
-                [
-                    round(x0, _BOX_PRECISION),
-                    round(y0, _BOX_PRECISION),
-                    round(x1, _BOX_PRECISION),
-                    round(y1, _BOX_PRECISION),
-                    word,
-                ]
-                for x0, y0, x1, y1, word, *_rest in page.get_text("words")
-            ]
-            for page in doc
-        ]
+        pages: list[list[list[object]]] = []
+        for page in doc:
+            words = list(page.get_text("words"))
+            boxes: list[list[object]] = []
+            for index, (x0, y0, x1, y1, word, *_rest) in enumerate(words):
+                boxes.append(
+                    [
+                        round(x0, _BOX_PRECISION),
+                        round(y0, _BOX_PRECISION),
+                        round(x1, _BOX_PRECISION),
+                        round(y1, _BOX_PRECISION),
+                        _neutralize_render_day(word, index, words),
+                    ]
+                )
+            pages.append(boxes)
+        return pages
+
+
+def _neutralize_render_day(word: str, index: int, words: list[tuple]) -> str:
+    """The word-level twin of :func:`normalize_text`'s render-day masking.
+
+    The phrase ``(as of MM/DD/YYYY)`` splits into three word tokens, so the
+    date token is masked only when the two words before it are ``(as`` and
+    ``of`` — every other date on the page (DOB, encounter, escript) is real
+    data and stays comparable. The mask replaces the TEXT only: the token is
+    fixed-width (mm/dd/yyyy), so the box geometry stays deterministic.
+    """
+    if index < 2 or not _RENDER_DAY_WORD_RE.fullmatch(word):
+        return word
+    if words[index - 2][4] == "(as" and words[index - 1][4] == "of":
+        return "<render-day>)"
+    return word
 
 
 def diff_word_boxes(
