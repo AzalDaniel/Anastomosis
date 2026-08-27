@@ -84,6 +84,10 @@ class StageEvent:
     stage: str
     counts: dict[str, int] = field(default_factory=dict)
     detail: str = ""
+    #: The stage was downgraded to a no-op rather than run. A frontend must not
+    #: paint it as completed: a physician who asked for verification and got a
+    #: tick would believe their charts were checked when nothing read them.
+    skipped: bool = False
 
 
 class PipelineError(Exception):
@@ -380,7 +384,13 @@ def _run_qa_stage(
     except ImportError as exc:
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
-        emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
+        emit(
+            StageEvent(
+                STAGE_QA,
+                detail="skipped: install anastomosis[render] for PyMuPDF",
+                skipped=True,
+            )
+        )
         return None
     lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
     report = run_qa(

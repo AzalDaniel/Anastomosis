@@ -165,3 +165,34 @@ def test_charts_ignores_another_flow_terminal_event(gui) -> None:
     # Migrate section is off screen, so Playwright calls all of it invisible.)
     assert app.last_args("last_run_summary") == ["deadbeef"]
     assert page.locator("#migrate-patients").get_attribute("hidden") is None
+
+
+def test_a_skipped_double_check_is_never_painted_as_done(gui) -> None:
+    """A verification that did not run must not close with a tick.
+
+    The pipeline downgrades QA to a no-op when PyMuPDF is missing. The bridge
+    used to close every stage as "done" regardless, so a physician who switched
+    the double-check ON saw a green tick over a check that never read a single
+    chart, and a plain "Finished." — the app asserting something untrue about
+    the safety control they had asked for.
+    """
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+    page.click("#charts-run")
+
+    app.emit(stage_event(_FLOW, "qa", "start"))
+    app.emit(progress_event(_FLOW, "qa"))
+    app.emit(stage_event(_FLOW, "qa", "skipped"))
+
+    card = page.locator("#charts-stage-qa")
+    assert card.get_attribute("data-state") == "skipped"
+    # The tick is reserved for a stage that ran.
+    assert card.get_attribute("data-state") != "done"
+    note = card.locator(".stage-counts").text_content() or ""
+    assert "cannot double-check" in note
+
+    app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=3, rendered=7))
+    current = app.text("#charts-current")
+    assert "Finished" in current and "did not run" in current
