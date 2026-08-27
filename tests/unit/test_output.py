@@ -15,9 +15,11 @@ from anastomosis.core.output import (
     _ADMINISTRATORS_SID,
     _README_NAME,
     _SYSTEM_SID,
+    OutputPathError,
     _harden_windows_acl,
     _windows_dacl_aces,
     _windows_user_sid,
+    require_output_dir,
     secure_output_dir,
 )
 
@@ -412,3 +414,20 @@ def test_windows_real_dacl_is_protected(tmp_path: Path) -> None:
     allowed = {user_sid, "LA", "OW", "SY", "BA"}
     assert trustees <= allowed, f"unexpected ACE trustees: {sorted(trustees - allowed)}"
     assert not trustees & {"BU", "WD", "AU", "IU"}
+
+
+# --- a blank output folder must refuse, not silently mean "here" ---------------
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "\t", "\n"])
+def test_blank_output_dir_is_refused(raw: str) -> None:
+    """Path("") is Path("."), so a blank value does not fail — it quietly means
+    the directory the program is running from. For a tool that writes files
+    named after patients, that is a misplacement reported as success."""
+    with pytest.raises(OutputPathError) as excinfo:
+        require_output_dir(raw)
+    assert "No output folder was given" in str(excinfo.value)
+
+
+def test_a_real_output_dir_is_returned_unchanged(tmp_path: Path) -> None:
+    assert require_output_dir(str(tmp_path / "charts")) == tmp_path / "charts"

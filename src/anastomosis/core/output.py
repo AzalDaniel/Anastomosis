@@ -31,7 +31,12 @@ import stat
 import subprocess
 from pathlib import Path
 
-__all__ = ["OutputPathError", "secure_output_dir", "validate_output_target"]
+__all__ = [
+    "OutputPathError",
+    "require_output_dir",
+    "secure_output_dir",
+    "validate_output_target",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +48,23 @@ class OutputPathError(Exception):
     instead of a ``FileExistsError``/``NotADirectoryError`` traceback from deep
     in the render/delivery code. Callers map it to a clean exit (code 2).
     """
+
+
+def require_output_dir(raw: str) -> Path:
+    """Turn a user-supplied output location into a Path, refusing a blank one.
+
+    ``Path("")`` is ``Path(".")``, so a blank value does not fail — it silently
+    means "here", and charts named after patients land in whatever directory the
+    program happens to be running from, with the run reporting success. The
+    blankness only exists before ``Path()`` sees it, so this has to be called on
+    the raw value at the boundary where the person typed it.
+    """
+    if not raw.strip():
+        raise OutputPathError(
+            "No output folder was given. Choose the folder Anastomosis should write "
+            "the finished charts into."
+        )
+    return Path(raw)
 
 
 def validate_output_target(path: str | Path) -> None:
