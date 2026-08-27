@@ -33,6 +33,7 @@ from pathlib import Path
 
 __all__ = [
     "OutputPathError",
+    "clean_typed_path",
     "require_output_dir",
     "secure_output_dir",
     "validate_output_target",
@@ -50,6 +51,22 @@ class OutputPathError(Exception):
     """
 
 
+def clean_typed_path(raw: str) -> str:
+    """Normalise a path as a person actually supplies one.
+
+    Windows Explorer's "Copy as path" wraps the path in double quotes, which is
+    the ordinary way to get a path on Windows 11 — and a pasted field keeps the
+    quotes and any stray spaces. Neither is a path anybody meant to type, and
+    left alone both produce a folder that does not exist.
+    """
+    cleaned = raw.strip()
+    for quote in ('"', "'"):
+        if len(cleaned) >= 2 and cleaned[0] == quote and cleaned[-1] == quote:
+            cleaned = cleaned[1:-1].strip()
+            break
+    return cleaned
+
+
 def require_output_dir(raw: str) -> Path:
     """Turn a user-supplied output location into a Path, refusing a blank one.
 
@@ -59,7 +76,8 @@ def require_output_dir(raw: str) -> Path:
     blankness only exists before ``Path()`` sees it, so this has to be called on
     the raw value at the boundary where the person typed it.
     """
-    if not raw.strip():
+    raw = clean_typed_path(raw)
+    if not raw:
         raise OutputPathError(
             "No output folder was given. Choose the folder Anastomosis should write "
             "the finished charts into."

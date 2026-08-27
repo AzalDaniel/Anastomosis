@@ -19,6 +19,7 @@ from anastomosis.core.output import (
     _harden_windows_acl,
     _windows_dacl_aces,
     _windows_user_sid,
+    clean_typed_path,
     require_output_dir,
     secure_output_dir,
 )
@@ -431,3 +432,26 @@ def test_blank_output_dir_is_refused(raw: str) -> None:
 
 def test_a_real_output_dir_is_returned_unchanged(tmp_path: Path) -> None:
     assert require_output_dir(str(tmp_path / "charts")) == tmp_path / "charts"
+
+
+# --- a path as a person actually supplies one ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ('"C:\\Users\\you\\export"', "C:\\Users\\you\\export"),  # Explorer "Copy as path"
+        ("'/home/you/export'", "/home/you/export"),
+        ("  /home/you/export  ", "/home/you/export"),
+        ('  "/home/you/export"  ', "/home/you/export"),
+        ("/home/you/export", "/home/you/export"),
+        ('/odd"path/here', '/odd"path/here'),  # an unmatched quote is part of the name
+        ('"', '"'),  # a lone quote is not a pair
+    ],
+)
+def test_clean_typed_path(raw: str, want: str) -> None:
+    assert clean_typed_path(raw) == want
+
+
+def test_require_output_dir_accepts_a_pasted_windows_path() -> None:
+    assert require_output_dir('  "C:\\Users\\you\\charts"  ') == Path("C:\\Users\\you\\charts")

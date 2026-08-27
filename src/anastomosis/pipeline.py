@@ -191,6 +191,23 @@ def resolve_source(export_dir: Path, source: str | None) -> SourceAdapter:
             raise PipelineError(
                 str(exc.args[0] if exc.args else exc), exit_code=2, kind="bad_source"
             ) from None
+    # Detection answers "which format is this?", so it cannot tell a folder of
+    # unrecognised files from a folder that is not there. Saying "could not
+    # identify the export format" for a bad path sends someone off to pick a
+    # format, which then fails too — name the thing that is actually wrong.
+    if not export_dir.exists():
+        raise PipelineError(
+            f"There is no folder at {export_dir}. Check the path and try again.",
+            exit_code=2,
+            kind="bad_export_dir",
+        )
+    if not export_dir.is_dir():
+        raise PipelineError(
+            f"{export_dir} is a file, not a folder. Choose the folder your EHR "
+            "gave you, not a file inside it.",
+            exit_code=2,
+            kind="bad_export_dir",
+        )
     detected = detect_source(export_dir)
     if detected is None:
         known = ", ".join(a.name for a in available_sources())

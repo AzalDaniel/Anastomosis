@@ -110,3 +110,28 @@ def test_successful_load_returns_records() -> None:
     records = load_records(_Good(), Path("."))
     assert len(records) == 1
     assert records[0].patient.family_name == "Specimen"
+
+
+# --- a bad export path must be named as a bad path, not a bad format ----------
+
+
+def test_a_missing_export_folder_says_so(tmp_path: Path) -> None:
+    """Detection answers "which format is this?", so it cannot tell a folder of
+    unrecognised files from a folder that is not there. Blaming the format sent
+    the person off to pick one, which then failed too."""
+    from anastomosis.pipeline import PipelineError, resolve_source
+
+    with pytest.raises(PipelineError) as excinfo:
+        resolve_source(tmp_path / "not-here", None)
+    assert "no folder at" in str(excinfo.value)
+    assert "export format" not in str(excinfo.value)
+
+
+def test_a_file_given_as_the_export_folder_says_so(tmp_path: Path) -> None:
+    from anastomosis.pipeline import PipelineError, resolve_source
+
+    a_file = tmp_path / "export.tsv"
+    a_file.write_text("PatientPracticeGuid\n", encoding="utf-8")
+    with pytest.raises(PipelineError) as excinfo:
+        resolve_source(a_file, None)
+    assert "is a file, not a folder" in str(excinfo.value)
