@@ -2,21 +2,25 @@
 
 The pieces here have no behavior of their own — they are the small, pure
 building blocks (the stage-rail names, the upload state groupings, the
-transit-map serializer) that several GUI consoles and the controller need in
-common. Kept in a dependency-free leaf module (it imports nothing from
-:mod:`anastomosis.gui.controller` or the consoles) so both the controller
-facade and every console can import it without a cycle.
+transit-map serializer, the no-traceback error-dict builder) that several GUI
+consoles and the controller need in common. Kept in a dependency-free leaf
+module (it imports nothing from :mod:`anastomosis.gui.controller` or the
+consoles) so both the controller facade and every console can import it
+without a cycle.
 
 The underscore-prefixed public names are preserved as-is to minimize churn:
 ``tests/unit/test_frontend_constants.py`` imports ``_STAGE_MAP``,
-``_STAGE_RAIL`` and ``_STATE_GROUPS`` (via the controller's re-export), and the
-controller still uses ``_transit_to_dict``/``_STAGE_RAIL``/``_STATE_GROUPS``
-directly.
+``_STAGE_RAIL`` and ``_STATE_GROUPS`` directly, and the controller still uses
+``_transit_to_dict``/``_STAGE_RAIL``/``_STATE_GROUPS`` directly.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from anastomosis.core.logutil import exc_tag
+from anastomosis.gui.events import error_event
 
 if TYPE_CHECKING:
     from anastomosis.deliver.router import TransitMap
@@ -27,6 +31,7 @@ __all__ = [
     "_STATE_GROUPS",
     "_group_states",
     "_transit_to_dict",
+    "fail_result",
 ]
 
 
@@ -96,3 +101,18 @@ def _group_states(counts: dict[str, int]) -> dict[str, int]:
         group: sum(counts.get(state, 0) for state in states)
         for group, states in _STATE_GROUPS.items()
     }
+
+
+def fail_result(
+    emit: Callable[[dict[str, object]], None], flow: str, stage: str, exc: BaseException
+) -> dict[str, object]:
+    """Convert a caught exception to the no-traceback error contract.
+
+    Emits an :func:`~anastomosis.gui.events.error_event` carrying only the
+    exception's TYPE name (never its message — PHI may ride an exception's
+    args) and returns the matching ``{"ok": False, "error": <type>}`` dict.
+    Every controller/console ``_fail`` method delegates here.
+    """
+    tag = exc_tag(exc)
+    emit(error_event(flow, stage, tag))
+    return {"ok": False, "error": tag}

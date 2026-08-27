@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +35,7 @@ from typing import TYPE_CHECKING
 
 from lxml import etree
 
+from anastomosis.core.atomic import atomic_replace
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import safe_name
@@ -148,13 +148,8 @@ def ccda_standard_doc_path(out_dir: str | Path, record: PatientRecord) -> Path:
 
 def _write_pdf(renderer: Renderer, html: str, target: Path) -> None:
     """Render to a sibling temp file then atomically replace (no partial PDF)."""
-    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-    try:
+    with atomic_replace(target) as tmp:
         renderer.render(html, tmp)
-        os.replace(tmp, target)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
 
 
 def render_ccda_standard(

@@ -37,6 +37,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.locking import output_lock
 
 __all__ = [
@@ -116,14 +117,10 @@ def _hash_snapshot_files(files: Mapping[str, bytes]) -> str:
 
 
 def pack_content_hash(root: Path) -> str:
-    """SHA-256 hex over a pack's executable + structural content.
+    """SHA-256 hex over a pack's ``context.py`` + ``template.html`` + ``pack.yaml``.
 
-    Hashes ``context.py``, ``template.html``, ``pack.yaml`` in that fixed order,
-    each prefixed by ``b"\\0<name>\\0"`` so the concatenation is unambiguous. A
-    missing file contributes only its separator (a broken pack fails to load
-    anyway, defensively, in :mod:`anastomosis.reconstruct.packs`). Computed via
-    :func:`read_pack_snapshot`, so the digest provably covers the same bytes the
-    loader executes; byte-identical to the historic per-file digest.
+    Thin wrapper over :func:`read_pack_snapshot` — see its docstring and
+    :func:`_hash_snapshot_files` for the exact byte layout.
     """
     return read_pack_snapshot(root).content_hash
 
@@ -190,18 +187,7 @@ class PackTrust:
             merged = _read_store(self._path)
             merged[key] = content_hash
             payload = json.dumps(merged, indent=2, sort_keys=True) + "\n"
-            tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
-            try:
-                if os.name == "posix":
-                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                        handle.write(payload)
-                else:  # pragma: no cover - POSIX is the tested platform
-                    tmp.write_text(payload, encoding="utf-8")
-                os.replace(tmp, self._path)
-            except BaseException:
-                tmp.unlink(missing_ok=True)  # never leave a stray temp on failure
-                raise
+            atomic_write_text(self._path, payload, mode=0o600)
             if os.name == "posix":
                 self._path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600 — owner only
             self._store = merged

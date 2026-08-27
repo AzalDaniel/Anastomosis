@@ -16,7 +16,8 @@ from pathlib import Path
 
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.browser.states import UploadState
-from anastomosis.gui.controller import _STAGE_MAP, _STAGE_RAIL, _STATE_GROUPS, GuiController
+from anastomosis.gui.controller import GuiController
+from anastomosis.gui.shared import _STAGE_MAP, _STAGE_RAIL, _STATE_GROUPS
 
 _WEB = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "gui" / "web"
 _CONSOLE_JS = _WEB / "console.js"

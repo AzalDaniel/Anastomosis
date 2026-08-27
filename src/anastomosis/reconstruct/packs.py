@@ -41,7 +41,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
@@ -77,9 +77,21 @@ class FilenameRules(BaseModel):
 
     # Render-time format string; fields come from the pack's build_context.
     pattern: str = "{family}_{given}_{dos}.pdf"
-    # What to do when two documents resolve to the same name ("guid_suffix"
-    # appends a short unique suffix — the same-day-visit defense).
+    # What to do when two documents resolve to the same name. Only
+    # "guid_suffix" (append a short unique source-id suffix — the
+    # same-day-visit defense) is implemented: reconstruct.engine's
+    # _allocate_target hardcodes that one behavior, so any other value is
+    # refused here rather than silently ignored.
     collision: str = "guid_suffix"
+
+    @field_validator("collision")
+    @classmethod
+    def _collision_is_implemented(cls, value: str) -> str:
+        if value != "guid_suffix":
+            raise ValueError(
+                f"filename.collision: only 'guid_suffix' is implemented (got {value!r})"
+            )
+        return value
 
 
 class PackManifest(BaseModel):
@@ -171,43 +183,65 @@ def _load_context_builder_from_source(source: bytes, path: Path) -> ContextBuild
     return cast(ContextBuilder, builder)
 
 
-def _load_pack_dir(root: Path, origin: str) -> PackStatus:
-    name = root.name
+_BuildResult = tuple[PackManifest, Path, ContextBuilder]
+
+
+def _finish_load(
+    name_cell: list[str], origin: str, root: Path, build: Callable[[], _BuildResult]
+) -> PackStatus:
+    """Run ``build()`` and turn it into a :class:`PackStatus`, diagnosing defensively.
+
+    Shared tail for :func:`_load_pack_dir` and :func:`_load_pack_snapshot`: only
+    how ``build`` reads the manifest/template/context (disk vs. pinned snapshot
+    bytes) differs between the two; the diagnosis shape does not. ``name_cell``
+    is a one-item mutable cell so ``build`` can update the reported name to
+    ``manifest.name`` as soon as the manifest parses — including on a LATER
+    failure (missing template, crashing ``context.py``).
+    """
     try:
+        manifest, template_path, builder = build()
+    except (ValidationError, OSError, ImportError, AttributeError, yaml.YAMLError) as exc:
+        # Diagnosis carries the exception type and pack-relative detail only —
+        # safe to log, enough to start the re-discovery wizard.
+        return PackStatus(
+            name=name_cell[0], pack=None, diagnosis=f"{type(exc).__name__}: {exc}", origin=origin
+        )
+    except Exception as exc:  # context.py crashed at import: arbitrary errors
+        return PackStatus(
+            name=name_cell[0],
+            pack=None,
+            diagnosis=f"context.py failed at import ({type(exc).__name__})",
+            origin=origin,
+        )
+    return PackStatus(
+        name=name_cell[0],
+        pack=LoadedPack(
+            manifest=manifest, root=root, template_path=template_path, build_context=builder
+        ),
+        origin=origin,
+    )
+
+
+def _load_pack_dir(root: Path, origin: str) -> PackStatus:
+    name_cell = [root.name]
+
+    def build() -> _BuildResult:
         manifest_path = root / "pack.yaml"
         if not manifest_path.is_file():
             raise FileNotFoundError("pack.yaml not found")
         manifest = PackManifest.model_validate(
             yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         )
-        name = manifest.name
+        name_cell[0] = manifest.name
         template_path = root / "template.html"
         if not template_path.is_file():
             raise FileNotFoundError("template.html not found")
         context_path = root / "context.py"
         if not context_path.is_file():
             raise FileNotFoundError("context.py not found")
-        builder = _load_context_builder(context_path)
-    except (ValidationError, OSError, ImportError, AttributeError, yaml.YAMLError) as exc:
-        # Diagnosis carries the exception type and pack-relative detail only —
-        # safe to log, enough to start the re-discovery wizard.
-        return PackStatus(
-            name=name, pack=None, diagnosis=f"{type(exc).__name__}: {exc}", origin=origin
-        )
-    except Exception as exc:  # context.py crashed at import: arbitrary errors
-        return PackStatus(
-            name=name,
-            pack=None,
-            diagnosis=f"context.py failed at import ({type(exc).__name__})",
-            origin=origin,
-        )
-    return PackStatus(
-        name=name,
-        pack=LoadedPack(
-            manifest=manifest, root=root, template_path=template_path, build_context=builder
-        ),
-        origin=origin,
-    )
+        return manifest, template_path, _load_context_builder(context_path)
+
+    return _finish_load(name_cell, origin, root, build)
 
 
 def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
@@ -225,40 +259,23 @@ def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
     hash entirely. Diagnoses defensively, identically to :func:`_load_pack_dir`.
     """
     root = snapshot.root
-    name = root.name
-    try:
+    name_cell = [root.name]
+
+    def build() -> _BuildResult:
         manifest_bytes = snapshot.files.get("pack.yaml")
         if manifest_bytes is None:
             raise FileNotFoundError("pack.yaml not found")
         manifest = PackManifest.model_validate(yaml.safe_load(manifest_bytes.decode("utf-8")))
-        name = manifest.name
+        name_cell[0] = manifest.name
         if snapshot.files.get("template.html") is None:
             raise FileNotFoundError("template.html not found")
-        template_path = root / "template.html"
         context_bytes = snapshot.files.get("context.py")
         if context_bytes is None:
             raise FileNotFoundError("context.py not found")
         builder = _load_context_builder_from_source(context_bytes, root / "context.py")
-    except (ValidationError, OSError, ImportError, AttributeError, yaml.YAMLError) as exc:
-        # Diagnosis carries the exception type and pack-relative detail only —
-        # safe to log, enough to start the re-discovery wizard.
-        return PackStatus(
-            name=name, pack=None, diagnosis=f"{type(exc).__name__}: {exc}", origin=origin
-        )
-    except Exception as exc:  # context.py crashed at import: arbitrary errors
-        return PackStatus(
-            name=name,
-            pack=None,
-            diagnosis=f"context.py failed at import ({type(exc).__name__})",
-            origin=origin,
-        )
-    return PackStatus(
-        name=name,
-        pack=LoadedPack(
-            manifest=manifest, root=root, template_path=template_path, build_context=builder
-        ),
-        origin=origin,
-    )
+        return manifest, root / "template.html", builder
+
+    return _finish_load(name_cell, origin, root, build)
 
 
 def _iter_candidate_dirs(pack_dirs: list[Path]) -> list[tuple[Path, str]]:

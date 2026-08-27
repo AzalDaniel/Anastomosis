@@ -125,8 +125,6 @@ _PARAMETRIC: dict[str, tuple[int, Callable[..., _Transform]]] = {
     "const": (1, _const),
 }
 
-DEFAULT_TRANSFORM = "strip"
-
 
 def parse_transform(spec: str) -> _Transform:
     """Resolve a transform spec string to a bound transform, or raise.

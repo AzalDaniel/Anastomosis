@@ -1,6 +1,6 @@
 """The draft: write a loadable template pack from a :class:`PackAnalysis`.
 
-This is the third packgen stage (M3b). :mod:`extract` harvested the spans and
+This is the third packgen stage. :mod:`extract` harvested the spans and
 drawings, :mod:`infer` distilled them into a :class:`PackAnalysis`; this module
 turns that analysis into a pack directory the *real* reconstruction engine can
 load and render with **no engine changes**:
@@ -16,7 +16,7 @@ explicitly *not* claimed (``DRAFT.md`` says so, and the wizard echoes it). The
 operator reviews the rendered preview side-by-side with a real sample, edits
 ``template.html``, and re-renders.
 
-Design choices, grounded in the contracts read for item 15:
+Design choices, grounded in the pack contracts read above:
 
 * The emitted ``context.py`` re-uses ``generic_soap``'s ``build_context`` rather
   than generating a bespoke one. The generated ``template.html`` therefore
@@ -66,7 +66,7 @@ _MIN_SECTION_COUNT = 2
 # #1a1a1a header rule at ~26. We pick the dominant fill inside the band-tint
 # luminance window, which separates the band from the border slivers that the
 # PackAnalysis contract (counts only, no area) cannot otherwise distinguish.
-# Window chosen from observed render output; documented in the PR decisions.
+# Window chosen from observed render output.
 _BAND_LUM_MIN = 200.0  # below this is a rule/border, not a heading tint
 _BAND_LUM_MAX = 252.0  # at/above this is effectively white (no visible band)
 # Fallback "non-white" gate for the dominant-by-count path (no band-tint found).

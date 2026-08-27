@@ -55,21 +55,11 @@ from anastomosis.gui.consoles import (
     SummaryStore,
     UploadConsole,
 )
-from anastomosis.gui.events import error_event
 from anastomosis.gui.jobs import GuiJobRunner
 
-# Re-imported from anastomosis.gui.shared so imports of these names FROM this
-# module keep working (tests/unit/test_frontend_constants.py imports
-# _STAGE_MAP/_STAGE_RAIL/_STATE_GROUPS from here). _STAGE_RAIL/_STATE_GROUPS feed
-# gui_config() and _transit_to_dict() feeds routes()/destination_status(); the
-# other two are pure re-exports (noqa) kept so the import surface is unchanged.
-from anastomosis.gui.shared import (
-    _STAGE_MAP,  # noqa: F401  re-exported for tests/unit/test_frontend_constants.py
-    _STAGE_RAIL,
-    _STATE_GROUPS,
-    _group_states,  # noqa: F401  re-exported to keep the import surface unchanged
-    _transit_to_dict,
-)
+# _STAGE_RAIL/_STATE_GROUPS feed gui_config(); _transit_to_dict() feeds
+# routes()/destination_status(); fail_result() backs the query-flow _fail below.
+from anastomosis.gui.shared import _STAGE_RAIL, _STATE_GROUPS, _transit_to_dict, fail_result
 
 if TYPE_CHECKING:
     from anastomosis.deliver.router import TransitMap
@@ -447,9 +437,7 @@ class GuiController:
 
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
-        tag = exc_tag(exc)
-        self._emit(error_event(self._QUERY_FLOW, stage, tag))
-        return {"ok": False, "error": tag}
+        return fail_result(self._emit, self._QUERY_FLOW, stage, exc)
 
     def _acquire(self) -> bool:
         return self._jobs.acquire()

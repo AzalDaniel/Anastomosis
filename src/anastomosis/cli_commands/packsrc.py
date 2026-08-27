@@ -1,14 +1,11 @@
 """``anast pack init`` / ``anast source init`` — the two learn-from-example wizards.
 
-The two command bodies and the pack-preview helpers (a fully-synthetic record
-and its render through the draft pack) split out of :mod:`anastomosis.cli`. Both
+See :mod:`anastomosis.cli_commands` for the split/registration rationale. Both
 commands are thin adapters over their shared command cores
 (:mod:`anastomosis.core.packinit`, :mod:`anastomosis.core.source_init_command`) so
 the CLI and the GUI run ONE flow; this module keeps only the CLI's Rich UX (the
 count line, the low-confidence warning, the same-patient confirm, the next-steps
-block). They register against ``pack_app`` / ``source_app`` defined in
-:mod:`anastomosis.cli`; ``console`` / ``_glyphs`` resolve late through the ``cli``
-module. See :mod:`anastomosis.cli_commands` for the facade rationale.
+block).
 """
 
 from __future__ import annotations

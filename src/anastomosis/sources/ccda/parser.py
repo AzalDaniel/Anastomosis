@@ -209,15 +209,11 @@ def _identifiers(patient_role: _Element) -> list[Identifier]:
 
 
 def _patient_id(patient_role: _Element, source_file: str) -> str:
-    """Stable canonical patient id, mirroring :func:`_encounter_id`.
-
-    The encounter ids in this adapter are already deterministic (uuid5 of the
-    source), but the patient inherited :class:`AnastBase`'s ``uuid4`` default — so
-    re-parsing the same CCD produced a DIFFERENT patient id each time (and the
-    PF/Tebra adapter, by contrast, uses the source guid). This derives the patient
-    id from the source instead: a clean source GUID is used verbatim; any other
-    source identifier is hashed into a deterministic uuid5; absent any id, the
-    file name is. Re-parsing the same document now yields the same patient id.
+    """Stable canonical patient id, mirroring :func:`_encounter_id` (re-parsing
+    the same document must yield the same id — nothing downstream may see it
+    change). A clean source GUID is used verbatim; any other source
+    identifier is hashed into a deterministic uuid5; absent any id, the file
+    name is.
     """
     for ident in _identifiers(patient_role):
         if ident.kind == IdentifierKind.SOURCE_GUID:

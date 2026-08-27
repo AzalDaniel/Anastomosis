@@ -105,6 +105,27 @@ def test_unknown_manifest_keys_are_rejected(tmp_path: Path) -> None:
     assert not status.available
 
 
+def test_collision_field_accepts_its_only_implemented_value(tmp_path: Path) -> None:
+    # "guid_suffix" is the one behavior _allocate_target hardcodes; declaring it
+    # explicitly must load exactly like the (identical) default.
+    make_pack(tmp_path, manifest=GOOD_MANIFEST + "filename:\n  collision: guid_suffix\n")
+    status = discover_packs([tmp_path], allow_external=True)["demo_soap"]
+    assert status.available and status.pack is not None
+    assert status.pack.manifest.filename.collision == "guid_suffix"
+
+
+def test_collision_field_refuses_any_other_value(tmp_path: Path) -> None:
+    # collision is parsed but never read by the render path — a value other
+    # than the one hardcoded behavior implements must be a loud refusal, not a
+    # silently-ignored config (PHI-adjacent: a healthcare tool must not pretend
+    # to honor a same-day-visit collision policy it does not run).
+    make_pack(tmp_path, manifest=GOOD_MANIFEST + "filename:\n  collision: overwrite\n")
+    status = discover_packs([tmp_path], allow_external=True)["demo_soap"]
+    assert not status.available
+    assert status.diagnosis is not None
+    assert "collision" in status.diagnosis
+
+
 def test_first_definition_wins_user_shadows_builtin(tmp_path: Path) -> None:
     a, b = tmp_path / "a", tmp_path / "b"
     make_pack(a)

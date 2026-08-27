@@ -23,6 +23,7 @@ from anastomosis.core.logutil import exc_tag
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.events import error_event, stage_event
 from anastomosis.gui.jobs import GuiJob, GuiJobRunner
+from anastomosis.gui.shared import fail_result
 
 if TYPE_CHECKING:
     from anastomosis.deliver.browser.tracking import TrackingDB
@@ -428,6 +429,4 @@ class UploadConsole:
 
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
-        tag = exc_tag(exc)
-        self._emit(error_event(self._FLOW, stage, tag))
-        return {"ok": False, "error": tag}
+        return fail_result(self._emit, self._FLOW, stage, exc)

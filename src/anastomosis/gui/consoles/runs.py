@@ -19,7 +19,7 @@ from uuid import uuid4
 from anastomosis.core.logutil import exc_tag
 from anastomosis.gui.events import done_event, error_event, progress_event, stage_event
 from anastomosis.gui.jobs import GuiJob, GuiJobRunner
-from anastomosis.gui.shared import _STAGE_MAP, _transit_to_dict
+from anastomosis.gui.shared import _STAGE_MAP, _transit_to_dict, fail_result
 
 if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome, PatientSummary
@@ -141,9 +141,7 @@ class _RunConsole:
 
     def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
         """Convert a caught exception to the no-traceback error contract."""
-        tag = exc_tag(exc)
-        self._emit(error_event(self._FLOW, stage, tag))
-        return {"ok": False, "error": tag}
+        return fail_result(self._emit, self._FLOW, stage, exc)
 
 
 class PipelineConsole(_RunConsole):

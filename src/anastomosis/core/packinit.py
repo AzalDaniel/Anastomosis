@@ -36,7 +36,7 @@ message that could embed a sample path.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from anastomosis.core.logutil import exc_tag
@@ -134,33 +134,26 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     nothing); ``cmd.confirmed=True`` emits the draft and returns its path +
     ``DRAFT.md``.
     """
+    base = PackInitResult(
+        ok=False,
+        error=None,
+        summary=[],
+        caveat="",
+        sample_count=0,
+        low_confidence=False,
+        pack_dir=None,
+        draft_md=None,
+    )
+
     # Type-guard up front so a malformed command returns a code rather than
     # raising — the module's "never raises into the caller" contract holds even
     # for a caller that ignores the type hints.
     if not isinstance(cmd.name, str) or not PACK_NAME_RE.match(cmd.name):
-        return PackInitResult(
-            ok=False,
-            error="InvalidPackName",
-            summary=[],
-            caveat="",
-            sample_count=0,
-            low_confidence=False,
-            pack_dir=None,
-            draft_md=None,
-        )
+        return replace(base, error="InvalidPackName")
 
     pdfs = collect_sample_pdfs(cmd.samples) if isinstance(cmd.samples, list) else []
     if not pdfs:
-        return PackInitResult(
-            ok=False,
-            error="NoSamplesFound",
-            summary=[],
-            caveat="",
-            sample_count=0,
-            low_confidence=False,
-            pack_dir=None,
-            draft_md=None,
-        )
+        return replace(base, error="NoSamplesFound")
 
     # Lazy import (the render extra's PyMuPDF) so a minimal install imports this
     # module cleanly — mirrors the CLI's in-function import.
@@ -170,34 +163,23 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     try:
         analysis = analyze(extract_samples(pdfs))
     except Exception as exc:  # unreadable/encrypted sample — type only, no path/PHI
-        return PackInitResult(
-            ok=False,
-            error=exc_tag(exc),
-            summary=[],
-            caveat="",
-            sample_count=len(pdfs),
-            low_confidence=False,
-            pack_dir=None,
-            draft_md=None,
-        )
+        return replace(base, error=exc_tag(exc), sample_count=len(pdfs))
 
-    summary = list(analysis.summary_lines())
-    caveat = SAME_PATIENT_CAVEAT
+    # The PHI-safe proposal, carried on every post-analyze outcome via
+    # dataclasses.replace.
+    proposal = replace(
+        base,
+        summary=list(analysis.summary_lines()),
+        caveat=SAME_PATIENT_CAVEAT,
+        sample_count=analysis.sample_count,
+        low_confidence=analysis.low_confidence,
+    )
 
     # The same-patient guard: an unconfirmed request refuses and writes nothing,
     # but still returns the PHI-safe summary so the operator sees what they are
     # being asked to confirm.
     if not cmd.confirmed:
-        return PackInitResult(
-            ok=False,
-            error="ConfirmationRequired",
-            summary=summary,
-            caveat=caveat,
-            sample_count=analysis.sample_count,
-            low_confidence=analysis.low_confidence,
-            pack_dir=None,
-            draft_md=None,
-        )
+        return replace(proposal, error="ConfirmationRequired")
 
     try:
         pack_dir = emit_draft_pack(
@@ -205,24 +187,6 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
         )
         draft_md = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
     except Exception as exc:  # emit/read failure — type name only, no PHI
-        return PackInitResult(
-            ok=False,
-            error=exc_tag(exc),
-            summary=summary,
-            caveat=caveat,
-            sample_count=analysis.sample_count,
-            low_confidence=analysis.low_confidence,
-            pack_dir=None,
-            draft_md=None,
-        )
+        return replace(proposal, error=exc_tag(exc))
 
-    return PackInitResult(
-        ok=True,
-        error=None,
-        summary=summary,
-        caveat=caveat,
-        sample_count=analysis.sample_count,
-        low_confidence=analysis.low_confidence,
-        pack_dir=pack_dir,
-        draft_md=draft_md,
-    )
+    return replace(proposal, ok=True, pack_dir=pack_dir, draft_md=draft_md)

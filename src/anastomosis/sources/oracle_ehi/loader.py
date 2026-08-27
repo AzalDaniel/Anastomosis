@@ -177,14 +177,11 @@ class _InsertLexer:
     def read_statements(self, table: str, columns: list[str]) -> list[Row]:
         """Scan the whole file once, returning rows from matching INSERTs.
 
-        The head regex is tried only anchored at the current position; when it
-        matches, the statement's value tuples are read by :meth:`read_tuples`,
-        which consumes each quoted cell *whole* via :meth:`_read_string`. So a
-        cell whose text contains a literal ``INSERT INTO ... VALUES`` shape is
-        swallowed as opaque string content and can never be re-scanned as a
-        head — the false-collision the old ``finditer`` had. Between statements
-        (comments, DDL, whitespace) the scanner just steps one char at a time;
-        a stray apostrophe there is harmless filler, never a string start (real
+        String literals are consumed whole (see the class docstring) before
+        any INSERT head is matched, so a head-shaped literal inside a quoted
+        cell is never mis-parsed. Between statements (comments, DDL,
+        whitespace) the scanner just steps one char at a time; a stray
+        apostrophe there is harmless filler, never a string start (real
         string literals live only inside value tuples, handled above).
         """
         rows: list[Row] = []
@@ -274,12 +271,8 @@ _INSERT_HEAD_RE = re.compile(
 
 
 def iter_insert_rows(sql: str, table: str, columns: list[str], source: str) -> list[Row]:
-    """Parse every ``INSERT INTO <table>`` in ``sql`` into header-keyed rows.
-
-    A single lexer pass consumes string literals as opaque units before any
-    statement head is matched, so a quoted cell containing a literal
-    ``INSERT INTO ... VALUES`` shape can never be read as a head (the bug the
-    old ``finditer``-over-the-whole-file approach had).
+    """Parse every ``INSERT INTO <table>`` in ``sql`` via one lexer pass (see
+    :class:`_InsertLexer`).
 
     ``columns`` is the DDL column order for the table. When an INSERT names
     its own column list, that ordering wins (some dumps reorder); otherwise

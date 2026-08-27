@@ -5,15 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from anastomosis.core.model import Encounter, ObservationCategory, PatientRecord
-from anastomosis.core.timeutil import age_display, to_local
-from anastomosis.reconstruct.packctx import observations_by_encounter, record_cache_of
-
-
-def _fmt_dt(value: Any, tz: str) -> str | None:
-    if value is None:
-        return None
-    local = to_local(value, tz)
-    return local.strftime("%b %d, %Y %I:%M %p").replace(" 0", " ")
+from anastomosis.core.timeutil import age_display
+from anastomosis.reconstruct.packctx import (
+    format_local_dt,
+    observations_by_encounter,
+    record_cache_of,
+)
 
 
 def build_context(
@@ -57,7 +54,7 @@ def build_context(
         ),
         "provider": record.practitioner(encounter.provider_id),
         "signer": signer,
-        "signed_at": _fmt_dt(encounter.signed_at, tz),
+        "signed_at": format_local_dt(encounter.signed_at, tz),
         "facility": record.facility(encounter.facility_id),
         "tokens": cfg.get("tokens", {}),
     }

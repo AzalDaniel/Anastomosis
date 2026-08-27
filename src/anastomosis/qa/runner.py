@@ -8,12 +8,12 @@ goes to a *logger* is verdict counts only.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 
@@ -110,9 +110,6 @@ def write_report(report: QAReport, out_dir: Path) -> Path:
     # the dir is already secured, so this is a no-op.
     out_dir = secure_output_dir(out_dir)
     target = out_dir / REPORT_NAME
-    # Atomic write: a reader (or a concurrent run) never sees a half-written
-    # report. os.replace is atomic within the directory on every platform.
-    tmp = out_dir / f".{REPORT_NAME}.{os.getpid()}.tmp"
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, target)
+    # Atomic write: a reader (or a concurrent run) never sees a half-written report.
+    atomic_write_text(target, json.dumps(payload, indent=2))
     return target

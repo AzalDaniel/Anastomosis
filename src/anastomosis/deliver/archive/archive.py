@@ -55,12 +55,7 @@ from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
-from anastomosis.deliver._shared import (
-    budgeted_copy_name,
-    claim_delivered_name,
-    copy_delivered_file,
-    write_fhir_bundle,
-)
+from anastomosis.deliver._shared import claim_delivered_name, copy_claimed_chart, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport
 
@@ -171,11 +166,9 @@ class ArchiveDeliverer:
             write_fhir_bundle(record, patient_dir)
 
             # PDFs — attributed strictly via the render index (patient_id
-            # match). The old fallback that guessed ownership from
-            # ``{family}_{given}_`` filename prefixes is gone: it cross-
-            # leaked between two same-name patients. With no index present
-            # the deliverer routes every PDF into ``unattributed/`` instead
-            # of guessing (see :meth:`_route_unattributed_pdfs` below).
+            # match; see render_index.py for why name-prefix guessing was
+            # unsafe). No index entry -> unattributed/, never a guess (see
+            # :meth:`_route_unattributed_pdfs` below).
             # Two different name sets come back: the DELIVERED names (budgeted,
             # what the pages link to) and the SOURCE names this patient claimed.
             # Ownership is tracked by SOURCE name because that is what the
@@ -275,11 +268,12 @@ class ArchiveDeliverer:
         on the date in the filename). A patient with no index entries
         gets no PDFs — never a guess.
 
-        The DELIVERED name is budgeted (``budgeted_copy_name``), because the
-        renderer's ``{family}_{given}_{dos}_{type}.pdf`` is bounded only by
-        ``safe_name`` — far past what the Windows path budget can hold under a
-        deep output tree. An over-budget destination is a hard failure here,
-        never a warn-and-continue: this is the path that carries the charts.
+        The DELIVERED name is budgeted (:func:`~anastomosis.deliver._shared.
+        copy_claimed_chart`), because the renderer's
+        ``{family}_{given}_{dos}_{type}.pdf`` is bounded only by ``safe_name``
+        — far past what the Windows path budget can hold under a deep output
+        tree. An over-budget destination is a hard failure here, never a
+        warn-and-continue: this is the path that carries the charts.
         """
         if render_index is None or pdfs_dir is None or not pdfs_dir.is_dir():
             return {}, set()
@@ -306,14 +300,14 @@ class ArchiveDeliverer:
                 continue
             # OUTSIDE the copy's warn path on purpose: a destination that
             # cannot be named distinctly raises (ValueError) rather than
-            # leaving the chart out of the delivered tree (budgeted_copy_name).
-            # Permission/disk failures keep the existing warn-and-continue below.
-            delivered = budgeted_copy_name(out_dir, name)
-            claim_delivered_name(claimed, delivered, name, kind="chart")
-            failure = copy_delivered_file(source, out_dir / delivered)
+            # leaving the chart out of the delivered tree (copy_claimed_chart
+            # budgets before it copies). Permission/disk failures keep the
+            # existing warn-and-continue below.
+            delivered, failure = copy_claimed_chart(out_dir, claimed, source, name, kind="chart")
             if failure is not None:
                 logger.warning("pdf copy failed (%s)", failure)
                 continue
+            assert delivered is not None  # copy_claimed_chart: failure is None => delivered isn't
             claimed_sources.add(name)
             entry = render_index.lookup(name)
             if entry is not None:
@@ -336,7 +330,9 @@ class ArchiveDeliverer:
         directory when no index is present at all. In both cases the
         deliverer refuses to guess — the PDFs are visible to the operator
         in one place, never silently dropped, never silently misattributed.
-        Returns the count for the run summary.
+        Returns the count of PDFs actually copied (a failed copy is warned
+        about, per :func:`~anastomosis.deliver._shared.copy_claimed_chart`,
+        and excluded from the count) for the run summary.
         """
         if pdfs_dir is None or not pdfs_dir.is_dir():
             return 0
@@ -359,15 +355,18 @@ class ArchiveDeliverer:
         target = out / "unattributed"
         target.mkdir(parents=True, exist_ok=True)
         claimed: dict[str, str] = {}
+        copied = 0
         for source in orphans:
             # Budgeted and claimed exactly like an attributed chart: a PDF that
             # lands here is still a chart nobody may lose.
-            delivered = budgeted_copy_name(target, source.name)
-            claim_delivered_name(claimed, delivered, source.name, kind="unattributed chart")
-            failure = copy_delivered_file(source, target / delivered)
+            _delivered, failure = copy_claimed_chart(
+                target, claimed, source, source.name, kind="unattributed chart"
+            )
             if failure is not None:
                 logger.warning("unattributed pdf copy failed (%s)", failure)
-        return len(orphans)
+                continue
+            copied += 1
+        return copied
 
     def _write_patient_page(
         self,
@@ -472,11 +471,8 @@ class ArchiveDeliverer:
         )
         index_path = out / "index.html"
         # PHI-BY-DESIGN: the archive index and its JSON manifest name patients so
-        # the offline search box works; both land under a secure_output_dir-
-        # hardened directory (0o700 owner-only on POSIX; on Windows NTFS,
-        # inheritance stripped and access limited to the current user, SYSTEM, and
-        # Administrators) with a PHI-warning README. See SECURITY.md, "Code
-        # scanning & suppression policy (auditable)".
+        # the offline search box works; same secure_output_dir hardening as
+        # write_fhir_bundle (_shared.py); see SECURITY.md.
         # codeql[py/clear-text-storage-sensitive-data]
         index_path.write_text(html, encoding="utf-8")
         # PHI-BY-DESIGN: same hardened-directory guarantee as the index above
