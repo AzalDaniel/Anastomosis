@@ -205,24 +205,117 @@ def test_the_anti_slop_ledger_stays_removed() -> None:
         ".pill {": "the dead filter-bar component",
         ".cmd-palette": "the command palette",
         ".watermark": "the full-viewport decorative mark",
+        ".status-badge": "the second pill, which nothing rendered",
+        ".chip:focus-visible": "a focus ring for a component that does not exist",
     }
     for needle, what in gone.items():
         assert needle not in css, f"{what} came back ({needle!r})"
-    # The pill radius survives in exactly two places: the segment toggle and the
-    # status badge (§5).
-    pill_users = [
-        line.strip()
-        for line in css.splitlines()
-        if "var(--radius-pill)" in line and "--radius-pill:" not in line
-    ]
-    assert pill_users, "the pill radius vanished entirely"
-    for line in pill_users:
-        assert "radius-pill" in line
     # The glyph icon constants are gone from the shipped markup (§8).
     html = _read("index.html")
     for glyph in ("✓", "⚠", "✗"):
         assert glyph not in html, f"the {glyph!r} glyph icon is back in the markup"
     assert "const GLYPH" not in _read("shell.js"), "the glyph table is back"
+
+
+def _css_rules(css: str) -> list[tuple[str, str]]:
+    """Every ``selector { body }`` pair in a stylesheet, comments stripped.
+
+    Enough of a parser for these checks: the sheet has no nesting and no at-rule
+    bodies containing braces other than the rules inside them, which this simply
+    reads as rules of their own.
+    """
+    bare = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    return [
+        (selector.strip().split("{")[-1].strip(), body)
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", bare)
+    ]
+
+
+def test_only_the_view_nav_wears_the_pill() -> None:
+    """A sliding pill means "peer destinations", and there is one such control.
+
+    A binary setting is a switch and one-of-N is a chooser, so the pill radius
+    is allowed on the nav (and its two internal layers), on the switch track and
+    the progress bar — round-ended shapes, not pills — and nowhere else. The
+    check this replaces gathered the same lines and then asserted they contained
+    the string it had just filtered them by, so it passed on any selector.
+    """
+    allowed = {
+        ".segment-toggle",
+        ".segment-goo",
+        ".segment-indicator",
+        ".toggle .track",
+        # The nav's own focus ring, shaped to the lozenge it hugs.
+        ".navpill .segment-option",
+        ".progress-bar",
+        ".progress-bar-fill",
+        ".log-strip",
+    }
+    users = {
+        part.split(":")[0]
+        for selector, body in _css_rules(_read("app.css"))
+        if "var(--radius-pill)" in body
+        for part in selector.split(",")
+    }
+    assert users, "the pill radius vanished entirely"
+    assert users <= allowed, f"a second control wears the pill: {sorted(users - allowed)}"
+
+
+def test_every_control_clears_the_hit_target_floor() -> None:
+    """44px on the short axis, declared — not left to whatever the padding gives.
+
+    Every one of these was measured under the floor in a real browser, nine of
+    them under WCAG 2.5.8's 24px AA minimum. The floors are asserted here so a
+    later padding change cannot quietly walk them back; the browser sweep in
+    tests/gui_e2e proves they actually render.
+    """
+    css = _read("app.css")
+    rules = dict(_css_rules(css))
+    for selector in (
+        ".btn",
+        ".toggle",
+        ".advanced > summary",
+        ".route-detail summary",
+        ".mode-tab",
+        '.field :where(input[type="text"], input[type="search"], select, textarea)',
+    ):
+        assert selector in rules, f"{selector} is gone"
+        assert "min-height: 44px;" in rules[selector], f"{selector} has no hit-target floor"
+    assert "width: 44px; height: 44px;" in rules[".cal-nav"], "the calendar arrows shrank again"
+
+
+def test_machine_shaped_fields_opt_in_to_the_mono_face() -> None:
+    """Mono is for strings read character by character, and it is opt-in.
+
+    The default is the body face, so a new field is safe by omission; a path or
+    an identifier says so with a class. The base rule is wrapped in :where() on
+    purpose — its attribute selectors would otherwise outrank a single class and
+    the opt-in would be silently ignored, which is exactly what happened first.
+    """
+    css = _read("app.css")
+    assert '.field :where(input[type="text"]' in css, "the base rule lost its :where()"
+    assert ".field .is-path, .field .is-id, .field .is-endpoint {" in css
+    html = _read("index.html")
+    for field, face in (
+        ("uploads-results-dir", "is-path"),
+        ("uploads-assistant-folder", "is-path"),
+        ("uploads-record", "is-path"),
+        ("layout-samples", "is-path"),
+        ("format-example", "is-path"),
+        ("uploads-assistant", "is-id"),
+        ("uploads-skiplist", "is-id"),
+        ("uploads-search", "is-id"),
+        ("layout-name", "is-id"),
+        ("format-name", "is-id"),
+        ("uploads-browser", "is-endpoint"),
+    ):
+        tag = re.search(rf'<(?:input|textarea)[^>]*\bid="{field}"', html)
+        assert tag is not None, f"{field} is gone from the markup"
+        assert f'class="{face}"' in tag.group(0), f"{field} is not wearing {face}"
+    # A name a person composes stays in the body face.
+    for field in ("layout-display", "format-display"):
+        tag = re.search(rf'<input[^>]*\bid="{field}"', html)
+        assert tag is not None and "class=" not in tag.group(0), f"{field} took a mono face"
 
 
 def test_the_four_status_buckets_have_their_own_grid_cells() -> None:

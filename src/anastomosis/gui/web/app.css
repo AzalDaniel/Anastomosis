@@ -273,20 +273,30 @@ svg { display: block; }
 }
 .field-help { font-size: var(--text-caption); color: var(--ink-muted); line-height: 1.5; }
 
-.field input[type="text"],
-.field input[type="search"],
-.field select,
-.field textarea {
+/* :where() so the base contributes only `.field`'s specificity — the face
+   opt-ins below are single classes, and an attribute selector here would
+   silently outrank them. */
+.field :where(input[type="text"], input[type="search"], select, textarea) {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-control);
   border: 1px solid var(--hairline);
   background: var(--field);
   color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--text-label);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  min-height: 44px;
   outline: none;
   transition: border-color var(--t-snap) var(--ease-quart),
               background var(--t-snap) var(--ease-quart);
+}
+/* Monospace is for strings a person reads character by character and could
+   mistype: paths, identifiers, host:port, visit ids. Everything they compose in
+   their own words stays in the body face, so a new field gets the safe default
+   and opts in only when its content is machine-shaped. */
+.field .is-path, .field .is-id, .field .is-endpoint {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
 }
 .field textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
 .field input::placeholder, .field textarea::placeholder { color: var(--ink-muted); }
@@ -341,6 +351,7 @@ svg { display: block; }
   list-style: none;
   display: inline-flex;
   align-items: center;
+  min-height: 44px;
   gap: var(--space-2);
   font-size: var(--text-label);
   font-weight: 560;
@@ -371,6 +382,7 @@ svg { display: block; }
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  min-height: 44px;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-control);
   border: 1px solid transparent;
@@ -421,8 +433,8 @@ svg { display: block; }
   border-radius: var(--radius-control);
 }
 .btn:focus-visible { border-radius: var(--radius-control); }
-.segment-toggle:focus-within, .status-badge:focus-visible { border-radius: var(--radius-pill); }
-.chip:focus-visible, .mode-tab:focus-visible { border-radius: var(--radius-chip); }
+.segment-toggle:focus-within { border-radius: var(--radius-pill); }
+.mode-tab:focus-visible { border-radius: var(--radius-chip); }
 .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
   border-radius: var(--radius-control);
 }
@@ -498,22 +510,20 @@ svg { display: block; }
   touch-action: none;
 }
 .segment-option:focus { outline: none; }
-.segment-option[aria-pressed="true"] { color: var(--ink); }
 /* The blob arrives before the commit does, so the label under it brightens on
-   the DRAG position while the selection still describes the committed view.
-   Scoped to the nav: only the nav's lozenge is porcelain, and dark ink on the
-   oxblood indicator of a settings toggle measures 3.77:1. */
+   the DRAG position while the selection still describes the committed view. */
 .navpill .segment-option.is-live { color: var(--ink-inverse); }
-.segment-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.segment-row > .field-help { flex: 1 1 260px; }
 
 
 /* ─── 9. Checkbox toggles + the section matrix ───────────────── */
 .toggles { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); }
+.stack > .toggle { align-self: flex-start; }
 .toggle {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-1);
+  gap: var(--space-3);
   cursor: pointer;
   font-size: var(--text-label);
   color: var(--ink-secondary);
@@ -521,11 +531,15 @@ svg { display: block; }
 .toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .toggle .track {
   position: relative;
-  width: 34px;
-  height: 20px;
+  width: 40px;
+  height: 24px;
   border-radius: var(--radius-pill);
   background: var(--fill);
-  border: 1px solid var(--hairline);
+  /* The OFF state is carried by this edge alone — the fill is nearly the
+     panel's — so it has to clear 3:1 against the panel (WCAG 1.4.11). At 0.34
+     it measures 3.007:1, which passes and leaves no room at all; 0.44 measures
+     3.73:1. The margin is the point. */
+  border: 1px solid rgba(244, 238, 228, 0.44);
   transition: background var(--t-snap) var(--ease-quart);
   flex-shrink: 0;
 }
@@ -533,17 +547,17 @@ svg { display: block; }
   content: "";
   position: absolute;
   top: 2px; left: 2px;
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   border-radius: 50%;
   background: var(--ink-secondary);
   transition: transform var(--t-move) var(--ease-quart),
               background var(--t-snap) var(--ease-quart);
 }
 .toggle input:checked + .track {
-  background: color-mix(in oklab, var(--brand-bright) 62%, transparent);
-  border-color: color-mix(in oklab, var(--brand-bright) 62%, transparent);
+  background: var(--brand-bright);
+  border-color: var(--brand-bright);
 }
-.toggle input:checked + .track::after { transform: translateX(14px); background: var(--ink); }
+.toggle input:checked + .track::after { transform: translateX(16px); background: var(--ink); }
 .toggle input:focus-visible + .track { outline: 2px solid var(--brand-bright); outline-offset: 3px; }
 
 .section-matrix {
@@ -644,24 +658,6 @@ svg { display: block; }
   color: var(--ink-muted);
 }
 .meta-value { color: var(--ink-secondary); font-weight: 600; }
-
-/* The status badge — the second and last pill in the system (§5). */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  align-self: flex-start;
-  padding: 3px var(--space-3);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--hairline);
-  background: var(--fill-soft);
-  font-size: var(--text-caption);
-  color: var(--ink-secondary);
-}
-.status-badge svg { width: 14px; height: 14px; }
-.status-badge[data-signal="ok"]        { border-color: color-mix(in oklab, var(--ok) 55%, transparent); color: var(--ok); }
-.status-badge[data-signal="attention"] { border-color: color-mix(in oklab, var(--attention) 55%, transparent); color: var(--attention); }
-.status-badge[data-signal="stop"]      { border-color: color-mix(in oklab, var(--stop) 55%, transparent); color: var(--stop); }
 
 /* Progress: a flat brand fill. The only motion is a slow opacity pulse, and
    only while a run is actually in flight (§12). */
@@ -858,25 +854,42 @@ svg { display: block; }
 .route-why { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.5; }
 .route-mark { font-size: var(--text-caption); color: var(--ink-muted); }
 .route-detail { font-size: var(--text-caption); color: var(--ink-muted); font-family: var(--font-mono); }
-.route-detail summary { cursor: pointer; font-family: var(--font-body); }
+.route-detail summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
 
 /* Teach: two modes of one workspace. */
-.mode-tabs { display: flex; gap: var(--space-2); }
+/* Choosing which content a panel shows is the content layer's job, so these are
+   underline tabs and not a second pill: the app has exactly one pill, the view
+   nav. The underline is porcelain because selection is porcelain throughout —
+   oxblood at 2px on a panel measures about 2.3:1 and would fail 1.4.11. */
+.mode-tabs {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
 .mode-tab {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-chip);
-  border: 1px solid var(--hairline);
-  background: var(--fill-soft);
-  color: var(--ink-secondary);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--ink-muted);
   font-size: var(--text-label);
   font-weight: 560;
-  transition: background var(--t-snap) var(--ease-quart), color var(--t-snap) var(--ease-quart);
+  transition: color var(--t-snap) var(--ease-quart),
+              border-color var(--t-snap) var(--ease-quart);
 }
-.mode-tab:hover { background: var(--fill); color: var(--ink); }
+.mode-tab:hover { color: var(--ink); }
 .mode-tab[aria-selected="true"] {
-  background: color-mix(in oklab, var(--brand-bright) 24%, transparent);
-  border-color: color-mix(in oklab, var(--brand-bright) 55%, transparent);
   color: var(--ink);
+  font-weight: 640;
+  border-bottom-color: var(--ink);
 }
 .step-line { font-size: var(--text-caption); color: var(--ink-muted); }
 
@@ -915,7 +928,7 @@ svg { display: block; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px; height: 28px;
+  width: 44px; height: 44px;
   border: 1px solid var(--hairline);
   background: transparent;
   color: var(--ink-secondary);

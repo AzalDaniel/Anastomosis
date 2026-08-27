@@ -183,31 +183,40 @@ def test_activity_strip_carries_every_flow(gui) -> None:
 
 
 @pytest.mark.parametrize("prefix", ["charts", "migrate"])
-def test_double_check_toggle_answers_a_real_mouse_click(gui, prefix: str) -> None:
-    """Clicking a segment option selects it — with a real pointer, not a script.
+def test_double_check_is_a_switch_that_answers_a_real_mouse_click(gui, prefix: str) -> None:
+    """Double-checking is a binary setting, so it wears the switch idiom.
 
-    The toggle takes pointer capture on ``pointerdown`` to drive its drag
-    physics, and the browser then retargets the following ``click`` to the
-    capture element — so the per-option click handler never fired for a real
-    press and the control was mouse-dead (keyboard and drag still worked, which
-    is exactly why it read as fine).
+    It used to be a second sliding pill on the same screen as the view nav,
+    which read to assistive tech as a radiogroup of "On"/"Off" — a control
+    announcing its own states instead of naming what it does. It also inherited
+    the pill's pointer capture, which retargeted the click away from the option
+    and left the control mouse-dead.
     """
     app = gui()
     view = "charts" if prefix == "charts" else "migrate"
     app.show(view)
-    toggle = app.page.locator(f'[data-view="{view}"] .segment-toggle[data-name="qa"]')
-    assert toggle.get_attribute("data-value") == "on"
+    box = app.page.locator(f"#{prefix}-qa")
+    assert box.is_checked(), "double-checking must ship on"
+    assert box.get_attribute("type") == "checkbox"
 
-    app.page.click(f'[data-view="{view}"] .segment-option[data-value="off"]')
+    app.page.click(f"label.toggle:has(#{prefix}-qa)")
     app.page.wait_for_timeout(120)
 
-    assert toggle.get_attribute("data-value") == "off"
-    assert (
-        app.page.locator(f'[data-view="{view}"] .segment-option[data-value="off"]').get_attribute(
-            "aria-pressed"
-        )
-        == "true"
-    )
+    assert not box.is_checked()
+
+
+def test_the_sliding_pill_is_only_the_view_nav(gui) -> None:
+    """One pill in the app, and it means "peer destinations".
+
+    A binary setting is a switch and one-of-N is a chooser; when a second
+    control wore the pill, the screen offered two different idioms for two
+    different kinds of choice and neither read as the more important one.
+    """
+    app = gui()
+
+    for view in VIEWS:
+        app.show(view)
+        assert app.page.locator(f'[data-view="{view}"] .segment-toggle').count() == 0
 
 
 def test_segment_indicator_is_actually_drawn(gui) -> None:
@@ -220,14 +229,12 @@ def test_segment_indicator_is_actually_drawn(gui) -> None:
     """
     app = gui()
 
-    indicator = app.page.locator('[data-view="charts"] .segment-indicator').first
+    indicator = app.page.locator("#nav-pill .segment-indicator")
     width = indicator.evaluate("node => node.getBoundingClientRect().width")
-    track = app.page.locator('[data-view="charts"] .segment-toggle[data-name="qa"]').evaluate(
-        "node => node.getBoundingClientRect().width"
-    )
+    track = app.page.locator("#nav-pill").evaluate("node => node.getBoundingClientRect().width")
     assert width > 0, "the segment indicator is invisible"
-    # Two options: the blob covers about half the track (minus the 4px inset).
-    assert 0.3 * track < width < 0.7 * track
+    # Four options: the blob covers about a quarter of the track (minus the inset).
+    assert 0.15 * track < width < 0.35 * track
 
 
 def test_about_popover_carries_the_version_and_licence(gui) -> None:
@@ -315,10 +322,11 @@ def test_the_nav_is_one_tablist_that_never_scrolls_away(gui) -> None:
 def test_the_nav_reads_as_tabs_and_keys_like_tabs(gui) -> None:
     """A group of peer destinations is a tablist, not a radiogroup.
 
-    The pill shares its sliding/dragging mechanism with the settings toggles, so
-    the thing that has to be pinned is that it does NOT share their ARIA: the
-    same code has to say `tab`/`aria-selected` here and `radio`/`aria-pressed`
-    there, or assistive tech is told the views are a multiple-choice question.
+    The mechanism used to serve two vocabularies — a settings toggle wore the
+    same pill and announced itself as a radiogroup — and getting that wrong
+    tells assistive tech the views are a multiple-choice question. The settings
+    toggle is a switch now, so the pill has one caller; this pins that the one
+    it has still reads as tabs.
     """
     app = gui()
     page = app.page
@@ -414,3 +422,116 @@ def test_the_activity_strip_floats_instead_of_landing_on_the_last_panel(gui) -> 
     strip = page.locator(".log-strip").bounding_box()
     assert strip is not None
     assert strip["height"] >= 44, f"the strip is {strip['height']}px tall"
+
+
+def test_nothing_an_operator_clicks_is_smaller_than_a_fingertip(gui) -> None:
+    """Every control on every view measures at least 44px on its short axis.
+
+    This used to be 52 of 69, twelve of them under WCAG 2.5.8's 24px AA floor:
+    the section switches were 20px of clickable track, the disclosure summaries
+    18px of text, and every text field 35px. The CSS floors are asserted in
+    tests/unit/test_gui_assets.py; this is the one that proves they render,
+    because a floor loses to a fixed height and neither the sheet nor a reviewer
+    would notice.
+
+    A checkbox is measured on its label row, which is what a person aims at —
+    the input itself is deliberately invisible and 0px.
+    """
+    app = gui()
+    page = app.page
+    measure = """() => {
+      const sel = 'button, input, select, textarea, summary, [role="tab"], a[href]';
+      const out = [];
+      for (const node of document.querySelectorAll('.view:not([hidden]) ' + sel)) {
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const target = (node.type === 'checkbox' && style.opacity === '0')
+          ? node.closest('label') || node : node;
+        const box = target.getBoundingClientRect();
+        if (!box.width && !box.height) continue;
+        out.push([node.id || target.className || node.tagName,
+                  Math.round(Math.min(box.width, box.height))]);
+      }
+      return out;
+    }"""
+
+    for view, _label in NAV_VIEWS:
+        app.show(view)
+        page.wait_for_timeout(120)
+        measured = page.evaluate(measure)
+        assert measured, f"{view} reported no controls at all"
+        small = [(name, size) for name, size in measured if size < 44]
+        assert not small, f"under the 44px floor on {view}: {small}"
+
+
+def test_a_switch_says_which_way_it_is_set_without_relying_on_colour(gui) -> None:
+    """OFF is legible by its edge, and ON/OFF are told apart by the thumb.
+
+    The two track fills are close on purpose — an oxblood switch that screamed
+    would compete with the one oxblood button on the panel — so the states are
+    NOT distinguishable by fill, and the 16px the thumb travels is what carries
+    the difference (WCAG 1.4.1). That makes two things load-bearing and worth
+    pinning: the OFF track's border must clear 3:1 against the panel behind it
+    (1.4.11), or the OFF switch is an invisible rectangle, and the thumb must
+    clear 3:1 against the ON fill, or the cue itself disappears when it matters.
+
+    The edge cleared the floor by 0.007 at the alpha it was first written with,
+    which is not a margin — hence the assertion, and hence the wider alpha it
+    now carries.
+    """
+    app = gui()
+    app.show("charts")
+
+    # Resolve every colour the way the compositor does: through a canvas, then
+    # alpha-composited in the order the page paints them.
+    measured = app.page.evaluate(
+        r"""() => {
+          // Through the canvas, and read back as PIXELS: Chromium reports a
+          // computed colour in the syntax it was authored in, so parsing the
+          // string yields nonsense the moment a token is written in oklch.
+          const canvas = document.createElement('canvas').getContext('2d');
+          const rgba = (value) => {
+            canvas.clearRect(0, 0, 1, 1);
+            canvas.fillStyle = value;
+            canvas.fillRect(0, 0, 1, 1);
+            const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data;
+            // getImageData un-premultiplies, so the channels are the source
+            // colour and the alpha is its own.
+            return [r, g, b, a / 255];
+          };
+          const over = (top, bottom) =>
+            [0, 1, 2].map((i) => top[i] * top[3] + bottom[i] * (1 - top[3])).concat([1]);
+          const lum = (c) => {
+            const f = (v) => (v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+            return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+          };
+          const ratio = (a, b) => {
+            const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+            return (hi + 0.05) / (lo + 0.05);
+          };
+          const track = (id) => document.getElementById(id).nextElementSibling;
+          const panel = rgba(getComputedStyle(
+            document.getElementById('charts-qa').closest('.panel')).backgroundColor);
+          const off = getComputedStyle(track('charts-archive'));
+          const offFill = over(rgba(off.backgroundColor), panel);
+          const offEdge = over(rgba(off.borderTopColor), offFill);
+          const on = getComputedStyle(track('charts-qa'));
+          const onFill = over(rgba(on.backgroundColor), panel);
+          const thumb = over(rgba(getComputedStyle(track('charts-qa'), '::after')
+            .backgroundColor), onFill);
+          const travel = getComputedStyle(track('charts-qa'), '::after').transform;
+          return {edge: ratio(offEdge, panel), thumb: ratio(thumb, onFill),
+                  fills: ratio(onFill, offFill), travel};
+        }"""
+    )
+
+    assert measured["edge"] >= 3.0, (
+        f"the OFF switch's edge is {measured['edge']:.2f}:1 on the panel"
+    )
+    assert measured["thumb"] >= 3.0, f"the thumb is {measured['thumb']:.2f}:1 on the ON track"
+    # The fills alone are NOT a sufficient cue, and are not asked to be — this
+    # records that, so nobody later reads the passing edge check as covering it.
+    assert measured["fills"] < 3.0
+    assert "matrix(1, 0, 0, 1, 16, 0)" in measured["travel"], (
+        f"the thumb no longer moves, so nothing distinguishes the states: {measured['travel']}"
+    )
