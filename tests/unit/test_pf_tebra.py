@@ -710,3 +710,85 @@ def test_social_observation_prefers_clinical_effective_date() -> None:
     }
     obs2 = _social_observations(only_recorded, guid)
     assert obs2[0].effective_at == parse_dt("2023-09-01")
+
+
+# --- the superbill TYPE join must not carry one patient's row onto another ------
+
+
+_SHARED_PLAN_ROW = (
+    "\t{guid}\tEvergreen Mutual\tEvergreen Basic\tMedical\tSelf\tEM55099\t\t"
+    "Primary\t1/1/2023\t\t\\N\ttrue\t\t6/2/2023 1:45:09 PM\n"
+)
+
+
+def _fixture_with_second_patient_on_p1s_plan(dst: Path) -> Path:
+    """P3 joins the plan P1's only superbill row describes.
+
+    The row has no PatientInsurancePlanGuid, so P3's coverage can only reach it
+    through the plan-name tier — the tier that matches across patients.
+    """
+    shutil.copytree(FIXTURE, dst)
+    with (dst / "patient-insurances.tsv").open("a", encoding="utf-8") as fh:
+        fh.write(_SHARED_PLAN_ROW.format(guid=P3))
+    return dst
+
+
+def test_shared_plan_name_does_not_carry_another_patients_row(tmp_path: Path) -> None:
+    """Two patients on one plan: neither may receive the other's identifiers.
+
+    The plan-name and payer-name tiers match across patients by construction —
+    only the first superbill row per plan name is indexed — so before this was
+    scoped, P1's PatientPracticeGuid and SuperbillGuid rode onto P3's Coverage
+    and into P3's exported bundle.
+    """
+    export = _fixture_with_second_patient_on_p1s_plan(tmp_path / "export")
+    records = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+
+    for patient_id, record in records.items():
+        for coverage in record.coverages:
+            for key, value in coverage.extensions.items():
+                if key.endswith("side:superbill-insurances:PatientPracticeGuid"):
+                    assert value == patient_id, (
+                        "a superbill row from another patient reached this coverage"
+                    )
+
+
+def test_shared_plan_name_still_resolves_the_type(tmp_path: Path) -> None:
+    """The TYPE itself is a fact about the PLAN, so reading it across patients
+    is correct and must survive the scoping above."""
+    export = _fixture_with_second_patient_on_p1s_plan(tmp_path / "export")
+    records = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+
+    evergreen = [c for c in records[P3].coverages if c.plan_name == "Evergreen Basic"]
+    assert evergreen and evergreen[0].plan_type == "HMO"
+
+
+def test_a_row_lent_across_patients_is_still_preserved_for_its_own(tmp_path: Path) -> None:
+    """A superbill row whose join won only ANOTHER patient's coverage was never
+    read for its own patient, so it is still unjoined and must be preserved —
+    counting the cross-patient read as consumption dropped it from the export."""
+    export = _fixture_with_second_patient_on_p1s_plan(tmp_path / "export")
+    insurances = (export / "patient-insurances.tsv").read_text(encoding="utf-8").splitlines()
+    kept = [line for line in insurances if "feedface-c0fe-0000-0000-000000000002" not in line]
+    (export / "patient-insurances.tsv").write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    records = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+    preserved = records[P1].extensions.get("pf_tebra:unjoined_superbill_insurances")
+    assert preserved and len(preserved) == 1
+
+
+def test_unjoined_superbill_row_with_no_home_patient_refuses(tmp_path: Path) -> None:
+    """Unjoined rows are placed by their own PatientPracticeGuid, so one naming
+    nobody in the export would vanish. superbill-insurances sits outside
+    _check_key_closure, so this is the only place that can catch it."""
+    export = tmp_path / "export"
+    shutil.copytree(FIXTURE, export)
+    with (export / "superbill-insurances.tsv").open("a", encoding="utf-8") as fh:
+        fh.write(
+            "feedface-5b11-0000-0000-000000000009\t\tfeedface-0000-0000-0000-000000000099\t"
+            "Nowhere Health\tNowhere Plan\tPPO\t6/2/2023 1:45:09 PM\n"
+        )
+
+    with pytest.raises(OrphanRowsError) as excinfo:
+        list(get_source("pf-tebra").load(export))
+    assert "superbill-insurances" in str(excinfo.value)

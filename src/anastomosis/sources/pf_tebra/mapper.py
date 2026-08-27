@@ -841,11 +841,11 @@ _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
 _BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2, "quaternary": 3, "other": 99}
 
 # superbill-insurances columns a WINNING join actually reads (see _matched_row):
-# the PIPG/plan-name join keys and the PlanType value they resolve. A row's own
-# PatientPracticeGuid is read by neither tier — it and every other column ride
-# the coverage's extensions via `residual` below (a row that wins no coverage at
-# all has NOTHING read from it; see `unjoined`, which keeps only its
-# PatientPracticeGuid as the placement key).
+# the PIPG/plan-name join keys and the PlanType value they resolve. Every other
+# column rides the coverage's extensions via `residual` below — but only onto
+# the row's OWN patient (see `_own_row`), because the name tiers match across
+# patients. A row that wins no coverage of its own has NOTHING read from it; see
+# `unjoined`, which keeps only its PatientPracticeGuid as the placement key.
 _SUPERBILL_JOINED_MAPPED = frozenset({"PatientInsurancePlanGuid", "PlanName", "PlanType"})
 
 
@@ -900,22 +900,45 @@ class _PlanTypeLookup:
         match = _PLAN_TYPE_RE.search(_s(ins_row, "InsurancePlanName") or "")
         return match.group(1).upper() if match else None
 
+    def _own_row(self, ins_row: Row) -> Row | None:
+        """The matched row, but only when it belongs to the SAME patient.
+
+        The TYPE a tier resolves is a fact about the PLAN — "Evergreen Basic is
+        an HMO" is true for everyone on it — so `resolve` may legitimately read
+        another patient's row to learn it. Every other column of that row is a
+        fact about THAT patient (their practice guid, their superbill guid), and
+        the plan-name and payer-name tiers match across patients by
+        construction: two patients on one plan resolve to whichever row was
+        indexed first. So the surplus columns may only ever be read from the
+        row's own patient, or one patient's identifiers land in another's chart.
+        """
+        row = self._matched_row(ins_row)
+        if row is None:
+            return None
+        return row if _s(row, _PATIENT_KEY) == _s(ins_row, _PATIENT_KEY) else None
+
     def residual(self, ins_row: Row) -> dict[str, Any]:
         """Surplus columns of the superbill row that resolved this coverage's
         TYPE — empty when the regex fallback resolved it (reads no superbill
-        row) or when no superbill row informed this coverage at all."""
-        row = self._matched_row(ins_row)
+        row), when no superbill row informed this coverage at all, or when the
+        row that informed it belongs to a different patient (see `_own_row`)."""
+        row = self._own_row(ins_row)
         if row is None:
             return {}
         return _ext(row, _SUPERBILL_JOINED_MAPPED, prefix="side:superbill-insurances:")
 
     def unjoined(self, insurance_rows: list[Row], superbill_rows: list[Row]) -> list[Row]:
-        """Superbill rows whose PIPG/plan-name/payer-name join won no coverage
-        at all, across every patient's insurance rows."""
+        """Superbill rows no patient's coverage consumed.
+
+        Consumed means `_own_row` — a row that only lent its TYPE to another
+        patient had nothing else read from it, so it is still unjoined and still
+        has to be preserved for its own patient. Counting a cross-patient TYPE
+        read as consumption would drop the row from the export entirely.
+        """
         used = {
             id(matched)
             for ins_row in insurance_rows
-            if (matched := self._matched_row(ins_row)) is not None
+            if (matched := self._own_row(ins_row)) is not None
         }
         return [row for row in superbill_rows if id(row) not in used]
 
@@ -1168,10 +1191,18 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     # _FOREIGN_KEYS), so a row that joins no coverage at all is found here, once,
     # rather than through _check_key_closure; preserved per patient below instead
     # of being dropped (see _PlanTypeLookup.unjoined).
-    unjoined_superbill_by_patient = _by(
-        plan_types.unjoined(export["patient-insurances"], export["superbill-insurances"]),
-        _PATIENT_KEY,
+    unjoined_rows = plan_types.unjoined(
+        export["patient-insurances"], export["superbill-insurances"]
     )
+    # These are placed by their OWN PatientPracticeGuid, so a row whose guid is
+    # blank or names nobody in this export has no home and would vanish here.
+    # superbill-insurances sits outside _check_key_closure (it is read in full,
+    # never sliced), so this is the only place that can catch it. Counts only —
+    # never a guid value.
+    homeless = sum(1 for row in unjoined_rows if _s(row, _PATIENT_KEY) not in patient_guids)
+    if homeless:
+        raise OrphanRowsError({"superbill-insurances": homeless})
+    unjoined_superbill_by_patient = _by(unjoined_rows, _PATIENT_KEY)
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
     # Encounter-keyed link tables, pre-grouped once (see _DemographicsGroups).
