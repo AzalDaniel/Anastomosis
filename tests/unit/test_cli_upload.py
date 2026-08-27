@@ -361,7 +361,7 @@ def test_warning_surfaced_and_prompt_no_aborts(
         input="n\n",
     )
     assert result.exit_code == 0, result.output
-    assert "multi-user" in result.output.lower()  # the shared-machine warning
+    assert "other people" in result.output.lower()  # the shared-machine warning
     assert "aborted" in result.output.lower()
     assert called["n"] == 0  # declined before the seam
 

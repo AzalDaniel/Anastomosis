@@ -1,103 +1,119 @@
 /* ════════════════════════════════════════════════════════════════
-   Anastomosis — Liquid Glass design system (tokens)
+   Anastomosis — Porcelain & Oxblood (tokens)
    ════════════════════════════════════════════════════════════════
-   The design-system fonts + token sheet, carried from the predecessor
-   GUI verbatim (the original section comments are the design rationale
-   and are kept intact). Single source of truth: every page links
-   tokens.css then app.css, so there is no per-page token drift.
-   No frameworks, no Tailwind, no @apply. Hand-written for full control.
+   The single source of truth for colour, type, glass, shape and motion.
+   docs/design/DESIGN_LANGUAGE.md §1-§6 IS this file's specification: a
+   value here that disagrees with that document is a bug in this file.
+   index.html links tokens.css then app.css, once, for the whole app —
+   there is no second token sheet and no per-view drift.
+   No frameworks, no build step. Hand-written for full control.
    ════════════════════════════════════════════════════════════════ */
 
 
 /* ─── 1. Fonts ────────────────────────────────────────────────── */
-/* MonaSansVF has wdth + wght + opsz + italic axes in ONE file — we use
-   `font-style: italic` on the same family for italics, not a second @font-face.
-   Both fonts ship locally under SIL OFL-1.1 (see fonts/README.md) so the
-   strict self-only CSP (font-src 'self') is satisfied with zero network. */
+/* Three variable faces, all bundled locally under SIL OFL-1.1 (see
+   fonts/README.md) so the strict `font-src 'self'` CSP is satisfied with zero
+   network. MonaSansVF carries wdth+wght+opsz+italic in ONE file, so italics
+   come from `font-style: italic` on the same family, not a second face.
+
+   font-display: fallback everywhere — the document parses ONCE per app launch
+   (§7), but a blocking face still costs a flash of invisible text on that one
+   load; a clinician reading a chart list must never wait on a glyph. */
 @font-face {
   font-family: "Mona Sans";
   src: url("fonts/MonaSansVF.woff2") format("woff2-variations");
   font-weight: 200 900;
   font-stretch: 75% 125%;
   font-style: normal italic;
-  font-display: block;
+  font-display: fallback;
 }
 @font-face {
   font-family: "JetBrains Mono";
   src: url("fonts/JetBrainsMonoVF.woff2") format("woff2-variations");
   font-weight: 100 800;
-  font-display: block;
+  font-display: fallback;
+}
+/* Fraunces: the editorial register (§4) for view titles and patient names.
+   Axes: opsz 9-144, wght 100-900, SOFT 0-100, WONK 0-1. Its file defaults are
+   wght 900 / WONK 1, so every use site pins all four axes through
+   font-variation-settings — otherwise the wonky alternates ship by accident. */
+@font-face {
+  font-family: "Fraunces";
+  src: url("fonts/FrauncesVF.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-display: fallback;
 }
 
 
 /* ─── 2. Tokens ───────────────────────────────────────────────── */
 :root {
+  /* The native form-control palette. Set here (not only in a media query) so
+     the OS-drawn parts of a control — the open <select> popup above all —
+     render dark instead of the white system default over our dark ground. */
+  color-scheme: dark;
+
   /* fonts */
-  --font-display: "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
-  --font-body:    "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
-  --font-mono:    "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font-body:      "Mona Sans", -apple-system, "Segoe UI Variable", system-ui, sans-serif;
+  --font-editorial: "Fraunces", "Mona Sans", Georgia, serif;
+  --font-mono:      "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
 
-  /* type scale */
-  --text-display-xl: 56px;
-  --text-display-lg: 32px;
-  --text-title:      20px;
-  --text-body:       14px;
-  --text-label:      12px;
-  --text-caption:    11px;
-  --text-mono:       13px;
+  /* type scale — 12/13/15/18/24/34. Nothing below 12px, ever: the smallest
+     text in a chart tool still carries audit-relevant facts (§4). */
+  --text-caption: 12px;
+  --text-label:   13px;
+  --text-body:    15px;
+  --text-lead:    18px;
+  --text-title:   24px;
+  --text-display: 34px;
 
-  /* surfaces */
-  --surface-veil:    rgba(245, 240, 232, 0.05);
-  --surface-card:    rgba(245, 240, 232, 0.08);
-  --surface-modal:   rgba(245, 240, 232, 0.13);
-  --surface-tile:    rgba(245, 240, 232, 0.10);
-  --surface-pressed: rgba(245, 240, 232, 0.16);
+  /* ground and ink — warm, never navy, never gray-blue (§1) */
+  --ground:        oklch(0.18 0.012 55);
+  --ground-deep:   oklch(0.14 0.010 55);
+  --ink:           oklch(0.96 0.010 80);
+  --ink-secondary: oklch(0.84 0.012 80);
+  --ink-muted:     oklch(0.68 0.012 80);
+  --ink-inverse:   oklch(0.15 0.010 55);
 
-  /* ink */
-  --ink-primary:   oklch(0.97 0.01 80);
-  --ink-secondary: oklch(0.82 0.01 80);
-  --ink-muted:     oklch(0.62 0.01 80);
-  --ink-inverse:   oklch(0.18 0.01 240);
+  /* brand — the oxblood of the vessel mark. --brand is identity only;
+     --brand-bright is every interactive brand surface (§1). */
+  --brand:        oklch(0.44 0.13 30);
+  --brand-bright: oklch(0.56 0.15 30);
+  --brand-press:  oklch(0.50 0.15 30);
 
-  /* dichroic accent (progress fill only) */
-  --accent-warm:   oklch(0.78 0.18 28);
-  --accent-mid:    oklch(0.85 0.10 60);
-  --accent-cool:   oklch(0.85 0.10 200);
-  --accent-fill:   linear-gradient(90deg,
-                       var(--accent-warm) 0%,
-                       var(--accent-mid)  50%,
-                       var(--accent-cool) 100%);
+  /* clinical signals — their own family. Never decoration, never swapped for
+     brand colour, never used to mean "this control is interactive" (§1). */
+  --ok:        oklch(0.80 0.13 160);
+  --attention: oklch(0.84 0.12 85);
+  --stop:      oklch(0.70 0.19 25);
 
-  /* solid primary */
-  --primary:        oklch(0.78 0.18 28);
-  --primary-press:  oklch(0.72 0.20 28);
-  --primary-glow:   oklch(0.78 0.18 28 / 0.40);
+  /* glass — three tiers that scale together: blur, saturation, opacity and
+     border move as one, because depth is correlated (§3). */
+  --glass-veil-blur:   saturate(130%) blur(24px);
+  --glass-card-blur:   saturate(150%) blur(32px);
+  --glass-modal-blur:  saturate(170%) blur(48px);
+  --glass-veil-bg:     rgba(244, 238, 228, 0.05);
+  --glass-card-bg:     rgba(244, 238, 228, 0.08);
+  /* The modal tier is near-OPAQUE on purpose: two stacked backdrop-filters
+     turn to mud, so anything floating above a card gets 94% ground plus its
+     own `isolation: isolate` (the Tebra mud fix / the Denim rule — legibility
+     outranks prettiness). */
+  --glass-modal-bg:    rgba(24, 20, 16, 0.94);
+  --glass-veil-border:  1px solid rgba(244, 238, 228, 0.10);
+  --glass-card-border:  1px solid rgba(244, 238, 228, 0.18);
+  --glass-modal-border: 1px solid rgba(244, 238, 228, 0.24);
+  /* Glass catches light through an inset top highlight, never an outer glow.
+     Shadow belongs to true floaters only; in-flow panels get the hairline. */
+  --glass-highlight: inset 0 1px 0 rgba(255, 250, 240, 0.12);
+  --shadow-float:    0 24px 64px rgba(0, 0, 0, 0.35);
 
-  /* signals */
-  --signal-success: oklch(0.82 0.14 165);
-  --signal-warning: oklch(0.85 0.14 75);
-  --signal-error:   oklch(0.72 0.18 18);
-  --signal-info:    oklch(0.80 0.06 230);
+  /* fills for tiles, hovers and wells — porcelain at low alpha */
+  --fill-soft:    rgba(244, 238, 228, 0.06);
+  --fill:         rgba(244, 238, 228, 0.10);
+  --fill-strong:  rgba(244, 238, 228, 0.16);
+  --hairline:     rgba(244, 238, 228, 0.14);
+  --well:         rgba(0, 0, 0, 0.22);
 
-  /* glass elevations */
-  --glass-veil-blur:    saturate(130%) blur(24px);
-  --glass-card-blur:    saturate(150%) blur(32px);
-  --glass-modal-blur:   saturate(170%) blur(48px);
-
-  --glass-veil-bg:      var(--surface-veil);
-  --glass-card-bg:      var(--surface-card);
-  --glass-modal-bg:     var(--surface-modal);
-
-  --glass-veil-border:  1.5px solid rgba(255, 250, 240, 0.10);
-  --glass-card-border:  1.5px solid rgba(255, 250, 240, 0.18);
-  --glass-modal-border: 1.5px solid rgba(255, 250, 240, 0.24);
-
-  --glass-card-shadow:  0 8px 24px rgba(0, 0, 0, 0.18),
-                        inset 0 1px 0 rgba(255, 250, 240, 0.12);
-  --glass-modal-shadow: 0 24px 64px rgba(0, 0, 0, 0.35),
-                        inset 0 1px 0 rgba(255, 250, 240, 0.20);
-
-  /* spacing */
+  /* spacing — the 4px scale: 4/8 inside a group, 24+ between groups (§5) */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -105,17 +121,17 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  /* radii */
-  --radius-sm:  8px;
-  --radius-md:  12px;
-  --radius-lg:  16px;
-  --radius-pill: 999px;
+  /* radius BY ROLE, never one token (§5). The pill exists in exactly two
+     places: the segment toggle and a status badge. */
+  --radius-panel:   14px;
+  --radius-control:  8px;
+  --radius-chip:     6px;
+  --radius-pill:   999px;
 
-  /* motion */
-  --ease-quart:        cubic-bezier(0.32, 0.72, 0, 1);
-  --ease-cubic-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
-  --dur-snap:    120ms;
-  --dur-std:     240ms;
-  --dur-soft:    480ms;
-  --dur-progress: 800ms;
+  /* motion — four durations, one curve (§6) */
+  --ease-quart: cubic-bezier(0.32, 0.72, 0, 1);
+  --t-snap: 120ms;
+  --t-move: 240ms;
+  --t-soft: 480ms;
+  --t-fill: 800ms;
 }

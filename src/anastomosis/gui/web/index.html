@@ -6,21 +6,30 @@
     <!--
       Strict, self-only CSP. The GUI is served from disk by pywebview and must
       make zero network requests (the archive's offline rule applies). Styles,
-      scripts, AND fonts are local files only (font-src 'self'); no inline
-      script is permitted.
+      scripts AND fonts are local files only (font-src 'self'); no inline script
+      is permitted, and no inline style attribute either — CSS custom properties
+      that vary at runtime are written through the CSSOM by shell.js.
     -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
+    <!-- The product name appears exactly ONCE, on the window itself. -->
     <title>Anastomosis</title>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
-  <body class="theme-dark">
-    <!-- SVG gooey filter: applied to .segment-toggle's .segment-goo so the coral
-         indicator blob stretches elastically between slots (iOS 26 style). -->
-    <svg class="gooey-defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <body>
+    <!--
+      ONE document, four views. The five legacy pages are gone: CSS, fonts, the
+      gooey filter defs and the backdrop parse once per app launch, the bridge
+      attaches once, and a run keeps streaming into the activity strip no matter
+      which view is on screen (DESIGN_LANGUAGE §7).
+    -->
+
+    <!-- Gooey filter for the segment toggle's indicator: blur → alpha
+         threshold → composite. Declared once, for the whole app. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false">
       <defs>
         <filter id="gooey">
           <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
@@ -31,236 +40,441 @@
       </defs>
     </svg>
 
-    <!-- frameless drag region with title -->
+    <!-- The backdrop: flat ground (body) plus ONE oversized blurred rendering of
+         the vessel mark, bottom-right, 5% opacity. The trunk-and-canopy strokes
+         are taken from assets/icon/icon-small.svg's line work; at blur(60px)
+         the fine capillaries add nothing, so only the load-bearing vessels are
+         carried. Fixed and non-interactive: it never repaints on a view switch. -->
+    <svg class="watermark" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M519.2 988.2 Q505.9 819.2 512.0 629.8" stroke-width="63" />
+        <path d="M512.0 629.8 Q438.3 517.1 402.4 346.1" stroke-width="63" />
+        <path d="M512.0 629.8 Q660.5 609.3 752.6 645.1" stroke-width="52.5" />
+        <path d="M512.0 629.8 Q480.5 536.4 442.0 464.8" stroke-width="63" />
+        <path d="M512.0 629.8 Q549.6 535.6 512.0 445.4" stroke-width="63" />
+        <path d="M512.0 629.8 Q569.0 549.4 582.0 464.8" stroke-width="63" />
+        <path d="M512.0 629.8 Q428.7 595.3 390.2 520.1" stroke-width="56.7" />
+        <path d="M512.0 629.8 Q564.6 556.6 631.8 518.0" stroke-width="56.7" />
+        <path d="M512.0 629.8 Q438.8 609.2 379.8 589.3" stroke-width="46.2" />
+        <path d="M512.0 629.8 Q585.0 608.5 642.7 584.8" stroke-width="46.2" />
+        <path d="M442.0 464.8 Q364.8 438.0 306.6 403.8" stroke-width="41.7" />
+        <path d="M442.0 464.8 Q431.8 386.8 385.1 333.6" stroke-width="40.8" />
+        <path d="M442.0 464.8 Q465.8 390.1 474.1 325.9" stroke-width="39.6" />
+        <path d="M512.0 445.4 Q442.3 402.1 404.5 342.0" stroke-width="43.6" />
+        <path d="M512.0 445.4 Q491.9 370.6 516.3 304.7" stroke-width="39.9" />
+        <path d="M512.0 445.4 Q563.3 380.5 610.8 331.9" stroke-width="45.2" />
+        <path d="M582.0 464.8 Q573.3 394.2 570.3 335.9" stroke-width="42.9" />
+        <path d="M582.0 464.8 Q616.7 402.7 643.2 350.9" stroke-width="39.1" />
+        <path d="M582.0 464.8 Q647.0 432.1 688.1 385.8" stroke-width="38.5" />
+        <path d="M631.8 518.0 Q641.3 451.8 638.7 396.7" stroke-width="37.5" />
+        <path d="M631.8 518.0 Q680.7 463.4 737.8 437.2" stroke-width="35.8" />
+        <path d="M631.8 518.0 Q699.6 507.7 756.4 516.8" stroke-width="35.4" />
+        <path d="M390.2 520.1 Q339.2 478.2 286.3 460.0" stroke-width="38.9" />
+        <path d="M390.2 520.1 Q352.9 462.6 323.5 414.8" stroke-width="38.6" />
+        <path d="M379.8 589.3 Q327.1 609.0 277.5 590.5" stroke-width="28.9" />
+        <path d="M379.8 589.3 Q321.0 575.6 289.6 526.6" stroke-width="31.2" />
+        <path d="M642.7 584.8 Q694.3 557.9 725.6 519.1" stroke-width="30.8" />
+        <path d="M642.7 584.8 Q699.4 605.8 752.7 586.7" stroke-width="32.0" />
+      </g>
+    </svg>
+
+    <!-- The band under the window frame names the CURRENT VIEW, never the app. -->
     <header class="title-bar" role="presentation">
-      <span class="title-text">Anastomosis</span>
+      <span class="title-text" id="view-band">Charts</span>
     </header>
 
-    <!-- wallpaper layers (procedural gradient; sit behind everything) -->
-    <div class="wallpaper" aria-hidden="true"></div>
-    <div class="wallpaper-veil" aria-hidden="true"></div>
-
     <main class="app-shell">
-      <div class="page-head">
-        <div>
-          <h1>Anastomosis</h1>
-          <div class="tagline">Reconstruct, verify, and re-home clinical records.</div>
-        </div>
-        <div class="version" id="version">—</div>
-      </div>
-
-      <nav class="nav" aria-label="Workspaces">
-        <a class="nav-link" href="index.html" aria-current="page">Dashboard</a>
-        <a class="nav-link" href="wizard.html">Migration wizard</a>
-        <a class="nav-link" href="console.html">Upload console</a>
-        <a class="nav-link" href="packgen.html">Pack from samples</a>
-        <a class="nav-link" href="source.html">Learn a source</a>
+      <nav class="nav" aria-label="Views">
+        <button type="button" class="nav-btn" data-view-target="charts" aria-current="true">Charts</button>
+        <button type="button" class="nav-btn" data-view-target="migrate">Migrate</button>
+        <button type="button" class="nav-btn" data-view-target="uploads">Uploads</button>
+        <button type="button" class="nav-btn" data-view-target="teach">Teach</button>
+        <span class="nav-spacer"></span>
+        <button type="button" class="about-btn" id="about-btn" aria-expanded="false" aria-controls="about-popover">
+          <span class="icon" data-icon="info"></span>About
+        </button>
       </nav>
 
-      <!-- Vendor-change detection toast (pack_freshness). Dismissible; hidden
-           until the dashboard finds a stale destination pack. -->
-      <div class="toast" id="freshness-toast" role="status">
-        <div id="freshness-body"></div>
-        <button class="toast-dismiss" id="freshness-dismiss" type="button" aria-label="Dismiss">
-          dismiss
-        </button>
-      </div>
-
-      <!-- Shown only when opened in a plain browser (no pywebview bridge). -->
+      <!-- Shown only when opened without the desktop bridge. -->
       <div class="no-api" id="no-api">
-        This dashboard runs inside the desktop app. Launch it with
-        <code>anast gui</code> (needs the <code>anastomosis[gui]</code> extra).
+        The desktop app is not connected. Close this window and start Anastomosis
+        from the Start menu.
+      </div>
+      <div class="banner" id="banner" role="alert"></div>
+      <!-- Vendor-change notice; hidden until a filing assistant looks out of date. -->
+      <div class="toast" id="freshness-toast" role="status">
+        <span id="freshness-body"></span>
+        <button class="btn btn-quiet" id="freshness-dismiss" type="button">Dismiss</button>
       </div>
 
-      <div class="banner" id="banner"></div>
-
-      <section class="panel glass-card" aria-label="Pipeline run">
-        <h2>run pipeline</h2>
-
-        <div class="field">
-          <label for="export-dir">Export directory</label>
-          <input type="text" id="export-dir" placeholder="/path/to/ehi/export" />
+      <!-- ───────────────────────── Charts ───────────────────────── -->
+      <section class="view" data-view="charts" aria-label="Charts">
+        <div class="view-head">
+          <h1>Charts</h1>
+          <div class="lede">Turn an EHR export into complete, verified charts.</div>
         </div>
 
-        <!-- Source format: "auto-detect" (value "") lets the pipeline sniff the
-             export; the rest are the registered adapters from info().sources. -->
-        <div class="field">
-          <label for="source">Source format</label>
-          <select id="source"></select>
+        <div class="panel" id="charts-panel">
+          <h2>Rebuild charts</h2>
+          <!-- The run form is ONE component (shell.js buildRunForm); Charts owns
+               the plain rebuild, Migrate composes the same form with a
+               destination. There is no second copy of this markup. -->
+          <div id="charts-form"></div>
         </div>
 
-        <div class="field">
-          <label for="out-dir">Output directory</label>
-          <input type="text" id="out-dir" placeholder="/path/to/output" />
+        <div class="panel progress-frame" id="charts-progress" aria-label="Progress">
+          <div class="progress-current" id="charts-current">Ready.</div>
+          <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="progress-bar-fill" id="charts-fill"></div>
+          </div>
+          <div class="stage-rail" id="charts-rail"></div>
         </div>
 
-        <div class="field">
-          <label for="pack">Template pack</label>
-          <select id="pack"></select>
+        <!-- Per-patient detail for a finished run: fetched over the bridge after
+             `done` and painted with textContent. Shown locally, never logged,
+             never carried on an event. -->
+        <section class="panel" id="charts-patients" aria-label="Patients in this run" hidden>
+          <h3>Patients in this run</h3>
+          <div id="charts-patients-body"></div>
+        </section>
+      </section>
+
+      <!-- ───────────────────────── Migrate ──────────────────────── -->
+      <section class="view" data-view="migrate" aria-label="Migrate" hidden>
+        <div class="view-head">
+          <h1>Migrate</h1>
+          <div class="lede">Move charts from one system into another.</div>
         </div>
 
-        <!-- Extra pack directory (optional): a custom --pack-dir made selectable
-             above. "trust new pack code" is the #40 hash-pin TOFU consent —
-             required the first time a pack dir's code is seen (and after it
-             changes). -->
-        <div class="field">
-          <label for="pack-dir">Extra pack directory (optional)</label>
-          <input type="text" id="pack-dir" placeholder="/path/to/custom/packs" />
-        </div>
-
-        <!-- Section-Selection Matrix: liquid toggles per pack section,
-             populated from info().packs[].sections; feeds gatherSections(). -->
-        <div class="field">
-          <label id="sections-label">Sections</label>
-          <div class="section-matrix" id="section-matrix" aria-labelledby="sections-label"></div>
-        </div>
-
-        <!-- QA as a gooey segment toggle; deliverers as liquid checkbox toggles.
-             No style="" attributes anywhere on this page: the CSP above ships
-             style-src 'self' with no 'unsafe-inline', so an inline style is
-             REFUSED (a console error, and the declaration never applies). The
-             segment's --segment-count/--segment-index are written by shell.js
-             through the CSSOM instead; layout modifiers are classes. -->
-        <div class="filter-bar filter-bar--flush">
-          <span class="pill-label">qa</span>
-          <div class="segment-toggle" role="radiogroup" aria-label="QA"
-               data-name="qa" data-value="on">
-            <div class="segment-goo" aria-hidden="true"><div class="segment-indicator"></div></div>
-            <button type="button" class="segment-option" data-value="on" aria-pressed="true">qa on</button>
-            <button type="button" class="segment-option" data-value="off" aria-pressed="false">qa off</button>
+        <div class="panel">
+          <h2>Where the charts are going</h2>
+          <div class="field">
+            <label for="migrate-destination">Destination system</label>
+            <div class="select-wrap"><select id="migrate-destination"></select></div>
+            <div class="field-help">The system these charts are moving into.</div>
+          </div>
+          <div class="route-list" id="migrate-routes"></div>
+          <div class="prose" id="migrate-guidance">
+            <p>Choose a destination to see how charts can reach it.</p>
+          </div>
+          <div class="actions" id="migrate-handoff-actions" hidden>
+            <button class="btn btn-secondary" id="migrate-continue" type="button">Continue on Uploads</button>
           </div>
         </div>
 
-        <div class="toggles">
-          <label class="toggle">
-            <input type="checkbox" id="deliver-archive" />
-            <span class="track"></span>
-            <span>archive</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="deliver-bundle" />
-            <span class="track"></span>
-            <span>bundles</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="deliver-ccda" />
-            <span class="track"></span>
-            <span>c-cda</span>
-          </label>
+        <div class="panel">
+          <h2>Rebuild charts</h2>
+          <div id="migrate-form"></div>
+          <div class="prose" id="migrate-result" hidden></div>
         </div>
 
-        <!-- Run levers (parity with the CLI): force re-render, and trust the
-             extra pack dir's code on first use. -->
-        <div class="toggles">
-          <label class="toggle">
-            <input type="checkbox" id="force" />
-            <span class="track"></span>
-            <span>force re-render</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="trust-pack" />
-            <span class="track"></span>
-            <span>trust new pack code</span>
-          </label>
-          <!-- Write the upload manifest the upload console consumes (GUI parity
-               for the CLI's `pipeline run --upload-manifest`). -->
-          <label class="toggle">
-            <input type="checkbox" id="write-manifest" />
-            <span class="track"></span>
-            <span>write upload manifest</span>
-          </label>
-        </div>
-
-        <button class="run-btn btn btn-primary" id="run-btn" type="button">run pipeline</button>
+        <section class="panel" id="migrate-patients" aria-label="Patients in this run" hidden>
+          <h3>Patients in this run</h3>
+          <div id="migrate-patients-body"></div>
+        </section>
       </section>
 
-      <!-- Now-running progress frame with the dichroic shimmer fill. -->
-      <section class="progress-frame glass-card" aria-label="Pipeline progress">
-        <div class="progress-current" id="progress-current">— idle —</div>
-        <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+      <!-- ───────────────────────── Uploads ──────────────────────── -->
+      <section class="view" data-view="uploads" aria-label="Uploads" hidden>
+        <div class="view-head">
+          <h1>Uploads</h1>
+          <div class="lede">Watch charts being filed into the destination, and start or stop the work.</div>
         </div>
+
+        <!-- Filing goes through the controller ONLY (upload_start / upload_stop):
+             this page never writes the upload record itself. The browser
+             connection is loopback-only, hard-gated on the Python side. -->
+        <div class="panel">
+          <h2>File charts into the destination</h2>
+          <div class="safety-warning" id="uploads-safety" role="alert"></div>
+          <div class="field">
+            <label for="uploads-results-dir">Results folder</label>
+            <input type="text" id="uploads-results-dir" placeholder="C:\Users\you\Documents\anastomosis-charts" />
+            <div class="field-help">The folder Anastomosis wrote the finished charts into.</div>
+          </div>
+          <div class="field">
+            <label for="uploads-assistant">Filing assistant</label>
+            <input type="text" id="uploads-assistant" placeholder="tebra" />
+            <div class="field-help">The destination system Anastomosis files into. Migrate fills this in for you.</div>
+          </div>
+          <div class="toggles">
+            <label class="toggle">
+              <input type="checkbox" id="uploads-verify" checked />
+              <span class="track"></span>
+              <span>Double-check each chart after filing</span>
+            </label>
+          </div>
+          <div class="field-help">
+            Confirms the right chart landed on the right patient before moving on.
+            Charts already filed are left alone.
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="advanced-body">
+              <div class="field">
+                <label for="uploads-browser">Browser connection</label>
+                <input type="text" id="uploads-browser" value="127.0.0.1:9222" spellcheck="false" />
+                <div class="field-help">
+                  Anastomosis files charts through a browser window it controls on
+                  this computer. Leave this as suggested unless support asks you to
+                  change it.
+                </div>
+              </div>
+              <div class="field">
+                <label for="uploads-skiplist">Skip these</label>
+                <textarea id="uploads-skiplist" rows="3" spellcheck="false" placeholder="visit-1234"></textarea>
+                <div class="field-help">
+                  One visit id per line. Lines starting with # are notes to yourself
+                  and are ignored.
+                </div>
+              </div>
+              <div class="field">
+                <label for="uploads-assistant-folder">Additional filing-assistant folder</label>
+                <input type="text" id="uploads-assistant-folder" placeholder="C:\Users\you\Documents\assistants" />
+                <div class="field-help">Only needed for an assistant that did not ship with Anastomosis.</div>
+              </div>
+              <div class="field">
+                <label for="uploads-record">Record file</label>
+                <input type="text" id="uploads-record" spellcheck="false" />
+                <div class="field-help">
+                  Only needed if the record of what has been filed is not in the
+                  results folder. Support will tell you what to put here.
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div class="actions">
+            <button class="btn btn-primary" id="uploads-start" type="button">Start filing</button>
+            <button class="btn btn-secondary" id="uploads-stop" type="button">Stop</button>
+            <button class="btn btn-quiet" id="uploads-refresh" type="button">Show what has been filed</button>
+          </div>
+        </div>
+
+        <section class="counter-grid" id="uploads-counters" aria-label="Filing progress" hidden>
+          <div class="counter-tile" data-bucket="filed">
+            <div class="counter-label">Filed</div>
+            <div class="counter-value" id="uploads-count-filed">0</div>
+            <div class="counter-sub">Confirmed in the destination.</div>
+          </div>
+          <div class="counter-tile" data-bucket="attention">
+            <div class="counter-label">Needs attention</div>
+            <div class="counter-value" id="uploads-count-attention">0</div>
+            <div class="counter-sub">Stopped or failed a check — review these.</div>
+          </div>
+          <div class="counter-tile" data-bucket="progress">
+            <div class="counter-label">In progress</div>
+            <div class="counter-value" id="uploads-count-progress">0</div>
+            <div class="counter-sub">Being filed right now.</div>
+          </div>
+          <div class="counter-tile" data-bucket="waiting">
+            <div class="counter-label">Waiting</div>
+            <div class="counter-value" id="uploads-count-waiting">0</div>
+            <div class="counter-sub">Not started, including charts you chose to skip.</div>
+          </div>
+        </section>
+
+        <section class="panel" id="uploads-detail" aria-label="What has been filed" hidden>
+          <h3>What has been filed</h3>
+          <div class="meta-row" id="uploads-meta"></div>
+          <div class="field search-field">
+            <span class="icon" data-icon="search"></span>
+            <input type="search" id="uploads-search" autocomplete="off" spellcheck="false"
+                   placeholder="Find an upload — search by visit id." aria-label="Find an upload — search by visit id." />
+          </div>
+          <div class="search-results" id="uploads-search-results"></div>
+          <div class="state-grid" id="uploads-states"></div>
+          <div class="actions">
+            <button class="btn btn-quiet" id="uploads-kinds-btn" type="button">What went wrong</button>
+          </div>
+        </section>
+
+        <section class="panel calendar" id="uploads-calendar" aria-label="Filing calendar" hidden>
+          <div class="cal-header">
+            <button type="button" class="cal-nav" id="uploads-cal-prev" aria-label="Previous month">
+              <span class="icon" data-icon="chevron-left"></span>
+            </button>
+            <h3 class="cal-title" id="uploads-cal-title"></h3>
+            <button type="button" class="cal-nav" id="uploads-cal-next" aria-label="Next month">
+              <span class="icon" data-icon="chevron-right"></span>
+            </button>
+          </div>
+          <div class="cal-weekdays" aria-hidden="true">
+            <span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span>
+          </div>
+          <div class="cal-grid" id="uploads-cal-grid" role="grid"></div>
+          <div class="cal-legend" aria-hidden="true">
+            <span><i class="legend-dot legend-dot--pending"></i>In progress</span>
+            <span><i class="legend-dot legend-dot--done"></i>Filed</span>
+            <span><i class="legend-dot legend-dot--errors"></i>Needs attention</span>
+          </div>
+        </section>
       </section>
 
-      <section class="rail" aria-label="Pipeline stages">
-        <div class="stage glass-card" id="stage-ingest">
-          <div class="name">ingest</div>
-          <div class="counters"></div>
+      <!-- ────────────────────────── Teach ───────────────────────── -->
+      <section class="view" data-view="teach" aria-label="Teach" hidden>
+        <div class="view-head">
+          <h1>Teach</h1>
+          <div class="lede">Show Anastomosis a document layout or an export format it does not know yet.</div>
         </div>
-        <div class="stage glass-card" id="stage-reconstruct">
-          <div class="name">reconstruct</div>
-          <div class="counters"></div>
-        </div>
-        <div class="stage glass-card" id="stage-qa">
-          <div class="name">qa</div>
-          <div class="counters"></div>
-        </div>
-        <div class="stage glass-card" id="stage-deliver">
-          <div class="name">deliver</div>
-          <div class="counters"></div>
-        </div>
-      </section>
 
-      <!-- Per-patient detail for the completed run: name, DOB, encounter and
-           note counts. Fetched via last_run_summary() after `done` — these are
-           PHI shown locally only, never carried on an event. Hidden until a run
-           produces patients. -->
-      <section class="panel glass-card patients-panel" id="patients-panel"
-               aria-label="Per-patient summary" hidden>
-        <h2>patients</h2>
-        <div class="patients-body" id="patients-body"></div>
+        <div class="mode-tabs" role="tablist" aria-label="What to teach">
+          <button type="button" class="mode-tab" role="tab" data-mode="layout" aria-selected="true"
+                  aria-controls="teach-layout">Document layout</button>
+          <button type="button" class="mode-tab" role="tab" data-mode="format" aria-selected="false"
+                  aria-controls="teach-format">Export format</button>
+        </div>
+
+        <!-- Mode 1: teach a document layout from sample documents. -->
+        <div class="stack" id="teach-layout" role="tabpanel" aria-label="Document layout">
+          <div class="panel">
+            <h2>Teach a document layout</h2>
+            <div class="step-line" id="layout-step">Step 1 of 2 — look at the samples.</div>
+            <div class="field">
+              <label for="layout-samples">Sample documents folder</label>
+              <input type="text" id="layout-samples" placeholder="C:\Users\you\Documents\samples" />
+              <div class="field-help">A folder of finished PDFs from the system you want matched.</div>
+            </div>
+            <div class="field">
+              <label for="layout-name">Layout name</label>
+              <input type="text" id="layout-name" placeholder="acme_soap" />
+              <div class="field-help">Lowercase letters and underscores, e.g. acme_soap.</div>
+            </div>
+            <div class="field">
+              <label for="layout-display">Display name</label>
+              <input type="text" id="layout-display" placeholder="Acme SOAP note" />
+              <div class="field-help">Optional. What you want to see in the layout list.</div>
+            </div>
+            <button class="btn btn-primary" id="layout-analyze" type="button">Look at the samples</button>
+          </div>
+
+          <div class="panel" id="layout-proposal" aria-label="Proposed layout" hidden>
+            <h3>Proposed layout</h3>
+            <div class="panel-note">No patient data is shown below.</div>
+            <div class="text-block" id="layout-summary"></div>
+            <div class="prose" id="layout-caveat"></div>
+            <div class="confirm-row">
+              <label class="toggle">
+                <input type="checkbox" id="layout-confirm" />
+                <span class="track"></span>
+                <span>These samples are from different patients and different visits.</span>
+              </label>
+            </div>
+            <button class="btn btn-primary" id="layout-write" type="button" disabled>Write the draft layout</button>
+            <div class="panel-note">
+              This draft matches the samples' structure; review the result before
+              relying on it.
+            </div>
+          </div>
+
+          <div class="panel" id="layout-result" aria-label="Draft layout written" hidden>
+            <h3>Draft layout written</h3>
+            <div class="prose" id="layout-result-path"></div>
+            <div class="text-block" id="layout-result-md"></div>
+          </div>
+        </div>
+
+        <!-- Mode 2: teach an export format from one example file. -->
+        <div class="stack" id="teach-format" role="tabpanel" aria-label="Export format" hidden>
+          <div class="panel">
+            <h2>Teach an export format</h2>
+            <div class="step-line" id="format-step">Step 1 of 2 — look at the example.</div>
+            <div class="field">
+              <label for="format-example">Example file</label>
+              <input type="text" id="format-example" placeholder="C:\Users\you\Downloads\export.csv" />
+              <div class="field-help">A .csv, .tsv or .json file — or the folder holding it.</div>
+            </div>
+            <div class="field">
+              <label for="format-name">Format name</label>
+              <input type="text" id="format-name" placeholder="acme_csv" />
+              <div class="field-help">Lowercase letters and underscores, e.g. acme_csv.</div>
+            </div>
+            <div class="field">
+              <label for="format-display">Display name</label>
+              <input type="text" id="format-display" placeholder="Acme clinic CSV" />
+              <div class="field-help">Optional. What you want to see in the export-format list.</div>
+            </div>
+            <button class="btn btn-primary" id="format-analyze" type="button">Look at the example</button>
+          </div>
+
+          <div class="panel" id="format-proposal" aria-label="Proposed match-up" hidden>
+            <h3>Proposed match-up</h3>
+            <div class="panel-note">No patient data is shown below.</div>
+            <div class="prose" id="format-grouping"></div>
+            <div class="mapping-table" id="format-mapping"></div>
+            <details class="advanced">
+              <summary>Column detail</summary>
+              <div class="advanced-body">
+                <div class="text-block" id="format-summary"></div>
+              </div>
+            </details>
+            <div class="confirm-row">
+              <label class="toggle">
+                <input type="checkbox" id="format-confirm" />
+                <span class="track"></span>
+                <span>I reviewed this match-up. Columns with no match are kept, not dropped.</span>
+              </label>
+            </div>
+            <button class="btn btn-primary" id="format-save" type="button" disabled>Save this format</button>
+            <div class="panel-note">
+              Saving first proves no column of your file would be lost, then stores
+              the format for your user account only.
+            </div>
+          </div>
+
+          <div class="panel" id="format-result" aria-label="Format saved" hidden>
+            <h3>Format saved</h3>
+            <div class="prose" id="format-result-path"></div>
+            <div class="text-block" id="format-result-md"></div>
+          </div>
+        </div>
       </section>
 
       <div class="shell-spacer"></div>
 
-      <!-- Activity strip (collapsed log; expands into .log-drawer). -->
+      <!-- The activity strip is GLOBAL: it shows the latest event from any run,
+           in any view, and expands into the full history. -->
       <button type="button" class="log-strip" id="log-strip"
-              aria-label="Activity log — click or press L to expand"
+              aria-label="Activity — click or press L for the full list"
               aria-expanded="false" aria-controls="log-drawer">
-        <span class="log-strip-ts" id="log-strip-ts">--:--:--</span>
-        <span class="log-strip-glyph" id="log-strip-glyph">·</span>
-        <span class="log-strip-msg" id="log-strip-msg">waiting for first event</span>
-        <span class="log-strip-hint" aria-hidden="true">L</span>
+        <span class="log-ts" id="log-strip-ts">--:--:--</span>
+        <span class="icon log-icon" id="log-strip-icon" data-icon="info"></span>
+        <span class="log-msg" id="log-strip-msg">Ready.</span>
+        <span class="log-hint" aria-hidden="true">L</span>
       </button>
     </main>
 
-    <!-- Activity drawer (full event history; hidden until the strip is clicked). -->
-    <div class="log-drawer glass-card" id="log-drawer" role="dialog"
-         aria-label="Activity log" aria-modal="false" hidden>
+    <div class="log-drawer" id="log-drawer" role="dialog" aria-label="Activity" aria-modal="false" hidden>
       <header class="log-drawer-header">
-        <span class="log-drawer-title">activity</span>
-        <button type="button" class="log-drawer-close" id="log-drawer-close" aria-label="Close activity log">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        <span class="log-drawer-title">Activity</span>
+        <button type="button" class="log-drawer-close" id="log-drawer-close" aria-label="Close activity">
+          <span class="icon" data-icon="close"></span>
         </button>
       </header>
-      <div class="log-rows" id="log-rows">
-        <div class="log-row log-row--info">
-          <span class="log-ts">--:--:--</span>
-          <span class="log-glyph">·</span>
-          <span class="log-msg">waiting for first event</span>
-        </div>
-      </div>
+      <div class="log-rows" id="log-rows"></div>
     </div>
 
-    <!-- Command palette (Raycast-style ⌘K / Ctrl+K overlay). -->
-    <div class="cmd-palette" id="cmd-palette" role="dialog" aria-label="Command palette" hidden>
-      <div class="cmd-palette-backdrop" data-cmd-dismiss="true"></div>
-      <div class="cmd-palette-box glass-card">
-        <div class="cmd-palette-input">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m14 14-3.5-3.5" /></svg>
-          <input type="text" id="cmd-palette-search" placeholder="type a command…" autocomplete="off" spellcheck="false" />
-          <kbd class="cmd-palette-hint">esc</kbd>
-        </div>
-        <ul class="cmd-palette-list" id="cmd-palette-list" role="listbox" aria-label="Commands"></ul>
+    <!-- Error kinds: exception TYPE names and counts only, never patient data. -->
+    <aside class="flyout" id="uploads-kinds" aria-label="What went wrong">
+      <h3>What went wrong</h3>
+      <div class="panel-note">Kinds of errors and how many. Never patient information.</div>
+      <div id="uploads-kinds-body"></div>
+    </aside>
+
+    <div class="about-popover" id="about-popover" role="dialog" aria-label="About" hidden>
+      <div class="about-line" id="about-version" data-version="">Anastomosis · AGPL-3.0</div>
+      <div class="about-note">
+        Anastomosis rebuilds clinical records from an EHR export and files them
+        into another system. It runs entirely on this computer.
       </div>
     </div>
-
-    <footer class="status-bar" id="status-bar">
-      <span id="status-text">ready</span>
-      <span id="status-runid"></span>
-    </footer>
 
     <script src="shell.js"></script>
     <script src="app.js"></script>
+    <script src="wizard.js"></script>
+    <script src="console.js"></script>
+    <script src="packgen.js"></script>
+    <script src="source.js"></script>
   </body>
 </html>

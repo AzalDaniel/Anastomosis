@@ -235,7 +235,8 @@ def upload_cmd(
         #     --yes still PRINTS the warning — the operator is told what they
         #     accepted.
         _cli.console.print(SHARED_MACHINE_WARNING)
-        if not yes and not typer.confirm("Attach to this browser debug port?", default=False):
+        prompt = "Connect to this browser and start filing?"
+        if not yes and not typer.confirm(prompt, default=False):
             _cli.console.print("aborted")
             raise typer.Exit(code=0)
 
