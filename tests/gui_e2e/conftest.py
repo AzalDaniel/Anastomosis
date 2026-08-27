@@ -110,6 +110,58 @@ class GuiPage:
         self.page.evaluate("window.__installAnastBridge()")
         self.page.wait_for_timeout(200)
 
+    # --- the chooser -------------------------------------------------------
+    # A one-of-N picker is a button plus a listbox now, not a <select>, so
+    # `select_option` no longer applies. These drive it the way a person does —
+    # open it, then click a row — which is the point of replacing the native
+    # control: its popup was drawn by the OS and invisible to this browser.
+    def choices(self, trigger: str) -> list[str]:
+        """The labels a person can read in this chooser, in order."""
+        return [
+            (text or "").strip()
+            for text in self.page.locator(
+                f"{trigger} + .chooser-list .chooser-name"
+            ).all_text_contents()
+        ]
+
+    def notes(self, trigger: str) -> list[str]:
+        """The mono captions under each row — the ids, for support."""
+        return [
+            (text or "").strip()
+            for text in self.page.locator(
+                f"{trigger} + .chooser-list .chooser-note"
+            ).all_text_contents()
+        ]
+
+    def titles(self, trigger: str) -> list[str]:
+        """Each row's tooltip — the machine id, for whoever has to ask."""
+        return [
+            row.get_attribute("title") or ""
+            for row in self.page.locator(f"{trigger} + .chooser-list .chooser-row").all()
+        ]
+
+    def choose(self, trigger: str, value: str) -> None:
+        """Pick the row carrying ``value``, by pointer, through the popup."""
+        self._click_row(trigger, f'.chooser-row[data-value="{value}"]', value)
+
+    def choose_label(self, trigger: str, label: str) -> None:
+        """Pick the row a person would recognise by its visible name."""
+        labels = self.choices(trigger)
+        assert label in labels, f"{trigger} has no option labelled {label!r} (has {labels})"
+        self._click_row(trigger, f".chooser-row >> nth={labels.index(label)}", label)
+
+    def chosen(self, trigger: str) -> str:
+        """The value the chooser would hand the controller."""
+        return str(self.page.locator(trigger).evaluate("node => node.value"))
+
+    def _click_row(self, trigger: str, row: str, wanted: str) -> None:
+        self.page.click(trigger)
+        self.page.wait_for_timeout(60)
+        target = self.page.locator(f"{trigger} + .chooser-list").locator(row)
+        assert target.count() == 1, f"{trigger} has no option for {wanted!r}"
+        target.click()
+        self.page.wait_for_timeout(80)
+
     # --- views -------------------------------------------------------------
     def show(self, view: str) -> None:
         """Switch views through the nav, and prove it was not a navigation."""

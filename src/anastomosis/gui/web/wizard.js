@@ -327,20 +327,28 @@
 
   function populate(info) {
     if (!FORM) return;
-    Shell.fillSelect(FORM.el("source"), [
+    Shell.fillChooser(FORM.el("source"), [
       { value: "", label: "Choose the export format…" },
-      ...(info.sources || []).map((src) => ({ value: src.name, label: src.name })),
+      ...(info.sources || []).map((src) => ({
+        value: src.name,
+        label: Shell.displayName(src.name),
+        note: src.description || src.name,
+      })),
     ]);
     SECTIONS_BY_PACK = {};
     const layouts = [];
     for (const layout of info.packs || []) {
       if (!layout.available) continue;
       SECTIONS_BY_PACK[layout.name] = layout.sections || {};
-      layouts.push({ value: layout.name, label: `Rendered pages — ${layout.name}` });
+      layouts.push({
+        value: layout.name,
+        label: `Rendered pages — ${Shell.displayName(layout.name)}`,
+        note: layout.name,
+      });
     }
-    Shell.fillSelect(FORM.el("render"), [
-      { value: "neutral", label: "Rendered pages — standard layout" },
-      { value: "ccda-standard", label: "Data only — C-CDA" },
+    Shell.fillChooser(FORM.el("render"), [
+      { value: "neutral", label: "Rendered pages — standard layout", note: "neutral" },
+      { value: "ccda-standard", label: "Data only — C-CDA", note: "ccda-standard" },
       ...layouts,
     ]);
     renderSections(FORM.el("render").value);
@@ -350,9 +358,13 @@
     try {
       const routes = await window.pywebview.api.routes();
       if (routes && routes.ok) {
-        Shell.fillSelect(el("migrate-destination"), [
+        Shell.fillChooser(el("migrate-destination"), [
           { value: "", label: "Choose a destination…" },
-          ...routes.routes.map((r) => ({ value: r.destination, label: r.destination })),
+          ...routes.routes.map((r) => ({
+            value: r.destination,
+            label: Shell.displayName(r.destination),
+            note: r.destination,
+          })),
         ]);
       }
     } catch (err) {

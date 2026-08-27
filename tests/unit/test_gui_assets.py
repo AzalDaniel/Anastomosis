@@ -187,9 +187,10 @@ def test_app_css_carries_the_components() -> None:
     assert "filter: url(#gooey);" in text
     # Reduced motion zeroes every animation (§6).
     assert "prefers-reduced-motion: reduce" in text
-    # The open native dropdown is styled dark, not left to the OS default.
-    assert ".field select option" in text
-    assert "background-color: #241d18" in text
+    # The one-of-N picker is ours, so its popup is in the page and styled here
+    # rather than drawn by the OS in colours we could only ask nicely for.
+    for cls in (".chooser-trigger", ".chooser-list", ".chooser-row", ".chooser-note"):
+        assert cls in text, f"app.css is missing {cls}"
     # A textarea is styled with the inputs, not left as a native white box.
     assert ".field textarea" in text
 
@@ -207,6 +208,8 @@ def test_the_anti_slop_ledger_stays_removed() -> None:
         ".watermark": "the full-viewport decorative mark",
         ".status-badge": "the second pill, which nothing rendered",
         ".chip:focus-visible": "a focus ring for a component that does not exist",
+        ".select-wrap": "the native dropdown's chevron wrapper",
+        "background-color: #241d18": "the colours we asked the OS to paint its popup",
     }
     for needle, what in gone.items():
         assert needle not in css, f"{what} came back ({needle!r})"

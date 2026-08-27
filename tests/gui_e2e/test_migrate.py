@@ -51,18 +51,21 @@ def test_migrate_populates_its_pickers(gui) -> None:
     page = app.page
 
     assert app.called("info") and app.called("routes")
-    formats = page.locator("#migrate-source option").all_text_contents()
+    formats = app.choices("#migrate-source")
     assert formats[0] == "Choose the export format…", "a migration's format is never guessed"
-    assert CANNED_SOURCE in formats
-    pages = page.locator("#migrate-render option").all_text_contents()
+    assert CANNED_SOURCE not in formats, "a raw format id is not a label"
+    # The row's caption is the format's own description; the id is the tooltip.
+    assert CANNED_SOURCE in app.titles("#migrate-source")
+    assert any("Practice Fusion" in note for note in app.notes("#migrate-source"))
+    pages = app.choices("#migrate-render")
     assert pages[0].startswith("Rendered pages") and pages[1].startswith("Data only")
-    destinations = page.locator("#migrate-destination option").all_text_contents()
+    destinations = app.choices("#migrate-destination")
     assert destinations[0] == "Choose a destination…"
-    assert CANNED_DESTINATION in destinations
+    assert CANNED_DESTINATION in app.notes("#migrate-destination")
     # Rendered pages open on the standard layout's sections...
     assert page.locator("#migrate-sections input[data-section]").count() > 0
     # ...and the data-only view honestly exposes none.
-    page.select_option("#migrate-render", "ccda-standard")
+    app.choose("#migrate-render", "ccda-standard")
     page.wait_for_timeout(80)
     assert page.locator("#migrate-sections input[data-section]").count() == 0
     assert "no sections" in (page.locator("#migrate-sections").text_content() or "")
@@ -78,7 +81,7 @@ def test_detect_arms_the_format_picker(gui) -> None:
     page.wait_for_timeout(150)
 
     assert app.last_args("detect") == ["/synthetic/export"]
-    assert page.locator("#migrate-source").input_value() == CANNED_SOURCE
+    assert app.chosen("#migrate-source") == CANNED_SOURCE
     assert CANNED_SOURCE in app.text("#log-strip-msg")
 
 
@@ -88,7 +91,7 @@ def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
     page = app.page
     transit = _transit()
 
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(200)
 
     cards = page.locator("#migrate-routes .route-card")
@@ -113,7 +116,7 @@ def test_continue_on_uploads_carries_the_context(gui) -> None:
     app = _open(gui)
     page = app.page
     page.fill("#migrate-out-dir", "/synthetic/out")
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(200)
 
     page.click("#migrate-continue")
@@ -140,7 +143,7 @@ def test_a_spent_handoff_never_retargets_uploads_again(gui) -> None:
     app = _open(gui)
     page = app.page
     page.fill("#migrate-out-dir", "/synthetic/batch-a")
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(200)
     page.click("#migrate-continue")
     page.wait_for_timeout(400)
@@ -172,8 +175,8 @@ def test_run_migration_dispatches_and_reports_the_honest_verdict(gui) -> None:
     page = app.page
     page.fill("#migrate-export-dir", "/synthetic/export")
     page.fill("#migrate-out-dir", "/synthetic/out")
-    page.select_option("#migrate-source", CANNED_SOURCE)
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-source", CANNED_SOURCE)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
     page.click("#migrate-run")
     page.wait_for_timeout(120)
@@ -215,8 +218,8 @@ def test_no_automatic_route_is_reported_as_an_outcome(gui) -> None:
     """The manual-import verdict is loud, but it is not a crash."""
     app = _open(gui)
     page = app.page
-    page.select_option("#migrate-source", CANNED_SOURCE)
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-source", CANNED_SOURCE)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
     page.click("#migrate-run")
 
@@ -237,8 +240,8 @@ def test_migrate_ignores_another_flow_terminal_event(gui) -> None:
     """
     app = _open(gui)
     page = app.page
-    page.select_option("#migrate-source", CANNED_SOURCE)
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-source", CANNED_SOURCE)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
     page.click("#migrate-run")
     page.wait_for_timeout(120)
@@ -264,8 +267,8 @@ def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> No
     """
     app = _open(gui)
     page = app.page
-    page.select_option("#migrate-source", CANNED_SOURCE)
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-source", CANNED_SOURCE)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
 
     page.click("#migrate-run")
@@ -305,15 +308,15 @@ def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
     """
     app = _open(gui)
     page = app.page
-    page.select_option("#migrate-source", CANNED_SOURCE)
-    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    app.choose("#migrate-source", CANNED_SOURCE)
+    app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(200)
 
     layouts = [
         value
         for value in page.evaluate(
-            "() => [...document.querySelectorAll('#migrate-render option')]"
-            ".map(o => o.value).filter(Boolean)"
+            "() => [...document.querySelectorAll('#migrate-render + .chooser-list"
+            " .chooser-row')].map(o => o.dataset.value).filter(Boolean)"
         )
         if value != "ccda-standard"  # a data-only document has no sections
     ]
@@ -328,7 +331,7 @@ def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
             )
         }
 
-    page.select_option("#migrate-render", layouts[0])
+    app.choose("#migrate-render", layouts[0])
     page.wait_for_timeout(150)
     labels = page.locator("#migrate-sections label.toggle")
     boxes = page.locator("#migrate-sections input[data-section]")
@@ -339,9 +342,9 @@ def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
     chosen = sections()
     assert chosen and not any(chosen.values()), chosen
 
-    page.select_option("#migrate-render", layouts[1])
+    app.choose("#migrate-render", layouts[1])
     page.wait_for_timeout(150)
-    page.select_option("#migrate-render", layouts[0])
+    app.choose("#migrate-render", layouts[0])
     page.wait_for_timeout(150)
     assert sections() == chosen, f"the layout's defaults came back over the choice: {sections()}"
 

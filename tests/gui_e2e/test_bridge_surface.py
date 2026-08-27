@@ -94,9 +94,9 @@ def test_the_app_recovers_when_the_bridge_attaches_late(gui) -> None:
     assert app.called("info"), "the app never fetched info() after the late attach"
     assert not page.locator("#charts-run").is_disabled()
     # And the views that hydrate from the bridge came alive with it.
-    assert page.locator("#charts-pack option").count() > 0
+    assert len(app.choices("#charts-pack")) > 0
     app.show("migrate")
-    assert page.locator("#migrate-destination option").count() > 0
+    assert len(app.choices("#migrate-destination")) > 0
 
 
 @pytest.mark.parametrize("view", VIEWS)

@@ -152,10 +152,10 @@ def check_dashboard(page: Page) -> list[str]:
         if label != RUN_BUTTON_LABEL:
             problems.append(f"#charts-run reads {label!r}, expected {RUN_BUTTON_LABEL!r}")
 
-    if page.locator("#charts-pack option").count() < 1:
+    if page.locator("#charts-pack + .chooser-list .chooser-row").count() < 1:
         problems.append("the chart-layout picker is empty — info().packs never rendered")
 
-    sources = page.locator("#charts-source option").all_text_contents()
+    sources = page.locator("#charts-source + .chooser-list .chooser-name").all_text_contents()
     if not sources or sources[0].strip() != "Detect":
         problems.append(f"the export-format picker does not lead with 'Detect' (got {sources!r})")
 

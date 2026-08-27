@@ -305,41 +305,103 @@ svg { display: block; }
   background: var(--field-focus);
 }
 
-/* The native <select> is drawn by the OS in two halves. `appearance: none` +
-   our own chevron owns the CLOSED box; the OPEN popup is the OS's, and it
-   follows `color-scheme: dark` (tokens.css) plus these explicit option colours
-   — without both, Windows/WebView2 drops a white XP-style list over the dark
-   glass. The chevron is drawn in CSS on the wrapper (a <select> takes no
-   pseudo-element of its own), so the assets stay free of any URL at all. */
-.field select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: var(--space-6);
-  cursor: pointer;
+/* The chooser — the app's one-of-N control, replacing the native <select>.
+   A <select>'s popup is drawn by the OS, which means it cannot be styled past
+   a point, cannot be seen by the browser tests, and gives each option one text
+   slot. That slot is why the app used to show `generic_soap` where a person
+   expected "Generic SOAP": there was nowhere to put the id as well as the name.
+   The popup floats over content, so it is the sheet tier, not a panel. */
+.chooser { position: relative; display: flex; flex-direction: column; }
+.chooser-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   width: 100%;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--hairline);
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
 }
-.select-wrap { position: relative; display: flex; }
-.select-wrap::after {
-  content: "";
-  position: absolute;
-  right: 15px;
-  top: 50%;
+.chooser-trigger:hover { background: var(--field-focus); }
+.chooser-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chooser-chevron {
+  flex: none;
   width: 7px;
   height: 7px;
-  margin-top: -6px;
+  margin-top: -3px;
   border-right: 1.5px solid var(--ink-muted);
   border-bottom: 1.5px solid var(--ink-muted);
   transform: rotate(45deg);
-  pointer-events: none;
+  transition: transform var(--t-snap) var(--ease-quart);
 }
-.field select option,
-.field select optgroup {
-  background-color: #241d18;
-  color: #f3ece1;
+.chooser-trigger[aria-expanded="true"] .chooser-chevron {
+  margin-top: 3px;
+  transform: rotate(-135deg);
 }
-/* The popup's highlighted row is OS-drawn; where the engine honours it, keep
-   that row in the brand family instead of the system blue. */
-.field select option:checked { background-color: #4a2c24; }
+.chooser-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  border-radius: var(--radius-control);
+  /* The near-opaque tier the About popover uses: two stacked backdrop-filters
+     turn to mud, and this floats over a panel that already has one. */
+  background: var(--glass-modal-bg);
+  backdrop-filter: var(--glass-modal-blur);
+  -webkit-backdrop-filter: var(--glass-modal-blur);
+  border: var(--glass-modal-border);
+  box-shadow: var(--shadow-float), var(--glass-highlight);
+  isolation: isolate;
+}
+.chooser-list.flips-up { top: auto; bottom: calc(100% + 4px); }
+.chooser-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-chip);
+  cursor: pointer;
+}
+.chooser-name { font-size: var(--text-body); color: var(--ink); }
+.chooser-note {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+}
+/* The chosen row is marked by a glyph, not only by a colour (WCAG 1.4.1). */
+.chooser-row[aria-selected="true"]::after {
+  content: "";
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 7px;
+  height: 12px;
+  margin-right: 4px;
+  border-right: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: rotate(45deg);
+}
+/* Keyboard focus lives on the trigger, so the row it is pointing at has to
+   draw its own ring — :focus-visible would never fire here. */
+.chooser-row.is-active {
+  background: var(--fill);
+  outline: 2px solid var(--brand-bright);
+  outline-offset: -2px;
+}
 
 /* Advanced disclosure — one per form, closed by default (§10.8). */
 .advanced {
