@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.logutil import exc_tag
 
 __all__ = ["INDEX_FILENAME", "RenderEntry", "RenderIndex"]
@@ -96,7 +97,6 @@ class RenderIndex:
         never leaves a partial index — same atomicity discipline the
         engine uses for the PDFs themselves (engine.py:210-226).
         """
-        import os
 
         target = pdfs_dir / INDEX_FILENAME
         payload: dict[str, Any] = {
@@ -106,18 +106,12 @@ class RenderIndex:
                 for e in self.entries
             ],
         }
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        try:
-            # PHI-BY-DESIGN: the sidecar maps PDF filenames (which embed patient
-            # name + date of service) to their owning patient/encounter ids;
-            # same secure_output_dir hardening as write_fhir_bundle (_shared.py);
-            # see SECURITY.md.
-            # codeql[py/clear-text-storage-sensitive-data]
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-            os.replace(tmp, target)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        # PHI-BY-DESIGN: the sidecar maps PDF filenames (which embed patient
+        # name + date of service) to their owning patient/encounter ids; same
+        # secure_output_dir hardening as write_fhir_bundle (_shared.py); see
+        # SECURITY.md.
+        # codeql[py/clear-text-storage-sensitive-data]
+        atomic_write_text(target, json.dumps(payload, indent=2, sort_keys=True))
         return target
 
     @classmethod

@@ -31,9 +31,9 @@ and the README texts (three distinct operator-facing documents:
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_copy, atomic_write_text
 from anastomosis.core.fhir import to_bundle
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
@@ -133,7 +133,7 @@ def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:
     # they reach here. See SECURITY.md, "Code scanning & suppression policy
     # (auditable)".
     # codeql[py/clear-text-storage-sensitive-data]
-    target.write_text(json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write_text(target, json.dumps(to_bundle(record), indent=2, sort_keys=True))
     return target
 
 
@@ -167,7 +167,7 @@ def copy_delivered_file(source: Path, destination: Path) -> str | None:
     leaves the caller's chart directory intact for a re-run.
     """
     try:
-        shutil.copyfile(source, destination)
+        atomic_copy(source, destination)
     except OSError as exc:
         return exc_tag(exc)
     return None

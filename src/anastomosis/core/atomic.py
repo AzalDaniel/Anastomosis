@@ -16,7 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-__all__ = ["atomic_replace", "atomic_write_text"]
+__all__ = ["atomic_copy", "atomic_replace", "atomic_write_bytes", "atomic_write_text"]
 
 
 def _tmp_path_for(target: Path) -> Path:
@@ -59,3 +59,26 @@ def atomic_write_text(
                 handle.write(text)
         else:
             tmp.write_text(text, encoding=encoding)
+
+
+def atomic_write_bytes(target: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Write ``data`` to ``target`` atomically. See :func:`atomic_write_text`."""
+    with atomic_replace(target) as tmp:
+        if mode is not None and os.name == "posix":
+            tmp.touch(mode=mode)
+        tmp.write_bytes(data)
+
+
+def atomic_copy(source: Path, target: Path) -> None:
+    """Copy ``source`` onto ``target`` atomically.
+
+    ``shutil.copyfile`` truncates the destination and streams into it, so a
+    crash partway leaves a truncated file where a complete one was. For a
+    chart page that is a patient's record, half-written. Copying to a sibling
+    temp and replacing means the target is either the old file or the new one,
+    never part of both.
+    """
+    import shutil
+
+    with atomic_replace(target) as tmp:
+        shutil.copyfile(source, tmp)

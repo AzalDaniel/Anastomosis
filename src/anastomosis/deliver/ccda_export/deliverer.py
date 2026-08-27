@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from anastomosis.core.atomic import atomic_write_bytes
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -60,7 +61,7 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
         claim_delivered_name(claimed, pid, record.patient.id, kind="C-CDA document")
         target = out / f"{pid}.xml"
         try:
-            target.write_bytes(build_ccd(record))
+            atomic_write_bytes(target, build_ccd(record))
         except Exception as exc:
             # One malformed record must not sink the batch; log the exception
             # TYPE only (its message may embed PHI) and move on.
