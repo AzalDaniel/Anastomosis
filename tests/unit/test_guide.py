@@ -40,7 +40,10 @@ class _Session:
     """One scripted run of the guide: answers in, output and argv out."""
 
     def __init__(self) -> None:
-        self.console = Console(file=io.StringIO(), width=100)
+        # Wide enough that no asserted sentence ever soft-wraps: CI temp paths
+        # (Windows especially) are long, and a wrap splits an asserted path
+        # mid-word across a newline.
+        self.console = Console(file=io.StringIO(), width=400)
         self.calls: list[list[str]] = []
         self.exit_code = 0
 
