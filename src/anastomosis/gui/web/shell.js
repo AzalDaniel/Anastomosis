@@ -148,11 +148,10 @@
     const leaving = VIEWS[CURRENT];
     CURRENT = name;
 
-    for (const btn of $$("[data-view-target]")) {
-      btn.setAttribute("aria-current", btn.dataset.viewTarget === name ? "true" : "false");
-    }
-    const band = el("view-band");
-    if (band) band.textContent = (spec && spec.title) || name;
+    // The pill owns the selected state. Told, not asked: a view can also be
+    // reached from a button inside another view (Migrate's "Continue on
+    // Uploads"), and the pill has to follow that too.
+    selectSegment("view", name);
 
     const swap = () => {
       if (outgoing) {
@@ -357,6 +356,24 @@
   // stretch; pointer-down + drag follows the cursor and snaps to the nearest
   // slot on release. --segment-count/--segment-index are written through the
   // CSSOM because the strict `style-src 'self'` CSP refuses a markup style="".
+  // Two vocabularies, one mechanism. A group of peer DESTINATIONS is a tablist
+  // (the view nav); a binary or small either/or SETTING is a radiogroup. They
+  // slide, drag and key identically, and assistive tech has to be told which is
+  // which — so the pattern is declared in the markup and only the ARIA differs.
+  const PATTERNS = {
+    tabs: { option: "tab", selected: "aria-selected" },
+    radios: { option: "radio", selected: "aria-pressed" },
+  };
+
+  // Setting a toggle from outside, WITHOUT calling back: the view nav has to
+  // follow a view change that started somewhere else (Migrate's "Continue on
+  // Uploads"), and a notify here would bounce straight back into showView.
+  const SEGMENTS = new Map();
+  function selectSegment(name, value) {
+    const set = SEGMENTS.get(name);
+    if (set) set(value);
+  }
+
   function initSegmentToggles(root, onChange) {
     $$(".segment-toggle", root).forEach((toggle) => {
       if (toggle.dataset.wired === "true") return;
@@ -364,10 +381,12 @@
       const options = $$(".segment-option", toggle);
       if (!options.length) return;
       const count = options.length;
+      const pattern = PATTERNS[toggle.dataset.pattern] || PATTERNS.radios;
       toggle.style.setProperty("--segment-count", String(count));
 
       const activate = (nextIdxRaw, opts) => {
         const animate = !opts || opts.animate !== false;
+        const notify = !opts || opts.notify !== false;
         const nextIdx = Math.max(0, Math.min(count - 1, Math.round(nextIdxRaw)));
         const fromFloat = parseFloat(toggle.style.getPropertyValue("--segment-index") || "0");
         const fromIdx = Math.round(fromFloat);
@@ -378,23 +397,37 @@
 
         const changed = opt.dataset.value !== toggle.dataset.value;
         toggle.dataset.value = opt.dataset.value;
-        if (animate && nextIdx !== fromIdx && !prefersReduced()) {
+        if (animate && nextIdx !== fromIdx) {
+          // Checked per activation, never cached: the operator can change the
+          // system setting while the app is open.
+          const settle = prefersReduced() ? "is-settling" : "is-stretching";
           toggle.style.setProperty("--segment-from", String(fromIdx));
-          toggle.classList.remove("is-stretching");
+          toggle.classList.remove("is-stretching", "is-settling");
           void toggle.offsetWidth; // force reflow so the restart registers
-          toggle.classList.add("is-stretching");
+          toggle.classList.add(settle);
         }
         toggle.style.setProperty("--segment-index", String(nextIdx));
         options.forEach((o, i) => {
           const selected = i === nextIdx;
-          o.setAttribute("aria-pressed", selected ? "true" : "false");
-          o.setAttribute("aria-checked", selected ? "true" : "false");
+          o.setAttribute(pattern.selected, selected ? "true" : "false");
+          if (pattern.option === "radio") {
+            o.setAttribute("aria-checked", selected ? "true" : "false");
+          }
+          o.classList.toggle("is-live", selected);
           o.tabIndex = selected ? 0 : -1;
         });
-        if (changed && typeof onChange === "function") {
+        if (changed && notify && typeof onChange === "function") {
           onChange(toggle.dataset.name, opt.dataset.value);
         }
       };
+
+      // Named toggles can also be set from outside — see `selectSegment`.
+      if (toggle.dataset.name) {
+        SEGMENTS.set(toggle.dataset.name, (value) => {
+          const idx = options.findIndex((o) => o.dataset.value === value);
+          if (idx >= 0) activate(idx, { notify: false });
+        });
+      }
 
       const drag = { active: false, pointerId: null, startX: 0, startIdx: 0, moved: false, slotWidth: 0, originX: 0 };
       const measure = () => {
@@ -429,7 +462,12 @@
           toggle.classList.add("is-dragging");
           toggle.classList.remove("is-stretching");
         }
-        toggle.style.setProperty("--segment-index", String(xToIndex(e.clientX)));
+        const live = xToIndex(e.clientX);
+        toggle.style.setProperty("--segment-index", String(live));
+        // The blob arrives before the commit does: light the label it is over,
+        // while the SELECTION still names the option that is actually chosen.
+        const under = Math.round(live);
+        options.forEach((o, i) => o.classList.toggle("is-live", i === under));
         e.preventDefault();
       });
       const finishDrag = (e, opts) => {
@@ -460,7 +498,7 @@
       toggle.addEventListener("pointercancel", (e) => finishDrag(e, { canceled: true }));
 
       options.forEach((opt, i) => {
-        opt.setAttribute("role", "radio");
+        opt.setAttribute("role", pattern.option);
         opt.addEventListener("click", (e) => {
           if (drag.moved) {
             e.preventDefault();
@@ -480,6 +518,14 @@
             const prev = (i - 1 + count) % count;
             activate(prev);
             options[prev].focus();
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            activate(0);
+            options[0].focus();
+          } else if (e.key === "End") {
+            e.preventDefault();
+            activate(count - 1);
+            options[count - 1].focus();
           } else if (e.key === " " || e.key === "Enter") {
             e.preventDefault();
             activate(i);
@@ -488,6 +534,7 @@
       });
       toggle.addEventListener("animationend", (e) => {
         if (e.animationName === "segment-stretch") toggle.classList.remove("is-stretching");
+        if (e.animationName === "segment-fade") toggle.classList.remove("is-settling");
       });
 
       const startIdx = options.findIndex((o) => o.dataset.value === toggle.dataset.value);
@@ -669,6 +716,7 @@
     const toggle = document.createElement("div");
     toggle.className = "segment-toggle";
     toggle.setAttribute("role", "radiogroup");
+    toggle.dataset.pattern = "radios";
     toggle.setAttribute("aria-label", labelText);
     toggle.dataset.name = name;
     toggle.dataset.value = options[0].value;
@@ -1057,12 +1105,16 @@
     paintIcons(document);
     initAbout();
     initTabs(document);
+    // The nav is the sliding pill, wired like any other: the only thing that
+    // makes it the nav is what its change does.
+    initSegmentToggles($(".navbar"), (name, value) => {
+      if (name === "view") showView(value);
+    });
+    // Buttons OUTSIDE the pill that jump to a view (Migrate's handoff).
     for (const btn of $$("[data-view-target]")) {
+      if (btn.closest(".navpill")) continue;
       btn.addEventListener("click", () => showView(btn.dataset.viewTarget));
     }
-    const band = el("view-band");
-    const first = VIEWS[CURRENT];
-    if (band && first) band.textContent = first.title || CURRENT;
     const strip = el("log-strip");
     if (strip) strip.addEventListener("click", toggleLogDrawer);
     const closeBtn = el("log-drawer-close");

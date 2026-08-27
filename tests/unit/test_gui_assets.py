@@ -277,7 +277,7 @@ def test_index_ships_the_four_views_and_their_nav() -> None:
     # Only the first view paints on load; the rest ship hidden, so the first
     # frame is the Charts skeleton rather than four stacked views.
     for view in VIEWS:
-        tag = re.search(rf'<section class="view" data-view="{view}"[^>]*>', text)
+        tag = re.search(rf'<section class="view"[^>]*data-view="{view}"[^>]*>', text)
         assert tag is not None, f"the {view!r} section is not a plain view section"
         is_hidden = "hidden" in tag.group(0)
         assert is_hidden is (view != "charts"), (
@@ -299,8 +299,11 @@ def test_the_app_name_appears_once_in_the_chrome() -> None:
     """§10.7: the product name is the window's, and the version lives in About."""
     text = _read("index.html")
     assert "<title>Anastomosis</title>" in text
-    # The in-page band carries the CURRENT VIEW, not the app name.
-    assert '<span class="title-text" id="view-band">Charts</span>' in text
+    # The nav pill names the current view in the chrome layer, and each view's
+    # own h1 names it in the content layer. The band that printed it a third
+    # time is gone.
+    assert 'class="title-bar"' not in text and 'id="view-band"' not in text
+    assert 'class="segment-toggle navpill"' in text
     assert 'id="about-version"' in text and "AGPL-3.0" in text
     # No <h1> repeats the product name.
     assert not re.search(r"<h1>\s*Anastomosis\s*</h1>", text)

@@ -77,9 +77,17 @@ def test_nav_switches_views_without_navigating(gui) -> None:
         for other in VIEWS:
             if other != view:
                 assert not app.visible(other), f"{other} stayed up behind {view}"
-        assert app.text(".title-bar .title-text") == label
-        current = app.page.locator(f'[data-view-target="{view}"]').get_attribute("aria-current")
-        assert current == "true"
+        tab = app.page.locator(f'.navpill [data-view-target="{view}"]')
+        assert tab.get_attribute("aria-selected") == "true"
+        # One name per layer: the pill names the view in the chrome, the h1
+        # names it in the content. The title band that printed it a third time
+        # is gone, so the name must appear exactly once outside the nav.
+        outside = app.page.evaluate(
+            "label => [...document.querySelectorAll('.view:not([hidden]) h1')]"
+            ".filter(h => h.textContent.trim() === label).length",
+            label,
+        )
+        assert outside == 1, f"{label!r} appears {outside} times outside the nav"
 
     assert app.page.url == start_url
 
@@ -273,3 +281,102 @@ def test_bridge_attaching_without_the_ready_event_still_goes_live(_browser) -> N
             time.sleep(0.05)
     finally:
         page.close()
+
+
+def test_the_nav_is_one_tablist_that_never_scrolls_away(gui) -> None:
+    """Four opaque boxes became one floating pill, and it stays put.
+
+    The old nav scrolled with the content: at scrollTop 400 it sat at y = -354 on
+    Charts and Migrate, entirely off-screen, which the HIG names directly ("make
+    sure the tab bar is visible when people navigate to different sections").
+    It also had no material — its background sampled byte-identical to the page
+    ground, 1.00:1 — so nothing marked it as chrome at all.
+    """
+    app = gui()
+    page = app.page
+
+    pill = page.locator(".navpill")
+    assert pill.count() == 1, "there is exactly one pill in the app, and it is the nav"
+    for option in page.locator(".navpill .segment-option").all():
+        box = option.bounding_box()
+        assert box is not None
+        assert box["height"] >= 44, f"tab {option.text_content()!r} is {box['height']}px tall"
+        assert box["width"] >= 104, f"tab {option.text_content()!r} is {box['width']}px wide"
+
+    for view, _label in NAV_VIEWS:
+        app.show(view)
+        page.evaluate("() => document.querySelector('.app-shell').scrollTo(0, 400)")
+        page.wait_for_timeout(150)
+        top = page.locator(".navpill").bounding_box()
+        assert top is not None and top["y"] >= 0, f"the nav scrolled off {view} (y={top})"
+        page.evaluate("() => document.querySelector('.app-shell').scrollTo(0, 0)")
+
+
+def test_the_nav_reads_as_tabs_and_keys_like_tabs(gui) -> None:
+    """A group of peer destinations is a tablist, not a radiogroup.
+
+    The pill shares its sliding/dragging mechanism with the settings toggles, so
+    the thing that has to be pinned is that it does NOT share their ARIA: the
+    same code has to say `tab`/`aria-selected` here and `radio`/`aria-pressed`
+    there, or assistive tech is told the views are a multiple-choice question.
+    """
+    app = gui()
+    page = app.page
+
+    tabs = page.locator(".navpill [role='tab']")
+    assert tabs.count() == len(NAV_VIEWS)
+    assert page.locator(".navpill[role='tablist']").count() == 1
+    assert page.locator(".navpill [role='radio']").count() == 0
+
+    def tabindexes() -> list[int]:
+        return page.evaluate(
+            "() => [...document.querySelectorAll('.navpill .segment-option')].map(o => o.tabIndex)"
+        )
+
+    # Roving tabindex: only the selected tab is in the tab order.
+    assert tabindexes() == [0, -1, -1, -1]
+    page.locator('.navpill [data-view-target="charts"]').focus()
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(300)
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(400)
+    assert tabindexes() == [-1, -1, 0, -1]
+    assert app.visible("uploads"), "the arrow keys moved focus but not the view"
+
+    page.keyboard.press("End")
+    page.wait_for_timeout(400)
+    assert app.visible("teach")
+    page.keyboard.press("Home")
+    page.wait_for_timeout(400)
+    assert app.visible("charts")
+
+
+def test_reduced_motion_fades_the_lozenge_rather_than_teleporting_it(gui) -> None:
+    """The global transition-zeroing rule is a deletion, not a fallback.
+
+    A selection indicator that vanishes and reappears somewhere else is harder
+    to follow than one that travels, so travel is replaced by a fade — which is
+    what the HIG asks for ("replacing transitions in x-, y-, and z-axes with
+    fades"), not what zeroing every duration produces.
+    """
+    app = gui()
+    page = app.page
+    # Set after load on purpose: shell.js checks the query per activation rather
+    # than caching it, because the operator can change the system setting while
+    # the app is open.
+    page.emulate_media(reduced_motion="reduce")
+    page.wait_for_timeout(100)
+
+    seen: list[str] = []
+    page.expose_function("__navClass", lambda cls: seen.append(cls))
+    page.evaluate(
+        "() => { const p = document.querySelector('.navpill');"
+        " new MutationObserver(() => window.__navClass(p.className))"
+        "   .observe(p, {attributes: true, attributeFilter: ['class']}); }"
+    )
+    app.show("teach")
+    page.wait_for_timeout(500)
+
+    assert any("is-settling" in c for c in seen), f"no fade was used: {seen}"
+    assert not any("is-stretching" in c for c in seen), f"the stretch ran anyway: {seen}"
+    assert app.visible("teach"), "the view did not switch under reduced motion"
