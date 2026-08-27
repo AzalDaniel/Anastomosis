@@ -534,3 +534,83 @@ def test_the_command_token_exemption_carries_no_dead_entries() -> None:
     """The exemption above may only cover literals the guide really types."""
     literals = set(_guide_copy())
     assert COMMAND_TOKENS <= literals, sorted(COMMAND_TOKENS - literals)
+
+
+def test_the_guide_never_says_the_work_happened_after_a_refusal() -> None:
+    """Exit 0 means "no error", not "the work was done".
+
+    Three commands exit 0 when the operator answers "no" to their own
+    confirmation — `upload`'s shared-machine gate, and both `pack init` and
+    `source init`'s save prompts. `_dispatch` reduces a command to one integer,
+    so across that boundary "declined" and "done" became the same value, and
+    the guide asserted the "done" sentence in the success style immediately
+    after the operator's refusal:
+
+        Save this mapping? [y/N]: n
+        Aborting — refine with --display/--name or edit the example, then re-run.
+
+        Anastomosis now recognizes acmecsv.        <-- nothing was saved
+
+    A false statement of system state, issued right after a refusal, is the
+    worst thing this function can print. The command now records the refusal
+    itself, because only the command knows.
+    """
+    from anastomosis.core.outcome import declined, take_declined
+
+    console = Console(file=io.StringIO(), width=100, force_terminal=False)
+    plan = guide.Plan(
+        argv=("source", "init"),
+        confirmation="Teach this format?",
+        finished="Anastomosis now recognizes acmecsv.",
+        next_step="A rebuild finds this format on its own from now on.",
+    )
+
+    declined("The format was not saved.")
+    guide._report(console, plan, 0)
+    said = console.file.getvalue()
+
+    assert "The format was not saved." in said
+    assert "now recognizes" not in said, f"the guide claimed the refusal worked:\n{said}"
+    assert take_declined() is None, "the outcome must not survive into the next run"
+
+    # And with no refusal recorded, exit 0 still reports the work as done.
+    console = Console(file=io.StringIO(), width=100, force_terminal=False)
+    guide._report(console, plan, 0)
+    assert "now recognizes" in console.file.getvalue()
+
+
+def test_every_operator_decline_records_what_did_not_happen() -> None:
+    """The three exit-0 declines, read off the syntax tree.
+
+    Each is `console.print(...)` then `raise typer.Exit(code=0)` after a
+    `typer.confirm` the operator answered no to. A fourth added later without a
+    `declined(...)` call would silently reintroduce the false success sentence,
+    so this counts them rather than trusting that they are all here.
+    """
+    commands = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "cli_commands"
+    total = 0
+    for module in ("upload.py", "packsrc.py"):
+        tree = ast.parse((commands / module).read_text(encoding="utf-8"))
+        exits_zero = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Raise)
+            and isinstance(node.exc, ast.Call)
+            and ast.unparse(node.exc.func) == "typer.Exit"
+            and any(
+                kw.arg == "code" and isinstance(kw.value, ast.Constant) and kw.value.value == 0
+                for kw in node.exc.keywords
+            )
+        ]
+        declines = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == "declined"
+        ]
+        assert len(declines) == len(exits_zero), (
+            f"{module} has {len(exits_zero)} exit-0 paths and {len(declines)} "
+            "declined() calls — an exit-0 decline with no recorded outcome makes "
+            "the guided session claim the work happened"
+        )
+        total += len(declines)
+    assert total == 3, f"expected the three known decline paths, found {total}"

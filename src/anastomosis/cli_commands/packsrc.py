@@ -17,6 +17,7 @@ import typer
 
 from anastomosis.cli import pack_app, source_app
 from anastomosis.cli_commands._paths import out_dir
+from anastomosis.core.outcome import declined
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
@@ -267,6 +268,7 @@ def pack_init(
     _cli.console.print(f"\n[yellow]Same-patient caveat:[/yellow] {analysis_result.caveat}")
     if not yes and not typer.confirm("Are these samples from DIFFERENT patients?", default=False):
         _cli.console.print("Aborting — gather samples from distinct patients and re-run.")
+        declined("No draft layout was written.")
         raise typer.Exit(code=0)
 
     # Emit step (confirmed=True): the shared core writes the draft pack.
@@ -388,6 +390,7 @@ def source_init(
         _cli.console.print(
             "Aborting — refine with --display/--name or edit the example, then re-run."
         )
+        declined("The format was not saved.")
         raise typer.Exit(code=0)
 
     # Save step (confirmed=True): build the mapping, prove it drops no column via
