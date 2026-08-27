@@ -96,48 +96,57 @@ class TransitMap:
         return "\n".join(lines)
 
 
-def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteOption:
-    if entry_doc_write_kind in (
-        DocWriteKind.FHIR_DOCUMENTREFERENCE.value,
-        DocWriteKind.VENDOR_REST.value,
-    ):
+def _capability_option(
+    kind: RouteKind,
+    field: str,
+    entry: str,
+    viable_values: tuple[str, ...],
+    verified_label: str,
+    requires: tuple[str, ...],
+) -> RouteOption:
+    """One capability's viability — shared by the vendor-API and C-CDA checks
+    below, which differ only in the field name, the values that count as
+    viable, and what taking the route ``requires``. ``"unverified"`` is the
+    cross-capability sentinel (see destinations.registry._NO_EVIDENCE_KINDS):
+    deliberately not viable, distinct from an ordinary unviable value so its
+    ``why`` can point the operator at re-verification instead of just naming
+    the entry.
+    """
+    if entry in viable_values:
         return RouteOption(
-            kind=RouteKind.VENDOR_API,
+            kind=kind,
             viable=True,
-            why=f"doc_write_api={entry_doc_write_kind} (verified {verified_label})",
-            requires=("credentials: vendor API",),
+            why=f"{field}={entry} (verified {verified_label})",
+            requires=requires,
         )
-    if entry_doc_write_kind == DocWriteKind.UNVERIFIED.value:
+    if entry == "unverified":
         return RouteOption(
-            kind=RouteKind.VENDOR_API,
+            kind=kind,
             viable=False,
-            why="doc_write_api unverified — run re-verification or contribute evidence",
+            why=f"{field} unverified — run re-verification or contribute evidence",
         )
-    return RouteOption(
-        kind=RouteKind.VENDOR_API,
-        viable=False,
-        why=f"doc_write_api={entry_doc_write_kind}",
+    return RouteOption(kind=kind, viable=False, why=f"{field}={entry}")
+
+
+def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteOption:
+    return _capability_option(
+        RouteKind.VENDOR_API,
+        "doc_write_api",
+        entry_doc_write_kind,
+        (DocWriteKind.FHIR_DOCUMENTREFERENCE.value, DocWriteKind.VENDOR_REST.value),
+        verified_label,
+        ("credentials: vendor API",),
     )
 
 
 def _ccda_option(entry_ccda_kind: str, verified_label: str) -> RouteOption:
-    if entry_ccda_kind in (CcdaImportKind.API.value, CcdaImportKind.IN_PRODUCT.value):
-        return RouteOption(
-            kind=RouteKind.CCDA_IMPORT,
-            viable=True,
-            why=f"ccda_import={entry_ccda_kind} (verified {verified_label})",
-            requires=("export: C-CDA document",),
-        )
-    if entry_ccda_kind == CcdaImportKind.UNVERIFIED.value:
-        return RouteOption(
-            kind=RouteKind.CCDA_IMPORT,
-            viable=False,
-            why="ccda_import unverified — run re-verification or contribute evidence",
-        )
-    return RouteOption(
-        kind=RouteKind.CCDA_IMPORT,
-        viable=False,
-        why=f"ccda_import={entry_ccda_kind}",
+    return _capability_option(
+        RouteKind.CCDA_IMPORT,
+        "ccda_import",
+        entry_ccda_kind,
+        (CcdaImportKind.API.value, CcdaImportKind.IN_PRODUCT.value),
+        verified_label,
+        ("export: C-CDA document",),
     )
 
 

@@ -4,12 +4,11 @@
 script ("Order Sent" → "Verified" → "Dispensed"…). Charts print a single
 resolved label, so transitions collapse by priority.
 
-The label map and priority table are ported verbatim from the battle-tested
-predecessor's escript module — the 20-description
-``_ESCRIPT_LABEL_MAP`` and the granular ``_ESCRIPT_PRIORITY`` derived
-empirically from 12,906 real documents. The governing rule that table encodes:
-cancellations override Verified, dispensing overrides cancellations, and
-refills / changes / clarifications DO NOT override Verified.
+Transaction descriptions collapse to one display label by priority (see
+_ESCRIPT_PRIORITY): dispensing overrides cancellation overrides Verified;
+refills, changes, and clarifications never override Verified. The
+label/priority tables were derived empirically against ~12,900 real
+PF/Tebra transaction records.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ __all__ = ["resolve_display_date", "resolve_prefix", "resolve_status", "script_p
 _DISPLAY_TZ = "America/New_York"
 
 # Transaction description (lowercased) → (prefix, status_label).
-# Ported verbatim from the predecessor's escript label map.
 # prefix is "ESCRIPT" for electronic, "SCRIPT" for printed/paper.
 _ESCRIPT_LABEL_MAP: dict[str, tuple[str, str]] = {
     "order sent": ("ESCRIPT", "VERIFIED"),
@@ -52,9 +50,8 @@ _ESCRIPT_LABEL_MAP: dict[str, tuple[str, str]] = {
 }
 
 # Priority ranking when one prescription has multiple transactions. Highest
-# wins. Ported verbatim from the predecessor's escript priority table:
-# dispensing > cancellation > Verified; refills/changes/clarifications (10) DO
-# NOT override Verified (50).
+# wins: dispensing > cancellation > Verified; refills/changes/clarifications
+# (10) DO NOT override Verified (50).
 _ESCRIPT_PRIORITY: dict[str, int] = {
     "DISPENSED": 100,
     "PARTIALLY DISPENSED": 95,
@@ -79,8 +76,7 @@ _ESCRIPT_PRIORITY: dict[str, int] = {
 }
 
 # Fallback priority keyed on the clean Status word (our model's tx.kind), used
-# only AFTER the predecessor's description map yields nothing — keeps the new
-# adapter's coarser status words working without overriding the old map.
+# only when the description map (_ESCRIPT_LABEL_MAP) yields nothing.
 _FALLBACK_PRIORITY: dict[str, int] = {
     "error": 100,
     "failed": 100,
@@ -116,9 +112,9 @@ def _resolve_via_label_map(
 def resolve_status(transactions: list[PrescriptionTransaction]) -> str | None:
     """Collapse a transaction history to one display label (uppercased).
 
-    The predecessor's _ESCRIPT_LABEL_MAP (keyed on TransactionDescription) is
-    primary; our Status-word fallback runs only when no description matched
-    (so VERIFIED still beats a refill that the old map ranks at 10).
+    _ESCRIPT_LABEL_MAP (keyed on TransactionDescription) is primary; the
+    Status-word fallback runs only when no description matched (so VERIFIED
+    still beats a refill, which the map ranks at 10).
     """
     resolved = _resolve_via_label_map(transactions)
     if resolved is not None:

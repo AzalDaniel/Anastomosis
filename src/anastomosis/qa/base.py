@@ -1,9 +1,8 @@
 """The QA check contract and registry.
 
-Preserved verbatim from the battle-tested predecessor: a check is a named
-object whose ``run(pdf_path, ctx)`` returns a verdict plus human-readable
-findings. Checks never raise for document problems — a problem is a
-finding; an exception is a bug in the check.
+A check is a named object whose ``run(pdf_path, ctx)`` returns a verdict
+plus human-readable findings. Checks never raise for document problems — a
+problem is a finding; an exception is a bug in the check.
 
 Findings may quote chart values (they live next to the charts, inside the
 hardened output directory) but must never be logged — loggers get verdict

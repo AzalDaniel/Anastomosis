@@ -1,9 +1,6 @@
 """``anast archive`` / ``anast bundle`` — full pipeline + an offline deliverable.
 
-The two command bodies split out of :mod:`anastomosis.cli`; they register
-against the top-level ``app`` defined there and drive the shared pipeline
-machinery (``_run_command`` / ``_sections_or_exit``) resolved late through the
-``cli`` module. See :mod:`anastomosis.cli_commands` for the facade rationale.
+See :mod:`anastomosis.cli_commands` for the split/registration rationale.
 
 Archive and bundle are the SAME command with one delivery kind apart: identical
 options, identical body, three strings of wording. :func:`_register` builds and

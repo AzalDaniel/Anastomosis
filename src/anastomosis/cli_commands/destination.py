@@ -1,12 +1,9 @@
 """``anast destination list`` / ``route`` / ``init`` — inspect routes, discover packs.
 
-The three command bodies and their helpers (registry load, oldest-evidence and
-local-pack-status columns, the selector-slot prompt) split out of
-:mod:`anastomosis.cli`. They register against the ``destination_app`` defined
-there; ``console`` / ``_glyphs`` resolve late through the ``cli`` module, and the
-live selector-validator seam ``_make_validator`` is resolved LATE through it too
-(``_cli._make_validator``) so the wizard tests keep mocking it at ``cli._make_validator``.
-See :mod:`anastomosis.cli_commands` for the facade rationale.
+See :mod:`anastomosis.cli_commands` for the split/registration rationale. One
+module-specific seam: the live selector-validator ``_make_validator`` is
+resolved LATE through the ``cli`` module (``_cli._make_validator``) so the
+wizard tests keep mocking it at ``cli._make_validator``.
 """
 
 from __future__ import annotations

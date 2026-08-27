@@ -16,7 +16,10 @@ identical across them today:
   to fit the path budget of the tree it is being copied INTO;
 * :func:`claim_delivered_name` — the per-run ledger that makes a name
   collision between two different source ids a loud failure instead of a
-  silent merge of two patients' output.
+  silent merge of two patients' output;
+* :func:`copy_claimed_chart` — the budget→claim→copy sequence for one chart,
+  built on the three above, that every attributed-, unattributed-, and
+  bundle-copy site runs identically.
 
 Deliberately NOT shared: PDF *attribution* (the archive routes unclaimed PDFs
 to ``unattributed/`` and maps encounter→filename for its per-encounter pages;
@@ -40,6 +43,7 @@ __all__ = [
     "DeliveredNameCollision",
     "budgeted_copy_name",
     "claim_delivered_name",
+    "copy_claimed_chart",
     "copy_delivered_file",
     "write_fhir_bundle",
 ]
@@ -131,6 +135,27 @@ def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:
     # codeql[py/clear-text-storage-sensitive-data]
     target.write_text(json.dumps(to_bundle(record), indent=2, sort_keys=True), encoding="utf-8")
     return target
+
+
+def copy_claimed_chart(
+    target_dir: Path, claims: dict[str, str], source: Path, name: str, *, kind: str = "chart"
+) -> tuple[str | None, str | None]:
+    """Budget, claim, and copy one chart into ``target_dir``; ``(delivered, failure)``.
+
+    The three deliverers (archive's own tree, archive's ``unattributed/``
+    sweep, bundle) each budgeted a destination name, claimed it against the
+    caller's per-run ledger, and copied — this is that ONE sequence. Exactly
+    one of the pair returned is not ``None``: the delivered filename on
+    success, or the PHI-safe failure TYPE name (:func:`copy_delivered_file`)
+    on an ``OSError``. The caller logs its own message on failure and decides
+    what "no result" means for its own bookkeeping — skip a mapping entry,
+    skip a claimed-source add, skip a copied-list append — so a copy that
+    fails is never counted as delivered by any of the three.
+    """
+    delivered = budgeted_copy_name(target_dir, name)
+    claim_delivered_name(claims, delivered, name, kind=kind)
+    failure = copy_delivered_file(source, target_dir / delivered)
+    return (None, failure) if failure else (delivered, None)
 
 
 def copy_delivered_file(source: Path, destination: Path) -> str | None:

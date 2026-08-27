@@ -45,7 +45,11 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.timeutil import age_display, to_local
-from anastomosis.reconstruct.packctx import observations_by_encounter, record_cache_of
+from anastomosis.reconstruct.packctx import (
+    format_local_dt,
+    observations_by_encounter,
+    record_cache_of,
+)
 
 # --- vitals --------------------------------------------------------------------
 # Display order (GOLD §8 VITAL_ORDER). Blood Pressure is the combined sys/dia row.
@@ -92,14 +96,6 @@ def _fmt_date_short(value: _dt.date | None) -> str | None:
 
 def _fmt_date_long(value: _dt.date | None) -> str | None:
     return value.strftime("%B %d, %Y") if value else None
-
-
-def _fmt_signed_at(value: _dt.datetime | None, tz: str) -> str | None:
-    """Signed/print datetime in practice-local time, no leading zeros."""
-    if value is None:
-        return None
-    local = to_local(value, tz)
-    return local.strftime("%b %d, %Y %I:%M %p").replace(" 0", " ")
 
 
 def _fmt_time(value: _dt.datetime | None, tz: str) -> str | None:
@@ -595,7 +591,7 @@ def build_record_context(
     advance_directives = [
         {
             "directive": d.directive,
-            "recorded": _fmt_signed_at(d.recorded_at, tz) or "",
+            "recorded": format_local_dt(d.recorded_at, tz) or "",
         }
         for d in record.advance_directives
         if d.directive
@@ -736,7 +732,7 @@ def build_context(
         "age_at_dos": age,
         "signed_by_name": signer.name if signer else None,
         "signed_by_credential": signer.credential if signer else None,
-        "signed_at": _fmt_signed_at(encounter.signed_at, tz),
+        "signed_at": format_local_dt(encounter.signed_at, tz),
         "cc_text": encounter.chief_complaint,
         # vitals
         "enc_vitals_rows": enc_vital_rows,

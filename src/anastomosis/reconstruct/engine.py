@@ -1,7 +1,6 @@
 """The reconstruction engine: canonical records → chart PDFs via a pack.
 
-Ported behaviors from the predecessor (which reconstructed 12,906 PDFs at
-100% final QA), re-typed clean:
+Behaviors this engine guarantees:
 
 * **Renderer recycling** — Chromium leaks slowly; the engine retires and
   relaunches the renderer every N renders instead of debugging that.
@@ -20,7 +19,6 @@ the run report never embeds patient-derived text.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +26,7 @@ from typing import Any, Protocol
 
 from jinja2 import Environment, FileSystemLoader
 
+from anastomosis.core.atomic import atomic_replace
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -164,13 +163,11 @@ class ReconstructionEngine:
                     )
         finally:
             self._retire_renderer()
-        # Persist the render index so downstream deliverers (archive, bundle)
-        # can attribute PDFs by patient_id directly, instead of reverse-
-        # inferring ownership from the leading ``{family}_{given}_`` prefix
-        # — the patient-safety hazard with two same-name patients that the
-        # old pdfindex helper warned about in its own docstring. The index
-        # is written even on partial/empty runs (an empty index is still a
-        # truthful answer, "this directory's attribution is known").
+        # Persist the render index so downstream deliverers (archive, bundle) can attribute
+        # PDFs by patient_id directly, instead of reverse-inferring ownership from the leading
+        # ``{family}_{given}_`` prefix — two same-name patients would misattribute silently.
+        # Written even on partial/empty runs: an empty index is still a truthful "attribution
+        # known" answer.
         self._write_render_index(out, result)
         return result
 
@@ -234,9 +231,7 @@ class ReconstructionEngine:
     def _render_pdf(self, html: str, target: Path) -> None:
         # Render to a sibling temp file, then atomically replace the target, so
         # a crash mid-write (or a concurrent reader) never sees a partial PDF.
-        # os.replace is atomic within a directory on every platform.
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        try:
+        with atomic_replace(target) as tmp:
             try:
                 self._acquire_renderer().render(html, tmp)
             except Exception as exc:
@@ -244,8 +239,4 @@ class ReconstructionEngine:
                 logger.warning("renderer crashed (%s); relaunching once", exc_tag(exc))
                 self._retire_renderer()
                 self._acquire_renderer().render(html, tmp)
-            os.replace(tmp, target)
-        except BaseException:
-            tmp.unlink(missing_ok=True)  # never leave a stray temp on failure
-            raise
         self._after_render()

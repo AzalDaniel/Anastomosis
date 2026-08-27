@@ -1,4 +1,4 @@
-"""Pack-from-samples layout learner — the analysis half (M3a).
+"""Pack-from-samples layout learner — the analysis half.
 
 A practice hands us N sample PDFs of their EHR's note format. ``packgen``
 *sees* the layout deterministically — no torch, fully offline — and infers
@@ -10,8 +10,8 @@ the design system that produced it:
   taxonomy, column grid, page geometry, page-break rules, design tokens, and
   the static/per-patient text split, aggregated into a :class:`PackAnalysis`.
 
-:class:`PackAnalysis` is the contract the draft-pack emitter (item 15) builds
-on; it is a frozen aggregate of everything inferred.
+:class:`PackAnalysis` is the contract the draft-pack emitter builds on; it is
+a frozen aggregate of everything inferred.
 
 PHI rule (non-negotiable): sample PDFs may be named after patients and carry
 per-patient values, so this package stores an opaque sample *index* — never a

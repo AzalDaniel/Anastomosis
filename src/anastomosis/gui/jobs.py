@@ -1,14 +1,13 @@
-"""GuiJobRunner: the one owner of the GUI's async-job choreography.
+"""GuiJobRunner owns the GUI's async-job choreography.
 
-Every long-running GUI action used to hand-roll the same six steps —
-acquire the busy guard (or return ``Busy``), set up per-job state, emit a
-start event, spawn a daemon worker whose ``finally`` releases the guard,
-handle a ``Thread.start()`` failure by cleaning up + releasing + returning
-the no-traceback error dict, and return ``{"ok": True, "started": True}``.
-Five copies of that choreography lived in ``controller.py`` (upload,
-packgen, source-init, pipeline, migration). This module owns it once.
+Every long-running GUI action needs the same six steps: acquire the busy
+guard (or return ``Busy``), set up per-job state, emit a start event, spawn a
+daemon worker whose ``finally`` releases the guard, handle a
+``Thread.start()`` failure by cleaning up + releasing + returning the
+no-traceback error dict, and return ``{"ok": True, "started": True}``. This
+module is the one place that choreography lives.
 
-Contract highlights, all preserved verbatim from the hand-rolled copies:
+Contract highlights:
 
 * the busy guard is acquired SYNCHRONOUSLY before ``submit`` returns, so
   two quick clicks cannot both get ``{"started": True}``;

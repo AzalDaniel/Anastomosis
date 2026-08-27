@@ -1,7 +1,5 @@
-"""QA: every reconstructed document is verified before it ships.
-
-The predecessor finished at 100% final QA across 12,906 documents because
-nothing left the pipeline unchecked. Same contract here:
+"""QA: every reconstructed document is verified before it ships — nothing
+leaves the pipeline unchecked.
 
     check.run(pdf_path, ctx) -> CheckResult(verdict=pass|warn|fail, findings)
 

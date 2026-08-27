@@ -192,6 +192,26 @@ def test_write_report_hardens_its_output_dir(tmp_path: Path) -> None:
         assert stat.S_IMODE(out.stat().st_mode) == 0o700
 
 
+def test_write_report_leaves_no_orphan_tmp_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash between the write and the atomic replace must not leave a stray
+    ``.qa_report.json.<pid>.tmp`` file behind — the atomic_write_text safety
+    net write_report now shares with every other atomic-write site."""
+    import anastomosis.core.atomic as atomic
+
+    report = _qa(make_pdf(tmp_path / "good.pdf", GOOD_LINES))
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(atomic.os, "replace", _boom)
+    with pytest.raises(OSError):
+        write_report(report, tmp_path)
+    leftover = list(tmp_path.glob(".qa_report.json.*.tmp"))
+    assert leftover == [], f"orphan tmp file(s) left behind: {leftover}"
+
+
 def test_worst_verdict_wins_mixed_warn_and_fail(tmp_path: Path) -> None:
     # Wrong page size alone → WARN; missing DOB alone → FAIL; together the
     # document verdict must be FAIL (and report.ok false): exit-code gating

@@ -31,12 +31,7 @@ from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
-from anastomosis.deliver._shared import (
-    budgeted_copy_name,
-    claim_delivered_name,
-    copy_delivered_file,
-    write_fhir_bundle,
-)
+from anastomosis.deliver._shared import claim_delivered_name, copy_claimed_chart, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.qa import QAReport, Verdict
 
@@ -107,18 +102,14 @@ class BundleDeliverer:
         *,
         qa_report: QAReport | None = None,
     ) -> list[BundleResult]:
-        """Deliver a bundle per record, attributing each patient's charts via
-        the engine's persisted render index.
-
-        Previously this bucketed PDFs by the leading ``{family}_{given}_``
-        filename prefix; two patients sharing both names cross-attributed
-        without warning. Attribution is now strictly by ``patient_id``:
-        the render index (``render_index.json`` written by the engine into
-        ``pdfs_dir``) tells the deliverer exactly which PDFs the engine
-        wrote for which patient. When the index is missing every patient's
-        PDF list is empty — bundles render without charts and the index
-        absence is logged loudly. Bundle has no per-patient ``unattributed``
-        slot (it's per-patient by definition), so it never guesses.
+        """Deliver a bundle per record, attributing each patient's charts
+        strictly by ``patient_id`` via the engine's persisted render index
+        (never by name prefix — two patients sharing both names must never
+        cross-attribute). ``pdfs_dir`` is the engine's ``render_index.json``
+        sidecar; when it is missing every patient's PDF list is empty —
+        bundles render without charts and the absence is logged loudly.
+        Bundle has no per-patient ``unattributed`` slot (it's per-patient by
+        definition), so it never guesses.
 
         The per-run claimed-name ledger lives here, at the scope that has more
         than one patient in it: two ids that sanitize to one directory name
@@ -214,13 +205,10 @@ class BundleDeliverer:
 
     def _copy_pdfs(self, patient: Patient, pdfs: list[Path], patient_dir: Path) -> list[Path]:
         # ``pdfs`` is the index-attributed list assembled by
-        # :meth:`deliver_records` (or supplied directly by a caller that
-        # already filtered by ``patient.id``). The deliverer trusts that
-        # filter and copies the lot verbatim; the old startswith re-check
-        # is gone because filename prefixes are no longer the source of
-        # truth for attribution — the render index is.
+        # :meth:`deliver_records` (already filtered by patient_id via the
+        # render index) or supplied directly by a caller that did the same.
         #
-        # The DESTINATION name is budgeted (``budgeted_copy_name``): renderer
+        # The DESTINATION name is budgeted (copy_claimed_chart): renderer
         # chart names run to ~617 characters, and an over-MAX_PATH copy used to
         # fail into the warn-and-continue below — a chart silently missing from
         # a delivered bundle. Naming is deliberately outside that warn path, so
@@ -232,14 +220,14 @@ class BundleDeliverer:
         copied: list[Path] = []
         claimed: dict[str, str] = {}
         for pdf in pdfs:
-            delivered = budgeted_copy_name(target_dir, pdf.name)
-            claim_delivered_name(claimed, delivered, pdf.name, kind="chart")
-            destination = target_dir / delivered
-            failure = copy_delivered_file(pdf, destination)
+            delivered, failure = copy_claimed_chart(
+                target_dir, claimed, pdf, pdf.name, kind="chart"
+            )
             if failure is not None:
                 logger.warning("pdf copy failed (%s)", failure)
                 continue
-            copied.append(destination)
+            assert delivered is not None  # copy_claimed_chart: failure is None => delivered isn't
+            copied.append(target_dir / delivered)
         return copied
 
     def _write_qa_slice(
@@ -252,11 +240,6 @@ class BundleDeliverer:
             return None
         encounter_ids = {encounter.id for encounter in record.encounters}
         slice_docs = [doc for doc in qa_report.documents if doc.encounter_id in encounter_ids]
-        if not slice_docs:
-            # Still emit an empty slice so the bundle structure is uniform —
-            # downstream consumers can count on the file existing whenever a
-            # report was passed in.
-            slice_docs = []
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
             "patient_id": record.patient.id,
@@ -284,12 +267,9 @@ class BundleDeliverer:
 
     def _write_readme(self, patient_id: str, patient_dir: Path) -> Path:
         target = patient_dir / "README.txt"
-        # PHI-BY-DESIGN: the per-bundle README names its patient id and the PHI
-        # handling rules; it lands in the same secure_output_dir-hardened tree
-        # (0o700 owner-only on POSIX; on Windows NTFS, inheritance stripped and
-        # access limited to the current user, SYSTEM, and Administrators) as the
-        # record it describes. See SECURITY.md, "Code scanning & suppression
-        # policy (auditable)".
+        # PHI-BY-DESIGN: the per-bundle README names its patient id; same
+        # secure_output_dir hardening as write_fhir_bundle (_shared.py); see
+        # SECURITY.md.
         # codeql[py/clear-text-storage-sensitive-data]
         target.write_text(
             _README_TEMPLATE.format(

@@ -15,6 +15,10 @@ wrong slot":
   ``write_bytes`` / ``write_text``, so two source ids resolving to one
   delivered name MERGE rather than fail. A second, different claimant raises.
 
+Plus :func:`~anastomosis.deliver._shared.copy_claimed_chart`, which chains
+the two together with the actual copy — the one budget→claim→copy sequence
+every deliverer's chart-copy site now shares.
+
 Synthetic ids only.
 """
 
@@ -24,11 +28,13 @@ from pathlib import Path
 
 import pytest
 
+import anastomosis.deliver._shared as _shared
 from anastomosis.core.textutil import HASH_TAG_CHARS, MAX_PATH_CHARS
 from anastomosis.deliver._shared import (
     DeliveredNameCollision,
     budgeted_copy_name,
     claim_delivered_name,
+    copy_claimed_chart,
 )
 
 # The renderer's own shape, at the length safe_name permits per component.
@@ -96,6 +102,42 @@ def test_claim_refuses_a_second_different_source_id() -> None:
     claim_delivered_name(claims, "MRN_1234", "MRN 1234", kind="patient directory")
     with pytest.raises(DeliveredNameCollision, match="patient directory"):
         claim_delivered_name(claims, "MRN_1234", "MRN/1234", kind="patient directory")
+
+
+def test_copy_claimed_chart_delivers_and_claims_on_success(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-1.7 fake\n")
+    target_dir = tmp_path / "pdfs"
+    target_dir.mkdir()
+    claims: dict[str, str] = {}
+
+    delivered, failure = copy_claimed_chart(target_dir, claims, source, "source.pdf")
+
+    assert failure is None
+    assert delivered == "source.pdf"
+    assert (target_dir / "source.pdf").read_bytes() == b"%PDF-1.7 fake\n"
+    assert claims == {"source.pdf": "source.pdf"}
+
+
+def test_copy_claimed_chart_still_claims_the_name_on_a_failed_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy failure returns ``(None, failure)`` — no file lands — but the
+    name is claimed regardless, exactly as the pre-extraction call sites did
+    (budget+claim always ran before the copy, never conditioned on it)."""
+    monkeypatch.setattr(_shared, "copy_delivered_file", lambda source, destination: "OSError")
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-1.7 fake\n")
+    target_dir = tmp_path / "pdfs"
+    target_dir.mkdir()
+    claims: dict[str, str] = {}
+
+    delivered, failure = copy_claimed_chart(target_dir, claims, source, "source.pdf")
+
+    assert delivered is None
+    assert failure == "OSError"
+    assert not (target_dir / "source.pdf").exists()
+    assert claims == {"source.pdf": "source.pdf"}
 
 
 def test_claim_message_carries_no_source_value() -> None:

@@ -4,7 +4,7 @@ Stdlib only — no numpy, no torch. Every function takes the
 :class:`~anastomosis.packgen.extract.DocumentSample` list produced by
 :mod:`anastomosis.packgen.extract` and returns a frozen, deterministically
 ordered structure. :func:`analyze` aggregates them into :class:`PackAnalysis`,
-the contract the draft-pack emitter (item 15) builds on.
+the contract the draft-pack emitter builds on.
 
 Clustering is intentionally simple and explainable (sorted greedy bucketing
 within a tolerance), not DBSCAN — a practice operator must be able to read why
@@ -162,8 +162,8 @@ def infer_type_scale(samples: Sequence[DocumentSample]) -> TypeScale:
     the nearest); clusters smaller than body are ``small``. Bold clusters at or
     below body size that are not the body itself are also treated as headings
     (the section-band case: bold 10.5pt headings under 11pt body) and take the
-    next available h-role — the PLAN's "repeated bold spans → section heading
-    taxonomy" intent, see module/decisions note.
+    next available h-role — the "repeated bold spans → section heading
+    taxonomy" heuristic.
     """
     all_spans = [span for sample in samples for span in sample.spans]
     clusters = _cluster_styles(all_spans)
