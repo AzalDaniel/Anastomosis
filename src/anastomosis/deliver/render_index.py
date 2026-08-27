@@ -110,11 +110,8 @@ class RenderIndex:
         try:
             # PHI-BY-DESIGN: the sidecar maps PDF filenames (which embed patient
             # name + date of service) to their owning patient/encounter ids;
-            # ``pdfs_dir`` is the engine's secure_output_dir-hardened output tree
-            # (0o700 owner-only on POSIX; on Windows NTFS, inheritance stripped and
-            # access limited to the current user, SYSTEM, and Administrators) with a
-            # PHI-warning README. See SECURITY.md, "Code scanning & suppression
-            # policy (auditable)".
+            # same secure_output_dir hardening as write_fhir_bundle (_shared.py);
+            # see SECURITY.md.
             # codeql[py/clear-text-storage-sensitive-data]
             tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
             os.replace(tmp, target)

@@ -51,14 +51,9 @@ from anastomosis.core.model import (
     Provenance,
     SectionKind,
 )
-from anastomosis.core.textutil import (
-    clean_cell,
-    clean_numeric,
-    format_phone,
-    html_to_text,
-    sanitize_soap_html,
-)
-from anastomosis.core.timeutil import age_at, parse_date, parse_dt
+from anastomosis.core.textutil import clean_numeric, format_phone, html_to_text, sanitize_soap_html
+from anastomosis.core.timeutil import age_at
+from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
 from .loader import KNOWN_TABLES, Export, OrphanRowsError, Row, UnsupportedTablesError
@@ -69,8 +64,8 @@ SOURCE = "pf_tebra"
 
 logger = logging.getLogger(__name__)
 
-# Map every LOINC — the predecessor's primary code AND its modern aliases — to
-# the vital, so an observation charted under either edition categorizes as a
+# Map every LOINC edition — the primary code and its modern aliases — to the
+# vital, so an observation charted under either edition categorizes as a
 # vital (see codes.VitalCode.aliases).
 _VITAL_BY_LOINC = {
     code: vital for vital in VITALS.values() for code in (vital.loinc, *vital.aliases)
@@ -90,21 +85,16 @@ _SOCIAL_TABLES = (
 )
 
 
-def _s(row: Row, col: str) -> str | None:
-    return clean_cell(row.get(col))
+# Row-cell helpers shared with oracle_ehi/mapper.py (see sources/_rowutil.py).
+_s = clean_str
+_dt = clean_dt
+_d = clean_date
+_by = group_by
 
 
 def _b(row: Row, col: str) -> bool:
     value = _s(row, col)
     return value is not None and value.lower() == "true"
-
-
-def _dt(row: Row, col: str) -> Any:
-    return parse_dt(_s(row, col))
-
-
-def _d(row: Row, col: str) -> Any:
-    return parse_date(_s(row, col))
 
 
 def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
@@ -116,24 +106,11 @@ def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
     its own sub-namespace (``side:``) rather than starting with a table name, so
     no prefixed key can ever be spelled by an unprefixed column name.
     """
-    return {
-        f"{SOURCE}:{prefix}{col}": value
-        for col, value in row.items()
-        if col is not None and col not in mapped and clean_cell(value) is not None
-    }
+    return residual(row, mapped, SOURCE, prefix)
 
 
 def _prov(table: str, source_id: str | None) -> Provenance:
     return Provenance(source_system=SOURCE, source_file=f"{table}.tsv", source_id=source_id)
-
-
-def _by(rows: list[Row], col: str) -> dict[str, list[Row]]:
-    grouped: dict[str, list[Row]] = {}
-    for row in rows:
-        key = _s(row, col)
-        if key is not None:
-            grouped.setdefault(key, []).append(row)
-    return grouped
 
 
 def _ids(rows: list[Row], col: str) -> frozenset[str]:
@@ -442,11 +419,8 @@ def _map_encounter(
         # SIMPLE encounters carry the whole narrative in Subjective.
         sections.append(_note_section(SectionKind.NARRATIVE, _s(row, "Subjective"), None))
 
-    # The addendum/diagnosis link tables are grouped by EncounterGuid ONCE for the
-    # whole export (see map_export's hoist block) and sliced here — building the
-    # index inside this function re-scanned both whole tables on every encounter
-    # (O(encounters * rows)). _by preserves insertion order, so the sliced lists
-    # are identical to the per-encounter rebuild.
+    # addenda/dx link tables are pre-grouped by EncounterGuid once for the
+    # whole export (see map_export) and sliced here.
     addenda = [
         Addendum(
             text=html_to_text(_s(add, "Addendum")),
@@ -553,8 +527,8 @@ def _to_kg(value: float, unit: str | None) -> float:
 
 
 def _find_vital(by_code: dict[str | None, Observation], kind: str) -> Observation | None:
-    """Find an encounter's vital by kind, accepting either the predecessor's
-    primary LOINC or any modern alias (codes.VitalCode.aliases)."""
+    """Find an encounter's vital by kind, matching any LOINC alias
+    (codes.VitalCode.aliases — see _VITAL_BY_LOINC)."""
     vital = VITALS[kind]
     for code in (vital.loinc, *vital.aliases):
         if code in by_code:
@@ -604,13 +578,9 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
             value = _s(row, value_col)
             if value is None:
                 continue
-            # EffectiveDate is the clinical assessment date, so it wins; the
-            # EffectiveDateFrom range-start is the next clinical form. RecordedDate
-            # (the administrative EHR entry date) is only a last-resort fallback for
-            # rows that carry no clinical date — so effective_at reflects when the
-            # fact was true, not when it was typed. (The predecessor preferred
-            # RecordedDate for smoking; the canonical model favors the clinical
-            # date. The non-chosen date is preserved verbatim in extensions.)
+            # EffectiveDate/EffectiveDateFrom/RecordedDate in that priority order:
+            # the clinical assessment date wins over the administrative entry
+            # date; the other value survives in extensions.
             effective = next(
                 (
                     d
@@ -633,15 +603,11 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
     return observations
 
 
-# patient-med-history is the free-prose history table (verified against a real
-# v9 export): one row per block, HistoryType tagging it social / family / major-
-# events, ReportedHistory carrying the narrative. The predecessor split it by
-# HistoryType to render the social-history freetext, the family-history freetext,
-# and "MAJOR EVENTS"; the canonical PastMedicalHistory(kind, text) holds all three
-# losslessly, and the PF pack already renders the `social`-kind block as the
-# social-history freetext. (The structured subcategories the predecessor showed
-# empty — alcohol, drug use, physical activity, diet, sexual activity, stress,
-# etc. — have NO source table in the export: verified-absent, mapped to nothing.)
+# patient-med-history is a free-prose block table (HistoryType: social/family/
+# major-events, ReportedHistory: narrative). PastMedicalHistory(kind, text)
+# holds all three losslessly; the PF pack renders the `social` kind. The
+# structured subcategory fields (alcohol, drug use, diet, ...) have no source
+# table in the export.
 def _past_medical_history(export: Export, guid: str) -> list[PastMedicalHistory]:
     blocks: list[PastMedicalHistory] = []
     for row in _by(export["patient-med-history"], "PatientPracticeGuid").get(guid, []):
@@ -886,11 +852,11 @@ _SUPERBILL_JOINED_MAPPED = frozenset({"PatientInsurancePlanGuid", "PlanName", "P
 class _PlanTypeLookup:
     """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...) three-tier join.
 
-    Ported from the predecessor's prescription-line builder. PF displays the TYPE from
-    superbill-insurances.PlanType — NOT from patient-insurances, which only
-    carries the generic "Medical" coverage type. Resolve by
-    PatientInsurancePlanGuid first, then lowercased plan name, then payer name.
-    The plan-name "(PPO)" regex is the last-resort fallback only.
+    PF displays the TYPE from superbill-insurances.PlanType — NOT from
+    patient-insurances, which only carries the generic "Medical" coverage
+    type. Resolve by PatientInsurancePlanGuid first, then lowercased plan
+    name, then payer name. The plan-name "(PPO)" regex is the last-resort
+    fallback only.
 
     superbill-insurances is read in FULL (never sliced by a foreign key — see
     _FOREIGN_KEYS), so a row's home is decided here rather than by
@@ -929,9 +895,8 @@ class _PlanTypeLookup:
     def resolve(self, ins_row: Row) -> str | None:
         if (row := self._matched_row(ins_row)) is not None:
             return _s(row, "PlanType")
-        # Last resort: the "(PPO)"-style suffix some practices embed in the plan
-        # name (the predecessor's heuristic of last resort; never guess from
-        # the payer name itself). No superbill row informs this branch.
+        # Last resort: a "(PPO)"-style suffix some practices embed in the plan
+        # name. No superbill row informs this branch.
         match = _PLAN_TYPE_RE.search(_s(ins_row, "InsurancePlanName") or "")
         return match.group(1).upper() if match else None
 
@@ -1209,8 +1174,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
     )
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
-    # Encounter-keyed link tables, grouped once for the whole run and threaded into
-    # _map_encounter (which previously rebuilt each index per encounter).
+    # Encounter-keyed link tables, pre-grouped once (see _DemographicsGroups).
     addenda_by_encounter = _by(export["patient-encounter-addendums"], "EncounterGuid")
     encounter_dx_by_encounter = _by(export["patient-encounter-diagnoses"], "EncounterGuid")
     obs_by_patient = _by(export["patient-encounter-observations"], "PatientPracticeGuid")

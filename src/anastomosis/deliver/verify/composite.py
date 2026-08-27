@@ -71,7 +71,7 @@ from .levels import (
     PdfSnapshot,
 )
 
-# Re-exported here for back-compat (the public typedef lives in .types so the
+# Re-exported here (the public typedef lives in .types so the
 # report writer can import it without traversing this module's heavier
 # imports and hitting a circular import: verify.composite -> browser.errors
 # -> browser/__init__ -> browser.reports -> verify.composite, which only

@@ -26,7 +26,8 @@ code). Notable consequences:
   results", §3.2), never on a fabricated code meaning. An event whose shape is
   unclassifiable becomes an :class:`Observation` carrying its own title verbatim
   — never dropped, never forced into a wrong clinical category. See
-  :func:`_classify_event`.
+  :func:`_event_observation`, :func:`_event_condition`, :func:`_event_allergy`,
+  and :func:`_title_has_prefix`.
 * **``CE_BLOB`` compression is undetermined** (§8): the brief documents only
   that ``COMPRESSION_CD`` exists, not its code set or algorithm. Uncompressed
   blobs decode as latin1 text (§5.1); a compressed blob hits a loud
@@ -64,7 +65,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.textutil import clean_cell, html_to_text
-from anastomosis.core.timeutil import parse_date, parse_dt
+from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
 
 from .loader import Export, Row
 
@@ -80,39 +81,20 @@ _STORAGE_CODE_SET = "25"
 _OTG = "OTG"  # handle is a Document Imaging document id
 _DICOM_SIUID = "DICOM_SIUID"  # handle is a DICOM study UID
 
-
-def _s(row: Row, col: str) -> str | None:
-    return clean_cell(row.get(col))
-
-
-def _dt(row: Row, col: str) -> Any:
-    return parse_dt(_s(row, col))
-
-
-def _d(row: Row, col: str) -> Any:
-    return parse_date(_s(row, col))
+# Row-cell helpers shared with pf_tebra/mapper.py (see sources/_rowutil.py).
+_s = clean_str
+_dt = clean_dt
+_d = clean_date
+_by = group_by
 
 
 def _ext(row: Row, mapped: frozenset[str]) -> dict[str, Any]:
     """Everything the mapping didn't consume — the lossless catch-all."""
-    return {
-        f"{SOURCE}:{col}": value
-        for col, value in row.items()
-        if col is not None and col not in mapped and clean_cell(value) is not None
-    }
+    return residual(row, mapped, SOURCE)
 
 
 def _prov(table: str, source_id: str | None) -> Provenance:
     return Provenance(source_system=SOURCE, source_file=f"{table}.sql", source_id=source_id)
-
-
-def _by(rows: list[Row], col: str) -> dict[str, list[Row]]:
-    grouped: dict[str, list[Row]] = {}
-    for row in rows:
-        key = _s(row, col)
-        if key is not None:
-            grouped.setdefault(key, []).append(row)
-    return grouped
 
 
 def _is_current(row: Row) -> bool:
@@ -673,7 +655,7 @@ def _attach_event(
     Only *document* events (those with CE_BLOB / CE_BLOB_RESULT rows) reach
     here; discrete result events become their own records, so the same-named
     ``RESULT_*`` columns of distinct events can no longer collide in this one
-    shared dict (the losslessness blocker this method used to cause).
+    shared dict.
     """
     encounter.sections = [*encounter.sections, *local_sections]
     extensions = dict(encounter.extensions)
@@ -695,8 +677,7 @@ def _stash_superseded(
     event so nothing is dropped." The row alone is not enough: a superseded
     document's CE_BLOB body (e.g. an earlier draft of a note) lives in CE_BLOB,
     not on the CLINICAL_EVENT row, so it is decoded here (where possible; raw
-    otherwise) and attached to the stashed payload. Without this the superseded
-    note text vanishes — the blocker this fix closes.
+    otherwise) and attached to the stashed payload.
     """
     encntr_id = _s(event_row, "ENCNTR_ID")
     target = encounters_by_id.get(encntr_id or "")

@@ -351,11 +351,6 @@ def _status_active_consumed(resource: dict[str, Any], field: str) -> tuple[bool,
     return False, set()
 
 
-def _status_active(resource: dict[str, Any], field: str) -> bool:
-    """Whether a clinical-status CodeableConcept (``clinicalStatus``) reads active."""
-    return _status_active_consumed(resource, field)[0]
-
-
 def _num_str(value: Any) -> str | None:
     """A FHIR numeric as a clean display string (integral floats lose the ``.0``)."""
     if value is None:

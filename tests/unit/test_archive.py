@@ -402,6 +402,56 @@ def test_archive_missing_render_index_routes_to_unattributed(tmp_path: Path) -> 
     assert unattributed == ["Smith_John_05-10-2023_SOAP.pdf"]
 
 
+def test_archive_unattributed_count_logs_only_successful_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression: the unattributed-PDF sweep used to report ``len(orphans)``
+    — the number of copies ATTEMPTED — while the two other chart-copy sites
+    (attributed patient PDFs, the bundle deliverer) counted only successes.
+    A copy that fails mid-sweep (disk full, permissions) must not inflate
+    the "(N unattributed)" count past what actually landed on disk.
+    """
+    import logging
+
+    import anastomosis.deliver._shared as shared
+    from anastomosis.core.model import Patient, PatientRecord
+
+    record = PatientRecord(patient=Patient(id="dddd-0000-0000-0000-000000000004"))
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    good = pdfs_dir / "aaa.pdf"
+    bad = pdfs_dir / "bbb.pdf"
+    good.write_bytes(b"%PDF-1.7 good\n")
+    bad.write_bytes(b"%PDF-1.7 bad\n")
+    # No render index at all -> both PDFs route through the unattributed sweep.
+
+    real_copy = shared.copy_delivered_file
+
+    def flaky_copy(source: Path, destination: Path) -> str | None:
+        if source.name == bad.name:
+            return "OSError"
+        return real_copy(source, destination)
+
+    # copy_claimed_chart (called by _route_unattributed_pdfs) looks up
+    # copy_delivered_file as a module global at call time, so patching the
+    # _shared module's attribute reaches it without touching archive.py.
+    monkeypatch.setattr(shared, "copy_delivered_file", flaky_copy)
+
+    out = tmp_path / "archive"
+    with caplog.at_level(logging.INFO, logger="anastomosis.deliver.archive.archive"):
+        ArchiveDeliverer().deliver([record], pdfs_dir, out)
+
+    landed = sorted(p.name for p in (out / "unattributed").glob("*.pdf"))
+    assert landed == [good.name], "the failed copy must never appear on disk"
+
+    lines = [r.getMessage() for r in caplog.records if "archive delivered" in r.getMessage()]
+    assert lines, "expected the archive-delivered summary log line"
+    assert "(1 unattributed)" in lines[0], (
+        f"logged unattributed count must match the {len(landed)} file(s) actually "
+        f"copied, not the 2 attempted: {lines[0]!r}"
+    )
+
+
 def test_archive_index_json_search_haystack_is_lowercased(
     tmp_path: Path, records: list[PatientRecord]
 ) -> None:
