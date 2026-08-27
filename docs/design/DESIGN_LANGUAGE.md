@@ -190,8 +190,11 @@ engineer. Rules, enforced against the audit’s string inventory:
 
 ## 12. What was removed, and why (the anti-slop ledger)
 
-* Gradient wallpaper + veil (two full-viewport decorative gradient layers)
-  → one flat ground + brand watermark.
+* Gradient wallpaper + veil (two full-viewport decorative gradient layers),
+  then the blurred brand watermark that replaced them → one flat ground and
+  nothing else. Glass belongs to the chrome that floats over content, and what
+  it refracts is the content; a decorative layer was standing in for a content
+  layer that had not been designed.
 * Dichroic shimmer progress gradient → flat `--brand-bright` fill; shimmer
   only as a subtle running-state pulse.
 * Dead `.pill` filter-bar CSS (never instantiated) → deleted.

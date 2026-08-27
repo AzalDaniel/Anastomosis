@@ -29,6 +29,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; color: inherit; }
 ul, ol { list-style: none; padding: 0; margin: 0; }
 svg { display: block; }
+/* An <svg> with a viewBox but no width/height falls back to the replaced-element
+   default and letterboxes, and width/height on an inline <span> host is ignored
+   outright — which is how the four stage clocks came to be drawn at 253px. An
+   icon host is a box, and the glyph fills it. */
+.icon { display: inline-flex; flex: none; }
+.icon > svg { width: 100%; height: 100%; }
 /* The `hidden` attribute must WIN. Every result panel here ships hidden and is
    revealed by JS; the browser expresses that attribute through a UA rule that
    ANY author `display` beats — and panels/grids all declare one. Without this
@@ -41,23 +47,11 @@ svg { display: block; }
 
 
 /* ─── 2. Backdrop ────────────────────────────────────────────── */
-/* ONE layer (§2): the flat warm ground on <body>, carrying a single oversized
-   blurred rendering of the vessel mark at 5% opacity, anchored bottom-right —
-   the thing the glass refracts. No gradient wallpaper, no veil stack, no
-   repaint per view: the backdrop is fixed and never changes. */
-.watermark {
-  position: fixed;
-  right: -22vmin;
-  bottom: -26vmin;
-  width: 140vmin;
-  height: 140vmin;
-  z-index: -1;
-  color: var(--brand-bright);
-  opacity: 0.05;
-  filter: blur(60px);
-  pointer-events: none;
-  user-select: none;
-}
+/* The flat warm ground on <body>, and nothing else. A 1204x1204 blurred
+   rendering of the vessel mark used to sit here as "the thing the glass
+   refracts" — but glass belongs to the chrome that floats over content, and
+   what it refracts is the content. A decorative full-viewport layer was
+   standing in for a content layer that had never been designed. */
 
 
 /* ─── 3. Chrome: title band, nav, about ──────────────────────── */
@@ -202,14 +196,17 @@ svg { display: block; }
 .shell-spacer { flex: 1 1 auto; min-height: var(--space-2); }
 
 
-/* ─── 5. Glass panels ────────────────────────────────────────── */
+/* ─── 5. Panels ──────────────────────────────────────────────── */
+/* Opaque. A panel is content, and content is what glass refracts, not what
+   glass is made of — the translucent version measured 1.19:1 against the
+   ground, which is a surface you cannot see. At --surface it is 1.71:1, and
+   with a real luminance step the heavy border is redundant: a hairline and an
+   inset top highlight are enough to catch the edge. */
 .panel {
   padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-panel);
-  background: var(--glass-card-bg);
-  -webkit-backdrop-filter: var(--glass-card-blur);
-  backdrop-filter: var(--glass-card-blur);
-  border: var(--glass-card-border);
+  background: var(--surface);
+  border: 1px solid rgba(244, 238, 228, 0.07);
   box-shadow: var(--glass-highlight);
   display: flex;
   flex-direction: column;
@@ -250,7 +247,7 @@ svg { display: block; }
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-control);
   border: 1px solid var(--hairline);
-  background: var(--well);
+  background: var(--field);
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: var(--text-label);
@@ -262,7 +259,7 @@ svg { display: block; }
 .field input::placeholder, .field textarea::placeholder { color: var(--ink-muted); }
 .field input:focus, .field select:focus, .field textarea:focus {
   border-color: color-mix(in oklab, var(--brand-bright) 60%, transparent);
-  background: rgba(0, 0, 0, 0.30);
+  background: var(--field-focus);
 }
 
 /* The native <select> is drawn by the OS in two halves. `appearance: none` +
@@ -536,10 +533,8 @@ svg { display: block; }
 .counter-tile {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-panel);
-  background: var(--glass-card-bg);
-  -webkit-backdrop-filter: var(--glass-card-blur);
-  backdrop-filter: var(--glass-card-blur);
-  border: var(--glass-card-border);
+  background: var(--surface);
+  border: 1px solid rgba(244, 238, 228, 0.07);
   box-shadow: var(--glass-highlight);
   display: flex;
   flex-direction: column;
@@ -732,7 +727,7 @@ svg { display: block; }
   padding: var(--space-3);
   border-radius: var(--radius-control);
   border: 1px solid rgba(244, 238, 228, 0.10);
-  background: var(--well);
+  background: var(--field);
 }
 
 /* The proposed match-up table (Teach → export format). */
@@ -744,7 +739,7 @@ svg { display: block; }
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-label);
   color: var(--ink-secondary);
-  background: var(--well);
+  background: var(--field);
   border-bottom: 1px solid rgba(244, 238, 228, 0.06);
 }
 .mapping-row:last-child { border-bottom: none; }
@@ -864,7 +859,7 @@ svg { display: block; }
 .search-result {
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-chip);
-  background: var(--well);
+  background: var(--field);
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--ink-secondary);

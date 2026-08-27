@@ -107,21 +107,29 @@ def test_tokens_carry_the_porcelain_and_oxblood_system() -> None:
     text = _read("tokens.css")
     # §1 ground and ink: warm, never navy.
     for token in (
-        "--ground:        oklch(0.18 0.012 55)",
-        "--ground-deep:   oklch(0.14 0.010 55)",
+        "--ground:        oklch(0.16 0.013 50)",
+        "--ground-deep:   oklch(0.125 0.012 50)",
         "--ink:           oklch(0.96 0.010 80)",
         "--brand:        oklch(0.44 0.13 30)",
-        "--brand-bright: oklch(0.56 0.15 30)",
     ):
         assert token in text, f"tokens.css lost {token!r}"
+    # The two values that carry a measured WCAG floor rather than a taste call.
+    # --ink-muted below 0.72 puts every 12px caption on a panel under 4.5:1;
+    # --brand-bright above 0.55 puts the porcelain label on the primary button
+    # under it. Both were measured, both ways, on the shipped surfaces.
+    assert "--ink-muted:     oklch(0.72 0.012 80)" in text
+    assert "--brand-bright: oklch(0.55 0.15 30)" in text
     # §1 clinical signals are their own family.
     for signal in ("--ok:", "--attention:", "--stop:"):
         assert signal in text, f"tokens.css missing the {signal!r} signal"
-    # §3 three glass tiers that scale together, with the near-opaque modal.
+    # Content surfaces are opaque steps of a luminance ladder, not glass.
+    for surface in ("--surface:", "--surface-row:", "--field:", "--field-focus:"):
+        assert surface in text, f"tokens.css missing the {surface!r} content surface"
+    # §3 glass is the chrome tiers only, near-opaque above ambient.
     assert "--glass-veil-blur:   saturate(130%) blur(24px)" in text
-    assert "--glass-card-blur:   saturate(150%) blur(32px)" in text
     assert "--glass-modal-blur:  saturate(170%) blur(48px)" in text
     assert "--glass-modal-bg:    rgba(24, 20, 16, 0.94)" in text, "the mud fix is gone"
+    assert "--glass-card-bg" not in text, "the content glass tier came back"
     # §5 radius BY ROLE, not one token.
     for radius in ("--radius-panel:   14px", "--radius-control:  8px", "--radius-chip:     6px"):
         assert radius in text, f"tokens.css lost {radius!r}"
@@ -169,7 +177,6 @@ def test_app_css_carries_the_components() -> None:
         ".log-strip",
         ".progress-bar-fill",
         ".counter-tile",
-        ".watermark",
         ".view--leaving",
         ".btn-primary",
         ".btn-secondary",
@@ -197,6 +204,7 @@ def test_the_anti_slop_ledger_stays_removed() -> None:
         "@keyframes shimmer": "the 8s progress shimmer",
         ".pill {": "the dead filter-bar component",
         ".cmd-palette": "the command palette",
+        ".watermark": "the full-viewport decorative mark",
     }
     for needle, what in gone.items():
         assert needle not in css, f"{what} came back ({needle!r})"
