@@ -102,11 +102,16 @@ def test_bare_anast_without_a_terminal_prints_the_unchanged_help_page(
     bare = runner.invoke(app, [])
     explicit = runner.invoke(app, ["--help"])
     assert bare.exit_code == 2, bare.output
-    assert "Usage: anast" in bare.output
+    # Typer's rich help interleaves ANSI styling through the text in some
+    # environments (CI enables color where a local capture does not), so the
+    # substring is asserted on the UNSTYLED text; the identical-output check
+    # compares raw bytes captured under the same environment, so it stays raw.
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", bare.output)
+    assert "Usage: anast" in plain, plain
     # Byte-identical to `--help` (which ends with one extra blank line) — the
     # page an operator and every script have always been shown here.
     assert bare.output.rstrip("\n") == explicit.output.rstrip("\n")
-    assert "What would you like to do?" not in bare.output
+    assert "What would you like to do?" not in plain
 
 
 def test_bare_anast_on_a_terminal_runs_the_guide(monkeypatch: pytest.MonkeyPatch) -> None:
