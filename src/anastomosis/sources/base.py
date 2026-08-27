@@ -18,7 +18,6 @@ time, no metaclass magic, defensive lookups with diagnoses.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from importlib import import_module
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -75,16 +74,6 @@ _REGISTRY: dict[str, SourceAdapter] = {}
 # pulls in core.model + destinations + yaml (a real chunk of startup cost), so
 # nothing outside this module imports them directly anymore — CLI startup
 # (--help, doctor, gui) must not pay for a registry no one has asked for yet.
-# ``sources.learned`` is deliberately absent: it self-registers only through
-# ``register_learned_sources()``, never at import time, so it has no module
-# path to list here.
-_BUILTIN_ADAPTER_MODULES = (
-    "anastomosis.sources.ccda",
-    "anastomosis.sources.fhir_r4",
-    "anastomosis.sources.oracle_ehi",
-    "anastomosis.sources.pf_tebra",
-)
-
 _builtins_loaded = False
 
 
@@ -94,12 +83,23 @@ def _ensure_builtin_adapters() -> None:
     Idempotent and cheap after the first call, so every registry entry point
     below can call it unconditionally — no caller can observe an unpopulated
     registry just because it happened to be first.
+
+    These MUST be literal ``import`` statements, never importlib over strings:
+    the frozen Windows build includes only statically-reachable modules
+    (packaging/build_windows.py ships package DATA wholesale, code
+    selectively), and these calls are the adapters' only remaining reference —
+    a string-based import here compiles fine and then strips every adapter
+    out of the shipped app. ``sources.learned`` is deliberately absent: it
+    self-registers only through ``register_learned_sources()``.
     """
     global _builtins_loaded
     if _builtins_loaded:
         return
-    for module_path in _BUILTIN_ADAPTER_MODULES:
-        import_module(module_path)
+    import anastomosis.sources.ccda
+    import anastomosis.sources.fhir_r4
+    import anastomosis.sources.oracle_ehi
+    import anastomosis.sources.pf_tebra  # noqa: F401
+
     _builtins_loaded = True
 
 

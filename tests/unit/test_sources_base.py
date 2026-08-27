@@ -79,8 +79,19 @@ def test_builtin_adapter_modules_excludes_learned() -> None:
     """``sources.learned`` self-registers only through
     ``register_learned_sources()`` — it has no module-level ``register()``
     call, so it must not appear in the eager-load tuple."""
-    assert "anastomosis.sources.learned" not in base._BUILTIN_ADAPTER_MODULES
-    assert not any("learned" in path for path in base._BUILTIN_ADAPTER_MODULES)
+    import ast
+    import inspect
+
+    ensure_src = inspect.getsource(base._ensure_builtin_adapters)
+    imported = [
+        alias.name
+        for node in ast.walk(ast.parse(ensure_src.replace("    def", "def", 1)))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    assert imported, "the lazy loader must import the built-in adapters"
+    assert all(name.startswith("anastomosis.sources.") for name in imported)
+    assert not any("learned" in name for name in imported)
 
 
 def test_ensure_builtin_adapters_is_idempotent() -> None:
