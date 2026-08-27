@@ -318,3 +318,68 @@ def test_record_without_identity_anchors_warns(tmp_path: Path) -> None:
     result = next(r for r in report.documents[0].results if r.check == "data_integrity")
     assert result.verdict is Verdict.WARN
     assert any("identity anchors" in f for f in result.findings)
+
+
+def test_a_chart_for_a_different_patient_does_not_pass_the_wrong_chart_check() -> None:
+    """The one check whose entire job is to catch a misfiled chart.
+
+    It matched the patient NAME with the value-boundary predicate, so a chart
+    for "Mary-Ann Li-Wong" verified clean against a record for "Ann Li" — a
+    different patient's chart, marked verified. The identity module keeps a
+    separate name-boundary family precisely because intra-name joiners have to
+    count as embedding, and both sibling verifiers (the L2/L3/L6 delivery
+    verifier and the browser pack) already used it.
+
+    The docstring above `_present` claimed the predicate "cannot drift into a
+    substring-loose variant in one place and not another". Nothing enforced
+    that, and it had already drifted, so the claim is now a test.
+
+    Every name here is invented.
+    """
+    from anastomosis.qa.checks import _date_present, _name_present, _present
+
+    other_patients_chart = "Chart for Mary-Ann Li-Wong. DOB 01-02-1980. Visit 05-10-2023."
+    assert not _name_present("Ann Li", other_patients_chart), (
+        "a chart bearing a different patient's name passed the wrong-chart check"
+    )
+    assert _present("Ann Li", other_patients_chart), (
+        "the VALUE predicate is what let it through — if this stops being true "
+        "the test above no longer proves anything"
+    )
+
+    # The right chart still passes, on either spelling of the date.
+    own_chart = "Chart for Ann Li. DOB 01-02-1980. Visit 5-10-2023."
+    assert _name_present("Ann Li", own_chart)
+    assert _date_present("01-02-1980", own_chart)
+
+
+def test_qa_matches_a_name_the_same_way_every_other_verifier_does() -> None:
+    """One family per kind of field, across all three consumers.
+
+    A comment is not a mechanism. This reads the imports off the syntax tree,
+    so a fourth consumer — or a regression in one of these three — shows up
+    here rather than as a chart filed under the wrong patient.
+    """
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "anastomosis"
+    consumers = {
+        "qa/checks.py": {"name_fragment_present", "date_token_present"},
+        "deliver/verify/levels.py": {"name_fragment_present", "date_token_present"},
+        "destinations/browserpack.py": {"name_parts_present", "date_token_present"},
+    }
+    for relative, required in consumers.items():
+        tree = ast.parse((src / relative).read_text(encoding="utf-8"))
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "anastomosis.core.identity"
+            for alias in node.names
+        }
+        missing = required - imported
+        assert not missing, (
+            f"{relative} no longer matches through {sorted(missing)} — a name "
+            "matched with the value predicate is how a chart for one patient "
+            "verifies clean against another"
+        )

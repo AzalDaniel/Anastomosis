@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pymupdf
 
-from anastomosis.core.identity import token_present
+from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
 from anastomosis.core.model import ObservationCategory
 from anastomosis.core.timeutil import all_date_spellings
 
@@ -116,12 +116,35 @@ def _present(needle: str, text: str) -> bool:
     lookarounds reject matches embedded in adjacent word characters or
     number runs.
 
-    This is the SINGLE shared predicate (:func:`anastomosis.core.identity.token_present`)
-    — the same one the L2/L3/L6 delivery verifier and the browser destination
-    pack match through — so the wrong-match defense cannot drift into a
-    substring-loose variant in one place and not another.
+    For a VALUE. A name goes through :func:`_name_present` and a date through
+    :func:`_date_present` — see those. The identity module keeps three families
+    apart on purpose, and this check has to pick the right one per field rather
+    than treat every field as a value.
     """
     return token_present(needle, text)
+
+
+def _name_present(name: str, text: str) -> bool:
+    """Is this PATIENT'S name on the document, as their name?
+
+    The name-boundary predicate, which is what the L2/L3/L6 delivery verifier
+    and the browser pack both use — because intra-name joiners have to count as
+    embedding. This check used the VALUE predicate, so a chart for
+    "Mary-Ann Li-Wong" passed verification against a record for "Ann Li": a
+    different patient's chart, marked verified, by the one check whose entire
+    job is to catch that.
+    """
+    return name_fragment_present(name, text)
+
+
+def _date_present(spelling: str, text: str) -> bool:
+    """Is this date on the document?
+
+    The date-boundary predicate, again matching the delivery verifier: a date
+    has its own run-of-digits rules, and an unpadded spelling must not match
+    inside a longer number.
+    """
+    return date_token_present(spelling, text)
 
 
 def _date_spellings(value: date) -> set[str]:
@@ -146,15 +169,15 @@ class DataIntegrityCheck:
 
         patient = ctx.record.patient
         if patient.display_name:
-            if not _present(patient.display_name, text):
+            if not _name_present(patient.display_name, text):
                 findings.append(f"patient name {patient.display_name!r} not found on document")
         if patient.birth_date:
-            if not any(_present(s, text) for s in _date_spellings(patient.birth_date)):
+            if not any(_date_present(s, text) for s in _date_spellings(patient.birth_date)):
                 findings.append("date of birth not found on document")
         if not patient.display_name and not patient.birth_date:
             warnings.append("record carries no identity anchors (name/DOB) to verify")
         dos = ctx.encounter.date_of_service
-        if dos and not any(_present(s, text) for s in _date_spellings(dos)):
+        if dos and not any(_date_present(s, text) for s in _date_spellings(dos)):
             findings.append("date of service not found on document")
 
         if findings:
@@ -223,7 +246,7 @@ class DateStalenessCheck:
         findings = [
             f"today's date ({spelling}) appears on a chart dated {ctx.encounter.date_of_service}"
             for spelling in sorted(_date_spellings(today))
-            if _present(spelling, text)
+            if _date_present(spelling, text)
         ]
         return CheckResult(self.name, Verdict.WARN if findings else Verdict.PASS, findings)
 
