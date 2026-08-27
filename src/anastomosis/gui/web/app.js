@@ -142,25 +142,84 @@
   };
   let skippedStages = [];
 
-  function resetRun(config) {
-    skippedStages = [];
-    setCurrent("Rebuilding…");
-    renderRail(config);
+  // --- the progress bar -----------------------------------------------------
+  // The bar measures stages settled out of stages planned. It used to sit at 0%
+  // for the whole run and then jump to full from the failure branch as well as
+  // the finish branch, so a run that stopped on stage two showed a complete,
+  // brand-coloured bar directly under the word "Stopped."
+  let plannedStages = [];
+  let settledStages = 0;
+
+  function setProgress(percent) {
     const fill = el("charts-fill");
-    if (fill) fill.style.width = "0%";
+    if (fill) fill.style.width = `${percent}%`;
+    const frame = el("charts-progress");
+    const bar = frame && frame.querySelector(".progress-bar");
+    if (bar) bar.setAttribute("aria-valuenow", String(Math.round(percent)));
   }
 
-  function finishRun() {
-    setBusy(false);
+  // Done and skipped both settle a stage: neither is still pending.
+  function advanceProgress() {
+    if (!plannedStages.length) return;
+    settledStages += 1;
+    setProgress(Math.min(100, (settledStages / plannedStages.length) * 100));
+  }
+
+  function stopProgress() {
+    const frame = el("charts-progress");
+    if (frame) frame.classList.add("is-stopped");
+  }
+
+  // A run that has been asked for but has not begun. The click says
+  // "Rebuilding…" and empties the bar straight away, because a button that
+  // answers nothing feels broken — but the last run's rail counts and patient
+  // table are RESULTS, and they stay until this run actually produces its own.
+  // So a submit the controller refuses puts back the two things the click
+  // moved, and the finished run below them is never touched.
+  let pendingRun = null;
+
+  function askForRun(config) {
+    pendingRun = {
+      config,
+      current: el("charts-current") ? el("charts-current").textContent : "",
+      fill: el("charts-fill") ? el("charts-fill").style.width : "0%",
+    };
+    setCurrent("Rebuilding…");
+    setProgress(0);
+  }
+
+  function abandonRun() {
+    if (!pendingRun) return;
+    setCurrent(pendingRun.current);
     const fill = el("charts-fill");
-    if (fill) fill.style.width = "100%";
+    if (fill) fill.style.width = pendingRun.fill;
+    pendingRun = null;
+  }
+
+  // The first event of the run is what replaces the last one's results. Doing it
+  // here rather than at submit time also settles the order: an event that beat
+  // the bridge's answer back can no longer have its stage card wiped by a reset
+  // arriving after it.
+  function beginRun() {
+    if (!pendingRun) return;
+    const config = pendingRun.config;
+    pendingRun = null;
+    skippedStages = [];
+    plannedStages = stagesFor(config);
+    settledStages = 0;
+    Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
+    const frame = el("charts-progress");
+    if (frame) frame.classList.remove("is-stopped");
+    renderRail(config);
   }
 
   // --- the event handler for the "pipeline" flow ---------------------------
   function onEvent(event) {
+    beginRun();
     switch (event.type) {
       case "stage":
         markStage(event.stage, event.state);
+        if (event.state === "done") advanceProgress();
         if (event.state === "start") setCurrent(`${Shell.stageLabel(event.stage)}…`);
         if (event.state === "skipped") {
           // A stage that did not run must say so where the tick would have been,
@@ -170,6 +229,7 @@
           const card = ensureStageCard(event.stage);
           const counts = card && card.querySelector(".stage-counts");
           if (counts) counts.textContent = SKIPPED_NOTE[event.stage] || "did not run";
+          advanceProgress();
         }
         break;
       case "progress": {
@@ -185,14 +245,17 @@
             : "Finished."
         );
         if (skippedStages.length) Shell.showBanner(SKIPPED_NOTE.qa);
-        finishRun();
+        setBusy(false);
+        setProgress(100);
         Shell.loadPatients(el("charts-patients"), el("charts-patients-body"), event.summary_id);
         break;
       case "error":
         markStage(event.stage, "error");
         setCurrent("Stopped.");
         Shell.showBanner(`The rebuild stopped during ${Shell.stageLabel(event.stage)}: ${event.error}`);
-        finishRun();
+        setBusy(false);
+        // The bar stays where the run got to, in the stopped colour.
+        stopProgress();
         break;
       default:
         break;
@@ -203,11 +266,11 @@
   async function onRun() {
     if (!hasApi() || !FORM) return;
     Shell.hideBanner();
-    Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
-    // Read the form BEFORE painting the rail: the rail is built from what this
-    // run will do, not from what a run could do.
+    // Read the form now, paint from it later: the rail is built from what this
+    // run will do, not from what a run could do — but nothing on screen changes
+    // until the controller confirms the run is actually under way.
     const v = FORM.values();
-    resetRun(v);
+    askForRun(v);
     setBusy(true);
     try {
       // Fire-and-forget on a worker thread; results stream back as events.
@@ -227,14 +290,17 @@
         v.writeManifest
       );
       if (started && started.ok === false) {
-        Shell.showBanner(started.error);
+        // Nothing started, so the screen goes back to describing the last run
+        // that did: no rail reset, no wiped patient table, no "Ready." over
+        // work that is still in flight somewhere else.
+        abandonRun();
         setBusy(false);
-        setCurrent("Ready.");
+        Shell.showBanner(Shell.refusalText(started.error));
       }
     } catch (err) {
-      Shell.showBanner(String(err));
+      abandonRun();
       setBusy(false);
-      setCurrent("Ready.");
+      Shell.showBanner(String(err));
     }
   }
 

@@ -200,6 +200,32 @@
     box.appendChild(p);
   }
 
+  // A run asked for but not yet begun. The click answers straight away, but the
+  // last run's patient table is a RESULT and stays until this run has its own —
+  // so a submit the controller refuses puts the result box back and leaves the
+  // finished run alone. See onRun.
+  let pendingRun = null;
+
+  function askForRun() {
+    const box = el("migrate-result");
+    pendingRun = { hidden: box.hidden, text: box.textContent };
+    showResult("Rebuilding…");
+  }
+
+  function abandonRun() {
+    if (!pendingRun) return;
+    const box = el("migrate-result");
+    if (pendingRun.hidden) box.hidden = true;
+    else showResult(pendingRun.text);
+    pendingRun = null;
+  }
+
+  function beginRun() {
+    if (!pendingRun) return;
+    pendingRun = null;
+    Shell.clearPatients(el("migrate-patients"), el("migrate-patients-body"));
+  }
+
   async function onRun() {
     if (!hasApi() || !FORM) return;
     const v = FORM.values();
@@ -213,9 +239,8 @@
       return;
     }
     Shell.hideBanner();
-    Shell.clearPatients(el("migrate-patients"), el("migrate-patients-body"));
+    askForRun();
     FORM.setBusy(true);
-    showResult("Rebuilding…");
     try {
       const started = await window.pywebview.api.run_migration_async(
         v.exportDir,
@@ -230,16 +255,20 @@
         v.trustNew
       );
       if (started && started.ok === false) {
-        Shell.showBanner(started.error);
+        abandonRun();
         FORM.setBusy(false);
+        Shell.showBanner(Shell.refusalText(started.error));
       }
     } catch (err) {
-      Shell.showBanner(String(err));
+      abandonRun();
       FORM.setBusy(false);
+      Shell.showBanner(String(err));
     }
   }
 
+
   function onEvent(event) {
+    beginRun();
     switch (event.type) {
       case "done":
         FORM.setBusy(false);

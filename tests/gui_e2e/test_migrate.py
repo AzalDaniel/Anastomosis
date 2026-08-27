@@ -210,3 +210,39 @@ def test_migrate_ignores_another_flow_terminal_event(gui) -> None:
     # Charts section is off screen, so Playwright calls all of it invisible.)
     assert app.last_args("last_run_summary") == ["deadbeef"]
     assert page.locator("#charts-patients").get_attribute("hidden") is None
+
+
+def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> None:
+    """The busy guard is shared with every other view, so this click is rejected.
+
+    Migrate had the same shape as Charts: it cleared the patient table and wrote
+    "Rebuilding…" over the verdict before asking, then reported the refusal as
+    the bare sentinel and left "Rebuilding…" standing over a run that had
+    already finished and one that never started.
+    """
+    app = _open(gui)
+    page = app.page
+    page.select_option("#migrate-source", CANNED_SOURCE)
+    page.select_option("#migrate-destination", CANNED_DESTINATION)
+    page.wait_for_timeout(150)
+
+    page.click("#migrate-run")
+    app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=2, rendered=4))
+    page.wait_for_selector("#migrate-patients:not([hidden])")
+
+    verdict = page.locator("#migrate-result").text_content()
+    assert verdict and "Nothing has been sent yet" in verdict
+
+    page.evaluate(
+        "() => { window.pywebview.api.run_migration_async ="
+        " () => Promise.resolve({ok: false, error: 'Busy'}); }"
+    )
+    page.click("#migrate-run")
+    page.wait_for_selector("#banner.show")
+
+    assert page.locator("#migrate-result").text_content() == verdict
+    assert page.locator("#migrate-patients").get_attribute("hidden") is None
+    assert not page.locator("#migrate-run").is_disabled()
+    banner = app.text("#banner")
+    assert "Busy" not in banner, f"the sentinel reached the screen: {banner!r}"
+    assert "already working on something else" in banner, banner

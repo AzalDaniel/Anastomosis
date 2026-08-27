@@ -99,7 +99,7 @@
     try {
       const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, false);
       if (started && started.ok === false) {
-        Shell.showBanner(`The samples could not be read: ${started.error}`);
+        Shell.showBanner(Shell.refusalText(started.error, "The samples could not be read"));
         setStep("Step 1 of 2 — look at the samples.");
       }
     } catch (err) {
@@ -115,7 +115,7 @@
     try {
       const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, true);
       if (started && started.ok === false) {
-        Shell.showBanner(`The draft layout could not be written: ${started.error}`);
+        Shell.showBanner(Shell.refusalText(started.error, "The draft layout could not be written"));
         setStep("Step 2 of 2 — review and confirm.");
       }
     } catch (err) {
