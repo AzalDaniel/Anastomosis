@@ -188,8 +188,11 @@ class ArchiveDeliverer:
             owned_pdfs.update(claimed_sources)
             pdf_count += len(patient_pdfs)
 
-            # Per-encounter HTML pages.
+            # Per-encounter HTML pages. Ledger is fresh per patient: page names
+            # only need to be distinct within this patient's own encounters/
+            # directory, mirroring the chart ledger's per-patient scope below.
             encounter_count += len(record.encounters)
+            claimed_pages: dict[str, str] = {}
             for encounter in record.encounters:
                 self._write_encounter_page(
                     encounter,
@@ -198,6 +201,7 @@ class ArchiveDeliverer:
                     patient_pdfs,
                     qa_lookup,
                     generated_at,
+                    claimed_pages,
                 )
 
             # Patient summary page.
@@ -407,6 +411,7 @@ class ArchiveDeliverer:
         patient_pdfs: dict[str, str],
         qa_lookup: dict[str, str],
         generated_at: str,
+        claimed_pages: dict[str, str],
     ) -> None:
         sections_ctx = [
             {"kind": s.kind.value, "title": s.title, "text": (s.text or "").strip()}
@@ -436,6 +441,9 @@ class ArchiveDeliverer:
             generated_at=generated_at,
         )
         page_id = _encounter_page_id(patient_dir, encounter)
+        # Two encounter ids that sanitize/truncate alike would otherwise
+        # overwrite one encounter's page with another's (exist_ok write below).
+        claim_delivered_name(claimed_pages, page_id, encounter.id, kind="encounter page")
         encounter_file = patient_dir / "encounters" / f"{page_id}.html"
         encounter_file.write_text(html, encoding="utf-8")
 

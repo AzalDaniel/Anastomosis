@@ -11,6 +11,15 @@ occurrence at its own key (``…:<loinc>#2``, ``#3``, … in document order), so
 second section can never overwrite the first. Document-level metadata rides
 ``patient.extensions`` too.
 
+One section is captured differently: a 51899-3 section carrying this repo's own
+export stamp is the loss ledger ``deliver/ccda_export`` wrote, and its entries
+land discretely under ``patient.extensions["ccda:prior_loss_narrative"]`` so a
+re-export can carry them forward deduplicated. Captured as an ordinary narrative
+blob instead, generation N of an export → ingest → export loop swallowed
+generation N-1's whole ledger as a single line and the document grew without
+bound. An UNSTAMPED 51899-3 section is a third party's and keeps round-tripping
+as ordinary foreign narrative.
+
 Parsing is defensive by design: a missing optional element maps to ``None``, a
 ``nullFlavor`` on an element means "absent", but a file that is not a
 ``ClinicalDocument`` at all raises :exc:`ValueError` — a loud failure, never a
@@ -79,6 +88,23 @@ LOINC_RESULTS = "30954-2"
 LOINC_SOCIAL = "29762-2"
 LOINC_ENCOUNTERS = "46240-8"
 LOINC_NOTES = "34109-9"
+# Not structurally parsed. A 51899-3 section STAMPED by this repo's C-CDA
+# exporter is its loss ledger and is captured entry-by-entry (see
+# :func:`_capture_loss_narrative`); any other 51899-3 section is a third
+# party's and stays ordinary foreign narrative.
+LOINC_EXTENSIONS = "51899-3"
+
+# The exporter's stamp on its OWN loss ledger (must mirror
+# deliver/ccda_export/builder.py exactly). Recognizing it is what stops a
+# repeated export → ingest → export loop from re-narrating generation N-1's
+# whole ledger as a single line inside generation N's — an unbounded blob that
+# drowned the real entries.
+LOSS_NARRATIVE_TEMPLATE_ROOT = "urn:anastomosis:ccda:loss-narrative"
+LOSS_NARRATIVE_GENERATION_ROOT = "urn:anastomosis:ccda:loss-narrative:generation"
+# Documents exported before the templateId stamp existed carry only this title;
+# it names this tool outright, so it is the legacy marker for those.
+LOSS_NARRATIVE_TITLE = "Anastomosis Preserved Source Fields"
+EXT_PRIOR_LOSS_NARRATIVE = "ccda:prior_loss_narrative"
 
 # Allergy substance-class SNOMED codes → canonical category.
 _ALLERGY_CATEGORY = {
@@ -332,6 +358,73 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
             occurrence += 1
         key = f"{key}#{occurrence}"
     extensions[key] = {"title": title, "text": text}
+
+
+def _is_own_loss_narrative(section: _Element, loinc: str | None) -> bool:
+    """Whether ``section`` is a loss ledger THIS repo's C-CDA exporter wrote.
+
+    Matched on the section code plus the exporter's own stamp — never on the
+    code alone: 51899-3 is a public LOINC any vendor may use, and a third
+    party's section must keep round-tripping as ordinary foreign narrative.
+    """
+    if loinc != LOINC_EXTENSIONS:
+        return False
+    if any(
+        _attr(node, "root") == LOSS_NARRATIVE_TEMPLATE_ROOT
+        for node in _findall(section, "v3:templateId")
+    ):
+        return True
+    return _text_content(_find(section, "v3:title")) == LOSS_NARRATIVE_TITLE
+
+
+def _loss_generation(section: _Element) -> int | None:
+    """The export generation stamped on a loss ledger, or ``None`` when absent
+    or unreadable (sentinel discipline — the counter is provenance, not clinical
+    content, so an unreadable one restarts the count rather than raising)."""
+    for node in _findall(section, "v3:id"):
+        if _attr(node, "root") != LOSS_NARRATIVE_GENERATION_ROOT:
+            continue
+        raw = _attr(node, "extension")
+        if raw is not None and raw.isdigit():
+            return int(raw)
+    return None
+
+
+def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
+    """Preserve OUR OWN loss ledger under ``ccda:prior_loss_narrative``.
+
+    Captured as discrete entries (one per ``<paragraph>``, as the exporter wrote
+    them) rather than as one ``ccda:section:51899-3`` narrative blob, so the next
+    export can carry the entries forward deduplicated instead of swallowing the
+    whole block as a single ever-growing line. A ledger whose narrative is not
+    per-paragraph (hand-edited, or a shape from before this contract) is kept
+    whole as one entry — unreadable structure must not cost the content.
+
+    A document merged from two exports can carry two stamped ledgers; their
+    entries CONCATENATE into the one key (highest generation wins) so the
+    exporter dedupes a single carry-forward ledger and neither one is
+    overwritten.
+    """
+    entries = [
+        text for node in _findall(section, "v3:text/v3:paragraph") if (text := _text_content(node))
+    ]
+    if not entries and (whole := _text_content(_find(section, "v3:text"))) is not None:
+        entries = [whole]
+    if not entries:
+        return
+    generation = _loss_generation(section)
+    prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if isinstance(prior, dict):
+        prior["entries"] = [*prior["entries"], *entries]
+        prior_generation = prior["generation"]
+        prior["generation"] = (
+            generation if prior_generation is None else max(prior_generation, generation or 0)
+        )
+        return
+    record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
+        "generation": generation,
+        "entries": entries,
+    }
 
 
 # --- problems ----------------------------------------------------------------
@@ -668,7 +761,12 @@ def parse_document(path: Path) -> PatientRecord:
         # unparsed ones. The structural parsers above `continue` past an entry
         # whose shape they do not support, so a known section can yield nothing
         # while its <text> still holds the clinical statement; the duplication
-        # for a fully-parsed section is the cheap side of that trade.
-        _capture_narrative(record, section, loinc)
+        # for a fully-parsed section is the cheap side of that trade. Our own
+        # loss ledger is the one exception — captured entry-by-entry so a repeat
+        # export cannot nest it inside the next one.
+        if _is_own_loss_narrative(section, loinc):
+            _capture_loss_narrative(record, section)
+        else:
+            _capture_narrative(record, section, loinc)
 
     return record
