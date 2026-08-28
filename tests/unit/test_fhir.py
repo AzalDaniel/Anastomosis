@@ -13,7 +13,8 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
 from anastomosis.core.fhir import from_bundle, to_bundle
-from anastomosis.core.model import PatientRecord, SectionKind
+from anastomosis.core.fhir.export import FhirExportError, _prune
+from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord, SectionKind
 from anastomosis.sources import get_source
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
@@ -268,3 +269,68 @@ def test_non_json_serializable_extension_value_survives_export() -> None:
         for x in entry["resource"].get("extension", [])
     ]
     assert any(str(stamp) in s for s in ext_strings)  # datetime survived, stringified
+
+
+# --- a resource with no id is refused, not indexed (#110) --------------------
+
+
+def test_a_document_with_no_id_is_refused_by_name(records: list[PatientRecord]) -> None:
+    """The shape a real Practice Fusion export hit: document rows with no id.
+
+    The mapper built `DocumentArtifact`s that were empty shells, `_prune` tidied
+    the empty `id` away, and `to_bundle` then indexed `r["id"]` inside a
+    comprehension — so an unhandled `KeyError` surfaced three frames up, after
+    fourteen charts were already written and the output lock taken. The data
+    problem was real; the way it arrived was not usable by anyone.
+    """
+    record = records[0].model_copy(deep=True)
+    record.documents.append(
+        DocumentArtifact(id="", patient_id=record.patient.id, mime_type="application/octet-stream")
+    )
+
+    with pytest.raises(FhirExportError) as caught:
+        to_bundle(record)
+
+    message = str(caught.value)
+    assert "1 DocumentReference" in message, message
+    assert "no id" in message
+    # The diagnosis names types and counts. Nothing off the record rides along:
+    # not the patient's id, not a document title, not a path.
+    assert record.patient.id not in message
+    for document in record.documents:
+        assert not document.title or document.title not in message
+        assert not document.path or document.path not in message
+
+
+def test_the_refusal_counts_every_missing_id_not_just_the_first() -> None:
+    """One run, one diagnosis: how many, and of what."""
+    patient = Patient(id="feedface-0000-4000-8000-000000000001")
+    record = PatientRecord(
+        id="feedface-0000-4000-8000-0000000000ff",
+        patient=patient,
+        documents=[DocumentArtifact(id="", patient_id=patient.id) for _ in range(3)],
+    )
+
+    with pytest.raises(FhirExportError) as caught:
+        to_bundle(record)
+
+    assert "3 of 4 resources" in str(caught.value), caught.value
+
+
+def test_pruning_keeps_the_fields_a_resource_cannot_be_addressed_without() -> None:
+    """`_prune` tidies empty OPTIONAL fields; the structural ones survive it.
+
+    Without this the emptiness disappears before anything can report it.
+    """
+    pruned = _prune({"resourceType": "DocumentReference", "id": "", "title": "", "status": None})
+
+    assert pruned == {"resourceType": "DocumentReference", "id": ""}
+
+
+def test_a_record_whose_documents_all_carry_ids_still_exports(
+    records: list[PatientRecord],
+) -> None:
+    """The guard refuses missing ids and nothing else."""
+    for record in records:
+        entries = to_bundle(record)["entry"]
+        assert entries and all(entry["fullUrl"] for entry in entries)

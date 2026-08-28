@@ -6,6 +6,7 @@ import base64
 import json
 import math
 import uuid
+from collections import Counter
 from html import escape
 from typing import Any
 
@@ -27,7 +28,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.base import AnastBase
 
-__all__ = ["EXT_NS", "FIELD_NS", "to_bundle"]
+__all__ = ["EXT_NS", "FIELD_NS", "FhirExportError", "to_bundle"]
 
 EXT_NS = "urn:anastomosis:ext"
 FIELD_NS = "urn:anastomosis:field:"
@@ -103,8 +104,28 @@ def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+class FhirExportError(Exception):
+    """A record cannot be expressed as a valid FHIR Bundle."""
+
+
+#: Fields a resource is structurally required to have, which :func:`_prune`
+#: leaves alone even when they are empty. A FHIR resource is ADDRESSED by its
+#: id — the bundle entry's ``fullUrl`` is built from it and every reference
+#: into the resource resolves through it — so an empty one is a problem to be
+#: refused by name, not a field to tidy away.
+_STRUCTURAL = frozenset({"resourceType", "id"})
+
+
 def _prune(resource: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in resource.items() if v not in (None, "", [], {})}
+    """Drop the fields FHIR reads as absent — and only the optional ones.
+
+    An empty optional field is noise a receiving system should not have to read
+    past. A structurally required one is not: an empty ``id`` pruned away left a
+    resource that looked well-formed until :func:`to_bundle` indexed it three
+    frames later and raised ``KeyError`` from inside a comprehension. Keeping it
+    means the emptiness survives to where it can be reported.
+    """
+    return {k: v for k, v in resource.items() if k in _STRUCTURAL or v not in (None, "", [], {})}
 
 
 def _date(value: Any) -> str | None:
@@ -613,6 +634,32 @@ def _artifact(d: DocumentArtifact) -> dict[str, Any]:
     )
 
 
+def _entries(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One bundle entry per resource, refusing any that cannot be addressed.
+
+    A resource with no id has nowhere to be pointed at: nothing in the bundle
+    can reference it and a receiving system has no handle for it, so it would
+    ride along attached to nothing. Refusing here says which resource types and
+    how many, rather than raising ``KeyError`` from a comprehension after a
+    partial delivery is already on disk.
+
+    The message carries resource TYPE names and counts only — never an id, a
+    title, or any other value off the record.
+    """
+    missing = Counter(
+        str(r.get("resourceType") or "(untyped)") for r in resources if not r.get("id")
+    )
+    if missing:
+        breakdown = ", ".join(f"{count} {name}" for name, count in sorted(missing.items()))
+        raise FhirExportError(
+            f"{sum(missing.values())} of {len(resources)} resources have no id and cannot go "
+            f"in a bundle ({breakdown}). A FHIR resource is addressed by its id, so one without "
+            "an id would be delivered attached to nothing. A source row reached the mapper "
+            "carrying no identifier."
+        )
+    return [{"fullUrl": _urn(r["id"]), "resource": r} for r in resources]
+
+
 def to_bundle(record: PatientRecord) -> dict[str, Any]:
     """Export one PatientRecord as a FHIR R4 Bundle (type=collection)."""
     resources: list[dict[str, Any]] = [_patient(record.patient, record)]
@@ -634,5 +681,5 @@ def to_bundle(record: PatientRecord) -> dict[str, Any]:
     return {
         "resourceType": "Bundle",
         "type": "collection",
-        "entry": [{"fullUrl": _urn(r["id"]), "resource": r} for r in resources],
+        "entry": _entries(resources),
     }
