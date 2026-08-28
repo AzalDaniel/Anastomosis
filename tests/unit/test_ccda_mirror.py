@@ -20,6 +20,7 @@ round trip goes quietly lossy, and every test still passes.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -89,3 +90,37 @@ def test_every_shared_constant_is_read_by_both_halves() -> None:
                 used[name].add(half)
     lonely = sorted(name for name, halves in used.items() if len(halves) < 2)
     assert not lonely, f"shared constants only one half actually reads: {lonely}"
+
+
+#: An HL7 OID or template id: dotted digits, long enough not to be a version.
+_OID_RE = re.compile(r"^\d+(?:\.\d+){4,}$")
+
+
+def _string_literals(path: Path) -> set[str]:
+    """Every string literal in a module, wherever it sits."""
+    return {
+        node.value
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+
+
+def test_no_oid_is_shared_between_the_halves_as_a_bare_literal() -> None:
+    """The named-constant check has a blind spot: a value spelled out inline.
+
+    `TPL_SEVERITY` sat in it. The builder stamped the allergy Severity
+    Observation from a named constant; the parser matched the same OID as a
+    string typed into an `elif`. Both tests above compare `NAME = literal`
+    assignments, so neither could see the reader's side at all — and the drift
+    it protects against is silent by nature. A severity code that stopped
+    matching would not raise: severity would simply stop coming back, and every
+    test would still pass.
+
+    An OID in both halves is a shared value whether or not it has a name.
+    """
+    shared = _string_literals(_HALVES["parser"]) & _string_literals(_HALVES["builder"])
+    owned = {value for value in vars(ccda_codes).values() if isinstance(value, str)}
+    stray = sorted(oid for oid in shared if _OID_RE.match(oid) and oid not in owned)
+    assert not stray, (
+        f"OIDs spelled out in both halves instead of shared via core.ccda_codes: {stray}"
+    )

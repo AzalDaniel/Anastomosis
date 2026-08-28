@@ -58,6 +58,7 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    TPL_SEVERITY,
     V3,
     XSI,
 )
@@ -171,6 +172,14 @@ def _text_content(node: _Element | None) -> str | None:
         return None
     parts = [t if isinstance(t, str) else t.decode() for t in node.itertext()]
     text = _WS_RE.sub(" ", "".join(parts)).strip()
+    return text or None
+
+
+def _collapse(raw: str | bytes | None) -> str | None:
+    """Whitespace-collapsed text, or None when there is nothing to keep."""
+    if raw is None:
+        return None
+    text = _WS_RE.sub(" ", raw if isinstance(raw, str) else raw.decode()).strip()
     return text or None
 
 
@@ -368,9 +377,51 @@ def _loss_generation(section: _Element) -> int | None:
         if _attr(node, "root") != LOSS_NARRATIVE_GENERATION_ROOT:
             continue
         raw = _attr(node, "extension")
-        if raw is not None and raw.isdigit():
+        if raw is None:
+            continue
+        try:
             return int(raw)
+        except ValueError:
+            # `str.isdigit()` was the guard here, and it is true for characters
+            # int() refuses — a superscript "²" among them — so a crafted stamp
+            # raised out of parse_document and aborted the WHOLE ingest instead
+            # of this one counter. Asking int() directly is the same question
+            # without the gap between the two.
+            return None
     return None
+
+
+def _narrative_entries(text_node: _Element | None) -> list[str]:
+    """Every discrete piece of a section's narrative, in document order.
+
+    One entry per child element — a ``<paragraph>`` as our exporter writes them,
+    but equally a ``<table>`` or a ``<list>`` some other system rendered — plus
+    any loose text between them.
+
+    Paragraphs alone used to be collected, with the whole ``<text>`` kept only
+    when there were NONE. A section holding one paragraph and one table
+    therefore lost the table: it reached neither the carried-forward ledger nor
+    the ordinary foreign-narrative key, and did not survive re-export. This is
+    the section where fields with no structured slot are parked so nothing is
+    dropped, so dropping part of it defeated the mechanism at the one point it
+    exists to hold.
+    """
+    if text_node is None:
+        return []
+    entries: list[str] = []
+    if lead := _collapse(text_node.text):
+        entries.append(lead)
+    for child in text_node:
+        # A comment or processing instruction is not an element: lxml gives it a
+        # callable tag, and itertext() raises ValueError on one. Without this a
+        # comment inside <text> aborts the whole parse.
+        if callable(child.tag):
+            continue
+        if body := _text_content(child):
+            entries.append(body)
+        if tail := _collapse(child.tail):
+            entries.append(tail)
+    return entries
 
 
 def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
@@ -388,11 +439,7 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     exporter dedupes a single carry-forward ledger and neither one is
     overwritten.
     """
-    entries = [
-        text for node in _findall(section, "v3:text/v3:paragraph") if (text := _text_content(node))
-    ]
-    if not entries and (whole := _text_content(_find(section, "v3:text"))) is not None:
-        entries = [whole]
+    entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
         return
     generation = _loss_generation(section)
@@ -474,7 +521,7 @@ def _allergies(section: _Element, patient_id: str, source_file: str) -> list[All
             display = _val_attr(inner, "v3:value", "displayName")
             if rel.get("typeCode") == "MFST" and display:
                 reactions.append(display)
-            elif template == "2.16.840.1.113883.10.20.22.4.8":  # Severity Observation
+            elif template == TPL_SEVERITY:
                 severity = display
 
         out.append(

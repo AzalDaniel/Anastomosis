@@ -16,7 +16,7 @@ serialized into a stamped loss-narrative section, and the handful of things
 that cannot even ride that are named in :data:`DECLARED_LOSSES`.
 
 See ``docs/CCDA_EXPORT.md`` for the scope table, the two loss tiers, why the
-ledger reaches a fixed point at generation 2, and the determinism rules.
+ledger stops growing around the loop, and the determinism rules.
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    TPL_SEVERITY,
     V3,
     XSI,
 )
@@ -76,7 +77,12 @@ __all__ = ["DECLARED_LOSSES", "build_ccd"]
 
 logger = logging.getLogger(__name__)
 
-# --- namespaces / OIDs (must mirror sources/ccda/parser.py exactly) ----------
+# --- the writer's own namespaces, OIDs and template ids ----------------------
+#
+# Not mirrored anywhere: the parser reads none of these. What both halves DO
+# have to agree on lives in core.ccda_codes, imported above, so it is one
+# definition rather than a promise each side keeps. This header used to claim
+# these must mirror the parser exactly; the parser has never had any of them.
 
 NSMAP = {None: V3, "sdtc": SDTC, "xsi": XSI}
 
@@ -94,8 +100,8 @@ OID_ACTCODE = "2.16.840.1.113883.5.4"  # HL7 ActCode (ASSERTION, SEV)
 # loss-narrative constant that is genuinely one-sided.
 LOSS_NARRATIVE_TEMPLATE_VERSION = "1"
 
-# Template ids the parser keys on (allergy severity, social tobacco).
-TPL_SEVERITY = "2.16.840.1.113883.10.20.22.4.8"
+# Header template ids. Declarative only — the parser does not dispatch on them.
+# (TPL_SEVERITY, which it DOES key on, is shared via core.ccda_codes.)
 TPL_US_REALM_HEADER = "2.16.840.1.113883.10.20.22.1.1"
 TPL_CCD = "2.16.840.1.113883.10.20.22.1.2"
 
