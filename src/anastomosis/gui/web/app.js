@@ -125,8 +125,7 @@
   }
 
   function setCurrent(text) {
-    const current = el("charts-current");
-    if (current) current.textContent = text;
+    Shell.setStatus(el("charts-current"), text);
   }
 
   function setBusy(busy) {

@@ -26,8 +26,10 @@
     return Shell.hasApi();
   }
 
+  // The step line is the whole of what a click on "Look at the samples"
+  // answers, so it is said as well as shown.
   function setStep(text) {
-    el("layout-step").textContent = text;
+    Shell.setStatus(el("layout-step"), text);
   }
 
   function renderProposal(res) {

@@ -361,9 +361,57 @@
     banner.textContent = String(message);
     banner.classList.add("show");
   }
+  // Empties the box rather than removing it. `#banner` is `role="alert"` and
+  // stays in the accessibility tree at all times (app.css clips it while it is
+  // not `.show`), so the arrival of TEXT is what an assistive technology has to
+  // notice — which only works if the text is what comes and goes.
   function hideBanner() {
     const banner = el("banner");
-    if (banner) banner.classList.remove("show");
+    if (!banner) return;
+    banner.classList.remove("show");
+    banner.textContent = "";
+  }
+
+  // ─── Saying it out loud ───────────────────────────────────────
+  //
+  // Every view narrates a run in one line on screen — "Reading records…",
+  // "Step 2 of 2", "Finished." — and until now that line was the ONLY feedback
+  // a click produced and none of it was announced. A screen-reader operator
+  // pressed the button and heard nothing at all, which is also why they pressed
+  // it again.
+  //
+  // One announcer for the whole document, not a `role="status"` on each of
+  // those five lines. Two of them (`#migrate-result`, `#uploads-counters`) are
+  // toggled with `hidden`, and a live region that is revealed in the same task
+  // as its first words is the case assistive technologies handle worst — the
+  // region has to already be in the accessibility tree when the text lands.
+  // A single always-present node has no such state to get wrong.
+  //
+  // Polite, never assertive: this is commentary alongside work the operator
+  // asked for. The interrupting channel is `#banner` (`role="alert"`), for the
+  // things that stopped.
+  function announce(text) {
+    const region = el("announcer");
+    if (!region) return;
+    const msg = String(text == null ? "" : text);
+    // A live region announces a MUTATION, not a change of value: rewriting a
+    // node with the words already in it says them again. Uploads re-reads the
+    // record on a timer, so without this an idle run repeated itself forever.
+    if (region.textContent === msg) return;
+    region.textContent = msg;
+  }
+
+  // The visible line and the spoken one, written together from one string, so
+  // they cannot drift apart. Nothing is said when the line did not change: the
+  // views repaint their resting state on boot ("Ready.", "Step 1 of 2 — look at
+  // the samples."), and an app that greets a screen-reader operator by reading
+  // out the words already on the page is one they will switch off.
+  function setStatus(node, text) {
+    if (!node) return;
+    const msg = String(text == null ? "" : text);
+    if (node.textContent === msg) return;
+    node.textContent = msg;
+    announce(msg);
   }
 
   // ─── Segment toggles (the gooey pill) ─────────────────────────
@@ -1564,6 +1612,8 @@
     setEmpty,
     showBanner,
     hideBanner,
+    announce,
+    setStatus,
     stageLabel,
     initSegmentToggles,
     displayName,
