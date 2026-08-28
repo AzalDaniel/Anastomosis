@@ -46,6 +46,16 @@ class RouteKind(StrEnum):
     BROWSER = "browser"
 
 
+#: What each route is, in the words the Migrate screen and `destination list`
+#: use. The enum values stay the registry's own names — they are the data — and
+#: these are what a person reads.
+ROUTE_NAMES = {
+    RouteKind.VENDOR_API: "Send directly",
+    RouteKind.CCDA_IMPORT: "Import a transfer document",
+    RouteKind.BROWSER: "Through a browser",
+}
+
+
 @dataclass(frozen=True)
 class RouteOption:
     """One candidate route and whether it is usable for this destination.
@@ -76,23 +86,23 @@ class TransitMap:
     chosen: RouteOption | None
 
     def render(self, glyphs: Glyphs = UNICODE_GLYPHS) -> str:
-        """A small fixed-width text transit map for the CLI.
+        """The routes into this system, as the CLI prints them.
 
         Deterministic: no timestamps, no ordering churn — the same registry
         renders byte-identical output every time. ``glyphs`` selects the
         viable/unviable markers; the CLI passes a stream-appropriate set so a
         non-UTF-8 console gets ASCII rather than a :class:`UnicodeEncodeError`.
         """
-        lines = [f"delivery routes for {self.destination}:"]
+        lines = [f"Ways to file charts into {self.destination}:"]
         for opt in self.options:
             mark = glyphs.ok if opt.viable else glyphs.fail
-            lines.append(f"  {mark} {opt.kind.value:<12} {opt.why}")
+            lines.append(f"  {mark} {ROUTE_NAMES[opt.kind]:<28} {opt.why}")
             for req in opt.requires:
-                lines.append(f"         requires {req}")
+                lines.append(f"         needs {req}")
         if self.chosen is not None:
-            lines.append(f"chosen: {self.chosen.kind.value}")
+            lines.append(f"Anastomosis would use: {ROUTE_NAMES[self.chosen.kind]}")
         else:
-            lines.append("chosen: none (no viable route)")
+            lines.append("No route into this system is available yet.")
         return "\n".join(lines)
 
 
@@ -116,19 +126,16 @@ def _capability_option(
         return RouteOption(
             kind=kind,
             viable=True,
-            why=f"{field}={entry} (verified {verified_label})",
+            why=f"available (confirmed working {verified_label})",
             requires=requires,
         )
     if entry == "unverified":
         return RouteOption(
             kind=kind,
             viable=False,
-            why=(
-                f"{field} is not verified yet — this route opens once its "
-                "capability has verified evidence"
-            ),
+            why="not confirmed yet — this opens once it has been checked",
         )
-    return RouteOption(kind=kind, viable=False, why=f"{field}={entry}")
+    return RouteOption(kind=kind, viable=False, why="not available")
 
 
 def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteOption:
@@ -138,7 +145,7 @@ def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteO
         entry_doc_write_kind,
         (DocWriteKind.FHIR_DOCUMENTREFERENCE.value, DocWriteKind.VENDOR_REST.value),
         verified_label,
-        ("credentials: vendor API",),
+        ("sign-in details for that system",),
     )
 
 
@@ -149,7 +156,7 @@ def _ccda_option(entry_ccda_kind: str, verified_label: str) -> RouteOption:
         entry_ccda_kind,
         (CcdaImportKind.API.value, CcdaImportKind.IN_PRODUCT.value),
         verified_label,
-        ("export: C-CDA document",),
+        ("a C-CDA transfer document",),
     )
 
 
@@ -163,13 +170,13 @@ def _browser_option(entry_browser_kind: str, pack_name: str) -> RouteOption:
         return RouteOption(
             kind=RouteKind.BROWSER,
             viable=True,
-            why=f"browser pack {pack_ref}",
-            requires=("extra: deliver-browser", f"pack: {pack_ref}"),
+            why=f"available, using the {pack_ref} filing assistant",
+            requires=("the browser parts installed", f"the {pack_ref} filing assistant"),
         )
     return RouteOption(
         kind=RouteKind.BROWSER,
         viable=False,
-        why=f"browser={entry_browser_kind}",
+        why="not available",
     )
 
 

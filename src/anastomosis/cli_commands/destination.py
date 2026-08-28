@@ -74,6 +74,21 @@ def _local_pack_status(name: str) -> str:
     return "ready" if loaded.ready else "needs-discovery"
 
 
+def _route_status(kind: str, *, verbose: bool) -> str:
+    """Whether a route works, in the words the Migrate screen uses.
+
+    The registry's own names for a route — ``vendor_rest``,
+    ``fhir_documentreference``, ``in_product`` — answer "how", and the table was
+    printing them as if that were the question. What a person choosing a
+    destination needs first is whether the route is available at all;
+    ``--verbose`` keeps the registry's name for anyone who needs to know which
+    interface is involved.
+    """
+    if verbose:
+        return kind
+    return "not available" if kind in {"none", "unverified"} else "available"
+
+
 @destination_app.command("list")
 def destination_list(
     registry: Annotated[
@@ -84,8 +99,12 @@ def destination_list(
             help="Overlay registry file (replaces packaged entries).",
         ),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", "-v", help="Name the interface behind each route."),
+    ] = False,
 ) -> None:
-    """List registered destinations and their declared capabilities."""
+    """List the systems charts can be filed into, and how each one accepts them."""
     from rich.console import Console
     from rich.table import Table
 
@@ -93,22 +112,22 @@ def destination_list(
 
     reg = _load_registry(registry)
     assert isinstance(reg, DestinationRegistry)
-    table = Table(title="destinations")
+    table = Table(title="Destination systems")
     table.add_column("name", style="cyan")
-    table.add_column("display")
-    table.add_column("doc_write_api")
-    table.add_column("ccda_import")
-    table.add_column("browser")
-    table.add_column("pack")
-    table.add_column("oldest evidence")
+    table.add_column("System")
+    table.add_column("Send directly")
+    table.add_column("Import a transfer document")
+    table.add_column("Through a browser")
+    table.add_column("Filing assistant")
+    table.add_column("Last checked")
     for name in sorted(reg.entries):
         entry: DestinationEntry = reg.entries[name]
         table.add_row(
             entry.name,
             entry.display,
-            entry.doc_write_api.kind,
-            entry.ccda_import.kind,
-            entry.browser.kind,
+            _route_status(entry.doc_write_api.kind, verbose=verbose),
+            _route_status(entry.ccda_import.kind, verbose=verbose),
+            _route_status(entry.browser.kind, verbose=verbose),
             _local_pack_status(entry.name),
             _oldest_evidence(entry),
         )
@@ -130,7 +149,7 @@ def destination_route(
         ),
     ] = None,
 ) -> None:
-    """Print the shortest-path transit map; exit 1 if no viable route exists."""
+    """Show how charts can reach this system; exit 1 if no route is available."""
     from anastomosis import cli as _cli
     from anastomosis.deliver.router import plan_route
     from anastomosis.destinations.registry import DestinationRegistry
@@ -215,12 +234,12 @@ def _prompt_slot(
 
 @destination_app.command("init")
 def destination_init(
-    name: Annotated[str, typer.Argument(help="Destination pack name, e.g. tebra.")],
+    name: Annotated[str, typer.Argument(help="Which filing assistant to set up, e.g. tebra.")],
     out_dir: Annotated[
         Path | None,
         typer.Option(
             "--out-dir",
-            help="Where to write selectors.yaml (default: user dir).",
+            help="Where to save what it learns (default: your user folder).",
             parser=out_dir,
         ),
     ] = None,
@@ -230,20 +249,27 @@ def destination_init(
     ] = False,
     cdp: Annotated[
         str | None,
-        typer.Option("--cdp", help="Loopback CDP endpoint, e.g. http://127.0.0.1:9222."),
+        typer.Option(
+            "--cdp",
+            help="The browser on this computer to work through, e.g. http://127.0.0.1:9222.",
+        ),
     ] = None,
     pack_dir: Annotated[
         list[Path] | None,
-        typer.Option("--pack-dir", help="Extra directories to find the pack scaffold in."),
+        typer.Option("--pack-dir", help="Another folder to look for the starting point in."),
     ] = None,
 ) -> None:
-    """Discover a browser pack's CSS selectors against your live EHR session.
+    """Teach Anastomosis where things are on your destination's pages.
 
-    Loads the pack scaffold, prompts for each selector slot (required first),
-    optionally validates each against your attached browser (``--validate
-    --cdp``), then writes ``selectors.yaml`` into your user directory. The
-    packaged registry is never modified — a paste-able overlay snippet is printed
-    so you declare the now-discovered pack in your own routing overlay.
+    Asks you to point out each thing it needs to find — the search box, the
+    patient name, the upload button — taking the required ones first. With
+    ``--validate --cdp`` it checks each answer against the browser you have
+    open, so a wrong answer is caught now rather than mid-run. What it learns
+    is saved in your own user folder.
+
+    What ships with Anastomosis is never changed. It prints a short block of
+    text for you to paste into your own settings, which is what tells
+    Anastomosis this system is now ready to file into.
     """
     from anastomosis import cli as _cli
     from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING

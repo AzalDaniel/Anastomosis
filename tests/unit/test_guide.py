@@ -715,3 +715,87 @@ def test_a_refusal_still_reads_as_one_with_the_colour_stripped(
     guide._say(console, "Nothing was written.", style=guide.BRAND_PALETTE.attention)
 
     assert "Nothing was written." in buffer.getvalue()
+
+
+# --- the same register, across every command (#116) --------------------------
+
+
+def _rendered_help(args: list[str]) -> str:
+    """What `anast ... --help` actually prints, as a person sees it."""
+    from typer.testing import CliRunner
+
+    from anastomosis.cli import app
+
+    result = CliRunner().invoke(app, [*args, "--help"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, f"{args} --help failed: {result.output}"
+    return result.output
+
+
+def _every_command() -> list[list[str]]:
+    """Every command path the CLI exposes, including subcommand groups.
+
+    Walked off the Typer app rather than a click Group: Typer 0.27 vendors
+    click, so there is no top-level `click` to import.
+    """
+    from anastomosis.cli import app
+
+    def _name(command: object) -> str:
+        given = getattr(command, "name", None)
+        callback = getattr(command, "callback", None)
+        return given or (callback.__name__.rstrip("_") if callback else "")
+
+    paths: list[list[str]] = [[]]
+    paths += [[_name(command)] for command in app.registered_commands]
+    for group in app.registered_groups:
+        assert group.name and group.typer_instance
+        paths.append([group.name])
+        paths += [
+            [group.name, _name(command)] for command in group.typer_instance.registered_commands
+        ]
+    return paths
+
+
+#: What a person TYPES is not vocabulary they must learn: command names, option
+#: flags, placeholders and anything in backticks are the literal input. Stripped
+#: before the sweep, exactly as COMMAND_TOKENS exempts them in the guide.
+_TYPED = re.compile(
+    r"`[^`]*`"  # a quoted command line
+    r"|--?[A-Za-z][\w-]*"  # an option flag
+    r"|\banast(?:omosis)? [\w -]+"  # a command path
+    r"|[<{\[][^>}\]]*[>}\]]"  # a placeholder or a Rich panel label
+    r"|\bANAST_[A-Z_]+"  # an environment variable a person sets
+)
+
+
+def test_every_command_speaks_the_same_register_as_the_guide() -> None:
+    """The sweep landed on the entry point; the subcommands kept their own words.
+
+    `DESIGN_LANGUAGE` §11 holds the CLI to the GUI's register, and the guided
+    session met it while `anast upload --help` was still explaining a
+    "crash-resumable upload engine" driving an "L0-L6 verification ladder" over
+    a "resume-safe ledger". This reads what each command actually prints, so it
+    cannot drift back one docstring at a time.
+    """
+    # A command's own name is something a person TYPES, not vocabulary they
+    # must learn — the same exemption COMMAND_TOKENS makes in the guide. It is
+    # derived from the app rather than listed, so renaming a command cannot
+    # leave a stale entry behind.
+    typed_names = {name for path in _every_command() for name in path}
+    named = re.compile(rf"\b(?:{'|'.join(re.escape(n) for n in sorted(typed_names) if n)})\b")
+
+    offenders: list[str] = []
+    for path in _every_command():
+        prose = named.sub(" ", _TYPED.sub(" ", _rendered_help(path)))
+        for word in BANNED_WORDS:
+            if re.search(rf"\b{re.escape(word)}\b", prose, flags=re.IGNORECASE):
+                where = " ".join(["anast", *path]) if path else "anast"
+                line = next(
+                    (
+                        ln.strip()
+                        for ln in prose.splitlines()
+                        if re.search(rf"\b{re.escape(word)}\b", ln, flags=re.IGNORECASE)
+                    ),
+                    "",
+                )
+                offenders.append(f"{word!r} in `{where} --help`: {line[:90]}")
+    assert not offenders, "every command reads the way the GUI reads:\n  " + "\n  ".join(offenders)

@@ -74,8 +74,8 @@ def test_only_browser_chooses_browser() -> None:
     tm = plan_route("acme", reg)
     assert tm.chosen is not None
     assert tm.chosen.kind is RouteKind.BROWSER
-    # The pack name rides in requires for the wizard PR to resolve.
-    assert any("pack: destinations/acme" in r for r in tm.chosen.requires)
+    # The assistant's name rides in requires for the wizard to resolve.
+    assert any("destinations/acme" in r for r in tm.chosen.requires)
 
 
 def test_nothing_viable_chooses_none() -> None:
@@ -97,9 +97,11 @@ def test_unverified_never_viable() -> None:
     tm = plan_route("acme", reg)
     assert all(not opt.viable for opt in tm.options)
     assert tm.chosen is None
-    # unverified options say so, not a generic "not viable".
+    # An unchecked route says so, distinctly from one that is simply absent.
     why = next(o.why for o in tm.options if o.kind is RouteKind.VENDOR_API)
-    assert "not verified" in why
+    assert "not confirmed yet" in why
+    absent = next(o.why for o in tm.options if o.kind is RouteKind.BROWSER)
+    assert absent == "not available", "an absent route reads differently from an unchecked one"
 
 
 def test_vendor_rest_is_viable() -> None:
@@ -125,9 +127,14 @@ def test_render_is_deterministic_and_complete() -> None:
     tm = plan_route("acme", reg)
     first = tm.render()
     assert tm.render() == first  # deterministic, no timestamps
-    # All three options present, in preference order.
-    assert first.index("vendor_api") < first.index("ccda_import") < first.index("browser")
-    assert "chosen: vendor_api" in first
+    # All three options present, in preference order — by the names a person
+    # reads, which is what the CLI prints.
+    assert (
+        first.index("Send directly")
+        < first.index("Import a transfer document")
+        < first.index("Through a browser")
+    )
+    assert "Anastomosis would use: Send directly" in first
 
 
 def test_render_no_timestamp_shapes() -> None:
@@ -138,8 +145,9 @@ def test_render_no_timestamp_shapes() -> None:
         browser=Capability(kind="none"),
     )
     rendered = plan_route("acme", reg).render()
-    assert "2026-05-01" in rendered  # the verified date IS carried
-    assert "T" not in rendered.split("verified", 1)[1].split("\n", 1)[0]  # no ISO clock time
+    assert "2026-05-01" in rendered  # the date it was confirmed IS carried
+    confirmed_line = next(ln for ln in rendered.splitlines() if "2026-05-01" in ln)
+    assert "T" not in confirmed_line, "a date, never an ISO clock time"
 
 
 # --- viable api route why carries the verified date -------------------------

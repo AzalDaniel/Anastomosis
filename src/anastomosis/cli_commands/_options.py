@@ -45,11 +45,15 @@ Source = Annotated[
     typer.Option("--source", "-s", help="Source adapter name (default: auto-detect)."),
 ]
 
-Pack = Annotated[str, typer.Option("--pack", "-p", help="Template pack name.")]
+Pack = Annotated[str, typer.Option("--pack", "-p", help="Which chart layout to use.")]
 
 PackDirs = Annotated[
     list[Path] | None,
-    typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
+    typer.Option(
+        "--pack-dir",
+        help="Another folder to look for chart layouts in. Layouts contain code, "
+        "so naming one here allows it to run.",
+    ),
 ]
 
 TrustPack = Annotated[
