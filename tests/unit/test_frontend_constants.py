@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.gui.controller import GuiController
 from anastomosis.gui.shared import _STAGE_MAP, _STAGE_RAIL, _STATE_GROUPS
@@ -98,3 +98,22 @@ def test_gui_api_exposes_gui_config() -> None:
     api = GuiApi(GuiController(_NullSink()))
     cfg = api.gui_config()
     assert cfg["ok"] is True and cfg["max_attempts"] == DEFAULT_MAX_ATTEMPTS
+
+
+def test_frontend_backend_record_filename_does_not_drift() -> None:
+    """The JS fallback record filename must equal the Python ``LEDGER_NAME``.
+
+    The console derives "the record this run writes" from the results folder,
+    so a drifted filename would have the counters polling a file the engine
+    never writes — reported as "no progress" rather than as an error, because a
+    record that is not there simply has nothing to say.
+    """
+    source = _CONSOLE_JS.read_text(encoding="utf-8")
+    match = re.search(r'^\s*let LEDGER_NAME\s*=\s*"([^"]+)"\s*;', source, re.MULTILINE)
+    assert match is not None, "console.js no longer declares a LEDGER_NAME fallback"
+    assert match.group(1) == LEDGER_NAME
+
+
+def test_gui_config_carries_the_record_filename() -> None:
+    """The canonical payload, which the fallback above only stands in for."""
+    assert GuiController(_NullSink()).gui_config()["ledger_name"] == LEDGER_NAME
