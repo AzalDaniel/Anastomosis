@@ -1172,6 +1172,9 @@
           sectionsKey === null ? null : chosenByLayout[sectionsKey]
         );
       },
+      //: The DOM id this form gave a named field, so a caller can point at it
+      //: (to open the disclosure hiding it) without re-deriving the prefix.
+      idFor: (name) => id(name),
       setBusy(busy) {
         run.disabled = busy;
         run.textContent = busy ? "Rebuilding…" : opts.runLabel || "Rebuild charts";
@@ -1424,8 +1427,65 @@
     boot();
   }
 
+  // ─── Required fields ──────────────────────────────────────────
+  //
+  // Uploads checked its inputs; Charts, Migrate and both Teach modes did not.
+  // Clicking "Rebuild charts" on a fresh page sent `run_pipeline_async("", "",
+  // …)`, locked the button to "Rebuilding…", and said nothing about what was
+  // missing — while also taking the process-wide busy guard, so the real run
+  // the operator started next was refused.
+  //
+  // `fields` is [[value, "what it is", elementId], …]. Returns true when
+  // everything is filled; otherwise banners the blank ones BY NAME, opens any
+  // disclosure hiding one, and returns false.
+  function requireFields(fields) {
+    const missing = fields.filter(([value]) => !String(value || "").trim());
+    if (!missing.length) return true;
+    missing.forEach(([, , id]) => {
+      const field = id && document.getElementById(id);
+      const details = field && field.closest("details");
+      if (details) details.open = true;
+    });
+    const names = missing.map(([, name]) => name);
+    const phrase =
+      names.length === 1
+        ? names[0]
+        : names.length === 2
+          ? `${names[0]} and ${names[1]}`
+          : `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+    showBanner(`Fill in ${phrase}.`);
+    return false;
+  }
+
+  // ─── One button, one job at a time ────────────────────────────
+  //
+  // `buildRunForm.setBusy` gave Charts and Migrate this, and nothing else had
+  // it: three rapid clicks on "Start filing" sent three `upload_start` calls.
+  // The Python side refuses the second and third, so the operator saw a red
+  // error banner for a run that was proceeding normally — and after the click
+  // that WORKED, the button was unchanged and the counters did not move for a
+  // full poll interval, so the screen's plainest reading was "nothing
+  // happened".
+  //
+  // `finally`, not the success path: a button that stays disabled after a
+  // failure is a dead screen, which is the worse of the two bugs.
+  async function guardButton(button, busyLabel, work) {
+    if (!button || button.disabled) return undefined;
+    const label = button.textContent;
+    button.disabled = true;
+    if (busyLabel) button.textContent = busyLabel;
+    try {
+      return await work();
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
   window.AnastShell = {
     hasApi,
+    guardButton,
+    requireFields,
     onReady,
     onInfo,
     icon,

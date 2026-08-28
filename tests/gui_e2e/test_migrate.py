@@ -249,6 +249,11 @@ def test_migrate_ignores_another_flow_terminal_event(gui) -> None:
     app.choose("#migrate-source", CANNED_SOURCE)
     app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
+    # Filled because a run has to actually start for this test to have a
+    # subject. It used to click straight through on a blank form — which
+    # worked only because the view submitted without checking its inputs.
+    page.fill("#migrate-export-dir", "/synthetic/export")
+    page.fill("#migrate-out-dir", "/synthetic/out")
     page.click("#migrate-run")
     page.wait_for_timeout(120)
 
@@ -276,6 +281,11 @@ def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> No
     app.choose("#migrate-source", CANNED_SOURCE)
     app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
+    # Filled so the click reaches the controller: the refusal this test is about
+    # comes from the BUSY guard, and a run that never leaves the page cannot be
+    # refused by it.
+    page.fill("#migrate-export-dir", "/synthetic/export")
+    page.fill("#migrate-out-dir", "/synthetic/out")
 
     page.click("#migrate-run")
     app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=2, rendered=4))

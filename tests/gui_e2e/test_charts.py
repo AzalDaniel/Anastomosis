@@ -157,6 +157,11 @@ def test_charts_ignores_another_flow_terminal_event(gui) -> None:
     """
     app = gui()
     page = app.page
+    # Filled because a run has to actually start for this test to have a
+    # subject. It used to click straight through on a blank form — which
+    # worked only because the view submitted without checking its inputs.
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
     page.click("#charts-run")
     page.wait_for_timeout(120)
 
@@ -379,3 +384,40 @@ def test_a_finished_run_survives_a_click_the_controller_refuses(gui) -> None:
     banner = app.text("#banner")
     assert "Busy" not in banner, f"the sentinel reached the screen: {banner!r}"
     assert "already working on something else" in banner, banner
+
+
+def test_a_blank_form_says_what_is_missing_instead_of_running(gui) -> None:
+    """Uploads checked its inputs; Charts did not.
+
+    Clicking "Rebuild charts" on a fresh page sent `run_pipeline_async("", "",
+    …)`, locked the button to "Rebuilding…", and said nothing about what was
+    missing — while also taking the process-wide busy guard, so the real run
+    started next was refused.
+    """
+    app = gui()
+    page = app.page
+
+    page.click("#charts-run")
+    page.wait_for_timeout(200)
+
+    assert not app.called("run_pipeline_async"), "a blank form reached the controller"
+    banner = app.text("#banner")
+    assert "the folder your export is in" in banner
+    assert "the folder to put the charts in" in banner
+    # And the button is usable again — a dead screen is the worse bug.
+    assert not page.locator("#charts-run").is_disabled()
+
+
+def test_the_banner_names_only_the_blank_half(gui) -> None:
+    """Half-filled is the common case, and naming the field already filled in
+    sends the operator looking in the wrong place."""
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+
+    page.click("#charts-run")
+    page.wait_for_timeout(200)
+
+    banner = app.text("#banner")
+    assert "the folder to put the charts in" in banner
+    assert "the folder your export is in" not in banner, banner
