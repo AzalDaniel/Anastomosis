@@ -40,9 +40,22 @@ from typing import Any
 from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.logutil import exc_tag
 
-__all__ = ["INDEX_FILENAME", "RenderEntry", "RenderIndex"]
+__all__ = ["INDEX_FILENAME", "RenderEntry", "RenderIndex", "RenderIndexConflict"]
 
 logger = logging.getLogger(__name__)
+
+
+class RenderIndexConflict(Exception):
+    """One PDF claimed by two different encounters — a chart was overwritten.
+
+    Carries the filename, which embeds a patient name and a date of service,
+    so callers name the index rather than the file in any log line.
+    """
+
+    def __init__(self, pdf: str) -> None:
+        super().__init__("one PDF is claimed by two different encounters")
+        self.pdf = pdf
+
 
 INDEX_FILENAME = "render_index.json"
 _SCHEMA_VERSION = 1
@@ -76,10 +89,16 @@ class RenderIndex:
         by_name: dict[str, RenderEntry] = {}
         by_patient: dict[str, list[str]] = {}
         for entry in items:
-            # Two engine runs into the same dir + a name clash would be a
-            # bug upstream; we keep the LAST entry deterministically so
-            # the index reflects the run that wrote it last. The engine
-            # already collision-suffixes within a run (engine.py:138).
+            # One file, two encounters means a chart was overwritten before it
+            # ever reached here. This used to keep the last entry and say so in
+            # a comment, reasoning that the engine's collision suffix made the
+            # case impossible; the suffix did not, and last-wins turned a lost
+            # chart into a clean index and a successful run. The index is the
+            # only place the loss is still visible, so it is the place to
+            # refuse.
+            claimed = by_name.get(entry.pdf)
+            if claimed is not None and claimed != entry:
+                raise RenderIndexConflict(entry.pdf)
             by_name[entry.pdf] = entry
             by_patient.setdefault(entry.patient_id, []).append(entry.pdf)
         return cls(
@@ -164,7 +183,15 @@ class RenderIndex:
                     encounter_id=item["encounter_id"],
                 )
             )
-        return cls.from_entries(entries)
+        try:
+            return cls.from_entries(entries)
+        except RenderIndexConflict as exc:
+            # An index written by a version that could overwrite a chart. It is
+            # not trustworthy for attribution, so it is treated exactly like a
+            # corrupt one: the deliverers fail closed to `unattributed/` rather
+            # than file a chart onto whichever patient happened to sort last.
+            logger.warning("render index self-conflicts at %s (%s)", INDEX_FILENAME, exc_tag(exc))
+            return None
 
     # --- queries ------------------------------------------------------------
 
