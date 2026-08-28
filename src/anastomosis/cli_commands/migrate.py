@@ -105,6 +105,18 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     )
     from anastomosis.pipeline import PipelineError
 
+    # Both names before either answer. `--to nosuch` failed fast, while
+    # `--from nosuch` printed the whole route table and the "Anastomosis would
+    # use" line FIRST and only then said the source was unknown — a page of
+    # confident output about a move that was never going to start.
+    try:
+        from anastomosis.sources import get_source
+
+        get_source(cmd.source)  # KeyError lists the known names
+    except KeyError as exc:
+        _cli.console.print(f"[red]{exc.args[0] if exc.args else exc}[/red]")
+        raise typer.Exit(code=2) from None
+
     # Resolve and SURFACE the route before running — a migration is a route move.
     try:
         from anastomosis.deliver.router import plan_route
@@ -204,9 +216,17 @@ def migrate_cmd(
             help="Turn one chart section on or off. Applies when charts are rendered as pages.",
         ),
     ] = None,
+    # Tri-state on purpose, and the reason the help reads differently from the
+    # other commands': `None` means "the operator did not say", which is what
+    # lets `--profile` supply it. The shared `QaFlag` is a plain bool and would
+    # make a saved profile's setting unreachable, so the missing `[default: qa]`
+    # marker here is correct rather than an oversight — the help says so.
     qa: Annotated[
         bool | None,
-        typer.Option("--qa/--no-qa", help="Verify every rendered document (default on)."),
+        typer.Option(
+            "--qa/--no-qa",
+            help="Verify every rendered document (on unless --profile says otherwise).",
+        ),
     ] = None,
     profile: Annotated[
         str | None,

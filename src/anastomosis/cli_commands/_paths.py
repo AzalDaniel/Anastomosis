@@ -36,9 +36,13 @@ def _typed_path(raw: str, what: str) -> Path:
         # ValueError and reports the *value* rather than the reason, which for
         # a blank value is an error message with nothing in it. A UsageError
         # travels intact.
+        # No "or leave the option off": this parser backs BOTH the required
+        # `--out` (shared as `OutDir`, no default) and genuinely optional dirs,
+        # and cannot tell which one it is being asked about. Omitting `--out`
+        # answers "Missing option '--out' / '-o'." — so that half of the advice
+        # was, on the commonest path, a second dead end.
         raise typer.BadParameter(
-            f"no {what} was given. Name the {what} this command should write "
-            "to, or leave the option off entirely."
+            f"no {what} was given. Name the {what} this command should write to."
         )
     return Path(cleaned)
 

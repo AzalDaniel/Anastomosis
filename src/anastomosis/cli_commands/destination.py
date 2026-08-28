@@ -86,7 +86,14 @@ def _route_status(kind: str, *, verbose: bool) -> str:
     """
     if verbose:
         return kind
-    return "not available" if kind in {"none", "unverified"} else "available"
+    # Three states, not two. `unverified` means nobody has checked this route
+    # yet; `none` means it is not there. `destination route` has always drawn
+    # that line ("not confirmed yet — this opens once it has been checked" vs
+    # "not available") and the plain table erased it — on a registry whose
+    # contract makes `unverified` a first-class, load-bearing state.
+    if kind == "unverified":
+        return "not checked"
+    return "not available" if kind == "none" else "available"
 
 
 @destination_app.command("list")
@@ -96,7 +103,7 @@ def destination_list(
         typer.Option(
             "--registry",
             parser=in_file,
-            help="Overlay registry file (replaces packaged entries).",
+            help="Overlay registry file (entries override packaged ones of the same name).",
         ),
     ] = None,
     verbose: Annotated[
@@ -145,7 +152,7 @@ def destination_route(
         typer.Option(
             "--registry",
             parser=in_file,
-            help="Overlay registry file (replaces packaged entries).",
+            help="Overlay registry file (entries override packaged ones of the same name).",
         ),
     ] = None,
 ) -> None:
