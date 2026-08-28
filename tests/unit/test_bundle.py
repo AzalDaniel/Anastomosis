@@ -302,3 +302,84 @@ def test_bundle_standalone_deliver_still_works_without_a_ledger(
     again = BundleDeliverer().deliver(records[0], None, out)
     assert first.patient_id == again.patient_id
     assert again.bundle_path.is_file()
+
+
+# --- the source's own documents ride along (#110) ----------------------------
+
+
+def _charts_with_attachments(tmp_path: Path, records: list[PatientRecord]) -> Path:
+    """A charts directory holding the attachments a run would have carried."""
+    from anastomosis.pipeline import ATTACHMENTS_DIRNAME
+
+    charts = tmp_path / "charts"
+    landing = charts / ATTACHMENTS_DIRNAME
+    landing.mkdir(parents=True)
+    for record in records:
+        for doc in record.documents:
+            if doc.path:
+                (landing / Path(doc.path).name).write_bytes((FIXTURE / doc.path).read_bytes())
+    return charts
+
+
+def test_a_bundle_carries_the_documents_its_charts_reference(tmp_path: Path) -> None:
+    """A record request answered without them cites scans the bundle lacks."""
+    records = list(get_source("pf-tebra").load(FIXTURE))
+    charts = _charts_with_attachments(tmp_path, records)
+    expected = {
+        record.patient.id: sorted(Path(d.path).name for d in record.documents if d.path)
+        for record in records
+    }
+    assert any(expected.values()), "the fixture no longer exercises this path"
+
+    results = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+
+    by_patient = {r.patient_id: r for r in results}
+    for patient_id, names in expected.items():
+        result = by_patient[patient_id]
+        assert sorted(p.name for p in result.attachment_paths) == names, patient_id
+        for path in result.attachment_paths:
+            assert path.is_file()
+            assert path.parent.parent.name == patient_id, "delivered into another patient's bundle"
+
+
+def test_a_bundle_without_the_carried_attachments_still_delivers(tmp_path: Path) -> None:
+    """Conservation belongs to the run, so this reports rather than refuses.
+
+    `pipeline._carry_attachments` knows the export and stops a run whose
+    attachments did not all arrive. A charts directory with none means it was
+    assembled without that step — the bundle says so and delivers the charts,
+    rather than putting a precondition on a public entry point.
+    """
+    records = list(get_source("pf-tebra").load(FIXTURE))
+    charts = tmp_path / "charts"
+    charts.mkdir()
+
+    results = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+
+    assert results, "the bundles were still written"
+    assert all(r.attachment_paths == [] for r in results)
+
+
+def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) -> None:
+    """Every document a record names gets its own slot in the bundle.
+
+    The names cannot collide outright — `_attachments_for` reads them from one
+    directory, and a directory cannot hold two files with one name. What CAN
+    collide is the DELIVERED name, because it is budgeted to fit the bundle's
+    path depth and two long names can be cut to the same thing. That case
+    raises through the shared ledger rather than filing one scan over another;
+    this pins the ordinary case, where both simply land.
+    """
+    landing = tmp_path / "attachments"
+    landing.mkdir()
+    (landing / "referral.pdf").write_bytes(b"%PDF-1.4 one\n")
+    (landing / "labs.pdf").write_bytes(b"%PDF-1.4 two\n")
+    patient_dir = tmp_path / "bundle"
+    patient_dir.mkdir()
+
+    copied = BundleDeliverer()._copy_attachments(
+        [landing / "referral.pdf", landing / "labs.pdf"], patient_dir
+    )
+
+    assert sorted(p.name for p in copied) == ["labs.pdf", "referral.pdf"]
+    assert {p.read_bytes() for p in copied} == {b"%PDF-1.4 one\n", b"%PDF-1.4 two\n"}

@@ -34,6 +34,7 @@ from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
 from anastomosis.deliver._shared import claim_delivered_name, copy_claimed_chart, write_fhir_bundle
 from anastomosis.deliver.render_index import RenderIndex
+from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 from anastomosis.qa import QAReport, Verdict
 
 __all__ = ["BundleDeliverer", "BundleResult"]
@@ -83,6 +84,11 @@ class BundleResult:
     out_dir: Path
     bundle_path: Path
     pdf_paths: list[Path] = field(default_factory=list)
+    #: The source's own documents for this patient — the scans and lab reports
+    #: their charts reference. Separate from ``pdf_paths``, which is charts this
+    #: run rendered: a request for a patient's record is answered with both, and
+    #: one list covering them would hide either going missing.
+    attachment_paths: list[Path] = field(default_factory=list)
     qa_report_path: Path | None = None
     readme_path: Path | None = None
 
@@ -131,6 +137,13 @@ class BundleDeliverer:
                 ]
                 for record in records
             }
+        # The attachments the run carried, looked up per record. No index is
+        # needed, unlike the charts above: a chart's filename carries no patient
+        # id, but a document is named BY the record that owns it.
+        landing = (pdfs_dir / ATTACHMENTS_DIRNAME) if pdfs_dir is not None else None
+        attachments_lookup = {
+            record.patient.id: _attachments_for(record, landing) for record in records
+        }
         claimed_dirs: dict[str, str] = {}
         return [
             self.deliver(
@@ -139,6 +152,7 @@ class BundleDeliverer:
                 out_dir,
                 qa_report=qa_report,
                 claimed_dirs=claimed_dirs,
+                attachments=attachments_lookup.get(record.patient.id, []),
             )
             for record in records
         ]
@@ -151,6 +165,7 @@ class BundleDeliverer:
         *,
         qa_report: QAReport | None = None,
         claimed_dirs: dict[str, str] | None = None,
+        attachments: list[Path] | None = None,
     ) -> BundleResult:
         """Deliver ONE patient's bundle into ``out_dir``.
 
@@ -181,6 +196,11 @@ class BundleDeliverer:
         # PDFs — copied (never moved) so the caller's working tree is intact.
         pdf_paths = self._copy_pdfs(record.patient, pdfs or [], patient_dir)
 
+        # The source's own documents — what the charts reference. A record
+        # request answered without them hands over notes that cite scans the
+        # bundle does not contain.
+        attachment_paths = self._copy_attachments(attachments or [], patient_dir)
+
         # QA slice — only this patient's documents.
         qa_path = self._write_qa_slice(record, patient_dir, qa_report)
 
@@ -188,9 +208,10 @@ class BundleDeliverer:
         readme_path = self._write_readme(record.patient.id, patient_dir)
 
         logger.info(
-            "bundle delivered for patient %s: %d pdfs, qa=%s",
+            "bundle delivered for patient %s: %d pdfs, %d attachments, qa=%s",
             safe_log_id(pid),
             len(pdf_paths),
+            len(attachment_paths),
             "yes" if qa_path else "no",
         )
         return BundleResult(
@@ -198,6 +219,7 @@ class BundleDeliverer:
             out_dir=patient_dir,
             bundle_path=bundle_path,
             pdf_paths=pdf_paths,
+            attachment_paths=attachment_paths,
             qa_report_path=qa_path,
             readme_path=readme_path,
         )
@@ -228,6 +250,30 @@ class BundleDeliverer:
                 logger.warning("pdf copy failed (%s)", failure)
                 continue
             assert delivered is not None  # copy_claimed_chart: failure is None => delivered isn't
+            copied.append(target_dir / delivered)
+        return copied
+
+    def _copy_attachments(self, attachments: list[Path], patient_dir: Path) -> list[Path]:
+        """Copy this patient's source documents into the bundle's own slot.
+
+        Same budget-claim-copy sequence as the charts above, and the same
+        reason for claiming: two documents resolving to one delivered name
+        would file one patient's scan over another's rather than fail.
+        """
+        if not attachments:
+            return []
+        target_dir = patient_dir / ATTACHMENTS_DIRNAME
+        target_dir.mkdir(parents=True, exist_ok=True)
+        copied: list[Path] = []
+        claimed: dict[str, str] = {}
+        for attachment in attachments:
+            delivered, failure = copy_claimed_chart(
+                target_dir, claimed, attachment, attachment.name, kind="attachment"
+            )
+            if failure is not None:
+                logger.warning("attachment copy failed (%s)", failure)
+                continue
+            assert delivered is not None  # copy_claimed_chart: no failure => a name
             copied.append(target_dir / delivered)
         return copied
 
@@ -281,3 +327,29 @@ class BundleDeliverer:
             ),
         )
         return target
+
+
+def _attachments_for(record: PatientRecord, landing: Path | None) -> list[Path]:
+    """The files in ``landing`` this record names, in the order it names them.
+
+    A document the record names but the charts directory does not hold is left
+    out rather than guessed at. Conservation belongs to the run —
+    ``pipeline._carry_attachments`` knows the export and stops a run whose
+    attachments did not all arrive — so reaching here means the directory was
+    assembled without that step or edited after it.
+    """
+    if landing is None or not landing.is_dir():
+        return []
+    found: list[Path] = []
+    for doc in record.documents:
+        if not doc.path:
+            continue
+        candidate = landing / Path(doc.path).name
+        if candidate.is_file():
+            found.append(candidate)
+        else:
+            logger.warning(
+                "record names an attachment the charts directory does not hold for patient %s",
+                safe_log_id(record.patient.id),
+            )
+    return found
