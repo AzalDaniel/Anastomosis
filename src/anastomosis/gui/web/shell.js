@@ -1040,9 +1040,9 @@
       makeField(
         id("source"),
         "Export format",
-        migrate
-          ? "Which system this export came from. Detect fills this in for you."
-          : "Which system this export came from. 'Detect' works for all built-in formats.",
+        // Migrate's button fills this in; Charts' chooser says "Detect" itself
+        // and each row carries the format's own description.
+        migrate ? "Detect the format fills this in for you." : "",
         makeChooser(id("source"))
       )
     );
@@ -1050,7 +1050,7 @@
       makeField(
         id("out-dir"),
         "Where results go",
-        "The folder Anastomosis writes the finished charts into.",
+        "",
         makeInput(id("out-dir"), "C:\\Users\\you\\Documents\\anastomosis-charts", "is-path")
       )
     );
@@ -1059,13 +1059,13 @@
         ? makeField(
             id("render"),
             "Chart pages",
-            "Rendered pages (PDF) or data only.",
+            "",
             makeChooser(id("render"))
           )
         : makeField(
             id("pack"),
             "Chart layout",
-            "How the finished chart pages are laid out.",
+            "",
             makeChooser(id("pack"))
           )
     );
@@ -1073,7 +1073,7 @@
     const matrix = document.createElement("div");
     matrix.className = "section-matrix";
     matrix.id = id("sections");
-    host.appendChild(makeField(id("sections"), "Chart sections", "Which sections each chart page includes.", matrix));
+    host.appendChild(makeField(id("sections"), "Chart sections", "", matrix));
 
     host.appendChild(
       makeSwitchField(
