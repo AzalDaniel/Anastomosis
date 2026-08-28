@@ -31,7 +31,7 @@ _GATE_MARKERS: tuple[tuple[str, str], ...] = (
     ("ruff check .", "ruff check"),
     ("ruff format --check .", "ruff format --check"),
     ("python -m mypy", "mypy"),  # CI may use bare `mypy` or `python -m mypy`
-    ("python -m pytest", "pytest"),
+    ("pytest", "pytest"),
     ("python tools/phi_scan.py", "tools/phi_scan.py"),
 )
 
@@ -93,6 +93,34 @@ def test_every_check_sh_gate_has_a_ci_lane() -> None:
     assert not missing, (
         "tools/check.sh claims to be 'exactly what CI runs' but these gates are missing from "
         ".github/workflows/ci.yml:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_pytest_is_invoked_the_same_way_in_both() -> None:
+    """Same gate, same form — because the two forms do not import the same things.
+
+    The marker match above proves a gate EXISTS in CI, not that it is invoked
+    identically, and for pytest that difference is a real one: `python -m
+    pytest` puts the working directory on `sys.path` and a bare `pytest` does
+    not. check.sh ran the `-m` form while CI ran the bare one, so a test
+    importing `tools.sbom` passed every local gate and failed five CI jobs on
+    `ModuleNotFoundError` (#142). `pythonpath` in pyproject settles what is
+    importable; this settles that both callers ask the same question.
+    """
+    # The COMMANDS, not the file text: the line above check.sh's pytest call
+    # explains this very trap and names the form it avoids, and a grep over the
+    # raw file cannot tell an explanation from an invocation.
+    invocations = [cmd for cmd in _check_sh_commands() if "pytest" in cmd]
+    assert invocations, "tools/check.sh no longer runs pytest at all"
+    assert not any(cmd.startswith("python -m pytest") for cmd in invocations), (
+        "tools/check.sh uses `python -m pytest`, which puts the working directory "
+        "on sys.path. CI runs a bare `pytest`, which does not — so the local gate "
+        "would be more permissive than the one that matters."
+    )
+    assert "python -m pytest" not in _ci_yml_run_blob(), (
+        "ci.yml uses `python -m pytest` while tools/check.sh runs a bare `pytest`. "
+        "Make them the same form, or the local gate and CI disagree about what is "
+        "importable."
     )
 
 

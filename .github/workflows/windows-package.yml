@@ -76,7 +76,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ".[render,gui,deliver-browser]" -c packaging/constraints.txt "nuitka==4.1.3"
+          pip install ".[render,gui,deliver-browser]" -c packaging/constraints.txt nuitka
 
       - name: Install Chromium (bundled at build time)
         run: playwright install chromium
@@ -137,25 +137,6 @@ jobs:
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.ver.outputs.version }} packaging\anastomosis.iss
 
-      - name: Generate the installer SBOM (CycloneDX)
-        # What actually ships inside the frozen bundles is this job's Python
-        # environment (Nuitka freezes it wholesale), so the SBOM is generated
-        # FROM that environment — not from pyproject floors, which say what is
-        # allowed, not what was shipped. Written next to the installer so the
-        # release job attaches both to the GitHub release.
-        # The tool runs from its own venv and inventories the BUILD interpreter,
-        # so cyclonedx-bom and its deps never appear in the shipped inventory.
-        shell: pwsh
-        run: |
-          $target = (python -c "import sys; print(sys.executable)")
-          python -m venv "$env:RUNNER_TEMP\sbomtool"
-          & "$env:RUNNER_TEMP\sbomtool\Scripts\pip.exe" install --quiet "cyclonedx-bom==7.3.1"
-          & "$env:RUNNER_TEMP\sbomtool\Scripts\cyclonedx-py.exe" environment `
-            --pyproject pyproject.toml --output-reproducible --of JSON `
-            -o "dist/installer/Anastomosis-${{ steps.ver.outputs.version }}-sbom.cdx.json" `
-            "$target"
-          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed" }
-
       - name: Smoke-test the installer (install, doctor, real window, uninstall)
         # The second anti-assumption gate, end to end the way a user meets the
         # artifact: silent install -> installed layout -> installed `anast
@@ -164,6 +145,32 @@ jobs:
         # gui-e2e lane) -> silent uninstall leaves no payload behind. Any FAIL
         # exits non-zero and fails the build.
         run: python packaging/smoke_windows.py
+
+      - name: Generate the installer SBOM (CycloneDX)
+        # AFTER the smoke gate, deliberately. An SBOM is a statement about
+        # something that works; producing one for an installer that has not yet
+        # been shown to install is a statement about nothing, and it was the
+        # step order until now.
+        #
+        # What actually ships inside the frozen bundles is this job's Python
+        # environment (Nuitka freezes it wholesale), so the SBOM is generated
+        # FROM that environment — not from pyproject floors, which say what is
+        # allowed, not what was shipped. Written next to the installer so the
+        # release job attaches both to the GitHub release.
+        # The tool runs from its own venv and inventories the BUILD interpreter,
+        # so cyclonedx-bom and its deps never appear in the shipped inventory;
+        # tools/sbom.py owns the invocation, shared with release.yml.
+        shell: pwsh
+        run: |
+          $target = (python -c "import sys; print(sys.executable)")
+          python -m venv "$env:RUNNER_TEMP\sbomtool"
+          & "$env:RUNNER_TEMP\sbomtool\Scripts\pip.exe" install --quiet `
+            -c packaging/constraints.txt cyclonedx-bom
+          python tools/sbom.py `
+            --cyclonedx "$env:RUNNER_TEMP\sbomtool\Scripts\cyclonedx-py.exe" `
+            --target-python "$target" `
+            --out "dist/installer/Anastomosis-${{ steps.ver.outputs.version }}-sbom.cdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed" }
 
       - name: Upload the installer
         # !cancelled() so the installer is available for download even when the
@@ -252,8 +259,13 @@ jobs:
             flag {print}
           ' CHANGELOG.md > RELEASE_NOTES.md
           if [ ! -s RELEASE_NOTES.md ]; then
-            echo "no CHANGELOG section for $ver; falling back to generated notes only" >&2
-            printf 'Anastomosis %s\n' "$ver" > RELEASE_NOTES.md
+            # Loudly, not quietly. This used to write a one-line body and carry
+            # on, so a release cut before anyone moved `## [Unreleased]` under a
+            # version heading shipped describing itself as its own name. A
+            # release that cannot say what changed is not ready to publish.
+            echo "CHANGELOG.md has no '## [$ver]' section." >&2
+            echo "Move the '## [Unreleased]' notes under that heading and re-tag." >&2
+            exit 1
           fi
           echo "----- release notes -----"; cat RELEASE_NOTES.md
 

@@ -264,16 +264,29 @@ def measure_footprint() -> None:
     expands TO was never measured anywhere. Printed here (and into the CI job
     summary when available) so every build records it; informational only — a
     size regression is a review conversation, not a broken install.
+
+    Which is why nothing in here raises. It runs inside ``step()``, and
+    ``step()`` records any exception as a FAIL, so an unreadable file or a
+    locked directory partway through a walk failed the whole release over a
+    measurement that was never a gate. A number nobody could take is reported
+    as one nobody could take.
     """
     app = _app_dir()
-    files = [p for p in app.rglob("*") if p.is_file()]
-    total = sum(p.stat().st_size for p in files)
+    try:
+        files = [p for p in app.rglob("*") if p.is_file()]
+        total = sum(p.stat().st_size for p in files)
+    except OSError as exc:
+        print(f"installed footprint: not measurable ({type(exc).__name__})")
+        return
     line = f"installed footprint: {total / 1_000_000_000:.2f} GB across {len(files)} files ({app})"
     print(line)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
-        with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"**{line}**\n")
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"**{line}**\n")
+        except OSError as exc:
+            print(f"(could not write the job summary: {type(exc).__name__})")
 
 
 def check_installed_doctor() -> None:

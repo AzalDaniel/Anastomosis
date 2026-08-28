@@ -8,6 +8,9 @@ python tools/preflight.py
 ruff check .
 ruff format --check .
 python -m mypy
-python -m pytest
+# `pytest`, not `python -m pytest`: the `-m` form puts the working directory on
+# sys.path and CI's bare `pytest` does not, so the two disagreed about what was
+# importable and this script's first line stopped being true.
+pytest
 python tools/phi_scan.py
 echo "ALL GATES GREEN"

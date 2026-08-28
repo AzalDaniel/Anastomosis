@@ -165,6 +165,11 @@ ignore = [
 # lane is scoped by path — so the default `pytest` (and tools/check.sh) never
 # needs a browser for it.
 testpaths = ["tests/unit", "tests/integration", "tests/e2e"]
+# The repo root, so a test can import `tools.*` — the release scripts are not
+# part of the shipped package and are not installed. `python -m pytest` puts the
+# working directory on sys.path and a bare `pytest` does not, which is exactly
+# how a green local gate and a red CI run disagreed about `tools.sbom`.
+pythonpath = ["."]
 addopts = "-q --strict-markers"
 markers = [
   "e2e: end-to-end pipeline tests (need playwright chromium)",
