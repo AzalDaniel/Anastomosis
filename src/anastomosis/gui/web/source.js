@@ -41,12 +41,17 @@
 
     // Built with the DOM API and textContent (never innerHTML) so a column name
     // can never be interpreted as markup.
+    // A CSS grid of <div>s that reads as a table on screen has to say so, or
+    // the header row is four loose words and every cell below is a value with
+    // nothing attached to it. Same divs, same layout, the roles a table has.
     const table = el("format-mapping");
     table.textContent = "";
     const head = document.createElement("div");
     head.className = "mapping-row mapping-head";
+    head.setAttribute("role", "row");
     for (const label of ["Column in your file", "Goes to", "How it is read", "Confidence"]) {
       const cell = document.createElement("span");
+      cell.setAttribute("role", "columnheader");
       cell.textContent = label;
       head.appendChild(cell);
     }
@@ -54,6 +59,7 @@
     for (const s of res.suggestions || []) {
       const row = document.createElement("div");
       row.className = "mapping-row";
+      row.setAttribute("role", "row");
       const cells = [
         s.source,
         s.target || "(kept, unmatched — nothing is dropped)",
@@ -62,6 +68,7 @@
       ];
       for (const value of cells) {
         const cell = document.createElement("span");
+        cell.setAttribute("role", "cell");
         cell.textContent = String(value);
         row.appendChild(cell);
       }

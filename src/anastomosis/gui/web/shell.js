@@ -725,10 +725,14 @@
         row.classList.toggle("is-active", isOpen() && i === active);
       });
       valueSlot.textContent = selected >= 0 ? entries[selected].label : "";
-      trigger.setAttribute(
-        "aria-activedescendant",
-        isOpen() && active >= 0 ? rows()[active].id : ""
-      );
+      // Removed rather than emptied. `aria-activedescendant=""` is an IDREF
+      // naming no element, which is invalid — Chromium shrugs, and a shrug is
+      // not a contract.
+      if (isOpen() && active >= 0) {
+        trigger.setAttribute("aria-activedescendant", rows()[active].id);
+      } else {
+        trigger.removeAttribute("aria-activedescendant");
+      }
     };
 
     const moveTo = (index) => {
@@ -1009,13 +1013,20 @@
     }
     const table = document.createElement("table");
     table.className = "patients-table";
+    // A <thead> and `scope="col"` — without them the four headings were a
+    // first row of bold text, and the cells below carried no column with them:
+    // "Ada Lovelace 1815-12-10 3 12" instead of "Patient: …, Visits: 3".
+    const thead = document.createElement("thead");
     const head = document.createElement("tr");
     for (const heading of ["Patient", "Date of birth", "Visits", "Notes"]) {
       const th = document.createElement("th");
+      th.scope = "col";
       th.textContent = heading;
       head.appendChild(th);
     }
-    table.appendChild(head);
+    thead.appendChild(head);
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
     for (const p of patients) {
       const tr = document.createElement("tr");
       for (const value of [p.display_name || "—", p.birth_date || "—", String(p.encounters), String(p.documents)]) {
@@ -1023,8 +1034,9 @@
         td.textContent = value; // textContent: patient data as text, never markup
         tr.appendChild(td);
       }
-      table.appendChild(tr);
+      tbody.appendChild(tr);
     }
+    table.appendChild(tbody);
     body.appendChild(table);
     setEmpty(panel.id, false);
   }
@@ -1111,13 +1123,25 @@
   // Charts owns the plain rebuild; Migrate composes the same component beside a
   // destination picker. There is exactly one implementation of these fields —
   // the two views differ only in `mode`.
+  //: `for` only reaches a control the HTML spec calls labelable. "Chart
+  //: sections" pointed at a <div> holding four checkboxes, so the association
+  //: was dropped and the group had no name at all — the checkboxes were just a
+  //: run of switches. A <div> gets `role="group"` named by the same label
+  //: instead, which is the association `for` could not make.
+  const LABELABLE = new Set(["BUTTON", "INPUT", "METER", "OUTPUT", "PROGRESS", "SELECT", "TEXTAREA"]);
+
   function makeField(id, labelText, helpText, control) {
     const field = document.createElement("div");
     field.className = "field";
     const label = document.createElement("label");
     label.id = `${id}-label`;
-    label.setAttribute("for", id);
     label.textContent = labelText;
+    if (LABELABLE.has(control.tagName)) {
+      label.setAttribute("for", id);
+    } else {
+      control.setAttribute("role", "group");
+      control.setAttribute("aria-labelledby", label.id);
+    }
     field.appendChild(label);
     field.appendChild(control);
     if (helpText) {
