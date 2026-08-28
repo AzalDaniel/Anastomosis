@@ -23,11 +23,14 @@
   const Shell = window.AnastShell;
   const el = (id) => document.getElementById(id);
 
-  // The shared per-item retry budget. This FALLBACK is only for the api-less
-  // browser preview; the live value is refreshed from the Python-canonical
-  // gui_config() endpoint, and tests/unit/test_frontend_constants.py pins the
-  // fallback to the Python constant so neither side can drift alone.
+  // The shared per-item retry budget, and the filename the engine gives the
+  // record it writes beside the charts. These FALLBACKS are only for the
+  // api-less browser preview; the live values are refreshed from the
+  // Python-canonical gui_config() endpoint, and
+  // tests/unit/test_frontend_constants.py pins each fallback to its Python
+  // constant so neither side can drift alone.
   let DEFAULT_MAX_ATTEMPTS = 3;
+  let LEDGER_NAME = "upload_ledger.sqlite";
 
   const POLL_INTERVAL_MS = 1500;
   let POLL_TIMER = null;
@@ -73,24 +76,42 @@
     if (!hasApi() || typeof window.pywebview.api.gui_config !== "function") return;
     try {
       const cfg = await window.pywebview.api.gui_config();
-      if (cfg && cfg.ok && Number.isInteger(cfg.max_attempts) && cfg.max_attempts > 0) {
+      if (!cfg || !cfg.ok) return;
+      if (Number.isInteger(cfg.max_attempts) && cfg.max_attempts > 0) {
         DEFAULT_MAX_ATTEMPTS = cfg.max_attempts;
+      }
+      if (typeof cfg.ledger_name === "string" && cfg.ledger_name) {
+        LEDGER_NAME = cfg.ledger_name;
       }
     } catch (_) {
       /* keep the fallback */
     }
   }
 
-  // The record the controller writes beside the charts. An operator with the
-  // record somewhere else overrides the path in Advanced.
-  function recordPath() {
-    const override = el("uploads-record").value.trim();
-    if (override) return override;
-    const outDir = el("uploads-results-dir").value.trim();
+  // The record a run writes: always beside the charts, inside the results
+  // folder the engine hardened. That is not configurable and must not become
+  // so — the record carries visit ids and lives inside the 0700 directory
+  // deliberately.
+  function runRecordPath(outDir) {
     if (!outDir) return "";
     const sep = outDir.includes("\\") && !outDir.includes("/") ? "\\" : "/";
-    return outDir.replace(/[/\\]+$/, "") + sep + "upload_ledger.sqlite";
+    return outDir.replace(/[/\\]+$/, "") + sep + LEDGER_NAME;
   }
+
+  // The record this VIEW is reading. Normally the one beside the charts; the
+  // Advanced override points the viewer at a record kept somewhere else, which
+  // is a reading affordance only — it cannot move where a run writes.
+  function recordPath() {
+    const elsewhere = el("uploads-record").value.trim();
+    return elsewhere || runRecordPath(el("uploads-results-dir").value.trim());
+  }
+
+  // While a run is in flight the counters follow the record THAT RUN writes,
+  // pinned when it started. Two reasons, both of them "the numbers on screen
+  // must describe this run": an override left in the field would have the
+  // counters reporting some other record's progress, and re-reading the field
+  // every tick let an edit mid-run silently move which record they follow.
+  let ACTIVE_RECORD = "";
 
   // --- reading the record ---------------------------------------------------
   function renderCounts(status) {
@@ -302,7 +323,7 @@
   // from an event). A transient read failure must not break the run.
   async function refreshQuietly() {
     if (!hasApi()) return;
-    const record = recordPath();
+    const record = ACTIVE_RECORD || recordPath();
     if (!record) return;
     try {
       const status = await window.pywebview.api.upload_status(record);
@@ -422,6 +443,7 @@
         return;
       }
       Shell.logEvent({ kind: "ok", msg: "Uploads: filing started." });
+      ACTIVE_RECORD = runRecordPath(outDir);
       startPolling();
     } catch (err) {
       Shell.showBanner(String(err));
@@ -444,6 +466,7 @@
   function onTerminal() {
     stopPolling();
     refreshQuietly();
+    ACTIVE_RECORD = "";
   }
 
   function onEvent(event) {

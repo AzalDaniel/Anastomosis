@@ -26,6 +26,9 @@ _OUT_DIR = "/synthetic/out"
 #: The record the controller keeps beside the charts — derived from the results
 #: folder, exactly as the view derives it.
 _RECORD = "/synthetic/out/upload_ledger.sqlite"
+#: Longer than console.js's POLL_INTERVAL_MS, so a test that is about what the
+#: POLL reads actually observes a tick rather than the view's opening read.
+_PAST_ONE_POLL_MS = 1900
 
 
 def _open(gui, **kwargs):
@@ -219,3 +222,57 @@ def test_filing_refuses_without_the_folder_and_the_assistant(gui) -> None:
 
     assert not app.called("upload_start")
     assert "Fill in" in (app.page.locator("#banner").text_content() or "")
+
+
+# --- one record per run (#140) ----------------------------------------------
+
+
+def test_the_override_points_the_viewer_somewhere_else(gui) -> None:
+    """Reading a record kept outside the results folder is what the field is for."""
+    app = _open(gui)
+    app.page.fill("#uploads-results-dir", _OUT_DIR)
+    app.page.click('[data-view="uploads"] .advanced > summary')
+    app.page.fill("#uploads-record", "/synthetic/elsewhere/upload_ledger.sqlite")
+    app.page.click("#uploads-refresh")
+    app.page.wait_for_timeout(250)
+
+    assert app.last_args("upload_status") == ["/synthetic/elsewhere/upload_ledger.sqlite"]
+
+
+def test_the_counters_follow_the_record_the_run_writes(gui) -> None:
+    """A run writes beside the charts, so that is what the counters must read.
+
+    The override is a reading affordance; it cannot move where the engine puts
+    a record (which lives inside the hardened results folder by design). Left
+    in the field, it used to have the progress counters reporting some other
+    record's numbers — or none, since a record that is not there reads as "no
+    progress" rather than as an error.
+    """
+    app = _load(gui)
+    app.page.click('[data-view="uploads"] .advanced > summary')
+    app.page.fill("#uploads-record", "/synthetic/elsewhere/upload_ledger.sqlite")
+    app.page.fill("#uploads-assistant", "tebra")
+    app.page.click("#uploads-start")
+    # Past one poll tick: the counters are read by the POLL, so a shorter wait
+    # would only ever see the read that opening the view already did.
+    app.page.wait_for_timeout(_PAST_ONE_POLL_MS)
+
+    followed = app.last_args("upload_status")
+    assert followed == [_RECORD], (
+        f"the counters are following {followed}, not the record this run writes"
+    )
+
+
+def test_editing_the_field_mid_run_cannot_move_which_record_is_followed(gui) -> None:
+    """The record is pinned when the run starts, not re-read every tick."""
+    app = _load(gui)
+    app.page.fill("#uploads-assistant", "tebra")
+    app.page.click("#uploads-start")
+    app.page.wait_for_timeout(200)
+
+    app.page.click('[data-view="uploads"] .advanced > summary')
+    app.page.fill("#uploads-record", "/synthetic/moved-mid-run/upload_ledger.sqlite")
+    app.page.wait_for_timeout(_PAST_ONE_POLL_MS)
+
+    followed = {tuple(call["args"]) for call in app.calls("upload_status")[-2:]}
+    assert followed == {(_RECORD,)}, f"an edit mid-run moved the counters: {followed}"

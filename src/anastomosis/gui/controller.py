@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
 from anastomosis.gui.consoles import (
     MigrationConsole,
     PackgenConsole,
@@ -158,12 +158,13 @@ class GuiController:
         for the api-less browser preview and refreshes from this endpoint on
         load; ``tests/unit/test_frontend_constants.py`` pins the fallbacks to
         these values so neither side can drift alone. PHI-free by
-        construction (retry budget, stage names, state-group names). Never
+        construction (retry budget, the record's filename, stage names, state-group names). Never
         raises.
         """
         return {
             "ok": True,
             "max_attempts": DEFAULT_MAX_ATTEMPTS,
+            "ledger_name": LEDGER_NAME,
             "stage_rail": list(_STAGE_RAIL),
             "state_groups": {group: list(states) for group, states in _STATE_GROUPS.items()},
         }
