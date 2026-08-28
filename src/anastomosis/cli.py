@@ -158,8 +158,8 @@ def main(
 #: Python extra that carries it — the extra's own name still prints beside it
 #: for a support request.
 CAPABILITY_NAMES = {
-    "render": "Building charts",
-    "render-qa": "Double-checking charts",
+    "render": "Building and double-checking charts",
+    "deliver-browser": "Filing charts through a browser",
     "fhir": "Sending charts over FHIR",
     "gui": "The desktop app",
 }
@@ -178,9 +178,14 @@ def info() -> None:
         what = CAPABILITY_NAMES.get(extra, extra)
         named = f"{what} [dim]({extra})[/dim]" if what != extra else what
         if available:
-            console.print(f"  [green]{what}[/green]: ready [dim]({extra})[/dim]")
+            # "installed", not "ready". This line knows what is present, not
+            # whether it works: `render` reads as installed on a machine where
+            # Playwright never downloaded its browser and every chart fails.
+            # `anast doctor` is the command that actually tries things, and the
+            # closing line below says so rather than letting this one imply it.
+            console.print(f"  [green]{what}[/green]: installed [dim]({extra})[/dim]")
         else:
-            console.print(f"  [dim]{named}[/dim]: not installed on this computer")
+            console.print(f"  [dim]{named}[/dim]: not available on this computer")
     for name, description in toolkit.sources:
         console.print(f"  export format [cyan]{name}[/cyan]: {description}")
     for pack in toolkit.packs:
@@ -189,6 +194,7 @@ def info() -> None:
             console.print(f"  chart layout [cyan]{pack.name}[/cyan]: ready ({origin})")
         else:
             console.print(f"  chart layout [red]{pack.name}[/red]: {pack.diagnosis}")
+    console.print("[dim]  anast doctor checks that what is installed actually works.[/dim]")
 
 
 @app.command("gui")
@@ -210,11 +216,20 @@ def gui_cmd(
         raise typer.Exit(code=1) from None
     try:
         launch(debug=debug)
-    except RuntimeError as exc:
-        # The shell raises RuntimeError naming the extra when pywebview is absent.
-        # Escape so Rich renders the literal "anastomosis[gui]" (the [gui] is not
-        # a style tag) rather than swallowing the bracketed extra name.
+    except Exception as exc:
+        # Not RuntimeError. The shell raises RuntimeError when pywebview itself
+        # is absent, but pywebview raises its OWN WebViewException — bases
+        # (Exception, BaseException, object) — when it is installed and has
+        # neither a GTK nor a Qt backend to draw with. That is the likeliest way
+        # this fails, and catching RuntimeError made the handler dead code for
+        # it: `anast gui` was the only command in the CLI that answered with a
+        # Rich stack dump instead of the hint written for exactly this.
+        #
+        # Both halves are printed: the exception says what is missing, and the
+        # line under it says what to install. Escaped so Rich renders the
+        # literal "anastomosis[gui]" rather than reading [gui] as a style tag.
         console.print(f"[red]{escape(str(exc))}[/red]")
+        console.print(f"Install the desktop parts with: {escape('pip install anastomosis[gui]')}")
         raise typer.Exit(code=1) from None
 
 
