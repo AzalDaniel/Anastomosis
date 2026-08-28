@@ -265,7 +265,7 @@
           </div>
         </section>
 
-        <section class="panel" id="uploads-detail" aria-label="What has been filed" hidden>
+        <section class="panel" id="uploads-detail" aria-label="What has been filed">
           <h3>What has been filed</h3>
           <div class="values" id="uploads-meta"></div>
           <div class="field-help" id="uploads-when"></div>
@@ -275,7 +275,14 @@
                    placeholder="Find an upload — search by visit id." aria-label="Find an upload — search by visit id." />
           </div>
           <div class="search-results" id="uploads-search-results"></div>
-          <div class="state-grid" id="uploads-states"></div>
+          <div class="results-head" id="uploads-states-head">
+            <span>What happened</span><span class="result-when">Charts</span>
+          </div>
+          <div class="results" id="uploads-states" hidden></div>
+          <div class="empty-state" id="uploads-states-empty">
+            <b>Charts are filed one visit at a time.</b>
+            <span>Each one appears here as it goes, with what happened to it and when.</span>
+          </div>
           <div class="actions">
             <button class="btn btn-quiet" id="uploads-kinds-btn" type="button">What went wrong</button>
           </div>
@@ -420,6 +427,14 @@
             <div class="text-block" id="format-result-md"></div>
           </div>
         </div>
+
+        <!-- What is already known, so "teach it another" has a "another THAN
+             WHAT" — and so the screen is not two forms over empty space. -->
+        <section class="panel" aria-label="What Anastomosis already knows">
+          <h3>What Anastomosis already knows</h3>
+          <div class="value-line" id="teach-known-summary"></div>
+          <div class="results results--static" id="teach-known"></div>
+        </section>
       </section>
 
     </main>

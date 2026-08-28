@@ -690,27 +690,65 @@ svg { display: block; }
 .empty-state b { font-weight: 600; font-size: var(--text-body); color: var(--ink-secondary); }
 .empty-state span { font-size: var(--text-label); color: var(--ink-muted); line-height: 1.5; }
 
-/* One accent per row: a 3px left border, never badge soup (§5). */
-.state-grid {
+/* Result rows — the content layer's main surface.
+   One accent per row, and the tint IS it: the 3px left border and the badge
+   are both retired. The plain-English state text is the primary carrier and
+   the tint is redundant reinforcement, which is what makes the row legible
+   when the colours collapse (WCAG 1.4.1). Waiting has no tint, because a row
+   with nothing to say should say nothing. */
+.results { display: flex; flex-direction: column; }
+.result,
+.results-head {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--space-1) var(--space-3);
+  grid-template-columns: var(--result-cols, 1fr auto);
+  align-items: center;
+  column-gap: var(--space-5);
+  padding: var(--space-2) var(--space-4);
 }
-.state-cell {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1) var(--space-3);
-  border-left: 3px solid var(--hairline);
-  border-radius: 0 var(--radius-chip) var(--radius-chip) 0;
+.result {
+  min-height: 44px;
+  border-bottom: 1px solid rgba(244, 238, 228, 0.10);
+  font-size: var(--text-body);
+  color: var(--ink);
+}
+/* A row nobody clicks is data, not a target, so it sits in the table band. */
+.results--static .result { min-height: 36px; padding: var(--space-1) var(--space-4); }
+.results-head {
+  padding: 0 var(--space-4) var(--space-2);
+  border-bottom: 1px solid rgba(244, 238, 228, 0.10);
+  /* Sentence case: the value displays own the app's only uppercase. */
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.result[data-bucket="filed"] { background: var(--tint-filed); }
+.result[data-bucket="progress"] { background: var(--tint-progress); }
+.result[data-bucket="attention"] { background: var(--tint-attention); }
+.result[data-bucket="waiting"] { background: none; }
+.result-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-lead);
+  text-align: right;
+}
+.result-id,
+.result-when {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--text-label);
   color: var(--ink-secondary);
 }
-.state-cell[data-bucket="filed"]     { border-left-color: var(--ok); }
-.state-cell[data-bucket="attention"] { border-left-color: var(--stop); }
-.state-cell[data-bucket="progress"]  { border-left-color: var(--attention); }
-.state-count { color: var(--ink); font-weight: 600; }
+.result-when { text-align: right; }
+/* --ink-muted never appears inside a tinted row: --ink-secondary is the floor
+   there, and it still clears 4.5:1 on the loudest tint. */
+.result-note { font-size: var(--text-label); color: var(--ink-secondary); }
+.value-line {
+  font-size: var(--text-label);
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  max-width: var(--measure-prose);
+}
+#teach-known .result { --result-cols: 22ch 1fr; }
 .kind-row {
   display: flex;
   justify-content: space-between;
@@ -895,28 +933,25 @@ svg { display: block; }
 
 
 /* ─── 13. View furniture ─────────────────────────────────────── */
-/* Migrate: one card per route, in plain language. */
-.route-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.route-card {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-control);
-  border: 1px solid var(--hairline);
-  border-left: 3px solid var(--hairline);
-  background: var(--fill-soft);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.route-card[data-available="true"] { border-left-color: var(--ok); }
-.route-card[data-chosen="true"] {
-  border-color: color-mix(in oklab, var(--brand-bright) 55%, transparent);
-  border-left-color: var(--brand-bright);
-  background: color-mix(in oklab, var(--brand-bright) 12%, transparent);
-}
+/* Migrate: one row per route, in plain language. These were cards with a 3px
+   left border and a background tint for the recommended one — two accents on
+   one object, which is what the row rule exists to stop. */
+.route-list { display: flex; flex-direction: column; }
+.route-list .result { --result-cols: 1fr 22ch; row-gap: var(--space-1); }
 .route-name { font-size: var(--text-body); font-weight: 600; color: var(--ink); }
-.route-why { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.5; }
-.route-mark { font-size: var(--text-caption); color: var(--ink-muted); }
-.route-detail { font-size: var(--text-caption); color: var(--ink-muted); font-family: var(--font-mono); }
+.route-why {
+  grid-column: 1;
+  font-size: var(--text-label);
+  color: var(--ink-secondary);
+  line-height: 1.5;
+}
+.route-mark { grid-column: 2; grid-row: 1; font-size: var(--text-label); color: var(--ink-secondary); }
+.route-detail {
+  grid-column: 1 / -1;
+  font-size: var(--text-caption);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+}
 .route-detail summary {
   display: inline-flex;
   align-items: center;
@@ -957,7 +992,11 @@ svg { display: block; }
 .step-line { font-size: var(--text-caption); color: var(--ink-muted); }
 
 /* Uploads: the visible search that replaced the hidden palette (§12). */
-.search-field { position: relative; display: flex; align-items: center; }
+/* flex-direction has to be reset, not just re-declared: `.field` above sets
+   column, so without this the input grew DOWNWARDS and sat centred at its
+   content width. Nobody saw it because the panel it lives in was hidden until
+   a record loaded. */
+.search-field { position: relative; display: flex; flex-direction: row; align-items: center; }
 .search-field svg {
   position: absolute;
   left: var(--space-3);

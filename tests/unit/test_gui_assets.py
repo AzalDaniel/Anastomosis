@@ -520,7 +520,7 @@ def test_uploads_states_render_as_plain_english_with_the_id_on_the_tooltip() -> 
         ("skipped_skiplist", "Skipped at your request"),
     ):
         assert state in js and label in js, f"{state!r} lost its plain label"
-    assert "cell.title = state" in js, "the technical id must stay available on the tooltip"
+    assert "row.title = state" in js, "the technical id must stay available on the tooltip"
 
 
 def test_teach_hosts_both_modes_behind_a_required_confirmation() -> None:

@@ -154,3 +154,42 @@ def test_format_mode_refuses_loudly_when_a_column_would_be_lost(gui) -> None:
     assert "Cannot save yet" in banner
     assert "clinic_widget_code" in banner
     assert "Every column must have a home" in banner
+
+
+def test_teach_says_what_it_already_knows(gui) -> None:
+    """ "Teach it another" needs an "another than WHAT".
+
+    Teach was two forms over empty space: it asked for a layout it did not have
+    without ever showing the ones it did, so there was no way to tell whether
+    the format in front of you was already covered. The list is static rows —
+    no tint, because every row here has the same status and a tint that never
+    varies carries nothing (§4.10 rule 2).
+    """
+    app = gui()
+    app.show("teach")
+
+    summary = app.text("#teach-known-summary")
+    assert "export format" in summary and "Teach it another" in summary
+
+    rows = app.page.evaluate(
+        """() => [...document.querySelectorAll('#teach-known .result')].map(r => ({
+             name: r.firstElementChild.textContent.trim(),
+             note: r.lastElementChild.textContent.trim(),
+             id: r.getAttribute('title'),
+             tinted: !!r.dataset.bucket,
+           }))"""
+    )
+    assert len(rows) >= 4, rows
+    ids = {row["id"] for row in rows}
+    assert "generic_soap" in ids and "pf-tebra" in ids, ids
+    for row in rows:
+        assert not row["tinted"], f"a list with one status is wearing a tint: {row}"
+        assert row["name"] != row["id"], f"a machine id is the visible name: {row}"
+
+    # The two counts in the sentence are the two halves of the list, counted —
+    # not a pair typed into the copy that drifts the first time a pack ships.
+    layouts = [row for row in rows if row["note"] == "Chart layout"]
+    formats = [row for row in rows if row["note"] != "Chart layout"]
+    assert layouts and formats, rows
+    assert f"reads {len(formats)} export format" in summary, summary
+    assert f"out {len(layouts)} way" in summary, summary

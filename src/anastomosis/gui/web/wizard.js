@@ -46,30 +46,26 @@
     const list = el("migrate-routes");
     list.innerHTML = "";
     for (const opt of transit.options) {
-      const card = document.createElement("div");
-      card.className = "route-card";
+      // A route that cannot be used is the thing to look at; one that can is
+      // quiet. The words carry that, and the tint reinforces it — the card this
+      // replaces wore a 3px left border AND a background wash, two accents on
+      // one object.
+      const chosen = opt.kind === transit.chosen;
+      const card = Shell.resultRow(opt.viable ? (chosen ? "filed" : "waiting") : "attention", [
+        { text: ROUTE_NAME[opt.kind] || opt.kind, className: "route-name" },
+        {
+          text: opt.viable
+            ? chosen
+              ? "Available — recommended"
+              : "Available"
+            : "Not available",
+          className: "route-mark",
+        },
+        { text: ROUTE_WHAT[opt.kind] || "", className: "route-why" },
+      ]);
       card.dataset.available = String(opt.viable);
-      card.dataset.chosen = String(opt.kind === transit.chosen);
+      card.dataset.chosen = String(chosen);
       card.dataset.route = opt.kind;
-
-      const name = document.createElement("div");
-      name.className = "route-name";
-      name.textContent = ROUTE_NAME[opt.kind] || opt.kind;
-      card.appendChild(name);
-
-      const what = document.createElement("div");
-      what.className = "route-why";
-      what.textContent = ROUTE_WHAT[opt.kind] || "";
-      card.appendChild(what);
-
-      const mark = document.createElement("div");
-      mark.className = "route-mark";
-      mark.textContent = opt.viable
-        ? opt.kind === transit.chosen
-          ? "Available — recommended"
-          : "Available"
-        : "Not available";
-      card.appendChild(mark);
 
       // The registry's evidence, verbatim and reachable, but never the headline.
       const detail = document.createElement("details");

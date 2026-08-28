@@ -730,3 +730,136 @@ def test_a_count_is_a_number_over_its_name_and_nothing_else(gui) -> None:
         if value["bucket"] in ("filed", "waiting"):
             assert value["signal"] == "", f"{value['bucket']} is asking for attention"
         assert value["zero"] == ("true" if value["n"] == "0" else "false"), value
+
+
+def test_the_status_tints_stay_separable_without_colour_vision(gui) -> None:
+    """The four row states are a luminance ladder, and they have to stay one.
+
+    Three hues of equal weight is the obvious design and it is wrong: at equal
+    weight amber and red are the IDENTICAL colour under deuteranopia, the
+    commonest colour-vision deficiency, so "in progress" and "needs attention"
+    become one state for roughly one man in twelve. The ladder is ordered by
+    urgency instead — the loudest state is the lightest and most saturated
+    thing on screen and success is the quietest — which holds under all three
+    simulations because it never asked hue to do the work.
+
+    The floor is a RAW luminance ratio, not a WCAG contrast ratio: near black
+    the +0.05 constant swamps the difference between two adjacent steps, so it
+    would report every ladder as flat. (It did, the first time this was run.)
+    """
+    app = gui()
+
+    measured = app.page.evaluate(
+        r"""() => {
+          const canvas = document.createElement('canvas').getContext('2d');
+          const rgba = (value) => {
+            canvas.clearRect(0, 0, 1, 1);
+            canvas.fillStyle = value;
+            canvas.fillRect(0, 0, 1, 1);
+            const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data;
+            return [r, g, b, a / 255];
+          };
+          const over = (top, bottom) =>
+            [0, 1, 2].map((i) => top[i] * top[3] + bottom[i] * (1 - top[3]));
+          const linear = (c) => c.map((v) => {
+            v /= 255;
+            return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          });
+          const lum = (c) => {
+            const [r, g, b] = linear(c);
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          // Vienot 1999: sRGB -> LMS, collapse the missing cone, back to sRGB.
+          const RGB2LMS = [[0.31399022, 0.63951294, 0.04649755],
+                           [0.15537241, 0.75789446, 0.08670142],
+                           [0.01775239, 0.10944209, 0.87256922]];
+          const LMS2RGB = [[5.47221206, -4.6419601, 0.16963708],
+                           [-1.1252419, 2.29317094, -0.1678952],
+                           [0.02980165, -0.19318073, 1.16364789]];
+          const SIM = {
+            protanopia: [[0, 1.05118294, -0.05116099], [0, 1, 0], [0, 0, 1]],
+            deuteranopia: [[1, 0, 0], [0.9513092, 0, 0.04866992], [0, 0, 1]],
+          };
+          const mul = (m, v) => m.map((row) => row.reduce((s, x, i) => s + x * v[i], 0));
+          const encode = (x) => Math.max(0, Math.min(255, Math.round(
+            (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055) * 255)));
+          const simulate = (c, kind) => {
+            if (kind === 'achromatopsia') { const g = encode(lum(c)); return [g, g, g]; }
+            return mul(LMS2RGB, mul(SIM[kind], mul(RGB2LMS, linear(c)))).map(encode);
+          };
+
+          const style = getComputedStyle(document.documentElement);
+          const ground = rgba(style.getPropertyValue('--ground')).slice(0, 3);
+          const ladder = [['waiting', ground]];
+          for (const step of ['filed', 'progress', 'attention']) {
+            ladder.push([step,
+              over(rgba(style.getPropertyValue('--tint-' + step)), [...ground, 1])]);
+          }
+          const steps = [];
+          for (let i = 1; i < ladder.length; i += 1) {
+            const [a, b] = [ladder[i - 1][1], ladder[i][1]];
+            const row = {step: `${ladder[i - 1][0]}->${ladder[i][0]}`};
+            for (const kind of [null, 'protanopia', 'deuteranopia', 'achromatopsia']) {
+              const [x, y] = kind ? [simulate(a, kind), simulate(b, kind)] : [a, b];
+              row[kind || 'normal'] = Math.max(lum(x), lum(y))
+                / Math.max(Math.min(lum(x), lum(y)), 1e-6);
+            }
+            steps.push(row);
+          }
+          const text = [];
+          for (const [name, tint] of ladder) {
+            for (const ink of ['ink', 'ink-secondary']) {
+              const on = over(rgba(style.getPropertyValue('--' + ink)), [...tint, 1]);
+              const [hi, lo] = [lum(on), lum(tint)].sort((p, q) => q - p);
+              text.push({name, ink, ratio: (hi + 0.05) / (lo + 0.05)});
+            }
+          }
+          return {steps, text};
+        }"""
+    )
+
+    for step in measured["steps"]:
+        for kind in ("normal", "protanopia", "deuteranopia", "achromatopsia"):
+            assert step[kind] >= 1.55, (
+                f"{step['step']} is only x{step[kind]:.2f} apart under {kind} — "
+                "two row states have collapsed into one"
+            )
+    # Monotone: every step goes the same way, so the ladder reads as an order.
+    for pair in measured["text"]:
+        assert pair["ratio"] >= 4.5, (
+            f"{pair['ink']} on the {pair['name']} tint is {pair['ratio']:.2f}:1"
+        )
+
+
+def test_a_tinted_row_says_its_state_in_words(gui) -> None:
+    """The tint is reinforcement; the words are what carry the state.
+
+    Which is the whole reason the ladder above can be trusted — if the colour
+    were the only carrier, a monotone ladder would still be a UI that stops
+    working in greyscale. And --ink-muted never appears inside a tinted row:
+    --ink-secondary is the floor there.
+    """
+    app = gui()
+    app.show("uploads")
+    app.page.fill("#uploads-results-dir", "/synthetic/out")
+    app.page.click("#uploads-refresh")
+    app.page.wait_for_timeout(400)
+
+    rows = app.page.evaluate(
+        r"""() => {
+          const muted = getComputedStyle(document.documentElement)
+            .getPropertyValue('--ink-muted').trim();
+          return [...document.querySelectorAll('.view:not([hidden]) .result')].map(row => ({
+            bucket: row.dataset.bucket || '',
+            words: row.textContent.replace(/\s+/g, ' ').replace(/[\d\s]+$/, '').trim(),
+            muted: [...row.querySelectorAll('*')]
+              .some(n => getComputedStyle(n).color === muted),
+          }));
+        }"""
+    )
+    assert rows, "no result rows were rendered"
+    for row in rows:
+        if not row["bucket"] or row["bucket"] == "waiting":
+            continue
+        assert len(row["words"]) > 3, f"a tinted row says nothing: {row}"
+        assert not row["muted"], f"--ink-muted is inside a tinted row: {row}"

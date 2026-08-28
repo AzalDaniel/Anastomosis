@@ -86,7 +86,7 @@ def test_detect_arms_the_format_picker(gui) -> None:
 
 
 def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
-    """Every route option becomes a card; the chosen one is marked recommended."""
+    """Every route option becomes a row; the chosen one is marked recommended."""
     app = _open(gui)
     page = app.page
     transit = _transit()
@@ -94,14 +94,20 @@ def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
     app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(200)
 
-    cards = page.locator("#migrate-routes .route-card")
+    cards = page.locator("#migrate-routes .result")
     assert cards.count() == len(transit["options"]), "a route option was dropped"
     chosen = page.locator(
-        '#migrate-routes .route-card[data-chosen="true"] .route-name'
+        '#migrate-routes .result[data-chosen="true"] .route-name'
     ).all_text_contents()
     expected = transit["chosen"]
     assert chosen == ([_ROUTE_NAMES[expected]] if expected else [])
     assert "Available — recommended" in (page.locator("#migrate-routes").text_content() or "")
+    # One accent per row, and the tint is it: a route that cannot be used is
+    # what needs looking at, and the WORDS say so before the colour does.
+    unusable = page.locator('#migrate-routes .result[data-available="false"]')
+    for i in range(unusable.count()):
+        assert unusable.nth(i).get_attribute("data-bucket") == "attention"
+        assert "Not available" in (unusable.nth(i).text_content() or "")
     # The registry's own evidence is kept, one disclosure down — nothing dropped.
     detail = page.locator("#migrate-routes .route-detail").first.text_content() or ""
     assert detail.strip(), "the route evidence was dropped instead of tucked away"

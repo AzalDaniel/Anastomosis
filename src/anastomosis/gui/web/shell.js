@@ -896,6 +896,24 @@
     setEmpty(panel.id, false);
   }
 
+  //: One result row. `cells` is [{text, className}] in column order; `bucket`
+  //: picks the tint, and the row's own plain-English text is what actually
+  //: carries the state — the tint only reinforces it, because at equal weight
+  //: amber and red are the same colour to a deuteranope.
+  function resultRow(bucket, cells) {
+    const row = document.createElement("div");
+    row.className = "result";
+    if (bucket) row.dataset.bucket = bucket;
+    for (const cell of cells) {
+      if (cell === null || cell === undefined) continue;
+      const span = document.createElement("span");
+      if (cell.className) span.className = cell.className;
+      span.textContent = cell.text;
+      row.appendChild(span);
+    }
+    return row;
+  }
+
   //: A region keeps its heading whether or not it has rows; what swaps is the
   //: list and the one sentence saying what would put rows in it. Every empty
   //: state is `<listId>-empty` in the markup, so there is nothing to wire.
@@ -1387,6 +1405,7 @@
     openLogDrawer,
     closeLogDrawer,
     toggleLogDrawer,
+    resultRow,
     setEmpty,
     showBanner,
     hideBanner,
