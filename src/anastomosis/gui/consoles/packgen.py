@@ -10,15 +10,11 @@ keeps the controller's contract: JSON-safe dict, never raise, PHI-safe events
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from anastomosis.core.logutil import exc_tag
-from anastomosis.gui.events import error_event, stage_event
-from anastomosis.gui.jobs import GuiJob, GuiJobRunner
-from anastomosis.gui.shared import fail_result
+from anastomosis.gui.consoles.wizard import WizardConsole
+from anastomosis.gui.events import error_event
 
 if TYPE_CHECKING:
     from anastomosis.core.packinit import PackInitResult
@@ -26,7 +22,7 @@ if TYPE_CHECKING:
 __all__ = ["PackgenConsole"]
 
 
-class PackgenConsole:
+class PackgenConsole(WizardConsole):
     """The pack-from-samples wizard backend."""
 
     # The operation family this console owns; stamped on every event so only the
@@ -34,15 +30,7 @@ class PackgenConsole:
     # The event STAGE stays "packgen"/"pack_init"; the FLOW is the page-owning
     # family name.
     _FLOW = "pack_init"
-
-    def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
-        self._emit = emit
-        self._jobs = jobs
-        # The most recent pack_init_async run's result dict, held for the wizard
-        # to fetch via last_pack_result() once the packgen `done` event lands.
-        # PHI-safe (static template text, counts, pack config); empty until the
-        # first async pack-init run.
-        self._last_pack: dict[str, object] = {}
+    _STAGE = "packgen"
 
     def pack_init(
         self,
@@ -145,77 +133,38 @@ class PackgenConsole:
     ) -> dict[str, object]:
         """Run :meth:`pack_init` on a daemon thread (the GUI stays responsive).
 
-        Mirrors :meth:`run_pipeline_async`: acquires the busy flag SYNCHRONOUSLY
-        before returning, emits a ``packgen`` ``start`` stage event, and runs the
-        shared :func:`anastomosis.core.packinit.run_pack_init` flow on a daemon
-        worker. Returns ``{"ok": True, "started": True}`` immediately, or
-        ``{"ok": False, "error": "Busy"}`` if a run is already in flight. The
-        result dict is stashed for :meth:`last_pack_result` and a terminal event
-        lands: a ``packgen`` ``done`` stage event for a written draft OR for a
-        ``ConfirmationRequired`` refusal (the expected analyze checkpoint, which
-        carries the summary the wizard renders), and a ``packgen`` ``error``
-        event only for a genuine failure (bad name, no samples, an analyze/emit
-        crash). The JS fetches :meth:`last_pack_result` on ``done`` to route the
-        result, so ConfirmationRequired must be ``done``, not ``error``.
-
-        The same-patient semantics match the sync path: ``confirmed=False`` runs
-        analyze-only and stashes the ``ConfirmationRequired`` dict (with the
-        summary + caveat), so the JS can use the async path for BOTH wizard
+        :class:`~anastomosis.gui.consoles.wizard.WizardConsole` owns the busy
+        guard, the events and the stashing; this method only supplies the pack
+        step to run. The same-patient semantics match the sync path:
+        ``confirmed=False`` analyzes and stops at ``ConfirmationRequired`` with
+        the summary + caveat, so the JS can use the async path for BOTH wizard
         steps. Never raises.
         """
 
-        def _worker() -> None:
-            try:
-                from anastomosis.core.output import typed_path
-                from anastomosis.core.packinit import PackInitCommand, run_pack_init
+        def _run() -> dict[str, object]:
+            from anastomosis.core.output import typed_path
+            from anastomosis.core.packinit import PackInitCommand, run_pack_init
 
-                result_dict = self._pack_init_result_dict(
-                    run_pack_init(
-                        PackInitCommand(
-                            samples=[samples_dir],
-                            name=name,
-                            display=display,
-                            out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
-                            confirmed=confirmed_distinct_patients,
-                        )
-                    ),
-                    emit_failure=False,  # the worker emits the single packgen error below
-                )
-                self._last_pack = result_dict
-                # A written draft OR the expected ConfirmationRequired refusal are
-                # both `done` (the wizard fetches last_pack_result and routes the
-                # summary vs the draft). Only a genuine failure is an `error`.
-                if result_dict.get("ok") or result_dict.get("error") == "ConfirmationRequired":
-                    self._emit(stage_event(self._FLOW, "packgen", "done"))
-                else:
-                    self._emit(error_event(self._FLOW, "packgen", str(result_dict.get("error"))))
-            except Exception as exc:  # never-raise: stash + emit, swallow nothing else
-                tag = exc_tag(exc)
-                self._last_pack = {"ok": False, "error": tag}
-                self._emit(error_event(self._FLOW, "packgen", tag))
-
-        return self._jobs.submit(
-            GuiJob(
-                name="packgen",
-                flow=self._FLOW,
-                worker=_worker,
-                on_start=lambda: self._emit(stage_event(self._FLOW, "packgen", "start")),
+            return self._pack_init_result_dict(
+                run_pack_init(
+                    PackInitCommand(
+                        samples=[samples_dir],
+                        name=name,
+                        display=display,
+                        out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
+                        confirmed=confirmed_distinct_patients,
+                    )
+                ),
+                emit_failure=False,  # WizardConsole emits the single packgen event
             )
-        )
+
+        return self._submit_step(_run)
 
     def last_pack_result(self) -> dict[str, object]:
         """The most recent :meth:`pack_init_async` result, for the wizard to fetch.
 
-        The async path returns immediately with ``{"started": True}`` and streams
-        PHI-safe ``packgen`` stage/error events back; the full result dict (the
-        summary + caveat for ``ConfirmationRequired``, or the pack path +
-        ``DRAFT.md`` for a written draft) is held here for the wizard to fetch
-        once the ``done``/``error`` event lands. PHI-safe (static template text,
-        counts, pack config). Returns ``{"ok": False, "error": "NoResult"}``
-        before the first async run. Never raises.
+        Either the summary + caveat for a ``ConfirmationRequired`` checkpoint or
+        the pack path + ``DRAFT.md`` for a written draft. PHI-safe (static
+        template text, counts, pack config).
         """
-        return deepcopy(self._last_pack) if self._last_pack else {"ok": False, "error": "NoResult"}
-
-    def _fail(self, stage: str, exc: BaseException) -> dict[str, object]:
-        """Convert a caught exception to the no-traceback error contract."""
-        return fail_result(self._emit, self._FLOW, stage, exc)
+        return self._last_result()
