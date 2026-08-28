@@ -1,13 +1,14 @@
 """The learn-a-source wizard backend (the source console).
 
 Marshals the shared
-:func:`anastomosis.core.source_init_command.run_source_init_command` core — the
-analyze -> build -> round-trip -> save flow the CLI's ``anast source init`` runs
-— into the wizard's JSON dict, offered both synchronously
-(:meth:`SourceConsole.source_init`) and as a busy-guarded daemon job
-(:meth:`SourceConsole.source_init_async`). PHI rule: the proposal carries column
-names, inferred type labels, counts, and masked shapes only — never a cell
-value; the example path the operator typed is not echoed back.
+:func:`anastomosis.core.source_init_command.run_source_init_command` core into
+the wizard's JSON dict — synchronously (:meth:`SourceConsole.source_init`, which
+describes the flow) and as a busy-guarded daemon job
+(:meth:`SourceConsole.source_init_async`).
+
+PHI rule: the proposal carries column names, inferred type labels, counts, and
+masked shapes only — never a cell value; the example path the operator typed is
+not echoed back.
 """
 
 from __future__ import annotations

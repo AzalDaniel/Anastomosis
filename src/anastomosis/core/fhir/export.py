@@ -155,7 +155,15 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
             "race": p.race,
             "ethnicity": p.ethnicity,
             "mothers_maiden_name": p.mothers_maiden_name,
+            # `name.given` is one ordered list, so a patient whose only
+            # forename is a middle name reads back as GIVEN "Quimby" without
+            # this. The `not p.given_name` half is only to keep the ordinary
+            # patient's extension empty — stashing it always round-trips too.
             "middle_name": p.middle_name if (p.middle_name and not p.given_name) else None,
+            # Same shape one field over: `address.line` is ordered too, so an
+            # address with only a second line reads back as line1 — "Suite 400"
+            # as the street. One such address stashes the whole list verbatim,
+            # since the positions are what carry the distinction.
             "addresses": (
                 [a.model_dump(mode="json") for a in p.addresses]
                 if any(a.line2 and not a.line1 for a in p.addresses)
@@ -168,7 +176,9 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
             "guarantor": p.guarantor.model_dump(mode="json") if p.guarantor else None,
         },
     )
-    if extras:  # always true: __record__ is always present
+    # `__record__` is set unconditionally above, so this never skips today; it
+    # is kept so the extension is not written as a bare "{}" should that change.
+    if extras:
         extension.append({"url": EXTRAS_NS, "valueString": json.dumps(extras, default=str)})
     gender = (p.sex or "").lower()
     return _prune(

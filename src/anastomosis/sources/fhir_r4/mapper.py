@@ -659,8 +659,8 @@ def _facility(resource: dict[str, Any], source_file: str | None) -> Facility:
     address = address or {}
     raw_lines = address.get("line", [])
     lines = [ln for ln in raw_lines if ln]
-    # Last-wins per system, exactly as the dict comprehension this replaces: a
-    # vendor listing two phones lands the LAST one, so that is the entry read.
+    # Last-wins per system: a vendor listing two phones lands the LAST one, so
+    # that is the entry read.
     telecom: dict[Any, Any] = {}
     telecom_at: dict[Any, int] = {}
     for index, tel in enumerate(resource.get("telecom", [])):
@@ -1099,9 +1099,8 @@ def _coverage(resource: dict[str, Any], patient_id: str, source_file: str | None
     period = resource.get("period") or {}
     start, end = _date(period.get("start")), _date(period.get("end"))
     consumed |= {f"period.{sub}" for sub, value in (("start", start), ("end", end)) if value}
-    # Last-wins per class type code, exactly as the dict comprehension this
-    # replaces; each entry's position rides along so a consumed sub-path names
-    # the entry the value actually came from.
+    # Last-wins per class type code. Each entry's position rides along so a
+    # consumed sub-path names the entry the value actually came from.
     classes: dict[Any, dict[str, Any]] = {}
     class_paths: dict[Any, tuple[str, set[str]]] = {}
     for index, cls in enumerate(resource.get("class", [])):

@@ -199,8 +199,12 @@ def test_round_trip_edge_cases_from_qa_review() -> None:
         extensions={"pf_tebra:RecordLevel": "survives"},
         patient=Patient(
             id=pid,
-            middle_name="Q",  # no given_name: sparse slot
-            addresses=[Address(line2="Apt 4")],  # no line1: sparse slot
+            # Two names for list positions FHIR fills from the front. Without
+            # the extensions export writes for these, "Q" comes back as the
+            # GIVEN name and "Apt 4" as line1 — each value in a neighbouring
+            # field, on the patient's own identity.
+            middle_name="Q",
+            addresses=[Address(line2="Apt 4")],
         ),
         encounters=[
             Encounter(

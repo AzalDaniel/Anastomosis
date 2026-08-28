@@ -344,10 +344,8 @@ class PipelineConsole(_RunConsole):
         if result.deliveries:
             self._present_deliveries(result.deliveries, rollup)
 
-        # Per-patient detail rides the RETURN value (and last_run_summary), never
-        # an event: names/DOB are local display only, the event stream is counts.
-        # Store before emitting `done` so the dashboard's done handler can fetch
-        # it immediately.
+        # Stored before `done` is emitted, so the dashboard's done handler can
+        # fetch it immediately. (Why it rides the return value: module docstring.)
         patients = self._patient_rows(summarize_patients(result.pipeline))
         summary_id = self._store.store_summary(patients)
         self._emit(done_event(self._FLOW, summary_id=summary_id, **rollup))
@@ -546,10 +544,9 @@ class MigrationConsole(_RunConsole):
         # migration: how many patients' charts moved as importable C-CDA).
         rollup["ccda_patients"] = result.ccda_export.counts["patients"]
 
-        # Per-patient detail rides the RETURN value (and last_run_summary), never
-        # an event. In neutral/pack mode the pipeline result yields it; in
-        # ccda-standard mode (no pipeline) it is derived from the loaded records
-        # and the per-patient view (one document per patient).
+        # Where the per-patient detail comes from differs by mode: pack mode has
+        # a pipeline result to summarize, ccda-standard has none, so it is
+        # derived from the loaded records (one document per patient).
         if result.render_mode == RENDER_CCDA_STANDARD:
             patients = self._ccda_standard_patients(result)
         else:

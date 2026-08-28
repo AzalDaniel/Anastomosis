@@ -3,14 +3,11 @@
 Two outputs, two audiences, one shared rule — no patient-derived value leaves
 the ledger through a report:
 
-* :func:`write_run_report` writes a deterministic JSON file inside the
-  hardened (``0o700``) output directory. It draws only on the ledger's
-  counts-and-types accessors: the run row, per-state counts, an attempts
-  histogram, and an error-type histogram from the audit trail. It NEVER copies
-  ``file_path`` values out of the ledger — those can embed a patient-derived
-  filename, and a report is the kind of artifact that gets emailed or synced.
-  Only counts, type names, timestamps, and the destination/run identifiers
-  appear.
+* :func:`write_run_report` writes a deterministic JSON file inside the hardened
+  (``0o700``) output directory, from the ledger's counts-and-types accessors
+  alone. A report is the kind of artifact that gets emailed or synced, so it
+  never copies a ``file_path`` out of the ledger — those embed patient-derived
+  filenames.
 * :func:`summary_line` builds a single console-safe line of counts only, in a
   fixed state order with zero-count states omitted. No item keys, no paths,
   no patient values — it is printed to a terminal that may be shoulder-surfed

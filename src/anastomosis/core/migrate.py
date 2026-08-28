@@ -220,11 +220,8 @@ def _write_manifest_with_event(
 def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> MigrationResult:
     """Run a migration: resolve the route, render the charts, emit the C-CDA payload.
 
-    Emits the SAME PHI-safe :class:`~anastomosis.pipeline.StageEvent`\\ s the
-    pipeline emits (so the CLI/GUI presenters work unchanged) and raises
-    :class:`~anastomosis.pipeline.PipelineError` on loud failures. The structured
-    C-CDA payload lands in ``<out>/ccda``; the human-readable charts in
-    ``<out>/charts``.
+    The structured C-CDA payload lands in ``<out>/ccda``, the human-readable
+    charts in ``<out>/charts``. Events and failures follow the module contract.
     """
     from anastomosis.deliver.router import plan_route
     from anastomosis.destinations.registry import DestinationRegistry
