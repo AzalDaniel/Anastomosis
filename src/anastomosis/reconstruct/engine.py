@@ -7,8 +7,10 @@ Behaviors this engine guarantees:
 * **Crash relaunch** — a renderer crash mid-run costs one retry, not the
   batch.
 * **Collision suffixing** — two same-day visits resolve to the same
-  filename; the loser gets a short source-id suffix rather than
-  overwriting (the same-day-visit defense).
+  filename; the loser gets a source-id suffix rather than overwriting, and
+  the suffix widens until the name is genuinely free (the same-day-visit
+  defense). Two encounters carrying one id have no name that separates
+  them: that chart is reported as a failure, never quietly overwritten.
 * **Idempotent skip** — re-running a half-finished batch only renders what
   is missing, so interruption is always safe.
 
@@ -34,9 +36,27 @@ from anastomosis.core.textutil import safe_name
 
 from .packs import LoadedPack
 
-__all__ = ["ReconstructionEngine", "RenderResult", "RenderedDoc", "Renderer"]
+__all__ = [
+    "DuplicateEncounterId",
+    "ReconstructionEngine",
+    "RenderResult",
+    "RenderedDoc",
+    "Renderer",
+]
 
 logger = logging.getLogger(__name__)
+
+
+class DuplicateEncounterId(Exception):
+    """Two encounters share one id, so no filename can tell their charts apart.
+
+    Carries the id and nothing else: an encounter id is a source identifier,
+    not patient text, and callers log it through ``safe_log_id``.
+    """
+
+    def __init__(self, encounter_id: str) -> None:
+        super().__init__(f"two encounters share id {safe_log_id(encounter_id)}")
+        self.encounter_id = encounter_id
 
 
 class Renderer(Protocol):
@@ -132,14 +152,31 @@ class ReconstructionEngine:
         """Deterministic name allocation: collisions are resolved against the
         names claimed *this run* (iteration order is stable), so a re-run
         allocates identical names and the idempotent skip works. The loser of
-        a same-day collision gets a short source-id suffix — never an
-        overwrite."""
-        path = out_dir / name
-        if path in claimed:
-            suffix = encounter.id.replace("-", "")[:8]
-            path = path.with_name(f"{path.stem}-{suffix}{path.suffix}")
-        claimed.add(path)
-        return path
+        a same-day collision gets a source-id suffix — never an overwrite.
+
+        The suffix used to be the id's first eight characters, applied once,
+        with no check that the suffixed name was free either. Ids that agree on
+        those eight characters are not exotic — sequential Millennium
+        ``ENCNTR_ID``s share long prefixes by construction, and every GUID in
+        this repo's own pf_tebra fixture starts ``feedface`` — so a third
+        same-day visit landed on the second and took it with it. Hence the
+        widening loop: eight characters, then the whole id, which two distinct
+        encounters cannot share.
+        """
+        stem, ext = Path(name).stem, Path(name).suffix
+        ident = encounter.id.replace("-", "")
+        for candidate in (
+            out_dir / name,
+            out_dir / f"{stem}-{ident[:8]}{ext}",
+            out_dir / f"{stem}-{ident}{ext}",
+        ):
+            if candidate not in claimed:
+                claimed.add(candidate)
+                return candidate
+        # Only two encounters carrying ONE id reach here, and there is no name
+        # left that tells them apart. Refusing costs this chart; guessing would
+        # lose one silently, which is the thing this tool must never do.
+        raise DuplicateEncounterId(encounter.id)
 
     # --- the run ---
 
@@ -173,16 +210,28 @@ class ReconstructionEngine:
 
     @staticmethod
     def _write_render_index(out: Path, result: RenderResult) -> None:
-        from anastomosis.deliver.render_index import RenderEntry, RenderIndex
-
-        index = RenderIndex.from_entries(
-            RenderEntry(
-                pdf=doc.path.name,
-                patient_id=doc.patient_id,
-                encounter_id=doc.encounter_id,
-            )
-            for doc in result.documents
+        from anastomosis.deliver.render_index import (
+            RenderEntry,
+            RenderIndex,
+            RenderIndexConflict,
         )
+
+        try:
+            index = RenderIndex.from_entries(
+                RenderEntry(
+                    pdf=doc.path.name,
+                    patient_id=doc.patient_id,
+                    encounter_id=doc.encounter_id,
+                )
+                for doc in result.documents
+            )
+        except RenderIndexConflict as exc:
+            # Unreachable by construction now that _allocate_target widens
+            # until the name is free — kept because it is the last place a
+            # future allocator bug could still be caught, and writing an index
+            # that maps two encounters to one file would hide it again.
+            logger.error("render index would self-conflict (%s); not written", exc_tag(exc))
+            return
         try:
             index.write(out)
         except OSError as exc:
@@ -201,9 +250,21 @@ class ReconstructionEngine:
         result: RenderResult,
         record_cache: dict[str, Any],
     ) -> None:
-        target = self._allocate_target(
-            out, self._filename_for(encounter, record), encounter, claimed
-        )
+        try:
+            target = self._allocate_target(
+                out, self._filename_for(encounter, record), encounter, claimed
+            )
+        except DuplicateEncounterId as exc:
+            # One unnameable chart, reported like any other render failure: the
+            # count and the exit code carry it, and the other several thousand
+            # charts in the batch still get written.
+            logger.error(
+                "cannot name a chart for encounter %s (%s)",
+                safe_log_id(encounter.id),
+                exc_tag(exc),
+            )
+            result.failed.append((encounter.id, exc_tag(exc)))
+            return
         if target.exists() and not force:
             result.skipped.append(target)
             # Skipped is not unverified: QA re-checks existing documents too,

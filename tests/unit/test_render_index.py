@@ -14,6 +14,7 @@ from anastomosis.deliver.render_index import (
     INDEX_FILENAME,
     RenderEntry,
     RenderIndex,
+    RenderIndexConflict,
 )
 
 
@@ -237,3 +238,62 @@ def test_engine_writes_render_index_at_end_of_run(tmp_path: Path) -> None:
     indexed = {(e.pdf, e.patient_id, e.encounter_id) for e in loaded.entries}
     expected = {(doc.path.name, doc.patient_id, doc.encounter_id) for doc in result.documents}
     assert indexed == expected, f"index drift: {indexed} != {expected}"
+
+
+# --- one file, one encounter ------------------------------------------------
+#
+# The index is the sidecar that exists so a chart is never misattributed, so it
+# has to be injective. It used to merge a name clash last-wins, reasoning in a
+# comment that the engine's collision suffix made the case impossible. The
+# suffix did not (it was applied once, unchecked), and last-wins turned an
+# overwritten chart into a clean index and a run that reported success.
+
+
+def _one_pdf_two_encounters() -> list[RenderEntry]:
+    return [
+        RenderEntry(pdf="Twin.pdf", patient_id="aaaa-0001", encounter_id="encA"),
+        RenderEntry(pdf="Twin.pdf", patient_id="aaaa-0001", encounter_id="encB"),
+    ]
+
+
+def test_from_entries_refuses_one_pdf_claimed_by_two_encounters() -> None:
+    with pytest.raises(RenderIndexConflict):
+        RenderIndex.from_entries(_one_pdf_two_encounters())
+
+
+def test_an_exactly_repeated_entry_is_not_a_conflict() -> None:
+    """The same chart listed twice says nothing was lost — only a name claimed
+    by two DIFFERENT encounters means a chart was overwritten."""
+    entry = RenderEntry(pdf="Twin.pdf", patient_id="aaaa-0001", encounter_id="encA")
+    index = RenderIndex.from_entries([entry, entry])
+    assert index.lookup("Twin.pdf") == entry
+
+
+def test_a_self_conflicting_index_on_disk_fails_closed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An index written by a version that could overwrite a chart is not
+    trustworthy for attribution. It is treated like a corrupt one: the
+    deliverers fall back to ``unattributed/`` rather than file a chart onto
+    whichever patient happened to sort last."""
+    import logging
+
+    (tmp_path / INDEX_FILENAME).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": [
+                    {"pdf": e.pdf, "patient_id": e.patient_id, "encounter_id": e.encounter_id}
+                    for e in _one_pdf_two_encounters()
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.render_index"):
+        assert RenderIndex.load(tmp_path) is None
+    conflicts = [rec.message for rec in caplog.records if "self-conflict" in rec.message]
+    assert conflicts, "a self-conflicting index must be logged loudly, never silent"
+    # The filename embeds a patient name and a date of service; the log names
+    # the index, not the chart.
+    assert all("Twin.pdf" not in msg for msg in conflicts)
