@@ -268,11 +268,15 @@ def pack_init(
             "DISTINCT-patient samples to be reliable."
         )
 
-    _cli.console.print("\n[bold]Inferred design[/bold] (PHI-safe summary):")
+    # NOT "PHI-safe summary", which is what this said. The static labels below
+    # are chosen by how often a string recurred, and a value two patients share
+    # recurs — so this list can carry patient data and the operator has to read
+    # it as such (#200).
+    _cli.console.print("\n[bold]Inferred design[/bold] — read the static labels before confirming:")
     for line in analysis_result.summary:
         _cli.console.print(f"  {line}")
 
-    _cli.console.print(f"\n[yellow]Same-patient caveat:[/yellow] {analysis_result.caveat}")
+    _cli.console.print(f"\n[yellow]Before you confirm:[/yellow] {analysis_result.caveat}")
     if not yes and not typer.confirm("Are these samples from DIFFERENT patients?", default=False):
         _cli.console.print("Aborting — gather samples from distinct patients and re-run.")
         declined("No draft layout was written.")

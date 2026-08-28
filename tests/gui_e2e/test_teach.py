@@ -68,9 +68,15 @@ def test_layout_mode_requires_the_distinct_patients_confirmation(gui) -> None:
     assert app.called("last_pack_result")
     assert not page.locator("#layout-proposal").is_hidden()
     assert "samples analyzed" in app.text("#layout-summary")
-    assert "About the samples" in app.text("#layout-caveat")
+    assert "Before you confirm" in app.text("#layout-caveat")
+    # The panel WARNS about the labels rather than vouching for them. It used to
+    # say "No patient data is shown below." directly above a list that can
+    # contain it: the labels are the strings that recurred across the samples,
+    # and a value two patients share recurs (#200).
     proposal = (page.locator("#layout-proposal").text_content() or "").lower()
-    assert "no patient data is shown" in proposal
+    assert "read the labels below before confirming" in proposal
+    assert "two patients happen to share repeats too" in proposal
+    assert "no patient data is shown" not in proposal
     assert page.locator("#layout-write").is_disabled(), "writing must be gated on the confirmation"
     assert "Step 2 of 2" in app.text("#layout-step")
 

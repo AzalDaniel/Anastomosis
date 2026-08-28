@@ -35,7 +35,7 @@
   function renderProposal(res) {
     el("layout-summary").textContent = (res.summary || []).join("\n");
     el("layout-caveat").textContent = res.caveat
-      ? `About the samples: ${res.caveat}`
+      ? `Before you confirm: ${res.caveat}`
       : "";
     el("layout-proposal").hidden = false;
     // Consent is per-analysis, never sticky: a fresh look re-arms the gate.

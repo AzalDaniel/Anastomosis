@@ -29,10 +29,19 @@ Design choices, grounded in the pack contracts read above:
   to a known model field become patient-header labels; the rest are emitted
   verbatim inside an ``UNPLACED STATIC TEXT`` HTML comment so nothing is
   silently dropped — the operator positions them by hand.
-* **PHI**: only static-classified text (recurring across a supermajority of
-  samples — template labels/headings by construction) ever reaches the emitted
-  files. Per-patient values never recur and never reach here. The same-patient
-  caveat from :mod:`infer` is restated in ``DRAFT.md``.
+* **PHI**: only static-classified text — text recurring across a supermajority
+  of samples — reaches the emitted files. That is a FREQUENCY test, and it was
+  described here as though it were a proof: "per-patient values never recur and
+  never reach here" is not true, and #200 reproduced it. Three charts from three
+  different patients put the bar at two, so a diagnosis or an ethnicity that two
+  of them share is classified as template chrome and written out verbatim, into
+  ``template.html`` and ``DRAFT.md`` alike.
+
+  What is still true: a value appearing in exactly ONE sample cannot reach here,
+  and a single-sample run emits no sample-derived text at all. What the operator
+  is owed is the rest of it, which is why ``SAME_PATIENT_CAVEAT`` now says that
+  distinct patients are not on their own enough, and asks them to read the
+  labels rather than trust them.
 * **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
   (sorted keys, fixed float formatting, deterministic section ordering).
 """
@@ -90,7 +99,14 @@ SAME_PATIENT_CAVEAT = (
     "of ONE patient's chart and that patient's values recur in every sample, "
     "become indistinguishable from template text, and WILL be emitted as "
     "labels here. If the samples were not distinct patients, discard this "
-    "draft."
+    "draft.\n\n"
+    "Distinct patients are NOT on their own enough. The split is a frequency "
+    "count, and any value two patients happen to share — a common diagnosis, "
+    "an ethnicity, a referring provider, a clinic address, a phone number — "
+    "recurs often enough to be classified as template text and is emitted "
+    "the same way. With three samples the bar is two. Read the static labels "
+    "below and delete anything that belongs to a patient rather than to the "
+    "form."
 )
 
 # Static strings that, after normalization, signal a known patient-header model

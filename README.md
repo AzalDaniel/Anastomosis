@@ -231,8 +231,11 @@ src/anastomosis/
 │                     no torch: font histogram → type scale, x-position bucketing →
 │                     column grids (deliberately explainable greedy clustering, not a
 │                     black box), get_drawings() fills → design tokens, bold spans
-│                     recurring across ALL samples → section taxonomy + static-text
-│                     intersection; emits a loadable draft pack with a same-patient caveat.
+│                     recurring across a SUPERMAJORITY of samples (60%, so two of
+│                     three) → section taxonomy + static text. That is a frequency
+│                     count, not a proof: a value two patients share classifies as
+│                     template chrome, so the draft ships a caveat saying to read
+│                     the labels before trusting them.
 ├── qa/               every rendered document is verified. CheckResult{pass|warn|fail}
 │                     over data_integrity, layout_pagination, vitals_loinc, and
 │                     date_staleness checks, with BOUNDARY-ANCHORED matching because
