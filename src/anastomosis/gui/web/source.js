@@ -24,7 +24,7 @@
   }
 
   function setStep(text) {
-    el("format-step").textContent = text;
+    Shell.setStatus(el("format-step"), text);
   }
 
   function keyNames(key) {

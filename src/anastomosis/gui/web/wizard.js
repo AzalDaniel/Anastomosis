@@ -202,6 +202,10 @@
     const p = document.createElement("p");
     p.textContent = text;
     box.appendChild(p);
+    // The box itself cannot be the live region: it is revealed and filled in
+    // the same task, which is the ordering an announcement is least likely to
+    // survive. Shell.announce owns a node that was there all along.
+    Shell.announce(text);
   }
 
   // A run asked for but not yet begun. The click answers straight away, but the

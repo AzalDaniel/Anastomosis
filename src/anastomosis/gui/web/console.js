@@ -122,11 +122,22 @@
     }
     // A zero is not a state worth colouring, whatever bucket it belongs to:
     // "0 needs attention" in oxblood reads as an alarm about nothing.
-    for (const [bucket, n] of Object.entries(buckets)) {
+    //
+    // The same four numbers are said as one sentence, because "8 1 0 3" is
+    // what four bare values sound like read in a row. The words come off the
+    // labels beside them rather than a second list here, so the sentence
+    // cannot drift from the screen; zeros are left out for the reason they are
+    // not coloured, and urgency leads, as it does in the state list below.
+    const said = [];
+    for (const bucket of ["attention", "progress", "waiting", "filed"]) {
+      const n = buckets[bucket];
       const value = el(`uploads-count-${bucket}`);
       value.textContent = String(n);
       value.parentNode.dataset.zero = String(n === 0);
+      const label = value.parentNode.querySelector(".value-k");
+      if (n > 0 && label) said.push(`${n} ${label.textContent.toLowerCase()}`);
     }
+    Shell.announce(said.length ? `Filing: ${said.join(", ")}.` : "Filing: nothing filed yet.");
 
     const grid = el("uploads-states");
     grid.innerHTML = "";

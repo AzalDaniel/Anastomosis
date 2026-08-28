@@ -72,6 +72,11 @@
         from the Start menu.
       </div>
       <div class="banner" id="banner" role="alert"></div>
+      <!-- The one polite announcer: Shell.announce writes here whenever a
+           view updates the line it already shows on screen, so the words a
+           sighted operator reads and the words a screen reader speaks are
+           the same words, written once. -->
+      <div class="sr-only" id="announcer" role="status" aria-live="polite"></div>
       <!-- Vendor-change notice; hidden until a filing assistant looks out of date. -->
       <div class="toast" id="freshness-toast" role="status">
         <span id="freshness-body"></span>
@@ -95,7 +100,8 @@
 
         <div class="panel progress-frame" id="charts-progress" aria-label="Progress">
           <div class="progress-current" id="charts-current">Ready.</div>
-          <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-bar" role="progressbar" aria-label="Stages finished"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="progress-bar-fill" id="charts-fill"></div>
           </div>
           <div class="stage-rail" id="charts-rail"></div>
@@ -439,13 +445,18 @@
          in any view, and expands into the full history. It floats above the
          shell rather than riding at the end of it. -->
     <button type="button" class="log-strip" id="log-strip"
-            aria-label="Activity — click or press L for the full list"
+            aria-describedby="log-strip-hint"
             aria-expanded="false" aria-controls="log-drawer">
-      <span class="log-ts" id="log-strip-ts">--:--:--</span>
-      <span class="icon log-icon" id="log-strip-icon" data-icon="info"></span>
+      <span class="log-ts" id="log-strip-ts" aria-hidden="true">--:--:--</span>
+      <span class="icon log-icon" id="log-strip-icon" data-icon="info" aria-hidden="true"></span>
       <span class="log-msg" id="log-strip-msg">Ready.</span>
       <span class="log-hint" aria-hidden="true">L</span>
     </button>
+    <!-- The hint DESCRIBES the button; it is not its name. As an aria-label it
+         overrode the contents, so the strip announced "Activity — click or
+         press L for the full list" while it read "Charts: stopped —
+         UnsupportedSourceError". The latest event is the name. -->
+    <span class="sr-only" id="log-strip-hint">Activity — click or press L for the full list</span>
 
     <div class="log-drawer" id="log-drawer" role="dialog" aria-label="Activity" aria-modal="false" hidden>
       <header class="log-drawer-header">
