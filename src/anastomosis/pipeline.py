@@ -381,6 +381,34 @@ def run_pipeline(
     )
 
 
+def settle_qa(report: QAReport, out: Path, emit: EventSink) -> None:
+    """Write the QA report, announce it, and refuse the run if it failed.
+
+    Both orchestrators end QA this way, and they have to end it the SAME way —
+    an operator reading the stage rail cannot tell which one produced the run,
+    and a script reading the exit code must not care. There is already a parity
+    test asserting the two share a stage contract; this makes it the contract
+    rather than a claim about two copies that happened to agree.
+    """
+    from anastomosis.qa import Verdict, write_report
+
+    write_report(report, out)
+    emit(
+        StageEvent(
+            STAGE_QA,
+            counts={
+                "pass": report.count(Verdict.PASS),
+                "warn": report.count(Verdict.WARN),
+                "fail": report.count(Verdict.FAIL),
+            },
+        )
+    )
+    if not report.ok:
+        raise PipelineError(
+            f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
+        )
+
+
 def _run_qa_stage(
     records: list[PatientRecord],
     result: RenderResult,
@@ -397,7 +425,9 @@ def _run_qa_stage(
     :class:`PipelineError` (exit 1).
     """
     try:
-        from anastomosis.qa import Verdict, run_qa, write_report
+        # The probe, not the whole surface: settle_qa imports what it needs
+        # once QA has actually run, and by then pymupdf is known to be here.
+        from anastomosis.qa import run_qa
     except ImportError as exc:
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
@@ -415,19 +445,5 @@ def _run_qa_stage(
         section_flags=engine.section_flags,
         page_size=page_size,
     )
-    write_report(report, out)
-    emit(
-        StageEvent(
-            STAGE_QA,
-            counts={
-                "pass": report.count(Verdict.PASS),
-                "warn": report.count(Verdict.WARN),
-                "fail": report.count(Verdict.FAIL),
-            },
-        )
-    )
-    if not report.ok:
-        raise PipelineError(
-            f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
-        )
+    settle_qa(report, out, emit)
     return report

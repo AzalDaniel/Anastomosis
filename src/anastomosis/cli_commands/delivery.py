@@ -21,6 +21,15 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 from anastomosis.cli import app
+from anastomosis.cli_commands._options import (
+    ExportDir,
+    Force,
+    Pack,
+    PackDirs,
+    QaFlag,
+    Source,
+    TrustPack,
+)
 from anastomosis.cli_commands._paths import out_dir
 
 if TYPE_CHECKING:
@@ -39,39 +48,21 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
     """
 
     def command(
-        export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
+        export_dir: ExportDir,
+        # Not the shared --out: the pair says something different about where
+        # its deliverable lands, and that wording is the only thing that
+        # differs between archive and bundle.
         out: Annotated[Path, typer.Option("--out", "-o", help=out_help, parser=out_dir)],
-        source: Annotated[
-            str | None,
-            typer.Option("--source", "-s", help="Source adapter name (default: auto-detect)."),
-        ] = None,
-        pack: Annotated[
-            str, typer.Option("--pack", "-p", help="Template pack name.")
-        ] = "generic_soap",
-        pack_dir: Annotated[
-            list[Path] | None,
-            typer.Option(
-                "--pack-dir", help="Extra pack directories (implies trusting their code)."
-            ),
-        ] = None,
-        trust_pack: Annotated[
-            bool,
-            typer.Option(
-                "--trust-pack",
-                help="Trust the --pack-dir packs at their current code hash (records the hash; "
-                "required the first time, and again after their code changes).",
-            ),
-        ] = False,
-        force: Annotated[
-            bool, typer.Option("--force", help="Re-render documents that exist.")
-        ] = False,
+        source: Source = None,
+        pack: Pack = "generic_soap",
+        pack_dir: PackDirs = None,
+        trust_pack: TrustPack = False,
+        force: Force = False,
         section: Annotated[
             list[str] | None,
             typer.Option("--section", help="Override a section flag."),
         ] = None,
-        qa: Annotated[
-            bool, typer.Option("--qa/--no-qa", help="Verify every rendered document (default on).")
-        ] = True,
+        qa: QaFlag = True,
         charts_dir: Annotated[
             Path | None,
             typer.Option("--charts-dir", help=charts_help, parser=out_dir),

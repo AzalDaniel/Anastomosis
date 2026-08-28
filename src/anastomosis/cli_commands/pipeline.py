@@ -14,34 +14,28 @@ from typing import Annotated
 import typer
 
 from anastomosis.cli import pipeline_app
+from anastomosis.cli_commands._options import (
+    ExportDir,
+    Force,
+    OutDir,
+    Pack,
+    PackDirs,
+    QaFlag,
+    Source,
+    TrustPack,
+)
 from anastomosis.cli_commands._paths import out_dir
 
 
 @pipeline_app.command("run")
 def pipeline_run(
-    export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
-    out: Annotated[
-        Path,
-        typer.Option("--out", "-o", help="Output directory (created 0700).", parser=out_dir),
-    ],
-    source: Annotated[
-        str | None,
-        typer.Option("--source", "-s", help="Source adapter name (default: auto-detect)."),
-    ] = None,
-    pack: Annotated[str, typer.Option("--pack", "-p", help="Template pack name.")] = "generic_soap",
-    pack_dir: Annotated[
-        list[Path] | None,
-        typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
-    ] = None,
-    trust_pack: Annotated[
-        bool,
-        typer.Option(
-            "--trust-pack",
-            help="Trust the --pack-dir packs at their current code hash (records the hash; "
-            "required the first time, and again after their code changes).",
-        ),
-    ] = False,
-    force: Annotated[bool, typer.Option("--force", help="Re-render documents that exist.")] = False,
+    export_dir: ExportDir,
+    out: OutDir,
+    source: Source = None,
+    pack: Pack = "generic_soap",
+    pack_dir: PackDirs = None,
+    trust_pack: TrustPack = False,
+    force: Force = False,
     section: Annotated[
         list[str] | None,
         typer.Option(
@@ -49,9 +43,7 @@ def pipeline_run(
             help="Override a section flag, e.g. --section insurance=on --section addenda=off.",
         ),
     ] = None,
-    qa: Annotated[
-        bool, typer.Option("--qa/--no-qa", help="Verify every rendered document (default on).")
-    ] = True,
+    qa: QaFlag = True,
     archive: Annotated[
         Path | None,
         typer.Option(
