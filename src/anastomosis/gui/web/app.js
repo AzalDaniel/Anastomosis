@@ -350,10 +350,18 @@
       if (!res || !res.ok || !Array.isArray(res.stale) || res.stale.length === 0) return;
       const names = res.stale.map((s) => s.destination).join(", ");
       // The controller's `advice` is a terminal command — never shown here.
+      // `pack_freshness` returns the exact command per destination in `advice`;
+      // it was being discarded in favour of "set it up again", which named no
+      // way to do it. One stale destination gets its command; several get the
+      // shape, since the toast is one line.
+      const advice =
+        res.stale.length === 1 && res.stale[0].advice
+          ? `Run: ${res.stale[0].advice}`
+          : "Re-check them with: anast destination init <name> --validate";
       el("freshness-body").textContent =
         `The filing assistant for ${names} was last checked more than ` +
         `${res.stale_after_days} days ago and may no longer match the destination. ` +
-        "Set it up again before filing charts there.";
+        `${advice}`;
       el("freshness-toast").classList.add("show");
     } catch (_) {
       /* advisory only; never block the view on it */

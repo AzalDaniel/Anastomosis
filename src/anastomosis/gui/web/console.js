@@ -226,15 +226,15 @@
     const [y, m] = started.split("-").map((s) => parseInt(s, 10));
     CAL.year = y;
     CAL.month = m - 1;
+    // ONE run, counted once, on the day it started.
+    //
+    // The finish day used to add a second tally, so a run that started and
+    // finished the same day showed a badge of "2" — under a legend whose green
+    // dot reads "Filed", next to counters correctly reading "57 Filed". The
+    // badge counts RUNS; nothing about it was ever a chart count.
     CAL.histogram[started] = run.aborted_reason
       ? { pending: 0, done: 0, errors: 1 }
       : { pending: 0, done: 1, errors: 0 };
-    if (run.finished_at) {
-      const fin = String(run.finished_at).slice(0, 10);
-      const cur = CAL.histogram[fin] || { pending: 0, done: 0, errors: 0 };
-      cur.done += 1;
-      CAL.histogram[fin] = cur;
-    }
     drawCalendar();
   }
 
@@ -436,8 +436,13 @@
         verify
       );
       if (!res || !res.ok) {
+        // Through the shared table, like every other view. This one printed
+        // the raw sentinel.
         Shell.showBanner(
-          `Filing could not start: ${res ? res.error : "no answer from the app"}`
+          Shell.refusalText(
+            res ? res.error : "no answer from the app",
+            "Filing could not start"
+          )
         );
         Shell.logEvent({ kind: "error", msg: "Uploads: filing did not start." });
         return;

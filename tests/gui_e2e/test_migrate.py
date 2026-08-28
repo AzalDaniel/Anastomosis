@@ -45,6 +45,26 @@ def _open(gui):
     return app
 
 
+def _with_a_ready_assistant(app):
+    """Report the canned destination's filing assistant as set up.
+
+    The shipped `tebra` pack has no discovered selectors on a test machine, so
+    the real controller reports `ready: false` — correctly. Wrapping the live
+    call keeps the transit map genuine and flips only the one flag, so a test
+    about the HANDOFF is not also a test about pack discovery.
+    """
+    app.page.evaluate(
+        """() => {
+          const real = window.pywebview.api.destination_status;
+          window.pywebview.api.destination_status = async (name) => {
+            const res = await real(name);
+            return { ...res, pack: { ...res.pack, ready: true } };
+          };
+        }"""
+    )
+    return app
+
+
 def test_migrate_populates_its_pickers(gui) -> None:
     """info() + routes() fill the format, chart-pages and destination pickers."""
     app = _open(gui)
@@ -111,15 +131,19 @@ def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
     # The registry's own evidence is kept, one disclosure down — nothing dropped.
     detail = page.locator("#migrate-routes .route-detail").first.text_content() or ""
     assert detail.strip(), "the route evidence was dropped instead of tucked away"
-    # This destination ships a filing assistant, so the handoff is offered.
-    assert not page.locator("#migrate-handoff-actions").is_hidden()
+    # This destination ships a filing assistant that is NOT set up here, so the
+    # handoff is withheld — offering it would put the operator one click from
+    # Start filing with an assistant that cannot file.
+    assert page.locator("#migrate-handoff-actions").is_hidden()
     guidance = page.locator("#migrate-guidance").text_content() or ""
     assert "filing assistant" in guidance.lower()
+    # And the way out is a command that exists, not a screen that cannot do it.
+    assert "anast destination init" in guidance
 
 
 def test_continue_on_uploads_carries_the_context(gui) -> None:
     """The handoff switches view AND pre-fills what Uploads would ask for."""
-    app = _open(gui)
+    app = _with_a_ready_assistant(_open(gui))
     page = app.page
     page.fill("#migrate-out-dir", "/synthetic/out")
     app.choose("#migrate-destination", CANNED_DESTINATION)
@@ -146,7 +170,7 @@ def test_a_spent_handoff_never_retargets_uploads_again(gui) -> None:
     with no banner and no line in the strip. That is the promise this product
     makes first: never silently misfile a chart.
     """
-    app = _open(gui)
+    app = _with_a_ready_assistant(_open(gui))
     page = app.page
     page.fill("#migrate-out-dir", "/synthetic/batch-a")
     app.choose("#migrate-destination", CANNED_DESTINATION)
@@ -365,3 +389,27 @@ def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
     assert not any(submitted.values()), (
         f"the run was submitted with sections the physician turned off: {submitted}"
     )
+
+
+def test_an_assistant_that_is_not_set_up_is_not_handed_off(gui) -> None:
+    """The handoff was gated on whether a filing assistant EXISTED.
+
+    So this panel could say the assistant was not set up and, two lines below,
+    offer "Continue on Uploads" — which switches view, pre-fills both fields,
+    and leaves the operator one click from Start filing with an assistant that
+    cannot file. The canned destination is exactly this case: a shipped pack
+    with no discovered selectors.
+    """
+    app = _open(gui)
+    page = app.page
+    app.choose("#migrate-destination", CANNED_DESTINATION)
+    page.wait_for_timeout(200)
+
+    assert page.locator("#migrate-handoff-actions").is_hidden()
+    guidance = page.locator("#migrate-guidance").text_content() or ""
+    assert "has not been set up" in guidance
+    # Naming a step that exists. It used to say "Set it up from the Teach
+    # screen" — a screen whose whole control surface is document layouts and
+    # export formats, with no destination setup on it at all.
+    assert "anast destination init" in guidance
+    assert "Teach screen" not in guidance

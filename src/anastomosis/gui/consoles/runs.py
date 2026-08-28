@@ -628,11 +628,23 @@ class MigrationConsole(_RunConsole):
         try:
             loaded = load_destination_pack(name)
         except BrowserPackError as exc:
-            return {"name": name, "ready": False, "diagnosis": exc_tag(exc)}
+            return {
+                "name": name,
+                "ready": False,
+                "diagnosis": exc_tag(exc),
+                "advice": f"anast destination init {name}",
+            }
         return {
             "name": loaded.name,
             "ready": loaded.ready,
             "builtin": loaded.builtin,
+            # What a person actually runs to make this ready. The wizard used to
+            # tell them to "set it up from the Teach screen" — a screen whose
+            # whole control surface is document layouts and export formats, with
+            # no destination setup on it at all. Carried here rather than typed
+            # into the JS so the command lives beside the code that knows it,
+            # next to the same advice `pack_freshness` already returns.
+            "advice": f"anast destination init {loaded.name}",
         }
 
 
