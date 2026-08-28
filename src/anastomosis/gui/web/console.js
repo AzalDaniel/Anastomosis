@@ -35,6 +35,12 @@
   const POLL_INTERVAL_MS = 1500;
   let POLL_TIMER = null;
   let ITEM_KEYS = [];
+  //: How many items the ledger has still owing work, which is not the same as
+  //: ITEM_KEYS.length — the controller caps what it sends.
+  let PENDING_TOTAL = 0;
+  //: The most rows the search will paint at once. A second cut on top of the
+  //: controller's, and the reason the count below has to name both.
+  const MAX_SEARCH_ROWS = 50;
   //: How many finished charts are ready to be filed (from the results folder),
   //: or null before anything has been counted.
   let READY_TO_FILE = null;
@@ -182,8 +188,12 @@
     const meta = el("uploads-meta");
     meta.innerHTML = "";
     const kinds = Object.keys(status.error_type_histogram || {}).length;
-    metaValue(meta, String(status.total || 0), "Charts recorded");
-    if (READY_TO_FILE !== null) metaValue(meta, String(READY_TO_FILE), "Ready to file");
+    // These two are NOT the same measurement and used to look like it: the
+    // first counts rows in the filing record, the second counts PDFs in the
+    // results folder. On a normal run they differ, and an operator seeing 8
+    // beside 7 with no explanation is owed one.
+    metaValue(meta, String(status.total || 0), "Charts in the record");
+    if (READY_TO_FILE !== null) metaValue(meta, String(READY_TO_FILE), "PDFs in the folder");
     metaValue(meta, String(kinds), "Kinds of error", kinds > 0 ? "attention" : null);
 
     // When the run happened is a sentence, not a value: a timestamp read as a
@@ -375,8 +385,13 @@
     try {
       const res = await window.pywebview.api.upload_item_keys(record);
       ITEM_KEYS = res && res.ok ? res.item_keys : [];
+      // What the ledger holds, not what came back: the controller caps the
+      // list, and a slice presented as the whole is how an operator concludes
+      // a visit id is missing when it is merely past the cut.
+      PENDING_TOTAL = res && res.ok ? res.total : ITEM_KEYS.length;
     } catch (_) {
       ITEM_KEYS = [];
+      PENDING_TOTAL = 0;
     }
     renderSearch();
   }
@@ -400,12 +415,37 @@
       host.appendChild(empty);
       return;
     }
-    for (const key of matches.slice(0, 50)) {
+    for (const key of matches.slice(0, MAX_SEARCH_ROWS)) {
       const row = document.createElement("div");
       row.className = "search-result";
       row.textContent = key; // a visit id plus a content fingerprint — never a name
       host.appendChild(row);
     }
+    const note = countNote(matches.length, !!query);
+    if (note) {
+      const line = document.createElement("div");
+      line.className = "search-empty";
+      line.textContent = note;
+      host.appendChild(line);
+    }
+  }
+
+  // Two cuts, and until now neither was mentioned: this view paints at most
+  // MAX_SEARCH_ROWS, and the controller had already capped what it sent. A
+  // ledger of three thousand became fifty rows with nothing saying so.
+  function countNote(shown, filtered) {
+    const capped = ITEM_KEYS.length < PENDING_TOTAL;
+    const cut = shown > MAX_SEARCH_ROWS;
+    if (!capped && !cut) return "";
+    if (filtered) {
+      const of = capped ? ` of the first ${ITEM_KEYS.length} read` : "";
+      return cut
+        ? `Showing ${MAX_SEARCH_ROWS} of ${shown} matches${of}. Narrow the search to see the rest.`
+        : `Searching the first ${ITEM_KEYS.length} of ${PENDING_TOTAL} still waiting.`;
+    }
+    return cut
+      ? `Showing ${MAX_SEARCH_ROWS} of ${PENDING_TOTAL} still waiting. Search to narrow it down.`
+      : `Showing ${shown} of ${PENDING_TOTAL} still waiting.`;
   }
 
   // --- driving --------------------------------------------------------------

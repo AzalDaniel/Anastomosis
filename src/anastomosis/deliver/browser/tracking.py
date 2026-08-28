@@ -386,6 +386,26 @@ class TrackingDB:
             for row in rows
         ]
 
+    def pending_count(self) -> int:
+        """How many items still owe work — the same states :meth:`pending_items`
+        returns, counted rather than listed.
+
+        Here and not in the caller: a reader that decided for itself which
+        states count as pending would be a second definition, free to drift
+        from this one. A caller showing a truncated list needs the true total
+        to say so honestly.
+        """
+        placeholders = ", ".join("?" for _ in _PENDING_STATES)
+        row = (
+            self._conn()
+            .execute(
+                f"SELECT COUNT(*) AS n FROM items WHERE state IN ({placeholders})",  # noqa: S608
+                [state.value for state in _PENDING_STATES],
+            )
+            .fetchone()
+        )
+        return int(row["n"])
+
     def counts(self) -> dict[str, int]:
         """Item counts per state (for reports and logging — counts only,
         never patient-derived values)."""

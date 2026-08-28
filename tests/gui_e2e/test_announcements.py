@@ -112,23 +112,29 @@ def test_the_banner_was_already_in_the_tree_when_the_error_arrived(gui) -> None:
     the alert and its text arrived together — the mutation happened outside the
     render tree. It is now always rendered and merely empty, which is why
     `hideBanner` clears the text rather than removing the box.
+
+    The alert is `#banner-text`, not the box: the dismiss button sits in the box
+    beside it, so pressing it is not announced as part of the message.
     """
     app = gui()
 
     def banner():
         return app.page.evaluate(
             """() => {
-              const node = document.getElementById('banner');
+              const box = document.getElementById('banner');
+              const text = document.getElementById('banner-text');
               return {
-                display: getComputedStyle(node).display,
-                text: node.textContent,
-                shown: node.classList.contains('show'),
+                display: getComputedStyle(box).display,
+                role: text.getAttribute('role'),
+                text: text.textContent,
+                shown: box.classList.contains('show'),
               };
             }"""
         )
 
     before = banner()
     assert before["display"] != "none", "the alert was not in the tree before it spoke"
+    assert before["role"] == "alert"
     assert before["text"] == ""
 
     app.emit(error_event(_FLOW, "reconstruct", "UnsupportedSourceError"))

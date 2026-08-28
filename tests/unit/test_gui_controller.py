@@ -1022,6 +1022,45 @@ def test_upload_item_keys_lists_keys_never_names(tmp_path: Path) -> None:
         assert "pat-" not in k  # no patient id leaks into the palette
 
 
+def test_upload_item_keys_reports_what_it_left_out(tmp_path: Path) -> None:
+    """A capped list presented as the whole is how an id looks missing.
+
+    ``limit`` caps what comes back; ``total`` is what the ledger holds. Without
+    the second number the view could not tell a visit id that is absent from one
+    that is merely past the cut, and it said nothing either way.
+    """
+    from anastomosis.deliver.browser.states import UploadState
+    from anastomosis.deliver.browser.tracking import TrackingDB
+    from anastomosis.destinations.base import UploadItem
+
+    db_path = tmp_path / "out" / "tracking.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    tracking = TrackingDB(db_path)
+    run_id = tracking.begin_run("fake")
+    for n in range(7):
+        tracking.enqueue(
+            UploadItem(
+                item_key=f"enc-{n}:abcdef012345",
+                encounter_id=f"enc-{n}",
+                patient_id=f"pat-{n}",
+                file_path=Path(f"/synthetic/note-{n}.pdf"),
+                sha256="0" * 64,
+                size_bytes=100 + n,
+            )
+        )
+    # One walked out of the pending states, so `total` is not simply the count
+    # of rows in the ledger.
+    tracking.transition("enc-0:abcdef012345", UploadState.RESOLVING_PATIENT, run_id=run_id)
+    tracking.close()
+
+    result = GuiController(_RecordingSink()).upload_item_keys(str(db_path), limit=3)
+
+    assert result["ok"] is True
+    assert len(result["item_keys"]) == 3  # type: ignore[arg-type]
+    assert result["count"] == 3
+    assert result["total"] == 6
+
+
 def test_upload_item_keys_missing_file_is_clean_error(tmp_path: Path) -> None:
     result = GuiController(_RecordingSink()).upload_item_keys(str(tmp_path / "nope.db"))
     assert result["ok"] is False
