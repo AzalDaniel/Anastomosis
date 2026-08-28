@@ -92,15 +92,18 @@ def test_reading_the_record_fills_the_buckets_and_the_calendar(gui) -> None:
         "waiting": "false",
     }, zeroes
 
-    # One cell per non-empty state, in plain English, with the technical id
+    # One row per non-empty state, in plain English, with the technical id
     # available on the tooltip.
-    cells = page.locator("#uploads-states .state-cell")
-    assert cells.count() == len(CANNED_LEDGER_COUNTS)
+    rows = page.locator("#uploads-states .result")
+    assert rows.count() == len(CANNED_LEDGER_COUNTS)
     text = page.locator("#uploads-states").text_content() or ""
     assert "Filed and confirmed" in text and "Could not file" in text
     assert "_" not in text, "a raw state id is being shown as a label"
-    ids = {cells.nth(i).get_attribute("title") for i in range(cells.count())}
+    ids = {rows.nth(i).get_attribute("title") for i in range(rows.count())}
     assert ids == set(CANNED_LEDGER_COUNTS)
+    # What needs a person is at the top, not wherever the alphabet put it.
+    buckets = [rows.nth(i).get_attribute("data-bucket") for i in range(rows.count())]
+    assert buckets == ["attention", "progress", "waiting", "filed"], buckets
 
     # When the run happened is a sentence: a timestamp is not a value display.
     when = app.text("#uploads-when")

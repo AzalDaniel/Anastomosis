@@ -132,6 +132,41 @@
     Shell.onReady((live) => {
       el("layout-analyze").disabled = !live;
     });
+    Shell.onInfo(renderKnown);
+  }
+
+  // "Teach it another" needs an "another than WHAT". This is that: the formats
+  // and layouts already installed, as static rows — no tint, because every row
+  // here has the same status and a tint that never varies carries nothing.
+  function renderKnown(info) {
+    const summary = el("teach-known-summary");
+    const list = el("teach-known");
+    if (!summary || !list) return;
+    const sources = info.sources || [];
+    const layouts = (info.packs || []).filter((pack) => pack.available);
+    const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    summary.textContent =
+      `Anastomosis reads ${count(sources.length, "export format", "export formats")} ` +
+      `and lays charts out ${count(layouts.length, "way", "ways")}. ` +
+      "Teach it another when it meets one it does not know.";
+
+    list.innerHTML = "";
+    for (const source of sources) {
+      const row = Shell.resultRow(null, [
+        { text: Shell.displayName(source.name) },
+        { text: source.description || "", className: "result-note" },
+      ]);
+      row.title = source.name;
+      list.appendChild(row);
+    }
+    for (const layout of layouts) {
+      const row = Shell.resultRow(null, [
+        { text: Shell.displayName(layout.name) },
+        { text: "Chart layout", className: "result-note" },
+      ]);
+      row.title = layout.name;
+      list.appendChild(row);
+    }
   }
 
   // The Teach VIEW is registered here (one workspace, two modes); source.js

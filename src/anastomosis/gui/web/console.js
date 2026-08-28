@@ -110,24 +110,23 @@
     const grid = el("uploads-states");
     grid.innerHTML = "";
     const states = Object.keys(counts).sort();
-    if (states.length === 0) {
-      grid.textContent = "Nothing has been recorded yet.";
-      return;
-    }
+    Shell.setEmpty("uploads-states", states.length === 0);
+    if (states.length === 0) return;
+    // Sorted by urgency, so what needs a person is at the top of the list
+    // rather than wherever the alphabet put it.
+    const order = { attention: 0, progress: 1, waiting: 2, filed: 3 };
+    states.sort((a, b) => {
+      const gap = order[stateInfo(a).bucket] - order[stateInfo(b).bucket];
+      return gap !== 0 ? gap : a.localeCompare(b);
+    });
     for (const state of states) {
       const info = stateInfo(state);
-      const cell = document.createElement("div");
-      cell.className = "state-cell";
-      cell.dataset.bucket = info.bucket;
-      cell.title = state; // the technical id, on the tooltip
-      const label = document.createElement("span");
-      label.textContent = info.label;
-      const value = document.createElement("span");
-      value.className = "state-count";
-      value.textContent = String(counts[state]);
-      cell.appendChild(label);
-      cell.appendChild(value);
-      grid.appendChild(cell);
+      const row = Shell.resultRow(info.bucket, [
+        { text: info.label },
+        { text: String(counts[state]), className: "result-n" },
+      ]);
+      row.title = state; // the technical id, on the tooltip
+      grid.appendChild(row);
     }
   }
 
@@ -246,11 +245,16 @@
     drawCalendar();
   }
 
-  async function onRefresh() {
+  async function onRefresh(opts) {
     if (!hasApi()) return;
+    const quiet = !!(opts && opts.quiet);
     const record = recordPath();
     if (!record) {
-      Shell.showBanner("Fill in the results folder first — the record of uploads lives beside the charts.");
+      if (!quiet) {
+        Shell.showBanner(
+          "Fill in the results folder first — the record of uploads lives beside the charts."
+        );
+      }
       return;
     }
     // Count the finished charts BEFORE reading the record, so the one meta row
@@ -267,9 +271,13 @@
     try {
       const status = await window.pywebview.api.upload_status(record);
       if (!status || !status.ok) {
-        Shell.showBanner(
-          `The record of uploads could not be read: ${status ? status.error : "no answer from the app"}`
-        );
+        // Arriving at a folder that has never been filed from is the ordinary
+        // first case, not a failure worth a banner.
+        if (!quiet) {
+          Shell.showBanner(
+            `The record of uploads could not be read: ${status ? status.error : "no answer from the app"}`
+          );
+        }
         return;
       }
       renderCounts(status);
@@ -277,9 +285,13 @@
       renderErrorKinds(status.error_type_histogram || {});
       buildCalendar(status.run);
       el("uploads-counters").hidden = false;
-      el("uploads-detail").hidden = false;
       el("uploads-calendar").hidden = false;
-      Shell.logEvent({ kind: "ok", msg: `Uploads: ${status.total || 0} charts in the record.` });
+      // A read the operator asked for is worth a line; one that happened
+      // because they arrived is not, and it would push the handoff note the
+      // migration just wrote off the strip.
+      if (!quiet) {
+        Shell.logEvent({ kind: "ok", msg: `Uploads: ${status.total || 0} charts in the record.` });
+      }
     } catch (err) {
       Shell.showBanner(String(err));
     }
@@ -299,7 +311,6 @@
         renderMeta(status);
         renderErrorKinds(status.error_type_histogram || {});
         el("uploads-counters").hidden = false;
-        el("uploads-detail").hidden = false;
       }
     } catch (_) {
       /* advisory */
@@ -455,7 +466,14 @@
   // into the wrong destination. Overwriting a field the operator can see is
   // also worth a line in the strip.
   function onEnter(handoff) {
-    if (!handoff) return;
+    // The record is what this view is FOR, so arriving reads it. It used to
+    // take a click on "Show what has been filed", which meant the screen an
+    // operator came to after a migration was a form and three hidden panels.
+    // Advisory: a folder with no record simply leaves the empty states up.
+    if (!handoff) {
+      void onRefresh({ quiet: true });
+      return;
+    }
     const changed = [];
     if (handoff.assistant && el("uploads-assistant").value !== handoff.assistant) {
       el("uploads-assistant").value = handoff.assistant;
@@ -471,10 +489,11 @@
         msg: `Uploads: ${changed.join(" and ")} taken from the migration you just ran.`,
       });
     }
+    void onRefresh({ quiet: true });
   }
 
   function init() {
-    el("uploads-refresh").addEventListener("click", onRefresh);
+    el("uploads-refresh").addEventListener("click", () => onRefresh());
     el("uploads-start").addEventListener("click", onStart);
     el("uploads-stop").addEventListener("click", onStop);
     el("uploads-search").addEventListener("input", renderSearch);
