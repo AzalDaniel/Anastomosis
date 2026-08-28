@@ -152,3 +152,69 @@ def test_claim_message_carries_no_source_value() -> None:
     assert "MRN/1234" not in message
     assert "MRN_1234" not in message
     assert message.count("id:") == 2
+
+
+# --- two records under one id (#121) ----------------------------------------
+#
+# The ledger above answers "do two DIFFERENT ids collide?" and deliberately
+# lets the same id re-claim its own slot — a record delivered twice in one run
+# keeps it. That is right for the case it was written for and wrong for a case
+# it did not distinguish: two DIFFERENT records that carry the same id. There
+# the second write lands on the first, the ledger raises nothing because the
+# ids match, and the run reports two encounters over one file.
+#
+# It is reachable from ordinary input. A C-CDA may list two <encounter> entries
+# under one <id root>, and the parser keeps a GUID-shaped root verbatim, so two
+# visits arrive as two objects with one id. `content` is what tells them apart.
+
+
+def test_the_same_record_delivered_twice_still_keeps_its_slot() -> None:
+    """The behaviour the ledger was written for, unchanged."""
+    claims: dict[str, str] = {}
+
+    claim_delivered_name(claims, "visit.html", "enc-1", kind="encounter page", content="<p>a</p>")
+    claim_delivered_name(claims, "visit.html", "enc-1", kind="encounter page", content="<p>a</p>")
+
+    assert len(claims) == 1
+
+
+def test_two_different_records_under_one_id_are_refused() -> None:
+    """Two visits, one id, one slot — the second must not land on the first."""
+    claims: dict[str, str] = {}
+    claim_delivered_name(claims, "visit.html", "enc-1", kind="encounter page", content="<p>May</p>")
+
+    with pytest.raises(DeliveredNameCollision) as caught:
+        claim_delivered_name(
+            claims, "visit.html", "enc-1", kind="encounter page", content="<p>July</p>"
+        )
+
+    message = str(caught.value)
+    assert "same source id" in message, message
+    assert "encounter page" in message, "the operator is told which kind collided"
+    assert "enc-1" not in message, "a raw source id must not reach the message"
+    assert "May" not in message and "July" not in message, "no record content in the message"
+
+
+def test_the_two_collisions_are_told_apart() -> None:
+    """A different-ids collision still reads as one; it is a different problem.
+
+    Two ids landing on one name is a SANITIZER collision — the fix is a longer
+    name. Two records under one id is a SOURCE problem — no name helps.
+    """
+    claims: dict[str, str] = {}
+    claim_delivered_name(claims, "MRN_1234", "MRN 1234", kind="patient directory")
+
+    with pytest.raises(DeliveredNameCollision) as caught:
+        claim_delivered_name(claims, "MRN_1234", "MRN/1234", kind="patient directory")
+
+    assert "two different source ids" in str(caught.value)
+
+
+def test_a_caller_that_passes_no_content_behaves_exactly_as_before() -> None:
+    """Every existing call site keeps its semantics; only the opt-in is new."""
+    claims: dict[str, str] = {}
+
+    claim_delivered_name(claims, "p", "patient-1", kind="patient directory")
+    claim_delivered_name(claims, "p", "patient-1", kind="patient directory")
+
+    assert claims == {"p": "patient-1"}
