@@ -349,11 +349,11 @@ def _run_ccda_standard_qa(
     (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently omitted.
     """
     from anastomosis.core.model import Encounter
-    from anastomosis.pipeline import STAGE_QA, PipelineError, StageEvent
+    from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
     from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
     try:
-        from anastomosis.qa import Verdict, run_qa, write_report
+        from anastomosis.qa import Verdict, run_qa
         from anastomosis.qa.base import CheckResult, engine_checks
     except ImportError as exc:
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
@@ -389,21 +389,7 @@ def _run_ccda_standard_qa(
         for name, reason in _CCDA_SKIPPED_CHECKS.items():
             doc_qa.results.append(CheckResult(name, Verdict.PASS, [reason]))
 
-    write_report(report, charts)
-    emit(
-        StageEvent(
-            STAGE_QA,
-            counts={
-                "pass": report.count(Verdict.PASS),
-                "warn": report.count(Verdict.WARN),
-                "fail": report.count(Verdict.FAIL),
-            },
-        )
-    )
-    if not report.ok:
-        raise PipelineError(
-            f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
-        )
+    settle_qa(report, charts, emit)
 
 
 def _run_ccda_standard(

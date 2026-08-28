@@ -5,13 +5,12 @@ See :mod:`anastomosis.cli_commands` for the split/registration rationale.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from anastomosis.cli import app
-from anastomosis.cli_commands._paths import out_dir
+from anastomosis.cli_commands._options import ExportDir, Force, OutDir, PackDirs, TrustPack
 
 if TYPE_CHECKING:
     from anastomosis.core.migrate import MigrationCommand
@@ -173,11 +172,8 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
 
 @app.command("migrate")
 def migrate_cmd(
-    export_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False, readable=True)],
-    out: Annotated[
-        Path,
-        typer.Option("--out", "-o", help="Output directory (created 0700).", parser=out_dir),
-    ],
+    export_dir: ExportDir,
+    out: OutDir,
     source: Annotated[
         str | None,
         typer.Option(
@@ -197,19 +193,9 @@ def migrate_cmd(
             help="Chart representation: 'neutral' (default), 'ccda-standard', or a pack name.",
         ),
     ] = None,
-    pack_dir: Annotated[
-        list[Path] | None,
-        typer.Option("--pack-dir", help="Extra pack directories (implies trusting their code)."),
-    ] = None,
-    trust_pack: Annotated[
-        bool,
-        typer.Option(
-            "--trust-pack",
-            help="Trust the --pack-dir packs at their current code hash (records the hash; "
-            "required the first time, and again after their code changes).",
-        ),
-    ] = False,
-    force: Annotated[bool, typer.Option("--force", help="Re-render documents that exist.")] = False,
+    pack_dir: PackDirs = None,
+    trust_pack: TrustPack = False,
+    force: Force = False,
     section: Annotated[
         list[str] | None,
         typer.Option("--section", help="Override a section flag (pack renders only)."),
