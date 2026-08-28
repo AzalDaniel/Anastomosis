@@ -2208,6 +2208,60 @@ def test_run_pipeline_threads_write_manifest(
     assert captured["cmd"].write_manifest is False  # type: ignore[attr-defined]
 
 
+def test_every_pipeline_option_survives_the_async_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The async entry is the one the GUI actually calls, and it was untested.
+
+    ``run_pipeline`` and ``run_pipeline_async`` each re-list the same thirteen
+    parameters and each forward all thirteen to the same locked body. Four of
+    them — force, pack_dirs, trust_new, write_manifest — had defaults on that
+    body, so DROPPING one from a forwarding call was legal Python and passed
+    mypy: the option would quietly revert to the default. The tests covered the
+    synchronous entry only, so on the path a button press takes, all four could
+    have stopped working and the run would still report success.
+
+    Measured by deleting each forwarded keyword in turn and running mypy and
+    the suite: 4 of 46 went unnoticed, all four on the async entry, all four on
+    the pipeline flow (the migration body has no defaults, so mypy caught
+    every one of its drops on both entries).
+
+    The body's four parameters are required now, which makes a drop a type
+    error. This test is the other half: it holds that the VALUES arrive, which
+    no signature can promise.
+    """
+    import anastomosis.core.commands as commands
+    from anastomosis.pipeline import PipelineError
+
+    captured: dict[str, object] = {}
+
+    def _fake(cmd: object, on_event: object = None) -> object:
+        captured["cmd"] = cmd
+        raise PipelineError("stop after capture")  # short-circuit; the console catches it
+
+    monkeypatch.setattr(commands, "run_pipeline_command", _fake)
+    controller = GuiController(_RecordingSink())
+    packs = tmp_path / "packs"
+    packs.mkdir()
+
+    started = controller.run_pipeline_async(
+        str(FIXTURE),
+        str(tmp_path / "out"),
+        force=True,
+        pack_dirs=[str(packs)],
+        trust_new=True,
+        write_manifest=True,
+    )
+    assert started.get("started") is True, started
+    assert controller.join_active_job(10.0) is True
+
+    cmd = captured["cmd"]
+    assert cmd.force is True  # type: ignore[attr-defined]
+    assert cmd.pack_dirs == (packs,)  # type: ignore[attr-defined]
+    assert cmd.trust_new is True  # type: ignore[attr-defined]
+    assert cmd.write_manifest is True  # type: ignore[attr-defined]
+
+
 # --- per-flow event scoping (each page owns exactly one flow) ------------------
 #
 # Every event now carries a `flow` naming the operation family the emitting page

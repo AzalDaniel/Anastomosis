@@ -272,10 +272,15 @@ class PipelineConsole(_RunConsole):
         archive: bool,
         bundle: bool,
         ccda: bool,
-        force: bool = False,
-        pack_dirs: list[str] | None = None,
-        trust_new: bool = False,
-        write_manifest: bool = False,
+        # No defaults, deliberately. Both entries always pass all four, and a
+        # default here makes a DROPPED keyword legal: the option would silently
+        # revert instead of failing, and mypy would not say so. Required
+        # parameters turn that class of slip into a type error. See
+        # test_every_pipeline_option_survives_the_async_entry.
+        force: bool,
+        pack_dirs: list[str] | None,
+        trust_new: bool,
+        write_manifest: bool,
     ) -> dict[str, object]:
         from anastomosis.core.commands import (
             DeliveryCommand,
