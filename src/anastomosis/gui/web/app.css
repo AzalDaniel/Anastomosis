@@ -961,6 +961,23 @@ svg { display: block; }
   background: color-mix(in oklab, var(--stop) 14%, var(--ground-deep));
   color: var(--ink);
 }
+.banner.show { display: flex; align-items: flex-start; gap: var(--space-3); }
+.banner-text { flex: 1; }
+.banner-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-secondary);
+}
+.banner-dismiss:hover { background: var(--fill); color: var(--ink); }
 .no-api {
   border: 1px solid var(--hairline);
   background: var(--fill-soft);

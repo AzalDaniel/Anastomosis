@@ -218,6 +218,7 @@ def canned_returns() -> dict[str, object]:
                 "ok": True,
                 "item_keys": ["enc-0001:0f1e2d3c4b5a", "enc-0002:9a8b7c6d5e4f"],
                 "count": 2,
+                "total": 2,
             },
             "upload_manifest_preview": {"ok": True, "renderable": 7, "total_bytes": 123456},
             # The busy-guarded drives: every one returns immediately.

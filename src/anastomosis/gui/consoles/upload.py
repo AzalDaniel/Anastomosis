@@ -172,14 +172,16 @@ class UploadConsole:
                 tracking.close()
 
     def upload_item_keys(self, db_path: str, limit: int = 200) -> dict[str, object]:
-        """The patient command sheet's payload: pending item KEYS only.
+        """Pending item KEYS for the Uploads search, and how many there are.
 
         Returns the opaque ``item_key`` values (``encounter_id:sha256[:12]``) of
-        items still owing work, for the Cmd+K palette. These are ids by
-        construction — never a patient name, never a file path. This is a
-        read-only visibility accessor; a run is driven by
-        :meth:`upload_start`/:meth:`upload_stop`. Capped at ``limit`` so a huge
-        ledger cannot flood the palette.
+        items still owing work. These are ids by construction — never a patient
+        name, never a file path. This is a read-only visibility accessor; a run
+        is driven by :meth:`upload_start`/:meth:`upload_stop`.
+
+        ``limit`` caps the list so a huge ledger cannot flood the view, and
+        ``total`` is what the ledger actually holds, so the view can say it is
+        showing a slice instead of quietly presenting one as the whole.
         """
         tracking = None
         try:
@@ -191,7 +193,12 @@ class UploadConsole:
                 return {"ok": False, "error": "FileNotFoundError"}
             tracking = TrackingDB(path)
             keys = [item.item_key for item in tracking.pending_items(limit=limit)]
-            return {"ok": True, "item_keys": keys, "count": len(keys)}
+            return {
+                "ok": True,
+                "item_keys": keys,
+                "count": len(keys),
+                "total": tracking.pending_count(),
+            }
         except Exception as exc:
             return self._fail("upload_item_keys", exc)
         finally:

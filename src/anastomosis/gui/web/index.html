@@ -71,7 +71,17 @@
         The desktop app is not connected. Close this window and start Anastomosis
         from the Start menu.
       </div>
-      <div class="banner" id="banner" role="alert"></div>
+      <!-- The alert is the TEXT, not the box: the dismiss button lives in the
+           box beside it, so pressing it is not announced as part of the
+           message. The box is always rendered and only ever empty — see
+           app.css, and hideBanner, which clears the words. -->
+      <div class="banner" id="banner">
+        <span class="banner-text" id="banner-text" role="alert"></span>
+        <button type="button" class="banner-dismiss" id="banner-dismiss"
+                aria-label="Dismiss this message">
+          <span class="icon" data-icon="close"></span>
+        </button>
+      </div>
       <!-- The one polite announcer: Shell.announce writes here whenever a
            view updates the line it already shows on screen, so the words a
            sighted operator reads and the words a screen reader speaks are
@@ -281,7 +291,10 @@
                    placeholder="Find an upload — search by visit id." aria-label="Find an upload — search by visit id." />
           </div>
           <div class="search-results" id="uploads-search-results"></div>
-          <div class="results-head" id="uploads-states-head">
+          <!-- Hidden to start, like the list it heads: `setEmpty` keeps the two
+               together after that. A column header standing over "nothing here
+               yet" is a table promising rows that are not coming. -->
+          <div class="results-head" id="uploads-states-head" hidden>
             <span>What happened</span><span class="result-when">Charts</span>
           </div>
           <div class="results" id="uploads-states" hidden></div>

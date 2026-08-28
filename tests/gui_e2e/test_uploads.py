@@ -111,10 +111,13 @@ def test_reading_the_record_fills_the_buckets_and_the_calendar(gui) -> None:
     # When the run happened is a sentence: a timestamp is not a value display.
     when = app.text("#uploads-when")
     assert str(CANNED_RUN["started_at"]) in when and "still running" in when
-    # The finished-chart count came from the results folder.
+    # The finished-chart count came from the results folder, and says so: this
+    # and "Charts in the record" are two counts of two different things that sat
+    # side by side reading as one. On this fixture they are 8 and 7.
     assert app.last_args("upload_manifest_preview") == [_OUT_DIR]
     meta = app.text("#uploads-meta")
-    assert "Ready to file" in meta and "7" in meta
+    assert "8Charts in the record" in meta
+    assert "7PDFs in the folder" in meta
 
     # The calendar opens on the run's month with a halo on its start day.
     assert app.text("#uploads-cal-title") == "August 2026"

@@ -147,6 +147,11 @@
     const outgoing = section(CURRENT);
     const leaving = VIEWS[CURRENT];
     CURRENT = name;
+    // A banner belongs to the screen that raised it. It used to be cleared only
+    // by the five run/analyze entry points — Uploads never cleared it and no
+    // view switch did — so an operator who read it, fixed the problem and moved
+    // on still had the red bar following them around.
+    hideBanner();
 
     // The pill owns the selected state. Told, not asked: a view can also be
     // reached from a button inside another view (Migrate's "Continue on
@@ -367,6 +372,19 @@
     return { open, close, toggle, isOpen };
   }
 
+  //: Where a letter means the letter and not a shortcut: somewhere that takes
+  //: typing by its nature. A chooser trigger is a <button> and also takes
+  //: typing, but it says so itself by calling preventDefault() on the character
+  //: — the `defaultPrevented` check below is the general form of that, and
+  //: naming the chooser here as well would be a second rule saying the same
+  //: thing, free to disagree with the first.
+  function takesTyping(node) {
+    if (!node) return false;
+    if (node.isContentEditable) return true;
+    const tag = node.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
   let logDrawer = null;
   function initLogDrawer() {
     const drawer = el("log-drawer");
@@ -420,8 +438,9 @@
 
   function showBanner(message) {
     const banner = el("banner");
-    if (!banner) return;
-    banner.textContent = String(message);
+    const text = el("banner-text");
+    if (!banner || !text) return;
+    text.textContent = String(message);
     banner.classList.add("show");
   }
   // Empties the box rather than removing it. `#banner` is `role="alert"` and
@@ -430,9 +449,10 @@
   // notice — which only works if the text is what comes and goes.
   function hideBanner() {
     const banner = el("banner");
+    const text = el("banner-text");
     if (!banner) return;
     banner.classList.remove("show");
-    banner.textContent = "";
+    if (text) text.textContent = "";
   }
 
   // ─── Saying it out loud ───────────────────────────────────────
@@ -1069,6 +1089,11 @@
     const list = el(listId);
     const empty = el(`${listId}-empty`);
     if (list) list.hidden = isEmpty;
+    // A column header over a "nothing here yet" message is a table promising
+    // rows that are not coming. Named `<listId>-head` in the markup, so this
+    // needs no wiring either — the same convention as `-empty`.
+    const head = el(`${listId}-head`);
+    if (head) head.hidden = isEmpty;
     if (!empty) return;
     empty.hidden = !isEmpty;
     const title = empty.querySelector("b");
@@ -1645,13 +1670,24 @@
       if (btn.closest(".navpill")) continue;
       btn.addEventListener("click", () => showView(btn.dataset.viewTarget));
     }
+    const dismiss = el("banner-dismiss");
+    if (dismiss) dismiss.addEventListener("click", hideBanner);
     initLogDrawer();
     const closeBtn = el("log-drawer-close");
     if (closeBtn) closeBtn.addEventListener("click", () => logDrawer && logDrawer.close(true));
+    // The strip advertises "L", so a bare letter it stays — but the guard was
+    // two tag names, and everything else on the page is neither. Pressing `l`
+    // on a chooser trigger, a checkbox, a button or a nav tab opened the
+    // activity drawer.
     document.addEventListener("keydown", (e) => {
       if (e.key !== "l" && e.key !== "L") return;
-      const tag = (document.activeElement && document.activeElement.tagName) || "";
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Ctrl+L, Cmd+L and Alt+L belong to the browser and the window manager.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Something nearer the key already claimed it. A chooser's type-ahead
+      // calls preventDefault() for every printable character — open or closed
+      // — and does not stop propagation, so both handlers used to run.
+      if (e.defaultPrevented) return;
+      if (takesTyping(document.activeElement)) return;
       e.preventDefault();
       if (logDrawer) logDrawer.toggle();
     });
