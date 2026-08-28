@@ -16,6 +16,7 @@ from anastomosis.sources.base import SourceAdapter, detect_source, get_source, r
 class _FakeAdapter:
     def __init__(self, name: str, *, detects: bool) -> None:
         self.name = name
+        self.display = f"Fake {name}"
         self.description = f"fake {name}"
         self._detects = detects
 

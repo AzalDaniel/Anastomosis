@@ -25,6 +25,7 @@ __all__ = ["OracleEHIAdapter"]
 
 class OracleEHIAdapter:
     name = "oracle-ehi"
+    display = "Oracle Health EHI"
     description = "Oracle Health / Cerner Millennium EHI export (V500 MySQL dumps)"
 
     def detect(self, path: Path) -> bool:

@@ -346,7 +346,7 @@
       { value: "", label: "Choose the export format…" },
       ...(info.sources || []).map((src) => ({
         value: src.name,
-        label: Shell.displayName(src.name),
+        label: Shell.nameOf(src),
         note: src.description || src.name,
       })),
     ]);
@@ -357,7 +357,7 @@
       SECTIONS_BY_PACK[layout.name] = layout.sections || {};
       layouts.push({
         value: layout.name,
-        label: `Rendered pages — ${Shell.displayName(layout.name)}`,
+        label: `Rendered pages — ${Shell.nameOf(layout)}`,
         note: layout.name,
       });
     }

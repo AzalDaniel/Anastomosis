@@ -314,6 +314,12 @@ def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]]
 # --------------------------------------------------------------------------- #
 
 
+def _yaml_quote(value: str) -> str:
+    """A double-quoted YAML scalar. An author's display name is free text."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str:
     geom = analysis.page_geometry
     size = _page_size_name(geom.width, geom.height)
@@ -325,6 +331,10 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
 
     lines: list[str] = [
         f"name: {name}",
+        # The author typed this at `--display`. It used to reach the file only
+        # inside the description sentence below, where nothing could read it
+        # back — so every picker re-cased the id instead (#164).
+        f"display: {_yaml_quote(display)}",
         'version: "0.1-draft"',
         "description: >",
         f"  DRAFT pack auto-generated from {analysis.sample_count} sample(s) by",

@@ -1,4 +1,5 @@
 name: generic_soap
+display: "Generic SOAP"
 version: "1.0"
 description: >
   Vendor-neutral SOAP/visit-note pack. Renders any canonical encounter into

@@ -946,16 +946,17 @@
   // which is right for the vendor names these ids are built from.
   const SHOUTED = new Set(["cda", "csv", "ehi", "fhir", "hl7", "pdf", "pf", "soap", "tsv", "xml"]);
 
-  // Ids whose readable form is not a re-casing of their parts.
-  const NAMED = { ccda: "C-CDA" };
-
   //: A readable name for a machine id: `generic_soap` -> "Generic SOAP",
   //: `pf-tebra` -> "PF Tebra". Every place a person reads one of these ids used
   //: to print it raw, because a <select> option had one text slot and the id
   //: had to go in it. The id survives as the row's caption.
+  //:
+  //: A guess, and only ever a guess — `ccda` will not become "C-CDA" here, and
+  //: it used to be a hard-coded exception for exactly that reason. Sources and
+  //: layouts now declare their own name, so this is the fallback for the ones
+  //: that do not: destinations, and third-party packs written before the field
+  //: existed. See `nameOf`.
   function displayName(id) {
-    const known = NAMED[String(id).toLowerCase()];
-    if (known) return known;
     return String(id)
       .split(/[-_\s]+/)
       .filter(Boolean)
@@ -965,6 +966,13 @@
           : word.charAt(0).toUpperCase() + word.slice(1)
       )
       .join(" ");
+  }
+
+  //: What a registration says its name is, or a guess from its id. One rule,
+  //: so a pack and a source and a destination are all read the same way and
+  //: no caller has to remember which of them declares one.
+  function nameOf(entry) {
+    return (entry && entry.display) || displayName(entry && entry.name);
   }
 
   //: Entries are {value, label, note}. `note` is the caption under the name —
@@ -1772,6 +1780,7 @@
     stageLabel,
     initSegmentToggles,
     displayName,
+    nameOf,
     fillChooser,
     renderSectionMatrix,
     gatherSections,

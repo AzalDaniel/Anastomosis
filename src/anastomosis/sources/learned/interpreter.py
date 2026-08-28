@@ -132,6 +132,10 @@ class LearnedSourceAdapter:
 
     def __init__(self, spec: MappingSpec) -> None:
         self.name = spec.mapping_id
+        # The author typed this into `anast source init --display`. It went
+        # into the description sentence and nowhere else, so every picker
+        # re-cased the mapping id instead of showing it.
+        self.display = spec.display
         self.description = f"learned: {spec.display}"
         self._spec = spec
         self._patient_key = spec.grouping.patient_key
