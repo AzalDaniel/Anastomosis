@@ -13,7 +13,7 @@ from pathlib import Path
 from anastomosis.core.model import PatientRecord
 from anastomosis.sources.base import register
 
-from .loader import read_export
+from .loader import find_attachments, read_export
 from .mapper import map_export
 
 __all__ = ["PFTebraAdapter"]
@@ -29,7 +29,7 @@ class PFTebraAdapter:
         ).is_file()
 
     def load(self, path: Path) -> Iterator[PatientRecord]:
-        yield from map_export(read_export(path))
+        yield from map_export(read_export(path), attachments=find_attachments(path))
 
 
 register(PFTebraAdapter())
