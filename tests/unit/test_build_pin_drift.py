@@ -1,17 +1,21 @@
-"""Pins the Playwright build version to ONE source of truth.
+"""Pins EVERY build version to one source of truth, not just Playwright.
 
-Invariant: ``packaging/constraints.txt`` carries the single ``playwright==``
-pin, and every build surface resolves Playwright through it. The rendering
-goldens (tests/e2e/goldens/*.json) and the Chromium bundled into the Windows
-installer are only reproducible if the CI test lane, golden regeneration, and
-the Windows package build all install the SAME Playwright — one pin to rule
-the builds. The library floor in pyproject.toml stays open for users, but it
-must never float ABOVE the build pin, or a build would resolve something the
-floor already forbids.
+Invariant: ``packaging/constraints.txt`` carries the build pins, and every
+build surface resolves through it. The rendering goldens
+(tests/e2e/goldens/*.json) and the Chromium bundled into the Windows installer
+are only reproducible if the CI test lane, golden regeneration, and the Windows
+package build all install the SAME Playwright — one pin to rule the builds. The
+library floor in pyproject.toml stays open for users, but it must never float
+ABOVE the build pin, or a build would resolve something the floor already
+forbids.
 
-This test keeps that live by parsing the constraints file and asserting the
-two workflows point at it (never a literal pin) and the pyproject floor sits
-at or below the pin.
+This file used to check that for Playwright alone, while the same workflows
+carried literal pins for two other things the constraints file says belong to
+it (#142): ``nuitka==`` in the Windows build, and ``cyclonedx-bom==`` written
+out TWICE — once per release workflow, free to disagree with itself. A guard
+over one of the pins is a guard that reports the state of one of the pins, so
+:func:`test_no_workflow_pins_a_constrained_package` now covers whatever the
+file governs, including whatever is added to it next.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONSTRAINTS = REPO_ROOT / "packaging" / "constraints.txt"
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 WINDOWS_YML = REPO_ROOT / ".github" / "workflows" / "windows-package.yml"
+RELEASE_YML = REPO_ROOT / ".github" / "workflows" / "release.yml"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
@@ -63,6 +68,17 @@ def test_constraints_file_has_one_pin() -> None:
     assert _pinned_playwright()
 
 
+def _constrained_packages() -> set[str]:
+    """Every package name ``packaging/constraints.txt`` pins."""
+    names = {
+        match.group(1).lower()
+        for line in CONSTRAINTS.read_text(encoding="utf-8").splitlines()
+        if (match := re.match(r"^([A-Za-z0-9._-]+)==", line.strip()))
+    }
+    assert names, "packaging/constraints.txt pins nothing at all"
+    return names
+
+
 def test_workflows_resolve_through_constraints() -> None:
     """(a) both build surfaces install via -c packaging/constraints.txt, and
     (b) neither workflow carries a literal playwright== pin anymore."""
@@ -80,6 +96,53 @@ def test_workflows_resolve_through_constraints() -> None:
             f"{path.name} still contains a literal `playwright==` pin. Remove it and let "
             "packaging/constraints.txt govern the version via `-c`."
         )
+
+
+#: The versions that decide what ships, and therefore have to be pinned
+#: somewhere. Named here rather than derived, because the derivable form —
+#: "everything a workflow installs alongside `-c`" — would also demand pins for
+#: pytest and hypothesis, which are deliberately floating: they shape the test
+#: run, not the artifact.
+_MUST_BE_PINNED = {
+    "playwright": "the rendering goldens and the Chromium inside the installer",
+    "pywebview": "whether the frozen Windows GUI starts at all",
+    "nuitka": "the frozen layout the installer carries",
+    "cyclonedx-bom": "the shape and spec level of a shipped SBOM",
+}
+
+
+def test_the_pins_that_decide_what_ships_are_all_governed() -> None:
+    """Moving a pin out of the file is how it starts floating unnoticed.
+
+    The workflows install these through `-c packaging/constraints.txt`, which
+    constrains and does not pin: delete the line here and the build resolves
+    whatever is newest, with the `-c` still in place looking like a guarantee.
+    """
+    pinned = _constrained_packages()
+    for package, why in _MUST_BE_PINNED.items():
+        assert package in pinned, (
+            f"packaging/constraints.txt no longer pins {package}, which governs "
+            f"{why}. The build surfaces install it through this file, so without "
+            "a line here it floats."
+        )
+
+
+def test_no_workflow_pins_a_constrained_package() -> None:
+    """A second copy of a pin is a pin that can disagree with the first.
+
+    `cyclonedx-bom==7.3.1` was written into both release workflows and into
+    neither constraints file; bumping one and forgetting the other would have
+    shipped a wheel SBOM and an installer SBOM built by different tools, with
+    nothing to notice (#142).
+    """
+    for path in (CI_YML, WINDOWS_YML, RELEASE_YML):
+        text = path.read_text(encoding="utf-8")
+        for package in _constrained_packages():
+            assert f"{package}==" not in text.lower(), (
+                f"{path.name} pins {package} directly. packaging/constraints.txt "
+                "governs it — install with `-c packaging/constraints.txt` instead, "
+                "so the version lives in one place."
+            )
 
 
 def test_pyproject_floor_not_above_pin() -> None:

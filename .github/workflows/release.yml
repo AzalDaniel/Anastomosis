@@ -126,14 +126,19 @@ jobs:
         # is inventoried. The tool runs from a second venv so cyclonedx-bom and
         # its own deps never pollute the inventory. Kept OUT of dist/ — the
         # publish job uploads dist/* to PyPI, which accepts only sdists/wheels.
+        # tools/sbom.py owns the invocation (and the version-resolution the
+        # `dynamic = ["version"]` declaration makes necessary) so this workflow
+        # and the Windows one cannot drift; it fails if the emitted document
+        # does not name this package at this version.
         shell: bash
         run: |
           python -m venv target && target/bin/pip install --quiet dist/*.whl
-          python -m venv tool && tool/bin/pip install --quiet "cyclonedx-bom==7.3.1"
-          mkdir -p sbom
+          python -m venv tool
+          tool/bin/pip install --quiet -c packaging/constraints.txt cyclonedx-bom
           version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/anastomosis/__init__.py)"
-          tool/bin/cyclonedx-py environment --pyproject pyproject.toml --output-reproducible \
-            --of JSON -o "sbom/anastomosis-${version}-sbom.cdx.json" target/bin/python
+          python tools/sbom.py --cyclonedx tool/bin/cyclonedx-py \
+            --target-python target/bin/python \
+            --out "sbom/anastomosis-${version}-sbom.cdx.json"
       - name: Attest build provenance (SLSA)
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:

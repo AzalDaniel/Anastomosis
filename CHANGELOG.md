@@ -9,6 +9,77 @@ minor versions may contain breaking changes (noted here when they happen).
 
 ## [Unreleased]
 
+Post-0.7.0 audit work: a full pass over the shipped surfaces, driving the real
+CLI and the real GUI rather than reading them, with every finding raised as an
+issue and fixed in its own pull request.
+
+### Fixed
+
+- **A run that is happening now says so.** Every view narrated a run in one
+  line on screen and none of it reached a screen reader — a click produced
+  silence. One always-present polite region carries it, written together with
+  the visible line and only when that line actually changed. (#198)
+- **The filing calendar is a table you read, not 42 buttons you cannot press.**
+  Every cell was a `<button>` with no click handler and a hand cursor, inside a
+  `role="grid"` with no rows at all. (#198)
+- **Escape closes what Escape opened.** About, the activity drawer and the
+  error-kinds flyout were wired separately and each forgot a different part of
+  the contract; one implementation now owns `aria-expanded`, Escape,
+  click-elsewhere, and moving focus in and back. Teach's mode tabs answer the
+  arrow keys. (#198)
+- **Four attributes that named nothing**: a `<label for>` pointing at a `<div>`,
+  a patients table with no `<thead>` or `scope`, a column-mapping grid that read
+  as a table and said nothing about it, and an `aria-activedescendant` emptied
+  rather than removed. (#198)
+- **An upload that dies says so before it dies.** A `BaseException` from the
+  filing engine — how it deliberately models process death — sailed through
+  both safety nets, leaving a run that had started, would never finish, and
+  told nobody. (#117)
+- **A machine that cannot render charts says so once, with the remedy**, instead
+  of one bare exception type per chart. (#202)
+- **The activity shortcut fired on the wrong keys**: `Ctrl+L` opened the drawer
+  instead of the address bar, and a bare `l` opened it on a chooser trigger,
+  where the type-ahead had already claimed the character. (#214)
+- **The Uploads search truncated twice and mentioned neither cut**, so a visit
+  id past the limit looked absent. (#214)
+- **The error banner never left.** It cleared on five run entry points and
+  nowhere else, so a message about a fixed problem followed the operator around
+  the app. It now clears on a view switch and carries a dismiss control. (#214)
+- Two charts can never land on one file; a same-day collision widens its suffix
+  until the name is free, and two encounters carrying one id are reported
+  rather than silently merged. (#186)
+- A re-rendered loss ledger keeps every narrative node. (#122)
+- Two exports of one record are byte-identical again. (#193)
+- The clinical note is verified to have reached the page. (#188)
+
+### Changed
+
+- **A layout or an export format is shown by the name its author typed.** Both
+  registries carry a `display` field now; `anast info` leads with the name and
+  dims the id beside it. The front end's hard-coded `ccda → "C-CDA"` exception
+  is gone, because the registration carries it. (#164)
+- Every command's help says what the command actually does, and names a next
+  step that exists. (#196, #197, #201, #203)
+- Charts already in a folder answer the question being asked. (#189)
+- `anast info` says what is installed, not that it is ready — `anast doctor` is
+  the command that tries things. (#190)
+- The Uploads counters are named for what they count: charts in the record, and
+  PDFs in the folder. They are not the same measurement and used to look like
+  it. (#214)
+
+### Release
+
+- **The shipped SBOMs name a version.** `dynamic = ["version"]` left both
+  documents describing a root component with `version: null` — and dropped the
+  package itself from the inventory — so the SBOM could not answer the one
+  question it exists for. Both workflows now share `tools/sbom.py`, which
+  resolves the version and refuses a document that does not carry it. (#142)
+- The installer's SBOM is generated **after** the smoke gate, not before: an
+  SBOM for an installer that has not been shown to install is a statement about
+  nothing. (#142)
+- The installed-footprint measurement can no longer fail a release. It is
+  informational by design and was not guarded. (#142)
+
 ## [0.7.0] — 2026-08-21
 
 The seventh alpha (**0.7.0-alpha**). Two arcs in one release. First the
