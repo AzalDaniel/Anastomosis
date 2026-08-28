@@ -130,13 +130,17 @@
         pack.ready
           ? `Filing assistant for ${pack.name} is ready.`
           : "The filing assistant for this system has not been set up on this " +
-            "computer yet. Set it up from the Teach screen."
+            `computer yet. Run: ${pack.advice || `anast destination init ${pack.name}`}`
       );
     }
     paragraphs(guidance, lines);
-    // The handoff is offered whenever a filing assistant exists for this
-    // destination — that is the context Uploads would otherwise ask for again.
-    el("migrate-handoff-actions").hidden = !pack;
+    // Offered only when the assistant is READY. Gating on whether a pack merely
+    // EXISTS meant this panel could say the assistant was not set up and, two
+    // lines below, offer "Continue on Uploads" — which switches view, pre-fills
+    // both fields, and leaves the operator one click from Start filing with an
+    // assistant that cannot file. Wrong direction to fail in, on the screen
+    // that files charts into a live EHR.
+    el("migrate-handoff-actions").hidden = !(pack && pack.ready);
   }
 
   async function onDestinationChange() {
@@ -297,7 +301,8 @@
           showResult(
             "No automatic route to this destination is available. The charts and the " +
               "transfer document are written — import the transfer document into the " +
-              "destination yourself, or set up a filing assistant from the Teach screen."
+              "destination yourself, or set up a filing assistant with " +
+              "`anast destination init`."
           );
           Shell.showBanner("The migration finished without sending anything. See the note below.");
         } else {
