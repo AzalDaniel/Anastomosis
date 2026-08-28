@@ -1,56 +1,31 @@
 """Manifest persistence: the bridge from a render run to a later ``anast upload``.
 
-A browser upload is a separate, operator-driven step that happens AFTER the
-charts have been reconstructed — often on a different machine, against a live
-EHR session the operator logs into by hand. So the upload driver cannot re-run
-the pipeline; it needs the render run's :class:`UploadItem` manifest and the
-:class:`Patient` demographics (the resolver searches the destination by name +
-DOB) written to disk, ready to read back.
+An upload happens after the charts are built, often on another machine, so the
+upload driver cannot re-run the pipeline — it reads this file instead.
+:func:`write_upload_manifest` writes it; :func:`load_upload_manifest` reads it
+back (:func:`read_upload_manifest` is the ``(items, patients)`` projection).
 
-:func:`write_upload_manifest` is that writer; :func:`load_upload_manifest` reads
-it back (:func:`read_upload_manifest` is the ``(items, patients)`` projection of
-that read). Two invariants shape the file:
+Two invariants shape the file:
 
 * **Deterministic.** ``sort_keys=True``, items sorted by ``item_key``, patients
-  keyed by ``patient_id`` — two writes over the same inputs are byte-identical
-  (the same golden-style discipline the run report uses). No clock, no random.
+  keyed by ``patient_id`` — two writes over the same inputs are byte-identical.
+  No clock, no random.
 * **Loud on malformed.** A missing file, an unsupported version, or a missing
-  key raises :class:`ManifestError` — a corrupt manifest is a defect to surface,
-  not a run to start with half the data (the loud-failure invariant).
+  key raises :class:`ManifestError`. A corrupt manifest is a defect to surface,
+  not a run to start with half the data.
 
-Schema versions
----------------
-
-``MANIFEST_VERSION`` is 2. Beyond v1's identity/integrity fields a v2 file
-carries exactly what the L0-L6 ladder needs to run in FULL on the upload path,
-and nothing more:
-
-* ``pack`` (run-level) — the template pack that rendered these charts, so the
-  upload side can reload the pack manifest L3 reads ``verify_header_fields``
-  from. One render run renders through one pack and the verifier holds one pack
-  for the run, so the name is recorded once rather than repeated per item;
-  ``null`` when no Jinja pack was involved (the whole-patient ccda-standard
-  view), which is a genuine "L3 has nothing to check", not a lost field.
-* ``expected_pages`` (per item) — the page count of the PDF **as rendered**, so
-  L1 asserts "exactly N pages" instead of only "at least one".
-* ``date_of_service`` (per item) — the encounter date L3's ``dos`` header field
-  is checked against. That is the ONLY encounter field L3 reads, so it is the
-  only one carried: no sections, no clinical content.
-
-A v1 file still loads — operators have rendered trees on disk and refusing them
-would strand charts — but with v1's coverage (L3 skips, L1 checks only the page
-floor) and one LOUD, PHI-free warning per read, never a silent downgrade. Any
-version outside :data:`SUPPORTED_MANIFEST_VERSIONS` is a defect and raises.
-
-PHI rule (load-bearing): this file carries patient demographics (the resolver
+PHI rule, load-bearing: this file carries patient demographics (the resolver
 needs name + DOB) and, from v2, dates of service. It lives ONLY inside the
 hardened ``0o700`` output directory
 (:func:`anastomosis.core.output.secure_output_dir`) beside the chart PDFs those
-values are rendered into — so v2 opens no new exposure surface — is NEVER logged
-(every log line here is a count, a version number, or an exception TYPE), and is
-NEVER committed. ``file_path`` is stored as a basename (relative) so the manifest
-is relocatable and never embeds an absolute path; it is re-absolutized against
-``out_dir`` on read.
+values are rendered into — so v2 opens no new exposure surface — is NEVER
+logged (every log line here is a count, a version number, or an exception
+TYPE), and is NEVER committed. ``file_path`` is stored as a basename so the
+manifest is relocatable and never embeds an absolute path; it is re-absolutized
+against ``out_dir`` on read.
+
+See ``docs/UPLOAD_MANIFEST.md`` for what each schema version carries and why a
+v1 file still loads.
 """
 
 from __future__ import annotations
