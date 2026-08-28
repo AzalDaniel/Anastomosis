@@ -20,11 +20,8 @@ counts, ratios, and field *names* — never a patient name, DOB, date, or path.
 The detail strings are surfaced in reports and may be logged, so an honest
 level cannot leak PHI. The same goes for any exception raised out of a level.
 
-PyMuPDF (``pymupdf``) is imported lazily inside the levels that read the PDF, so
-this module imports on a machine without the ``render`` extra; L0 (pure
-file-integrity) works there too. A missing install raises a ``RuntimeError``
-naming ``anastomosis[render]``, matching the optional-dependency error style in
-:mod:`anastomosis.reconstruct.chromium`.
+PyMuPDF is imported lazily, so this module loads without the ``render`` extra —
+see :func:`_import_pymupdf`, which is where that happens and why.
 """
 
 from __future__ import annotations

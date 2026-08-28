@@ -118,6 +118,10 @@ def _patient(resource: dict[str, Any]) -> Patient:
     communication = resource.get("communication", [])
     return Patient(
         id=resource["id"],
+        # The reading half of the middle-name rule in `export._patient`: when the
+        # extension carries a middle name, this patient had NO given name, so
+        # `name.given[0]` is the middle name and must not be read as the given
+        # one. Without the guard the round-trip moves the name between fields.
         given_name=None if "middle_name" in fields else (given[0] if given else None),
         middle_name=fields.get("middle_name", given[1] if len(given) > 1 else None),
         family_name=name.get("family"),
@@ -151,6 +155,10 @@ def _patient(resource: dict[str, Any]) -> Patient:
             )
             for t in resource.get("telecom", [])
         ],
+        # And the reading half of the address rule: the extension is present
+        # only when some address was missing its first line, and it holds the
+        # list verbatim. `address_list` above reads `line[0]` as line1, which is
+        # right for every ordinary address and wrong for exactly those.
         addresses=(
             [Address.model_validate(a) for a in fields["addresses"]]
             if "addresses" in fields
