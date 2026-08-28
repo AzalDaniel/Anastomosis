@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import anastomosis.reconstruct.chromium as chromium
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
 from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord
 from anastomosis.pipeline import (
@@ -35,6 +36,41 @@ from anastomosis.pipeline import (
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 BLOB = "binary-content/feedface-d0c0-0000-0000-000000000001.pdf"
+
+
+class _FakeChromium:
+    """Writes a REAL pdf carrying the chart text (the test_gui_controller pattern).
+
+    The three tests below drive the whole pipeline, and the unit lane has no
+    browser: without this they fail with "6 encounter(s) failed to render"
+    wherever Chromium is absent, which is every CI runner.
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        pass
+
+    def render(self, html: str, pdf_path: Path) -> None:
+        import pymupdf
+
+        from anastomosis.core.textutil import html_to_text
+
+        doc = pymupdf.open()
+        page = doc.new_page(width=612, height=792)
+        page.insert_textbox(
+            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
+        )
+        doc.save(str(pdf_path))
+        doc.close()
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture
+def rendered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Render without a browser, so these run anywhere the suite does."""
+    pytest.importorskip("pymupdf", reason="the fake renderer writes a real PDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
 
 
 @pytest.fixture
@@ -65,7 +101,9 @@ def _carried(out: Path) -> list[str]:
     return sorted(p.name for p in directory.iterdir() if not p.name.startswith("_"))
 
 
-def test_an_attachment_the_records_name_reaches_the_output(export: Path, tmp_path: Path) -> None:
+def test_an_attachment_the_records_name_reaches_the_output(
+    rendered: None, export: Path, tmp_path: Path
+) -> None:
     """The whole point: the file is where a deliverer will look for it."""
     out = tmp_path / "charts"
 
@@ -80,7 +118,9 @@ def test_an_attachment_the_records_name_reaches_the_output(export: Path, tmp_pat
     ).read_bytes()
 
 
-def test_the_record_still_locates_it_without_any_extra_index(export: Path, tmp_path: Path) -> None:
+def test_the_record_still_locates_it_without_any_extra_index(
+    rendered: None, export: Path, tmp_path: Path
+) -> None:
     """A deliverer needs no sidecar: the document's own path is the lookup key.
 
     That is deliberate — `render_index.json` exists for charts because a chart's
@@ -192,7 +232,9 @@ def test_the_same_file_named_twice_is_carried_once(tmp_path: Path) -> None:
     assert _carried(out) == ["shared.pdf"]
 
 
-def test_an_export_with_no_attachments_runs_exactly_as_before(export: Path, tmp_path: Path) -> None:
+def test_an_export_with_no_attachments_runs_exactly_as_before(
+    rendered: None, export: Path, tmp_path: Path
+) -> None:
     """The step costs nothing when there is nothing to carry."""
     (export / BLOB).unlink()
     (export / "patient-documents.tsv").write_text(
