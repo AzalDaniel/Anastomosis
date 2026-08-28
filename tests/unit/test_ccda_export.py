@@ -615,7 +615,12 @@ def test_populated_native_fields_land_in_loss_narrative(tmp_path: Path) -> None:
 
 def test_addenda_path_line_shape(tmp_path: Path) -> None:
     # The loss narrative uses deterministic path = value lines, e.g.
-    # encounter[<id>].addenda[0].text = ... — proves the path format is emitted.
+    # encounters[0].addenda[0].text = ... — proves the path format is emitted.
+    #
+    # Positional at BOTH levels. The outer subscript used to be the object's own
+    # id, which for a model the adapter mints is a fresh uuid4 per load — so the
+    # document was not reproducible between two ingests of one export. The inner
+    # subscript was already positional; these now agree.
     pid = "feedface-pat0-0000-0000-00000000c002"
     enc_id = "feedface-0000-0000-0000-00000000c0e2"
     rec = PatientRecord(
@@ -633,7 +638,8 @@ def test_addenda_path_line_shape(tmp_path: Path) -> None:
     out = tmp_path / "path.xml"
     out.write_bytes(build_ccd(rec))
     entries = _loss_entries(parse_document(out))
-    assert f"encounters[{enc_id}].addenda[0].text = amended note body" in entries
+    assert "encounters[0].addenda[0].text = amended note body" in entries
+    assert enc_id not in " ".join(entries), "a canonical id must not subscript a ledger path"
 
 
 # A source CCD whose Problems entry is NOT the shape `_conditions` parses, so
@@ -794,7 +800,7 @@ def test_three_generations_keep_every_distinct_loss_entry(tmp_path: Path) -> Non
     documents = _generations(_generation_record(), 3, tmp_path)
     entries = _entries_of(documents[-1])
     for expected in (
-        "encounters[feedface-0000-0000-0000-0000000000e9].chief_complaint = CHIEFSENTINEL",
+        "encounters[0].chief_complaint = CHIEFSENTINEL",
         "patient.gender_identity = GENSENTINEL",
         "patient.extensions.pf_tebra:PatientStatusCode = A",
     ):
@@ -1608,7 +1614,100 @@ def test_no_undeclared_native_loss(tmp_path: Path) -> None:
 
 
 def test_two_builds_are_byte_identical(source: PatientRecord) -> None:
+    """One record object, built twice.
+
+    Necessary and not sufficient: this holds even when the export is NOT
+    reproducible, because the ids were minted once when the object was made and
+    both builds see the same ones. The determinism the docs promise is about the
+    same RECORD, not the same object — see the two tests below.
+    """
     assert build_ccd(source) == build_ccd(source)
+
+
+def test_two_ingests_of_one_export_build_identical_documents(tmp_path: Path) -> None:
+    """The contract as `docs/CCDA_EXPORT.md` states it: same record in,
+    byte-identical bytes out.
+
+    It did not hold. Two `anast migrate` runs over the same fixture produced
+    documents differing in 168, 80 and 48 lines — 248 of them a runtime uuid,
+    48 a wall clock. Clinical content was unaffected, so nothing failed; what
+    broke was checksum dedup and every "re-run and diff to see what changed"
+    workflow, which is how a migration is audited.
+
+    Two independent ingests, because that is where fresh ids come from.
+    """
+    import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
+    from anastomosis.sources import get_source
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
+    first = {r.patient.id: build_ccd(r) for r in get_source("pf-tebra").load(fixture)}
+    second = {r.patient.id: build_ccd(r) for r in get_source("pf-tebra").load(fixture)}
+
+    assert set(first) == set(second)
+    differing = sorted(pid for pid in first if first[pid] != second[pid])
+    assert not differing, f"{len(differing)} document(s) differ between two ingests"
+
+
+def test_a_runtime_minted_id_does_not_reach_the_narrative(tmp_path: Path) -> None:
+    """A collection entry was subscripted by the object's own id.
+
+    `_model_index` returned it and called itself "a stable per-item index"; for
+    every model the adapter mints rather than reads, that id is a fresh uuid4
+    per load. The narrative is sorted by path, so both the ids and the line
+    ORDER moved every run. The subscript is positional now, as it already was
+    for every nested list in the same serializer.
+    """
+    pid = "feedface-0000-0000-0000-0000000000b1"
+    lines = _loss_entries_of(
+        PatientRecord(
+            patient=Patient(id=pid, given_name="Sub", family_name="Script"),
+            advance_directives=[
+                AdvanceDirective(patient_id=pid, directive="Do not resuscitate."),
+            ],
+        )
+    )
+    directive = next(line for line in lines if "directive" in line)
+    assert "advance_directives[0]." in directive, directive
+    assert not _UUID_RE.search(directive), f"a runtime id reached the ledger: {directive}"
+
+
+def test_provenance_nested_in_an_extension_is_not_narrated(tmp_path: Path) -> None:
+    """`DECLARED_LOSSES["*.provenance"]` says provenance is never narrated. The
+    `*` means any depth; the code implemented it only at the top level of a
+    model, and extension payloads — which carry whole model dumps, ingest
+    timestamp and all — were walked by a serializer with no notion of it."""
+    pid = "feedface-0000-0000-0000-0000000000b2"
+    lines = _loss_entries_of(
+        PatientRecord(
+            patient=Patient(id=pid, given_name="Nest", family_name="Prov"),
+            extensions={
+                "vendor:parked": [
+                    {
+                        "reason": "empty_note",
+                        "encounter": {
+                            "chief_complaint": "KEEPSENTINEL",
+                            "provenance": {
+                                "source_system": "vendor",
+                                "ingested_at": "2026-08-28T05:31:25.864176Z",
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+    )
+    blob = " | ".join(lines)
+    assert "KEEPSENTINEL" in blob, "the payload itself must still narrate"
+    assert "ingested_at" not in blob
+    assert "source_system" not in blob
+
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _loss_entries_of(record: PatientRecord) -> list[str]:
+    """The ledger lines a record's own export writes (no re-ingest)."""
+    return _entries_of(build_ccd(record))
 
 
 def test_default_document_id_is_deterministic_uuid5(source: PatientRecord) -> None:
