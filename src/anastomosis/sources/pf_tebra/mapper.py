@@ -245,6 +245,9 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     guid = _s(row, "PatientPracticeGuid")
     assert guid is not None  # loader guarantees keyed rows; join column required
 
+    # Order within the list is presentation, not identity: which one a
+    # destination is searched by is decided by the destination
+    # (`_SEARCH_IDENTIFIER_ORDER`), not by whichever adapter built the list.
     identifiers = [Identifier(kind=IdentifierKind.SOURCE_GUID, value=guid, system=SOURCE)]
     if ssn := _s(row, "SSN"):
         identifiers.append(Identifier(kind=IdentifierKind.SSN, value=ssn))
