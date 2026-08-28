@@ -223,17 +223,8 @@ def _choose_plan(console: Console) -> Plan | None:
 
 def _flow_rebuild(console: Console) -> Plan:
     """1 — rebuild charts from an EHR export (``anast pipeline run``)."""
-    export_dir = _ask_existing_dir(
-        console,
-        "Where is the export folder?",
-        "The folder your EHR gave you when you exported your records. "
-        "Nothing inside it is changed.",
-    )
-    out_dir = _ask_output_dir(
-        console,
-        "Where should the finished charts go?",
-        "This folder is created if it is not there yet, and stays readable only by you.",
-    )
+    export_dir = _ask_export_dir(console)
+    out_dir = _ask_output_dir(console, "Where should the finished charts go?")
     source = _ask_source_format(console)
     layout = _ask_text(
         console,
@@ -287,17 +278,8 @@ def _flow_rebuild(console: Console) -> Plan:
 
 def _flow_move(console: Console) -> Plan:
     """2 — move charts into another system (``anast migrate``)."""
-    export_dir = _ask_existing_dir(
-        console,
-        "Where is the export folder?",
-        "The folder your EHR gave you when you exported your records. "
-        "Nothing inside it is changed.",
-    )
-    out_dir = _ask_output_dir(
-        console,
-        "Where should the results go?",
-        "This folder is created if it is not there yet, and stays readable only by you.",
-    )
+    export_dir = _ask_export_dir(console)
+    out_dir = _ask_output_dir(console, "Where should the results go?")
     source = _ask_choice(
         console,
         "Which system did this export come from?",
@@ -607,6 +589,21 @@ def _ask_choice(
         _retry(console, f"Type a number between 1 and {len(options)}.")
 
 
+def _ask_export_dir(console: Console) -> Path:
+    """Ask for the EHR's export folder.
+
+    Two flows begin with this exact question and this exact reassurance, and the
+    reassurance is a promise about what the tool does to the operator's files.
+    One place to say it, so the two flows cannot come to say it differently.
+    """
+    return _ask_existing_dir(
+        console,
+        "Where is the export folder?",
+        "The folder your EHR gave you when you exported your records. "
+        "Nothing inside it is changed.",
+    )
+
+
 def _ask_existing_dir(console: Console, question: str, note: str) -> Path:
     """Ask for a folder that must already be there and readable."""
     _print_question(console, question, note)
@@ -639,13 +636,22 @@ def _ask_existing_path(console: Console, question: str, note: str) -> Path:
             return path
 
 
-def _ask_output_dir(console: Console, question: str, note: str) -> Path:
+def _ask_output_dir(console: Console, question: str) -> Path:
     """Ask where results should go — the one path that may not exist yet.
 
     Checked as far as it can be checked here: a folder that is really a file, or
     one whose parent is missing, is caught now rather than after a long run.
+
+    The question varies by flow ("the finished charts", "the results"); the
+    reassurance underneath it does not, and it is the half that has to stay the
+    same everywhere — an operator who reads "readable only by you" once should
+    not have to wonder whether it still holds on the next screen.
     """
-    _print_question(console, question, note)
+    _print_question(
+        console,
+        question,
+        "This folder is created if it is not there yet, and stays readable only by you.",
+    )
     while True:
         path = _typed_path(console, "Folder")
         if path is None:
