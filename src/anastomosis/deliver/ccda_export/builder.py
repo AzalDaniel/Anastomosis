@@ -259,6 +259,16 @@ _EXPORTED_FIELDS: dict[str, frozenset[str]] = {
 # outside that route still never lands as a raw dict in the narrative.
 _STRUCTURAL_SKIP = frozenset({"id", "provenance", "extensions"})
 
+#: What ``DECLARED_LOSSES["*.provenance"]`` has always promised, at the depth it
+#: says: ANY. Ingest provenance is recreated at parse time and carries a wall
+#: clock, so narrating one nested inside an extension payload made the document
+#: differ between two exports of the same record — the determinism contract
+#: broken by the one field the contract already named. ``_STRUCTURAL_SKIP``
+#: applied only at the top level of a model, and extension payloads (a source's
+#: own model dumps among them) are walked by a serializer that had no notion of
+#: it at all.
+_STRUCTURAL_SKIP_ANYWHERE = frozenset({"provenance"})
+
 # A fixed namespace for deterministic document ids derived from the patient id.
 _DOC_NS = uuid5(NAMESPACE_URL, "anastomosis:ccda-export:document")
 
@@ -995,12 +1005,10 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
         if attr == "patient":
             lines += _walk_model("patient", value, _consumed_fields("patient", value))
         elif isinstance(value, list):
-            for item in value:
+            for index, item in enumerate(value):
                 if not isinstance(item, dict):
                     continue
-                lines += _walk_model(
-                    f"{attr}[{_model_index(item)}]", item, _consumed_fields(attr, item)
-                )
+                lines += _walk_model(f"{attr}[{index}]", item, _consumed_fields(attr, item))
         elif isinstance(value, dict):
             # The record's OWN dict attrs — `extensions` (vendor namespaces the
             # sources hang off the record, e.g. pf_tebra:unmapped:<table>) and
@@ -1013,13 +1021,6 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
         # scalar top-level attrs (none exist today) would fall through silently;
         # the record is a fixed set of model/list/dict fields, so there are none.
     return sorted(lines)
-
-
-def _model_index(item: dict[str, Any]) -> str:
-    """A stable per-item index for path lines: the canonical id where present
-    (ids are GUID-shaped for top-level models), else a positional fallback."""
-    ident = item.get("id")
-    return str(ident) if ident else "0"
 
 
 def _walk_model(path: str, item: dict[str, Any], consumed: frozenset[str]) -> list[str]:
@@ -1115,6 +1116,8 @@ def _serialize(path: str, value: Any) -> list[str]:
     if isinstance(value, dict):
         out: list[str] = []
         for key in sorted(value):
+            if key in _STRUCTURAL_SKIP_ANYWHERE:
+                continue
             out += _serialize(f"{path}.{key}", value[key])
         return out
     if isinstance(value, list):
