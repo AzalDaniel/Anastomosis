@@ -55,8 +55,13 @@ from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
-from anastomosis.deliver._shared import claim_delivered_name, copy_claimed_chart, write_fhir_bundle
+from anastomosis.deliver._shared import (
+    claim_delivered_name,
+    copy_claimed_chart,
+    write_fhir_bundle,
+)
 from anastomosis.deliver.render_index import RenderIndex
+from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 from anastomosis.qa import QAReport
 
 from .templates import CSP_META_CONTENT, ENCOUNTER_HTML, INDEX_HTML, PATIENT_HTML, README_TEXT
@@ -102,6 +107,11 @@ class ArchiveResult:
     patient_count: int
     encounter_count: int
     pdf_count: int
+    #: Source attachments delivered — the scans and lab reports a chart
+    #: references. Counted separately from `pdf_count`, which is charts this
+    #: run rendered: an operator needs to see that the documents came through
+    #: too, and one number covering both would hide either going missing.
+    attachment_count: int
     index_path: Path
 
 
@@ -134,6 +144,7 @@ class ArchiveDeliverer:
         manifest_entries: list[dict[str, object]] = []
         encounter_count = 0
         pdf_count = 0
+        attachment_count = 0
         generated_at = datetime.now(UTC).isoformat()
 
         records_list = list(records)
@@ -181,6 +192,14 @@ class ArchiveDeliverer:
             owned_pdfs.update(claimed_sources)
             pdf_count += len(patient_pdfs)
 
+            # The source's own documents, handed to the patient whose record
+            # names them. Charts and attachments are counted apart: one number
+            # covering both would hide either going missing.
+            patient_attachments = self._copy_patient_attachments(
+                record, (pdfs_dir or out) / ATTACHMENTS_DIRNAME, patient_dir
+            )
+            attachment_count += len(patient_attachments)
+
             # Per-encounter HTML pages. Ledger is fresh per patient: page names
             # only need to be distinct within this patient's own encounters/
             # directory, mirroring the chart ledger's per-patient scope below.
@@ -198,7 +217,7 @@ class ArchiveDeliverer:
                 )
 
             # Patient summary page.
-            self._write_patient_page(record, patient_dir, generated_at)
+            self._write_patient_page(record, patient_dir, generated_at, patient_attachments)
 
             manifest_entries.append(_manifest_entry(record, pid))
 
@@ -214,10 +233,12 @@ class ArchiveDeliverer:
         )
         self._write_readme(out)
         logger.info(
-            "archive delivered: %d patients, %d encounters, %d pdfs (%d unattributed)",
+            "archive delivered: %d patients, %d encounters, %d pdfs, "
+            "%d attachments (%d unattributed)",
             len(manifest_entries),
             encounter_count,
             pdf_count,
+            attachment_count,
             unattributed_count,
         )
         return ArchiveResult(
@@ -225,6 +246,7 @@ class ArchiveDeliverer:
             patient_count=len(manifest_entries),
             encounter_count=encounter_count,
             pdf_count=pdf_count,
+            attachment_count=attachment_count,
             index_path=index_path,
         )
 
@@ -245,6 +267,81 @@ class ArchiveDeliverer:
             licenses_dir = out / "LICENSES"
             licenses_dir.mkdir(parents=True, exist_ok=True)
             atomic_copy(notice, licenses_dir / "NOTICE.txt")
+
+    def _copy_patient_attachments(
+        self,
+        record: PatientRecord,
+        attachments_dir: Path,
+        patient_dir: Path,
+    ) -> list[dict[str, object]]:
+        """Copy this patient's source attachments into their own slot.
+
+        These are not charts this run rendered — they are the files the source
+        export carried: a scanned referral, a lab report, the pages a chart
+        references and is incomplete without. The run put them in the charts
+        directory (see `pipeline._carry_attachments`); this hands each one to
+        the patient whose record names it.
+
+        Attribution needs no index, unlike the PDFs above. A chart's filename
+        carries no patient id, so ownership had to be looked up; a document is
+        named BY the record that owns it, so the record is the attribution.
+
+        Returns what the patient page needs to link them. Two of this
+        patient's documents claiming one delivered name still raises through
+        the shared ledger — that is a wrong-chart hazard, not a missing file.
+        """
+        wanted = [doc for doc in record.documents if doc.path]
+        if not wanted:
+            return []
+
+        out_dir = patient_dir / ATTACHMENTS_DIRNAME
+        out_dir.mkdir(parents=True, exist_ok=True)
+        claims: dict[str, str] = {}
+        delivered: list[dict[str, object]] = []
+        for doc in wanted:
+            name = Path(doc.path or "").name
+            source = attachments_dir / name
+            if not source.is_file():
+                # The record names a document the run did not carry. The
+                # pipeline refuses that case outright, so reaching here means a
+                # charts directory was edited between the run and delivery.
+                # Loud by surrogate id — never the filename, which is a source
+                # identifier, and never a patient value.
+                logger.warning(
+                    "record names an attachment missing from the charts directory for patient %s",
+                    safe_log_id(record.patient.id),
+                )
+                continue
+            copied, failure = copy_claimed_chart(out_dir, claims, source, name, kind="attachment")
+            if failure or copied is None:
+                logger.warning(
+                    "attachment could not be delivered for patient %s (%s)",
+                    safe_log_id(record.patient.id),
+                    failure,
+                )
+                continue
+            delivered.append(
+                {"name": copied, "title": doc.title or copied, "pages": doc.page_count}
+            )
+
+        missing = len(wanted) - len(delivered)
+        if missing:
+            # Deliberately a warning here, not a refusal. Conservation belongs
+            # to the run: `pipeline._carry_attachments` knows the export, checks
+            # every attachment arrived, and stops the run if one did not. This
+            # deliverer only sees a charts directory, so a record naming a
+            # document that is not in it means the directory was assembled
+            # without the carry step or edited after it — a state the pipeline
+            # cannot produce. Refusing here would put a precondition on
+            # `deliver()` that its one production caller already satisfies, and
+            # would fail an operator delivering an older charts directory.
+            # Counted, so `attachment_count` never overstates what landed.
+            logger.warning(
+                "%d attachment(s) named by a record are not in the charts directory for patient %s",
+                missing,
+                safe_log_id(record.patient.id),
+            )
+        return delivered
 
     def _copy_patient_pdfs(
         self,
@@ -373,6 +470,7 @@ class ArchiveDeliverer:
         record: PatientRecord,
         patient_dir: Path,
         generated_at: str,
+        attachments: list[dict[str, object]] | None = None,
     ) -> None:
         encounters_ctx = [
             {
@@ -394,6 +492,7 @@ class ArchiveDeliverer:
                 for ident in record.patient.identifiers
             ],
             encounters=encounters_ctx,
+            attachments=attachments or [],
             conditions=[c.display for c in record.conditions if c.display],
             allergies=[a.substance for a in record.allergies if a.substance],
             medications=[m.display_name for m in record.medications if m.display_name],
