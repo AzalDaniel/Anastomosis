@@ -113,6 +113,13 @@ patient id <code>{{ patient_id }}</code>
 </ul>
 {% else %}<p>No encounters recorded.</p>{% endif %}
 </div>
+{% if attachments %}
+<div class="section"><h3>Documents ({{ attachments | length }})</h3>
+<ul class="attachment-list">
+{% for doc in attachments %}<li><a href="attachments/{{ doc.name }}">{{ doc.title }}</a>{% if doc.pages %} &mdash; {{ doc.pages }} page{% if doc.pages != 1 %}s{% endif %}{% endif %}</li>{% endfor %}
+</ul>
+</div>
+{% endif %}
 {% if conditions %}
 <div class="section"><h3>Conditions ({{ conditions | length }})</h3>
 <ul>{% for c in conditions %}<li>{{ c }}</li>{% endfor %}</ul></div>

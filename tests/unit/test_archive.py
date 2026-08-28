@@ -9,6 +9,7 @@ only (the fixture is the standard one driven from
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -745,3 +746,105 @@ def test_archive_budgeted_chart_is_not_also_routed_to_unattributed(tmp_path: Pat
 
     assert not (out / "unattributed").exists(), "an attributed chart must not be duplicated"
     assert len(list((out / "patients" / pid / "pdfs").glob("*.pdf"))) == 1
+
+
+# --- the source's own documents reach the patient (#110) ---------------------
+
+
+def _charts_with_attachments(tmp_path: Path, records: list[PatientRecord]) -> Path:
+    """A charts directory holding the attachments a run would have carried."""
+    from anastomosis.pipeline import ATTACHMENTS_DIRNAME
+
+    charts = tmp_path / "charts"
+    landing = charts / ATTACHMENTS_DIRNAME
+    landing.mkdir(parents=True)
+    for record in records:
+        for doc in record.documents:
+            if doc.path:
+                (landing / Path(doc.path).name).write_bytes((FIXTURE / doc.path).read_bytes())
+    return charts
+
+
+def test_a_patients_documents_land_in_their_own_directory(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """The scans and lab reports a chart references, delivered beside it.
+
+    Attribution needs no index: a chart's filename carries no patient id, so
+    ownership had to be looked up, but a document is named BY the record that
+    owns it. What this pins is that nothing lands in a directory whose record
+    did not ask for it.
+    """
+    charts = _charts_with_attachments(tmp_path, records)
+    expected = {Path(d.path).name for r in records for d in r.documents if d.path}
+    assert expected, "the fixture no longer exercises this path"
+
+    result = ArchiveDeliverer().deliver(records, charts, tmp_path / "archive")
+
+    patients = tmp_path / "archive" / "patients"
+    delivered = {p.name for p in patients.rglob("attachments/*") if p.suffix}
+    assert delivered == expected
+    assert result.attachment_count == len(expected)
+
+    # And each one sits under a patient whose own record names it — a document
+    # filed into the wrong patient's folder is the failure this tool exists to
+    # prevent, and it would still satisfy the set comparison above.
+    by_patient_dir = {
+        page.parent.name: {
+            Path(d.path).name
+            for r in records
+            for d in r.documents
+            if d.path and r.patient.id in page.read_text(encoding="utf-8")
+        }
+        for page in patients.rglob("index.html")
+    }
+    for directory, owned in by_patient_dir.items():
+        here = {p.name for p in (patients / directory / "attachments").glob("*") if p.suffix}
+        assert here <= owned, f"{directory} holds a document its record does not name"
+
+
+def test_the_patient_page_links_each_document_by_name_and_length(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """A delivered file nobody links to is half a delivery."""
+    charts = _charts_with_attachments(tmp_path, records)
+
+    ArchiveDeliverer().deliver(records, charts, tmp_path / "archive")
+
+    pages = [
+        page.read_text(encoding="utf-8")
+        for page in (tmp_path / "archive" / "patients").rglob("index.html")
+    ]
+    with_docs = [page for page in pages if "<h3>Documents (" in page]
+    assert with_docs, "no patient page lists the documents delivered beside it"
+    assert 'href="attachments/' in with_docs[0]
+    assert "Cardiology referral letter" in with_docs[0], "the title, not the storage id"
+    assert "2 pages" in with_docs[0], "the page count a chart is incomplete without"
+
+
+def test_a_document_missing_from_the_charts_dir_is_named_not_counted(
+    tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Conservation belongs to the run; the deliverer must not overstate.
+
+    `pipeline._carry_attachments` knows the export and stops a run whose
+    attachments did not all arrive. This deliverer only sees a charts
+    directory, so a record naming a document that is not in it means the
+    directory was assembled without the carry step or edited after — it says
+    so, by surrogate id, and does not count what it did not deliver.
+    """
+    charts = tmp_path / "charts"
+    charts.mkdir()  # no attachments/ at all
+
+    with caplog.at_level(logging.WARNING):
+        result = ArchiveDeliverer().deliver(records, charts, tmp_path / "archive")
+
+    assert result.attachment_count == 0
+    assert any("not in the charts directory" in r.message for r in caplog.records)
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    for record in records:
+        assert record.patient.id not in logged, "a raw patient id reached the log"
+        for doc in record.documents:
+            assert not doc.path or Path(doc.path).name not in logged, (
+                "an attachment filename — a source identifier — reached the log"
+            )
