@@ -280,10 +280,17 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 console.print(f"Detected source: [cyan]{event.detail}[/cyan]")
         elif event.stage == STAGE_RECONSTRUCT:
             failed = event.counts["failed"]
+            # "skipped" here means "already on disk", so on a first run it reads
+            # as "nothing was left out" — and encounters the source's own
+            # selection rules excluded were invisible. They get their own
+            # number, and only when there are any: a run that left nothing out
+            # should not have to say so on every line.
+            excluded = event.counts.get("excluded", 0)
             console.print(
                 f"[green]{event.counts['rendered']} rendered[/green], "
                 f"{event.counts['skipped']} skipped, "
-                f"{'[red]' if failed else ''}{failed} failed"
+                + (f"[yellow]{excluded} excluded by selection rules[/yellow], " if excluded else "")
+                + f"{'[red]' if failed else ''}{failed} failed"
                 f"{'[/red]' if failed else ''} {arrow} {charts_dir}"
             )
         elif event.stage == STAGE_QA:

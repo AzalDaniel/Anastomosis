@@ -275,6 +275,61 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
 ATTACHMENTS_DIRNAME = "attachments"
 
 
+#: Adapters park the encounters their own selection rules kept out of the
+#: render under an extension key ending in this, so nothing is dropped. The
+#: suffix is the convention; the prefix is the adapter's namespace, as in
+#: ``pf_tebra:skipped_encounters``.
+SELECTION_EXCLUDED_SUFFIX = ":skipped_encounters"
+
+#: The reconciliation artifact. An operator counting 8 encounter rows into a
+#: run and 6 charts out of it needs somewhere to read the other two.
+SELECTION_REPORT_NAME = "selection_report.json"
+
+
+def _selection_exclusions(records: list[PatientRecord]) -> list[dict[str, str]]:
+    """Every encounter an adapter's selection rules kept out of the render.
+
+    Ids and rule names only. An encounter id is a source identifier and a
+    reason is the name of a rule, so this carries none of the chart — which is
+    what lets it be written beside the charts and read back without care.
+    """
+    exclusions: list[dict[str, str]] = []
+    for record in records:
+        for key, value in record.extensions.items():
+            if not key.endswith(SELECTION_EXCLUDED_SUFFIX) or not isinstance(value, list):
+                continue
+            for entry in value:
+                if not isinstance(entry, dict):
+                    continue
+                encounter = entry.get("encounter")
+                exclusions.append(
+                    {
+                        "patient_id": record.patient.id,
+                        "encounter_id": (
+                            str(encounter.get("id", "")) if isinstance(encounter, dict) else ""
+                        ),
+                        "reason": str(entry.get("reason", "")),
+                        "rule_source": key.removesuffix(SELECTION_EXCLUDED_SUFFIX),
+                    }
+                )
+    return exclusions
+
+
+def _write_selection_report(out: Path, exclusions: list[dict[str, str]]) -> None:
+    """Write the run's selection report, whatever it has to say.
+
+    Written on every run, including the empty one. "Nothing was left out" is
+    the answer an operator reconciling counts most often needs, and an absent
+    file cannot distinguish it from a run that never looked.
+    """
+    import json
+
+    from anastomosis.core.atomic import atomic_write_text
+
+    payload = {"version": 1, "excluded": exclusions}
+    atomic_write_text(out / SELECTION_REPORT_NAME, json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
     """Copy every attachment the source resolved into the run's output.
 
@@ -452,12 +507,15 @@ def run_pipeline(
     # `out` is hardened by the engine above, so this is the first point a
     # patient's own files may be written beside their charts.
     carried = _carry_attachments(records, export_dir, out)
+    exclusions = _selection_exclusions(records)
+    _write_selection_report(out, exclusions)
     emit(
         StageEvent(
             STAGE_RECONSTRUCT,
             counts={
                 "rendered": len(result.rendered),
                 "skipped": len(result.skipped),
+                "excluded": len(exclusions),
                 "failed": len(result.failed),
                 "attachments": carried,
             },
