@@ -258,7 +258,12 @@ svg { display: block; }
   font-weight: 600;
   color: var(--ink-secondary);
 }
-.panel-note { font-size: var(--text-caption); color: var(--ink-muted); line-height: 1.55; }
+.panel-note {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  line-height: 1.55;
+  max-width: var(--measure-prose);
+}
 .prose { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.55; }
 .prose p { margin: 0 0 var(--space-2); }
 .prose p:last-child { margin-bottom: 0; }
@@ -271,7 +276,20 @@ svg { display: block; }
   font-weight: 560;
   color: var(--ink-secondary);
 }
-.field-help { font-size: var(--text-caption); color: var(--ink-muted); line-height: 1.5; }
+.field-help {
+  font-size: var(--text-label);
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  max-width: var(--measure-prose);
+}
+/* Not a field's help: the run's own sentence, which is empty until there is a
+   run to describe. It wore .field-help and so counted as one. */
+.run-note {
+  font-size: var(--text-label);
+  color: var(--ink-secondary);
+  line-height: 1.5;
+  max-width: var(--measure-prose);
+}
 
 /* :where() so the base contributes only `.field`'s specificity — the face
    opt-ins below are single classes, and an attribute selector here would

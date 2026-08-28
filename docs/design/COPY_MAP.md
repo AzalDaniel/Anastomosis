@@ -23,8 +23,8 @@ and format names keep their proper casing (C-CDA, FHIR).
 | Reconstruct, verify, and re-home clinical records. | Turn an EHR export into complete, verified charts. |
 | Export directory (`/path/to/ehi/export`) | Export folder — “The folder your EHR gave you when you exported your records.” placeholder: `C:\Users\you\Downloads\ehr-export` |
 | run pipeline | Rebuild charts |
-| Source format | Export format — “Which system this export came from. ‘Detect’ works for all built-in formats.” |
-| Template pack | Chart layout — “How the finished chart pages are laid out.” |
+| Source format | Export format — no help line: the chooser leads with “Detect” and every row carries the format’s own description. On Migrate only, “Detect the format fills this in for you.” |
+| Template pack | Chart layout — no help line; it restated the label. |
 | Extra pack directory | (Advanced) Additional layout folder |
 | qa on / qa off | Double-check results — a switch, so the label names what it turns on and the states are not spelled out. “Re-reads every finished chart and confirms names, dates, and values landed on the right patient.” |
 | trust new pack code | (Advanced) Allow this new layout to run — “Layouts contain code. Anastomosis refuses layouts it has not seen before unless you allow them once here.” |
@@ -39,7 +39,7 @@ and format names keep their proper casing (C-CDA, FHIR).
 | --- | --- |
 | Source → destination → the shortest viable route. | Move charts from one system into another. |
 | viable / not viable | available / not available |
-| Chart representation (--render) | Chart pages — “Rendered pages (PDF) or data only.” |
+| Chart representation (--render) | Chart pages — no help line: the chooser’s rows read “Rendered pages — …” and “Data only — C-CDA”. |
 | Browser pack X ready (selectors discovered) | Filing assistant for X is ready |
 | …needs discovery — run `anast destination init`… | The filing assistant for this system has not been set up on this computer yet. Set it up from the Teach screen. |
 | Run the pipeline with the C-CDA deliverer… `anast pipeline run <export> -o out --ccda` | This route creates a C-CDA transfer document the destination can import. “Rebuild charts” below produces it. |
@@ -79,6 +79,40 @@ and format names keep their proper casing (C-CDA, FHIR).
 | Saving proves the mapping drops no column (round-trip), then writes it owner-only. Refine the saved `mapping.json`… | Saving first proves no column of your file would be lost, then stores the format for your user account only. |
 | Refusing to save — these columns would be dropped: … | Cannot save yet — these columns would be lost: … Every column must have a home before the format is saved. |
 | format X · N columns · patient key … · row scope … | Prose: “X file · N columns · patients identified by ‹column› · one row per ‹scope›.” |
+
+## Copy deleted rather than rewritten (§5.2)
+
+A field earns a help line only when the label cannot carry the point: the
+consequence is not recoverable from it, the value comes from outside the app,
+there is a format the placeholder cannot show, or it is Advanced and needs one
+line saying when a person would want it. Everything below failed all four.
+
+| Deleted line | Why |
+| --- | --- |
+| “The folder Anastomosis writes the finished charts into.” | restates “Where results go” |
+| “The folder Anastomosis wrote the finished charts into.” | restates “Results folder” |
+| “Which sections each chart page includes.” | restates “Chart sections” |
+| “How the finished chart pages are laid out.” | restates “Chart layout” |
+| “Rendered pages (PDF) or data only.” | the chooser’s rows say it |
+| “The system these charts are moving into.” | restates “Destination system” |
+| “Lowercase letters and underscores, e.g. `acme_soap`.” | the placeholder is `acme_soap` |
+| “Optional. What you want to see in the layout list.” | “optional” belongs in the label → **Display name (optional)** |
+| “The destination system Anastomosis files into.” | restates “Filing assistant”; the second sentence survives alone |
+| the four counter sub-lines | deleted with the tiles (#165) |
+
+Survivors render at 13px `--ink-secondary` capped at a prose measure, rather
+than 12px `--ink-muted` — at the old size every line looked equally skippable,
+which is what made adding one cost nothing.
+
+## Empty states (§4.11)
+
+| Region | Line |
+| --- | --- |
+| Charts · Patients in this run | **No run yet.** Choose Rebuild charts above; every patient Anastomosis finds is listed here. |
+| Migrate · Patients in this run | **No transfer yet.** Choose a destination and start the transfer; every patient it moves is listed here. |
+| Migrate · How charts can reach a destination | **Choose a destination above.** The ways charts can reach it are listed here, with what each one needs. |
+| Uploads · What has been filed | **Charts are filed one visit at a time.** Each one appears here as it goes, with what happened to it and when. |
+| Teach · What Anastomosis already knows | Anastomosis reads *N* export formats and lays charts out *N* ways. Teach it another when it meets one it does not know. |
 
 ## Cross-cutting
 

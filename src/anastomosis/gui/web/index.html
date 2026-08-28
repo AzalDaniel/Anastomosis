@@ -136,7 +136,6 @@
               <ul class="chooser-list" id="migrate-destination-list" role="listbox"
                   aria-labelledby="migrate-destination-label" hidden></ul>
             </div>
-            <div class="field-help">The system these charts are moving into.</div>
           </div>
           <div class="route-list" id="migrate-routes" hidden></div>
           <div class="empty-state" id="migrate-routes-empty">
@@ -180,12 +179,11 @@
           <div class="field">
             <label for="uploads-results-dir">Results folder</label>
             <input class="is-path" type="text" id="uploads-results-dir" placeholder="C:\Users\you\Documents\anastomosis-charts" />
-            <div class="field-help">The folder Anastomosis wrote the finished charts into.</div>
           </div>
           <div class="field">
             <label for="uploads-assistant">Filing assistant</label>
             <input class="is-id" type="text" id="uploads-assistant" placeholder="tebra" />
-            <div class="field-help">The destination system Anastomosis files into. Migrate fills this in for you.</div>
+            <div class="field-help">Migrate fills this in for you.</div>
           </div>
           <div class="toggles">
             <label class="toggle">
@@ -268,7 +266,7 @@
         <section class="panel" id="uploads-detail" aria-label="What has been filed">
           <h3>What has been filed</h3>
           <div class="values" id="uploads-meta"></div>
-          <div class="field-help" id="uploads-when"></div>
+          <div class="run-note" id="uploads-when"></div>
           <div class="field search-field">
             <span class="icon" data-icon="search"></span>
             <input class="is-id" type="search" id="uploads-search" autocomplete="off" spellcheck="false"
@@ -337,12 +335,10 @@
             <div class="field">
               <label for="layout-name">Layout name</label>
               <input class="is-id" type="text" id="layout-name" placeholder="acme_soap" />
-              <div class="field-help">Lowercase letters and underscores, e.g. acme_soap.</div>
             </div>
             <div class="field">
-              <label for="layout-display">Display name</label>
+              <label for="layout-display">Display name (optional)</label>
               <input type="text" id="layout-display" placeholder="Acme SOAP note" />
-              <div class="field-help">Optional. What you want to see in the layout list.</div>
             </div>
             <button class="btn btn-primary" id="layout-analyze" type="button">Look at the samples</button>
           </div>
@@ -359,11 +355,11 @@
                 <span>These samples are from different patients and different visits.</span>
               </label>
             </div>
-            <button class="btn btn-primary" id="layout-write" type="button" disabled>Write the draft layout</button>
             <div class="panel-note">
               This draft matches the samples' structure; review the result before
               relying on it.
             </div>
+            <button class="btn btn-primary" id="layout-write" type="button" disabled>Write the draft layout</button>
           </div>
 
           <div class="panel" id="layout-result" aria-label="Draft layout written" hidden>
@@ -386,12 +382,10 @@
             <div class="field">
               <label for="format-name">Format name</label>
               <input class="is-id" type="text" id="format-name" placeholder="acme_csv" />
-              <div class="field-help">Lowercase letters and underscores, e.g. acme_csv.</div>
             </div>
             <div class="field">
-              <label for="format-display">Display name</label>
+              <label for="format-display">Display name (optional)</label>
               <input type="text" id="format-display" placeholder="Acme clinic CSV" />
-              <div class="field-help">Optional. What you want to see in the export-format list.</div>
             </div>
             <button class="btn btn-primary" id="format-analyze" type="button">Look at the example</button>
           </div>
@@ -414,11 +408,11 @@
                 <span>I reviewed this match-up. Columns with no match are kept, not dropped.</span>
               </label>
             </div>
-            <button class="btn btn-primary" id="format-save" type="button" disabled>Save this format</button>
             <div class="panel-note">
               Saving first proves no column of your file would be lost, then stores
               the format for your user account only.
             </div>
+            <button class="btn btn-primary" id="format-save" type="button" disabled>Save this format</button>
           </div>
 
           <div class="panel" id="format-result" aria-label="Format saved" hidden>

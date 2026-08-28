@@ -863,3 +863,55 @@ def test_a_tinted_row_says_its_state_in_words(gui) -> None:
             continue
         assert len(row["words"]) > 3, f"a tinted row says nothing: {row}"
         assert not row["muted"], f"--ink-muted is inside a tinted row: {row}"
+
+
+def test_no_view_carries_more_help_than_fields(gui) -> None:
+    """A help line under every field is a help line under nothing.
+
+    Two views used to carry MORE help lines than fields — ten under six, ten
+    under seven — and most of them restated the label they sat beneath ("The
+    folder Anastomosis writes the finished charts into." under "Where results
+    go"). Uniform emphasis is no emphasis: when every field looks equally
+    annotated the reader stops reading all of them, including the two that
+    would have saved them.
+
+    A line survives only if the label cannot carry the point: the consequence
+    is not recoverable from it, the value comes from outside the app, there is
+    a format the placeholder cannot show, or the field is Advanced and needs
+    one line saying when a person would want it.
+    """
+    app = gui()
+    counts = {}
+
+    for view, _label in NAV_VIEWS:
+        app.show(view)
+        seen = app.page.evaluate(
+            r"""() => {
+              const root = document.querySelector('.view:not([hidden])');
+              const shown = (n) =>
+                !!(n.offsetWidth || n.offsetHeight || n.getClientRects().length);
+              const inAdvanced = (n) => !!n.closest('.advanced');
+              const lines = [...root.querySelectorAll('.field-help')]
+                .filter(shown)
+                .map(n => ({text: n.textContent.replace(/\s+/g, ' ').trim(),
+                            advanced: inAdvanced(n)}))
+                .filter(l => l.text);
+              return {
+                lines,
+                fields: [...root.querySelectorAll('.field')].filter(shown).length,
+              };
+            }"""
+        )
+        plain = [line for line in seen["lines"] if not line["advanced"]]
+        counts[view] = len(plain)
+        assert len(seen["lines"]) <= seen["fields"], (
+            f"{view} has {len(seen['lines'])} help lines under {seen['fields']} fields"
+        )
+        for line in seen["lines"]:
+            # An empty element still occupies the count; the run's own sentence
+            # wore this class and so read as a field's help line.
+            assert line["text"], f"{view} has an empty help line"
+
+    # Off the Advanced disclosure, which earns one line per field by its own
+    # rule, what is left is the handful that actually could not be a label.
+    assert counts == {"charts": 3, "migrate": 3, "uploads": 2, "teach": 1}, counts
