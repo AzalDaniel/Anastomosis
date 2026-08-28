@@ -504,7 +504,7 @@ def run_pipeline(
     """
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.chromium import ChromiumRenderer
+    from anastomosis.reconstruct.chromium import ChromiumRenderer, RendererUnavailable
     from anastomosis.reconstruct.engine import ReconstructionEngine
     from anastomosis.reconstruct.packtrust import default_pack_trust
 
@@ -568,7 +568,17 @@ def run_pipeline(
     records = load_records(adapter, export_dir)
     emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
 
-    result = engine.run(records, out, force=force)
+    try:
+        result = engine.run(records, out, force=force)
+    except RendererUnavailable as exc:
+        # A property of the machine, not of a chart. It reaches the operator as
+        # the loud, PHI-safe failure the CLI prints verbatim — exit 2, the code
+        # this pipeline already uses for "a capability this run needs is not
+        # available here", the same class as an unavailable pack. Previously it
+        # was tagged onto every encounter, so a base install answered with six
+        # identical "(RuntimeError)" lines and threw away the one sentence
+        # naming what to install.
+        raise PipelineError(str(exc), exit_code=2, kind="render_unavailable") from None
     if result.failed:
         # Loud render failure, before the stage is announced as finished and
         # before anything is carried: a run that could not render every chart

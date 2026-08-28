@@ -34,6 +34,7 @@ from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import safe_name
 
+from .chromium import RendererUnavailable
 from .packs import LoadedPack
 
 __all__ = [
@@ -283,6 +284,12 @@ class ReconstructionEngine:
             self._render_pdf(html, target)
             result.rendered.append(target)
             result.documents.append(RenderedDoc(target, encounter.id, record.patient.id))
+        except RendererUnavailable:
+            # Not this chart's failure — the machine cannot render any chart, so
+            # tagging it per encounter produced N identical "(RuntimeError)"
+            # lines and discarded the one sentence that said what to install.
+            # Raised once, ends the run, message intact.
+            raise
         except Exception as exc:
             logger.error(
                 "render failed for encounter %s (%s)", safe_log_id(encounter.id), exc_tag(exc)
@@ -295,6 +302,13 @@ class ReconstructionEngine:
         with atomic_replace(target) as tmp:
             try:
                 self._acquire_renderer().render(html, tmp)
+            except RendererUnavailable:
+                # Nothing to relaunch. The retry below is for a Chromium that
+                # died mid-run; a machine with no browser at all will not have
+                # one on the second attempt, and retrying only adds a "renderer
+                # crashed" warning in front of the message that says what to
+                # install.
+                raise
             except Exception as exc:
                 # Crash relaunch: one fresh renderer, one retry, then report.
                 logger.warning("renderer crashed (%s); relaunching once", exc_tag(exc))
