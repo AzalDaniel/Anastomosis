@@ -447,10 +447,14 @@ def test_archive_unattributed_count_logs_only_successful_copies(
 
     lines = [r.getMessage() for r in caplog.records if "archive delivered" in r.getMessage()]
     assert lines, "expected the archive-delivered summary log line"
-    assert "(1 unattributed)" in lines[0], (
+    assert "1 unattributed" in lines[0], (
         f"logged unattributed count must match the {len(landed)} file(s) actually "
         f"copied, not the 2 attempted: {lines[0]!r}"
     )
+    # And the one that did not copy is not simply forgotten: it was in the
+    # charts folder and it is not in the archive, which is the run's missing
+    # count wherever the copy failed (#225).
+    assert "1 missing" in lines[0], lines[0]
 
 
 def test_archive_index_json_search_haystack_is_lowercased(

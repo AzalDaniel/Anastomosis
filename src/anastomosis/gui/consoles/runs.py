@@ -364,7 +364,21 @@ class PipelineConsole(_RunConsole):
                 continue
             patients = outcome.counts["patients"]
             rollup[f"{kind}_patients"] = patients
-            self._emit(progress_event(self._FLOW, "deliver", deliverer=kind, patients=patients))
+            # What the delivery could NOT file travels with what it did. Zero
+            # is left out rather than shown, so the rail stays a short line on
+            # an ordinary run and a non-zero count is the thing that changed.
+            shortfall = {
+                key: outcome.counts[key]
+                for key in ("missing", "unattributed")
+                if outcome.counts.get(key)
+            }
+            for key, value in shortfall.items():
+                rollup[f"{kind}_{key}"] = value
+            self._emit(
+                progress_event(
+                    self._FLOW, "deliver", deliverer=kind, patients=patients, **shortfall
+                )
+            )
         self._emit(stage_event(self._FLOW, "deliver", "done"))
 
 

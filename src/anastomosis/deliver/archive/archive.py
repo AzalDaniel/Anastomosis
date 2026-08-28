@@ -100,6 +100,33 @@ def _date_iso(value: object) -> str | None:
 
 
 @dataclass(frozen=True)
+class _PatientCharts:
+    """What copying one patient's charts produced — including what it did not.
+
+    ``missing`` is the point of the type. Two of the three fields were already
+    returned as a bare tuple; the third was discovered in the same loop, logged,
+    and dropped, so no caller could count it.
+    """
+
+    #: encounter id -> the DELIVERED filename its chart was written under.
+    by_encounter: dict[str, str]
+    #: the renderer's own filenames this patient claimed, which is what the
+    #: caller's unattributed sweep matches against (it reads the charts
+    #: directory, where the names have not been budgeted yet).
+    claimed_sources: set[str]
+    #: encounter ids with no chart in THIS patient's folder, whichever way it
+    #: went wrong. Drives the per-encounter page, which links into that folder.
+    missing: set[str]
+    #: how many of those charts were not in the charts directory at all.
+    #: Counted apart from the rest because it decides who does the counting: a
+    #: chart whose file is missing is gone here and nowhere else will see it,
+    #: while a chart whose copy failed is still in the charts directory, so it
+    #: reaches the unattributed sweep and is reconciled there. Adding both here
+    #: counted one failed chart twice.
+    absent: int
+
+
+@dataclass(frozen=True)
 class ArchiveResult:
     """What landed on disk, summarized for the CLI."""
 
@@ -113,6 +140,17 @@ class ArchiveResult:
     #: too, and one number covering both would hide either going missing.
     attachment_count: int
     index_path: Path
+    #: Charts that were expected in the delivered tree and are not in it —
+    #: the index named one and the file was gone, or a copy failed (including
+    #: in the unattributed sweep). A number the operator has to see: it is the
+    #: difference between "this patient had two visits" and "this patient's
+    #: second chart is lost".
+    missing_count: int = 0
+    #: Charts that arrived but belong to no patient in this run, so they were
+    #: filed under ``unattributed/`` rather than guessed onto someone. Not a
+    #: loss — they are on disk — but nobody will open that directory unless
+    #: they are told it has something in it.
+    unattributed_count: int = 0
 
 
 class ArchiveDeliverer:
@@ -145,6 +183,7 @@ class ArchiveDeliverer:
         encounter_count = 0
         pdf_count = 0
         attachment_count = 0
+        missing_count = 0
         generated_at = datetime.now(UTC).isoformat()
 
         records_list = list(records)
@@ -186,11 +225,11 @@ class ArchiveDeliverer:
             # unattributed sweep below sees in ``pdfs_dir`` — matching it
             # against a budgeted-shorter delivered name would re-copy a chart
             # already filed with its patient into ``unattributed/`` as well.
-            patient_pdfs, claimed_sources = self._copy_patient_pdfs(
-                record, render_index, pdfs_dir, patient_dir
-            )
-            owned_pdfs.update(claimed_sources)
+            charts = self._copy_patient_pdfs(record, render_index, pdfs_dir, patient_dir)
+            patient_pdfs = charts.by_encounter
+            owned_pdfs.update(charts.claimed_sources)
             pdf_count += len(patient_pdfs)
+            missing_count += charts.absent
 
             # The source's own documents, handed to the patient whose record
             # names them. Charts and attachments are counted apart: one number
@@ -214,6 +253,7 @@ class ArchiveDeliverer:
                     qa_lookup,
                     generated_at,
                     claimed_pages,
+                    chart_missing=encounter.id in charts.missing,
                 )
 
             # Patient summary page.
@@ -223,7 +263,14 @@ class ArchiveDeliverer:
 
         # Anything in ``pdfs_dir`` not claimed by an indexed patient lands
         # in ``unattributed/`` so nothing is silently dropped or guessed.
-        unattributed_count = self._route_unattributed_pdfs(pdfs_dir, render_index, owned_pdfs, out)
+        unattributed_count, sweep_failures = self._route_unattributed_pdfs(
+            pdfs_dir, render_index, owned_pdfs, out
+        )
+        # The sweep is where a chart still IN the charts directory is settled:
+        # a failed attributed copy leaves the chart unclaimed, so the sweep sees
+        # it and either rescues it into unattributed/ or cannot, and only then
+        # is it missing. Counting it above as well would count one chart twice.
+        missing_count += sweep_failures
 
         index_path = self._write_index(
             out,
@@ -234,11 +281,12 @@ class ArchiveDeliverer:
         self._write_readme(out)
         logger.info(
             "archive delivered: %d patients, %d encounters, %d pdfs, "
-            "%d attachments (%d unattributed)",
+            "%d attachments (%d missing, %d unattributed)",
             len(manifest_entries),
             encounter_count,
             pdf_count,
             attachment_count,
+            missing_count,
             unattributed_count,
         )
         return ArchiveResult(
@@ -248,6 +296,8 @@ class ArchiveDeliverer:
             pdf_count=pdf_count,
             attachment_count=attachment_count,
             index_path=index_path,
+            missing_count=missing_count,
+            unattributed_count=unattributed_count,
         )
 
     # --- writers ------------------------------------------------------------
@@ -349,15 +399,8 @@ class ArchiveDeliverer:
         render_index: RenderIndex | None,
         pdfs_dir: Path | None,
         patient_dir: Path,
-    ) -> tuple[dict[str, str], set[str]]:
+    ) -> _PatientCharts:
         """Copy this patient's PDFs into the patient's own ``pdfs/`` slot.
-
-        Returns ``(encounter.id -> DELIVERED pdf filename, the SOURCE filenames
-        this patient claimed)``. The first drives the per-encounter page links;
-        the second is what the caller's unattributed sweep matches against,
-        because that sweep looks at ``pdfs_dir``, where the names are still the
-        renderer's — a budgeted delivered name would not be found there and the
-        chart would be copied a second time into ``unattributed/``.
 
         Attribution is strictly index-based: only PDFs the engine actually
         wrote for ``record.patient.id`` are copied, and the encounter link comes
@@ -371,18 +414,36 @@ class ArchiveDeliverer:
         — far past what the Windows path budget can hold under a deep output
         tree. An over-budget destination is a hard failure here, never a
         warn-and-continue: this is the path that carries the charts.
+
+        A chart the index names and that does not arrive is COUNTED, not just
+        logged: the count is what reaches the operator, and the log line only
+        reaches whoever is already reading logs.
         """
+        empty = _PatientCharts({}, set(), set(), 0)
         if render_index is None or pdfs_dir is None or not pdfs_dir.is_dir():
-            return {}, set()
+            return empty
         names = render_index.for_patient(record.patient.id)
         if not names:
-            return {}, set()
+            return empty
 
         out_dir = patient_dir / "pdfs"
         out_dir.mkdir(parents=True, exist_ok=True)
         mapping: dict[str, str] = {}
         claimed: dict[str, str] = {}
         claimed_sources: set[str] = set()
+        missing: set[str] = set()
+        absent = 0
+
+        def lost(name: str) -> None:
+            """Remember WHICH encounter lost its chart, not only how many did.
+
+            The per-encounter page needs the id: it can then say the chart is
+            missing instead of quietly rendering without the link.
+            """
+            entry = render_index.lookup(name)
+            if entry is not None:
+                missing.add(entry.encounter_id)
+
         for name in names:
             source = pdfs_dir / name
             if not source.is_file():
@@ -394,6 +455,8 @@ class ArchiveDeliverer:
                 logger.warning(
                     "indexed pdf missing on disk for patient %s", safe_log_id(record.patient.id)
                 )
+                lost(name)
+                absent += 1
                 continue
             # OUTSIDE the copy's warn path on purpose: a destination that
             # cannot be named distinctly raises (ValueError) rather than
@@ -403,6 +466,7 @@ class ArchiveDeliverer:
             delivered, failure = copy_claimed_chart(out_dir, claimed, source, name, kind="chart")
             if failure is not None:
                 logger.warning("pdf copy failed (%s)", failure)
+                lost(name)
                 continue
             assert delivered is not None  # copy_claimed_chart: failure is None => delivered isn't
             claimed_sources.add(name)
@@ -411,7 +475,7 @@ class ArchiveDeliverer:
                 # First-wins: a doubled encounter→pdf row (corrupted index)
                 # keeps the first assignment, never overwrites.
                 mapping.setdefault(entry.encounter_id, delivered)
-        return mapping, claimed_sources
+        return _PatientCharts(mapping, claimed_sources, missing, absent)
 
     def _route_unattributed_pdfs(
         self,
@@ -419,7 +483,7 @@ class ArchiveDeliverer:
         render_index: RenderIndex | None,
         owned: set[str],
         out: Path,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Copy any leftover PDFs into ``out/unattributed/`` (fail-closed).
 
         Two cases land here: PDFs in ``pdfs_dir`` that the index does not
@@ -427,15 +491,16 @@ class ArchiveDeliverer:
         directory when no index is present at all. In both cases the
         deliverer refuses to guess — the PDFs are visible to the operator
         in one place, never silently dropped, never silently misattributed.
-        Returns the count of PDFs actually copied (a failed copy is warned
-        about, per :func:`~anastomosis.deliver._shared.copy_claimed_chart`,
-        and excluded from the count) for the run summary.
+        Returns ``(copied, failed)``. Keeping the two apart is the point: a
+        chart whose copy failed here is not "unattributed", it is a chart that
+        was in the folder and is not in the archive, so it belongs to the run's
+        missing count and not to the count of files someone can go and read.
         """
         if pdfs_dir is None or not pdfs_dir.is_dir():
-            return 0
+            return 0, 0
         all_pdfs = sorted(p for p in pdfs_dir.glob("*.pdf"))
         if not all_pdfs:
-            return 0
+            return 0, 0
         if render_index is None:
             # No index at all → every PDF is unattributed by the same
             # fail-closed rule. Log loud (by count only — the pdfs dir is a
@@ -448,11 +513,12 @@ class ArchiveDeliverer:
         else:
             orphans = [p for p in all_pdfs if p.name not in owned]
         if not orphans:
-            return 0
+            return 0, 0
         target = out / "unattributed"
         target.mkdir(parents=True, exist_ok=True)
         claimed: dict[str, str] = {}
         copied = 0
+        failed = 0
         for source in orphans:
             # Budgeted and claimed exactly like an attributed chart: a PDF that
             # lands here is still a chart nobody may lose.
@@ -461,9 +527,10 @@ class ArchiveDeliverer:
             )
             if failure is not None:
                 logger.warning("unattributed pdf copy failed (%s)", failure)
+                failed += 1
                 continue
             copied += 1
-        return copied
+        return copied, failed
 
     def _write_patient_page(
         self,
@@ -510,6 +577,8 @@ class ArchiveDeliverer:
         qa_lookup: dict[str, str],
         generated_at: str,
         claimed_pages: dict[str, str],
+        *,
+        chart_missing: bool = False,
     ) -> None:
         sections_ctx = [
             {"kind": s.kind.value, "title": s.title, "text": (s.text or "").strip()}
@@ -532,6 +601,12 @@ class ArchiveDeliverer:
             chief_complaint=encounter.chief_complaint,
             note_type=encounter.note_type,
             pdf_name=patient_pdfs.get(encounter.id),
+            # The absence of a chart link means two different things and the
+            # page has to tell them apart. An encounter the run never rendered
+            # (a selection rule kept it out) has no chart and never had one;
+            # this one was rendered and did not arrive. Only the second is a
+            # loss, and only the second gets a sentence.
+            chart_missing=chart_missing,
             qa_verdict=qa_lookup.get(encounter.id),
             sections=sections_ctx,
             addenda=addenda_ctx,

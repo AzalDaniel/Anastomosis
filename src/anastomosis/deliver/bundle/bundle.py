@@ -91,6 +91,11 @@ class BundleResult:
     attachment_paths: list[Path] = field(default_factory=list)
     qa_report_path: Path | None = None
     readme_path: Path | None = None
+    #: Charts the render index named for this patient that were not on disk
+    #: when the bundle was built. A record request answered without a chart the
+    #: run says it rendered is exactly the silent loss this tool exists to end,
+    #: so the number travels with the result instead of being filtered away.
+    missing_count: int = 0
 
 
 class BundleDeliverer:
@@ -123,20 +128,38 @@ class BundleDeliverer:
         would otherwise merge two patients into a single bundle.
         """
         render_index = RenderIndex.load(pdfs_dir)
+        missing: dict[str, int] = {}
         if pdfs_dir is None or not pdfs_dir.is_dir():
             pdfs_lookup: dict[str, list[Path]] = {}
         elif render_index is None:
             logger.warning("no render index; bundle will deliver without chart PDFs")
             pdfs_lookup = {}
         else:
-            pdfs_lookup = {
-                record.patient.id: [
-                    pdfs_dir / name
-                    for name in render_index.for_patient(record.patient.id)
-                    if (pdfs_dir / name).is_file()
-                ]
-                for record in records
-            }
+            # Split rather than filtered. This was one comprehension with an
+            # `if ... .is_file()` on the end, so a chart the index named and
+            # that was not there vanished with no branch, no log line, and no
+            # count — and the per-patient INFO line below then reported the
+            # post-filter number as though it were the whole truth.
+            pdfs_lookup = {}
+            for record in records:
+                found: list[Path] = []
+                absent = 0
+                for name in render_index.for_patient(record.patient.id):
+                    path = pdfs_dir / name
+                    if path.is_file():
+                        found.append(path)
+                    else:
+                        absent += 1
+                if absent:
+                    # By the run-scoped surrogate and a count: a chart filename
+                    # carries the patient's name and their date of service.
+                    logger.warning(
+                        "%d indexed chart(s) missing on disk for patient %s",
+                        absent,
+                        safe_log_id(record.patient.id),
+                    )
+                pdfs_lookup[record.patient.id] = found
+                missing[record.patient.id] = absent
         # The attachments the run carried, looked up per record. No index is
         # needed, unlike the charts above: a chart's filename carries no patient
         # id, but a document is named BY the record that owns it.
@@ -153,6 +176,7 @@ class BundleDeliverer:
                 qa_report=qa_report,
                 claimed_dirs=claimed_dirs,
                 attachments=attachments_lookup.get(record.patient.id, []),
+                missing_count=missing.get(record.patient.id, 0),
             )
             for record in records
         ]
@@ -166,8 +190,14 @@ class BundleDeliverer:
         qa_report: QAReport | None = None,
         claimed_dirs: dict[str, str] | None = None,
         attachments: list[Path] | None = None,
+        missing_count: int = 0,
     ) -> BundleResult:
         """Deliver ONE patient's bundle into ``out_dir``.
+
+        ``missing_count`` is how many charts the caller's index named for this
+        patient and could not find; it rides the result so the run summary can
+        report it. A standalone call has nothing to reconcile against and gets
+        the default 0.
 
         ``claimed_dirs`` is the per-run ledger of delivered directory name ->
         the patient id that claimed it, threaded in by :meth:`deliver_records`;
@@ -208,10 +238,11 @@ class BundleDeliverer:
         readme_path = self._write_readme(record.patient.id, patient_dir)
 
         logger.info(
-            "bundle delivered for patient %s: %d pdfs, %d attachments, qa=%s",
+            "bundle delivered for patient %s: %d pdfs, %d attachments, %d missing, qa=%s",
             safe_log_id(pid),
             len(pdf_paths),
             len(attachment_paths),
+            missing_count,
             "yes" if qa_path else "no",
         )
         return BundleResult(
@@ -222,6 +253,7 @@ class BundleDeliverer:
             attachment_paths=attachment_paths,
             qa_report_path=qa_path,
             readme_path=readme_path,
+            missing_count=missing_count,
         )
 
     # --- internals ----------------------------------------------------------

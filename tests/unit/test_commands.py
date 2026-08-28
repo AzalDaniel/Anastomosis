@@ -102,7 +102,7 @@ def test_run_pipeline_command_delivers_all_three(
     assert set(result.deliveries) == {"archive", "bundle", "ccda"}
     assert result.deliveries["archive"].counts["patients"] == 3
     assert {"patients", "encounters", "pdfs"} <= set(result.deliveries["archive"].counts)
-    assert result.deliveries["bundle"].counts == {"patients": 3}
+    assert result.deliveries["bundle"].counts == {"patients": 3, "missing": 0}
     assert result.deliveries["ccda"].counts == {"patients": 3}
     # Files landed in the operator-chosen directories.
     assert (tmp_path / "arc" / "index.html").is_file()

@@ -362,7 +362,7 @@ def _run_command(cmd: PipelineCommand) -> None:
 
 
 def _print_delivery(outcome: DeliveryOutcome) -> None:
-    """Print one deliverer's outcome, byte-identical to the pre-extraction lines."""
+    """Print one deliverer's outcome, then anything it could not deliver."""
     counts = outcome.counts
     arrow = _glyphs().arrow
     if outcome.kind == "archive":
@@ -377,6 +377,37 @@ def _print_delivery(outcome: DeliveryOutcome) -> None:
     elif outcome.kind == "ccda":
         console.print(
             f"C-CDA: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
+        )
+    _print_shortfall(outcome)
+
+
+def _plural(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _print_shortfall(outcome: DeliveryOutcome) -> None:
+    """Say what this delivery could not file — and only when there is something.
+
+    Under the success line rather than folded into it: a chart that did not
+    reach the patient it belongs to is not another statistic about a run that
+    worked, and reading it as one is how it gets missed. Silent when both
+    counts are zero, which is every ordinary run.
+    """
+    counts = outcome.counts
+    where = {"archive": "the archive", "bundle": "the bundles"}.get(outcome.kind, "it")
+    missing = counts.get("missing", 0)
+    unattributed = counts.get("unattributed", 0)
+    if missing:
+        console.print(
+            f"  [yellow]{_plural(missing, 'chart', 'charts')} this run rendered "
+            f"{'is' if missing == 1 else 'are'} missing from {where}.[/yellow] "
+            f"Check the charts folder."
+        )
+    if unattributed:
+        console.print(
+            f"  [yellow]{_plural(unattributed, 'chart', 'charts')} could not be matched "
+            f"to a patient[/yellow]; {'it is' if unattributed == 1 else 'they are'} "
+            f"in unattributed/."
         )
 
 
