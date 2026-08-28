@@ -16,23 +16,29 @@ key names no record in the export (:class:`OrphanRowsError`).
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
 
 from anastomosis.sources.base import SourceDataError
 
 __all__ = [
     "KNOWN_TABLES",
+    "Attachments",
     "Export",
     "MalformedExportError",
     "OrphanRowsError",
     "Row",
     "UnsupportedTablesError",
+    "find_attachments",
     "read_export",
     "read_table",
 ]
 
 Row = dict[str, str | None]
 Export = dict[str, list[Row]]
+
+#: The export's own tables. Everything else on disk is a candidate attachment.
+_TABLE_SUFFIX = ".tsv"
 
 
 class UnsupportedTablesError(SourceDataError):
@@ -172,3 +178,60 @@ def read_export(root: Path) -> Export:
     known = set(KNOWN_TABLES)
     names = list(KNOWN_TABLES) + [stem for stem in discovered if stem not in known]
     return {name: read_table(root, name) for name in names}
+
+
+@dataclass(frozen=True)
+class Attachments:
+    """The files an export carries beside its tables, found by storage id.
+
+    Holds the export root as well as the index because a document row needs two
+    different answers about the same file: an absolute path to READ it (to hash
+    it, to count its pages) and a root-relative one to RECORD, so the chart says
+    ``binary-content/<id>.pdf`` and not the operator's home directory. An
+    exported bundle travels to another EHR; it has no business carrying the
+    layout of the machine that made it.
+    """
+
+    root: Path
+    by_id: dict[str, Path]
+
+    def find(self, storage_id: str) -> Path | None:
+        """The absolute path for a storage id, or None if the export lacks it."""
+        return self.by_id.get(storage_id.lower()) if storage_id else None
+
+    def relative(self, path: Path) -> str:
+        """How to name that file in a chart: relative to the export root."""
+        try:
+            return path.relative_to(self.root).as_posix()
+        except ValueError:  # not under the root — the name alone still locates it
+            return path.name
+
+
+def find_attachments(root: Path) -> Attachments:
+    """Index every non-table file in the export, keyed by its filename stem.
+
+    A ``patient-documents`` row names its file by a storage GUID, and exports
+    disagree about where those files go — a ``binary-content/`` folder in one,
+    a flat directory beside the tables in another. Indexing by stem instead of
+    by an assumed path means the mapper finds the file wherever the export
+    happened to put it, without the adapter having to encode a layout it would
+    then be wrong about.
+
+    A stem naming more than one file is left OUT of the index rather than
+    resolved to whichever the walk reached first. Two candidates for one
+    document is an ambiguity, and choosing between them would be a guess about
+    which file belongs in a patient's chart. Unresolved is recoverable; wrong
+    is not.
+    """
+    found: dict[str, Path] = {}
+    ambiguous: set[str] = set()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() == _TABLE_SUFFIX:
+            continue
+        stem = path.stem.lower()
+        if stem in found:
+            ambiguous.add(stem)
+        found[stem] = path
+    for stem in ambiguous:
+        del found[stem]
+    return Attachments(root=root, by_id=found)

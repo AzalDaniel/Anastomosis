@@ -12,11 +12,14 @@ translation table and provenance stays greppable.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import mimetypes
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from anastomosis.core.codes import VITALS, bmi_metric, pain_display
@@ -56,7 +59,14 @@ from anastomosis.core.timeutil import age_at
 from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
-from .loader import KNOWN_TABLES, Export, OrphanRowsError, Row, UnsupportedTablesError
+from .loader import (
+    KNOWN_TABLES,
+    Attachments,
+    Export,
+    OrphanRowsError,
+    Row,
+    UnsupportedTablesError,
+)
 
 __all__ = ["map_export"]
 
@@ -1158,8 +1168,100 @@ def _check_key_closure(export: Export, known: dict[str, frozenset[str]]) -> None
         raise OrphanRowsError(orphans)
 
 
-def map_export(export: Export) -> Iterator[PatientRecord]:
-    """Join the loaded tables into one PatientRecord per patient."""
+#: Read in blocks rather than whole: an export's scanned records run to tens of
+#: megabytes and there is no reason to hold one in memory to hash it.
+_HASH_BLOCK = 1 << 20
+
+
+def _sha256(path: Path) -> str | None:
+    """The file's digest, or None if it cannot be read.
+
+    An unreadable attachment leaves the artifact pointing at nothing rather than
+    carrying a digest of nothing, so the chart never claims to have verified a
+    file it could not open.
+    """
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            while block := handle.read(_HASH_BLOCK):
+                digest.update(block)
+    except OSError as exc:
+        logger.warning("attachment could not be read (%s)", type(exc).__name__)
+        return None
+    return digest.hexdigest()
+
+
+def _page_count(path: Path) -> int | None:
+    """Pages in a PDF attachment; None for anything else, or an unreadable one.
+
+    A scanned record's page count is the difference between a chart that says
+    "7 pages attached" and one that silently shows the first. Non-PDF
+    attachments have no page count to give, and a PDF that will not open is
+    reported as unknown rather than as zero — zero would read as "nothing here".
+    """
+    if path.suffix.lower() != ".pdf":
+        return None
+    try:
+        import pymupdf
+
+        with pymupdf.open(path) as doc:  # type: ignore[no-untyped-call]
+            return int(doc.page_count)
+    except Exception as exc:  # a corrupt attachment must not fail the whole load
+        logger.warning("attachment page count unavailable (%s)", type(exc).__name__)
+        return None
+
+
+def _mime_type(row: Row, blob: Path | None) -> str:
+    """The attachment's media type, from its extension.
+
+    The export states the original extension; the resolved file's own suffix is
+    the fallback for a row that omits it. `application/octet-stream` — "some
+    bytes, no idea what kind" — is what is left when neither says.
+    """
+    suffix = _s(row, "OriginalFileExtension") or (blob.suffix if blob else None)
+    if not suffix:
+        return "application/octet-stream"
+    guessed, _ = mimetypes.guess_type(f"f{suffix if suffix.startswith('.') else '.' + suffix}")
+    return guessed or "application/octet-stream"
+
+
+def _map_document(row: Row, guid: str, attachments: Attachments | None) -> DocumentArtifact:
+    """One `patient-documents` row, with its file located if the export has it.
+
+    The row names its file by `DocumentStorageGuid` (older exports reuse
+    `DocumentGuid` for both). A row whose file is not in the export keeps every
+    column it carries — they ride in `extensions` to the preserved-fields
+    narrative — but claims no path, no digest and no page count, because it has
+    none. An artifact that named a file it could not produce would be worse than
+    one that admits it has only the metadata.
+    """
+    storage = _s(row, "DocumentStorageGuid") or _s(row, "DocumentGuid") or ""
+    blob = attachments.find(storage) if attachments else None
+    return DocumentArtifact(
+        id=_s(row, "DocumentGuid") or "",
+        patient_id=guid,
+        title=_s(row, "DocumentName"),
+        path=attachments.relative(blob) if attachments and blob else None,
+        sha256=_sha256(blob) if blob else None,
+        mime_type=_mime_type(row, blob),
+        page_count=_page_count(blob) if blob else None,
+        generated_at=_dt(row, "DocumentDate"),
+        extensions=_ext(row, frozenset({"PatientPracticeGuid", "DocumentGuid", "DocumentName"})),
+        provenance=_prov("patient-documents", _s(row, "DocumentGuid")),
+    )
+
+
+def map_export(
+    export: Export, *, attachments: Attachments | None = None
+) -> Iterator[PatientRecord]:
+    """Join the loaded tables into one PatientRecord per patient.
+
+    ``attachments`` is :func:`~anastomosis.sources.pf_tebra.loader.find_attachments`
+    over the same export directory — the files the ``patient-documents`` rows
+    point at. Without it the rows still map, carrying their metadata and no
+    file; the adapter always passes it.
+    """
+
     # Losslessness: account for every table the mapper does not consume, and for
     # every mapped table's foreign keys, before producing any record (so a
     # refusal happens cleanly, before partial output).
@@ -1330,18 +1432,7 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             ],
             coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
-                DocumentArtifact(
-                    id=_s(row, "DocumentGuid") or "",
-                    patient_id=guid,
-                    title=_s(row, "DocumentName"),
-                    mime_type="application/octet-stream",
-                    generated_at=_dt(row, "DocumentDate"),
-                    extensions=_ext(
-                        row, frozenset({"PatientPracticeGuid", "DocumentGuid", "DocumentName"})
-                    ),
-                    provenance=_prov("patient-documents", _s(row, "DocumentGuid")),
-                )
-                for row in docs_by_patient.get(guid, [])
+                _map_document(row, guid, attachments) for row in docs_by_patient.get(guid, [])
             ],
             practitioners=practitioners,
             facilities=facilities,
