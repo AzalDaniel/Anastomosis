@@ -275,6 +275,75 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
 ATTACHMENTS_DIRNAME = "attachments"
 
 
+#: What the charts in an output directory were rendered from: which layout, and
+#: which sections were switched on. Kept so a later run into the same directory
+#: can tell whether the charts already there answer the question being asked.
+RENDER_SETTINGS_NAME = "render_settings.json"
+
+
+def _render_settings(pack: str, flags: dict[str, bool]) -> dict[str, object]:
+    """The run's rendering intent, in a form two runs can be compared by."""
+    return {"version": 1, "pack": pack, "sections": dict(sorted(flags.items()))}
+
+
+def _guard_render_settings(out: Path, settings: dict[str, object], *, force: bool) -> None:
+    """Refuse a run whose settings differ from the ones that made these charts.
+
+    The idempotent skip decided on ``target.exists()`` alone, so re-running with
+    a section switched OFF into a directory that already had charts reported
+    ``0 rendered, 6 skipped, 0 failed`` and left every chart carrying the
+    section. Those flags are how an operator SUPPRESSES content, and the run
+    said "done, and verified" while the output was exactly what they were trying
+    not to produce. If the folder was then archived or uploaded, the suppression
+    never happened at all.
+
+    Refusing rather than silently re-rendering: charts in this directory may
+    already have been delivered, and quietly rewriting them is its own kind of
+    surprise. ``--force`` is the existing way to say "render them all again",
+    and it is what the message names.
+    """
+    import json
+
+    if force:
+        return
+    record = out / RENDER_SETTINGS_NAME
+    if not record.is_file():
+        return
+    try:
+        previous = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return  # unreadable: treat as absent rather than block a run over it
+    if previous == settings:
+        return
+
+    changed = _settings_difference(previous, settings)
+    raise PipelineError(
+        f"The charts already in this folder were built with different settings "
+        f"({changed}). Re-run with --force to rebuild them, or choose an empty "
+        f"folder — otherwise they would be left as they are and the new "
+        f"settings would have no effect.",
+        exit_code=2,
+        kind="settings_changed",
+    )
+
+
+def _settings_difference(previous: dict[str, object], current: dict[str, object]) -> str:
+    """A short, PHI-free description of what the operator changed."""
+    parts: list[str] = []
+    if previous.get("pack") != current.get("pack"):
+        parts.append(f"layout {previous.get('pack')!r} -> {current.get('pack')!r}")
+    was = previous.get("sections")
+    now = current.get("sections")
+    if isinstance(was, dict) and isinstance(now, dict):
+        parts += [
+            f"{name} {'on' if was.get(name) else 'off'} -> {'on' if value else 'off'}"
+            for name, value in sorted(now.items())
+            if was.get(name) != value
+        ]
+        parts += [f"{name} no longer offered" for name in sorted(set(was) - set(now))]
+    return "; ".join(parts) or "settings differ"
+
+
 #: Adapters park the encounters their own selection rules kept out of the
 #: render under an extension key ending in this, so nothing is dropped. The
 #: suffix is the convention; the prefix is the adapter's namespace, as in
@@ -315,6 +384,15 @@ def _selection_exclusions(records: list[PatientRecord]) -> list[dict[str, str]]:
     return exclusions
 
 
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    """One sidecar, written atomically and deterministically."""
+    import json
+
+    from anastomosis.core.atomic import atomic_write_text
+
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _write_selection_report(out: Path, exclusions: list[dict[str, str]]) -> None:
     """Write the run's selection report, whatever it has to say.
 
@@ -322,12 +400,7 @@ def _write_selection_report(out: Path, exclusions: list[dict[str, str]]) -> None
     the answer an operator reconciling counts most often needs, and an absent
     file cannot distinguish it from a run that never looked.
     """
-    import json
-
-    from anastomosis.core.atomic import atomic_write_text
-
-    payload = {"version": 1, "excluded": exclusions}
-    atomic_write_text(out / SELECTION_REPORT_NAME, json.dumps(payload, indent=2, sort_keys=True))
+    _write_json(out / SELECTION_REPORT_NAME, {"version": 1, "excluded": exclusions})
 
 
 def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
@@ -486,6 +559,12 @@ def run_pipeline(
         lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
         section_overrides=overrides,
     )
+    # Before any ingest work: if this folder already holds charts, do they answer
+    # the question being asked? A mismatch is refused here rather than discovered
+    # as a silently-unchanged output at the end.
+    settings = _render_settings(pack, engine.section_flags)
+    _guard_render_settings(out, settings, force=force)
+
     records = load_records(adapter, export_dir)
     emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
 
@@ -509,6 +588,7 @@ def run_pipeline(
     carried = _carry_attachments(records, export_dir, out)
     exclusions = _selection_exclusions(records)
     _write_selection_report(out, exclusions)
+    _write_json(out / RENDER_SETTINGS_NAME, settings)
     emit(
         StageEvent(
             STAGE_RECONSTRUCT,
