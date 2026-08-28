@@ -1077,25 +1077,82 @@ def _map_facilities(export: Export) -> list[Facility]:
 # --- assembly --------------------------------------------------------------------
 
 
+def _self_keyed(rows: list[Row]) -> str | None:
+    """The column that identifies each row of a directory table, if there is one.
+
+    A practice-level reference table — the lab vendors, the pharmacies, the
+    provider profiles — is keyed by its OWN id and referenced BY patient rows: a
+    prescription names a ``PharmacyGuid``, a lab result names a ``LabGuid``.
+    Such a column is a ``*Guid`` that is present, non-empty and DISTINCT on
+    every row. Uniqueness is what separates a directory from a link table that
+    merely mentions an id many times.
+
+    Deliberately a shape test rather than a list of table names: a real export
+    carries 85 tables and the four that broke this were only the four that
+    happened to be in one. A rule that reads the data holds for the next one.
+    """
+    if not rows:
+        return None
+    for column in rows[0]:
+        if not column.endswith("Guid"):
+            continue
+        values = [row.get(column) for row in rows]
+        if all(values) and len(set(values)) == len(values):
+            return column
+    return None
+
+
+def _reference_tables(export: Export) -> dict[str, list[Row]]:
+    """Unmapped tables that describe the PRACTICE, not any one patient.
+
+    These have no patient column because they are not patient rows, so demanding
+    a patient key of them is a category error — and it is the one that stopped
+    the adapter opening a real Practice Fusion export at all: `labs`,
+    `pharmacies`, `provider-profiles` and `users` are part of the standard
+    export, and the run refused every one of them.
+
+    They are carried whole into every record's extensions, which is what
+    `providers` and `facilities` — the two practice-level tables the mapper
+    already knew about — have always done. A record has to stand alone: the
+    bundle is one directory per patient, so a prescription naming a pharmacy
+    travels with the pharmacy it names.
+    """
+    found: dict[str, list[Row]] = {}
+    for table in sorted(set(export) - set(KNOWN_TABLES)):
+        rows = export[table]
+        if not rows or "PatientPracticeGuid" in rows[0]:
+            continue
+        if _self_keyed(rows) is not None:
+            found[table] = rows
+    return found
+
+
 def _unmapped_tables(
-    export: Export, patient_guids: frozenset[str]
+    export: Export, patient_guids: frozenset[str], reference: dict[str, list[Row]] | None = None
 ) -> dict[str, dict[str, list[Row]]]:
     """Account for EVERY table the mapper does not consume — losslessly.
 
     Returns ``{patient_guid: {table_name: [rows verbatim]}}`` for unmapped tables
     whose every row attributes to a KNOWN patient via ``PatientPracticeGuid``;
     the mapper stashes those rows in the owning patient's ``extensions`` so no
-    field is dropped. A table with rows that cannot ALL be attributed to a known
-    patient (no patient-key column, a null key, or a guid absent from
-    patient-demographics) cannot be placed in the per-patient model, so the run
-    is refused (:class:`UnsupportedTablesError`) — failing closed beats silently
-    discarding clinical data. Empty tables are ignored (nothing to lose).
+    field is dropped.
+
+    ``reference`` names the practice-level tables :func:`_reference_tables`
+    recognised; they are carried at record scope instead and so are not orphans.
+
+    What is left over is genuinely unattributable — a table with a patient
+    column whose rows point at patients this export does not contain, or one
+    with neither a patient key nor an identity of its own. That cannot be placed
+    anywhere in a per-patient model, so the run is refused
+    (:class:`UnsupportedTablesError`): failing closed beats silently discarding
+    clinical data. Empty tables are ignored (nothing to lose).
     """
     by_patient: dict[str, dict[str, list[Row]]] = {}
     orphans: list[str] = []
+    practice_level = set(reference or {})
     for table in sorted(set(export) - set(KNOWN_TABLES)):
         rows = export[table]
-        if not rows:
+        if not rows or table in practice_level:
             continue
         grouped = _by(rows, "PatientPracticeGuid")
         attributed = sum(len(group) for group in grouped.values())
@@ -1266,7 +1323,15 @@ def map_export(
     # every mapped table's foreign keys, before producing any record (so a
     # refusal happens cleanly, before partial output).
     patient_guids = _ids(export["patient-demographics"], _PATIENT_KEY)
-    unmapped_by_patient = _unmapped_tables(export, patient_guids)
+    reference_tables = _reference_tables(export)
+    unmapped_by_patient = _unmapped_tables(export, patient_guids, reference_tables)
+    if reference_tables:
+        # Table NAMES are schema, not PHI — safe to log; row values are not.
+        logger.info(
+            "pf_tebra: carried %d practice-level reference table(s): %s",
+            len(reference_tables),
+            ", ".join(sorted(reference_tables)),
+        )
     _check_key_closure(
         export,
         {
@@ -1369,6 +1434,10 @@ def map_export(
         # name, so no field the adapter does not yet map is dropped.
         for table_name, table_rows in unmapped_by_patient.get(guid, {}).items():
             record_extensions[f"{SOURCE}:unmapped:{table_name}"] = table_rows
+        # The practice's own directories, carried whole so a record stands
+        # alone: a prescription naming a pharmacy travels with that pharmacy.
+        for table_name, table_rows in reference_tables.items():
+            record_extensions[f"{SOURCE}:practice:{table_name}"] = table_rows
 
         # A superbill-insurances row whose PIPG/plan-name/payer-name join won no
         # coverage: non-attributing (it fed no typed object), so it lands on the
