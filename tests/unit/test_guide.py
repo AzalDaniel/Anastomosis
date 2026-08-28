@@ -656,3 +656,62 @@ def test_every_operator_decline_records_what_did_not_happen() -> None:
         )
         total += len(declines)
     assert total == 3, f"expected the three known decline paths, found {total}"
+
+
+# --- the terminal owns its background (#139) ---------------------------------
+
+
+def test_no_cli_colour_is_an_absolute_value() -> None:
+    """The CLI may only name colours the terminal resolves for itself.
+
+    The GUI can use the design language's tokens because it draws its own dark
+    ground. A terminal application cannot: the background belongs to the person
+    running it. Approximating porcelain in truecolor put primary text at
+    1.13 : 1 on a light theme and a refusal at 2.90 : 1 — and it is not a
+    tuning problem, because the same palette's oxblood measured 8.30 : 1 on
+    white against 2.53 : 1 on black. No absolute set serves both grounds.
+    """
+    from dataclasses import fields
+
+    from anastomosis.core.presentation import BRAND_PALETTE
+
+    for field in fields(BRAND_PALETTE):
+        value = getattr(BRAND_PALETTE, field.name)
+        assert "#" not in value, f"{field.name} is an absolute colour: {value!r}"
+        assert not any(ch.isdigit() for ch in value), (
+            f"{field.name} looks like an indexed colour ({value!r}); "
+            "only ANSI names and attributes let the terminal's theme decide"
+        )
+
+
+def test_identity_does_not_borrow_the_refusal_colour() -> None:
+    """The clinical signal family is never decoration — §1 of the design language."""
+    from anastomosis.core.presentation import BRAND_PALETTE
+
+    assert BRAND_PALETTE.stop == "red"
+    assert "red" not in BRAND_PALETTE.brand_bright, "identity is carried by weight, not by hue"
+
+
+def test_every_cli_colour_survives_the_sixteen_colour_floor() -> None:
+    """Whatever a terminal offers, these resolve — down to the ANSI 16."""
+    from dataclasses import fields
+
+    from anastomosis.core.presentation import BRAND_PALETTE
+
+    for field in fields(BRAND_PALETTE):
+        buffer = io.StringIO()
+        console = Console(file=buffer, force_terminal=True, color_system="standard")
+        console.print("legible", style=getattr(BRAND_PALETTE, field.name))
+        assert "legible" in buffer.getvalue()
+
+
+def test_a_refusal_still_reads_as_one_with_the_colour_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Colour reinforces the meaning; the words carry it."""
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=100, force_terminal=False)  # no colour at all
+
+    guide._say(console, "Nothing was written.", style=guide.BRAND_PALETTE.attention)
+
+    assert "Nothing was written." in buffer.getvalue()

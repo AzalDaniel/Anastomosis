@@ -42,21 +42,33 @@ class Glyphs:
 
 @dataclass(frozen=True)
 class Palette:
-    """The design language's colors as Rich style strings.
+    """The CLI's colors, named so the TERMINAL resolves them.
 
-    Truecolor sRGB approximations of the ``oklch`` tokens in
-    ``docs/design/DESIGN_LANGUAGE.md`` §1. Rich maps every one of these down to
-    the best match the terminal actually offers (256-color, then the 16-color
-    ANSI set, then nothing at all on a plain pipe), so one definition serves
-    every console without a per-terminal branch here.
+    Every value here is an ANSI name or an attribute, never an absolute one.
+    The GUI can use the design language's ``oklch`` tokens directly because it
+    draws its own dark ground; a terminal application cannot. The background
+    belongs to the person running it, and the only colors readable against
+    whatever they chose are the ones their terminal maps itself — a light
+    theme's ``yellow`` is a dark mustard, a dark theme's is bright, and both
+    are legible because the theme's author made them so.
+
+    Measured against white, the truecolor tokens this replaced ran from
+    1.13 : 1 (primary text) through 1.65 : 1 (an attention line) to 2.90 : 1
+    (a refusal). Not a tuning problem: the brand oxblood was 8.30 : 1 on white
+    and 2.53 : 1 on black, so no single absolute palette can serve both grounds.
+
+    Color is never the only signal — the words carry the meaning, and these
+    only reinforce it.
     """
 
-    #: The oxblood of the vessel mark — identity moments only, never decoration.
-    brand: str
-    #: Interactive brand: the mark, a heading, the thing being answered.
+    #: Identity: the mark and the thing being answered. Weight, not hue —
+    #: ``red`` is the refusal color and identity must not borrow it.
     brand_bright: str
-    #: Primary text (porcelain) and the quieter supporting register.
+    #: Primary text: whatever the terminal uses for ordinary output, which is
+    #: readable on that terminal's background by construction.
     ink: str
+    #: The supporting register. ``dim`` modulates the reader's own foreground
+    #: rather than picking a grey that a light theme would wash out.
     ink_muted: str
     #: The clinical signal family — never reused as decoration.
     ok: str
@@ -66,13 +78,12 @@ class Palette:
 
 #: The one palette every text surface shares (§1 of the design language).
 BRAND_PALETTE = Palette(
-    brand="#8c2e23",
-    brand_bright="#bc4a3c",
-    ink="#f5f1ea",
-    ink_muted="#9c9890",
-    ok="#68d7a1",
-    attention="#eec469",
-    stop="#ff645f",
+    brand_bright="bold",
+    ink="default",
+    ink_muted="dim",
+    ok="green",
+    attention="yellow",
+    stop="red",
 )
 
 #: The pretty glyphs, used when the target stream is UTF-8.
