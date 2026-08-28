@@ -318,10 +318,19 @@ engineer. Rules, enforced against the audit’s string inventory:
 
 ## 11. Per-surface notes
 
-* **CLI/TUI**: same palette (oxblood/porcelain ANSI approximations), same
-  register, same state vocabulary. `anast` bare = a guided, numbered flow a
-  clinician can follow; every prompt states what happens next. Rich tables
-  use the same Filed/Needs-attention/In-progress/Waiting words as the GUI.
+* **CLI/TUI**: same register, same state vocabulary — but NOT the same
+  palette. The GUI may use the tokens above because it draws its own ground;
+  a terminal cannot, because the background belongs to the person running it.
+  Approximating porcelain in truecolor put primary text at 1.13 : 1 on a
+  light theme and a refusal at 2.90 : 1, and no absolute palette fixes that
+  in both directions: the oxblood measured 8.30 : 1 on white and 2.53 : 1 on
+  black. So the CLI names colors the terminal resolves — `default` for text,
+  `dim` for the supporting register, `green`/`yellow`/`red` for the clinical
+  signals, and weight rather than hue for identity, since `red` is the
+  refusal color and identity must not borrow it. `anast` bare = a guided,
+  numbered flow a clinician can follow; every prompt states what happens
+  next. Rich tables use the same Filed/Needs-attention/In-progress/Waiting
+  words as the GUI, and those words carry the meaning without the color.
 * **Installer**: dark warm ground, the rounded porcelain tile as wizard
   imagery, modern wizard style, sentence-case copy in the same register;
   no marketing prose.
