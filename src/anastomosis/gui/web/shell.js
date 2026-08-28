@@ -331,8 +331,23 @@
   // a physician can act on. Anything unrecognised is passed through as-is; a
   // `prefix` is only used on those, because "the samples could not be read:
   // Busy" describes a failure that never happened.
+  // Each refusal the controller can hand back, in words that say what to DO.
+  // Uploads bypassed this table entirely and printed the raw code — so the
+  // screen that files charts into a live EHR answered "Filing could not start:
+  // BadCdpEndpoint", which tells an operator nothing, while every other view
+  // rendered the sentence below for the same class of refusal.
   const REFUSALS = {
     Busy: "Anastomosis is already working on something else. Wait for that to finish, then try again.",
+    BadCdpEndpoint:
+      "That browser connection is not on this computer. Filing only drives a browser " +
+      "running locally — check the address in Advanced.",
+    BadManifest:
+      "No filing list was found in that results folder. Rebuild the charts with " +
+      "“Write the filing list” switched on, then try again.",
+    PackNotReady:
+      "The filing assistant for this system has not been set up on this computer yet. " +
+      "Set it up, then come back.",
+    NoRun: "Nothing is being filed at the moment.",
   };
   function refusalText(error, prefix) {
     const sentinel = String(error == null ? "" : error);
@@ -871,7 +886,14 @@
     if (!panel || !body) return;
     body.innerHTML = "";
     if (!patients.length) {
-      setEmpty(panel.id, true);
+      // Distinct from the panel's own "No run yet": a run HAS happened and it
+      // found nobody. `clearPatients` still resets to the default copy, so the
+      // three states — not run yet, found nobody, could not be read — no longer
+      // wear the same words.
+      setEmpty(panel.id, true, {
+        title: "No patients in this run.",
+        detail: "The run finished and found no patient records to rebuild.",
+      });
       return;
     }
     const table = document.createElement("table");
@@ -917,11 +939,24 @@
   //: A region keeps its heading whether or not it has rows; what swaps is the
   //: list and the one sentence saying what would put rows in it. Every empty
   //: state is `<listId>-empty` in the markup, so there is nothing to wire.
-  function setEmpty(listId, isEmpty) {
+  // `message` (optional) is {title, detail} — a state the markup has no words
+  // for, such as "the detail could not be read". Omit it and the panel's OWN
+  // copy comes back, so the wording still lives in exactly one place.
+  function setEmpty(listId, isEmpty, message) {
     const list = el(listId);
     const empty = el(`${listId}-empty`);
     if (list) list.hidden = isEmpty;
-    if (empty) empty.hidden = !isEmpty;
+    if (!empty) return;
+    empty.hidden = !isEmpty;
+    const title = empty.querySelector("b");
+    const detail = empty.querySelector("span");
+    if (!title || !detail) return;
+    if (empty.dataset.defaultTitle === undefined) {
+      empty.dataset.defaultTitle = title.textContent || "";
+      empty.dataset.defaultDetail = detail.textContent || "";
+    }
+    title.textContent = message ? message.title : empty.dataset.defaultTitle;
+    detail.textContent = message ? message.detail : empty.dataset.defaultDetail;
   }
 
   function clearPatients(panel, body) {
@@ -934,12 +969,31 @@
   // failure never blocks the run roll-up.
   async function loadPatients(panel, body, summaryId) {
     if (!hasApi()) return;
+    // A failure here used to be swallowed whole, leaving the panel showing the
+    // copy it had before the run: "No run yet. Choose Rebuild charts above…"
+    // — under a status line reading "Finished." and a strip line counting the
+    // patients. It read identically to a run that genuinely found nobody, and
+    // those want different things from the operator: one is a reason to go and
+    // look at the output folder, the other is not.
+    let reason = "";
     try {
       const res = await window.pywebview.api.last_run_summary(summaryId);
-      if (res && res.ok) renderPatients(panel, body, res.patients || []);
-    } catch (_) {
-      /* advisory only */
+      if (res && res.ok) {
+        renderPatients(panel, body, res.patients || []);
+        return;
+      }
+      reason = (res && res.error) || "no answer from the app";
+    } catch (err) {
+      reason = String(err);
     }
+    if (!panel || !body) return;
+    body.innerHTML = "";
+    setEmpty(panel.id, true, {
+      title: "The per-patient list could not be read.",
+      detail:
+        `The run itself finished — this is the roll-up beside it (${reason}). ` +
+        "The charts are in the output folder.",
+    });
   }
 
   // ─── The shared run form ──────────────────────────────────────
@@ -1274,6 +1328,14 @@
             badge.textContent = sum > 99 ? "99+" : String(sum);
             btn.appendChild(badge);
           }
+          // The badge counts RUNS, and nothing on screen said so — a cell for
+          // day 3 carrying a badge of 2 read out as the number "32", beside a
+          // legend that is `aria-hidden`. Naming it is also the only way the
+          // unit is stated anywhere.
+          btn.setAttribute(
+            "aria-label",
+            `${cell.d} ${MONTH_NAMES[month]} — ${sum} filing ${sum === 1 ? "run" : "runs"}`
+          );
         }
       }
       grid.appendChild(btn);
