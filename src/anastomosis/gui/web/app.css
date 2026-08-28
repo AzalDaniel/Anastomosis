@@ -42,8 +42,7 @@ svg { display: block; }
 [hidden] { display: none !important; }
 
 /* Numbers that change never jitter (§4). */
-.tnum, .counter-value, .cal-title, .state-count, .kind-count,
-.patients-table { font-variant-numeric: tabular-nums; }
+.cal-title, .kind-count, .patients-table { font-variant-numeric: tabular-nums; }
 
 
 /* ─── 2. Backdrop ────────────────────────────────────────────── */
@@ -749,7 +748,6 @@ svg { display: block; }
   font-size: var(--text-lead);
   text-align: right;
 }
-.result-id,
 .result-when {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

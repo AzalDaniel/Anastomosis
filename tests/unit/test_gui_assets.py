@@ -674,3 +674,37 @@ def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
         assert any(n.endswith(f"gui/web/fonts/{font}") for n in names), (
             f"wheel is missing gui/web/fonts/{font}"
         )
+
+
+def test_every_styled_class_is_one_the_app_actually_puts_on_an_element() -> None:
+    """A class selector nothing ever names is a rule that will never fire.
+
+    Four had accumulated (``.tnum``, ``.counter-value``, ``.state-count``,
+    ``.result-id``), each a dead name inside a rule whose other selectors were
+    live — so deleting the rules would have taken working styling with them, and
+    nothing said which half was dead. This is the check that says so.
+
+    Classes built at runtime (``log-row--${kind}``) count as named: the test
+    looks for the literal name first, then for the template-literal prefix the
+    markup interpolates into.
+    """
+    css = "\n".join(_read(name) for name in ASSETS if name.endswith(".css"))
+    markup = "\n".join(_read(name) for name in ASSETS if not name.endswith(".css"))
+    # Strip comments so a class named only in prose does not count as used, and
+    # quoted strings so a font filename (`url("…VF.woff2")`) is not read as one.
+    css = re.sub(r"/\*.*?\*/", " ", css, flags=re.S)
+    css = re.sub(r"\"[^\"]*\"|'[^']*'", " ", css)
+
+    def is_named(cls: str) -> bool:
+        if re.search(rf"\b{re.escape(cls)}\b", markup):
+            return True
+        # `log-row--error` is written as `log-row--${kind}`: walk the name back
+        # to each `-` boundary and look for that prefix feeding a substitution.
+        for cut in range(len(cls) - 1, 0, -1):
+            if cls[cut] == "-" and re.search(rf"{re.escape(cls[: cut + 1])}\$\{{", markup):
+                return True
+        return False
+
+    styled = sorted(set(re.findall(r"\.([a-zA-Z][\w-]*)", css)))
+    orphans = [cls for cls in styled if not is_named(cls)]
+    assert not orphans, f"styled but never applied: {orphans}"
