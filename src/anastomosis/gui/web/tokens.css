@@ -86,15 +86,13 @@
      glass, practically invisible. Glass belongs to the chrome that floats over
      content, and there was no opaque content for it to refract. */
   --surface:      oklch(0.35 0.013 55);   /* panels — 1.71:1 vs ground */
-  --surface-row:  oklch(0.40 0.013 55);   /* rows and selected states inside one */
   --field:        oklch(0.265 0.012 52);  /* a recessed well — 1.35:1 vs panel */
   --field-focus:  oklch(0.235 0.012 52);
 
-  /* brand — the oxblood of the vessel mark. --brand is identity only;
-     --brand-bright is every interactive brand surface (§1). */
-  --brand:        oklch(0.44 0.13 30);
-  /* 0.55 is the only brand fill that ever carries text. At 0.56 the porcelain
-     label on the primary button measured 4.46:1 — a failure that was shipping. */
+  /* brand — the oxblood of the vessel mark, on every interactive brand
+     surface. 0.55 is the only brand fill that ever carries text: at 0.56 the
+     porcelain label on the primary button measured 4.46:1, a failure that was
+     shipping. --brand-press is hover and pressed, never a resting state. */
   --brand-bright: oklch(0.55 0.15 30);
   --brand-press:  oklch(0.49 0.15 30);
 
@@ -116,9 +114,6 @@
   --tint-filed:     color-mix(in oklab, var(--ok) 10%, var(--ground));
   --tint-progress:  color-mix(in oklab, var(--attention) 16%, var(--ground));
   --tint-attention: color-mix(in oklab, var(--stop) 32%, var(--ground));
-  --tint-filed-hover:     color-mix(in oklab, var(--ok) 15%, var(--ground));
-  --tint-progress-hover:  color-mix(in oklab, var(--attention) 22%, var(--ground));
-  --tint-attention-hover: color-mix(in oklab, var(--stop) 40%, var(--ground));
 
   /* glass — the chrome tiers. Ambient chrome is translucent; anything floating
      above it is near-opaque, because two stacked backdrop-filters read as mud
@@ -131,15 +126,12 @@
   --glass-blur:      saturate(150%) blur(24px);
   --glass-border:    1px solid rgba(244, 238, 228, 0.36);
   --glass-shadow:    0 10px 30px rgba(0, 0, 0, 0.46);
-  --glass-veil-blur:   saturate(130%) blur(24px);
   --glass-modal-blur:  saturate(170%) blur(48px);
-  --glass-veil-bg:     rgba(244, 238, 228, 0.05);
   /* The modal tier is near-OPAQUE on purpose: two stacked backdrop-filters
      turn to mud, so anything floating above a card gets 94% ground plus its
      own `isolation: isolate` (the Tebra mud fix / the Denim rule — legibility
      outranks prettiness). */
   --glass-modal-bg:    rgba(24, 20, 16, 0.94);
-  --glass-veil-border:  1px solid rgba(244, 238, 228, 0.10);
   --glass-modal-border: 1px solid rgba(244, 238, 228, 0.24);
   /* Glass catches light through an inset top highlight, never an outer glow.
      Shadow belongs to true floaters only; in-flow panels get the hairline. */

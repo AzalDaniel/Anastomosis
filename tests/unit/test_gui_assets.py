@@ -110,7 +110,6 @@ def test_tokens_carry_the_porcelain_and_oxblood_system() -> None:
         "--ground:        oklch(0.16 0.013 50)",
         "--ground-deep:   oklch(0.125 0.012 50)",
         "--ink:           oklch(0.96 0.010 80)",
-        "--brand:        oklch(0.44 0.13 30)",
     ):
         assert token in text, f"tokens.css lost {token!r}"
     # The two values that carry a measured WCAG floor rather than a taste call.
@@ -123,10 +122,10 @@ def test_tokens_carry_the_porcelain_and_oxblood_system() -> None:
     for signal in ("--ok:", "--attention:", "--stop:"):
         assert signal in text, f"tokens.css missing the {signal!r} signal"
     # Content surfaces are opaque steps of a luminance ladder, not glass.
-    for surface in ("--surface:", "--surface-row:", "--field:", "--field-focus:"):
+    for surface in ("--surface:", "--field:", "--field-focus:"):
         assert surface in text, f"tokens.css missing the {surface!r} content surface"
     # §3 glass is the chrome tiers only, near-opaque above ambient.
-    assert "--glass-veil-blur:   saturate(130%) blur(24px)" in text
+    assert "--glass-blur:      saturate(150%) blur(24px)" in text
     assert "--glass-modal-blur:  saturate(170%) blur(48px)" in text
     assert "--glass-modal-bg:    rgba(24, 20, 16, 0.94)" in text, "the mud fix is gone"
     assert "--glass-card-bg" not in text, "the content glass tier came back"
@@ -194,6 +193,68 @@ def test_app_css_carries_the_components() -> None:
         assert cls in text, f"app.css is missing {cls}"
     # A textarea is styled with the inputs, not left as a native white box.
     assert ".field textarea" in text
+
+
+def test_the_design_language_names_every_token_and_no_others() -> None:
+    """The doc and the sheet describe the same system, checked both ways.
+
+    This test exists because the document went stale in exactly the way a
+    document does: its §1 table still gave `--ground` as 0.18 and
+    `--brand-bright` as 0.56 long after both moved, and its whole §2 rested on
+    a backdrop layer that had been deleted. A prose file nothing checks becomes
+    a second, wrong source of truth — and this one carries measured accessibility
+    floors, so being wrong about it is not cosmetic.
+
+    Both directions matter. A token the document does not mention is a
+    decision nobody wrote down; a token the document names that the sheet does
+    not define is advice for a system that no longer exists.
+    """
+    sheet = _read("tokens.css")
+    doc = (Path(__file__).resolve().parents[2] / "docs/design/DESIGN_LANGUAGE.md").read_text(
+        encoding="utf-8"
+    )
+    # A letter has to follow the dashes, or markdown's own `---` table rules
+    # read as a token name.
+    defined = set(re.findall(r"^\s+(--[a-z][a-z0-9-]*):", sheet, re.M))
+    # The removal ledger's whole job is naming things that no longer exist, so
+    # the "stale" direction stops where it starts.
+    live = doc.split("## 12.", 1)[0]
+    named = set(re.findall(r"(--[a-z][a-z0-9-]*)", live))
+
+    # Groups the document describes by their rule rather than one row each —
+    # naming six spacing steps and six type sizes twice would make the document
+    # worse, and both groups ARE described (the 4px scale table, the type scale).
+    by_rule = {token for token in defined if re.match(r"--(space|text|t-|radius|ease)", token)}
+    # Values a component owns rather than the system: they appear in app.css at
+    # the one place that uses them and are covered by the tier they belong to.
+    owned = {
+        "--fill",
+        "--fill-soft",
+        "--fill-strong",
+        "--hairline",
+        "--font-body",
+        "--font-mono",
+        "--font-editorial",
+        "--glass-highlight",
+        "--glass-shadow",
+        "--shadow-float",
+        "--measure-prose",
+        "--glass-border",
+        "--glass-bg",
+        "--glass-blur",
+        "--glass-modal-border",
+    }
+
+    unwritten = sorted(defined - named - by_rule - owned)
+    assert not unwritten, f"tokens.css defines what the design language never mentions: {unwritten}"
+
+    stale = sorted(named - defined)
+    assert not stale, f"the design language names tokens that no longer exist: {stale}"
+
+    # And the two measured floors are quoted correctly, since being wrong about
+    # THESE is a shipped accessibility failure rather than a stale sentence.
+    assert "--ink-muted` | `oklch(0.72 0.012 80)" in doc
+    assert "--brand-bright` | `oklch(0.55 0.15 30)" in doc
 
 
 def test_the_anti_slop_ledger_stays_removed() -> None:
