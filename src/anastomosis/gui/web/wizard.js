@@ -125,6 +125,33 @@
           "they have been verified to work."
       );
     }
+
+    // The filing assistant, when it is available but not the recommended route.
+    //
+    // This is the whole of what Anastomosis can do by itself, and the screen
+    // built to offer it never mentioned it. `tebra` is the only destination
+    // that ships a filing assistant, and it also declares `ccda_import:
+    // in_product`, which the router prefers — so the assistant was demoted to a
+    // plain "Available" card while the guidance talked only about exporting a
+    // document and importing it by hand. A physician following the
+    // recommendation never learned the tool could have done the filing (#127).
+    //
+    // The routing is NOT changed here. Preferring the destination's own
+    // supported import over driving somebody else's web UI is a defensible
+    // call for a tool whose promise is never to misfile, and reversing it is
+    // not this change's to make. What is fixed is that the choice was never
+    // offered.
+    const assistant = (transit.options || []).find((opt) => opt.kind === "browser");
+    if (assistant && assistant.viable && chosen !== "browser") {
+      lines.push(
+        "Anastomosis can also file these charts into the destination for you, " +
+          "through a browser window it controls — rebuild the charts below, then " +
+          "continue on the Uploads screen. The route above is recommended because " +
+          "it is the destination's own supported import; the filing assistant does " +
+          "the work for you instead."
+      );
+    }
+
     if (pack) {
       lines.push(
         pack.ready
