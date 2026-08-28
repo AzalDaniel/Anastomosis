@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import pymupdf
-
 from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
 from anastomosis.core.model import Encounter, ObservationCategory
 from anastomosis.core.timeutil import all_date_spellings
@@ -60,6 +58,12 @@ def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
     always called from inside a check, so it surfaces as that check's CHECK
     CRASHED finding rather than aborting the batch.
     """
+    # Imported here, not at module scope. `pymupdf` ships in the `render` extra,
+    # and this module is reached from `anastomosis.deliver.archive` — so a base
+    # install could not import the archive deliverer at all, and `anast doctor`
+    # reported its own bundled assets as missing on a correct install.
+    import pymupdf
+
     with pymupdf.open(pdf_path) as doc:  # type: ignore[no-untyped-call]
         return [
             PageInfo(text=page.get_text(), width=page.rect.width, height=page.rect.height)

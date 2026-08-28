@@ -301,12 +301,23 @@ def _write_pipeline_manifest(
 
 # --- toolkit info (shared by `anast info` and the GUI dashboard header) ---------
 
-# The extras probe both frontends show, in display order.
-_EXTRAS: tuple[tuple[str, str], ...] = (
-    ("render", "playwright"),
-    ("render-qa", "pymupdf"),
-    ("fhir", "fhir.resources"),
-    ("gui", "webview"),
+# The extras both frontends show, in display order, each with the modules that
+# have to be importable for it to be usable at all.
+#
+# These names are the ones `pyproject.toml` actually declares. They drifted:
+# `render-qa` was listed here and has never been an extra (pymupdf ships inside
+# `render`), so `pip install "anastomosis[render-qa]"` warned and installed
+# nothing; `deliver-browser` is real and was never mentioned.
+#
+# `gui` names a BACKEND alongside the wrapper. `import webview` succeeds on a
+# machine with neither GTK nor Qt bindings, and pywebview then raises on launch
+# — so probing the wrapper alone reported the desktop app as ready on a machine
+# where `anast gui` could not start. Either backend will do; pywebview picks.
+_EXTRAS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("render", ("playwright", "pymupdf")),
+    ("deliver-browser", ("playwright",)),
+    ("fhir", ("fhir.resources",)),
+    ("gui", ("webview", "gi|qtpy")),
 )
 
 
@@ -332,11 +343,29 @@ class ToolkitInfo:
 
 
 def _module_available(module: str) -> bool:
+    """Is this module importable, without importing it?
+
+    ``__import__`` was the test, which meant asking "is pymupdf installed" cost
+    105 ms of executing pymupdf, and asking about the GUI wrapper ran a
+    toolkit probe inside a read-only status command. ``find_spec`` answers the
+    same question by looking, at roughly no cost.
+
+    A dotted name still imports its PARENT package (that is how ``find_spec``
+    resolves one), so a missing parent raises rather than returning None.
+    """
+    from importlib.util import find_spec
+
     try:
-        __import__(module)
-    except ImportError:
+        return find_spec(module) is not None
+    except (ImportError, ValueError):
         return False
-    return True
+
+
+def _extra_available(modules: tuple[str, ...]) -> bool:
+    """Every module the extra needs is present; ``a|b`` means either will do."""
+    return all(
+        any(_module_available(name) for name in requirement.split("|")) for requirement in modules
+    )
 
 
 def get_toolkit_info() -> ToolkitInfo:
@@ -350,7 +379,7 @@ def get_toolkit_info() -> ToolkitInfo:
     from anastomosis.reconstruct import discover_packs
     from anastomosis.sources import available_sources
 
-    extras = {extra: _module_available(module) for extra, module in _EXTRAS}
+    extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
     sources = [(a.name, a.description) for a in available_sources()]
     packs: list[PackInfo] = []
     for status in discover_packs().values():
