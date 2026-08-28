@@ -1091,6 +1091,10 @@ svg { display: block; }
 .cal-nav:hover { background: var(--fill); color: var(--ink); }
 .cal-nav svg { width: 16px; height: 16px; }
 .cal-weekdays, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+/* A week is a row in the accessibility tree and nothing at all in the layout:
+   the seven cells stay direct children of the grid, where the template
+   expects them. */
+.cal-week { display: contents; }
 .cal-weekdays {
   font-size: var(--text-caption);
   font-weight: 600;
@@ -1099,6 +1103,7 @@ svg { display: block; }
 }
 .calendar-cell {
   position: relative;
+  cursor: default;
   aspect-ratio: 1 / 1;
   display: flex;
   align-items: center;

@@ -304,10 +304,25 @@
               <span class="icon" data-icon="chevron-right"></span>
             </button>
           </div>
-          <div class="cal-weekdays" aria-hidden="true">
-            <span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span>
+          <!-- A table, because that is what it is: seven columns of days, read
+               and not operated. It was `role="grid"` with `gridcell` children
+               and no rows at all, which reports rowCount 0, and every cell was
+               a <button> with no click handler — 42 tab stops and a pointer
+               cursor that led nowhere. The title is the table's name, so the
+               month comes with it. -->
+          <div class="cal-table" role="table" aria-labelledby="uploads-cal-title">
+            <div class="cal-weekdays" role="row">
+              <span role="columnheader">Mo</span><span role="columnheader">Tu</span><span
+                role="columnheader">We</span><span role="columnheader">Th</span><span
+                role="columnheader">Fr</span><span role="columnheader">Sa</span><span
+                role="columnheader">Su</span>
+            </div>
+            <div class="cal-grid" id="uploads-cal-grid" role="rowgroup"></div>
           </div>
-          <div class="cal-grid" id="uploads-cal-grid" role="grid"></div>
+          <!-- Still hidden, and now for a reason rather than by oversight: it is
+               a key to the halo COLOURS, and each day that has runs says its own
+               state in words. Read aloud the legend is three adjectives with
+               nothing attached to them. -->
           <div class="cal-legend" aria-hidden="true">
             <span><i class="legend-dot legend-dot--pending"></i>In progress</span>
             <span><i class="legend-dot legend-dot--done"></i>Filed</span>

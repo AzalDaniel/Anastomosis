@@ -1347,47 +1347,67 @@
     let trailing = 1;
     while (cells.length < 42) cells.push({ outside: true, y: nextYear, m: nextMonth, d: trailing++ });
 
-    for (const cell of cells) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "calendar-cell";
-      btn.setAttribute("role", "gridcell");
+    // Six rows of seven. The row wrappers exist for the accessibility tree
+    // only (`.cal-week { display: contents }` keeps the cells where the CSS
+    // grid expects them); without them the table had no rows and reported
+    // nothing to count.
+    let row = null;
+    cells.forEach((cell, index) => {
+      if (index % 7 === 0) {
+        row = document.createElement("div");
+        row.className = "cal-week";
+        row.setAttribute("role", "row");
+        grid.appendChild(row);
+      }
+      const day = document.createElement("div");
+      day.className = "calendar-cell";
+      day.setAttribute("role", "cell");
       const iso = isoDate(cell.y, cell.m, cell.d);
-      btn.dataset.iso = iso;
+      day.dataset.iso = iso;
       const label = document.createElement("span");
       label.textContent = String(cell.d);
-      btn.appendChild(label);
-      if (cell.outside) btn.classList.add("calendar-cell--outside");
-      if (iso === todayIso) btn.classList.add("calendar-cell--today");
+      day.appendChild(label);
+      if (cell.outside) day.classList.add("calendar-cell--outside");
+      if (iso === todayIso) day.classList.add("calendar-cell--today");
       if (!cell.outside) {
         const hit = histogram[iso];
         if (hit) {
           const pending = hit.pending || 0;
           const done = hit.done || 0;
           const errors = hit.errors || 0;
-          btn.classList.add("calendar-cell--has-data");
-          if (errors > 0) btn.classList.add("calendar-cell--halo-errors");
-          else if (pending > 0) btn.classList.add("calendar-cell--halo-pending");
-          else if (done > 0) btn.classList.add("calendar-cell--halo-done");
+          day.classList.add("calendar-cell--has-data");
+          if (errors > 0) day.classList.add("calendar-cell--halo-errors");
+          else if (pending > 0) day.classList.add("calendar-cell--halo-pending");
+          else if (done > 0) day.classList.add("calendar-cell--halo-done");
           const sum = pending + done + errors;
           if (sum > 1) {
             const badge = document.createElement("span");
             badge.className = "calendar-count-badge";
             badge.textContent = sum > 99 ? "99+" : String(sum);
-            btn.appendChild(badge);
+            day.appendChild(badge);
           }
           // The badge counts RUNS, and nothing on screen said so — a cell for
-          // day 3 carrying a badge of 2 read out as the number "32", beside a
-          // legend that is `aria-hidden`. Naming it is also the only way the
-          // unit is stated anywhere.
-          btn.setAttribute(
+          // day 3 carrying a badge of 2 read out as the number "32". The state
+          // is in here too, in the legend's own words, because the halo that
+          // carries it is a colour and the legend is a colour key.
+          const states = [
+            [errors, "needs attention"],
+            [pending, "in progress"],
+            [done, "filed"],
+          ].filter((pair) => pair[0] > 0);
+          const detail =
+            states.length === 1
+              ? states[0][1]
+              : states.map((pair) => `${pair[0]} ${pair[1]}`).join(" and ");
+          day.setAttribute(
             "aria-label",
-            `${cell.d} ${MONTH_NAMES[month]} — ${sum} filing ${sum === 1 ? "run" : "runs"}`
+            `${cell.d} ${MONTH_NAMES[month]} — ` +
+              `${sum} filing ${sum === 1 ? "run" : "runs"}, ${detail}`
           );
         }
       }
-      grid.appendChild(btn);
-    }
+      row.appendChild(day);
+    });
   }
 
   // ─── Tabs (one workspace, several modes) ─────────────────────
