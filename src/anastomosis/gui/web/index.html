@@ -382,7 +382,17 @@
 
           <div class="panel" id="layout-proposal" aria-label="Proposed layout" hidden>
             <h3>Proposed layout</h3>
-            <div class="panel-note">No patient data is shown below.</div>
+            <!-- It said "No patient data is shown below." directly above a list
+                 that can contain it. The static labels are the strings that
+                 recurred across the samples, and a value two patients share
+                 recurs — so the promise was one a frequency count could not
+                 keep (#200). The Proposed match-up panel below keeps its
+                 version of this note, because that one shows column names. -->
+            <div class="panel-note">
+              Read the labels below before confirming. They are the strings that
+              repeated across your samples, which is usually the form — but a
+              value two patients happen to share repeats too.
+            </div>
             <div class="text-block" id="layout-summary"></div>
             <div class="prose" id="layout-caveat"></div>
             <div class="confirm-row">

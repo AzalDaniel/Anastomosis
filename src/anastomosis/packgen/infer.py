@@ -293,11 +293,21 @@ def infer_static_text(samples: Sequence[DocumentSample]) -> list[str]:
     """All normalized span texts recurring in >= 60% of samples — the label
     vocabulary (e.g. ``"DOB:"``, ``"Provider:"``) — minus section headings.
 
-    These are the strings that are the SAME on every chart: field labels,
-    running headers, empty-state text. Per-patient values, recurring in fewer
-    samples, are excluded. Section headings (from
+    These are MOSTLY the strings that are the same on every chart: field labels,
+    running headers, empty-state text. Section headings (from
     :func:`infer_section_taxonomy`) are subtracted so the two outputs do not
     double-count.
+
+    "Per-patient values recur in fewer samples, and are excluded" is what this
+    said, and it is not true — it reads a frequency count as a proof of
+    authorship. With three samples the bar is two, so any value two patients
+    share lands here: a common diagnosis, an ethnicity, a referring provider,
+    a clinic address (#200, reproduced). The count of samples is doing work
+    only the content can do.
+
+    The one thing frequency does settle: a value appearing in exactly ONE
+    sample is per-patient and is excluded. That is the guarantee this list
+    carries, and it is narrower than the name "static" suggests.
     """
     threshold = _static_threshold(len(samples))
     seen: dict[str, set[int]] = {}
@@ -567,12 +577,17 @@ class PackAnalysis:
     low_confidence: bool = False  # set when only one sample was analyzed
 
     def summary_lines(self) -> list[str]:
-        """PHI-safe one-screen digest: counts, roles, geometry, and — only —
-        the STATIC text (by construction template strings, never per-patient).
+        """One-screen digest: counts, roles, geometry, and the STATIC text.
 
-        A value appearing in just one sample is per-patient by definition and
-        is excluded from ``sections``/``static_text`` upstream, so it can never
-        surface here. The tests assert exactly that property.
+        Static means "recurred across a supermajority of the samples", which is
+        a frequency count and not a proof of authorship. A value two patients
+        share recurs, classifies as static, and prints here (#200) — so this
+        digest is not the "no values shown" summary the CLI header calls it,
+        and the header says so now.
+
+        What frequency does settle: a value appearing in exactly one sample is
+        per-patient and is excluded upstream, so it can never surface here. The
+        tests assert that property, which is narrower than it reads.
 
         SINGLE-SAMPLE runs break that property at the source: with one sample
         the recurrence threshold is 1, so per-patient values classify as
