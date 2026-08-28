@@ -30,6 +30,29 @@ from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
+from anastomosis.core.ccda_codes import (
+    EXT_PRIOR_LOSS_NARRATIVE,
+    LOINC_ALLERGIES,
+    LOINC_ENCOUNTERS,
+    LOINC_EXTENSIONS,
+    LOINC_IMMUNIZATIONS,
+    LOINC_MEDICATIONS,
+    LOINC_NOTES,
+    LOINC_PROBLEMS,
+    LOINC_RESULTS,
+    LOINC_SOCIAL,
+    LOINC_VITALS,
+    LOSS_NARRATIVE_GENERATION_ROOT,
+    LOSS_NARRATIVE_TEMPLATE_ROOT,
+    LOSS_NARRATIVE_TITLE,
+    OID_ICD10,
+    OID_RXNORM,
+    OID_SNOMED,
+    OID_SSN,
+    SDTC,
+    V3,
+    XSI,
+)
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
     AllergyCategory,
@@ -55,15 +78,8 @@ logger = logging.getLogger(__name__)
 
 # --- namespaces / OIDs (must mirror sources/ccda/parser.py exactly) ----------
 
-V3 = "urn:hl7-org:v3"
-SDTC = "urn:hl7-org:sdtc"
-XSI = "http://www.w3.org/2001/XMLSchema-instance"
 NSMAP = {None: V3, "sdtc": SDTC, "xsi": XSI}
 
-OID_SSN = "2.16.840.1.113883.4.1"
-OID_SNOMED = "2.16.840.1.113883.6.96"
-OID_ICD10 = "2.16.840.1.113883.6.90"
-OID_RXNORM = "2.16.840.1.113883.6.88"
 OID_LOINC = "2.16.840.1.113883.6.1"
 OID_CPT = "2.16.840.1.113883.6.12"
 OID_CVX = "2.16.840.1.113883.12.292"
@@ -73,38 +89,10 @@ OID_CONFIDENTIALITY = "2.16.840.1.113883.5.25"
 OID_ACTCLASS = "2.16.840.1.113883.5.6"
 OID_ACTCODE = "2.16.840.1.113883.5.4"  # HL7 ActCode (ASSERTION, SEV)
 
-# Section LOINC codes — the values sources/ccda/parser.py dispatches on.
-LOINC_PROBLEMS = "11450-4"
-LOINC_ALLERGIES = "48765-2"
-LOINC_MEDICATIONS = "10160-0"
-LOINC_IMMUNIZATIONS = "11369-6"
-LOINC_VITALS = "8716-3"
-LOINC_RESULTS = "30954-2"
-LOINC_SOCIAL = "29762-2"
-LOINC_ENCOUNTERS = "46240-8"
-LOINC_NOTES = "34109-9"
-# The parser does not structurally parse this section; it captures the entries
-# of a section STAMPED as ours into patient.extensions["ccda:prior_loss_narrative"]
-# and any other 51899-3 section into ccda:section:51899-3 like ordinary foreign
-# narrative. We use it as the declared home for source fields CDA has no
-# structured slot for.
-LOINC_EXTENSIONS = "51899-3"
-
-# The stamp that makes THIS tool's loss ledger self-identifying, so a re-ingest
-# can carry its entries forward instead of re-narrating the whole block as one
-# ever-growing line — and so a third party's 51899-3 section (unstamped) stays
-# ordinary foreign narrative. Non-OID roots are this exporter's existing
-# convention for anastomosis-private identifiers (see _patient_ids); the module
-# docstring's scope note covers why XSD-OID discipline does not apply here.
-# These four must mirror sources/ccda/parser.py exactly.
-LOSS_NARRATIVE_TEMPLATE_ROOT = "urn:anastomosis:ccda:loss-narrative"
+# The writer's own version stamp on the section it emits. NOT mirrored: the
+# parser recognises the root and ignores the extension, so this is the one
+# loss-narrative constant that is genuinely one-sided.
 LOSS_NARRATIVE_TEMPLATE_VERSION = "1"
-LOSS_NARRATIVE_GENERATION_ROOT = "urn:anastomosis:ccda:loss-narrative:generation"
-# The pre-stamp marker: documents exported before the templateId existed carry
-# only this title, and the parser still recognizes them by it.
-LOSS_NARRATIVE_TITLE = "Anastomosis Preserved Source Fields"
-# Where a re-ingest parks a stamped section's entries (mirrors the parser).
-EXT_PRIOR_LOSS_NARRATIVE = "ccda:prior_loss_narrative"
 
 # Template ids the parser keys on (allergy severity, social tobacco).
 TPL_SEVERITY = "2.16.840.1.113883.10.20.22.4.8"

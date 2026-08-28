@@ -38,6 +38,29 @@ from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
+from anastomosis.core.ccda_codes import (
+    EXT_PRIOR_LOSS_NARRATIVE,
+    LOINC_ALLERGIES,
+    LOINC_ENCOUNTERS,
+    LOINC_EXTENSIONS,
+    LOINC_IMMUNIZATIONS,
+    LOINC_MEDICATIONS,
+    LOINC_NOTES,
+    LOINC_PROBLEMS,
+    LOINC_RESULTS,
+    LOINC_SOCIAL,
+    LOINC_VITALS,
+    LOSS_NARRATIVE_GENERATION_ROOT,
+    LOSS_NARRATIVE_TEMPLATE_ROOT,
+    LOSS_NARRATIVE_TITLE,
+    OID_ICD10,
+    OID_RXNORM,
+    OID_SNOMED,
+    OID_SSN,
+    SDTC,
+    V3,
+    XSI,
+)
 from anastomosis.core.model import (
     AllergyCategory,
     AllergyIntolerance,
@@ -67,44 +90,8 @@ SOURCE = "ccda"
 
 # --- namespaces / OIDs (verified C-CDA R2.1 reference) -----------------------
 
-V3 = "urn:hl7-org:v3"
-SDTC = "urn:hl7-org:sdtc"
-XSI = "http://www.w3.org/2001/XMLSchema-instance"
 NS = {"v3": V3, "sdtc": SDTC, "xsi": XSI}
 
-OID_SSN = "2.16.840.1.113883.4.1"
-OID_SNOMED = "2.16.840.1.113883.6.96"
-OID_ICD10 = "2.16.840.1.113883.6.90"
-OID_RXNORM = "2.16.840.1.113883.6.88"
-
-# Section LOINC codes this adapter structurally parses; anything else is
-# captured as narrative (the losslessness rule below).
-LOINC_PROBLEMS = "11450-4"
-LOINC_ALLERGIES = "48765-2"
-LOINC_MEDICATIONS = "10160-0"
-LOINC_IMMUNIZATIONS = "11369-6"
-LOINC_VITALS = "8716-3"
-LOINC_RESULTS = "30954-2"
-LOINC_SOCIAL = "29762-2"
-LOINC_ENCOUNTERS = "46240-8"
-LOINC_NOTES = "34109-9"
-# Not structurally parsed. A 51899-3 section STAMPED by this repo's C-CDA
-# exporter is its loss ledger and is captured entry-by-entry (see
-# :func:`_capture_loss_narrative`); any other 51899-3 section is a third
-# party's and stays ordinary foreign narrative.
-LOINC_EXTENSIONS = "51899-3"
-
-# The exporter's stamp on its OWN loss ledger (must mirror
-# deliver/ccda_export/builder.py exactly). Recognizing it is what stops a
-# repeated export → ingest → export loop from re-narrating generation N-1's
-# whole ledger as a single line inside generation N's — an unbounded blob that
-# drowned the real entries.
-LOSS_NARRATIVE_TEMPLATE_ROOT = "urn:anastomosis:ccda:loss-narrative"
-LOSS_NARRATIVE_GENERATION_ROOT = "urn:anastomosis:ccda:loss-narrative:generation"
-# Documents exported before the templateId stamp existed carry only this title;
-# it names this tool outright, so it is the legacy marker for those.
-LOSS_NARRATIVE_TITLE = "Anastomosis Preserved Source Fields"
-EXT_PRIOR_LOSS_NARRATIVE = "ccda:prior_loss_narrative"
 
 # Allergy substance-class SNOMED codes → canonical category.
 _ALLERGY_CATEGORY = {
