@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 
@@ -70,25 +70,47 @@ class Plan:
     notes: tuple[str, ...] = ()
 
 
+def _attached_to_a_terminal(stream: Any) -> bool:
+    """Whether ``stream`` is really a terminal — asked of the stream itself.
+
+    Never of anything that reports colour capability. ``FORCE_COLOR`` and
+    ``TTY_COMPATIBLE`` make Rich answer ``is_terminal`` True for a plain file
+    (``typer/rich_utils.py`` sets them up), and both are exported by ordinary
+    tooling — CI images, ``just``/``make`` wrappers, terminal multiplexers. With
+    one of them set, ``anast > log`` from a shell used to open the guided
+    session, write the menu into the log file, and then block on a question
+    nobody could see.
+
+    Whether output can carry colour and whether a person is reading it are
+    different questions with different answers; letting the first stand in for
+    the second is what made an unattended run hang.
+    """
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        # A closed or exotic stream is neither a keyboard nor a screen.
+        return False
+
+
 def is_interactive_terminal(console: Console) -> bool:
     """True only when a person is at BOTH ends of this session.
 
     The guided session asks questions, so it may start only when the answers can
     come from a keyboard and the questions can be seen: a real terminal on stdin
-    AND a terminal on the console's output. A pipe, a redirect, a cron job or a
+    AND on the console's own output stream. A pipe, a redirect, a cron job or a
     CI runner fails this test and is given the help page instead — which is why
     no script can ever hang waiting for a prompt that nobody will answer.
+
+    Both ends are asked directly (see :func:`_attached_to_a_terminal`). Dropping
+    the output end would not do: stdin stays a keyboard when only stdout is
+    redirected, so ``anast > log`` would start the session and put its questions
+    somewhere the person answering cannot read them.
     """
     import sys
 
-    stdin = getattr(sys, "stdin", None)
-    try:
-        if stdin is None or not stdin.isatty():
-            return False
-    except (AttributeError, OSError, ValueError):
-        # A closed or exotic stdin cannot be a keyboard; treat it as a script.
-        return False
-    return bool(console.is_terminal)
+    return _attached_to_a_terminal(getattr(sys, "stdin", None)) and _attached_to_a_terminal(
+        getattr(console, "file", None)
+    )
 
 
 def run_guide(console: Console) -> int:
