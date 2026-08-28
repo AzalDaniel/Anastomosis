@@ -111,6 +111,7 @@ KNOWN_TABLES = (
     "patient-family-history-diagnoses",
     "patient-immunizations",
     "patient-advance-directives",
+    "patient-goals",
     "patient-documents",
     "providers",
     "facilities",

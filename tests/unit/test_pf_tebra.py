@@ -613,6 +613,36 @@ def test_family_history_immunizations_directives(
     assert dnr.directive is not None and dnr.directive.startswith("Do not resuscitate")
 
 
+def test_goals_are_mapped_and_split_by_active(tmp_path: Path) -> None:
+    """``patient-goals`` feeds ``record.goals``, which the SOAP pack's Active and
+    Inactive Goals sections read. Until it was mapped those sections printed
+    "No active goals recorded" over an export that had goals in it (#236).
+    """
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-goals",
+        ["PatientPracticeGuid", "Goal", "StartDate", "IsActive", "CodeDescription"],
+        [
+            [P1, "Walk 30 minutes daily", "01/02/2023", "True", "Exercise"],
+            [P1, "Quit tobacco", "01/02/2022", "False", "Tobacco cessation"],
+        ],
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+    walk, quit_tobacco = loaded[P1].goals
+    assert (walk.description, walk.effective, walk.active) == (
+        "Walk 30 minutes daily",
+        date(2023, 1, 2),
+        True,
+    )
+    assert (quit_tobacco.description, quit_tobacco.active) == ("Quit tobacco", False)
+    # Columns the mapper does not read ride along instead of being dropped.
+    assert walk.extensions["pf_tebra:CodeDescription"] == "Exercise"
+    # A patient with no goal rows gets an empty list, not a phantom goal.
+    assert loaded[P2].goals == []
+    # And the table is mapped now, so it must not ALSO be preserved as unmapped.
+    assert "pf_tebra:unmapped:patient-goals" not in loaded[P1].extensions
+
+
 def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     cleo = records[P3]
     guarantor = cleo.patient.guarantor
