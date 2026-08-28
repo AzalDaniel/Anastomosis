@@ -533,15 +533,296 @@
   }
 
   // ─── Small DOM builders shared by the views ───────────────────
-  function fillSelect(select, entries) {
-    if (!select) return;
-    select.innerHTML = "";
-    for (const entry of entries) {
-      const opt = document.createElement("option");
-      opt.value = entry.value;
-      opt.textContent = entry.label;
-      select.appendChild(opt);
+  // ─── The chooser: one of N ────────────────────────────────────
+  // WAI-ARIA's select-only combobox — a button plus a listbox popup, DOM focus
+  // never leaving the button, the active row named by aria-activedescendant.
+  //
+  // This replaced the native <select>, which had one text slot per option. That
+  // slot is why operators read `generic_soap` instead of "Generic SOAP": the
+  // controller already sends a description alongside every name and the app had
+  // nowhere to put it. It is also the one control the browser tests could not
+  // see, because the popup an OS draws is not in the page.
+  //
+  // The trigger keeps a `value` property and fires a bubbling `change`, so every
+  // caller that read `pick("pack").value` off a <select> still works.
+
+  const TYPEAHEAD_MS = 800;
+
+  function makeChooser(id) {
+    const wrap = document.createElement("div");
+    wrap.className = "chooser";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.id = id;
+    trigger.className = "chooser-trigger";
+    trigger.setAttribute("role", "combobox");
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-controls", `${id}-list`);
+    trigger.setAttribute("aria-labelledby", `${id}-label`);
+
+    const value = document.createElement("span");
+    value.className = "chooser-value";
+    const chevron = document.createElement("span");
+    chevron.className = "chooser-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    trigger.appendChild(value);
+    trigger.appendChild(chevron);
+
+    const list = document.createElement("ul");
+    list.id = `${id}-list`;
+    list.className = "chooser-list";
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-labelledby", `${id}-label`);
+    list.hidden = true;
+
+    wrap.appendChild(trigger);
+    wrap.appendChild(list);
+    wireChooser(trigger, list, value);
+    return wrap;
+  }
+
+  function wireChooser(trigger, list, valueSlot) {
+    let entries = [];
+    let selected = -1;
+    let active = -1;
+    let typed = "";
+    let typedAt = 0;
+
+    const rows = () => $$(".chooser-row", list);
+    const isOpen = () => !list.hidden;
+
+    const paint = () => {
+      rows().forEach((row, i) => {
+        row.setAttribute("aria-selected", i === selected ? "true" : "false");
+        row.classList.toggle("is-active", isOpen() && i === active);
+      });
+      valueSlot.textContent = selected >= 0 ? entries[selected].label : "";
+      trigger.setAttribute(
+        "aria-activedescendant",
+        isOpen() && active >= 0 ? rows()[active].id : ""
+      );
+    };
+
+    const moveTo = (index) => {
+      if (!entries.length) return;
+      active = Math.max(0, Math.min(entries.length - 1, index));
+      paint();
+      const row = rows()[active];
+      if (row) row.scrollIntoView({ block: "nearest" });
+    };
+
+    const open = () => {
+      if (isOpen() || !entries.length) return;
+      list.hidden = false;
+      // Flip above when the popup would run past the window bottom. Measured
+      // after it is laid out, because until then it has no height.
+      const box = trigger.getBoundingClientRect();
+      const overruns = box.bottom + list.offsetHeight + 8 > window.innerHeight;
+      list.classList.toggle("flips-up", overruns && box.top > list.offsetHeight);
+      trigger.setAttribute("aria-expanded", "true");
+      moveTo(selected >= 0 ? selected : 0);
+    };
+
+    const close = () => {
+      if (!isOpen()) return;
+      list.hidden = true;
+      list.classList.remove("flips-up");
+      trigger.setAttribute("aria-expanded", "false");
+      paint();
+    };
+
+    const select = (index, opts) => {
+      if (index < 0 || index >= entries.length) return;
+      const changed = index !== selected;
+      selected = index;
+      paint();
+      if (changed && (!opts || opts.notify !== false)) {
+        trigger.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    };
+
+    const commit = () => {
+      select(active);
+      close();
+      trigger.focus();
+    };
+
+    // Typeahead matches on what a person reads — the label, not the id.
+    const typeahead = (char) => {
+      const now = Date.now();
+      typed = now - typedAt > TYPEAHEAD_MS ? char : typed + char;
+      typedAt = now;
+      const from = (isOpen() ? active : selected) + (typed.length === 1 ? 1 : 0);
+      for (let step = 0; step < entries.length; step += 1) {
+        const i = (Math.max(0, from) + step) % entries.length;
+        if (entries[i].label.toLowerCase().startsWith(typed.toLowerCase())) {
+          if (isOpen()) moveTo(i);
+          else select(i);
+          return;
+        }
+      }
+    };
+
+    trigger.addEventListener("click", () => (isOpen() ? close() : open()));
+
+    trigger.addEventListener("keydown", (e) => {
+      const key = e.key;
+      if (!isOpen()) {
+        if (key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === " ") {
+          e.preventDefault();
+          open();
+        } else if (key === "Home") {
+          e.preventDefault();
+          select(0);
+        } else if (key === "End") {
+          e.preventDefault();
+          select(entries.length - 1);
+        } else if (key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          typeahead(key);
+        }
+        return;
+      }
+      if (key === "ArrowDown") {
+        e.preventDefault();
+        moveTo(active + 1);
+      } else if (key === "ArrowUp") {
+        e.preventDefault();
+        moveTo(active - 1);
+      } else if (key === "Home") {
+        e.preventDefault();
+        moveTo(0);
+      } else if (key === "End") {
+        e.preventDefault();
+        moveTo(entries.length - 1);
+      } else if (key === "PageDown") {
+        e.preventDefault();
+        moveTo(active + 10);
+      } else if (key === "PageUp") {
+        e.preventDefault();
+        moveTo(active - 10);
+      } else if (key === "Enter" || key === " ") {
+        e.preventDefault();
+        commit();
+      } else if (key === "Escape") {
+        e.preventDefault();
+        close();
+      } else if (key === "Tab") {
+        // APG: tabbing out of an open listbox commits what is focused.
+        select(active);
+        close();
+      } else if (key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        typeahead(key);
+      }
+    });
+
+    list.addEventListener("mousedown", (e) => {
+      // Keep DOM focus on the trigger: the popup is not a focus destination.
+      e.preventDefault();
+      const row = e.target.closest(".chooser-row");
+      if (!row) return;
+      active = rows().indexOf(row);
+      commit();
+    });
+    list.addEventListener("mousemove", (e) => {
+      const row = e.target.closest(".chooser-row");
+      if (row) moveTo(rows().indexOf(row));
+    });
+
+    document.addEventListener("mousedown", (e) => {
+      if (!isOpen()) return;
+      if (!trigger.parentNode.contains(e.target)) close();
+    });
+
+    Object.defineProperty(trigger, "value", {
+      get: () => (selected >= 0 ? entries[selected].value : ""),
+      set: (next) => {
+        const i = entries.findIndex((entry) => entry.value === next);
+        if (i >= 0) select(i, { notify: false });
+      },
+    });
+
+    CHOOSERS.set(trigger, (next) => {
+      entries = next;
+      list.innerHTML = "";
+      next.forEach((entry, i) => {
+        const row = document.createElement("li");
+        row.id = `${trigger.id}-opt-${i}`;
+        row.className = "chooser-row";
+        row.setAttribute("role", "option");
+        row.dataset.value = entry.value;
+        // The machine id stays reachable on the tooltip even when the caption
+        // is a description — the same rule the stage rail and the upload states
+        // follow: plain English on screen, the id for whoever has to ask.
+        if (entry.value) row.title = entry.value;
+        const name = document.createElement("span");
+        name.className = "chooser-name";
+        name.textContent = entry.label;
+        row.appendChild(name);
+        if (entry.note) {
+          const note = document.createElement("span");
+          note.className = "chooser-note";
+          note.textContent = entry.note;
+          row.appendChild(note);
+        }
+        list.appendChild(row);
+      });
+      selected = next.length ? 0 : -1;
+      active = selected;
+      close();
+      paint();
+    });
+  }
+
+  const CHOOSERS = new Map();
+
+  //: Wire the choosers written directly into index.html. The ones the run form
+  //: builds are wired as they are made.
+  function initChoosers(root) {
+    for (const wrap of $$(".chooser", root || document)) {
+      const trigger = $(".chooser-trigger", wrap);
+      const list = $(".chooser-list", wrap);
+      const value = $(".chooser-value", wrap);
+      if (trigger && list && value && !CHOOSERS.has(trigger)) {
+        wireChooser(trigger, list, value);
+      }
     }
+  }
+
+  // Acronyms a person would write in capitals. Anything else is title-cased,
+  // which is right for the vendor names these ids are built from.
+  const SHOUTED = new Set(["cda", "csv", "ehi", "fhir", "hl7", "pdf", "pf", "soap", "tsv", "xml"]);
+
+  // Ids whose readable form is not a re-casing of their parts.
+  const NAMED = { ccda: "C-CDA" };
+
+  //: A readable name for a machine id: `generic_soap` -> "Generic SOAP",
+  //: `pf-tebra` -> "PF Tebra". Every place a person reads one of these ids used
+  //: to print it raw, because a <select> option had one text slot and the id
+  //: had to go in it. The id survives as the row's caption.
+  function displayName(id) {
+    const known = NAMED[String(id).toLowerCase()];
+    if (known) return known;
+    return String(id)
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((word) =>
+        SHOUTED.has(word.toLowerCase())
+          ? word.toUpperCase()
+          : word.charAt(0).toUpperCase() + word.slice(1)
+      )
+      .join(" ");
+  }
+
+  //: Entries are {value, label, note}. `note` is the caption under the name —
+  //: the raw id, or the source's own description — which the <select> had no
+  //: room for and therefore discarded.
+  function fillChooser(trigger, entries) {
+    const fill = trigger && CHOOSERS.get(trigger);
+    if (fill) fill(entries);
   }
 
   function renderSectionMatrix(matrix, sections, emptyText, remembered) {
@@ -641,6 +922,7 @@
     const field = document.createElement("div");
     field.className = "field";
     const label = document.createElement("label");
+    label.id = `${id}-label`;
     label.setAttribute("for", id);
     label.textContent = labelText;
     field.appendChild(label);
@@ -663,17 +945,6 @@
     if (face) input.className = face;
     if (placeholder) input.placeholder = placeholder;
     return input;
-  }
-
-  // A select ships inside its wrapper: the chevron is drawn on the wrapper,
-  // because a <select> takes no pseudo-element of its own.
-  function makeSelect(id) {
-    const wrap = document.createElement("div");
-    wrap.className = "select-wrap";
-    const select = document.createElement("select");
-    select.id = id;
-    wrap.appendChild(select);
-    return wrap;
   }
 
   function makeToggle(id, labelText, checked) {
@@ -744,7 +1015,7 @@
         migrate
           ? "Which system this export came from. Detect fills this in for you."
           : "Which system this export came from. 'Detect' works for all built-in formats.",
-        makeSelect(id("source"))
+        makeChooser(id("source"))
       )
     );
     host.appendChild(
@@ -761,13 +1032,13 @@
             id("render"),
             "Chart pages",
             "Rendered pages (PDF) or data only.",
-            makeSelect(id("render"))
+            makeChooser(id("render"))
           )
         : makeField(
             id("pack"),
             "Chart layout",
             "How the finished chart pages are laid out.",
-            makeSelect(id("pack"))
+            makeChooser(id("pack"))
           )
     );
 
@@ -1061,6 +1332,7 @@
     paintIcons(document);
     initAbout();
     initTabs(document);
+    initChoosers(document);
     // The nav is the sliding pill, wired like any other: the only thing that
     // makes it the nav is what its change does.
     initSegmentToggles($(".navbar"), (name, value) => {
@@ -1109,7 +1381,8 @@
     hideBanner,
     stageLabel,
     initSegmentToggles,
-    fillSelect,
+    displayName,
+    fillChooser,
     renderSectionMatrix,
     gatherSections,
     buildRunForm,

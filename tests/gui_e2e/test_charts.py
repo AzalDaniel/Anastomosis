@@ -34,10 +34,15 @@ def test_charts_populates_its_pickers_and_sections(gui) -> None:
     page = app.page
 
     assert app.called("info"), "the app never called info()"
-    layouts = page.locator("#charts-pack option").all_text_contents()
-    assert "generic_soap" in layouts
+    # A person reads the name; the id they would quote to support is the row's
+    # caption. Both, because the <select> this replaced had room for only one
+    # and the id won.
+    layouts = app.choices("#charts-pack")
+    assert "Generic SOAP" in layouts, layouts
+    assert "generic_soap" not in layouts
+    assert "generic_soap" in app.notes("#charts-pack")
     assert page.locator("#charts-sections input[data-section]").count() > 0
-    page.select_option("#charts-pack", "practice_fusion_soap")
+    app.choose("#charts-pack", "practice_fusion_soap")
     page.wait_for_timeout(80)
     assert page.locator("#charts-sections input[data-section]").count() > 0
     # The out-of-date filing-assistant notice surfaced from pack_freshness(),
@@ -209,11 +214,11 @@ def test_section_choices_survive_a_layout_round_trip(gui) -> None:
     """
     app = gui()
     page = app.page
-    packs = page.locator("#charts-pack option").all_text_contents()
+    packs = app.choices("#charts-pack")
     assert len(packs) >= 2, f"need two layouts to switch between, got {packs}"
 
     first, second = packs[0], packs[1]
-    page.select_option("#charts-pack", label=first)
+    app.choose_label("#charts-pack", first)
     boxes = page.locator("#charts-sections input[data-section]")
     assert boxes.count() >= 1
 
@@ -232,8 +237,8 @@ def test_section_choices_survive_a_layout_round_trip(gui) -> None:
     }
     assert chosen and not any(chosen.values()), chosen
 
-    page.select_option("#charts-pack", label=second)
-    page.select_option("#charts-pack", label=first)
+    app.choose_label("#charts-pack", second)
+    app.choose_label("#charts-pack", first)
 
     back = {
         b["k"]: b["v"]

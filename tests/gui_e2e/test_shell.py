@@ -535,3 +535,126 @@ def test_a_switch_says_which_way_it_is_set_without_relying_on_colour(gui) -> Non
     assert "matrix(1, 0, 0, 1, 16, 0)" in measured["travel"], (
         f"the thumb no longer moves, so nothing distinguishes the states: {measured['travel']}"
     )
+
+
+def test_the_chooser_keys_like_the_control_it_replaced(gui) -> None:
+    """The whole APG select-only combobox keyboard contract, in one trace.
+
+    A native <select> gave this for free, and it is the reason replacing one is
+    usually a bad idea. It was replaced anyway because its popup is drawn by the
+    OS: unstyleable past a point, invisible to this test, and one text slot per
+    option — which is why the app printed `generic_soap` at people. So the
+    contract it used to provide is now something this repo owes, and this is
+    where that debt is paid.
+
+    DOM focus stays on the trigger throughout; the row the keyboard is pointing
+    at is named by aria-activedescendant, never by :focus.
+    """
+    app = gui()
+    page = app.page
+    app.show("charts")
+    trigger = page.locator("#charts-pack")
+    rows = page.locator("#charts-pack + .chooser-list .chooser-row")
+    labels = app.choices("#charts-pack")
+    assert len(labels) >= 2, f"need two layouts to key between, got {labels}"
+
+    def active() -> str:
+        return trigger.get_attribute("aria-activedescendant") or ""
+
+    def focused_is_trigger() -> bool:
+        return bool(page.evaluate("() => document.activeElement.id === 'charts-pack'"))
+
+    def open_state() -> bool:
+        return trigger.get_attribute("aria-expanded") == "true"
+
+    trigger.focus()
+    assert not open_state()
+
+    # ↓ opens on the current selection and names it.
+    page.keyboard.press("ArrowDown")
+    page.wait_for_timeout(60)
+    assert open_state() and active() == rows.nth(0).get_attribute("id")
+    assert focused_is_trigger(), "focus left the trigger for the popup"
+
+    # ↓ / End / Home move the pointer without committing anything.
+    page.keyboard.press("ArrowDown")
+    assert active() == rows.nth(1).get_attribute("id")
+    page.keyboard.press("End")
+    assert active() == rows.nth(rows.count() - 1).get_attribute("id")
+    page.keyboard.press("PageUp")
+    assert active() == rows.nth(0).get_attribute("id")
+    assert app.chosen("#charts-pack") == rows.nth(0).get_attribute("data-value")
+
+    # Esc closes and changes nothing.
+    before = app.chosen("#charts-pack")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(60)
+    assert not open_state()
+    assert app.chosen("#charts-pack") == before, "Esc committed the focused row"
+
+    # Enter commits and hands focus back.
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(60)
+    assert not open_state()
+    assert focused_is_trigger()
+    assert app.chosen("#charts-pack") == rows.nth(1).get_attribute("data-value")
+    assert app.text("#charts-pack .chooser-value") == labels[1]
+
+    # A printable character jumps to the first label starting with it — the
+    # label, because that is what a person is reading.
+    page.keyboard.press(labels[0][0].lower())
+    page.wait_for_timeout(60)
+    assert app.chosen("#charts-pack") == rows.nth(0).get_attribute("data-value")
+
+
+def test_no_view_shows_a_machine_id_where_a_name_belongs(gui) -> None:
+    """The ids appear as captions and tooltips, never as the thing you read.
+
+    `generic_soap` was on screen as the chart layout's name, `pf-tebra` as an
+    export format's, `tebra` as a destination's — not a copy defect but a
+    control defect: an <option> has one text slot, so the id took it.
+    """
+    app = gui()
+    seen = 0
+
+    for view, _label in NAV_VIEWS:
+        app.show(view)
+        shown = app.page.evaluate(
+            """() => [...document.querySelectorAll('.view:not([hidden]) .chooser-value,'
+               + ' .view:not([hidden]) .chooser-name')].map(n => n.textContent.trim())"""
+        )
+        seen += len(shown)
+        raw = [text for text in shown if "_" in text or (text and text == text.lower())]
+        assert not raw, f"{view} shows a machine id where a name belongs: {raw}"
+
+    # Without this the check passes on a build that has no chooser at all —
+    # which is exactly the build that had the defect.
+    assert seen >= 8, f"only {seen} chooser labels were on screen across the views"
+
+
+def test_a_machine_id_becomes_a_name_a_person_would_write(gui) -> None:
+    """The derivation, on the ids this app actually ships.
+
+    It is a fallback: the right long-term fix is for a layout to carry the
+    display name the Teach flow already asks its author for. Until then this is
+    what stands between an operator and `practice_fusion_soap`, so the cases it
+    gets wrong are worth pinning — an initialism it has not been told about
+    comes out title-cased, which is wrong but readable, and a hyphenated
+    acronym has to be named outright.
+    """
+    app = gui()
+
+    def name(raw: str) -> str:
+        return str(app.page.evaluate("id => window.AnastShell.displayName(id)", raw))
+
+    assert name("generic_soap") == "Generic SOAP"
+    assert name("practice_fusion_soap") == "Practice Fusion SOAP"
+    assert name("pf-tebra") == "PF Tebra"
+    assert name("fhir_r4") == "FHIR R4"
+    assert name("oracle_ehi") == "Oracle EHI"
+    assert name("tebra") == "Tebra"
+    # Not derivable by re-casing the parts, so it is named.
+    assert name("ccda") == "C-CDA"

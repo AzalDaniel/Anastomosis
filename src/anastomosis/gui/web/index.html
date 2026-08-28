@@ -120,8 +120,18 @@
         <div class="panel">
           <h2>Where the charts are going</h2>
           <div class="field">
-            <label for="migrate-destination">Destination system</label>
-            <div class="select-wrap"><select id="migrate-destination"></select></div>
+            <label id="migrate-destination-label" for="migrate-destination">Destination system</label>
+            <div class="chooser">
+              <button type="button" class="chooser-trigger" id="migrate-destination"
+                      role="combobox" aria-haspopup="listbox" aria-expanded="false"
+                      aria-controls="migrate-destination-list"
+                      aria-labelledby="migrate-destination-label">
+                <span class="chooser-value"></span>
+                <span class="chooser-chevron" aria-hidden="true"></span>
+              </button>
+              <ul class="chooser-list" id="migrate-destination-list" role="listbox"
+                  aria-labelledby="migrate-destination-label" hidden></ul>
+            </div>
             <div class="field-help">The system these charts are moving into.</div>
           </div>
           <div class="route-list" id="migrate-routes"></div>

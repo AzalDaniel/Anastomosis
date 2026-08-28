@@ -322,13 +322,23 @@
     for (const layout of info.packs || []) {
       if (!layout.available) continue;
       SECTIONS_BY_PACK[layout.name] = layout.sections || {};
-      entries.push({ value: layout.name, label: layout.name });
+      // The name a person reads, with the id they would quote to support
+      // underneath it — the two used to compete for one slot, and the id won.
+      entries.push({
+        value: layout.name,
+        label: Shell.displayName(layout.name),
+        note: layout.name,
+      });
     }
-    Shell.fillSelect(pack, entries);
+    Shell.fillChooser(pack, entries);
     renderSections(pack ? pack.value : "");
-    Shell.fillSelect(FORM.el("source"), [
-      { value: "", label: "Detect" },
-      ...(info.sources || []).map((src) => ({ value: src.name, label: src.name })),
+    Shell.fillChooser(FORM.el("source"), [
+      { value: "", label: "Detect", note: "works for every built-in format" },
+      ...(info.sources || []).map((src) => ({
+        value: src.name,
+        label: Shell.displayName(src.name),
+        note: src.description || src.name,
+      })),
     ]);
   }
 
