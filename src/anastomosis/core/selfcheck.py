@@ -159,7 +159,11 @@ def _check_fonts() -> AssetCheck:
     try:
         from anastomosis.gui.shell import _WEB_DIR
 
-        fonts = ("MonaSansVF.woff2", "JetBrainsMonoVF.woff2")
+        # Every face the GUI ships. Fraunces was bundled later and never added
+        # here, so `doctor` reported all-clear while never looking at it — a
+        # missing display face would have shown up as a silent fallback in the
+        # app rather than as a failed check.
+        fonts = ("FrauncesVF.woff2", "MonaSansVF.woff2", "JetBrainsMonoVF.woff2")
         bad = []
         for name in fonts:
             path = _WEB_DIR / "fonts" / name
@@ -169,7 +173,7 @@ def _check_fonts() -> AssetCheck:
         return AssetCheck("GUI fonts", False, type(exc).__name__)
     if bad:
         return AssetCheck("GUI fonts", False, f"missing/invalid: {', '.join(bad)}")
-    return AssetCheck("GUI fonts", True, "Mona Sans + JetBrains Mono (woff2)")
+    return AssetCheck("GUI fonts", True, "Fraunces + Mona Sans + JetBrains Mono (woff2)")
 
 
 def _check_synonyms() -> AssetCheck:

@@ -88,7 +88,7 @@ def _resolve_migration_profile(
 def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     """Run a :class:`MigrationCommand`, presenting it as the CLI presents a pipeline.
 
-    Prints the transit map FIRST (the route is the headline of a migration),
+    Shows the available routes FIRST (the route is the headline of a move),
     then runs :func:`run_migration` translating its events with the SAME printer
     ``anast pipeline run`` uses, then the chart + C-CDA outcome lines. On
     :class:`PipelineError` it reproduces ``_report_pipeline_error`` +
@@ -190,7 +190,8 @@ def migrate_cmd(
         str | None,
         typer.Option(
             "--render",
-            help="Chart representation: 'neutral' (default), 'ccda-standard', or a pack name.",
+            help="How the chart pages look: 'neutral' (default), 'ccda-standard', "
+            "or the name of a chart layout.",
         ),
     ] = None,
     pack_dir: PackDirs = None,
@@ -198,7 +199,10 @@ def migrate_cmd(
     force: Force = False,
     section: Annotated[
         list[str] | None,
-        typer.Option("--section", help="Override a section flag (pack renders only)."),
+        typer.Option(
+            "--section",
+            help="Turn one chart section on or off. Applies when charts are rendered as pages.",
+        ),
     ] = None,
     qa: Annotated[
         bool | None,
@@ -217,11 +221,11 @@ def migrate_cmd(
 ) -> None:
     """Migrate records from one EHR to another (PF->Tebra is one instance).
 
-    Emits BOTH the structured C-CDA payload the destination imports (``<out>/ccda``)
-    and a human-readable chart archive (``<out>/charts``) in the chosen
-    representation, after surfacing the destination's transit map. ``--render``
-    selects the chart representation: ``neutral`` (the generic SOAP pack),
-    ``ccda-standard`` (HL7's standard C-CDA view), or any pack name.
+    Writes BOTH the C-CDA transfer document the destination imports
+    (``<out>/ccda``) and readable chart pages (``<out>/charts``), after showing
+    which routes into that system are available. ``--render`` chooses how the
+    pages look: ``neutral`` (a plain visit-note layout), ``ccda-standard``
+    (HL7's standard C-CDA view), or the name of any chart layout.
     """
     from anastomosis.core.migrate import MigrationCommand
 

@@ -186,7 +186,10 @@ def pack_init(
         ),
     ],
     name: Annotated[
-        str, typer.Option("--name", help="Pack name (lowercase identifier, e.g. acme_soap).")
+        str,
+        typer.Option(
+            "--name", help="A name for this layout: lowercase, no spaces, e.g. acme_soap."
+        ),
     ],
     out_dir: Annotated[
         Path,
@@ -212,13 +215,17 @@ def pack_init(
         typer.Option("--yes", "-y", help="Skip the interactive same-patient confirmation."),
     ] = False,
 ) -> None:
-    """Learn a draft template pack from sample PDFs of an EHR's note format.
+    """Learn a draft chart layout from sample notes an EHR printed.
 
-    Collects the samples, harvests + analyzes them (PHI-safe — only static
-    template text is summarized), echoes the same-patient caveat for explicit
-    confirmation, then writes a loadable DRAFT pack. The draft is a STARTING
-    POINT: review the rendered preview against an original sample, edit the
-    template, and re-render. Fidelity is not claimed.
+    Reads the samples and works out what is fixed wording and what is a
+    patient's own data. Only the fixed wording is summarised back to you — no
+    patient data is echoed or kept. It then asks you to confirm the samples
+    come from DIFFERENT patients, because text repeated across one patient's
+    notes cannot be told apart from the layout itself.
+
+    What you get is a draft and a starting point: compare a chart it produces
+    against an original, edit the layout, and try again. It is not claimed to
+    match.
     """
     from anastomosis import cli as _cli
     from anastomosis.core.packinit import (

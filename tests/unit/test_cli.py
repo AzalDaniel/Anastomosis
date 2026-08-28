@@ -354,7 +354,12 @@ def test_destination_list_shows_tebra() -> None:
     result = runner.invoke(app, ["destination", "list"])
     assert result.exit_code == 0, result.output
     assert "tebra" in result.output
-    assert "unverified" in result.output
+    assert "not available" in result.output, "a route's state reads as words"
+    # The registry's own names stay reachable for anyone who needs to know
+    # WHICH interface is involved — they are just no longer the default.
+    detailed = runner.invoke(app, ["destination", "list", "--verbose"])
+    assert detailed.exit_code == 0, detailed.output
+    assert "unverified" in detailed.output
 
 
 def test_destination_route_tebra_routes_via_ccda_import() -> None:
@@ -362,8 +367,8 @@ def test_destination_route_tebra_routes_via_ccda_import() -> None:
     # have in-product C-CDA import, so a route exists.
     result = runner.invoke(app, ["destination", "route", "tebra"])
     assert result.exit_code == 0, result.output
-    assert "delivery routes for tebra" in result.output
-    assert "chosen: ccda_import" in result.output
+    assert "Ways to file charts into tebra" in result.output
+    assert "Anastomosis would use: Import a transfer document" in result.output
 
 
 def test_destination_route_unroutable_exits_1_with_map(tmp_path: Path) -> None:
@@ -382,8 +387,8 @@ def test_destination_route_unroutable_exits_1_with_map(tmp_path: Path) -> None:
     )
     result = runner.invoke(app, ["destination", "route", "nowhere", "--registry", str(overlay)])
     assert result.exit_code == 1, result.output
-    assert "delivery routes for nowhere" in result.output
-    assert "no viable route" in result.output
+    assert "Ways to file charts into nowhere" in result.output
+    assert "No route into this system is available yet." in result.output
 
 
 def test_destination_route_unknown_is_clean_error() -> None:
@@ -655,8 +660,8 @@ def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     assert result.exit_code == 0, result.output
     normalized = " ".join(result.output.split())
     # The transit map (the route headline) printed first.
-    assert "delivery routes for tebra" in normalized
-    assert "chosen: ccda_import" in normalized
+    assert "Ways to file charts into tebra" in normalized
+    assert "Anastomosis would use: Import a transfer document" in normalized
     # An explicit --from suppresses the auto-detect "Detected source" line.
     assert "Detected source" not in result.output
     # The reconstruct + structured-payload outcome lines printed.
@@ -691,7 +696,7 @@ def test_migrate_no_route_destination_produces_ccda_and_exits_1(
     )
     assert result.exit_code == 1, result.output
     normalized = " ".join(result.output.split()).lower()
-    assert "chosen: none" in normalized  # the transit map shows no viable route
+    assert "no route into this system is available yet." in normalized
     assert "no viable automated route" in normalized  # the actionable warning
     # The structured C-CDA payload IS still written for manual import.
     assert list((out / "ccda").glob("*.xml"))
@@ -743,7 +748,7 @@ def test_migrate_ccda_standard_render(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     assert result.exit_code == 0, result.output
     normalized = " ".join(result.output.split())
-    assert "chosen: ccda_import" in normalized
+    assert "Anastomosis would use: Import a transfer document" in normalized
     assert "C-CDA: 3 patients" in normalized
     # One standard-view PDF per patient.
     assert len(list((out / "charts").glob("*_ccda.pdf"))) == 3
@@ -814,7 +819,7 @@ def test_migrate_save_then_load_profile_round_trip(
         ["migrate", str(FIXTURE), "--out", str(tmp_path / "out2"), "--profile", "pf2tebra"],
     )
     assert loaded.exit_code == 0, loaded.output
-    assert "chosen: ccda_import" in " ".join(loaded.output.split())
+    assert "Anastomosis would use: Import a transfer document" in " ".join(loaded.output.split())
     # The render came from the profile → one standard-view PDF per patient.
     assert len(list((tmp_path / "out2" / "charts").glob("*_ccda.pdf"))) == 3
 

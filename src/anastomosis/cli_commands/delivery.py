@@ -95,7 +95,7 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
 
 _register(
     "archive",
-    summary="Run the full pipeline and write a searchable offline archive.",
+    summary="Rebuild the charts and write a searchable offline copy.",
     out_help="Archive output directory (0700).",
     charts_help=(
         "Where chart PDFs land before being copied into the archive (default: <out>/_charts)."
@@ -103,7 +103,7 @@ _register(
 )
 _register(
     "bundle",
-    summary="Run the full pipeline and write one per-patient bundle directory each.",
+    summary="Rebuild the charts and write one folder per patient.",
     out_help="Bundles output directory (0700).",
     charts_help=(
         "Where chart PDFs land before being copied into the bundles (default: <out>/_charts)."

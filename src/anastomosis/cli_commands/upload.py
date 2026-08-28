@@ -49,12 +49,14 @@ def upload_cmd(
     ],
     to: Annotated[
         str | None,
-        typer.Option("--to", "-t", help="Browser route: destination pack name (e.g. tebra)."),
+        typer.Option("--to", "-t", help="Through a browser: which filing assistant (e.g. tebra)."),
     ] = None,
     cdp: Annotated[
         str | None,
         typer.Option(
-            "--cdp", help="Browser route: loopback CDP endpoint, e.g. http://127.0.0.1:9222."
+            "--cdp",
+            help="Through a browser: the browser on this computer to work through, "
+            "e.g. http://127.0.0.1:9222.",
         ),
     ] = None,
     fhir: Annotated[
@@ -100,17 +102,18 @@ def upload_cmd(
     ] = DEFAULT_MAX_ATTEMPTS,
     pack_dir: Annotated[
         list[Path] | None,
-        typer.Option("--pack-dir", help="Extra directories to find the destination pack in."),
+        typer.Option("--pack-dir", help="Another folder to look for filing assistants in."),
     ] = None,
     verify: Annotated[
         bool,
         typer.Option(
             "--verify/--no-verify",
             help=(
-                "Run the L0-L6 verification ladder around each upload (ON by "
-                "default; needs the render extra and fails closed without it). "
-                "Pass --no-verify to file WITHOUT the ladder — the engine's "
-                "wrong-patient banner check still runs either way."
+                "Double-check each chart after filing: confirm the right chart "
+                "landed on the right patient before moving on. ON by default, "
+                "and it refuses to run rather than skip the check if the parts "
+                "it needs are not installed. --no-verify files without that "
+                "check; the wrong-patient warning still stops a run either way."
             ),
         ),
     ] = True,
@@ -119,28 +122,30 @@ def upload_cmd(
         typer.Option("--yes", "-y", help="Skip the shared-machine attach confirmation."),
     ] = False,
 ) -> None:
-    """File reconstructed charts into a destination EHR, by browser or by API.
+    """File finished charts into another EHR, one of two ways.
 
-    Reads the upload manifest written by `anast pipeline run --upload-manifest`
-    or `anast migrate`, then drives the crash-resumable upload engine over
-    exactly ONE delivery route:
+    Reads what `anast pipeline run --upload-manifest` or `anast migrate`
+    prepared, then files each chart by ONE of these routes. A run that stops
+    part way can be started again and picks up where it left off.
 
-    BROWSER (--to PACK --cdp URL) files each chart through the destination's web
-    UI, in a browser YOU launched with a remote debug port and logged into
-    yourself. The CDP attach is loopback-only and refuses any other host; the
-    shared-machine warning is shown (and confirmed unless --yes) before any
-    browser is touched. Anastomosis NEVER stores your EHR credentials and NEVER
-    closes your browser — you log in by hand and the attach ends when you close it.
+    THROUGH A BROWSER (--to ASSISTANT --cdp URL). Anastomosis files each chart
+    through the destination's own web pages, in a browser YOU opened and signed
+    into. It connects only to a browser on this computer and refuses any other
+    address. Before it touches the browser it warns you about shared machines
+    and waits for you to confirm, unless you pass --yes. Anastomosis NEVER
+    stores your sign-in, and NEVER closes your browser — you sign in by hand,
+    and the connection ends when you close it.
 
-    API (--fhir URL) files each chart as a FHIR R4 DocumentReference over HTTPS
-    (plain http is allowed only for a loopback host). The bearer token is read
-    from an ENVIRONMENT VARIABLE — --fhir-token-env, default ANAST_FHIR_TOKEN —
-    so it never appears in argv or in your shell history; an unset variable means
-    unauthenticated. No browser is attached, so nothing is asked to confirm.
+    DIRECTLY TO THE DESTINATION'S FHIR INTERFACE (--fhir URL), over HTTPS —
+    plain http only for an address on this computer. The sign-in token is read
+    from an ENVIRONMENT VARIABLE (--fhir-token-env, default ANAST_FHIR_TOKEN),
+    so it never appears in the command you type or in your shell history. If
+    that variable is unset, no token is sent. No browser is involved, so
+    nothing is asked to confirm.
 
-    Both routes share the skiplist, the retry budget, the L0-L6 verification
-    ladder, and the resume-safe ledger. The manifest, ledger, and run report all
-    stay inside the 0700 output dir.
+    Either way: the skip list, how many times a chart is retried, and the
+    double-check after each chart all work the same. Everything the run writes
+    stays in the results folder, which is created readable only by you.
     """
     # NB: the docstring's FIRST line is this command's SHORT help, so it is also
     # rendered into the top-level ``anast --help`` table — which

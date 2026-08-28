@@ -2,17 +2,17 @@
 
 Installed as both ``anast`` (everyday) and ``anastomosis`` (formal).
 
-    anast pipeline run  EHI export  ->  verified charts (+ archive, bundles)
-    anast migrate       EHI export  ->  a prepared cross-EHR move
-    anast upload        prepared charts     ->  a destination EHR
-    anast archive       EHI export  ->  a searchable offline archive
-    anast bundle        EHI export  ->  per-patient record-request bundles
-    anast destination   list destinations, plan a route, or set one up
-    anast pack init     sample PDFs ->  a draft template pack
-    anast source init   one example ->  a learned source-format mapping
-    anast info          installed extras, source adapters, template packs
-    anast doctor        verify every bundled data asset is present
-    anast gui           launch the desktop app
+    anast pipeline run  an EHR export      ->  finished, double-checked charts
+    anast migrate       an EHR export      ->  what a move to another system needs
+    anast upload        finished charts    ->  filed into another system
+    anast archive       an EHR export      ->  a searchable offline copy
+    anast bundle        an EHR export      ->  one folder per patient, for requests
+    anast destination   which systems charts can go to, and how to set one up
+    anast pack init     some sample PDFs   ->  a draft chart layout
+    anast source init   one example export ->  Anastomosis learns that format
+    anast info          what this copy can do on this computer
+    anast doctor        check that nothing Anastomosis ships is missing
+    anast gui           open the desktop app
 """
 
 # NB: this module's docstring is the top-level ``anast --help`` text
@@ -94,11 +94,11 @@ app = typer.Typer(
     no_args_is_help=False,
     rich_markup_mode="rich",
 )
-pipeline_app = typer.Typer(help="Run pipeline stages end to end.")
+pipeline_app = typer.Typer(help="Rebuild charts from an export, end to end.")
 app.add_typer(pipeline_app, name="pipeline")
 destination_app = typer.Typer(help="Inspect destinations and plan delivery routes.")
 app.add_typer(destination_app, name="destination")
-pack_app = typer.Typer(help="Build and inspect template packs.")
+pack_app = typer.Typer(help="Make and inspect chart layouts.")
 app.add_typer(pack_app, name="pack")
 source_app = typer.Typer(help="Teach the toolkit a new structured export format.")
 app.add_typer(source_app, name="source")
@@ -153,25 +153,42 @@ def main(
     raise typer.Exit(code=run_guide(console))
 
 
+#: What each optional install actually lets a person do. `anast info` answers
+#: "can this computer do the thing I want", so it names the thing, not the
+#: Python extra that carries it — the extra's own name still prints beside it
+#: for a support request.
+CAPABILITY_NAMES = {
+    "render": "Building charts",
+    "render-qa": "Double-checking charts",
+    "fhir": "Sending charts over FHIR",
+    "gui": "The desktop app",
+}
+
+
 @app.command()
 def info() -> None:
-    """Show toolkit status: installed extras, sources, packs, environment."""
+    """Show what this copy of Anastomosis can do on this computer."""
     from anastomosis.core.commands import get_toolkit_info
 
     toolkit = get_toolkit_info()
     console.print(f"[bold]anastomosis[/bold] {toolkit.version}")
     for extra, available in toolkit.extras.items():
+        # The packaging name is what a support request needs; what an operator
+        # needs is whether the thing it enables works. Both, in that order.
+        what = CAPABILITY_NAMES.get(extra, extra)
+        named = f"{what} [dim]({extra})[/dim]" if what != extra else what
         if available:
-            console.print(f"  extra [green]{extra}[/green]: available")
+            console.print(f"  [green]{what}[/green]: ready [dim]({extra})[/dim]")
         else:
-            console.print(f"  extra [dim]{extra}[/dim]: not installed")
+            console.print(f"  [dim]{named}[/dim]: not installed on this computer")
     for name, description in toolkit.sources:
-        console.print(f"  source [cyan]{name}[/cyan]: {description}")
+        console.print(f"  export format [cyan]{name}[/cyan]: {description}")
     for pack in toolkit.packs:
+        origin = "built in" if pack.origin == "builtin" else pack.origin
         if pack.available:
-            console.print(f"  pack [cyan]{pack.name}[/cyan]: available ({pack.origin})")
+            console.print(f"  chart layout [cyan]{pack.name}[/cyan]: ready ({origin})")
         else:
-            console.print(f"  pack [red]{pack.name}[/red]: {pack.diagnosis}")
+            console.print(f"  chart layout [red]{pack.name}[/red]: {pack.diagnosis}")
 
 
 @app.command("gui")
@@ -180,7 +197,7 @@ def gui_cmd(
         bool, typer.Option("--debug", help="Open the webview with developer tools.")
     ] = False,
 ) -> None:
-    """Launch the desktop GUI (liquid-glass dashboard). Needs the gui extra."""
+    """Open the desktop app. Needs the desktop parts to be installed."""
     from rich.markup import escape
 
     try:
