@@ -45,6 +45,7 @@ def _looks_like_cda(head: bytes) -> bool:
 
 class CCDAAdapter:
     name = "ccda"
+    display = "C-CDA"
     description = "C-CDA / CCD XML documents (HL7 CDA R2)"
 
     def detect(self, path: Path) -> bool:

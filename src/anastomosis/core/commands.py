@@ -326,6 +326,10 @@ class PackInfo:
     """One pack's discovery state for the info surface."""
 
     name: str
+    #: What a person reads. Falls back to ``name`` for a pack that declares
+    #: none, so a third-party pack written before ``display`` existed still
+    #: shows something — the front end's derivation then tidies the id.
+    display: str
     available: bool
     origin: str
     diagnosis: str | None
@@ -338,7 +342,8 @@ class ToolkitInfo:
 
     version: str
     extras: dict[str, bool]
-    sources: list[tuple[str, str]]
+    #: (name, display, description) per registered source adapter.
+    sources: list[tuple[str, str, str]]
     packs: list[PackInfo]
 
 
@@ -380,7 +385,13 @@ def get_toolkit_info() -> ToolkitInfo:
     from anastomosis.sources import available_sources
 
     extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
-    sources = [(a.name, a.description) for a in available_sources()]
+    # `getattr`, though the protocol declares `display`: the registry is open,
+    # and an adapter registered by code this repository never type-checked is
+    # exactly the case a fallback exists for. It reads as its own id, which is
+    # what every adapter read as before.
+    sources = [
+        (a.name, getattr(a, "display", "") or a.name, a.description) for a in available_sources()
+    ]
     packs: list[PackInfo] = []
     for status in discover_packs().values():
         pack = status.pack
@@ -393,6 +404,7 @@ def get_toolkit_info() -> ToolkitInfo:
         packs.append(
             PackInfo(
                 name=status.name,
+                display=(pack.manifest.display if pack is not None else "") or status.name,
                 available=status.available,
                 origin=status.origin,
                 diagnosis=status.diagnosis,

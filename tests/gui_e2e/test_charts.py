@@ -41,6 +41,15 @@ def test_charts_populates_its_pickers_and_sections(gui) -> None:
     assert "Generic SOAP" in layouts, layouts
     assert "generic_soap" not in layouts
     assert "generic_soap" in app.notes("#charts-pack")
+
+    # And the name comes from the registration, not from re-casing the id. The
+    # export formats are where that matters: no re-casing of "ccda" produces
+    # "C-CDA", which is why the front end used to carry that one by hand (#164).
+    formats = app.choices("#charts-source")
+    assert "C-CDA" in formats, formats
+    assert "Practice Fusion / Tebra" in formats, formats
+    assert "Ccda" not in formats and "Pf Tebra" not in formats, formats
+
     assert page.locator("#charts-sections input[data-section]").count() > 0
     app.choose("#charts-pack", "practice_fusion_soap")
     page.wait_for_timeout(80)

@@ -21,6 +21,7 @@ __all__ = ["PFTebraAdapter"]
 
 class PFTebraAdapter:
     name = "pf-tebra"
+    display = "Practice Fusion / Tebra"
     description = "Practice Fusion / Tebra EHI export (v9 TSV tables)"
 
     def detect(self, path: Path) -> bool:

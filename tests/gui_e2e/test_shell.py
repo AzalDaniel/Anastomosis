@@ -636,14 +636,16 @@ def test_no_view_shows_a_machine_id_where_a_name_belongs(gui) -> None:
 
 
 def test_a_machine_id_becomes_a_name_a_person_would_write(gui) -> None:
-    """The derivation, on the ids this app actually ships.
+    """The derivation, on the ids this app actually ships — a guess, and only that.
 
-    It is a fallback: the right long-term fix is for a layout to carry the
-    display name the Teach flow already asks its author for. Until then this is
-    what stands between an operator and `practice_fusion_soap`, so the cases it
-    gets wrong are worth pinning — an initialism it has not been told about
-    comes out title-cased, which is wrong but readable, and a hyphenated
-    acronym has to be named outright.
+    It used to carry `ccda -> "C-CDA"` as a hard-coded exception, because no
+    re-casing of the parts can produce it. That exception was the evidence the
+    derivation was standing in for something missing: sources and layouts now
+    declare their own name (#164), so this is what is left for the ids that do
+    not — destinations, and third-party packs written before the field existed.
+
+    The cases it gets wrong are still worth pinning: an initialism it has not
+    been told about comes out title-cased, which is wrong but readable.
     """
     app = gui()
 
@@ -656,8 +658,27 @@ def test_a_machine_id_becomes_a_name_a_person_would_write(gui) -> None:
     assert name("fhir_r4") == "FHIR R4"
     assert name("oracle_ehi") == "Oracle EHI"
     assert name("tebra") == "Tebra"
-    # Not derivable by re-casing the parts, so it is named.
-    assert name("ccda") == "C-CDA"
+    # And the one it cannot reach, which is now nobody's problem but this test's.
+    assert name("ccda") == "Ccda"
+
+
+def test_a_declared_name_wins_over_the_guess(gui) -> None:
+    """`nameOf` is the rule every picker uses: what it says it is, or a guess.
+
+    One rule, so a pack and a source and a destination are read the same way and
+    no caller has to remember which of them declares one.
+    """
+    app = gui()
+
+    def named(entry: dict[str, str]) -> str:
+        return str(app.page.evaluate("e => window.AnastShell.nameOf(e)", entry))
+
+    assert named({"name": "ccda", "display": "C-CDA"}) == "C-CDA"
+    assert named({"name": "acme_soap", "display": "Acme SOAP note"}) == "Acme SOAP note"
+    # No declaration, or an empty one, falls back to the guess — which knows
+    # "soap" is shouted and does not know what an "Acme" is.
+    assert named({"name": "acme_soap"}) == "Acme SOAP"
+    assert named({"name": "acme_soap", "display": ""}) == "Acme SOAP"
 
 
 def test_a_region_with_no_rows_says_what_would_fill_it(gui) -> None:

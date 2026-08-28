@@ -101,6 +101,11 @@ class PackManifest(BaseModel):
 
     name: str
     version: str
+    #: What a person should read instead of ``name``. Optional, so every
+    #: pack.yaml written before this field existed stays valid under
+    #: ``extra="forbid"``; empty means "derive one from the id", which is what
+    #: every surface used to do because there was nowhere to put a real one.
+    display: str = ""
     description: str = ""
     locale: str = "en_US"
     timezone: str = "America/New_York"

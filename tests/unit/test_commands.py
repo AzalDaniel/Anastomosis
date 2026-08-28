@@ -55,9 +55,17 @@ class _FakeChromium:
 def test_get_toolkit_info_reports_sources_packs_and_extras() -> None:
     info = get_toolkit_info()
     assert isinstance(info.version, str) and info.version
-    assert "pf-tebra" in {name for name, _ in info.sources}
+    by_name = {name: display for name, display, _desc in info.sources}
+    assert "pf-tebra" in by_name
     pack_names = {p.name for p in info.packs}
     assert {"generic_soap", "practice_fusion_soap"} <= pack_names
+
+    # Every registration carries the name a person reads, beside the id they
+    # would type. `ccda` is the one that proves the point: no re-casing of the
+    # id produces "C-CDA", which is why the front end had it hard-coded (#164).
+    assert by_name["pf-tebra"] == "Practice Fusion / Tebra"
+    assert by_name["ccda"] == "C-CDA"
+    assert {p.display for p in info.packs} >= {"Generic SOAP", "Practice Fusion SOAP"}
     # Extras probe has all four keys with boolean values.
     assert set(info.extras) == {"render", "deliver-browser", "fhir", "gui"}
     assert all(isinstance(v, bool) for v in info.extras.values())

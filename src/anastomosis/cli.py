@@ -186,14 +186,20 @@ def info() -> None:
             console.print(f"  [green]{what}[/green]: installed [dim]({extra})[/dim]")
         else:
             console.print(f"  [dim]{named}[/dim]: not available on this computer")
-    for name, description in toolkit.sources:
-        console.print(f"  export format [cyan]{name}[/cyan]: {description}")
+    # The name a person reads leads; the id they would type at `--from` or
+    # `--pack`, or quote to support, is the dim caption. It used to be the only
+    # thing here, because there was nowhere for a registration to declare a
+    # readable name (#164).
+    for name, display, description in toolkit.sources:
+        ident = f" [dim]({name})[/dim]" if display != name else ""
+        console.print(f"  export format [cyan]{display}[/cyan]{ident}: {description}")
     for pack in toolkit.packs:
         origin = "built in" if pack.origin == "builtin" else pack.origin
+        ident = f" [dim]({pack.name})[/dim]" if pack.display != pack.name else ""
         if pack.available:
-            console.print(f"  chart layout [cyan]{pack.name}[/cyan]: ready ({origin})")
+            console.print(f"  chart layout [cyan]{pack.display}[/cyan]{ident}: ready ({origin})")
         else:
-            console.print(f"  chart layout [red]{pack.name}[/red]: {pack.diagnosis}")
+            console.print(f"  chart layout [red]{pack.display}[/red]{ident}: {pack.diagnosis}")
     console.print("[dim]  anast doctor checks that what is installed actually works.[/dim]")
 
 

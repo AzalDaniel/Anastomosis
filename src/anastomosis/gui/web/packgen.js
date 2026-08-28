@@ -188,7 +188,7 @@
     list.innerHTML = "";
     for (const source of sources) {
       const row = Shell.resultRow(null, [
-        { text: Shell.displayName(source.name) },
+        { text: Shell.nameOf(source) },
         { text: source.description || "", className: "result-note" },
       ]);
       row.title = source.name;
@@ -196,7 +196,7 @@
     }
     for (const layout of layouts) {
       const row = Shell.resultRow(null, [
-        { text: Shell.displayName(layout.name) },
+        { text: Shell.nameOf(layout) },
         { text: "Chart layout", className: "result-note" },
       ]);
       row.title = layout.name;

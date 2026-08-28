@@ -56,6 +56,11 @@ class SourceAdapter(Protocol):
 
     #: CLI/GUI identifier, e.g. ``"pf-tebra"``.
     name: str
+    #: What a person should read instead of ``name`` — "Practice Fusion /
+    #: Tebra", not "pf-tebra". Every picker used to re-case the id, which
+    #: cannot produce "C-CDA" from "ccda"; that one was hard-coded in the
+    #: front end for exactly this reason.
+    display: str
     #: Human description shown in pickers and ``anast info``.
     description: str
 

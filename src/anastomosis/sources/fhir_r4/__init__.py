@@ -74,6 +74,7 @@ def _resources_from_file(path: Path) -> Iterator[dict[str, Any]]:
 
 class FHIRR4Adapter:
     name = "fhir-r4"
+    display = "FHIR R4"
     description = "FHIR R4 / US Core export (Bundle JSON or Bulk-Data $export NDJSON)"
 
     def detect(self, path: Path) -> bool:

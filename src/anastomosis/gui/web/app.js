@@ -333,7 +333,7 @@
       // underneath it — the two used to compete for one slot, and the id won.
       entries.push({
         value: layout.name,
-        label: Shell.displayName(layout.name),
+        label: Shell.nameOf(layout),
         note: layout.name,
       });
     }
@@ -343,7 +343,7 @@
       { value: "", label: "Detect", note: "works for every built-in format" },
       ...(info.sources || []).map((src) => ({
         value: src.name,
-        label: Shell.displayName(src.name),
+        label: Shell.nameOf(src),
         note: src.description || src.name,
       })),
     ]);

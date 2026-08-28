@@ -4,6 +4,7 @@
 # operator explicitly selects it (--pack practice_fusion_soap) — e.g. a PF→Tebra
 # run that wants the source-faithful PF layout. See docs/the README output model.
 name: practice_fusion_soap
+display: "Practice Fusion SOAP"
 version: "1.0"
 description: >
   Forensic Practice Fusion SOAP-note replica. Ports the predecessor's
