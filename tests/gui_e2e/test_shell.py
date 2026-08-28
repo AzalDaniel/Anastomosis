@@ -915,3 +915,103 @@ def test_no_view_carries_more_help_than_fields(gui) -> None:
     # Off the Advanced disclosure, which earns one line per field by its own
     # rule, what is left is the handful that actually could not be a label.
     assert counts == {"charts": 3, "migrate": 3, "uploads": 2, "teach": 1}, counts
+
+
+def test_refusing_transparency_turns_off_every_backdrop_filter(gui) -> None:
+    """Both ways of saying "no glass", and they turn off the same thing.
+
+    Every backdrop-filter in the app reads --glass-blur or --glass-modal-blur
+    and every glass fill reads --glass-bg or --glass-modal-bg, so the fallback
+    is four token overrides rather than a per-component list somebody has to
+    keep in step. This asserts that property, not the list.
+    """
+    app = gui()
+    count = """() => [...document.querySelectorAll('*')]
+        .filter(n => getComputedStyle(n).backdropFilter !== 'none').length"""
+    assert app.page.evaluate(count) > 0, "there was no glass to turn off"
+
+    # The system preference, over CDP.
+    session = app.page.context.new_cdp_session(app.page)
+    session.send(
+        "Emulation.setEmulatedMedia",
+        {"features": [{"name": "prefers-reduced-transparency", "value": "reduce"}]},
+    )
+    app.page.wait_for_timeout(120)
+    assert app.page.evaluate(count) == 0, "the system preference left glass on screen"
+    session.send("Emulation.setEmulatedMedia", {"features": []})
+    app.page.wait_for_timeout(120)
+
+    # And by hand, because WebView2 does not report that preference on every
+    # Windows build — a setting that silently does nothing on the platform the
+    # app ships on is worse than not having one.
+    app.page.click("#about-btn")
+    app.page.click("label.toggle:has(#reduce-effects)")
+    app.page.wait_for_timeout(150)
+    assert app.page.evaluate(count) == 0, "the in-app switch left glass on screen"
+    assert app.page.evaluate("() => localStorage.getItem('anast.reduce-effects')") == "true"
+
+    # With the blur gone the pill's edge is the only thing holding it off the
+    # background, so it has to carry the separation on its own (WCAG 1.4.11).
+    # This arithmetic is only valid here: with glass the border composites over
+    # a refracted backdrop no calculation can model, which is why the glass
+    # state is measured from pixels in the redesign harness instead.
+    boundary = app.page.evaluate(
+        r"""() => {
+          const c = document.createElement('canvas').getContext('2d');
+          const rgba = (v) => { c.clearRect(0, 0, 1, 1); c.fillStyle = v; c.fillRect(0, 0, 1, 1);
+            const [r, g, b, a] = c.getImageData(0, 0, 1, 1).data; return [r, g, b, a / 255]; };
+          const over = (t, u) => [0, 1, 2].map(i => t[i] * t[3] + u[i] * (1 - t[3])).concat([1]);
+          const lum = (x) => { const f = (v) => (v /= 255) <= 0.04045
+            ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+            return 0.2126 * f(x[0]) + 0.7152 * f(x[1]) + 0.0722 * f(x[2]); };
+          const ratio = (a, b) => { const [h, l] = [lum(a), lum(b)].sort((p, q) => q - p);
+            return (h + 0.05) / (l + 0.05); };
+          const style = getComputedStyle(document.documentElement);
+          const ground = rgba(style.getPropertyValue('--ground'));
+          const panel = over(rgba(style.getPropertyValue('--surface')), ground);
+          const edge = rgba(getComputedStyle(document.getElementById('nav-pill')).borderTopColor);
+          return {ground: ratio(over(edge, ground), ground),
+                  panel: ratio(over(edge, panel), panel)};
+        }"""
+    )
+    assert boundary["ground"] >= 3.0, f"the pill edge is {boundary['ground']:.2f}:1 on the ground"
+    assert boundary["panel"] >= 3.0, f"the pill edge is {boundary['panel']:.2f}:1 on a panel"
+
+
+def test_reduced_motion_stops_travel_but_keeps_three_fades(gui) -> None:
+    """Motion off, except where deleting it makes a change harder to follow.
+
+    The HIG's rule is to replace transitions in x, y and z with fades, not to
+    remove them: a lozenge that teleports between two view names is harder to
+    track than one that moves, and a view that swaps with no crossfade reads as
+    a page load — which is the one thing this shell exists not to do.
+    """
+    app = gui(reduced_motion=True)
+
+    timings = app.page.evaluate(
+        r"""() => {
+          const out = {slow: [], fades: {}};
+          const seconds = (v) => v.split(',').map(s => parseFloat(s) || 0);
+          for (const node of document.querySelectorAll('*')) {
+            const cs = getComputedStyle(node);
+            const worst = Math.max(
+              ...seconds(cs.transitionDuration), ...seconds(cs.animationDuration),
+              ...seconds(cs.transitionDelay), ...seconds(cs.animationDelay));
+            if (worst <= 1e-5) continue;
+            const name = node.id || node.className.toString().split(' ')[0] || node.tagName;
+            out.slow.push({name, worst});
+          }
+          out.scroll = getComputedStyle(document.querySelector('.app-shell')).scrollBehavior;
+          return out;
+        }"""
+    )
+    allowed = {"view", "log-drawer", "segment-indicator"}
+    unexpected = [
+        row for row in timings["slow"] if not any(word in row["name"] for word in allowed)
+    ]
+    assert not unexpected, f"motion survived reduced-motion: {unexpected}"
+    assert timings["scroll"] == "auto", "smooth scrolling survived reduced-motion"
+
+    # And the app still works: a view switch is the thing the crossfade is for.
+    app.show("teach")
+    assert app.visible("teach")

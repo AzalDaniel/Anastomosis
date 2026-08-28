@@ -144,6 +144,8 @@
   /* Glass catches light through an inset top highlight, never an outer glow.
      Shadow belongs to true floaters only; in-flow panels get the hairline. */
   --glass-highlight: inset 0 1px 0 rgba(255, 250, 240, 0.16);
+  /* The chrome tier's opaque twin, for when transparency is refused. */
+  --surface-raised: oklch(0.255 0.013 50);
   --shadow-float:    0 24px 64px rgba(0, 0, 0, 0.35);
 
   /* fills for hovers and highlights — porcelain at low alpha */
@@ -177,4 +179,38 @@
   --t-move: 240ms;
   --t-soft: 480ms;
   --t-fill: 800ms;
+}
+
+/* ─── Refusing transparency ───────────────────────────────────────
+   Every backdrop-filter in the app reads --glass-blur or
+   --glass-modal-blur, and every glass fill reads --glass-bg or
+   --glass-modal-bg, so switching four tokens turns all of it off at once —
+   there is no per-component list to keep in step.
+
+   Two triggers, one set of values. The media query is the standard signal;
+   the attribute is the in-app switch, which exists because WebView2 does not
+   report the system preference on every Windows build, and an accessibility
+   setting that silently does nothing on the platform the app actually ships
+   on is worse than none.
+
+   The border alpha goes UP, not down: without the blur the pill's edge is the
+   only thing separating it from the ground, and 0.36 was chosen against a
+   refracted fill it no longer has. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-bg: var(--surface-raised);
+    --glass-blur: none;
+    --glass-border: 1px solid rgba(244, 238, 228, 0.52);
+    --glass-modal-bg: var(--surface-raised);
+    --glass-modal-blur: none;
+    --glass-modal-border: 1px solid rgba(244, 238, 228, 0.52);
+  }
+}
+:root[data-reduce-effects="true"] {
+  --glass-bg: var(--surface-raised);
+  --glass-blur: none;
+  --glass-border: 1px solid rgba(244, 238, 228, 0.52);
+  --glass-modal-bg: var(--surface-raised);
+  --glass-modal-blur: none;
+  --glass-modal-border: 1px solid rgba(244, 238, 228, 0.52);
 }

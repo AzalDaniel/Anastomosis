@@ -1296,6 +1296,38 @@
   }
 
   // ─── About popover ────────────────────────────────────────────
+  // WebView2 does not report `prefers-reduced-transparency` on every Windows
+  // build, and an accessibility setting that silently does nothing on the
+  // platform the app ships on is worse than not having one. So the same tokens
+  // are also reachable by hand, and the choice survives a restart — this is
+  // the one preference the app stores, and it holds no information about
+  // anyone, so localStorage is the right size of thing for it.
+  const REDUCE_EFFECTS_KEY = "anast.reduce-effects";
+
+  function initReduceEffects() {
+    const box = el("reduce-effects");
+    if (!box) return;
+    let saved = null;
+    try {
+      saved = window.localStorage.getItem(REDUCE_EFFECTS_KEY);
+    } catch (_) {
+      /* a browser with storage disabled simply gets the system preference */
+    }
+    const apply = (on) => {
+      document.documentElement.dataset.reduceEffects = on ? "true" : "false";
+    };
+    box.checked = saved === "true";
+    apply(box.checked);
+    box.addEventListener("change", () => {
+      apply(box.checked);
+      try {
+        window.localStorage.setItem(REDUCE_EFFECTS_KEY, String(box.checked));
+      } catch (_) {
+        /* the setting still applies for this session */
+      }
+    });
+  }
+
   function initAbout() {
     const btn = el("about-btn");
     const popover = el("about-popover");
@@ -1359,6 +1391,7 @@
   function init() {
     paintIcons(document);
     initAbout();
+    initReduceEffects();
     initTabs(document);
     initChoosers(document);
     // The nav is the sliding pill, wired like any other: the only thing that
