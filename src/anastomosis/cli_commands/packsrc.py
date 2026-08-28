@@ -435,4 +435,17 @@ def source_init(
     _cli.console.print(
         f"  Review {saved.mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
     )
-    _cli.console.print(f"  Run it:  anast pipeline run <export-dir> --source {name} -o out")
+    # Only a source in the DEFAULT directory is discoverable: `pipeline run` has
+    # no `--source-dir` to point at another one (unlike packs, which thread
+    # `--pack-dir` — see `pack init` above). Printing the run command for a
+    # custom `--out-dir` handed over a line that answers
+    # "unknown source 'name' (available: …)".
+    from anastomosis.sources.learned import user_sources_dir
+
+    if saved.mapping_dir.parent == user_sources_dir():
+        _cli.console.print(f"  Run it:  anast pipeline run <export-dir> --source {name} -o out")
+    else:
+        _cli.console.print(
+            f"  Saved outside the folder Anastomosis reads ({user_sources_dir()}). "
+            f"Move it there to use --source {name}."
+        )
