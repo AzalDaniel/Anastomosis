@@ -226,7 +226,8 @@ def _browser() -> Iterator[Browser]:
 def gui(_browser: Browser) -> Iterator[Any]:
     """Open the bundled GUI over ``file://`` with the bridge stub installed.
 
-    ``gui(bridge=..., canned=...)`` returns a :class:`GuiPage`. ``bridge`` is
+    ``gui(bridge=..., canned=..., reduced_motion=...)`` returns a
+    :class:`GuiPage`. ``bridge`` is
     one of ``stub.BRIDGE_READY`` (default), ``BRIDGE_LATE`` (install it yourself
     with :meth:`GuiPage.attach_bridge`) or ``BRIDGE_NONE`` (the plain-browser
     preview). ``canned`` overrides individual API returns.
@@ -237,10 +238,18 @@ def gui(_browser: Browser) -> Iterator[Any]:
     """
     opened: list[tuple[Any, GuiPage]] = []
 
-    def _open(*, bridge: str = BRIDGE_READY, canned: dict[str, Any] | None = None) -> GuiPage:
+    def _open(
+        *,
+        bridge: str = BRIDGE_READY,
+        canned: dict[str, Any] | None = None,
+        reduced_motion: bool = False,
+    ) -> GuiPage:
         path = _WEB_DIR / "index.html"
         assert path.is_file(), f"the bundled GUI is missing: {path}"
-        context = _browser.new_context(viewport={"width": 1200, "height": 860})
+        context = _browser.new_context(
+            viewport={"width": 1200, "height": 860},
+            reduced_motion="reduce" if reduced_motion else "no-preference",
+        )
         if bridge != BRIDGE_NONE:
             context.add_init_script(init_script(bridge, canned))
         # Planted before any app script runs, so a reload would wipe it.

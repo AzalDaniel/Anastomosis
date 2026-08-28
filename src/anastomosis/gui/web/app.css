@@ -1280,7 +1280,10 @@ svg { display: block; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0.01ms !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
   .segment-goo { filter: none; }
   .segment-toggle.is-stretching .segment-indicator { animation: none; }
