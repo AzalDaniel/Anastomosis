@@ -72,7 +72,7 @@ def test_neither_wizard_reaches_the_job_runner_on_its_own() -> None:
 
 def test_neither_wizard_decides_its_own_terminal_event() -> None:
     """`ConfirmationRequired`-is-`done` is stated once, in the base."""
-    routing = "if result.get(\"ok\") or result.get(\"error\") == \"ConfirmationRequired\""
+    routing = 'if result.get("ok") or result.get("error") == "ConfirmationRequired"'
     base = (_SRC / "gui" / "consoles" / "wizard.py").read_text(encoding="utf-8")
     assert routing in base, "the routing rule moved; this guard needs updating with it"
     for name, path in _WIZARDS.items():
