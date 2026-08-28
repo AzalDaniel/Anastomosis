@@ -7,6 +7,7 @@ doesn't ship.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -14,7 +15,7 @@ from pathlib import Path
 import pymupdf
 
 from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
-from anastomosis.core.model import ObservationCategory
+from anastomosis.core.model import Encounter, ObservationCategory
 from anastomosis.core.timeutil import all_date_spellings
 
 from .base import CheckResult, QAContext, Verdict, register_check
@@ -23,6 +24,7 @@ __all__ = [
     "DataIntegrityCheck",
     "DateStalenessCheck",
     "LayoutPaginationCheck",
+    "NoteBodyCheck",
     "VitalsLoincCheck",
 ]
 
@@ -157,6 +159,61 @@ def _date_spellings(value: date) -> set[str]:
     return all_date_spellings(value)
 
 
+#: Words per matched passage. Small enough that a page break costs one passage
+#: rather than the section; large enough that a passage is a phrase, not a word
+#: that any chart might happen to contain.
+_CHUNK_WORDS = 8
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize(text: str) -> str:
+    """Whitespace-collapsed, case-folded text, for comparing prose to prose.
+
+    The renderer re-wraps and the PDF extractor re-breaks, so line structure
+    says nothing about whether the words arrived.
+    """
+    return _WHITESPACE_RE.sub(" ", text).strip().casefold()
+
+
+def _chunks(body: str) -> list[str]:
+    """``body`` as consecutive runs of :data:`_CHUNK_WORDS` words.
+
+    A short body is one chunk, so it is all-or-nothing — which is right: there
+    is no page break to forgive inside eight words.
+    """
+    words = _normalize(body).split()
+    return [
+        " ".join(words[start : start + _CHUNK_WORDS])
+        for start in range(0, len(words), _CHUNK_WORDS)
+    ]
+
+
+def _note_bodies(encounter: Encounter, flags: dict[str, bool]) -> list[tuple[str, str]]:
+    """Every piece of narrative the chart is supposed to carry, labelled.
+
+    Labels name the SECTION, never quote it: a finding travels into logs and
+    run reports, and the body is the patient's chart.
+
+    A section the operator switched off is absent on purpose and is not asked
+    about — ``addenda`` is a declared flag in the bundled packs, and a pack may
+    declare one named for any section kind. Only what the chart was asked to
+    carry is verified.
+    """
+    bodies = [
+        (f"the {section.kind.value} section", section.text)
+        for section in encounter.sections
+        if (section.text or "").strip() and flags.get(section.kind.value, True)
+    ]
+    if flags.get("addenda", True):
+        bodies += [
+            (f"addendum {nth}", addendum.text)
+            for nth, addendum in enumerate(encounter.addenda, start=1)
+            if (addendum.text or "").strip()
+        ]
+    return [(label, body) for label, body in bodies if body]
+
+
 class DataIntegrityCheck:
     """The wrong-chart defense: name, DOB, and DOS must be on the document."""
 
@@ -251,9 +308,62 @@ class DateStalenessCheck:
         return CheckResult(self.name, Verdict.WARN if findings else Verdict.PASS, findings)
 
 
+class NoteBodyCheck:
+    """The clinical note reached the page.
+
+    Four checks verified the header, the geometry, the vitals and the date
+    stamp, and none of them read the note. A chart with its Subjective,
+    Objective, Assessment and Plan bodies removed — headings and vitals table
+    intact — passed all four. The note is the field family the README calls the
+    one that routinely fails to survive a migration, and it was the one nothing
+    looked at.
+
+    Matched in word chunks rather than whole, because a long section legitimately
+    straddles a page break and picks up a footer in the extracted text. A body
+    that is wholly absent is a FAIL; one that is partly absent is a WARN, since
+    that is the shape a page-boundary artifact takes and the shape truncation
+    takes, and telling those apart is a person's job.
+
+    ``NoteSection.text`` is the plain-text shadow the model already carries
+    "for search and QA" — this is the QA half finally reading it.
+
+    Known limit, stated rather than papered over: a body of only a few words
+    ("Deferred.", "Stable.") is one short passage, and a short passage can be
+    somewhere else on the chart by coincidence — so for those the check can
+    pass without the section having rendered. Ruling that out needs to know
+    where on the page the pack put the section, which a pack-independent check
+    does not. The absent-body case this exists for is caught either way.
+    """
+
+    name = "note_body"
+
+    def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
+        text = _normalize(_document_text(pdf_path, ctx))
+        findings: list[str] = []
+        warnings: list[str] = []
+
+        for label, body in _note_bodies(ctx.encounter, ctx.section_flags):
+            chunks = _chunks(body)
+            if not chunks:
+                continue
+            missing = sum(1 for chunk in chunks if chunk not in text)
+            if missing == len(chunks):
+                findings.append(f"{label} is not on the document")
+            elif missing:
+                warnings.append(
+                    f"{label} is only partly on the document "
+                    f"({missing} of {len(chunks)} passages missing)"
+                )
+
+        if findings:
+            return CheckResult(self.name, Verdict.FAIL, findings + warnings)
+        return CheckResult(self.name, Verdict.WARN if warnings else Verdict.PASS, warnings)
+
+
 for _check in (
     DataIntegrityCheck(),
     LayoutPaginationCheck(),
+    NoteBodyCheck(),
     VitalsLoincCheck(),
     DateStalenessCheck(),
 ):

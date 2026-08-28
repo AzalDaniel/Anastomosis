@@ -11,11 +11,14 @@ import pytest
 pymupdf = pytest.importorskip("pymupdf", reason="QA tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import (  # noqa: E402
+    Addendum,
     Encounter,
+    NoteSection,
     Observation,
     ObservationCategory,
     Patient,
     PatientRecord,
+    SectionKind,
 )
 from anastomosis.qa import (  # noqa: E402
     QAReport,
@@ -97,7 +100,13 @@ def _result(report: QAReport, check: str) -> tuple[Verdict, list[str]]:
 def test_engine_checks_registered() -> None:
     names = [c.name for c in engine_checks()]
     assert names == sorted(names)
-    assert set(names) >= {"data_integrity", "layout_pagination", "vitals_loinc", "date_staleness"}
+    assert set(names) >= {
+        "data_integrity",
+        "date_staleness",
+        "layout_pagination",
+        "note_body",
+        "vitals_loinc",
+    }
 
 
 def test_good_document_passes_everything(tmp_path: Path) -> None:
@@ -383,3 +392,123 @@ def test_qa_matches_a_name_the_same_way_every_other_verifier_does() -> None:
             "matched with the value predicate is how a chart for one patient "
             "verifies clean against another"
         )
+
+
+# --- note_body ---------------------------------------------------------------
+#
+# Four checks verified the header, the geometry, the vitals and the date stamp,
+# and none of them read the note. A chart with every word of Subjective,
+# Objective, Assessment and Plan removed — headings and vitals table intact —
+# passed all four with `6 pass, 0 warn, 0 fail` and exit 0. The note is the one
+# field family the README says routinely fails to survive a migration.
+
+_SUBJECTIVE = "Patient reports a dull ache in the left shoulder for the past three weeks."
+_PLAN = "Start physiotherapy twice weekly and review in one month."
+
+
+def _record_with_note() -> PatientRecord:
+    record = _record()
+    record.encounters[0].sections = [
+        NoteSection(kind=SectionKind.SUBJECTIVE, text=_SUBJECTIVE),
+        NoteSection(kind=SectionKind.PLAN, text=_PLAN),
+    ]
+    return record
+
+
+def _qa_note(pdf: Path) -> QAReport:
+    record = _record_with_note()
+    return run_qa([(pdf, record.encounters[0], record)])
+
+
+def test_note_body_passes_when_the_note_is_on_the_page(tmp_path: Path) -> None:
+    pdf = make_pdf(tmp_path / "with_note.pdf", [*GOOD_LINES, _SUBJECTIVE, _PLAN])
+    verdict, findings = _result(_qa_note(pdf), "note_body")
+    assert (verdict, findings) == (Verdict.PASS, [])
+
+
+def test_note_body_fails_when_the_note_is_gone_but_everything_else_is_there(
+    tmp_path: Path,
+) -> None:
+    """The exact chart that used to pass every check: identity, vitals, dates and
+    the section HEADINGS all present, the bodies all absent."""
+    pdf = make_pdf(tmp_path / "hollow.pdf", [*GOOD_LINES, "SUBJECTIVE", "PLAN"])
+    report = _qa_note(pdf)
+    verdict, findings = _result(report, "note_body")
+    assert verdict is Verdict.FAIL
+    assert findings == [
+        "the subjective section is not on the document",
+        "the plan section is not on the document",
+    ]
+    # The document as a whole must not pass — that is the bug.
+    assert not report.ok
+    # And every OTHER check still passes, which is why this went unnoticed.
+    for check in ("data_integrity", "layout_pagination", "vitals_loinc"):
+        assert _result(report, check)[0] is Verdict.PASS
+
+
+def test_a_partly_present_note_warns_rather_than_fails(tmp_path: Path) -> None:
+    """A long section legitimately straddles a page break and picks up a footer
+    in the extracted text, so a partial match is not proof of loss. Truncation
+    looks the same from here, and telling the two apart is a person's job —
+    so it is surfaced, not adjudicated."""
+    long_note = " ".join(f"finding number {n} recorded at the visit" for n in range(1, 13))
+    record = _record()
+    record.encounters[0].sections = [NoteSection(kind=SectionKind.SUBJECTIVE, text=long_note)]
+    kept = " ".join(long_note.split()[:24])  # the first three chunks of six
+    pdf = make_pdf(tmp_path / "partial.pdf", [*GOOD_LINES, kept])
+
+    report = run_qa([(pdf, record.encounters[0], record)])
+    verdict, findings = _result(report, "note_body")
+    assert verdict is Verdict.WARN
+    assert len(findings) == 1
+    assert "only partly on the document" in findings[0]
+
+
+def test_note_body_findings_never_quote_the_note(tmp_path: Path) -> None:
+    """A finding travels into logs and run reports. It names the section; the
+    body is the patient's chart and stays on the chart."""
+    pdf = make_pdf(tmp_path / "hollow.pdf", GOOD_LINES)
+    _, findings = _result(_qa_note(pdf), "note_body")
+    blob = " ".join(findings)
+    assert findings
+    for word in set(_SUBJECTIVE.split()) | set(_PLAN.split()):
+        if len(word) > 4:  # skip articles and prepositions that any sentence has
+            assert word not in blob, f"note text leaked into a finding: {word!r}"
+
+
+def test_an_addendum_is_verified_like_a_section(tmp_path: Path) -> None:
+    """An amendment to a signed note is the part a clinician added deliberately;
+    losing it silently is the same defect as losing the note."""
+    record = _record()
+    record.encounters[0].addenda = [Addendum(text="Corrected: the ache is on the RIGHT shoulder.")]
+    pdf = make_pdf(tmp_path / "no_addendum.pdf", GOOD_LINES)
+
+    verdict, findings = _result(run_qa([(pdf, record.encounters[0], record)]), "note_body")
+    assert verdict is Verdict.FAIL
+    assert findings == ["addendum 1 is not on the document"]
+
+
+def test_an_encounter_with_no_narrative_passes_vacuously(tmp_path: Path) -> None:
+    """Not every encounter carries a note. Having nothing to verify is a pass,
+    not a warning — the check must not become noise on ordinary charts."""
+    verdict, findings = _result(_qa(make_pdf(tmp_path / "plain.pdf", GOOD_LINES)), "note_body")
+    assert (verdict, findings) == (Verdict.PASS, [])
+
+
+def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
+    """A section the operator disabled is absent on purpose.
+
+    Caught by the gate rather than by inspection: `addenda` is a declared flag
+    in the bundled packs, so a GUI run with it off rendered charts without the
+    addendum and this check called every one of them a loss — turning a
+    deliberate choice into a failed run.
+    """
+    record = _record()
+    record.encounters[0].addenda = [Addendum(text="Corrected: the ache is on the RIGHT shoulder.")]
+    pdf = make_pdf(tmp_path / "no_addendum.pdf", GOOD_LINES)
+
+    on = run_qa([(pdf, record.encounters[0], record)], section_flags={"addenda": True})
+    off = run_qa([(pdf, record.encounters[0], record)], section_flags={"addenda": False})
+
+    assert _result(on, "note_body")[0] is Verdict.FAIL
+    assert _result(off, "note_body") == (Verdict.PASS, [])
