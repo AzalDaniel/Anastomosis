@@ -46,7 +46,7 @@ from datetime import UTC, datetime
 
 from anastomosis.core.fhir import export
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.model import Patient, PatientRecord
+from anastomosis.core.model import Identifier, IdentifierKind, Patient, PatientRecord
 from anastomosis.deliver.browser.errors import PermanentDeliveryError
 from anastomosis.destinations.base import (
     DestinationPatient,
@@ -113,6 +113,49 @@ class _NoopSession:
                 logger.warning("FHIR metadata probe failed (%s)", exc_tag(exc))
                 self._alive = False
         return self._alive
+
+
+#: Which of a patient's identifiers to look them up in the destination by, best
+#: first. The search takes ONE identifier, so this decides which patient value
+#: is sent — and :meth:`FhirClient.get` puts search params in the query string,
+#: which reaches the destination's access log and any proxy between. That is a
+#: different exposure surface from a request body, and not one this tool can
+#: clean up afterwards, so the SSN is the last resort rather than a coin toss.
+#:
+#: Before this was a list, the search used the FIRST identifier that mapped to a
+#: known system, so the order the SOURCE DOCUMENT happened to list them in chose
+#: it. Measured across the shipped fixtures, that meant a source GUID for
+#: pf-tebra and oracle-ehi, an MRN for fhir-r4 — and the patient's SSN for
+#: c-cda, whose first ``v3:id`` carries the SSN OID.
+#:
+#: The source GUID leads because on a re-run into a destination this tool has
+#: written to, it is the exact identity this tool recorded. The destination's
+#: own record numbers come next. An SSN still gets sent for a patient who
+#: carries nothing else: whether that should instead miss (and, with
+#: --create-patients, make a duplicate) is a question about the operator's
+#: destination, and #232 leaves it open.
+_SEARCH_IDENTIFIER_ORDER: tuple[IdentifierKind, ...] = (
+    IdentifierKind.SOURCE_GUID,
+    IdentifierKind.MRN,
+    IdentifierKind.PRN,
+    IdentifierKind.OTHER,
+    IdentifierKind.SSN,
+)
+
+
+def _search_identifier(patient: Patient) -> Identifier | None:
+    """The identifier to search the destination by, or None to fall back.
+
+    Best kind first, and within a kind the one the source listed first — an
+    adapter that emits two MRNs still gets the same answer every run. The order
+    covers every :class:`IdentifierKind`, so an identifier this skips is one
+    with no value at all.
+    """
+    for kind in _SEARCH_IDENTIFIER_ORDER:
+        for ident in patient.identifiers:
+            if ident.kind is kind and ident.value:
+                return ident
+    return None
 
 
 class FhirApiDestination:
@@ -208,15 +251,17 @@ class FhirApiDestination:
     def _search_params(self, patient: Patient) -> tuple[dict[str, str], tuple[str, ...]]:
         """Build the Patient search params + the matched-on field names (PHI-safe).
 
-        Identifier search uses ``{system}|{value}`` with the export systems.
-        The demographic fallback uses family/given/birthdate; a missing
-        birth_date there is still searched (FHIR ANDs only the params present),
-        and the matched_on names reflect exactly which params were sent.
+        Identifier search uses ``{system}|{value}`` with the export systems, on
+        the identifier :data:`_SEARCH_IDENTIFIER_ORDER` prefers rather than
+        whichever one happens to be first (see that constant). The demographic
+        fallback uses family/given/birthdate; a missing birth_date there is
+        still searched (FHIR ANDs only the params present), and the matched_on
+        names reflect exactly which params were sent.
         """
-        for ident in patient.identifiers:
-            system = export.IDENTIFIER_SYSTEMS.get(ident.kind.value)
-            if system and ident.value:
-                return {"identifier": f"{system}|{ident.value}"}, ("identifier",)
+        chosen = _search_identifier(patient)
+        if chosen is not None:
+            system = export.IDENTIFIER_SYSTEMS[chosen.kind.value]
+            return {"identifier": f"{system}|{chosen.value}"}, ("identifier",)
         params: dict[str, str] = {}
         matched: list[str] = []
         if patient.family_name:

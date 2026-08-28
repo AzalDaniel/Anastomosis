@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from anastomosis.core.model import Encounter, Patient
+from anastomosis.core.model import Encounter, Identifier, IdentifierKind, Patient
 from anastomosis.deliver.browser.engine import UploadEngine
 from anastomosis.deliver.browser.errors import PermanentDeliveryError
 from anastomosis.deliver.browser.manifest import build_manifest
@@ -749,3 +749,128 @@ def test_the_duplicate_scan_refuses_a_cross_origin_next_link() -> None:
         destination.existing_fingerprints(
             DestinationPatient(destination_patient_id=pid, matched_on="identifier")
         )
+
+
+# --- which identifier the destination is searched by (#232) -------------------
+#
+# The search takes ONE identifier, and it used to be whichever mapped first —
+# so the order the SOURCE DOCUMENT listed them in chose it. For the shipped
+# C-CDA fixture that was the patient's SSN, and search params ride in the query
+# string, where a request line is logged by the destination and by any proxy
+# between. These hold the order as a decision.
+
+
+def _searched_by(patient: Patient) -> str:
+    """The system of the identifier the resolver would search by."""
+    from anastomosis.deliver.fhir_api.destination import FhirApiDestination as D
+
+    params, matched = D._search_params(D.__new__(D), patient)
+    if "identifier" not in params:
+        return f"(demographics: {','.join(matched)})"
+    return params["identifier"].split("|", 1)[0]
+
+
+def _patient_with(*kinds: IdentifierKind) -> Patient:
+    return Patient(
+        id="feedface-0000-0000-0000-0000000000aa",
+        family_name="Testpatient",
+        given_name="Synthia",
+        identifiers=[Identifier(kind=kind, value=f"{kind.value}-value") for kind in kinds],
+    )
+
+
+def test_the_search_identifier_is_chosen_not_inherited_from_document_order() -> None:
+    """The same two identifiers, either way round, choose the same one."""
+    from anastomosis.core.fhir import export
+
+    guid_first = _searched_by(_patient_with(IdentifierKind.SOURCE_GUID, IdentifierKind.SSN))
+    ssn_first = _searched_by(_patient_with(IdentifierKind.SSN, IdentifierKind.SOURCE_GUID))
+    assert guid_first == ssn_first == export.IDENTIFIER_SYSTEMS["source_guid"]
+
+
+@pytest.mark.parametrize(
+    ("carried", "expected"),
+    [
+        ((IdentifierKind.SSN, IdentifierKind.MRN), "mrn"),
+        ((IdentifierKind.SSN, IdentifierKind.PRN), "prn"),
+        ((IdentifierKind.SSN, IdentifierKind.OTHER), "other"),
+        ((IdentifierKind.MRN, IdentifierKind.SOURCE_GUID), "source_guid"),
+        ((IdentifierKind.SSN,), "ssn"),  # the last resort, still reachable
+    ],
+)
+def test_the_ssn_is_the_last_identifier_reached_for(
+    carried: tuple[IdentifierKind, ...], expected: str
+) -> None:
+    from anastomosis.core.fhir import export
+
+    assert _searched_by(_patient_with(*carried)) == export.IDENTIFIER_SYSTEMS[expected]
+
+
+def test_two_identifiers_of_one_kind_keep_source_order() -> None:
+    """A deterministic answer when the preference cannot separate them."""
+    patient = Patient(
+        id="feedface-0000-0000-0000-0000000000ab",
+        identifiers=[
+            Identifier(kind=IdentifierKind.MRN, value="first"),
+            Identifier(kind=IdentifierKind.MRN, value="second"),
+        ],
+    )
+    from anastomosis.deliver.fhir_api.destination import FhirApiDestination as D
+
+    params, _ = D._search_params(D.__new__(D), patient)
+    assert params["identifier"].endswith("|first")
+
+
+def test_a_patient_with_no_identifier_still_falls_back_to_demographics() -> None:
+    patient = Patient(
+        id="feedface-0000-0000-0000-0000000000ac", family_name="Testpatient", given_name="Synthia"
+    )
+    assert _searched_by(patient).startswith("(demographics")
+
+
+def test_an_identifier_with_no_value_does_not_become_an_empty_search() -> None:
+    """A blank identifier must fall back, not search the destination for "".
+
+    Found by a surviving mutation rather than by reading: the preference order
+    covers every kind, so the only identifier the loop can skip is one with no
+    value — and searching ``mrn|`` would ask the destination to match every
+    patient whose MRN is blank.
+    """
+    patient = Patient(
+        id="feedface-0000-0000-0000-0000000000ad",
+        family_name="Testpatient",
+        given_name="Synthia",
+        identifiers=[Identifier(kind=IdentifierKind.MRN, value="")],
+    )
+    assert _searched_by(patient).startswith("(demographics")
+
+
+@pytest.mark.parametrize("source", ["pf-tebra", "ccda", "fhir-r4", "oracle-ehi"])
+def test_no_shipped_adapter_sends_an_ssn_when_the_patient_has_another_id(source: str) -> None:
+    """The fixture sweep that found this, kept as the guard.
+
+    C-CDA's first ``v3:id`` carries the SSN OID, so before the preference order
+    every C-CDA patient was looked up in the destination by their SSN.
+    """
+    import anastomosis.sources.ccda
+    import anastomosis.sources.fhir_r4
+    import anastomosis.sources.oracle_ehi
+    import anastomosis.sources.pf_tebra  # noqa: F401
+    from anastomosis.core.fhir import export
+    from anastomosis.sources import get_source
+
+    fixtures = {
+        "pf-tebra": "pf_tebra_v9",
+        "ccda": "ccda",
+        "fhir-r4": "fhir_r4",
+        "oracle-ehi": "oracle_ehi_v500",
+    }
+    root = Path(__file__).resolve().parents[1] / "fixtures" / fixtures[source]
+    records = list(get_source(source).load(root))
+    assert records, f"{source} fixture loaded nothing"
+    for record in records:
+        kinds = {i.kind for i in record.patient.identifiers if i.value}
+        if kinds - {IdentifierKind.SSN}:
+            assert _searched_by(record.patient) != export.IDENTIFIER_SYSTEMS["ssn"], (
+                f"{source} would send an SSN despite carrying {sorted(k.value for k in kinds)}"
+            )

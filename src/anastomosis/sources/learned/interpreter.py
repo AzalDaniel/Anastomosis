@@ -242,6 +242,9 @@ class LearnedSourceAdapter:
 
         patient_id = clean_cell(base_row.get(self._patient_key))
         if patient_id is not None:
+            # Front of the list so a reader sees the identity this mapping keyed
+            # on first. Nothing downstream depends on the position: the
+            # destination picks by kind (`_SEARCH_IDENTIFIER_ORDER`).
             identifiers.insert(
                 0, Identifier(kind=IdentifierKind.SOURCE_GUID, value=patient_id, system=self.name)
             )
