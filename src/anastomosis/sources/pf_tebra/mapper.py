@@ -37,6 +37,7 @@ from anastomosis.core.model import (
     Encounter,
     Facility,
     FamilyMemberHistory,
+    Goal,
     Guarantor,
     Identifier,
     IdentifierKind,
@@ -1027,6 +1028,22 @@ def _map_immunization(row: Row) -> Immunization:
     )
 
 
+_GOAL_MAPPED = frozenset({"PatientPracticeGuid", "Goal", "StartDate", "IsActive"})
+
+
+def _map_goal(row: Row, patient_id: str) -> Goal:
+    """A care-plan goal. ``patient-goals`` has no guid of its own, so provenance
+    points at the owning patient."""
+    return Goal(
+        patient_id=patient_id,
+        description=_s(row, "Goal"),
+        effective=_d(row, "StartDate"),
+        active=_b(row, "IsActive"),
+        extensions=_ext(row, _GOAL_MAPPED),
+        provenance=_prov("patient-goals", patient_id),
+    )
+
+
 # --- shared actors -------------------------------------------------------------
 
 
@@ -1198,6 +1215,7 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     ("patient-insurances", _PATIENT_KEY, "patient"),
     ("patient-immunizations", _PATIENT_KEY, "patient"),
     ("patient-advance-directives", _PATIENT_KEY, "patient"),
+    ("patient-goals", _PATIENT_KEY, "patient"),
     ("patient-documents", _PATIENT_KEY, "patient"),
     ("patient-encounter-addendums", "EncounterGuid", "encounter"),
     ("patient-encounter-diagnoses", "EncounterGuid", "encounter"),
@@ -1388,6 +1406,7 @@ def map_export(
     ins_by_patient = _by(export["patient-insurances"], "PatientPracticeGuid")
     imm_by_patient = _by(export["patient-immunizations"], "PatientPracticeGuid")
     ad_by_patient = _by(export["patient-advance-directives"], "PatientPracticeGuid")
+    goals_by_patient = _by(export["patient-goals"], "PatientPracticeGuid")
     docs_by_patient = _by(export["patient-documents"], "PatientPracticeGuid")
     demo_groups = _DemographicsGroups.build(export)  # pinned-notes/giso/race/ethnicity/guarantor
 
@@ -1502,6 +1521,7 @@ def map_export(
                 )
                 for row in ad_by_patient.get(guid, [])
             ],
+            goals=[_map_goal(row, guid) for row in goals_by_patient.get(guid, [])],
             coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
                 _map_document(row, guid, attachments) for row in docs_by_patient.get(guid, [])
