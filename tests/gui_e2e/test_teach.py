@@ -193,3 +193,38 @@ def test_teach_says_what_it_already_knows(gui) -> None:
     assert layouts and formats, rows
     assert f"reads {len(formats)} export format" in summary, summary
     assert f"out {len(layouts)} way" in summary, summary
+
+
+# --- required fields, and one analysis per click ------------------------------
+
+
+def test_a_blank_layout_form_says_what_is_missing(gui) -> None:
+    """`pack_init_async("", "", null, false)` used to go straight through, with
+    the "Step 1 of 2" line as the only sign anything had happened."""
+    app = gui()
+    app.show("teach")
+    page = app.page
+
+    page.click("#layout-analyze")
+    page.wait_for_timeout(200)
+
+    assert not app.called("pack_init_async"), "a blank form reached the controller"
+    banner = app.text("#banner")
+    assert "sample charts" in banner
+    assert "short name" in banner
+
+
+def test_three_clicks_analyze_once(gui) -> None:
+    """The step line is not a live region, so a screen-reader operator got
+    nothing at all from a click and would reasonably click again."""
+    app = gui()
+    app.show("teach")
+    page = app.page
+    page.fill("#layout-samples", "/synthetic/samples")
+    page.fill("#layout-name", "probe_layout")
+
+    for _ in range(3):
+        page.click("#layout-analyze", force=True)
+    page.wait_for_timeout(300)
+
+    assert len(app.calls("pack_init_async")) == 1, "a second click started another analysis"

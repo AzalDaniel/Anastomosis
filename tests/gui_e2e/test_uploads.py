@@ -276,3 +276,82 @@ def test_editing_the_field_mid_run_cannot_move_which_record_is_followed(gui) -> 
 
     followed = {tuple(call["args"]) for call in app.calls("upload_status")[-2:]}
     assert followed == {(_RECORD,)}, f"an edit mid-run moved the counters: {followed}"
+
+
+# --- one button, one job ------------------------------------------------------
+
+
+def _ready_to_file(gui):
+    """Uploads with every required field filled — one click from a real run."""
+    app = _open(gui)
+    app.page.fill("#uploads-results-dir", _OUT_DIR)
+    app.page.fill("#uploads-assistant", "tebra")
+    return app
+
+
+def test_three_clicks_on_start_file_once(gui) -> None:
+    """The most dangerous button in the app used to fire once per click.
+
+    Three rapid clicks sent three `upload_start` calls. The Python side refuses
+    the second and third, so the operator saw a red error banner for a run that
+    was proceeding perfectly normally — and had no way to tell the two apart.
+    """
+    app = _ready_to_file(gui)
+
+    for _ in range(3):
+        app.page.click("#uploads-start", force=True)
+    app.page.wait_for_timeout(250)
+
+    assert len(app.calls("upload_start")) == 1, "a second click reached the controller"
+
+
+def test_start_says_a_run_is_going_and_recovers_when_it_ends(gui) -> None:
+    """After the click that WORKED, the button was unchanged and the counters
+    did not move for a full poll interval — so the plainest reading of the
+    screen was that nothing had happened."""
+    app = _ready_to_file(gui)
+    app.page.click("#uploads-start")
+    app.page.wait_for_timeout(200)
+
+    start = app.page.locator("#uploads-start")
+    assert start.is_disabled()
+    assert "Filing…" in (start.text_content() or "")
+
+    app.emit(stage_event(_FLOW, "upload", "done"))
+    app.page.wait_for_timeout(200)
+
+    assert not start.is_disabled(), "the button never came back"
+    assert "Start filing" in (start.text_content() or "")
+
+
+def test_stop_stays_available_whether_or_not_a_run_is_going(gui) -> None:
+    """Deliberately NOT gated on this page's idea of a live run.
+
+    `upload_stop` already answers `NoRun` when nothing is in flight, so an idle
+    Stop is harmless. A Stop gone unclickable because the page lost track of the
+    run is not: it is the one control for halting a filing run into a live EHR,
+    missing during exactly the emergency it exists for.
+    """
+    app = _ready_to_file(gui)
+    assert not app.page.locator("#uploads-stop").is_disabled()
+
+    app.page.click("#uploads-start")
+    app.page.wait_for_timeout(200)
+    assert not app.page.locator("#uploads-stop").is_disabled()
+
+
+def test_the_banner_names_only_the_field_that_is_empty(gui) -> None:
+    """It named all three when one was blank — sending an operator hunting for
+    the browser connection, which ships PREFILLED and sits inside a closed
+    disclosure. Both correct and invisible."""
+    app = _open(gui)
+    app.page.fill("#uploads-assistant", "tebra")  # results folder left empty
+
+    app.page.click("#uploads-start")
+    app.page.wait_for_timeout(150)
+
+    banner = app.text("#banner")
+    assert "the results folder" in banner
+    assert "the filing assistant" not in banner, banner
+    assert "the browser connection" not in banner, banner
+    assert not app.called("upload_start")

@@ -230,6 +230,14 @@
     if (!hasApi() || !FORM) return;
     const v = FORM.values();
     const destination = el("migrate-destination").value;
+    if (
+      !Shell.requireFields([
+        [v.exportDir, "the folder your export is in", FORM.idFor("export-dir")],
+        [v.outDir, "the folder to put the charts in", FORM.idFor("out-dir")],
+      ])
+    ) {
+      return;
+    }
     if (!v.source) {
       Shell.showBanner("Choose the export format these charts are coming from.");
       return;
@@ -378,7 +386,9 @@
       onRun,
     });
     const detect = FORM.el("detect");
-    if (detect) detect.addEventListener("click", onDetect);
+    if (detect) {
+      detect.addEventListener("click", () => Shell.guardButton(detect, "Looking…", onDetect));
+    }
     const render = FORM.el("render");
     if (render) render.addEventListener("change", () => renderSections(render.value));
     el("migrate-destination").addEventListener("change", onDestinationChange);
