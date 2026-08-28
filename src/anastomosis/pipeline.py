@@ -267,6 +267,93 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
     return records
 
 
+#: Where a run keeps the source attachments it carried through, inside the same
+#: hardened output directory as the charts. The deliverers read charts out of
+#: this directory and nothing else — they are never handed the export — so an
+#: attachment has to be HERE by the time delivery runs, not fetched back out of
+#: an export that a later `anast archive` may no longer be able to reach.
+ATTACHMENTS_DIRNAME = "attachments"
+
+
+def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
+    """Copy every attachment the source resolved into the run's output.
+
+    A `DocumentArtifact` with a ``path`` names a real file in the export — a
+    scanned referral, a lab report, the pages a chart is incomplete without.
+    Nothing carried them out of the export, so they reached the operator as
+    nothing at all: not rendered, not delivered, not named anywhere.
+
+    Each file keeps the name the export gave it (its storage id), which is what
+    the record already points at, so a deliverer needs no extra index to find
+    one — the document's own ``path`` locates it. Names are claimed through the
+    delivery ledger with the file's digest as witness, so a source that reused
+    one storage id for two different files is refused here rather than filing
+    one patient's scan under another's document.
+
+    Returns the number of files carried. Raises :class:`PipelineError` if any
+    attachment the records claim did not arrive: a chart delivered without the
+    documents it references is the silent loss this exists to end, so the run
+    stops rather than reporting a success it cannot back up.
+    """
+    from anastomosis.core.output import secure_output_dir
+    from anastomosis.deliver._shared import (
+        DeliveredNameCollision,
+        claim_delivered_name,
+        copy_delivered_file,
+    )
+
+    # (what the record points at, what it is called here, which document, its
+    # digest) — bound once so the rest reads as files rather than as optionals.
+    wanted = [
+        (Path(doc.path), Path(doc.path).name, doc.id, doc.sha256)
+        for record in records
+        for doc in record.documents
+        if doc.path
+    ]
+    if not wanted:
+        return 0
+
+    target = secure_output_dir(out / ATTACHMENTS_DIRNAME)
+    root = export_dir.resolve()
+    claims: dict[str, str] = {}
+    failures: list[str] = []
+    for relative, name, doc_id, digest in wanted:
+        # The path is the source adapter's word, and a record can also arrive
+        # from a FHIR bundle someone else wrote. Reading it must stay inside the
+        # export the operator pointed at: a `../..` in a hand-made bundle would
+        # otherwise copy a file from anywhere the process can read into an
+        # output directory that gets delivered onward.
+        source = (root / relative).resolve()
+        if not source.is_relative_to(root):
+            raise PipelineError(
+                f"an attachment path points outside the export ({name!r}); refusing to read it",
+                exit_code=1,
+                kind="attachment_escape",
+            )
+        try:
+            claim_delivered_name(claims, name, doc_id, kind="attachment", content=digest)
+        except DeliveredNameCollision as exc:
+            raise PipelineError(str(exc), exit_code=1, kind="attachment_collision") from None
+        destination = target / name
+        if destination.is_file():
+            continue  # the same file claimed twice, or a resumed run
+        failure = copy_delivered_file(source, destination)
+        if failure:
+            failures.append(failure)
+
+    missing = sum(1 for _, name, _, _ in wanted if not (target / name).is_file())
+    if missing:
+        kinds = ", ".join(sorted(set(failures))) or "the file was not where the export said"
+        raise PipelineError(
+            f"{missing} of {len(wanted)} attachment(s) named by the records did not reach "
+            f"the output ({kinds}); refusing to deliver charts without the documents they "
+            "reference",
+            exit_code=1,
+            kind="attachment_missing",
+        )
+    return len({name for _, name, _, _ in wanted})
+
+
 def run_pipeline(
     *,
     export_dir: Path,
@@ -348,6 +435,23 @@ def run_pipeline(
     emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
 
     result = engine.run(records, out, force=force)
+    if result.failed:
+        # Loud render failure, before the stage is announced as finished and
+        # before anything is carried: a run that could not render every chart
+        # has no business scattering a patient's scanned records around, and
+        # the render failure is the message an operator needs, not a
+        # consequence of it. The (encounter_id, type) pairs ride on the error
+        # so the CLI can print its per-encounter detail lines; PHI-safe.
+        raise PipelineError(
+            f"{len(result.failed)} encounter(s) failed to render",
+            exit_code=1,
+            kind="render_failed",
+            failed=tuple(result.failed),
+        )
+
+    # `out` is hardened by the engine above, so this is the first point a
+    # patient's own files may be written beside their charts.
+    carried = _carry_attachments(records, export_dir, out)
     emit(
         StageEvent(
             STAGE_RECONSTRUCT,
@@ -355,18 +459,10 @@ def run_pipeline(
                 "rendered": len(result.rendered),
                 "skipped": len(result.skipped),
                 "failed": len(result.failed),
+                "attachments": carried,
             },
         )
     )
-    if result.failed:
-        # Loud render failure. The (encounter_id, type) pairs ride on the error
-        # so the CLI can print its per-encounter detail lines; they are PHI-safe.
-        raise PipelineError(
-            f"{len(result.failed)} encounter(s) failed to render",
-            exit_code=1,
-            kind="render_failed",
-            failed=tuple(result.failed),
-        )
 
     qa_report = None
     if qa and result.documents:
