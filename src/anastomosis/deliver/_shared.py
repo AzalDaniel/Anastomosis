@@ -30,6 +30,7 @@ and the README texts (three distinct operator-facing documents:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -95,26 +96,59 @@ def budgeted_copy_name(target_dir: Path, source_name: str) -> str:
     return budgeted_name(source.stem, "chart", parent=target_dir, suffix=suffix) + suffix
 
 
-def claim_delivered_name(claims: dict[str, str], name: str, source_id: str, *, kind: str) -> None:
+def _owner(source_id: str, content: str | None) -> str:
+    """Who holds a delivered slot: a source id, or a source id AND its content.
+
+    An id alone answers "is this the same record?" only while ids are unique.
+    When the caller can supply what it is about to write, the digest of that
+    goes in too, so two records the source gave one id are two owners.
+    """
+    if content is None:
+        return source_id
+    return f"{source_id}@{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}"
+
+
+def claim_delivered_name(
+    claims: dict[str, str], name: str, source_id: str, *, kind: str, content: str | None = None
+) -> None:
     """Record that ``source_id`` owns the delivered ``name``, or raise.
 
     ``claims`` is a per-run ledger the caller owns (one dict per delivery run),
     mirroring the render engine's per-run ``claimed`` set. Re-claiming a name
-    with the SAME source id is a no-op — a record legitimately delivered twice
-    in one run keeps its slot; a claim by a different id raises
+    with the same owner is a no-op — a record legitimately delivered twice in
+    one run keeps its slot; a claim by a different owner raises
     :class:`DeliveredNameCollision`.
 
-    PHI: the message names the artifact ``kind`` and the two ids as run-scoped
+    Pass ``content`` — the artifact about to be written — wherever two records
+    could arrive carrying one id. Without it the ledger reads a re-claim by the
+    same id as the same record and lets the second write land on the first:
+    one file holding the second visit, while the run reports two. A physician
+    opens visit 1 and reads visit 2, with nothing saying so.
+
+    Two records under one id is not a naming problem to route around. It means
+    the SOURCE cannot say which visit is which — so writing both under invented
+    names would be this tool guessing at a patient's chart, which is the one
+    thing it must never do. It refuses instead, and says which kind collided.
+
+    PHI: the message names the artifact ``kind`` and the ids as run-scoped
     :func:`~anastomosis.core.logutil.safe_log_id` surrogates — never the
     delivered name (built from a source id) and never a patient value.
     """
-    previous = claims.setdefault(name, source_id)
-    if previous != source_id:
+    owner = _owner(source_id, content)
+    previous = claims.setdefault(name, owner)
+    if previous == owner:
+        return
+    if previous == source_id or previous.startswith(f"{source_id}@"):
         raise DeliveredNameCollision(
-            f"two different source ids resolve to the same delivered {kind} name "
-            f"({safe_log_id(previous)} and {safe_log_id(source_id)}); refusing to "
-            "merge two records into one slot"
+            f"two different {kind}s carry the same source id ({safe_log_id(source_id)}) and "
+            "would land in the same slot; refusing to write one over the other. The source "
+            "gave both records one id, so nothing downstream can tell them apart"
         )
+    raise DeliveredNameCollision(
+        f"two different source ids resolve to the same delivered {kind} name "
+        f"({safe_log_id(previous)} and {safe_log_id(source_id)}); refusing to "
+        "merge two records into one slot"
+    )
 
 
 def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:

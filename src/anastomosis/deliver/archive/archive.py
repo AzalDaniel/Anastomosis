@@ -442,7 +442,14 @@ class ArchiveDeliverer:
         page_id = _encounter_page_id(patient_dir, encounter)
         # Two encounter ids that sanitize/truncate alike would otherwise
         # overwrite one encounter's page with another's (exist_ok write below).
-        claim_delivered_name(claimed_pages, page_id, encounter.id, kind="encounter page")
+        # The rendered page goes in as the claim's witness because encounter
+        # ids are not guaranteed unique: a C-CDA may list two <encounter>
+        # entries under one <id root>, and the parser keeps a vendor GUID
+        # verbatim. Two visits, one id, one slot — without the witness the
+        # second page silently replaces the first while the run reports two.
+        claim_delivered_name(
+            claimed_pages, page_id, encounter.id, kind="encounter page", content=html
+        )
         encounter_file = patient_dir / "encounters" / f"{page_id}.html"
         atomic_write_text(encounter_file, html)
 
