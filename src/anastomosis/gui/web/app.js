@@ -270,6 +270,14 @@
     // run will do, not from what a run could do — but nothing on screen changes
     // until the controller confirms the run is actually under way.
     const v = FORM.values();
+    if (
+      !Shell.requireFields([
+        [v.exportDir, "the folder your export is in", FORM.idFor("export-dir")],
+        [v.outDir, "the folder to put the charts in", FORM.idFor("out-dir")],
+      ])
+    ) {
+      return;
+    }
     askForRun(v);
     setBusy(true);
     try {

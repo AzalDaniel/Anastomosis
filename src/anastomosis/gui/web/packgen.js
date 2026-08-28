@@ -68,11 +68,34 @@
     try {
       route(await window.pywebview.api.last_pack_result());
     } catch (err) {
+      setAnalyzing(false);
       Shell.showBanner(String(err));
     }
   }
 
+  //: Held from the click until the run's terminal event.
+  //:
+  //: NOT `Shell.guardButton`: that releases when its `work` resolves, and
+  //: `packgen_init_async` resolves as soon as the WORKER STARTS. Three rapid
+  //: clicks still fired three analyses through it — measured, not assumed.
+  //: The only on-screen feedback here is the step line, which is not a live
+  //: region, so a screen-reader operator gets nothing from a click and will
+  //: reasonably click again.
+  let analyzeLabel = "";
+  function setAnalyzing(busy) {
+    const button = el("layout-analyze");
+    if (!button) return;
+    // Remember the button's OWN label rather than re-typing it here, so the
+    // markup stays the single place the wording lives.
+    if (!analyzeLabel) analyzeLabel = button.textContent;
+    button.disabled = busy;
+    button.textContent = busy ? "Looking…" : analyzeLabel;
+  }
+
   function onEvent(event) {
+    if (event.type === "done" || event.type === "error" || event.state === "done") {
+      setAnalyzing(false);
+    }
     if (event.type === "stage" && event.stage === "packgen" && event.state === "done") {
       fetchResult();
     } else if (event.type === "done") {
@@ -95,12 +118,22 @@
     Shell.hideBanner();
     el("layout-result").hidden = true;
     const v = values();
+    if (
+      !Shell.requireFields([
+        [v.samples, "the folder your sample charts are in", "layout-samples"],
+        [v.name, "a short name for this layout", "layout-name"],
+      ])
+    ) {
+      return;
+    }
     setStep("Step 1 of 2 — looking at the samples…");
+    setAnalyzing(true);
     try {
       const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, false);
       if (started && started.ok === false) {
         Shell.showBanner(Shell.refusalText(started.error, "The samples could not be read"));
         setStep("Step 1 of 2 — look at the samples.");
+        setAnalyzing(false);
       }
     } catch (err) {
       Shell.showBanner(String(err));

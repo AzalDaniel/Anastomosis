@@ -413,8 +413,18 @@
     const outDir = el("uploads-results-dir").value.trim();
     const browser = el("uploads-browser").value.trim();
     const assistant = el("uploads-assistant").value.trim();
-    if (!outDir || !browser || !assistant) {
-      Shell.showBanner("Fill in the results folder, the filing assistant, and the browser connection.");
+    // The same check the other three views use. This view had its own copy,
+    // which is how the two drifted: it named ALL THREE fields when one was
+    // blank, sending an operator who had filled in two of them hunting for the
+    // browser connection — which ships prefilled AND sits inside a closed
+    // "Advanced" disclosure, so it was both correct and invisible.
+    if (
+      !Shell.requireFields([
+        [outDir, "the results folder", "uploads-results-dir"],
+        [assistant, "the filing assistant", "uploads-assistant"],
+        [browser, "the browser connection", "uploads-browser"],
+      ])
+    ) {
       return;
     }
     const folder = el("uploads-assistant-folder").value.trim();
@@ -449,6 +459,7 @@
       }
       Shell.logEvent({ kind: "ok", msg: "Uploads: filing started." });
       ACTIVE_RECORD = runRecordPath(outDir);
+      setRunning(true);
       startPolling();
     } catch (err) {
       Shell.showBanner(String(err));
@@ -472,6 +483,24 @@
     stopPolling();
     refreshQuietly();
     ACTIVE_RECORD = "";
+    setRunning(false);
+  }
+
+  //: Start reflects whether a run is going. Stop deliberately does NOT.
+  //:
+  //: Gating Stop on this page's idea of "a run is live" was the obvious
+  //: symmetry and it is the wrong trade. `upload_stop` already answers
+  //: `NoRun` when nothing is in flight, and `onStop` logs "nothing is
+  //: running" — so an idle Stop is harmless. A Stop that has gone
+  //: unclickable because this page lost track of the run is not: it is the
+  //: one control for halting a filing run into a live EHR, missing during
+  //: exactly the emergency it exists for. Availability wins over tidiness
+  //: on this button.
+  function setRunning(running) {
+    const start = el("uploads-start");
+    if (!start) return;
+    start.disabled = running;
+    start.textContent = running ? "Filing…" : "Start filing";
   }
 
   function onEvent(event) {
@@ -521,7 +550,9 @@
   }
 
   function init() {
-    el("uploads-refresh").addEventListener("click", () => onRefresh());
+    el("uploads-refresh").addEventListener("click", () =>
+      Shell.guardButton(el("uploads-refresh"), "Refreshing…", onRefresh)
+    );
     el("uploads-start").addEventListener("click", onStart);
     el("uploads-stop").addEventListener("click", onStop);
     el("uploads-search").addEventListener("input", renderSearch);
@@ -532,9 +563,15 @@
     });
 
     Shell.onReady((live) => {
-      const start = el("uploads-start");
-      start.disabled = !live;
-      el("uploads-stop").disabled = !live;
+      // With no bridge these did nothing at all when clicked — no banner, no
+      // strip line, an `hasApi()` early return — so they looked live and were
+      // not. Stop stays off until a run is actually going (`setRunning`).
+      ["uploads-start", "uploads-stop", "uploads-refresh", "uploads-kinds-btn"].forEach(
+        (id) => {
+          const button = el(id);
+          if (button) button.disabled = !live;
+        }
+      );
       if (!live) return;
       loadGuiConfig();
       loadSafetyNotice();
