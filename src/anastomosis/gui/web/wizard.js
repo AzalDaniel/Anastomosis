@@ -88,6 +88,7 @@
       card.appendChild(detail);
       list.appendChild(card);
     }
+    Shell.setEmpty("migrate-routes", transit.options.length === 0);
   }
 
   function paragraphs(host, lines) {
@@ -101,6 +102,7 @@
 
   function renderGuidance(transit, pack) {
     const guidance = el("migrate-guidance");
+    guidance.hidden = false;
     const chosen = transit.chosen;
     const lines = [];
     if (chosen === "ccda_import") {

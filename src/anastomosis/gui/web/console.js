@@ -99,10 +99,13 @@
     for (const [state, n] of Object.entries(counts)) {
       buckets[stateInfo(state).bucket] += n;
     }
-    el("uploads-count-filed").textContent = String(buckets.filed);
-    el("uploads-count-attention").textContent = String(buckets.attention);
-    el("uploads-count-progress").textContent = String(buckets.progress);
-    el("uploads-count-waiting").textContent = String(buckets.waiting);
+    // A zero is not a state worth colouring, whatever bucket it belongs to:
+    // "0 needs attention" in oxblood reads as an alarm about nothing.
+    for (const [bucket, n] of Object.entries(buckets)) {
+      const value = el(`uploads-count-${bucket}`);
+      value.textContent = String(n);
+      value.parentNode.dataset.zero = String(n === 0);
+    }
 
     const grid = el("uploads-states");
     grid.innerHTML = "";
@@ -128,33 +131,42 @@
     }
   }
 
-  function metaEntry(host, label, value) {
-    const wrap = document.createElement("span");
-    const text = document.createElement("span");
-    text.textContent = `${label} `;
-    const val = document.createElement("span");
-    val.className = "meta-value";
-    val.textContent = value;
-    wrap.appendChild(text);
-    wrap.appendChild(val);
+  function metaValue(host, value, label, signal) {
+    const wrap = document.createElement("div");
+    wrap.className = "value value--sm";
+    if (signal) wrap.dataset.signal = signal;
+    wrap.dataset.zero = String(value === "0");
+    const n = document.createElement("span");
+    n.className = "value-n";
+    n.textContent = value;
+    const k = document.createElement("span");
+    k.className = "value-k";
+    k.textContent = label;
+    wrap.appendChild(n);
+    wrap.appendChild(k);
     host.appendChild(wrap);
   }
 
   function renderMeta(status) {
     const meta = el("uploads-meta");
     meta.innerHTML = "";
-    metaEntry(meta, "Charts recorded:", String(status.total || 0));
-    if (READY_TO_FILE !== null) metaEntry(meta, "Ready to file:", String(READY_TO_FILE));
     const kinds = Object.keys(status.error_type_histogram || {}).length;
-    metaEntry(meta, "Kinds of error:", String(kinds));
+    metaValue(meta, String(status.total || 0), "Charts recorded");
+    if (READY_TO_FILE !== null) metaValue(meta, String(READY_TO_FILE), "Ready to file");
+    metaValue(meta, String(kinds), "Kinds of error", kinds > 0 ? "attention" : null);
+
+    // When the run happened is a sentence, not a value: a timestamp read as a
+    // 34px numeral is unreadable, and there is nothing to compare it against.
+    const when = el("uploads-when");
     const run = status.run;
     if (!run) {
-      metaEntry(meta, "Last run:", "none yet");
+      when.textContent = "No filing run has been recorded from this folder.";
       return;
     }
-    metaEntry(meta, "Started:", String(run.started_at));
-    metaEntry(meta, "Finished:", run.finished_at ? String(run.finished_at) : "still running");
-    if (run.aborted_reason) metaEntry(meta, "Stopped early:", String(run.aborted_reason));
+    const finished = run.finished_at ? `finished ${run.finished_at}` : "still running";
+    when.textContent = run.aborted_reason
+      ? `Started ${run.started_at}, ${finished} — stopped early: ${run.aborted_reason}.`
+      : `Started ${run.started_at}, ${finished}.`;
   }
 
   function renderErrorKinds(hist) {

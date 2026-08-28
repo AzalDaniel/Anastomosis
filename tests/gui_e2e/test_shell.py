@@ -658,3 +658,75 @@ def test_a_machine_id_becomes_a_name_a_person_would_write(gui) -> None:
     assert name("tebra") == "Tebra"
     # Not derivable by re-casing the parts, so it is named.
     assert name("ccda") == "C-CDA"
+
+
+def test_a_region_with_no_rows_says_what_would_fill_it(gui) -> None:
+    """Two clauses: what is not here, then the one thing that puts it here.
+
+    These regions used to be `hidden` outright, so a screen that had not run
+    yet was a form and then nothing — no indication that a list was coming, or
+    what would summon it. The heading stays either way; what swaps is the list
+    and the sentence.
+    """
+    app = gui()
+
+    for view, region, opening in (
+        ("charts", "charts-patients", "No run yet."),
+        ("migrate", "migrate-patients", "No transfer yet."),
+        ("migrate", "migrate-routes", "Choose a destination above."),
+    ):
+        app.show(view)
+        state = app.page.evaluate(
+            r"""id => {
+              const list = document.getElementById(id);
+              const empty = document.getElementById(id + '-empty');
+              return {listHidden: list.hidden, emptyHidden: empty.hidden,
+                      text: empty.textContent.replace(/\s+/g, ' ').trim(),
+                      headed: !!list.closest('section').querySelector('h3')};
+            }""",
+            region,
+        )
+        assert state["listHidden"], f"{region} shows an empty list"
+        assert not state["emptyHidden"], f"{region} says nothing about being empty"
+        assert state["headed"], f"{region} lost its heading when it lost its rows"
+        assert state["text"].startswith(opening), state["text"]
+        # Two clauses, and no zero pretending to be a measurement.
+        assert " " in state["text"].removeprefix(opening).strip(), "the second clause is missing"
+        assert "0" not in state["text"], "an empty state is showing a count"
+
+
+def test_a_count_is_a_number_over_its_name_and_nothing_else(gui) -> None:
+    """Value displays, and the two rules that keep them from shouting.
+
+    They were four glass tiles 96px tall, each with a sentence underneath
+    restating its own label, and each coloured by its bucket — so a run with
+    nothing wrong still showed a green number and an oxblood zero. Colour is
+    earned by a number that asks for something; a zero never asks.
+    """
+    app = gui()
+    app.show("uploads")
+    app.page.fill("#uploads-results-dir", "/synthetic/out")
+    app.page.click("#uploads-refresh")
+    app.page.wait_for_timeout(400)
+
+    shown = app.page.evaluate(
+        r"""() => [...document.querySelectorAll('#uploads-counters .value')].map(v => {
+             const label = v.querySelector('.value-k');
+             return {bucket: v.dataset.bucket, zero: v.dataset.zero,
+                     signal: v.dataset.signal || '',
+                     n: v.querySelector('.value-n').textContent,
+                     label: label.textContent,
+                     upper: getComputedStyle(label).textTransform,
+                     words: label.textContent.trim().split(/\s+/).length};
+           })"""
+    )
+    assert len(shown) == 4, shown
+    for value in shown:
+        # The one place uppercase is allowed, and it is bounded.
+        assert value["upper"] == "uppercase", value
+        assert value["words"] <= 3, f"a value label became a sentence: {value['label']!r}"
+        assert value["label"] == value["label"].strip()
+        # Success is never coloured — it is the absence of a coloured number.
+        if value["bucket"] in ("filed", "waiting"):
+            assert value["signal"] == "", f"{value['bucket']} is asking for attention"
+        assert value["zero"] == ("true" if value["n"] == "0" else "false"), value
