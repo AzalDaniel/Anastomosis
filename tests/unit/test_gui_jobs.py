@@ -79,18 +79,71 @@ def test_submit_rejects_while_busy_then_recovers() -> None:
 def test_worker_exception_becomes_error_event_never_raises() -> None:
     emit = _RecordingEmit()
     runner = GuiJobRunner(emit)
+    escaped: list[str] = []
 
     def _boom() -> None:
         raise ValueError("secret patient value must not appear")
 
-    assert runner.submit(GuiJob(name="j", worker=_boom)) == {"ok": True, "started": True}
-    _wait_released(runner)
+    previous = threading.excepthook
+    threading.excepthook = lambda args: escaped.append(type(args.exc_value).__name__)
+    try:
+        assert runner.submit(GuiJob(name="j", worker=_boom)) == {"ok": True, "started": True}
+        _wait_released(runner)
+    finally:
+        threading.excepthook = previous
+
     errors = [e for e in emit.events if e.get("type") == "error"]
     assert len(errors) == 1
     assert errors[0]["stage"] == "j"
     # PHI-safe: the exception TYPE name only, never the message.
     assert errors[0]["error"] == "ValueError"
     assert "secret" not in str(emit.events)
+    # "never raises" is half the name of this test and was not being checked.
+    # An ordinary Exception is reported and SWALLOWED — only a BaseException is
+    # re-raised, and that difference is the whole shape of the two arms.
+    assert escaped == [], escaped
+
+
+def test_a_base_exception_still_reports_before_it_kills_the_thread() -> None:
+    """A run that started must always end with something the operator can see.
+
+    The upload engine models process death as a BaseException on purpose (see
+    FakeCrash) so its "unknown exception, retry" handler cannot swallow a kill.
+    That is right for the engine and left the GUI with a run that emitted
+    `start` and then nothing at all, forever — #117's "no terminal upload event
+    landed; events=[{'state': 'start'}]", reproduced exactly.
+
+    Caught, reported, re-raised: telling the operator is not the same as
+    pretending it did not happen, so the thread still dies and the guard still
+    releases.
+    """
+    emit = _RecordingEmit()
+    runner = GuiJobRunner(emit)
+    raised: list[str] = []
+
+    class _Kill(KeyboardInterrupt):
+        """Stands in for FakeCrash: a BaseException, not an Exception."""
+
+    def _boom() -> None:
+        raise _Kill
+
+    def _hook(args: threading.ExceptHookArgs) -> None:
+        raised.append(type(args.exc_value).__name__)
+
+    previous = threading.excepthook
+    threading.excepthook = _hook
+    try:
+        assert runner.submit(GuiJob(name="j", worker=_boom)) == {"ok": True, "started": True}
+        _wait_released(runner)
+    finally:
+        threading.excepthook = previous
+
+    errors = [e for e in emit.events if e.get("type") == "error"]
+    assert len(errors) == 1, emit.events
+    assert errors[0]["stage"] == "j"
+    assert errors[0]["error"] == "_Kill"
+    # Re-raised, not swallowed: the thread died the way it was going to.
+    assert raised == ["_Kill"], raised
 
 
 def test_stage_overrides_thread_name_for_error_channel() -> None:

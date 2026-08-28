@@ -17,6 +17,7 @@ import pytest
 
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
+from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.controller import GuiApi, GuiController
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
@@ -1590,14 +1591,32 @@ def _ledger_counts(out_dir: Path) -> dict[str, int]:
         tracking.close()
 
 
-def _wait_for_terminal_upload(
-    sink: _RecordingSink, *, deadline_s: float = 10.0
-) -> dict[str, object]:
-    """Poll until a terminal upload event lands (stage done OR error); return it.
+#: The longest a legitimate upload run over ``_write_upload_manifest``'s three
+#: charts can take, from the engine's own retry budget: each item may fail
+#: ``DEFAULT_MAX_ATTEMPTS - 1`` times, sleeping ``backoff_base_s * 2**(n-1)``
+#: before each retry with the REAL ``time.sleep`` (the engine's ``sleeper`` seam
+#: is not threaded through ``run_upload_command``). Three items x (2s + 4s) is
+#: eighteen seconds — which is why the flat ten-second deadline this replaced
+#: could fail a run that was behaving perfectly (#117).
+_UPLOAD_WORST_CASE_S = 3 * 2.0 * (2 ** (DEFAULT_MAX_ATTEMPTS - 1) - 1)
 
-    Time-bounded like test_last_run_summary_serves_async_run. A terminal event is
-    a ``stage`` event with ``stage==upload`` and ``state==done`` OR an ``error``
-    event with ``stage==upload``.
+
+def _wait_for_terminal_upload(
+    controller: GuiController,
+    sink: _RecordingSink,
+    *,
+    deadline_s: float = _UPLOAD_WORST_CASE_S + 10.0,
+) -> dict[str, object]:
+    """Wait for the upload worker to FINISH, then read its terminal event.
+
+    Joining the worker rather than polling the event list is what separates the
+    two answers #117 needed telling apart. A poll that times out cannot say
+    whether the run was still going or had already ended saying nothing; once
+    the worker's ``finally`` has run, the answer is final and no amount of
+    further waiting changes it.
+
+    A terminal event is a ``stage`` event with ``stage==upload`` and
+    ``state==done``, or an ``error`` event with ``stage==upload``.
     """
 
     def _terminal(e: dict[str, object]) -> bool:
@@ -1605,13 +1624,15 @@ def _wait_for_terminal_upload(
             return True
         return e.get("type") == "error" and e.get("stage") == "upload"
 
-    deadline = time.time() + deadline_s
-    while time.time() < deadline:
-        for e in list(sink.events):
-            if _terminal(e):
-                return e
-        time.sleep(0.05)
-    raise AssertionError(f"no terminal upload event landed; events={sink.events!r}")
+    assert controller._jobs.join(deadline_s), (
+        f"the upload worker was still running after {deadline_s:.0f}s; events={sink.events!r}"
+    )
+    for e in list(sink.events):
+        if _terminal(e):
+            return e
+    raise AssertionError(
+        f"the upload worker finished without a terminal event; events={sink.events!r}"
+    )
 
 
 def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1636,7 +1657,7 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
     )
     assert started == {"ok": True, "started": True}
 
-    terminal = _wait_for_terminal_upload(sink)
+    terminal = _wait_for_terminal_upload(controller, sink)
     assert terminal["type"] == "stage", f"expected a clean done, got {terminal!r}"
     assert terminal["state"] == "done"
 
@@ -1688,7 +1709,7 @@ def test_upload_start_failed_items_emit_error_not_done(
     )
     assert started == {"ok": True, "started": True}
 
-    terminal = _wait_for_terminal_upload(sink)
+    terminal = _wait_for_terminal_upload(controller, sink)
     # The bug was a stage `done`; the fix is an `error` carrying the state summary.
     assert terminal["type"] == "error", f"expected an error, got {terminal!r}"
     assert terminal["stage"] == "upload"
@@ -1710,6 +1731,78 @@ def test_upload_start_failed_items_emit_error_not_done(
     blob = repr(sink.events)
     for name in ("Family", "Given", *FIXTURE_NAMES):
         assert name not in blob, f"event log leaked patient value {name!r}"
+
+
+def test_the_upload_wait_outlasts_the_engines_own_retry_budget() -> None:
+    """The deadline has to be derived from the code, not guessed at.
+
+    #117's second half: the helper waited ten seconds, and three charts each
+    retrying twice sleeps eighteen — with the REAL ``time.sleep``, because
+    ``UploadEngine``'s ``sleeper`` seam is not threaded through
+    ``run_upload_command``. The test was asserting something the code had never
+    promised, and Windows was simply slow enough to collect.
+
+    Reading both constants back means a future bump to the retry budget fails
+    here, where it is one line, rather than as an intermittent red build.
+    """
+    import inspect
+
+    from anastomosis.deliver.browser.engine import UploadEngine
+
+    base = inspect.signature(UploadEngine.__init__).parameters["backoff_base_s"].default
+    worst = 3 * base * (2 ** (DEFAULT_MAX_ATTEMPTS - 1) - 1)
+
+    assert _UPLOAD_WORST_CASE_S >= worst, (
+        f"the wait allows {_UPLOAD_WORST_CASE_S}s for a run that can legitimately "
+        f"take {worst}s ({DEFAULT_MAX_ATTEMPTS} attempts, {base}s base backoff)"
+    )
+
+
+def test_a_dying_upload_says_so_before_it_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#117, reproduced: a run that emitted `start` and then nothing at all.
+
+    ``FakeCrash`` is a BaseException by design — the engine models process death
+    as something its "unknown exception, retry" handler cannot swallow. That is
+    right for the engine, and it sailed through the worker's ``except
+    Exception`` AND the job runner's safety net, so the ledger was left
+    mid-flight and the GUI showed a filing run that had started and would never
+    finish. The busy guard released, so nothing looked broken; the operator was
+    simply never told.
+
+    The event carries the exception TYPE name, like every other failure here.
+    """
+    from anastomosis.deliver.browser.fake import FakeDestination
+
+    out_dir = _write_upload_manifest(tmp_path)
+    pack_root = _upload_pack_dir(tmp_path)
+    monkeypatch.setattr(
+        controller_module,
+        "_attach_destination",
+        lambda cdp, loaded: FakeDestination(_upload_known(), crash_after=1),
+    )
+    # The re-raise reaches the thread's excepthook, which pytest turns into a
+    # warning. Swallowing it here keeps the death visible to this test without
+    # failing the run for behaviour the test is asserting.
+    seen: list[str] = []
+    monkeypatch.setattr(
+        threading, "excepthook", lambda args: seen.append(type(args.exc_value).__name__)
+    )
+
+    sink = _RecordingSink()
+    controller = GuiController(sink)
+    assert controller.upload_start(
+        str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
+    ) == {"ok": True, "started": True}
+
+    terminal = _wait_for_terminal_upload(controller, sink)
+
+    assert terminal["type"] == "error"
+    assert terminal["error"] == "FakeCrash"
+    assert seen == ["FakeCrash"], seen
+    # And the guard is free, so the operator can start the resuming run.
+    assert controller.upload_stop() == {"ok": False, "error": "NoRun"}
 
 
 def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1735,7 +1828,7 @@ def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     assert started == {"ok": True, "started": True}
 
-    terminal = _wait_for_terminal_upload(sink)
+    terminal = _wait_for_terminal_upload(controller, sink)
     assert terminal["type"] == "stage" and terminal["state"] == "done"
     counts = _ledger_counts(out_dir)
     assert counts.get(UploadState.SKIPPED_SKIPLIST.value) == 1
@@ -1774,7 +1867,7 @@ def test_upload_start_rejects_non_loopback_cdp(
     )
     assert second == {"ok": True, "started": True}
     # Drain the spawned worker so its daemon thread does not outlive the test.
-    _wait_for_terminal_upload(sink)
+    _wait_for_terminal_upload(controller, sink)
 
 
 def test_upload_start_bad_manifest(tmp_path: Path) -> None:
@@ -1843,7 +1936,7 @@ def test_upload_start_refuses_when_output_locked(
             str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
         )
         assert started == {"ok": True, "started": True}
-        terminal = _wait_for_terminal_upload(sink)
+        terminal = _wait_for_terminal_upload(controller, sink)
     assert terminal["type"] == "error"
     assert terminal["error"] == "OutputLocked"  # refused, never drove the engine
 
@@ -1978,7 +2071,7 @@ def test_upload_start_threads_no_verify(tmp_path: Path, monkeypatch: pytest.Monk
         str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
     )
     assert started == {"ok": True, "started": True}
-    _wait_for_terminal_upload(sink)
+    _wait_for_terminal_upload(controller, sink)
     assert captured["cmd"].verify is False  # type: ignore[union-attr]
 
 
@@ -2001,7 +2094,7 @@ def test_upload_start_verify_defaults_on(tmp_path: Path, monkeypatch: pytest.Mon
         str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)]
     )
     assert started == {"ok": True, "started": True}
-    _wait_for_terminal_upload(sink)
+    _wait_for_terminal_upload(controller, sink)
     assert captured["cmd"].verify is True  # type: ignore[union-attr]
 
 
@@ -2195,7 +2288,7 @@ def test_upload_events_all_carry_upload_flow(
         str(out_dir), _LOOPBACK, _UPLOAD_DEST, pack_dirs=[str(pack_root)], verify=False
     )
     assert started == {"ok": True, "started": True}
-    _wait_for_terminal_upload(sink)
+    _wait_for_terminal_upload(controller, sink)
     assert sink.events
     assert all(e.get("flow") == "upload" for e in sink.events), sink.events
 

@@ -160,6 +160,21 @@ class GuiJobRunner:
                 # own exceptions and never reach this. The event carries the
                 # job's own flow so it reaches the same page as its siblings.
                 self._emit(error_event(job.flow_name, job.stage_name, exc_tag(exc)))
+            except BaseException as exc:
+                # And the same for a BaseException, which is not an over-broad
+                # catch here but the whole point of a net. The upload engine
+                # models process death as a BaseException on purpose — see
+                # FakeCrash — so that its "unknown exception, retry" handler
+                # cannot swallow a kill. That reasoning is right for the
+                # engine, and it left the GUI with a run that emitted `start`
+                # and then nothing at all, forever: the one state this product
+                # must never be in quietly (#117).
+                #
+                # Re-raised, unlike the branch above, because a shutdown
+                # request has to stay a shutdown request. Telling the operator
+                # is not the same as pretending it did not happen.
+                self._emit(error_event(job.flow_name, job.stage_name, exc_tag(exc)))
+                raise
             finally:
                 self._cleanup(job)
                 self.release()
