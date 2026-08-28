@@ -301,27 +301,90 @@
     if (drawer && !drawer.hidden) rows.scrollTop = rows.scrollHeight;
   }
 
-  function openLogDrawer() {
-    const drawer = el("log-drawer");
-    if (!drawer) return;
-    drawer.hidden = false;
-    const strip = el("log-strip");
-    if (strip) strip.setAttribute("aria-expanded", "true");
-    const rows = el("log-rows");
-    if (rows) rows.scrollTop = rows.scrollHeight;
+  // ─── Disclosures (a button, and the thing it opens) ──────────
+  //
+  // Three of these — About, the activity drawer, the error-kinds flyout — and
+  // each was written separately and forgot something different. About had
+  // Escape; the flyout had neither Escape nor `aria-expanded`, so nothing said
+  // it was open. The drawer was a `role="dialog"` that focus never entered and
+  // Escape never closed, which leaves a keyboard operator opening a panel they
+  // then have to Tab through the whole page to reach.
+  //
+  // This is the one implementation, and what it owns is exactly the part all
+  // three got wrong: the trigger says whether it is open, Escape closes it, a
+  // click elsewhere closes it, and focus goes in and comes back.
+  //
+  // Showing and hiding stay with the caller. The drawer scrolls its rows to
+  // the bottom on the way in and the flyout slides on a class rather than
+  // `hidden`; neither is this function's business.
+  const FOCUSABLE =
+    'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
+
+  function initDisclosure(opts) {
+    const trigger = opts.trigger;
+    const panel = opts.panel;
+    if (!trigger || !panel) return null;
+    const isOpen = opts.isOpen;
+
+    const open = () => {
+      opts.show();
+      trigger.setAttribute("aria-expanded", "true");
+      // Somewhere inside, or the panel itself. A dialog you cannot reach is
+      // the same as a dialog that did not open.
+      const first = panel.querySelector(FOCUSABLE);
+      if (first) {
+        first.focus();
+      } else {
+        panel.tabIndex = -1;
+        panel.focus();
+      }
+    };
+    // `restore` is false for a click elsewhere, and that is a statement of
+    // intent rather than a mechanism: the browser's own mousedown handling
+    // focuses whatever was clicked — or the body, if nothing there takes
+    // focus — after this listener returns, so a trigger.focus() here would be
+    // overwritten a moment later either way. Asking for something that cannot
+    // happen is a worse thing to leave in a file than not asking.
+    const close = (restore) => {
+      if (!isOpen()) return;
+      opts.hide();
+      trigger.setAttribute("aria-expanded", "false");
+      if (restore) trigger.focus();
+    };
+    const toggle = () => (isOpen() ? close(true) : open());
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggle();
+    });
+    document.addEventListener("mousedown", (e) => {
+      if (!isOpen() || panel.contains(e.target) || trigger.contains(e.target)) return;
+      close(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close(true);
+    });
+    return { open, close, toggle, isOpen };
   }
-  function closeLogDrawer() {
+
+  let logDrawer = null;
+  function initLogDrawer() {
     const drawer = el("log-drawer");
-    if (!drawer) return;
-    drawer.hidden = true;
     const strip = el("log-strip");
-    if (strip) strip.setAttribute("aria-expanded", "false");
-  }
-  function toggleLogDrawer() {
-    const drawer = el("log-drawer");
-    if (!drawer) return;
-    if (drawer.hidden) openLogDrawer();
-    else closeLogDrawer();
+    if (!drawer || !strip) return;
+    logDrawer = initDisclosure({
+      trigger: strip,
+      panel: drawer,
+      isOpen: () => !drawer.hidden,
+      show: () => {
+        drawer.hidden = false;
+        const rows = el("log-rows");
+        if (rows) rows.scrollTop = rows.scrollHeight;
+      },
+      hide: () => {
+        drawer.hidden = true;
+      },
+    });
   }
 
   // ─── Banner ───────────────────────────────────────────────────
@@ -1413,18 +1476,47 @@
   // ─── Tabs (one workspace, several modes) ─────────────────────
   // Generic chrome: every [role="tab"] in a .mode-tabs group shows the panel
   // named by its aria-controls and hides its siblings'.
+  //
+  // The keyboard half was missing, so a screen reader announced "tab, 1 of 2"
+  // and then the arrow keys did nothing — and both tabs were separate stops on
+  // the way through the page. A tablist is ONE stop with the arrows moving
+  // inside it: that is the roving tabindex below, and it is the same contract
+  // the nav pill already keeps.
   function initTabs(root) {
     for (const group of $$(".mode-tabs", root || document)) {
       const tabs = $$('[role="tab"]', group);
-      const show = (chosen) => {
+      if (!tabs.length) continue;
+      const show = (chosen, moveFocus) => {
         for (const tab of tabs) {
           const selected = tab === chosen;
           tab.setAttribute("aria-selected", selected ? "true" : "false");
+          tab.tabIndex = selected ? 0 : -1;
           const panel = el(tab.getAttribute("aria-controls"));
           if (panel) panel.hidden = !selected;
         }
+        if (moveFocus) chosen.focus();
       };
-      for (const tab of tabs) tab.addEventListener("click", () => show(tab));
+      for (const tab of tabs) {
+        tab.addEventListener("click", () => show(tab, false));
+        tab.addEventListener("keydown", (e) => {
+          const at = tabs.indexOf(tab);
+          let next = null;
+          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            next = tabs[(at + 1) % tabs.length];
+          } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            next = tabs[(at - 1 + tabs.length) % tabs.length];
+          } else if (e.key === "Home") {
+            next = tabs[0];
+          } else if (e.key === "End") {
+            next = tabs[tabs.length - 1];
+          }
+          if (!next) return;
+          e.preventDefault();
+          show(next, true);
+        });
+      }
+      // Whatever the markup says is selected keeps the only tab stop.
+      show(tabs.find((tab) => tab.getAttribute("aria-selected") === "true") || tabs[0], false);
     }
   }
 
@@ -1462,26 +1554,18 @@
   }
 
   function initAbout() {
-    const btn = el("about-btn");
     const popover = el("about-popover");
-    if (!btn || !popover) return;
-    const close = () => {
-      popover.hidden = true;
-      btn.setAttribute("aria-expanded", "false");
-    };
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const open = popover.hidden;
-      popover.hidden = !open;
-      btn.setAttribute("aria-expanded", open ? "true" : "false");
-    });
-    document.addEventListener("mousedown", (e) => {
-      if (popover.hidden) return;
-      if (popover.contains(e.target) || btn.contains(e.target)) return;
-      close();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") close();
+    if (!popover) return;
+    initDisclosure({
+      trigger: el("about-btn"),
+      panel: popover,
+      isOpen: () => !popover.hidden,
+      show: () => {
+        popover.hidden = false;
+      },
+      hide: () => {
+        popover.hidden = true;
+      },
     });
   }
 
@@ -1537,22 +1621,15 @@
       if (btn.closest(".navpill")) continue;
       btn.addEventListener("click", () => showView(btn.dataset.viewTarget));
     }
-    const strip = el("log-strip");
-    if (strip) strip.addEventListener("click", toggleLogDrawer);
+    initLogDrawer();
     const closeBtn = el("log-drawer-close");
-    if (closeBtn) closeBtn.addEventListener("click", closeLogDrawer);
-    document.addEventListener("mousedown", (e) => {
-      const drawer = el("log-drawer");
-      if (!drawer || drawer.hidden) return;
-      if (drawer.contains(e.target) || (strip && strip.contains(e.target))) return;
-      closeLogDrawer();
-    });
+    if (closeBtn) closeBtn.addEventListener("click", () => logDrawer && logDrawer.close(true));
     document.addEventListener("keydown", (e) => {
       if (e.key !== "l" && e.key !== "L") return;
       const tag = (document.activeElement && document.activeElement.tagName) || "";
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       e.preventDefault();
-      toggleLogDrawer();
+      if (logDrawer) logDrawer.toggle();
     });
     boot();
   }
@@ -1625,9 +1702,7 @@
     showView,
     currentView: () => CURRENT,
     logEvent,
-    openLogDrawer,
-    closeLogDrawer,
-    toggleLogDrawer,
+    initDisclosure,
     resultRow,
     setEmpty,
     showBanner,
