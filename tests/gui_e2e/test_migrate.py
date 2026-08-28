@@ -141,6 +141,66 @@ def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
     assert "anast destination init" in guidance
 
 
+def test_the_filing_assistant_is_offered_even_when_it_is_not_recommended(gui) -> None:
+    """The one thing Anastomosis can do by itself, on the screen built to offer it.
+
+    `tebra` is the only destination that ships a filing assistant, and it also
+    declares `ccda_import: in_product`, which the router prefers — so the
+    assistant was demoted to a plain "Available" card and the guidance talked
+    only about exporting a document and importing it by hand. A physician
+    following the recommendation never learned the tool could have done the
+    filing (#127).
+
+    The routing is unchanged and this asserts that too: the C-CDA route is still
+    the recommended one. What is fixed is that the choice was never offered.
+    """
+    app = _with_a_ready_assistant(_open(gui))
+    app.choose("#migrate-destination", CANNED_DESTINATION)
+    app.page.wait_for_timeout(200)
+
+    routes = app.page.locator("#migrate-routes").text_content() or ""
+    assert "Transfer document (C-CDA)" in routes
+    recommended = app.page.locator(
+        '#migrate-routes .result[data-chosen="true"] .route-name'
+    ).all_text_contents()
+    assert recommended == ["Transfer document (C-CDA)"], recommended
+
+    guidance = app.page.locator("#migrate-guidance").text_content() or ""
+    assert "file these charts into the destination for you" in guidance, guidance
+    assert "browser window it controls" in guidance, guidance
+    # And it says why the other one leads, so the choice is an informed one.
+    assert "the destination's own supported import" in guidance, guidance
+
+
+def test_a_destination_with_no_route_is_not_offered_an_assistant(gui) -> None:
+    """Six of the thirteen shipped destinations have no viable route at all.
+
+    Every transit map carries all three option kinds — that is the shape, not a
+    claim — so the paragraph has to key on `viable`, not on the option existing.
+    `advancedmd` is one of the six: three options, none of them usable.
+    """
+    from stub import _NullSink  # type: ignore[import-not-found]
+
+    from anastomosis.gui.controller import GuiController
+
+    # The real map for a destination with nothing viable, from the real
+    # controller — a hand-built payload here could drift from the router and
+    # this test would keep passing while the shape it models no longer exists.
+    nothing_viable = GuiController(_NullSink()).destination_status("advancedmd")
+    assert nothing_viable["transit"]["chosen"] is None, nothing_viable
+    app = gui(canned={"destination_status": nothing_viable})
+    app.show("migrate")
+    app.choose("#migrate-destination", CANNED_DESTINATION)
+    app.page.wait_for_timeout(200)
+
+    marks = app.page.locator("#migrate-routes .route-mark").all_text_contents()
+    assert marks and all(mark.strip() == "Not available" for mark in marks), marks
+
+    guidance = app.page.locator("#migrate-guidance").text_content() or ""
+    assert "No route to this destination is available yet" in guidance
+    assert "file these charts into the destination for you" not in guidance, guidance
+
+
 def test_continue_on_uploads_carries_the_context(gui) -> None:
     """The handoff switches view AND pre-fills what Uploads would ask for."""
     app = _with_a_ready_assistant(_open(gui))
