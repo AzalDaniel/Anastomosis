@@ -569,8 +569,15 @@
     el("uploads-search").addEventListener("input", renderSearch);
     el("uploads-cal-prev").addEventListener("click", () => navigateMonth(-1));
     el("uploads-cal-next").addEventListener("click", () => navigateMonth(1));
-    el("uploads-kinds-btn").addEventListener("click", () => {
-      el("uploads-kinds").classList.toggle("show");
+    // It slid open on a class and there it stayed: no aria-expanded, no
+    // Escape, no click-elsewhere, and no close button either.
+    const kinds = el("uploads-kinds");
+    Shell.initDisclosure({
+      trigger: el("uploads-kinds-btn"),
+      panel: kinds,
+      isOpen: () => kinds.classList.contains("show"),
+      show: () => kinds.classList.add("show"),
+      hide: () => kinds.classList.remove("show"),
     });
 
     Shell.onReady((live) => {

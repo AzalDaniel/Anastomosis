@@ -290,7 +290,8 @@
             <span>Each one appears here as it goes, with what happened to it and when.</span>
           </div>
           <div class="actions">
-            <button class="btn btn-quiet" id="uploads-kinds-btn" type="button">What went wrong</button>
+            <button class="btn btn-quiet" id="uploads-kinds-btn" type="button"
+                    aria-expanded="false" aria-controls="uploads-kinds">What went wrong</button>
           </div>
         </section>
 
@@ -339,14 +340,14 @@
         </div>
 
         <div class="mode-tabs" role="tablist" aria-label="What to teach">
-          <button type="button" class="mode-tab" role="tab" data-mode="layout" aria-selected="true"
-                  aria-controls="teach-layout">Document layout</button>
-          <button type="button" class="mode-tab" role="tab" data-mode="format" aria-selected="false"
-                  aria-controls="teach-format">Export format</button>
+          <button type="button" class="mode-tab" role="tab" id="teach-tab-layout" data-mode="layout"
+                  aria-selected="true" aria-controls="teach-layout">Document layout</button>
+          <button type="button" class="mode-tab" role="tab" id="teach-tab-format" data-mode="format"
+                  aria-selected="false" aria-controls="teach-format">Export format</button>
         </div>
 
         <!-- Mode 1: teach a document layout from sample documents. -->
-        <div class="stack" id="teach-layout" role="tabpanel" aria-label="Document layout">
+        <div class="stack" id="teach-layout" role="tabpanel" aria-labelledby="teach-tab-layout">
           <div class="panel">
             <h2>Teach a document layout</h2>
             <div class="step-line" id="layout-step">Step 1 of 2 — look at the samples.</div>
@@ -393,7 +394,7 @@
         </div>
 
         <!-- Mode 2: teach an export format from one example file. -->
-        <div class="stack" id="teach-format" role="tabpanel" aria-label="Export format" hidden>
+        <div class="stack" id="teach-format" role="tabpanel" aria-labelledby="teach-tab-format" hidden>
           <div class="panel">
             <h2>Teach an export format</h2>
             <div class="step-line" id="format-step">Step 1 of 2 — look at the example.</div>
