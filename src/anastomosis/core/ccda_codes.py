@@ -40,6 +40,7 @@ __all__ = [
     "OID_SNOMED",
     "OID_SSN",
     "SDTC",
+    "TPL_SEVERITY",
     "V3",
     "XSI",
 ]
@@ -54,6 +55,13 @@ OID_SSN = "2.16.840.1.113883.4.1"
 OID_SNOMED = "2.16.840.1.113883.6.96"
 OID_ICD10 = "2.16.840.1.113883.6.90"
 OID_RXNORM = "2.16.840.1.113883.6.88"
+
+# The allergy Severity Observation template. The builder stamps it on the inner
+# observation; the parser keys severity on it and reads displayName off nothing
+# else. It lived here as a named constant on the writer's side and a bare string
+# on the reader's, which is the one shape the mirror test cannot see — so if the
+# two drifted, severity would simply stop coming back and every test would pass.
+TPL_SEVERITY = "2.16.840.1.113883.10.20.22.4.8"
 
 # Section LOINC codes: what the builder emits and what the parser dispatches on.
 # A section code the parser does not know is captured as foreign narrative, so a

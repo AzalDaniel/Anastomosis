@@ -78,8 +78,19 @@ ever-growing blob that drowned the real entries. The entries now come back
 discrete and are re-emitted as a carry-forward appendix, deduplicated against
 this generation's own by `_carried_forward` — identical entries collapse,
 distinct ones survive at their multiplicity, and the document carries exactly
-one 51899-3 section stamped with its generation number. **The ledger reaches a
-fixed point at generation 2.**
+one 51899-3 section stamped with its generation number.
+
+**The ledger is bounded: it stops growing once the record's own ids stop
+moving, and never grows again.** Which generation that lands on depends on the
+chart. A chart whose canonical ids survive re-ingest verbatim settles at
+generation 2. A chart whose patient id the parser re-derives on first ingest
+settles one generation later, because `document_id` defaults to a uuid5 over
+the patient id, so the derived id shifts once alongside it and narrates one
+extra entry. On the repository's richest test record the entry counts run
+26 → 66 → 67 → 67 → 67.
+
+The bound is the property worth having and the one the tests pin; the exact
+generation is not a promise this format can make about an arbitrary chart.
 
 ### 2. Truly unrecoverable losses (`DECLARED_LOSSES`)
 
