@@ -708,7 +708,7 @@ def test_source_document_metadata_rides_the_loss_narrative(tmp_path: Path) -> No
 # nobody can read. The exporter now stamps the section and the parser recovers
 # its entries discretely, so each generation carries its own entries plus the
 # prior ledger DEDUPLICATED: identical entries collapse, distinct ones all
-# survive, and the ledger reaches a fixed point.
+# survive, and the ledger stops growing.
 
 
 def _generation_record() -> PatientRecord:
@@ -807,7 +807,12 @@ def test_three_generations_keep_every_distinct_loss_entry(tmp_path: Path) -> Non
 def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path) -> None:
     """Identical entries must not multiply: once the chart has been through one
     full round trip the ledger stops growing. An unbounded ledger is the
-    regression this guards."""
+    regression this guards.
+
+    This record's ids survive re-ingest verbatim, which is the fastest case —
+    it settles at generation 2. ``test_ledger_is_bounded_for_a_record_whose_id_
+    is_rederived`` covers the slower one.
+    """
     documents = _generations(_generation_record(), 3, tmp_path)
     counts = [len(_entries_of(document)) for document in documents]
     assert counts[1] == counts[2], f"loss ledger still growing across generations: {counts}"
@@ -822,6 +827,32 @@ def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path
     assert not any(EXT_PRIOR_LOSS_NARRATIVE in entry for entry in _entries_of(documents[2]))
 
 
+def test_ledger_is_bounded_for_a_record_whose_id_is_rederived(tmp_path: Path) -> None:
+    """The bound holds for a chart that needs an extra generation to reach it.
+
+    ``document_id`` defaults to a uuid5 over the patient id. A chart whose id
+    the parser re-derives on first ingest therefore gets a different derived
+    document id on its second export, which narrates one entry the first pass
+    could not — so the ledger settles a generation later than one whose ids
+    survive verbatim. Both settle; only the generation differs. The docs used to
+    promise generation 2 flatly, which is true only of the fast case, so the
+    growth this guards could have run a full generation unnoticed.
+    """
+    documents = _generations(_rich_record(), 5, tmp_path)
+    counts = [len(_entries_of(document)) for document in documents]
+    assert counts[2] == counts[3] == counts[4], f"ledger still growing: {counts}"
+    # Bounded, not merely equal in count: entry for entry, modulo the
+    # regenerated canonical ids inside paths that the dedupe key erases.
+    keys = [sorted(_entry_key(entry) for entry in _entries_of(d)) for d in documents[2:]]
+    assert keys[0] == keys[1] == keys[2], "the ledger's contents keep churning"
+    # And the extra generation really is needed — asserting it at 2 would be a
+    # promise this record breaks.
+    assert counts[1] < counts[2], (
+        f"this record no longer needs the extra generation ({counts}); if that is "
+        "deliberate, the fast case is now the only case and the docs should say so"
+    )
+
+
 def _entries_of(document: bytes) -> list[str]:
     """The loss-ledger entries of an exported document, read straight off the
     emitted paragraphs (no re-ingest — this is what the document SAYS)."""
@@ -832,6 +863,106 @@ def _entries_of(document: bytes) -> list[str]:
         for node in section.findall(f"{{{V3}}}text/{{{V3}}}paragraph")
         if (text := node.text)
     ]
+
+
+# --- a re-rendered ledger: mixed narrative content ---------------------------
+#
+# A document this tool wrote, passed through a system that re-rendered the
+# ledger as a table or a list, or hand-edited. The stamp survives; the shape of
+# the narrative does not. Only `<paragraph>` children used to be collected, with
+# the whole `<text>` kept as a single entry when there were NONE — so a section
+# holding one paragraph AND a table lost the table outright. It reached neither
+# the carried-forward ledger nor the ordinary foreign-narrative key, and did not
+# survive re-export: a silent content drop inside the mechanism whose entire job
+# is to prevent silent content drops.
+
+
+def _stamped_mixed_ledger(generation: str = "1") -> str:
+    """A stamped ledger whose text holds one of everything a renderer might
+    leave behind: a paragraph, loose text, a table and a list."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda4"/>
+  <title>Re-rendered CCD</title>
+  <recordTarget><patientRole>
+    <id root="2.16.840.1.113883.19.5" extension="feedface-0000-0000-0000-0000000000f1"/>
+    <patient><name><given>Mix</given><family>Content</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <templateId root="{LOSS_NARRATIVE_TEMPLATE_ROOT}" extension="1"/>
+      <id root="{LOSS_NARRATIVE_GENERATION_ROOT}" extension="{generation}"/>
+      <code code="{LOINC_EXTENSIONS}" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>{LOSS_NARRATIVE_TITLE}</title>
+      <text>LOOSE-LEAD
+        <paragraph>synthetic:AlphaField = one</paragraph>
+        LOOSE-TAIL
+        <table><tbody><tr><td>synthetic:BetaField</td><td>two</td></tr></tbody></table>
+        <list><item>synthetic:GammaField = three</item></list>
+      </text>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_mixed_content_ledger_keeps_every_narrative_node(tmp_path: Path) -> None:
+    """Paragraph, table, list and loose text all come back, and all re-export.
+
+    Before the fix the table and the list were silently dropped on ingest: the
+    paragraph was found, so the whole-text fallback never fired, and nothing
+    else was ever looked at.
+    """
+    source_doc = tmp_path / "mixed.xml"
+    source_doc.write_text(_stamped_mixed_ledger(), encoding="utf-8")
+    ingested = parse_document(source_doc)
+
+    recovered = " | ".join(_loss_entries(ingested))
+    for field in ("AlphaField", "BetaField", "GammaField", "LOOSE-LEAD", "LOOSE-TAIL"):
+        assert field in recovered, f"{field} lost on ingest"
+
+    # And it survives the trip back out — the entries are re-emitted as this
+    # generation's carry-forward appendix, not stranded in the parsed record.
+    exported = tmp_path / "mixed_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reexported = " | ".join(_entries_of(exported.read_bytes()))
+    for field in ("AlphaField", "BetaField", "GammaField", "LOOSE-LEAD", "LOOSE-TAIL"):
+        assert field in reexported, f"{field} lost on re-export"
+
+
+def test_a_comment_inside_the_ledger_does_not_abort_the_parse(tmp_path: Path) -> None:
+    """lxml gives a comment a CALLABLE tag and raises on ``itertext()``, so
+    walking the children without checking would turn one stray comment into a
+    failed ingest of the whole document."""
+    source_doc = tmp_path / "commented.xml"
+    source_doc.write_text(
+        _stamped_mixed_ledger().replace(
+            "<paragraph>synthetic:AlphaField = one</paragraph>",
+            "<!-- rendered by a downstream system -->\n"
+            "<paragraph>synthetic:AlphaField = one</paragraph>",
+        ),
+        encoding="utf-8",
+    )
+    entries = " | ".join(_loss_entries(parse_document(source_doc)))
+    assert "AlphaField" in entries
+    assert "BetaField" in entries
+
+
+def test_a_crafted_generation_stamp_does_not_abort_the_ingest(tmp_path: Path) -> None:
+    """``str.isdigit()`` is true for characters ``int()`` refuses — a superscript
+    among them — so guarding with one and converting with the other left a gap a
+    crafted document could fall through, raising out of ``parse_document`` and
+    taking the whole ingest with it. An unreadable counter is a missing counter,
+    not a failed document: the entries are what matter.
+    """
+    source_doc = tmp_path / "crafted.xml"
+    source_doc.write_text(_stamped_mixed_ledger(generation="\u00b2"), encoding="utf-8")
+
+    ingested = parse_document(source_doc)  # must not raise
+    prior = ingested.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]
+    assert isinstance(prior, dict)
+    assert prior["generation"] is None, "an unreadable stamp reads as absent, not as a number"
+    assert "AlphaField" in " | ".join(_loss_entries(ingested)), "content lost with the counter"
 
 
 # A third party's 51899-3 section: same LOINC, no anastomosis stamp, its own

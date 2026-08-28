@@ -519,8 +519,14 @@ def test_pipeline_never_logs_patient_names(
         pdfs_dir.mkdir()
         entries: list[RenderEntry] = []
         for rec in loaded:
-            for enc in rec.encounters:
-                fname = f"{rec.patient.family_name}_{rec.patient.given_name}_01-02-2020_SOAP.pdf"
+            # One file per encounter, as the engine allocates them. A flat name
+            # shared by all of a patient's encounters would be an index that
+            # maps one chart onto several visits — which the index now refuses,
+            # and which the engine cannot produce.
+            for nth, enc in enumerate(rec.encounters):
+                fname = (
+                    f"{rec.patient.family_name}_{rec.patient.given_name}_01-02-2020_SOAP-{nth}.pdf"
+                )
                 entries.append(
                     RenderEntry(pdf=fname, patient_id=rec.patient.id, encounter_id=enc.id)
                 )
