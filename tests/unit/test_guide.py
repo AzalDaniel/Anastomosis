@@ -130,6 +130,13 @@ def test_a_named_command_is_untouched_by_the_callback() -> None:
     assert "anastomosis" in result.output
 
 
+class _TerminalFile(io.StringIO):
+    """A stream that really is a terminal, as far as anything can ask it."""
+
+    def isatty(self) -> bool:
+        return True
+
+
 @pytest.mark.parametrize("stdin_is_tty", [True, False])
 def test_is_interactive_terminal_needs_both_ends(
     monkeypatch: pytest.MonkeyPatch, *, stdin_is_tty: bool
@@ -139,7 +146,7 @@ def test_is_interactive_terminal_needs_both_ends(
             return stdin_is_tty
 
     monkeypatch.setattr("sys.stdin", _Stdin())
-    on_terminal = Console(file=io.StringIO(), force_terminal=True)
+    on_terminal = Console(file=_TerminalFile())
     off_terminal = Console(file=io.StringIO())
     assert guide.is_interactive_terminal(on_terminal) is stdin_is_tty
     assert guide.is_interactive_terminal(off_terminal) is False
@@ -149,7 +156,42 @@ def test_is_interactive_terminal_survives_a_closed_stdin(monkeypatch: pytest.Mon
     closed = io.StringIO()
     closed.close()
     monkeypatch.setattr("sys.stdin", closed)
-    assert guide.is_interactive_terminal(Console(file=io.StringIO(), force_terminal=True)) is False
+    assert guide.is_interactive_terminal(Console(file=_TerminalFile())) is False
+
+
+@pytest.mark.parametrize("variable", ["FORCE_COLOR", "TTY_COMPATIBLE"])
+def test_a_colour_variable_cannot_make_a_redirected_run_look_interactive(
+    monkeypatch: pytest.MonkeyPatch, *, variable: str
+) -> None:
+    """`anast > log` must not open the guided session, whatever the shell exports.
+
+    Both variables are set by ordinary tooling — CI images, `just`/`make`
+    wrappers, terminal multiplexers — and both make Rich report `is_terminal`
+    for a plain file. With one exported, the session used to start, write its
+    menu into the log file, and block on a question nobody could see.
+    """
+
+    class _Stdin:
+        def isatty(self) -> bool:
+            return True  # a person IS at the keyboard
+
+    monkeypatch.setattr("sys.stdin", _Stdin())
+    monkeypatch.setenv(variable, "1")
+    redirected = Console(file=io.StringIO())
+
+    assert redirected.is_terminal, f"{variable} no longer fools Rich; this guard needs rechecking"
+    assert guide.is_interactive_terminal(redirected) is False
+
+
+def test_a_real_terminal_still_opens_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard refuses redirected output and nothing else."""
+
+    class _Stdin:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("sys.stdin", _Stdin())
+    assert guide.is_interactive_terminal(Console(file=_TerminalFile())) is True
 
 
 # --- the menu ----------------------------------------------------------------
