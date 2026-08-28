@@ -199,6 +199,11 @@ def deliver_outputs(
                     "patients": arc.patient_count,
                     "encounters": arc.encounter_count,
                     "pdfs": arc.pdf_count,
+                    # What did NOT arrive. Both were already known at the point
+                    # the deliverer discovered them and went no further than a
+                    # log line; a frontend cannot report a number it is not given.
+                    "missing": arc.missing_count,
+                    "unattributed": arc.unattributed_count,
                 },
             )
         elif dc.kind == "bundle":
@@ -210,7 +215,12 @@ def deliver_outputs(
                 result.records, charts_dir, dc.out_dir, qa_report=result.qa_report
             )
             outcomes["bundle"] = DeliveryOutcome(
-                kind="bundle", out_dir=dc.out_dir, counts={"patients": len(written)}
+                kind="bundle",
+                out_dir=dc.out_dir,
+                counts={
+                    "patients": len(written),
+                    "missing": sum(w.missing_count for w in written),
+                },
             )
         elif dc.kind == "ccda":
             from anastomosis.deliver.ccda_export import deliver_ccda

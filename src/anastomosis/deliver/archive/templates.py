@@ -157,6 +157,9 @@ patient: <a href="../index.html">{{ display_name }}</a>
 </div>
 </header>
 <div class="phi-warning"><strong>PHI WARNING.</strong> Encounter detail; treat as PHI.</div>
+{% if chart_missing %}<div class="missing-chart"><strong>The chart for this visit is missing.</strong>
+It was rendered for this patient, and the file was not there when this archive was built.
+Deliver again from the folder the charts were rendered into.</div>{% endif %}
 <p>
 {% if pdf_name %}<a class="button" href="../pdfs/{{ pdf_name }}">Open rendered chart (PDF)</a>{% endif %}
 <a class="button" href="../index.html">Patient summary</a>
@@ -207,6 +210,10 @@ Where the data lives
 * ``patients/<patient_id>/encounters/*.html`` — per-encounter pages.
 * ``patients/<patient_id>/pdfs/*.pdf``      — rendered chart PDFs.
 * ``index.json``                            — top-level manifest of all patients.
+* ``unattributed/*.pdf``                    — charts that could not be matched to
+  a patient in this run, filed here rather than guessed onto someone. The folder
+  exists only when there were any, and the run summary says how many. Read them
+  before treating the archive as complete.
 
 PHI warning
 -----------
