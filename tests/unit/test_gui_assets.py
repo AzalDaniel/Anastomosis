@@ -176,7 +176,8 @@ def test_app_css_carries_the_components() -> None:
         ".calendar-cell",
         ".log-strip",
         ".progress-bar-fill",
-        ".counter-tile",
+        ".value-n",
+        ".empty-state",
         ".view--leaving",
         ".btn-primary",
         ".btn-secondary",
@@ -321,22 +322,30 @@ def test_machine_shaped_fields_opt_in_to_the_mono_face() -> None:
         assert tag is not None and "class=" not in tag.group(0), f"{field} took a mono face"
 
 
-def test_the_four_status_buckets_have_their_own_grid_cells() -> None:
-    """The counter tiles no longer collide, and only Filed is green (§10.5)."""
+def test_a_count_is_coloured_only_when_it_asks_for_something() -> None:
+    """Colour is earned; success and zero are not states worth shouting about.
+
+    This replaces a check on the counter grid's template areas, which existed
+    because two tiles once shared a cell. There is no grid now — a value display
+    is a number over its name with no container — so the collision it guarded
+    against cannot happen, and what is worth guarding is the colour rule.
+    """
     css = _read("app.css")
-    areas = re.search(r"grid-template-areas:(.+?);", css, re.DOTALL)
-    assert areas is not None, "the counter grid lost its template areas"
-    named = set(re.findall(r"[a-z]+", areas.group(1)))
-    assert named == {"filed", "attention", "progress", "waiting"}
-    placed = dict(re.findall(r'\[data-bucket="(\w+)"\]\s*\{\s*grid-area:\s*(\w+);', css))
-    assert placed == {
-        "filed": "filed",
-        "attention": "attention",
-        "progress": "progress",
-        "waiting": "waiting",
-    }, f"two tiles share a cell: {placed}"
-    assert '[data-bucket="filed"] .counter-value     { color: var(--ok); }' in css
-    assert '[data-bucket="attention"] .counter-value { color: var(--stop); }' in css
+    coloured = dict(
+        re.findall(r'\.value\[data-signal="(\w+)"\] \.value-n \{ color: var\((--\w+)\);', css)
+    )
+    assert coloured == {"attention": "--stop", "progress": "--attention"}, (
+        f"a signal outside the attention family is colouring a number: {coloured}"
+    )
+    assert "--ok" not in css.split(".values {", 1)[1].split(".empty-state", 1)[0], (
+        "success is being coloured — success is the ABSENCE of a coloured number"
+    )
+    zero = '.value[data-zero="true"] .value-n'
+    assert f"{zero} {{ color: var(--ink-secondary); font-weight: 300; }}" in css
+
+    # The uppercase carve-out is bounded to this one label and nothing else.
+    upper = [selector for selector, body in _css_rules(css) if "text-transform: uppercase" in body]
+    assert upper == [".value-k"], f"uppercase escaped the value label: {upper}"
 
 
 # --- the single document ---------------------------------------------------

@@ -43,7 +43,7 @@ svg { display: block; }
 
 /* Numbers that change never jitter (§4). */
 .tnum, .counter-value, .cal-title, .state-count, .kind-count,
-.patients-table, .meta-value { font-variant-numeric: tabular-nums; }
+.patients-table { font-variant-numeric: tabular-nums; }
 
 
 /* ─── 2. Backdrop ────────────────────────────────────────────── */
@@ -638,48 +638,57 @@ svg { display: block; }
 /* ─── 10. Status components ──────────────────────────────────── */
 /* The four buckets (§10.5), each with its own grid cell — no two tiles share
    an area, and "Filed" is the ONLY green one. */
-.counter-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-areas:
-    "filed filed attention attention"
-    "filed filed attention attention"
-    "progress progress waiting waiting";
-  gap: var(--space-3);
+/* Value displays — a number over its name, and no container at all.
+   These were four glass tiles in a 96px grid, each with a sentence underneath
+   restating its own label. A count is already the smallest thing that can be
+   said; boxing it and explaining it twice is what made a screen of four numbers
+   fill half a window. */
+.values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-4) var(--space-6);
 }
-.counter-tile {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-panel);
-  background: var(--surface);
-  border: 1px solid rgba(244, 238, 228, 0.07);
-  box-shadow: var(--glass-highlight);
+.value { display: flex; flex-direction: column; gap: var(--space-1); }
+.value-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-display);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+/* The one place uppercase is allowed, and only here: 12px floor, weight 600,
+   at most three words, never a sentence. Table headers stay sentence case, so
+   the eye has exactly one uppercase idiom to learn. */
+.value-k {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+/* Colour is earned by a number that asks for something. Success is never
+   coloured — success is the absence of a coloured number — and a zero is not a
+   state worth shouting about whatever bucket it belongs to. */
+.value[data-signal="attention"] .value-n { color: var(--stop); }
+.value[data-signal="progress"] .value-n { color: var(--attention); }
+.value[data-zero="true"] .value-n { color: var(--ink-secondary); font-weight: 300; }
+.value--sm .value-n { font-size: var(--text-title); }
+
+/* Empty states: what is not here, then the one thing that fills it. No icon,
+   no illustration, no button, and above all no zeros — four zeros on a screen
+   that has never run is the same lie as "idle" during a live run. */
+.empty-state {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  min-height: 96px;
+  max-width: var(--measure-prose);
 }
-.counter-tile[data-bucket="filed"]     { grid-area: filed; }
-.counter-tile[data-bucket="attention"] { grid-area: attention; }
-.counter-tile[data-bucket="progress"]  { grid-area: progress; }
-.counter-tile[data-bucket="waiting"]   { grid-area: waiting; }
-.counter-label {
-  font-size: var(--text-label);
-  font-weight: 600;
-  color: var(--ink-secondary);
-}
-.counter-value {
-  font-size: var(--text-display);
-  font-weight: 300;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  color: var(--ink);
-}
-.counter-tile[data-bucket="filed"] .counter-value,
-.counter-tile[data-bucket="attention"] .counter-value { font-size: 46px; }
-.counter-tile[data-bucket="filed"] .counter-value     { color: var(--ok); }
-.counter-tile[data-bucket="attention"] .counter-value { color: var(--stop); }
-.counter-tile[data-bucket="progress"] .counter-value  { color: var(--attention); }
-.counter-sub { font-size: var(--text-caption); color: var(--ink-muted); line-height: 1.45; }
+.empty-state b { font-weight: 600; font-size: var(--text-body); color: var(--ink-secondary); }
+.empty-state span { font-size: var(--text-label); color: var(--ink-muted); line-height: 1.5; }
 
 /* One accent per row: a 3px left border, never badge soup (§5). */
 .state-grid {
@@ -712,14 +721,6 @@ svg { display: block; }
 }
 .kind-row span:first-child { font-family: var(--font-mono); }
 
-.meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  font-size: var(--text-caption);
-  color: var(--ink-muted);
-}
-.meta-value { color: var(--ink-secondary); font-weight: 600; }
 
 /* Progress: a flat brand fill. The only motion is a slow opacity pulse, and
    only while a run is actually in flight (§12). */

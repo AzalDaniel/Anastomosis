@@ -871,7 +871,7 @@
     if (!panel || !body) return;
     body.innerHTML = "";
     if (!patients.length) {
-      panel.hidden = true;
+      setEmpty(panel.id, true);
       return;
     }
     const table = document.createElement("table");
@@ -893,12 +893,22 @@
       table.appendChild(tr);
     }
     body.appendChild(table);
-    panel.hidden = false;
+    setEmpty(panel.id, false);
+  }
+
+  //: A region keeps its heading whether or not it has rows; what swaps is the
+  //: list and the one sentence saying what would put rows in it. Every empty
+  //: state is `<listId>-empty` in the markup, so there is nothing to wire.
+  function setEmpty(listId, isEmpty) {
+    const list = el(listId);
+    const empty = el(`${listId}-empty`);
+    if (list) list.hidden = isEmpty;
+    if (empty) empty.hidden = !isEmpty;
   }
 
   function clearPatients(panel, body) {
     if (body) body.innerHTML = "";
-    if (panel) panel.hidden = true;
+    if (panel) setEmpty(panel.id, true);
   }
 
   // `summaryId` is the run's OWN id (from its `done` event), so a rapid second
@@ -1377,6 +1387,7 @@
     openLogDrawer,
     closeLogDrawer,
     toggleLogDrawer,
+    setEmpty,
     showBanner,
     hideBanner,
     stageLabel,

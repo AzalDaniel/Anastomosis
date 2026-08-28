@@ -104,9 +104,13 @@
         <!-- Per-patient detail for a finished run: fetched over the bridge after
              `done` and painted with textContent. Shown locally, never logged,
              never carried on an event. -->
-        <section class="panel" id="charts-patients" aria-label="Patients in this run" hidden>
+        <section class="panel" aria-label="Patients in this run">
           <h3>Patients in this run</h3>
-          <div id="charts-patients-body"></div>
+          <div class="empty-state" id="charts-patients-empty">
+            <b>No run yet.</b>
+            <span>Choose Rebuild charts above; every patient Anastomosis finds is listed here.</span>
+          </div>
+          <div id="charts-patients" hidden><div id="charts-patients-body"></div></div>
         </section>
       </section>
 
@@ -134,10 +138,12 @@
             </div>
             <div class="field-help">The system these charts are moving into.</div>
           </div>
-          <div class="route-list" id="migrate-routes"></div>
-          <div class="prose" id="migrate-guidance">
-            <p>Choose a destination to see how charts can reach it.</p>
+          <div class="route-list" id="migrate-routes" hidden></div>
+          <div class="empty-state" id="migrate-routes-empty">
+            <b>Choose a destination above.</b>
+            <span>The ways charts can reach it are listed here, with what each one needs.</span>
           </div>
+          <div class="prose" id="migrate-guidance" hidden></div>
           <div class="actions" id="migrate-handoff-actions" hidden>
             <button class="btn btn-secondary" id="migrate-continue" type="button">Continue on Uploads</button>
           </div>
@@ -149,9 +155,13 @@
           <div class="prose" id="migrate-result" hidden></div>
         </div>
 
-        <section class="panel" id="migrate-patients" aria-label="Patients in this run" hidden>
+        <section class="panel" aria-label="Patients in this run">
           <h3>Patients in this run</h3>
-          <div id="migrate-patients-body"></div>
+          <div class="empty-state" id="migrate-patients-empty">
+            <b>No transfer yet.</b>
+            <span>Choose a destination and start the transfer; every patient it moves is listed here.</span>
+          </div>
+          <div id="migrate-patients" hidden><div id="migrate-patients-body"></div></div>
         </section>
       </section>
 
@@ -167,7 +177,6 @@
              connection is loopback-only, hard-gated on the Python side. -->
         <div class="panel">
           <h2>File charts into the destination</h2>
-          <div class="safety-warning" id="uploads-safety" role="alert"></div>
           <div class="field">
             <label for="uploads-results-dir">Results folder</label>
             <input class="is-path" type="text" id="uploads-results-dir" placeholder="C:\Users\you\Documents\anastomosis-charts" />
@@ -226,6 +235,10 @@
             </div>
           </details>
 
+          <!-- Beside the button, not at the top of the panel: a warning read
+               before the form is filled in is a warning read before it means
+               anything. -->
+          <div class="safety-warning" id="uploads-safety" role="alert"></div>
           <div class="actions">
             <button class="btn btn-primary" id="uploads-start" type="button">Start filing</button>
             <button class="btn btn-secondary" id="uploads-stop" type="button">Stop</button>
@@ -233,32 +246,29 @@
           </div>
         </div>
 
-        <section class="counter-grid" id="uploads-counters" aria-label="Filing progress" hidden>
-          <div class="counter-tile" data-bucket="filed">
-            <div class="counter-label">Filed</div>
-            <div class="counter-value" id="uploads-count-filed">0</div>
-            <div class="counter-sub">Confirmed in the destination.</div>
+        <section class="values" id="uploads-counters" aria-label="Filing progress" hidden>
+          <div class="value" data-zero="true" data-bucket="filed">
+            <span class="value-n" id="uploads-count-filed">0</span>
+            <span class="value-k">Filed</span>
           </div>
-          <div class="counter-tile" data-bucket="attention">
-            <div class="counter-label">Needs attention</div>
-            <div class="counter-value" id="uploads-count-attention">0</div>
-            <div class="counter-sub">Stopped or failed a check — review these.</div>
+          <div class="value" data-zero="true" data-bucket="attention" data-signal="attention">
+            <span class="value-n" id="uploads-count-attention">0</span>
+            <span class="value-k">Needs attention</span>
           </div>
-          <div class="counter-tile" data-bucket="progress">
-            <div class="counter-label">In progress</div>
-            <div class="counter-value" id="uploads-count-progress">0</div>
-            <div class="counter-sub">Being filed right now.</div>
+          <div class="value" data-zero="true" data-bucket="progress" data-signal="progress">
+            <span class="value-n" id="uploads-count-progress">0</span>
+            <span class="value-k">In progress</span>
           </div>
-          <div class="counter-tile" data-bucket="waiting">
-            <div class="counter-label">Waiting</div>
-            <div class="counter-value" id="uploads-count-waiting">0</div>
-            <div class="counter-sub">Not started, including charts you chose to skip.</div>
+          <div class="value" data-zero="true" data-bucket="waiting">
+            <span class="value-n" id="uploads-count-waiting">0</span>
+            <span class="value-k">Waiting</span>
           </div>
         </section>
 
         <section class="panel" id="uploads-detail" aria-label="What has been filed" hidden>
           <h3>What has been filed</h3>
-          <div class="meta-row" id="uploads-meta"></div>
+          <div class="values" id="uploads-meta"></div>
+          <div class="field-help" id="uploads-when"></div>
           <div class="field search-field">
             <span class="icon" data-icon="search"></span>
             <input class="is-id" type="search" id="uploads-search" autocomplete="off" spellcheck="false"

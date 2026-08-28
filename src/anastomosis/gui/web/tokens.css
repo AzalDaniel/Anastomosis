@@ -66,6 +66,11 @@
   --text-title:   24px;
   --text-display: 34px;
 
+  /* How wide a line of prose may run before it is hard to track back to the
+     next one. Applies to help text, panel notes and empty states — never to a
+     table or a form row. */
+  --measure-prose: 64ch;
+
   /* ground and ink — warm, never navy, never gray-blue (§1) */
   --ground:        oklch(0.16 0.013 50);
   --ground-deep:   oklch(0.125 0.012 50);

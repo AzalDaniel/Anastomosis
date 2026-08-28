@@ -49,6 +49,20 @@ def test_uploads_surfaces_the_shared_machine_warning(gui) -> None:
 
     assert app.called("upload_safety_notice")
     assert "never stores your EHR sign-in" in app.text("#uploads-safety")
+    # And it sits beside the button it is about. At the top of the panel it was
+    # read before the form was filled in, which is before it means anything.
+    order = app.page.evaluate(
+        """() => {
+          const warning = document.getElementById('uploads-safety');
+          const start = document.getElementById('uploads-start');
+          return {before: !!(warning.compareDocumentPosition(start)
+                    & Node.DOCUMENT_POSITION_FOLLOWING),
+                  gap: Math.round(start.getBoundingClientRect().top
+                    - warning.getBoundingClientRect().bottom)};
+        }"""
+    )
+    assert order["before"], "the warning is no longer above Start filing"
+    assert order["gap"] < 40, f"the warning is {order['gap']}px from the button it warns about"
 
 
 def test_reading_the_record_fills_the_buckets_and_the_calendar(gui) -> None:
@@ -66,6 +80,17 @@ def test_reading_the_record_fills_the_buckets_and_the_calendar(gui) -> None:
     assert app.text("#uploads-count-waiting") == "4"
     total = sum(CANNED_LEDGER_COUNTS.values())
     assert f"{total}" in app.text("#uploads-meta")
+    # A zero is never coloured, whatever bucket it is in.
+    zeroes = page.evaluate(
+        """() => [...document.querySelectorAll('#uploads-counters .value')]
+             .map(v => [v.dataset.bucket, v.dataset.zero])"""
+    )
+    assert dict(zeroes) == {
+        "filed": "false",
+        "attention": "false",
+        "progress": "false",
+        "waiting": "false",
+    }, zeroes
 
     # One cell per non-empty state, in plain English, with the technical id
     # available on the tooltip.
@@ -77,12 +102,13 @@ def test_reading_the_record_fills_the_buckets_and_the_calendar(gui) -> None:
     ids = {cells.nth(i).get_attribute("title") for i in range(cells.count())}
     assert ids == set(CANNED_LEDGER_COUNTS)
 
-    # The run row: ids and ISO stamps only.
-    meta = app.text("#uploads-meta")
-    assert str(CANNED_RUN["started_at"]) in meta and "still running" in meta
+    # When the run happened is a sentence: a timestamp is not a value display.
+    when = app.text("#uploads-when")
+    assert str(CANNED_RUN["started_at"]) in when and "still running" in when
     # The finished-chart count came from the results folder.
     assert app.last_args("upload_manifest_preview") == [_OUT_DIR]
-    assert "Ready to file:" in meta and "7" in meta
+    meta = app.text("#uploads-meta")
+    assert "Ready to file" in meta and "7" in meta
 
     # The calendar opens on the run's month with a halo on its start day.
     assert app.text("#uploads-cal-title") == "August 2026"
