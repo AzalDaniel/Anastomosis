@@ -588,7 +588,24 @@ def build_record_context(
         _medication_view(m, rx_by_id, record, tz) for m in index.historical_medications
     ]
     # "as of" = render-day, NOT encounter date (GOLD §5#9).
-    meds_as_of = _dt.date.today().strftime("%m/%d/%Y")  # noqa: DTZ011 — display-only render-day
+    #
+    # In the PACK's timezone, through the same `to_local` every other date in
+    # this module goes through. It was `date.today()`, which is the SYSTEM local
+    # date — so the same record rendered at the same instant on two machines
+    # produced two different charts:
+    #
+    #     TZ=Pacific/Kiritimati  as-of 08/28/2026
+    #     TZ=Etc/GMT+12          as-of 08/27/2026
+    #
+    # A chart that depends on where the operator is sitting is not reproducible,
+    # and reproducibility is what the rest of this module's date handling is for.
+    #
+    # This does NOT settle whether render-day is the right stamp at all: it
+    # collides with `DateStalenessCheck`, which reads today's date on an old
+    # chart as a template calling now() by mistake, so this pack warns on every
+    # document it produces. That half of #194 changes what the chart SAYS and is
+    # the maintainer's call; this half is machine-dependence and is not.
+    meds_as_of = to_local(_dt.datetime.now(_dt.UTC), tz).strftime("%m/%d/%Y")
 
     # --- past medical history --------------------------------------------------
     pmh_sections = [

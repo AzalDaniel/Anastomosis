@@ -469,9 +469,50 @@ def test_payment_never_renders_raw_none(pack: LoadedPack, records: list[Any]) ->
 def test_meds_as_of_is_render_day_not_encounter_date(pack: LoadedPack, records: list[Any]) -> None:
     import datetime as dt
 
+    from anastomosis.core.timeutil import to_local
+
     html = _render_all(pack, records)[0]
-    today = dt.date.today().strftime("%m/%d/%Y")  # mirrors context render-day
+    # Render-day in the PACK's timezone — the same `to_local` every other date
+    # in the module goes through. `date.today()` is the system local date, which
+    # is what made this stamp depend on where the operator was sitting (#194).
+    today = to_local(dt.datetime.now(dt.UTC), pack.manifest.timezone).strftime("%m/%d/%Y")
     assert f"Current Medications (as of {today})" in html
+
+
+def test_the_as_of_stamp_follows_the_pack_not_the_machine(
+    pack: LoadedPack, records: list[Any]
+) -> None:
+    """Two clinics rendering the same record at the same moment got two charts.
+
+    `date.today()` reads the SYSTEM local date; every other date in this module
+    goes through `to_local(..., tz)` and lands in the practice's timezone. So
+    the stamp moved with the operator, and #194 measured it across the date
+    line: 08/28/2026 under `TZ=Pacific/Kiritimati`, 08/27/2026 under
+    `TZ=Etc/GMT+12`, same instant, same record.
+
+    Driven through the PACK's timezone rather than the process's, which is both
+    portable — Windows has no `time.tzset()`, and setting `TZ` does not move
+    its clock — and a stronger statement: the stamp has to TRACK the pack, not
+    merely ignore the machine. The two zones below are 26 hours apart, so their
+    local dates always differ, whenever this runs.
+    """
+    import datetime as dt
+
+    from anastomosis.core.timeutil import to_local
+
+    def stamp_for(zone: str) -> str:
+        cfg = {**_cfg(pack), "timezone": zone}
+        context = pack.build_context(records[0].encounters[0], records[0], cfg)
+        return str(context["meds_as_of"])
+
+    east, west = "Pacific/Kiritimati", "Etc/GMT+12"  # UTC+14 and UTC-12
+    now = dt.datetime.now(dt.UTC)
+
+    assert stamp_for(east) == to_local(now, east).strftime("%m/%d/%Y")
+    assert stamp_for(west) == to_local(now, west).strftime("%m/%d/%Y")
+    assert stamp_for(east) != stamp_for(west), (
+        "the stamp is the same in two zones a day apart — it is not reading the pack's"
+    )
 
 
 def test_escript_line_field_order(pack: LoadedPack, records: list[Any]) -> None:
