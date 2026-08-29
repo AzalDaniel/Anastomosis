@@ -19,6 +19,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -203,3 +204,68 @@ def test_a_temp_whose_pid_will_not_parse_is_left_alone(tmp_path: Path) -> None:
     stranger.write_text("someone else's file", encoding="utf-8")
     atomic_write_text(target, "{}")
     assert stranger.exists(), "the sweep deleted a temp it could not identify"
+
+
+def test_a_pid_too_large_to_signal_keeps_the_file_and_the_write(tmp_path: Path) -> None:
+    """``OverflowError`` is not an ``OSError``.
+
+    ``int()`` takes any run of digits a filename offers, and ``os.kill`` raises
+    on converting one too large for a C int — a class the first version of the
+    liveness probe did not catch, so it escaped the sweep and took the caller's
+    write with it. A courtesy that cannot answer must cost neither the file nor
+    the write.
+    """
+    target = tmp_path / "report.json"
+    huge = tmp_path / f".{target.name}.{2**70}.tmp"
+    huge.write_text("someone else's file", encoding="utf-8")
+
+    atomic_write_text(target, "{}")  # must not raise
+
+    assert target.read_text(encoding="utf-8") == "{}", "the write survived the unanswerable pid"
+    assert huge.exists(), "an unanswerable pid is not a dead one"
+
+
+def test_a_pid_alive_under_another_uid_keeps_its_file() -> None:
+    """``PermissionError`` means alive, not gone.
+
+    A pid running under another uid answers EPERM rather than "no such
+    process". Reading that as dead would delete the temp of a live writer we
+    merely lack permission to probe — the exact over-clean this sweep must
+    never do, and a mutation flipping only this branch passes the rest of the
+    suite. Asserted by making the kernel give that answer rather than by
+    finding a process that happens to produce it: as root, nothing does.
+    """
+    from anastomosis.core import atomic
+
+    with mock.patch.object(atomic.os, "kill", side_effect=PermissionError):
+        assert atomic._writer_is_gone(".Chart.pdf.4242.tmp") is False
+
+
+def test_a_platform_with_no_liveness_probe_reaps_nothing(tmp_path: Path) -> None:
+    """The non-POSIX early return is load-bearing, not defensive padding.
+
+    ``os.kill(pid, 0)`` on Windows does not ask whether a process is alive — it
+    calls TerminateProcess. With no question available to ask, every temp stays.
+    Deleting the guard passes the whole suite on Linux, so this pins it by
+    faking the platform rather than by needing a Windows runner.
+    """
+    from anastomosis.core import atomic
+
+    with mock.patch.object(atomic.os, "name", "nt"):
+        assert atomic._writer_is_gone(".Chart.pdf.999999.tmp") is False
+
+
+def test_a_bracket_in_a_chart_name_is_not_a_glob_pattern(tmp_path: Path) -> None:
+    """A patient's chart name is data the sweep matches on, not a pattern.
+
+    ``safe_name`` keeps ``[`` and ``]``, and an unescaped bracket makes the
+    glob ask a different question than the one intended — matching another
+    chart's temps, or silently none at all.
+    """
+    target = tmp_path / "Chart_[A-Z].pdf"
+    dead = tmp_path / f".{target.name}.999999.tmp"
+    dead.write_bytes(b"%PDF-1.7 half a chart")
+
+    atomic_write_text(target, "ours")
+
+    assert not dead.exists(), "the bracketed name never matched its own temp"

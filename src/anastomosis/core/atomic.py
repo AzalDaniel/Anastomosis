@@ -17,6 +17,7 @@ beside its own target by writers that are no longer alive; see
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 from collections.abc import Iterator
@@ -59,8 +60,14 @@ def _writer_is_gone(tmp_name: str) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
-    except OSError:
-        return False  # EPERM and friends: alive, just not ours to signal
+    except (OSError, OverflowError):
+        # EPERM and friends: alive, just not ours to signal. OverflowError is
+        # not an OSError, so without it here a pid too large for a C int would
+        # escape this function and take the caller's write down with it —
+        # `int()` accepts any run of digits a filename offers, `os.kill` raises
+        # on the conversion. Reaping is a courtesy; anything it cannot answer
+        # keeps the file and must never cost the write.
+        return False
     return False
 
 
@@ -80,7 +87,11 @@ def _reap_dead_temps(target: Path) -> None:
     names, is what keeps our temp and a concurrent run's temp safe.
     """
     reaped = 0
-    for stale in target.parent.glob(f".{target.name}.*.tmp"):
+    # The target's own name is data, not pattern: `safe_name` does not strip
+    # `[`, `]`, `*` or `?`, and an unescaped one of those turns this glob into
+    # a different question than the one being asked — quietly matching another
+    # chart's temps, or none at all.
+    for stale in target.parent.glob(f".{glob.escape(target.name)}.*.tmp"):
         if not _writer_is_gone(stale.name):
             continue
         try:
