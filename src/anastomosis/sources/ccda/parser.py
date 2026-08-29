@@ -723,7 +723,6 @@ def _encounters(section: _Element, patient_id: str, source_file: str) -> list[En
                 date_of_service=_ts_date(enc, "v3:effectiveTime")
                 or _ts_date(enc, "v3:effectiveTime/v3:low"),
                 encounter_type=encounter_type,
-                note_type=encounter_type,
                 provenance=_prov(source_file, _val_attr(enc, "v3:id", "root")),
             )
         )
@@ -748,6 +747,74 @@ def _note_encounters(section: _Element, patient_id: str, source_file: str) -> li
             )
         )
     return out
+
+
+_ENCOUNTER_LIST_FIELDS = ("sections", "addenda", "diagnosis_ids")
+_ENCOUNTER_IDENTITY_FIELDS = ("id", "patient_id", "provenance")
+
+
+def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
+    """Whether two encounters under one id are halves of one visit.
+
+    They are only if nothing they BOTH state disagrees. Two entries describing
+    genuinely different visits — different dates, different types — happen in
+    ordinary C-CDA and must stay two objects, so the archive refuses rather than
+    writing one page over the other. Folding those would invent a hybrid visit
+    that happened on neither day, which is the misfiling this project exists to
+    prevent (see tests/unit/test_duplicate_encounter_ids.py).
+    """
+    for name in type(seen).model_fields:
+        if name in _ENCOUNTER_IDENTITY_FIELDS or name in _ENCOUNTER_LIST_FIELDS:
+            continue
+        if name == "extensions":
+            continue
+        mine, theirs = getattr(seen, name), getattr(incoming, name)
+        if mine is not None and theirs is not None and mine != theirs:
+            return False
+    return True
+
+
+def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
+    """One ``<id root>`` is one visit when the halves agree.
+
+    A C-CDA may describe the same encounter twice: once as an entry in the
+    46240-8 Encounters section and again as the Note Activity documenting it in
+    34109-9. Both legitimately carry the same ``<id root>``, and this parser
+    appended an Encounter for each, so a record round-tripped through our own
+    exporter came back with every visit doubled and two objects sharing one id.
+    Downstream that is fatal rather than untidy: ArchiveDeliverer refuses the
+    patient with DeliveredNameCollision, blaming a source that did nothing wrong.
+
+    Complementary halves fold — first non-None wins per scalar, lists
+    concatenate, order preserved. Contradictory ones do not: they stay separate
+    so the collision still surfaces.
+    """
+    folded: dict[str, Encounter] = {}
+    order: list[str] = []
+    kept_apart: list[Encounter] = []
+    for encounter in encounters:
+        seen = folded.get(encounter.id)
+        if seen is None:
+            folded[encounter.id] = encounter
+            order.append(encounter.id)
+            continue
+        if not _folds_together(seen, encounter):
+            kept_apart.append(encounter)
+            continue
+        update: dict[str, object] = {}
+        for name in type(encounter).model_fields:
+            if name in _ENCOUNTER_IDENTITY_FIELDS:
+                continue
+            incoming = getattr(encounter, name)
+            if name in _ENCOUNTER_LIST_FIELDS:
+                update[name] = [*(getattr(seen, name) or []), *(incoming or [])]
+            elif name == "extensions":
+                if incoming:
+                    update[name] = {**(getattr(seen, name) or {}), **incoming}
+            elif getattr(seen, name) is None and incoming is not None:
+                update[name] = incoming
+        folded[encounter.id] = seen.model_copy(update=update)
+    return [folded[key] for key in order] + kept_apart
 
 
 # --- top-level assembly ------------------------------------------------------
@@ -828,4 +895,5 @@ def parse_document(path: Path) -> PatientRecord:
         else:
             _capture_narrative(record, section, loinc)
 
+    record.encounters = _fold_encounters_sharing_an_id(record.encounters)
     return record
