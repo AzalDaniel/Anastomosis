@@ -28,6 +28,7 @@ from anastomosis.core.migrate import (
     run_migration,
     user_migrations_path,
 )
+from anastomosis.core.model import PatientRecord
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -150,12 +151,60 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
     # One standard-C-CDA-view PDF per patient (the 3-patient fixture).
     assert len(result.ccda_view.documents) == 3
     assert len(list((out / "charts").glob("*_ccda.pdf"))) == 3
-    # Still emits the structured payload for the destination to import.
-    assert result.ccda_export.counts["patients"] == 3
+    # Still emits the structured payload for the destination to import — and
+    # says so completely: "missing" is present and zero, not absent.
+    assert result.ccda_export.counts == {"patients": 3, "missing": 0}
     assert list((out / "ccda").glob("*.xml"))
     # The upload manifest is written in ccda-standard mode too — one item per
     # patient (the whole-patient view has no per-encounter documents).
     _assert_manifest(out / "charts", expected_items=3)
+
+
+def test_migrate_ccda_standard_counts_a_patient_it_could_not_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route real C-CDA data takes must report its own shortfall.
+
+    A CCD that fails to build is skipped so one bad record cannot sink the
+    batch — but skipped is not the same as unmentioned. This is the surface an
+    operator hands to another EHR, so a patient with no document has to reach
+    the outcome as a number, not as a smaller "patients" count nobody compares
+    against anything.
+
+    Only the deliverer's ``build_ccd`` is broken here: the standard-view
+    renderer binds its own reference, so all three view PDFs still render and
+    the two counts legitimately disagree — which is the case that would have
+    hidden the loss.
+    """
+    _patch_chromium(monkeypatch)
+    import anastomosis.deliver.ccda_export.deliverer as deliverer_mod
+
+    real_build = deliverer_mod.build_ccd
+    seen: list[str] = []
+
+    def _fail_the_first(record: PatientRecord, **kw: object) -> bytes:
+        seen.append(record.patient.id)
+        if len(seen) == 1:
+            raise RuntimeError("synthetic build failure")
+        return real_build(record, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(deliverer_mod, "build_ccd", _fail_the_first)
+    out = tmp_path / "out"
+    result = run_migration(
+        MigrationCommand(
+            export_dir=FIXTURE,
+            out_dir=out,
+            source="pf-tebra",
+            destination="tebra",
+            render=RENDER_CCDA_STANDARD,
+            qa=False,
+        )
+    )
+    assert result.ccda_export.counts == {"patients": 2, "missing": 1}
+    assert len(list((out / "ccda").glob("*.xml"))) == 2
+    # The view PDFs are unaffected — the disagreement is the point.
+    assert result.ccda_view is not None
+    assert len(result.ccda_view.documents) == 3
 
 
 # --- the transit map (the route a migration would take) ---------------------

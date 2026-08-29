@@ -1162,6 +1162,55 @@ def test_declared_losses_is_structured_and_minimal() -> None:
     assert "*.provenance" in DECLARED_LOSSES
 
 
+def test_every_extensions_key_declared_losses_names_is_one_that_exists(tmp_path: Path) -> None:
+    """The ledger is the contract, so the keys it cites have to be real.
+
+    The narrative tier's whole promise is "not on its typed field, but here" —
+    it is only worth anything if "here" is somewhere you can look. The ledger
+    named ``patient.extensions['ccda:section:51899-3']``, which is where a
+    stamped ledger landed BEFORE the generation fix stopped re-ingesting it as
+    one undifferentiated blob. That key has not existed since; a reader who
+    followed the contract to recover a narrated field found nothing and had no
+    reason to doubt the document.
+
+    Rather than pin today's spelling, this reads whatever keys the ledger cites
+    and requires each to appear on a real round trip — so the two cannot drift
+    apart again in either direction.
+    """
+    cited = {
+        key
+        for reason in DECLARED_LOSSES.values()
+        for key in re.findall(r"extensions\[['\"]([^'\"]+)['\"]\]", reason)
+    }
+    assert cited, "the ledger cites at least one extensions key"
+
+    # A record whose only interesting field has no structured slot, so the
+    # narrative tier is exercised rather than described.
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+                date_of_service=date(2023, 5, 10),
+                encounter_type="Office visit",
+                chief_complaint="Persistent cough for three weeks",
+            )
+        ],
+    )
+    blob = build_ccd(record)
+    path = tmp_path / "ccd.xml"
+    path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
+    extensions = parse_document(path).patient.extensions or {}
+
+    missing = sorted(key for key in cited if key not in extensions)
+    assert not missing, f"DECLARED_LOSSES names extensions keys that never appear: {missing}"
+
+    # And the promise behind the key holds: the narrated field is recoverable.
+    entries = extensions[EXT_PRIOR_LOSS_NARRATIVE]["entries"]
+    assert any("chief_complaint = Persistent cough for three weeks" in e for e in entries)
+
+
 # --- the pinning property test (SHOULD-FIX 3) --------------------------------
 #
 # Build a MAXIMALLY-populated record (every field of every canonical model set to
@@ -1892,7 +1941,7 @@ def test_deliverer_writes_one_xml_per_patient_in_secure_dir(tmp_path: Path) -> N
         ),
     ]
     out = tmp_path / "ccda_out"
-    written = deliver_ccda(records, out)
+    written = deliver_ccda(records, out).paths
     assert len(written) == 2
     # Filenames are patient ids only (no name-derived component).
     names = sorted(p.name for p in written)
@@ -1985,7 +2034,10 @@ def test_no_patient_values_logged_on_deliverer_failure(
     rec = _rich_record()
     with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.ccda_export.deliverer"):
         written = deliver_ccda([rec], tmp_path / "out")
-    assert written == []
+    assert written.paths == []
+    # The patient that failed to build is COUNTED, not just dropped — the caller
+    # needs a number to report, or a whole chart vanishes behind a green line.
+    assert written.missing_count == 1
     blob = " ".join(r.getMessage() for r in caplog.records)
     assert "RuntimeError" in blob  # the exception type IS logged
     assert "Cora" not in blob and "901-65-4329" not in blob

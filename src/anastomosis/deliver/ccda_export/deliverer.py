@@ -20,6 +20,7 @@ filename PHI-free.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_write_bytes
@@ -31,12 +32,27 @@ from anastomosis.deliver._shared import claim_delivered_name
 
 from .builder import build_ccd
 
-__all__ = ["deliver_ccda"]
+__all__ = ["CcdaExportResult", "deliver_ccda"]
 
 logger = logging.getLogger(__name__)
 
 
-def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path]:
+@dataclass(frozen=True)
+class CcdaExportResult:
+    """What the C-CDA export wrote, and what it could not.
+
+    ``missing_count`` is the point: a build that fails leaves a patient with no
+    document, and the archive and bundle deliverers already report that shape
+    so ``_print_shortfall`` can say it out loud. This one returned only the
+    paths it wrote, so a lost patient read as a smaller batch under a green
+    success line.
+    """
+
+    paths: list[Path]
+    missing_count: int
+
+
+def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExportResult:
     """Write one CCD XML per record into ``out_dir`` and return the paths.
 
     The directory is created (or hardened) 0700 with a PHI warning README.
@@ -53,6 +69,7 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
     out = secure_output_dir(out_dir)
     written: list[Path] = []
     claimed: dict[str, str] = {}
+    missing = 0
     for index, record in enumerate(records):
         # Budgeted against ``out``: an over-long path would otherwise raise
         # OSError inside the write below, and the batch-continues handler would
@@ -64,11 +81,15 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> list[Path
             atomic_write_bytes(target, build_ccd(record))
         except Exception as exc:
             # One malformed record must not sink the batch; log the exception
-            # TYPE only (its message may embed PHI) and move on.
+            # TYPE only (its message may embed PHI) and move on. But "move on"
+            # used to end there: the count returned was the count WRITTEN, so a
+            # patient with no document at all was indistinguishable from a
+            # smaller batch and the operator saw an unqualified green line.
             logger.warning("ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc))
+            missing += 1
             continue
         written.append(target)
     # PHI: never log the output path — an operator dir named after a patient
     # would enter the logs (SECURITY.md: never a path). Counts only.
     logger.info("ccda export complete: %d of %d patient(s)", len(written), len(records))
-    return written
+    return CcdaExportResult(paths=written, missing_count=missing)

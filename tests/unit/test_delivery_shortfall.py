@@ -272,7 +272,24 @@ def test_the_cli_says_nothing_when_the_delivery_lost_nothing() -> None:
         len(_cli_lines("archive", patients=3, encounters=6, pdfs=6, missing=0, unattributed=0)) == 1
     )
     assert len(_cli_lines("bundle", patients=3, missing=0)) == 1
-    assert len(_cli_lines("ccda", patients=3)) == 1, "a deliverer with no counts is unchanged"
+    assert len(_cli_lines("ccda", patients=3, missing=0)) == 1
+
+
+def test_the_cli_says_a_patient_has_no_ccda_document() -> None:
+    """The C-CDA export's shortfall is a different one from the archive's.
+
+    Nothing was misfiled and there is no charts folder to check — a patient
+    simply has no document, and the export the operator is about to hand to
+    another EHR is short by that patient. Saying "1 chart is missing from it"
+    would send them looking in the wrong place for a file that was never built.
+    """
+    (line,) = _cli_lines("ccda", patients=2, missing=1)[1:]
+    assert "1 patient has no C-CDA document" in line
+    assert "the export is incomplete" in line
+    assert "charts folder" not in line
+
+    (plural,) = _cli_lines("ccda", patients=1, missing=2)[1:]
+    assert "2 patients have no C-CDA document" in plural
 
 
 def test_the_cli_shortfall_names_no_chart() -> None:
@@ -284,8 +301,8 @@ def test_the_cli_shortfall_names_no_chart() -> None:
     assert not [line for line in lines if ".pdf" in line]
 
 
-def _deliver_events(**counts: int) -> list[dict[str, object]]:
-    """The events the GUI's deliver rail receives for one archive outcome."""
+def _deliver_events(kind: str = "archive", **counts: int) -> list[dict[str, object]]:
+    """The events the GUI's deliver rail receives for one delivery outcome."""
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.gui.consoles.runs import PipelineConsole, SummaryStore
 
@@ -298,8 +315,8 @@ def _deliver_events(**counts: int) -> list[dict[str, object]]:
 
     emitted: list[dict[str, object]] = []
     console = PipelineConsole(emitted.append, _Jobs(), SummaryStore())
-    outcome = DeliveryOutcome(kind="archive", out_dir=Path("out"), counts=counts)
-    console._present_deliveries({"archive": outcome}, {})
+    outcome = DeliveryOutcome(kind=kind, out_dir=Path("out"), counts=counts)
+    console._present_deliveries({kind: outcome}, {})
     return [e for e in emitted if e.get("type") == "progress"]
 
 
@@ -313,3 +330,14 @@ def test_the_gui_deliver_rail_carries_the_shortfall() -> None:
 def test_the_gui_deliver_rail_stays_short_when_nothing_was_lost() -> None:
     (event,) = _deliver_events(patients=3, encounters=6, pdfs=6, missing=0, unattributed=0)
     assert "missing" not in event and "unattributed" not in event
+
+
+def test_the_gui_deliver_rail_carries_the_ccda_shortfall() -> None:
+    """The rail reads ``missing`` off whatever counts an outcome carries, so the
+    C-CDA export reaches it the moment the deliverer starts reporting one. This
+    pins that: the rail was never the missing half, the count was.
+    """
+    (event,) = _deliver_events("ccda", patients=2, missing=1)
+    assert event["missing"] == 1
+    (quiet,) = _deliver_events("ccda", patients=3, missing=0)
+    assert "missing" not in quiet

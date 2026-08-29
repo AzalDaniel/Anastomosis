@@ -4,6 +4,7 @@ Each test asserts one section's mapping (or one trap) documented in
 tests/fixtures/ccda/README.md.
 """
 
+import re
 from datetime import UTC, date, timedelta
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from anastomosis.core.model import (
 from anastomosis.sources import get_source
 
 CCDA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+_BIRTHTIME_RE = re.compile(r'<birthTime value="[^"]*"/>')
 PF_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
 
@@ -436,6 +438,37 @@ def test_every_ccda_value_type_keeps_its_result(tmp_path: Path) -> None:
     assert readings["Poikilocytosis"] == ("Negative", None)  # CD — the coded display
     assert readings["WBC"] == ("4.0-11.0", "10*3/uL")  # IVL_PQ — a range with its unit
     assert not [d for d, (v, _) in readings.items() if v is None], "a result lost its value"
+
+
+def test_one_unreadable_document_is_refused_by_position_not_anonymously(tmp_path: Path) -> None:
+    """A document the adapter cannot parse refuses the run — a partial migration
+    that silently omits a patient is the failure this project exists to prevent.
+
+    But refusing has to say WHICH document to repair, and it did not: the
+    exception escaped as an arbitrary error, so the pipeline could show only its
+    type — "Could not read the ccda export (ValueError)." Against 2,103 real
+    documents that leaves bisecting by hand as the only recourse (#243).
+    """
+    from anastomosis.pipeline import PipelineError, load_records
+
+    good = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
+    for index in range(1, 6):
+        body = good.replace(
+            "feedface-0000-0000-0000-000000000001",
+            f"feedface-0000-0000-0000-00000000000{index}",
+        )
+        if index == 3:
+            body = _BIRTHTIME_RE.sub('<birthTime value="not-a-date"/>', body)
+        (tmp_path / f"patient_{index:02d}.xml").write_text(body, encoding="utf-8")
+
+    with pytest.raises(PipelineError) as caught:
+        load_records(get_source("ccda"), tmp_path)
+
+    message = str(caught.value)
+    assert "document 3 of 5" in message, "the refusal must name which document"
+    assert "ValueError" in message
+    # The file name is a patient value in a real C-CDA export, so it must not appear.
+    assert "patient_03" not in message
 
 
 _NARRATIVE_REFS_CCD = """<?xml version="1.0"?>

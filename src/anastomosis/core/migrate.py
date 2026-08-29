@@ -470,11 +470,15 @@ def _run_ccda_standard(
             ]
             _write_manifest_with_event(manifest_docs, records, charts, emit, pack=None)
 
-            paths = deliver_ccda(records, ccda)
+            ccda_result = deliver_ccda(records, ccda)
     except OutputLockedError as exc:
         raise PipelineError(str(exc), exit_code=2, kind="output_locked") from None
 
-    ccda_export = DeliveryOutcome(kind="ccda", out_dir=ccda, counts={"patients": len(paths)})
+    ccda_export = DeliveryOutcome(
+        kind="ccda",
+        out_dir=ccda,
+        counts={"patients": len(ccda_result.paths), "missing": ccda_result.missing_count},
+    )
     return MigrationResult(
         transit=transit,
         pipeline=None,
