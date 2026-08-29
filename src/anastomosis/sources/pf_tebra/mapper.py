@@ -1005,15 +1005,18 @@ def _map_family_history(export: Export, guid: str) -> list[FamilyMemberHistory]:
 
 
 _IMMUNIZATION_MAPPED = frozenset(
-    {"PatientPracticeGuid", "ImmunizationGuid", "Vaccine", "Lot", "Type", "Comment"}
+    {"PatientPracticeGuid", "ImmunizationGuid", "Vaccine", "Lot", "Type", "Comments"}
 )
-# Date column spelling is INFERRED (not in the public dictionary) — read the
-# first that exists.
-_IMM_DATE_COLS = ("DateAdministered", "AdministeredDate", "AdministeredDateTimeUtc")
+# The date column was previously three guessed spellings read in turn, none of
+# which a v9 export has, so every immunization came back undated. It is
+# VaccinationOrEffectiveDate. One real name beats three inferred ones: if a
+# future export spells it differently the date goes missing visibly, rather
+# than a guess quietly happening to match.
+_IMM_DATE_COL = "VaccinationOrEffectiveDate"
 
 
 def _map_immunization(row: Row) -> Immunization:
-    administered = next((d for c in _IMM_DATE_COLS if (d := _d(row, c))), None)
+    administered = _d(row, _IMM_DATE_COL)
     return Immunization(
         id=_s(row, "ImmunizationGuid") or "",
         patient_id=_s(row, "PatientPracticeGuid") or "",
@@ -1022,8 +1025,8 @@ def _map_immunization(row: Row) -> Immunization:
         source=_s(row, "Type"),
         lot_number=_s(row, "Lot"),
         expires=_d(row, "ExpirationDate"),
-        comment=_s(row, "Comment"),
-        extensions=_ext(row, _IMMUNIZATION_MAPPED | {"ExpirationDate", *_IMM_DATE_COLS}),
+        comment=_s(row, "Comments"),
+        extensions=_ext(row, _IMMUNIZATION_MAPPED | {"ExpirationDate", _IMM_DATE_COL}),
         provenance=_prov("patient-immunizations", _s(row, "ImmunizationGuid")),
     )
 
