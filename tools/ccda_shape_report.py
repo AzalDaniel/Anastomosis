@@ -171,6 +171,12 @@ def _record_counters(record: Any) -> Counter[str]:
     A collection count says ingest worked. The ``_unattributed`` and ``_no_``
     counters say whether the values will reach a chart, which is a different
     question and the one that keeps being answered wrong.
+
+    Every conservation counter is seeded at zero rather than left to appear on
+    first increment. A key missing from the returned report reads as "the tool
+    did not look"; a key at zero reads as "the tool looked and found none". We
+    are asking an operator to send this back as evidence, so the report has to
+    be able to say the second thing.
     """
     c: Counter[str] = Counter()
     for name in (
@@ -186,6 +192,16 @@ def _record_counters(record: Any) -> Counter[str]:
         "facilities",
     ):
         c[name] = len(getattr(record, name, []) or [])
+    for name in (
+        "observations_unattributed",
+        "observations_dangling_encounter",
+        "observations_no_value",
+        "encounters_no_date",
+        "encounters_no_type",
+        "encounters_no_note_body",
+        "conditions_no_display",
+    ):
+        c[name] = 0
 
     encounter_ids = {e.id for e in record.encounters}
     for obs in record.observations:
