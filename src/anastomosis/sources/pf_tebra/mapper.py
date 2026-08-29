@@ -1122,6 +1122,37 @@ def _self_keyed(rows: list[Row]) -> str | None:
     return None
 
 
+def _patient_scoped_guids(export: Export) -> frozenset[str]:
+    """Every ``*Guid`` column that appears in a table carrying a patient key.
+
+    A column that names a patient's row somewhere in the export names one
+    everywhere. That is what lets a table with no patient column of its own
+    still be patient data.
+    """
+    scoped: set[str] = set()
+    for rows in export.values():
+        if rows and "PatientPracticeGuid" in rows[0]:
+            scoped.update(column for column in rows[0] if column.endswith("Guid"))
+    return frozenset(scoped)
+
+
+def _names_a_patient(rows: list[Row], own_key: str, patient_scoped: frozenset[str]) -> bool:
+    """Whether a would-be directory points back into patient scope.
+
+    A directory may be keyed by itself; it may not name a patient's record. The
+    table that broke this was ``patient-insurance-eligibilities``: no patient
+    column, a unique guid of its own, so it read as practice-level — and its
+    ``PatientInsurancePlanGuid`` is the very column that keys each patient's
+    coverage. Classified as a directory it was copied whole into every record.
+    """
+    for column in rows[0]:
+        if column == own_key or not column.endswith("Guid"):
+            continue
+        if column in patient_scoped or "Patient" in column:
+            return True
+    return False
+
+
 def _reference_tables(export: Export) -> dict[str, list[Row]]:
     """Unmapped tables that describe the PRACTICE, not any one patient.
 
@@ -1136,14 +1167,22 @@ def _reference_tables(export: Export) -> dict[str, list[Row]]:
     already knew about — have always done. A record has to stand alone: the
     bundle is one directory per patient, so a prescription naming a pharmacy
     travels with the pharmacy it names.
+
+    A table that merely LOOKS practice-level is not carried: one that names a
+    patient's record through a foreign key is patient data whatever its own
+    columns say, and falls through to :func:`_unmapped_tables`, which has no
+    patient key to attribute it by and so refuses the run. Loud beats broadcast.
     """
+    patient_scoped = _patient_scoped_guids(export)
     found: dict[str, list[Row]] = {}
     for table in sorted(set(export) - set(KNOWN_TABLES)):
         rows = export[table]
         if not rows or "PatientPracticeGuid" in rows[0]:
             continue
-        if _self_keyed(rows) is not None:
-            found[table] = rows
+        own_key = _self_keyed(rows)
+        if own_key is None or _names_a_patient(rows, own_key, patient_scoped):
+            continue
+        found[table] = rows
     return found
 
 

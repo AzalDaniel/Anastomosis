@@ -30,7 +30,12 @@ import pytest
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
 from anastomosis.sources import get_source
 from anastomosis.sources.pf_tebra.loader import UnsupportedTablesError, read_export
-from anastomosis.sources.pf_tebra.mapper import _reference_tables, _self_keyed, map_export
+from anastomosis.sources.pf_tebra.mapper import (
+    _patient_scoped_guids,
+    _reference_tables,
+    _self_keyed,
+    map_export,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 DIRECTORIES = ("labs", "pharmacies", "provider-profiles", "users")
@@ -110,3 +115,110 @@ def test_a_table_with_a_patient_key_is_never_read_as_a_directory() -> None:
 
     assert "patient-widgets" not in reference
     assert "pf_tebra:unmapped:patient-widgets" in record.extensions
+
+
+def test_a_directory_that_names_a_patient_record_is_refused_not_broadcast() -> None:
+    """The #234 shape: no patient column, a unique guid of its own, and a foreign
+    key into patient scope. Classified as a directory it was copied whole into
+    EVERY record — 773 rows x 2,167 patients on the real export. It must refuse.
+    """
+    export = read_export(FIXTURE)
+    plan = export["patient-insurances"][0]["PatientInsurancePlanGuid"]
+    export["patient-insurance-eligibilities"] = [
+        {
+            "PatientInsuranceEligibilityGuid": "feedface-0000-0000-0000-00000000e001",
+            "PatientInsurancePlanGuid": plan,
+            "CopayAmount": "25.00",
+        }
+    ]
+
+    # It is self-keyed, so the old rule called it a directory.
+    assert _self_keyed(export["patient-insurance-eligibilities"]) is not None
+    assert "patient-insurance-eligibilities" not in _reference_tables(export)
+
+    # And with no patient key to attribute it by, the run refuses rather than guessing.
+    with pytest.raises(UnsupportedTablesError) as caught:
+        list(map_export(export))
+    assert "patient-insurance-eligibilities" in str(caught.value)
+
+
+def test_the_five_real_practice_directories_are_still_carried() -> None:
+    """The invariant must not cost the tables it was built to admit. These are the
+    real export's genuine directories — each keyed by itself, none naming a patient.
+    """
+    export = read_export(FIXTURE)
+    export["care-team-profiles"] = [
+        {"CareTeamProfileGuid": "feedface-0000-0000-0000-00000000c001", "Name": "Care team"}
+    ]
+    export["users"] = [{"UserGuid": "feedface-0000-0000-0000-00000000u001", "Name": "A user"}]
+
+    reference = _reference_tables(export)
+    for table in ("labs", "pharmacies", "provider-profiles", "care-team-profiles", "users"):
+        assert table in reference, f"{table} is a directory and must still be carried"
+
+
+def test_a_directory_referenced_BY_patient_rows_is_still_a_directory() -> None:
+    """Being named by patient rows is what a directory is FOR — it must not be
+    mistaken for being patient data.
+
+    On the real export ``PharmacyGuid``, ``LabGuid`` and ``CareTeamProfileGuid``
+    all appear in patient-keyed tables, because prescriptions name pharmacies and
+    results name labs. A rule that looked at a table's own key as though it were
+    a foreign key would refuse three of the five genuine directories and stop the
+    migration cold.
+    """
+    export = read_export(FIXTURE)
+    patient = export["patient-demographics"][0]["PatientPracticeGuid"]
+    pharmacy = export["pharmacies"][0]["PharmacyGuid"]
+    # A patient-keyed table that NAMES the directory, exactly as prescriptions do.
+    export["patient-pharmacy-picks"] = [{"PatientPracticeGuid": patient, "PharmacyGuid": pharmacy}]
+
+    assert "PharmacyGuid" in _patient_scoped_guids(export)
+    assert "pharmacies" in _reference_tables(export), "a referenced directory is still a directory"
+
+
+def test_a_patient_foreign_key_is_caught_even_when_it_is_not_named_Patient() -> None:
+    """The column name is a convenience, not the rule. What makes a column
+    patient-scoped is that it keys a row somewhere that carries a patient.
+    """
+    export = read_export(FIXTURE)
+    patient = export["patient-demographics"][0]["PatientPracticeGuid"]
+    export["patient-widget-links"] = [
+        {"PatientPracticeGuid": patient, "WidgetGuid": "feedface-0000-0000-0000-00000000w001"}
+    ]
+    # Directory-shaped, and its foreign key carries no "Patient" in the name.
+    export["widget-eligibilities"] = [
+        {
+            "WidgetEligibilityGuid": "feedface-0000-0000-0000-00000000x001",
+            "WidgetGuid": "feedface-0000-0000-0000-00000000w001",
+            "Amount": "25.00",
+        }
+    ]
+
+    assert _self_keyed(export["widget-eligibilities"]) is not None
+    assert "widget-eligibilities" not in _reference_tables(export)
+    with pytest.raises(UnsupportedTablesError) as caught:
+        list(map_export(export))
+    assert "widget-eligibilities" in str(caught.value)
+
+
+def test_a_patient_named_key_is_caught_even_when_no_patient_table_carries_it() -> None:
+    """The two halves of the rule cover different misses.
+
+    The cross-table check needs the foreign key to appear in some patient-keyed
+    table. A second-order table can name a patient's record through a column that
+    appears nowhere else — the name is the only signal left, so it is kept.
+    """
+    export = read_export(FIXTURE)
+    export["consent-eligibilities"] = [
+        {
+            "ConsentEligibilityGuid": "feedface-0000-0000-0000-00000000y001",
+            "PatientConsentGuid": "feedface-0000-0000-0000-00000000y002",
+        }
+    ]
+
+    assert "PatientConsentGuid" not in _patient_scoped_guids(export), "no table carries it"
+    assert "consent-eligibilities" not in _reference_tables(export)
+    with pytest.raises(UnsupportedTablesError) as caught:
+        list(map_export(export))
+    assert "consent-eligibilities" in str(caught.value)
