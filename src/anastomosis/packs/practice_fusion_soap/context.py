@@ -465,7 +465,10 @@ def _demographics(patient: Patient) -> dict[str, Any]:
         "last_name": patient.family_name,
         "sex": patient.sex,
         "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
-        "death_date": _ext(patient, "DateOfDeath"),
+        # DeathDate is what patient-demographics spells it; DateOfDeath was a
+        # name no v9 table has, so the DATE OF DEATH cell printed "-" over an
+        # export that carried the date.
+        "death_date": _ext(patient, "DeathDate"),
         "race": ", ".join(patient.race) or None,
         "ethnicity": ", ".join(patient.ethnicity) or None,
         "language": patient.language,
@@ -574,7 +577,13 @@ def build_record_context(
 
     # --- demographics (the unified 6-col table) --------------------------------
     demo = _demographics(patient)
-    prn = _ext(patient, "PatientContactCode") or _ext(patient, "PRN")
+    # PatientContactCode is the one column in v9 that carries a patient's record
+    # number, and it lives on patient-superbills — a table the pf_tebra adapter
+    # does not map yet, so this reads None on a PF export and the header prints
+    # "-". LOUD: the alternative spelling this used to fall back to ("PRN") is a
+    # column no v9 table has, and a chain over invented names is how a wrong
+    # guess hides (#248). One real name, blank until the table is mapped.
+    prn = _ext(patient, "PatientContactCode")
 
     # --- insurance / payment ---------------------------------------------------
     active_cov = index.active_coverages

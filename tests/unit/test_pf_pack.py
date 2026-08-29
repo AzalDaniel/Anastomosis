@@ -381,13 +381,13 @@ def test_empty_state_strings_present(pack: LoadedPack) -> None:
         assert empty in blob, f"missing empty-state string: {empty!r}"
 
 
-def _one_encounter_record(**collections: Any) -> Any:
+def _one_encounter_record(patient: Any = None, **collections: Any) -> Any:
     """A minimal renderable record: one SOAP encounter and whatever collection
     the caller is exercising."""
     from anastomosis.core.model import Encounter, NoteSection, Patient, PatientRecord, SectionKind
 
     return PatientRecord(
-        patient=Patient(given_name="Section", family_name="Coverage"),
+        patient=patient or Patient(given_name="Section", family_name="Coverage"),
         encounters=[
             Encounter(
                 id="feedface-sect-0000-0000-000000000000",
@@ -399,6 +399,48 @@ def _one_encounter_record(**collections: Any) -> Any:
         ],
         **collections,
     )
+
+
+def test_header_reads_the_columns_v9_actually_spells(pack: LoadedPack) -> None:
+    """Two demographics readers were spelled against columns no v9 table has.
+
+    ``DateOfDeath`` is ``DeathDate`` on patient-demographics, so the DATE OF
+    DEATH cell printed "-" over an export that carried the date. PRN read
+    ``PatientContactCode`` — the one column in the 85-table dictionary that
+    carries a patient's record number — but fell back to a bare ``PRN``, a name
+    nothing in v9 or in this codebase ever writes. The fallback is gone: a chain
+    over invented names is how a wrong guess hides (#248).
+    """
+    from anastomosis.core.model import Patient
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+
+    real = _one_encounter_record(
+        patient=Patient(
+            given_name="Deceased",
+            family_name="Fixture",
+            extensions={
+                "pf_tebra:DeathDate": "04/09/2024",
+                "pf_tebra:PatientContactCode": "PRN-4242",
+            },
+        )
+    )
+    html = template.render(**pack.build_context(real.encounters[0], real, cfg))
+    assert "04/09/2024" in html
+    assert "PRN-4242" in html
+
+    invented = _one_encounter_record(
+        patient=Patient(
+            given_name="Invented",
+            family_name="Spelling",
+            extensions={"pf_tebra:DateOfDeath": "04/09/2024", "pf_tebra:PRN": "PRN-4242"},
+        )
+    )
+    html = template.render(**pack.build_context(invented.encounters[0], invented, cfg))
+    assert "04/09/2024" not in html
+    assert "PRN-4242" not in html
 
 
 def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> None:
