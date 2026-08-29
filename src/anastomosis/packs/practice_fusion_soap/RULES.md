@@ -86,7 +86,21 @@ Screenings → Observations → Quality of care → Care plan → Addenda (condi
 
 Every static section renders even when empty (the empty-state strings, GOLD §4,
 are inventoried in `pack.yaml`/the template). Addenda is the one CONDITIONAL
-section — heading only when addendum rows exist (GOLD §10).
+section — heading only when addendum rows exist (GOLD §10). A section that HAS
+data must stop printing its empty state: the string is a statement to the chart
+reader that there is nothing to see, and it is only true when there is nothing.
+
+Screenings carries one phrase this port added rather than carried over. An
+encounter event the clinician marked as not performed (`IsNegated`) is prefixed
+`Not performed — `, because printing it beside the events that did happen would
+tell the reader the opposite of what the export says, and dropping it would lose
+it. Correct it here first if a real PF chart is ever seen to word it otherwise.
+
+Still static, and honestly so: implantable devices and IMAGING ORDERS (no data
+path in the export), Observations, Quality of care, Care plan. LAB ORDERS is
+static too, but for a different reason — `patient-lab-orders` exists in v9 and
+the section's row layout does not survive in the gold standard, so what the
+predecessor printed there is unknown and this pack does not guess it.
 
 ## Medications + escript line (GOLD §5)
 
