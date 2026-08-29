@@ -96,11 +96,26 @@ encounter event the clinician marked as not performed (`IsNegated`) is prefixed
 tell the reader the opposite of what the export says, and dropping it would lose
 it. Correct it here first if a real PF chart is ever seen to word it otherwise.
 
-Still static, and honestly so: implantable devices and IMAGING ORDERS (no data
-path in the export), Observations, Quality of care, Care plan. LAB ORDERS is
-static too, but for a different reason — `patient-lab-orders` exists in v9 and
-the section's row layout does not survive in the gold standard, so what the
-predecessor printed there is unknown and this pack does not guess it.
+Six sections render as heading plus empty state and never as rows: implantable
+devices, LAB ORDERS, IMAGING ORDERS, Observations, Quality of care, Care plan.
+
+An earlier revision of this paragraph blamed the export for two of them, saying
+devices and imaging orders had no data path in v9. That was wrong, and reading
+the vendor's own data dictionary instead of repeating it is what settled it.
+`patient-healthcare-devices` is a 31-column table that goes all the way down to
+`UniqueDeviceIdentifier` and `MriSafetyStatus`. `patient-lab-orders.LabType` is
+described by the vendor as "Type of lab order (e.g. Diagnostic or Imaging)" —
+one table feeds both order sections and a single column tells them apart. Nor
+are the other three empty-handed: `patient-encounter-observations` is already
+loaded for vitals, and `patient-clinical-worksheet-summaries`, `patient-goals`
+and `patient-health-concerns` are all sitting in the same export.
+
+So the reason is the one LAB ORDERS always had, and it applies to all six: the
+gold standard preserves no populated example of these sections, so the row
+layout the predecessor printed is unknown. A wrong-looking row is worse here
+than an honest empty state, and this pack does not guess. What unblocks them is
+a real chart that shows one of them filled in — not more of the export, which
+has been there the whole time.
 
 ## Medications + escript line (GOLD §5)
 

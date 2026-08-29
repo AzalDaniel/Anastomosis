@@ -867,7 +867,19 @@ def _allergy_views(items: list[Any]) -> dict[str, list[dict[str, str | None]]]:
 
 
 def _concern_view(obj: Any) -> dict[str, str | None]:
-    return {"description": obj.description, "date": _fmt_date_short(obj.effective) or "-"}
+    """A concern or goal as the template renders it.
+
+    Both cells fall back to the pack's "-" rather than to nothing: a row whose
+    description is absent still says a concern EXISTS on this chart, and
+    dropping it would lose that. The template interpolates these straight, so
+    passing None through would print the literal token ``None`` where a
+    clinician reads a diagnosis — a Python repr on a medical record, which is
+    worse than an honest blank.
+    """
+    return {
+        "description": obj.description or "-",
+        "date": _fmt_date_short(obj.effective) or "-",
+    }
 
 
 def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str | None, list[Any]]:
@@ -893,9 +905,16 @@ def _screening_view(event: Any) -> dict[str, Any]:
     here: the section prints name, result and comments, and an event the
     clinician marked as not performed has to be readable as such or the row
     claims the opposite of what the export says.
+
+    ``name`` falls back to the pack's "-" for the same reason ``_concern_view``
+    does. Result and comments are each wrapped in a template conditional and
+    simply vanish when absent, but the name is interpolated bare — an event
+    that reached us without one would otherwise print the token ``None`` as the
+    name of a screening. The row still has to appear: the export says something
+    happened at this visit, and that is the fact worth keeping.
     """
     return {
-        "name": event.name,
+        "name": event.name or "-",
         "result": event.result,
         "comments": event.comments,
         "negated": event.negated,

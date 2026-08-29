@@ -764,9 +764,12 @@ body {
 {% endif %}
 
 {% if show_devices %}
-<!-- IMPLANTABLE DEVICES (keep-together). Static: the PF layout carries the
-     section; the EHI export has no device data path (same rule as IMAGING
-     ORDERS under Orders). -->
+<!-- IMPLANTABLE DEVICES (keep-together). Static, but not for the reason this
+     comment used to give: v9 does carry the data, in a 31-column
+     patient-healthcare-devices table. What is missing is the row layout — the
+     gold standard preserves no populated example of this section — so the pack
+     prints the empty state rather than inventing one. Same for IMAGING ORDERS
+     under Orders. RULES.md has the whole correction. -->
 <div class="keep-together">
 <div class="section-header">Implantable devices</div>
 <div class="no-record">No implantable devices recorded</div>

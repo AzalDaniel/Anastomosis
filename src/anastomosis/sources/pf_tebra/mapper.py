@@ -1296,6 +1296,16 @@ def _unmapped_tables(
 # column and the parent whose ids that key must name. superbill-insurances,
 # providers, and facilities are deliberately absent: they are read in full, not
 # sliced by an owning record, so no row of theirs can be orphaned.
+#
+# The two encounter child tables below — patient-encounter-observations and
+# patient-encounter-events — are keyed on the PATIENT, not the encounter, so a
+# row whose EncounterGuid names no encounter in this export lands on the patient
+# and is refused by nothing. It is not lost (it still narrates to the loss
+# ledger), but nothing renders it either, because both sections are drawn per
+# encounter. v9 types EncounterGuid non-nullable on both tables, so this needs a
+# malformed export to happen at all; key them on the encounter and a real export
+# missing one encounter row would fail the whole patient instead of one section.
+# That trade is why they sit here, and it is a chart gap, not data loss.
 _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     # patient-demographics is the patient table itself, so the only way one of
     # its rows fails is a MISSING key — which would drop that whole patient.

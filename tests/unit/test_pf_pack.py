@@ -569,6 +569,42 @@ def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> Non
     assert "No inactive health concerns recorded" in html
 
 
+def test_a_row_with_no_text_does_not_print_the_word_none(pack: LoadedPack) -> None:
+    """`description` and `name` are both optional, and both are interpolated bare.
+
+    So a concern, goal or screening that arrives without one used to put the
+    literal token `None` where a clinician reads a diagnosis — a Python repr
+    printed on a medical record. The row still has to appear: its existence is
+    the fact, and dropping it would lose that the chart carries a concern at
+    all. What it prints instead is the pack's own "-", the same blank every
+    other empty cell in this chart uses.
+
+    The date beside a concern was guarded from the day it was written; the
+    description next to it was not, which is the shape this kind of bug keeps
+    taking — one cell of a pair remembered, the other forgotten.
+    """
+    from anastomosis.core.model import Goal, ScreeningEvent
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000cd"
+    record = _one_encounter_record(
+        health_concerns=[Goal(patient_id=pid, description=None, active=True)],
+        goals=[Goal(patient_id=pid, description=None, active=False)],
+    )
+    record.screening_events = [
+        ScreeningEvent(patient_id=pid, encounter_id=record.encounters[0].id, name=None)
+    ]
+    html = template.render(**pack.build_context(record.encounters[0], record, cfg))
+
+    assert "None" not in html, "a Python repr must never reach a chart, anywhere"
+    # And the rows survive: the empty state would deny that the chart has any.
+    assert "No active health concerns recorded." not in html
+    assert "No inactive goals recorded" not in html
+    assert "No screenings/interventions/assessments recorded." not in html
+
+
 # --- context wiring ------------------------------------------------------------
 
 
