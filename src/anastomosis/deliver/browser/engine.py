@@ -43,6 +43,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from anastomosis.core.conservation import Conservation
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Patient
@@ -73,6 +74,28 @@ class EngineResult:
     counts: Mapping[str, int]
     aborted_reason: str | None = field(default=None)
     processed: int = 0
+
+
+def _ledger_conservation(offered_keys: Sequence[str], known: int) -> Conservation:
+    """The delivered -> filed seam, asked at the only moment it can be asked.
+
+    Every state this engine reports comes from the ledger, so an item that was
+    offered and never got a row is invisible to all of them: the run finishes,
+    the counts add up among the rows that exist, and a chart nobody filed is
+    reported as nothing at all. Enqueue is idempotent and cannot lose a row on
+    any path today — which is the point of checking here rather than trusting
+    it forever.
+
+    Asked right after enqueue rather than at the end: the answer is the same,
+    and the run stops before touching a destination instead of after.
+    """
+    distinct = len(set(offered_keys))
+    return Conservation(
+        stage="offered -> ledger",
+        unit="item",
+        offered=distinct,
+        dispositions={"in the ledger": known},
+    )
 
 
 # An internal signal raised by _process_one to tell run() to abort the whole
@@ -151,6 +174,8 @@ class UploadEngine:
         """
         for item in items:
             self._tracking.enqueue(item)
+        offered_keys = [item.item_key for item in items]
+        _ledger_conservation(offered_keys, self._tracking.count_known(offered_keys)).check()
 
         scope: frozenset[str] | None = (
             frozenset(item.item_key for item in items) if restrict_to_items else None

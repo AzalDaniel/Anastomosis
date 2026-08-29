@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +57,11 @@ __all__ = ["TrackingDB"]
 # States an item can be picked up from on a resumed run (work still owed,
 # nothing in flight). UPLOAD_INTERRUPTED is included so resume drives it back
 # through the duplicate scan; RETRY_WAIT so a backed-off item is retried.
+#: How many keys go into one ``IN (...)`` clause. SQLite's default bound-
+#: parameter ceiling is 999; a real run offers thousands of items, so the
+#: membership query is chunked rather than assuming the batch is small.
+_IN_CHUNK = 500
+
 _PENDING_STATES: tuple[UploadState, ...] = (
     UploadState.PENDING,
     UploadState.UPLOAD_INTERRUPTED,
@@ -249,6 +254,35 @@ class TrackingDB:
     def state_of(self, item_key: str) -> UploadState:
         """Return the current state of ``item_key`` (raises ``KeyError``)."""
         return self._require_state(self._conn(), item_key)
+
+    def count_known(self, item_keys: Sequence[str]) -> int:
+        """How many of ``item_keys`` the ledger actually holds a row for.
+
+        The closing question at the delivered -> filed seam: an item enqueued
+        for a run and then absent from the ledger has left the accounting, and
+        nothing downstream would notice — the counts report on the rows that
+        exist, so a row that never existed is invisible to every one of them.
+
+        Chunked because SQLite caps the number of bound parameters in one
+        statement, and a real run offers thousands of items. Duplicate keys in
+        the argument count once, which is what the caller means: the question
+        is how many DISTINCT offered items the ledger knows.
+        """
+        keys = sorted(set(item_keys))
+        if not keys:
+            return 0
+        conn = self._conn()
+        found = 0
+        for start in range(0, len(keys), _IN_CHUNK):
+            chunk = keys[start : start + _IN_CHUNK]
+            # The only interpolation is a run of literal "?" placeholders, one
+            # per key in the chunk; the keys themselves bind as parameters —
+            # the same shape (and the same suppression) as ``pending_items``.
+            placeholders = ", ".join("?" for _ in chunk)
+            sql = f"SELECT COUNT(*) AS n FROM items WHERE item_key IN ({placeholders})"  # noqa: S608
+            row = conn.execute(sql, chunk).fetchone()
+            found += int(row["n"])
+        return found
 
     def attempts_of(self, item_key: str) -> int:
         """Return the retry-attempt count of ``item_key`` (raises ``KeyError``).

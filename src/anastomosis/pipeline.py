@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from anastomosis.core.conservation import ConservationError
 from anastomosis.core.logutil import exc_tag
 from anastomosis.sources import SourceDataError, available_sources, detect_source, get_source
 from anastomosis.sources.learned import register_learned_sources
@@ -579,6 +580,13 @@ def run_pipeline(
         # identical "(RuntimeError)" lines and threw away the one sentence
         # naming what to install.
         raise PipelineError(str(exc), exit_code=2, kind="render_unavailable") from None
+    except ConservationError as exc:
+        # The seam lost work. Not a chart's failure and not the machine's: the
+        # stage was handed N encounters and cannot say what became of all of
+        # them, so nothing downstream may treat the survivors as the whole set.
+        # PHI-safe by construction — the message carries counts and column
+        # names only.
+        raise PipelineError(str(exc), exit_code=1, kind="conservation_failed") from None
     if result.failed:
         # Loud render failure, before the stage is announced as finished and
         # before anything is carried: a run that could not render every chart
