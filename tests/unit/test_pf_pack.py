@@ -142,6 +142,8 @@ def test_record_view_index_splits_match_naive_filtering(records: list[Any]) -> N
         assert idx.conditions_by_id == {c.id: c for c in record.conditions}
         assert idx.active_medications == [m for m in record.medications if m.active]
         assert idx.prescriptions_by_id == {p.id: p for p in record.prescriptions}
+        assert idx.active_concerns == [c for c in record.health_concerns if c.active]
+        assert idx.inactive_concerns == [c for c in record.health_concerns if not c.active]
         for category, items in idx.allergies_by_category.items():
             assert items == [a for a in record.allergies if a.category == category]
 
@@ -175,6 +177,10 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
             Goal(patient_id=pid, active=True),
             Goal(patient_id=pid, active=False),
         ],
+        health_concerns=[
+            Goal(patient_id=pid, description="concern-active", active=True),
+            Goal(patient_id=pid, description="concern-inactive", active=False),
+        ],
     )
     idx = _RecordViewIndex.build(record)
     # active coverages sorted by benefit order (tie keeps source order); inactive split out.
@@ -183,6 +189,9 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
     # active/inactive goals are not swapped.
     assert [g.active for g in idx.active_goals] == [True]
     assert [g.active for g in idx.inactive_goals] == [False]
+    # nor are health concerns, which share the Goal shape and split the same way.
+    assert [c.description for c in idx.active_concerns] == ["concern-active"]
+    assert [c.description for c in idx.inactive_concerns] == ["concern-inactive"]
     # duplicate condition id: last wins, matching {c.id: c for c in conditions}.
     assert idx.conditions_by_id["c1"].active is False
 
@@ -370,6 +379,230 @@ def test_empty_state_strings_present(pack: LoadedPack) -> None:
     blob = template.render(**pack.build_context(enc, empty_record, cfg))
     for empty in _EMPTY_STATES:
         assert empty in blob, f"missing empty-state string: {empty!r}"
+
+
+def _one_encounter_record(patient: Any = None, **collections: Any) -> Any:
+    """A minimal renderable record: one SOAP encounter and whatever collection
+    the caller is exercising."""
+    from anastomosis.core.model import Encounter, NoteSection, Patient, PatientRecord, SectionKind
+
+    return PatientRecord(
+        patient=patient or Patient(given_name="Section", family_name="Coverage"),
+        encounters=[
+            Encounter(
+                id="feedface-sect-0000-0000-000000000000",
+                patient_id="feedface-sect",
+                chief_complaint="Section coverage",
+                encounter_type="SOAP",
+                sections=[NoteSection(kind=SectionKind.SUBJECTIVE, html="<p>x</p>", text="x")],
+            )
+        ],
+        **collections,
+    )
+
+
+def test_header_reads_the_columns_v9_actually_spells(pack: LoadedPack) -> None:
+    """Two demographics readers were spelled against columns no v9 table has.
+
+    ``DateOfDeath`` is ``DeathDate`` on patient-demographics, so the DATE OF
+    DEATH cell printed "-" over an export that carried the date. PRN read
+    ``PatientContactCode`` — the one column in the 85-table dictionary that
+    carries a patient's record number — but fell back to a bare ``PRN``, a name
+    nothing in v9 or in this codebase ever writes. The fallback is gone: a chain
+    over invented names is how a wrong guess hides (#248).
+    """
+    from anastomosis.core.model import Patient
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+
+    real = _one_encounter_record(
+        patient=Patient(
+            given_name="Deceased",
+            family_name="Fixture",
+            extensions={
+                "pf_tebra:DeathDate": "04/09/2024",
+                "pf_tebra:PatientContactCode": "PRN-4242",
+            },
+        )
+    )
+    html = template.render(**pack.build_context(real.encounters[0], real, cfg))
+    assert "04/09/2024" in html
+    assert "PRN-4242" in html
+
+    invented = _one_encounter_record(
+        patient=Patient(
+            given_name="Invented",
+            family_name="Spelling",
+            extensions={"pf_tebra:DateOfDeath": "04/09/2024", "pf_tebra:PRN": "PRN-4242"},
+        )
+    )
+    html = template.render(**pack.build_context(invented.encounters[0], invented, cfg))
+    assert "04/09/2024" not in html
+    assert "PRN-4242" not in html
+
+
+def test_screenings_render_per_encounter_and_keep_their_negation(pack: LoadedPack) -> None:
+    """The Screenings/Interventions/Assessments section was starved by a
+    hard-coded empty list, so it printed "No screenings/interventions/assessments
+    recorded." over every export that had them.
+
+    Two things are asserted beyond the row appearing at all. The section is
+    encounter-scoped, so an event belonging to another visit must not leak into
+    this one. And an event the clinician marked as not performed must not read
+    as one that was — that is the row stating the opposite of the export.
+    """
+    from anastomosis.core.model import (
+        Encounter,
+        NoteSection,
+        Patient,
+        PatientRecord,
+        ScreeningEvent,
+        SectionKind,
+    )
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000ee"
+    this_visit = "feedface-ev00-0000-0000-000000000001"
+    other_visit = "feedface-ev00-0000-0000-000000000002"
+
+    def encounter(eid: str) -> Any:
+        return Encounter(
+            id=eid,
+            patient_id=pid,
+            chief_complaint="Screening coverage",
+            encounter_type="SOAP",
+            sections=[NoteSection(kind=SectionKind.SUBJECTIVE, html="<p>x</p>", text="x")],
+        )
+
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Screening", family_name="Coverage"),
+        encounters=[encounter(this_visit), encounter(other_visit)],
+        screening_events=[
+            ScreeningEvent(
+                patient_id=pid,
+                encounter_id=this_visit,
+                name="PHQ-2",
+                result="2",
+                comments="Follow up next visit",
+            ),
+            ScreeningEvent(
+                patient_id=pid,
+                encounter_id=this_visit,
+                name="Tobacco cessation counseling",
+                negated=True,
+            ),
+            ScreeningEvent(patient_id=pid, encounter_id=other_visit, name="Fall risk assessment"),
+        ],
+    )
+    html = template.render(**pack.build_context(record.encounters[0], record, cfg))
+    assert "PHQ-2: 2 - Follow up next visit" in html
+    assert "No screenings/interventions/assessments recorded." not in html
+    # The other visit's event stays on the other visit.
+    assert "Fall risk assessment" not in html
+    # And the negated one cannot be read as having happened.
+    assert "Not performed — Tobacco cessation counseling" in html
+
+    # The second encounter sees its own event and neither of the first's.
+    html = template.render(**pack.build_context(record.encounters[1], record, cfg))
+    assert "Fall risk assessment" in html
+    assert "PHQ-2" not in html
+
+    # A record with no events at all still owes the reader the empty state.
+    bare = _one_encounter_record()
+    html = template.render(**pack.build_context(bare.encounters[0], bare, cfg))
+    assert "No screenings/interventions/assessments recorded." in html
+
+
+def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> None:
+    """A chart over a record that HAS health concerns must show them and stop
+    printing the empty state — the section used to be two hard-coded no-record
+    rows with no variable behind them, so an export carrying concerns rendered
+    "No active health concerns recorded." on top of them.
+
+    The two sections are asserted independently: an active-only record must keep
+    the inactive empty state, because a section with genuinely nothing in it
+    still owes the chart reader that string.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Goal
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000cc"
+    both = _one_encounter_record(
+        health_concerns=[
+            Goal(
+                patient_id=pid,
+                description="Uncontrolled blood pressure",
+                effective=date(2023, 3, 4),
+                active=True,
+            ),
+            Goal(
+                patient_id=pid,
+                description="Contact dermatitis, resolved",
+                effective=date(2021, 3, 4),
+                active=False,
+            ),
+        ]
+    )
+    html = template.render(**pack.build_context(both.encounters[0], both, cfg))
+    assert "Uncontrolled blood pressure" in html
+    assert "03/04/23" in html  # the effective date, in the pack's MM/DD/YY form
+    assert "Contact dermatitis, resolved" in html
+    assert "No active health concerns recorded." not in html
+    assert "No inactive health concerns recorded" not in html
+    # The headings stay outside the conditional: every static section renders.
+    assert "Active health concerns" in html and "Inactive health concerns" in html
+
+    active_only = _one_encounter_record(
+        health_concerns=[Goal(patient_id=pid, description="Prediabetes", active=True)]
+    )
+    html = template.render(**pack.build_context(active_only.encounters[0], active_only, cfg))
+    assert "Prediabetes" in html
+    assert "No active health concerns recorded." not in html
+    assert "No inactive health concerns recorded" in html
+
+
+def test_a_row_with_no_text_does_not_print_the_word_none(pack: LoadedPack) -> None:
+    """`description` and `name` are both optional, and both are interpolated bare.
+
+    So a concern, goal or screening that arrives without one used to put the
+    literal token `None` where a clinician reads a diagnosis — a Python repr
+    printed on a medical record. The row still has to appear: its existence is
+    the fact, and dropping it would lose that the chart carries a concern at
+    all. What it prints instead is the pack's own "-", the same blank every
+    other empty cell in this chart uses.
+
+    The date beside a concern was guarded from the day it was written; the
+    description next to it was not, which is the shape this kind of bug keeps
+    taking — one cell of a pair remembered, the other forgotten.
+    """
+    from anastomosis.core.model import Goal, ScreeningEvent
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000cd"
+    record = _one_encounter_record(
+        health_concerns=[Goal(patient_id=pid, description=None, active=True)],
+        goals=[Goal(patient_id=pid, description=None, active=False)],
+    )
+    record.screening_events = [
+        ScreeningEvent(patient_id=pid, encounter_id=record.encounters[0].id, name=None)
+    ]
+    html = template.render(**pack.build_context(record.encounters[0], record, cfg))
+
+    assert "None" not in html, "a Python repr must never reach a chart, anywhere"
+    # And the rows survive: the empty state would deny that the chart has any.
+    assert "No active health concerns recorded." not in html
+    assert "No inactive goals recorded" not in html
+    assert "No screenings/interventions/assessments recorded." not in html
 
 
 # --- context wiring ------------------------------------------------------------

@@ -141,3 +141,21 @@ class Goal(AnastBase):
     description: str | None = None
     effective: date | None = None
     active: bool = True
+
+
+class ScreeningEvent(AnastBase):
+    """One clinical-worksheet item on an encounter: a screening administered,
+    an intervention performed, an assessment scored.
+
+    ``negated`` is the source's own "this did not happen" flag. It is a field
+    rather than a filter because a negated event is still a fact about the
+    visit — dropping it would lose it, and rendering it beside the ones that did
+    happen would state the opposite of what the chart says.
+    """
+
+    patient_id: str
+    encounter_id: str | None = None
+    name: str | None = None
+    result: str | None = None
+    comments: str | None = None
+    negated: bool = False
