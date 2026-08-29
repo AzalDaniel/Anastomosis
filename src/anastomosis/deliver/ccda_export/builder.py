@@ -87,7 +87,6 @@ logger = logging.getLogger(__name__)
 NSMAP = {None: V3, "sdtc": SDTC, "xsi": XSI}
 
 OID_LOINC = "2.16.840.1.113883.6.1"
-OID_CPT = "2.16.840.1.113883.6.12"
 OID_CVX = "2.16.840.1.113883.12.292"
 OID_GENDER = "2.16.840.1.113883.5.1"
 OID_MARITAL = "2.16.840.1.113883.5.2"
@@ -790,6 +789,32 @@ def _social_history(body: etree._Element, observations: list[Observation]) -> No
 # --- encounters --------------------------------------------------------------
 
 
+def _encounter_code(node: etree._Element, encounter_type: str | None) -> None:
+    """The encounter's type, as text, without inventing a billing code for it.
+
+    This used to emit ``code="99999" codeSystem=<CPT>``. Nothing in the source
+    carries a CPT code — ``Encounter`` has no such field — so the 99999 was a
+    constant chosen to fill an attribute, and 99999 is not an assigned CPT code
+    at all. To the receiving system it did not read as a placeholder: a coded
+    ``<code>`` with a codeSystem is an assertion, and the encounter type went
+    into ``displayName`` where a mismatched pair like that is normally resolved
+    in the code's favour. An import that trusts it books every visit we migrate
+    under one fabricated procedure.
+
+    So: no code. ``nullFlavor="OTH"`` says the real value lies outside CPT, and
+    the type travels as ``originalText`` — the same shape the unmapped-sex case
+    settled on, and the one the parser reads back into ``encounter_type``. When
+    there is no type either, ``NI``: no information, which is the truth.
+    """
+    if encounter_type is None:
+        # No caller reaches this today — _structured_encounters keeps only typed
+        # encounters — but OTH is not the fallback if that filter ever widens:
+        # OTH asserts a real value outside CPT while showing none of it.
+        _el(node, "code", nullFlavor="NI")
+        return
+    _text_el(_el(node, "code", nullFlavor="OTH"), "originalText", encounter_type)
+
+
 def _encounters(body: etree._Element, encounters: list[Encounter]) -> None:
     section = _section(body, LOINC_ENCOUNTERS, "Encounters", "History of Encounters")
     _narrative(section, [e.encounter_type or "Encounter" for e in encounters])
@@ -798,7 +823,7 @@ def _encounters(body: etree._Element, encounters: list[Encounter]) -> None:
         _el(node, "templateId", root="2.16.840.1.113883.10.20.22.4.49", extension="2015-08-01")
         # id @root drives the deterministic encounter id on re-ingest.
         _el(node, "id", root=enc.id)
-        _el(node, "code", code="99999", displayName=enc.encounter_type, codeSystem=OID_CPT)
+        _encounter_code(node, enc.encounter_type)
         _nullable(
             node,
             "effectiveTime",
