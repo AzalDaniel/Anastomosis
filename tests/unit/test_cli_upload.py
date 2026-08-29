@@ -520,12 +520,19 @@ def _fhir_spy(
     calls: list[dict[str, object]] = []
     made = dest if dest is not None else FakeDestination(_known())
 
-    def _spy(base_url: str, *, bearer_token: str | None, create_missing_patients: bool) -> object:
+    def _spy(
+        base_url: str,
+        *,
+        bearer_token: str | None,
+        create_missing_patients: bool,
+        search_by_ssn: bool,
+    ) -> object:
         calls.append(
             {
                 "base_url": base_url,
                 "bearer_token": bearer_token,
                 "create_missing_patients": create_missing_patients,
+                "search_by_ssn": search_by_ssn,
             }
         )
         return made
@@ -689,6 +696,27 @@ def test_create_patients_defaults_on_and_is_overridable(
 
     assert result.exit_code == 0, result.output
     assert calls[0]["create_missing_patients"] is expected
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [(None, False), ("--search-by-ssn", True), ("--no-search-by-ssn", False)],
+)
+def test_search_by_ssn_defaults_off_and_is_overridable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str | None, expected: bool
+) -> None:
+    """OFF unless asked. A search parameter rides in the URL query string, so
+    an SSN goes there because the operator decided it should, never because a
+    patient happened to carry nothing else."""
+    monkeypatch.delenv(DEFAULT_TOKEN_ENV, raising=False)
+    out_dir = _write_manifest(tmp_path)
+    calls = _fhir_spy(monkeypatch)
+
+    extra = ["--no-verify"] if flag is None else [flag, "--no-verify"]
+    result = _invoke_fhir(out_dir, *extra)
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["search_by_ssn"] is expected
 
 
 def test_fhir_cleartext_off_loopback_exit_2_seam_never_called(

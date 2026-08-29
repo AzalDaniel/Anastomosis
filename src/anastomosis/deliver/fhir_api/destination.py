@@ -130,28 +130,50 @@ class _NoopSession:
 #:
 #: The source GUID leads because on a re-run into a destination this tool has
 #: written to, it is the exact identity this tool recorded. The destination's
-#: own record numbers come next. An SSN still gets sent for a patient who
-#: carries nothing else: whether that should instead miss (and, with
-#: --create-patients, make a duplicate) is a question about the operator's
-#: destination, and #232 leaves it open.
+#: own record numbers come next.
 _SEARCH_IDENTIFIER_ORDER: tuple[IdentifierKind, ...] = (
     IdentifierKind.SOURCE_GUID,
     IdentifierKind.MRN,
     IdentifierKind.PRN,
     IdentifierKind.OTHER,
-    IdentifierKind.SSN,
 )
 
+#: The one kind that is NOT reached for unless an operator asks. It sat at the
+#: end of the order above, so a patient carrying only an SSN had it put in a
+#: URL query string — and that reaches the destination's access log and every
+#: proxy between, which is not somewhere this tool can clean up afterwards.
+#:
+#: The question #232 left open was whether an SSN should ever be a search
+#: parameter, and the honest reading of the trade is that it is the operator's
+#: to make, not one to inherit by default. Off, a patient with nothing else
+#: simply is not found: with --create-patients that is a duplicate chart, which
+#: is visible and recoverable, and without it the item is skipped and reported.
+#: On (``--search-by-ssn``), the SSN is the last resort it used to be, for a
+#: destination that really does hold its patients under nothing else.
+_SSN_SEARCH_KIND = IdentifierKind.SSN
 
-def _search_identifier(patient: Patient) -> Identifier | None:
+
+def _has_usable_ssn(patient: Patient) -> bool:
+    """Does this patient carry an SSN with something in it?
+
+    The distinction that matters when nothing else was searchable: an SSN this
+    run declines to send is an identity withheld, while a blank identifier is
+    an identity the source never gave.
+    """
+    return any(i.kind is _SSN_SEARCH_KIND and i.value for i in patient.identifiers)
+
+
+def _search_identifier(patient: Patient, *, allow_ssn: bool = False) -> Identifier | None:
     """The identifier to search the destination by, or None to fall back.
 
     Best kind first, and within a kind the one the source listed first — an
-    adapter that emits two MRNs still gets the same answer every run. The order
-    covers every :class:`IdentifierKind`, so an identifier this skips is one
-    with no value at all.
+    adapter that emits two MRNs still gets the same answer every run. The SSN
+    is reached only with ``allow_ssn``, and only after everything else, so
+    turning it on changes the answer for exactly the patients who carry
+    nothing better.
     """
-    for kind in _SEARCH_IDENTIFIER_ORDER:
+    order = (*_SEARCH_IDENTIFIER_ORDER, _SSN_SEARCH_KIND) if allow_ssn else _SEARCH_IDENTIFIER_ORDER
+    for kind in order:
         for ident in patient.identifiers:
             if ident.kind is kind and ident.value:
                 return ident
@@ -167,6 +189,7 @@ class FhirApiDestination:
         *,
         name: str = "fhir_api",
         create_missing_patients: bool = False,
+        search_by_ssn: bool = False,
         doc_type_loinc: str = _DEFAULT_DOC_LOINC,
         doc_type_display: str = _DEFAULT_DOC_DISPLAY,
         max_payload_bytes: int = _MAX_PAYLOAD_BYTES,
@@ -174,6 +197,7 @@ class FhirApiDestination:
         self._client = client
         self._name = name
         self._create_missing_patients = create_missing_patients
+        self._search_by_ssn = search_by_ssn
         self._doc_type_loinc = doc_type_loinc
         self._doc_type_display = doc_type_display
         # The inline-payload bound, enforced BEFORE the file is read.
@@ -213,9 +237,12 @@ class FhirApiDestination:
 
         Searches by identifier first (the export identifier-system convention),
         falling back to a demographic search only when the patient carries no
-        identifier. Exactly one match resolves; multiple is a hard error; zero
-        returns ``None`` unless ``create_missing_patients`` is set, which POSTs
-        a new Patient and returns its id.
+        identifier at all. A patient carrying ONLY an SSN is not that patient:
+        without ``search_by_ssn`` there is nothing this run will search on, and
+        it resolves to nothing rather than to a name-and-DOB match. Exactly one
+        match resolves; multiple is a hard error; zero returns ``None`` unless
+        ``create_missing_patients`` is set, which POSTs a new Patient and
+        returns its id.
         """
         found = self._find(patient)
         if found is not None:
@@ -231,6 +258,14 @@ class FhirApiDestination:
         that could CREATE a patient would corrupt the very state it verifies.
         """
         params, matched_on = self._search_params(patient)
+        if not params:
+            # Nothing to search ON. Issuing the GET anyway would ask the server
+            # for every Patient it holds, and the multi-match refusal below
+            # would then report "matched 4,000 records" — true, useless, and
+            # hiding the actual reason. PHI-safe: matched_on names why, never a
+            # patient value.
+            logger.info("no destination search is possible: %s", "; ".join(matched_on))
+            return None
         bundle = self._client.get("Patient", params)
         ids = _entry_ids(bundle)
         if len(ids) > 1:
@@ -258,10 +293,20 @@ class FhirApiDestination:
         still searched (FHIR ANDs only the params present), and the matched_on
         names reflect exactly which params were sent.
         """
-        chosen = _search_identifier(patient)
+        chosen = _search_identifier(patient, allow_ssn=self._search_by_ssn)
         if chosen is not None:
             system = export.IDENTIFIER_SYSTEMS[chosen.kind.value]
             return {"identifier": f"{system}|{chosen.value}"}, ("identifier",)
+        if not self._search_by_ssn and _has_usable_ssn(patient):
+            # Carries an identity, just not one this run will put in a URL.
+            # Demographics is NOT the answer here: that fallback exists for a
+            # patient the source gave no identity at all, and letting a
+            # withheld SSN reach it would trade a query-string exposure for a
+            # name-and-DOB match on a stranger — the failure this subsystem
+            # exists to prevent, and the worse of the two. A patient whose only
+            # identifier entry is BLANK is a different case: the source gave
+            # nothing, so the fallback below is right for them.
+            return {}, ("identifier withheld (SSN only; --search-by-ssn is off)",)
         params: dict[str, str] = {}
         matched: list[str] = []
         if patient.family_name:
@@ -273,6 +318,8 @@ class FhirApiDestination:
         if patient.birth_date:
             params["birthdate"] = patient.birth_date.isoformat()
             matched.append("birth_date")
+        if not params:
+            return {}, ("no identifier, name or date of birth to search on",)
         return params, tuple(matched)
 
     def _create_patient(self, patient: Patient) -> DestinationPatient:
