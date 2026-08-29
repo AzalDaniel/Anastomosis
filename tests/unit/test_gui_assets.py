@@ -708,3 +708,115 @@ def test_every_styled_class_is_one_the_app_actually_puts_on_an_element() -> None
     styled = sorted(set(re.findall(r"\.([a-zA-Z][\w-]*)", css)))
     orphans = [cls for cls in styled if not is_named(cls)]
     assert not orphans, f"styled but never applied: {orphans}"
+
+
+# Tags whose implicit ARIA role permits an accessible name. Everything else —
+# `div`, `span`, and friends — has the `generic` role, and ARIA prohibits naming
+# `generic`: the label is dropped, and whether anything reads it is left to the
+# browser's generosity rather than the spec.
+_NAMEABLE_TAGS = frozenset(
+    {
+        "a",
+        "area",
+        "article",
+        "aside",
+        "button",
+        "dialog",
+        "fieldset",
+        "footer",
+        "form",
+        "header",
+        "iframe",
+        "img",
+        "input",
+        "main",
+        "meter",
+        "nav",
+        "optgroup",
+        "option",
+        "output",
+        "progress",
+        "section",
+        "select",
+        "summary",
+        "table",
+        "td",
+        "textarea",
+        "th",
+        "tr",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    }
+)
+
+
+def _labelled_elements() -> list[tuple[str, str, str, str]]:
+    """Every element carrying an ARIA name, as (tag, id, role, label)."""
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    found = []
+    for tag_text in re.findall(r"<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>", html):
+        tag, attrs = tag_text
+        if "aria-label" not in attrs and "aria-labelledby" not in attrs:
+            continue
+        role = re.search(r'\brole="([^"]*)"', attrs)
+        ident = re.search(r'\bid="([^"]*)"', attrs)
+        label = re.search(r'\baria-label(?:ledby)?="([^"]*)"', attrs)
+        found.append(
+            (
+                tag.lower(),
+                ident.group(1) if ident else "",
+                role.group(1) if role else "",
+                label.group(1) if label else "",
+            )
+        )
+    return found
+
+
+def test_every_aria_label_sits_on_something_that_can_carry_one() -> None:
+    """A label on a bare `div` is a label nothing is obliged to read.
+
+    Five panels shipped as `<div aria-label="...">` with no role — the progress
+    frame on Charts and the four proposal/result panels on Teach. ARIA prohibits
+    `aria-label` on the `generic` role, so the name is dropped: Chromium happens
+    to keep it in its own tree, which is exactly why this was invisible, but
+    nothing requires an assistive technology to expose it and several do not.
+    They carry `role="group"` now, verified through Chromium's accessibility
+    tree by CDP: `generic` before, `group` after, the name intact either way.
+
+    axe found ONE of the five. The other four ship `hidden`, and a rule that
+    only runs on what is visible under-reports by design — so this counts them
+    from the markup, where being hidden makes no difference.
+    """
+    unnamed = [
+        (tag, ident, label)
+        for tag, ident, role, label in _labelled_elements()
+        if not role and tag not in _NAMEABLE_TAGS
+    ]
+    assert unnamed == [], (
+        "these carry an ARIA name on a role that prohibits one — give each an "
+        f"explicit role, or use an element whose implicit role permits it: {unnamed}"
+    )
+
+
+def test_the_activity_strip_lives_inside_a_landmark() -> None:
+    """The strip floats above the shell, so it is outside `<main>` by design.
+
+    Content outside every landmark is content a screen-reader user reaches only
+    by walking the whole document — axe's `region` rule, and the one violation
+    left on all four views. An `<aside>` is what this actually is: available
+    everywhere, related to the run in view without being part of it.
+    """
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    strip = html.index('id="log-strip"')
+    opened = html.rindex("<aside", 0, strip)
+    closed = html.index("</aside>", strip)
+    assert 'aria-label="Activity"' in html[opened : opened + 120], (
+        "the activity strip must sit in a labelled landmark"
+    )
+    assert html.index('id="log-strip-hint"') < closed, (
+        "its description belongs in the same landmark, not loose in the body"
+    )

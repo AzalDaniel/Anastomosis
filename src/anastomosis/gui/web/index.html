@@ -108,7 +108,7 @@
           <div id="charts-form"></div>
         </div>
 
-        <div class="panel progress-frame" id="charts-progress" aria-label="Progress">
+        <div class="panel progress-frame" id="charts-progress" role="group" aria-label="Progress">
           <div class="progress-current" id="charts-current">Ready.</div>
           <div class="progress-bar" role="progressbar" aria-label="Stages finished"
                aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -380,7 +380,7 @@
             <button class="btn btn-primary" id="layout-analyze" type="button">Look at the samples</button>
           </div>
 
-          <div class="panel" id="layout-proposal" aria-label="Proposed layout" hidden>
+          <div class="panel" id="layout-proposal" role="group" aria-label="Proposed layout" hidden>
             <h3>Proposed layout</h3>
             <!-- It said "No patient data is shown below." directly above a list
                  that can contain it. The static labels are the strings that
@@ -409,7 +409,7 @@
             <button class="btn btn-primary" id="layout-write" type="button" disabled>Write the draft layout</button>
           </div>
 
-          <div class="panel" id="layout-result" aria-label="Draft layout written" hidden>
+          <div class="panel" id="layout-result" role="group" aria-label="Draft layout written" hidden>
             <h3>Draft layout written</h3>
             <div class="prose" id="layout-result-path"></div>
             <div class="text-block" id="layout-result-md"></div>
@@ -437,7 +437,7 @@
             <button class="btn btn-primary" id="format-analyze" type="button">Look at the example</button>
           </div>
 
-          <div class="panel" id="format-proposal" aria-label="Proposed match-up" hidden>
+          <div class="panel" id="format-proposal" role="group" aria-label="Proposed match-up" hidden>
             <h3>Proposed match-up</h3>
             <div class="panel-note">No patient data is shown below.</div>
             <div class="prose" id="format-grouping"></div>
@@ -463,7 +463,7 @@
             <button class="btn btn-primary" id="format-save" type="button" disabled>Save this format</button>
           </div>
 
-          <div class="panel" id="format-result" aria-label="Format saved" hidden>
+          <div class="panel" id="format-result" role="group" aria-label="Format saved" hidden>
             <h3>Format saved</h3>
             <div class="prose" id="format-result-path"></div>
             <div class="text-block" id="format-result-md"></div>
@@ -483,20 +483,28 @@
 
     <!-- The activity strip is GLOBAL: it shows the latest event from any run,
          in any view, and expands into the full history. It floats above the
-         shell rather than riding at the end of it. -->
-    <button type="button" class="log-strip" id="log-strip"
-            aria-describedby="log-strip-hint"
-            aria-expanded="false" aria-controls="log-drawer">
-      <span class="log-ts" id="log-strip-ts" aria-hidden="true">--:--:--</span>
-      <span class="icon log-icon" id="log-strip-icon" data-icon="info" aria-hidden="true"></span>
-      <span class="log-msg" id="log-strip-msg">Ready.</span>
-      <span class="log-hint" aria-hidden="true">L</span>
-    </button>
-    <!-- The hint DESCRIBES the button; it is not its name. As an aria-label it
-         overrode the contents, so the strip announced "Activity — click or
-         press L for the full list" while it read "Charts: stopped —
-         UnsupportedSourceError". The latest event is the name. -->
-    <span class="sr-only" id="log-strip-hint">Activity — click or press L for the full list</span>
+         shell rather than riding at the end of it.
+
+         Wrapped in its own landmark because it sits OUTSIDE <main> — floating
+         above the shell is the whole point of it — and content outside every
+         landmark is content a screen-reader user reaches only by walking the
+         whole document. A complementary region is what this is: available
+         everywhere, related to the run in view, not part of it. -->
+    <aside class="log-region" aria-label="Activity">
+      <button type="button" class="log-strip" id="log-strip"
+              aria-describedby="log-strip-hint"
+              aria-expanded="false" aria-controls="log-drawer">
+        <span class="log-ts" id="log-strip-ts" aria-hidden="true">--:--:--</span>
+        <span class="icon log-icon" id="log-strip-icon" data-icon="info" aria-hidden="true"></span>
+        <span class="log-msg" id="log-strip-msg">Ready.</span>
+        <span class="log-hint" aria-hidden="true">L</span>
+      </button>
+      <!-- The hint DESCRIBES the button; it is not its name. As an aria-label it
+           overrode the contents, so the strip announced "Activity — click or
+           press L for the full list" while it read "Charts: stopped —
+           UnsupportedSourceError". The latest event is the name. -->
+      <span class="sr-only" id="log-strip-hint">Activity — click or press L for the full list</span>
+    </aside>
 
     <div class="log-drawer" id="log-drawer" role="dialog" aria-label="Activity" aria-modal="false" hidden>
       <header class="log-drawer-header">
