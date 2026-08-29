@@ -151,8 +151,8 @@ coverage:
     - immunizations
   omits:
     results: >
-      the Observations section is one of the static sections described in
-      RULES.md: the gold standard preserves no populated example, so the row
-      layout is unknown and the section renders its empty state. Tracked in
-      issue #236 — when the layout is known this moves to carries and the
-      check starts enforcing it.
+      the Observations section is one this pack does not reconstruct (RULES.md):
+      the gold standard preserves no populated example, so the row layout is
+      unknown and the pack will not invent one. Tracked in issue #236 — when a
+      real chart shows the layout, this moves to carries and the check starts
+      enforcing it.
