@@ -1983,3 +1983,68 @@ def test_an_unmapped_gender_is_nullFlavoured_not_given_a_fabricated_code(tmp_pat
     path = tmp_path / "ccd.xml"
     path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
     assert parse_document(path).patient.sex == "Nonbinary"
+
+
+def _encounter_ccd(tmp_path: Path, encounter_type: str | None) -> tuple[str, PatientRecord]:
+    """One encounter through build → parse, returning the XML and what came back."""
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+                date_of_service=date(2023, 5, 10),
+                encounter_type=encounter_type,
+            )
+        ],
+    )
+    blob = build_ccd(record)
+    path = tmp_path / "ccd.xml"
+    path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
+    return (blob.decode() if isinstance(blob, bytes) else str(blob)), parse_document(path)
+
+
+def test_an_encounter_is_not_given_a_fabricated_cpt_code(tmp_path: Path) -> None:
+    """No source field carries a CPT code, so the export must not assert one.
+
+    Every encounter went out as ``code="99999" codeSystem="…6.12"`` — the CPT
+    OID — with the real type demoted to @displayName. 99999 is not an assigned
+    CPT code, but nothing downstream can tell that from a placeholder: a coded
+    <code> with a codeSystem is a claim, and a receiver reconciling code against
+    displayName resolves in the code's favour. Every migrated visit in the
+    practice lands under one invented procedure.
+    """
+    text, _ = _encounter_ccd(tmp_path, "Office outpatient visit 15 minutes")
+    assert "99999" not in text
+    assert "2.16.840.1.113883.6.12" not in text, "the CPT OID is not claimed at all"
+
+
+def test_an_encounter_type_travels_as_text_and_survives_the_round_trip(
+    tmp_path: Path,
+) -> None:
+    """Saying nothing must not mean losing the type. OTH — the value is real and
+    outside CPT — with the words in originalText, which is what comes back."""
+    text, reingested = _encounter_ccd(tmp_path, "Office outpatient visit 15 minutes")
+    assert 'nullFlavor="OTH"' in text
+    assert "<originalText>Office outpatient visit 15 minutes</originalText>" in text
+    (enc,) = reingested.encounters
+    assert enc.encounter_type == "Office outpatient visit 15 minutes"
+
+
+def test_an_encounter_with_no_type_says_no_information() -> None:
+    """The helper directly, because no document reaches this branch.
+
+    ``_structured_encounters`` keeps only typed encounters, so a typeless one is
+    filtered out before the section is built and never gets a <code> at all.
+    The branch is still worth pinning: OTH is the wrong fallback if that filter
+    ever widens, since it asserts a real value outside CPT while showing none of
+    it. NI says what is true instead.
+    """
+    from anastomosis.deliver.ccda_export.builder import _encounter_code
+
+    node = etree.Element("encounter")
+    _encounter_code(node, None)
+    (code,) = list(node)
+    assert code.get("nullFlavor") == "NI"
+    assert code.get("code") is None and code.get("codeSystem") is None
+    assert list(code) == [], "nothing to show, so nothing shown"
