@@ -294,11 +294,25 @@ def _run_pack_mode(
 # than silently omitted (the L0-L6 skip-with-reason ethos).
 
 # The engine checks that apply to a whole-patient standard C-CDA view.
-_CCDA_DOC_CHECKS: tuple[str, ...] = ("data_integrity", "layout_pagination")
+# ``unattributed_vitals`` belongs here rather than below because it never reads
+# ``ctx.encounter`` at all: it asks whether the RECORD's observations name
+# encounters the record contains, which is as fair a question of a whole-patient
+# document as of a per-encounter one.
+_CCDA_DOC_CHECKS: tuple[str, ...] = (
+    "data_integrity",
+    "layout_pagination",
+    "unattributed_vitals",
+)
 
 # The encounter-scoped engine checks, recorded as skipped WITH A REASON (not
 # omitted). A skip is Verdict.PASS + a ``skipped: ...`` finding — the same idiom
 # ``VitalsLoincCheck`` uses when its section is disabled.
+#
+# Between them these two tables must name EVERY registered check, which is the
+# whole point of the skip-with-reason ethos and which nothing used to enforce:
+# ``note_body`` was registered later and landed in neither, so the one path that
+# promised never to omit a check silently omitted it. The parity test named
+# below is now what keeps this honest.
 _CCDA_SKIPPED_CHECKS: dict[str, str] = {
     "vitals_loinc": (
         "skipped: vitals are encounter-scoped; the standard C-CDA view is a "
@@ -307,6 +321,11 @@ _CCDA_SKIPPED_CHECKS: dict[str, str] = {
     "date_staleness": (
         "skipped: date-staleness compares the chart against one encounter's date "
         "of service; the standard C-CDA view is whole-patient (no single DOS)"
+    ),
+    "note_body": (
+        "skipped: note-body verifies one encounter's Subjective/Objective/"
+        "Assessment/Plan bodies; the standard C-CDA view is whole-patient and "
+        "carries no single encounter's note"
     ),
 }
 
@@ -341,9 +360,14 @@ def _run_ccda_standard_qa(
       per-record context" for a whole-patient document.
     * ``layout_pagination`` — no empty/blank pages; page geometry as declared.
 
-    The encounter-scoped checks (``vitals_loinc``, ``date_staleness``) cannot be
-    satisfied per-patient; they are recorded as skipped WITH A REASON
-    (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently omitted.
+    * ``unattributed_vitals`` — no measurement in the record points at a visit
+      the record does not have. It reads the record rather than the encounter,
+      so a whole-patient document can answer it as well as a per-encounter one.
+
+    The encounter-scoped checks (``vitals_loinc``, ``date_staleness``,
+    ``note_body``) cannot be satisfied per-patient; they are recorded as skipped
+    WITH A REASON (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently
+    omitted.
     """
     from anastomosis.core.model import Encounter
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
