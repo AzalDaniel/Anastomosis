@@ -172,34 +172,57 @@ def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
-def test_the_emitted_files_say_it_where_the_list_actually_is(tmp_path: Path) -> None:
-    """The caveat has to survive the scroll down to the strings it is about.
+def test_sample_text_lands_in_the_quarantine_and_in_no_other_file(tmp_path: Path) -> None:
+    """One file carries text taken from the samples, and deleting it is the job.
 
-    DRAFT.md opens with SAME_PATIENT_CAVEAT and then, several sections later,
-    printed the shared diagnosis under a sentence calling the list "template
-    labels/boilerplate, not patient data" — the contradiction landing exactly
-    where the operator decides what to keep. template.html carried the same
-    sentence above the same values. Both now restate the caveat in one line.
+    This assertion is the inverse of the one it replaces, and deliberately so.
+    That test pinned the shared diagnosis as PRESENT in template.html and
+    DRAFT.md — it was documenting the leak while checking the wording printed
+    above it. Wording was the right fix for the claim; it is not a fix for the
+    string being in those files.
+
+    Both of them travel. template.html renders every future patient's chart and
+    is what gets copied when a second pack is derived from this one; DRAFT.md
+    is the sheet handed over with it. A previous patient's diagnosis in either
+    is carried everywhere the pack goes, and being an HTML comment is what
+    makes it easy never to notice.
+
+    So the strings sit in UNPLACED.txt, which renders nothing and is imported by
+    nothing, and the operator's remedy stops depending on their diligence: they
+    delete one file rather than reading two and remembering a third.
     """
     from anastomosis.packgen import analyze, extract_samples
-    from anastomosis.packgen.emit import STATIC_LIST_NOTE, emit_draft_pack
+    from anastomosis.packgen.emit import STATIC_LIST_NOTE, UNPLACED_NAME, emit_draft_pack
 
     analysis = analyze(extract_samples(_samples(tmp_path)))
     pack_dir = emit_draft_pack(
         analysis, name="acme_soap", display="ACME Clinic", out_dir=tmp_path / "out"
     )
-    emitted = {
-        name: (pack_dir / name).read_text(encoding="utf-8")
-        for name in ("DRAFT.md", "template.html")
-    }
 
-    for name, body in emitted.items():
-        # The premise: the shared diagnosis really is written into this file.
-        assert "Type 2 diabetes mellitus" in body, f"{name} lost the reproduction"
-        for claim in ("not patient data", "boilerplate", "template labels"):
-            assert claim not in body, f"{name} still calls the list {claim!r}"
-        assert _flat(STATIC_LIST_NOTE) in _flat(body), (
-            f"{name} prints the list without saying what recurrence does not prove"
+    # The premise: this fixture really does produce the leak worth quarantining.
+    # Two of its three patients share this diagnosis, so it recurs and promotes.
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    assert "Type 2 diabetes mellitus" in quarantine, "the fixture lost the reproduction"
+
+    # And it is in NOTHING else the generator wrote.
+    for path in sorted(pack_dir.rglob("*")):
+        if not path.is_file() or path.name == UNPLACED_NAME:
+            continue
+        body = path.read_text(encoding="utf-8", errors="replace")
+        assert "Type 2 diabetes mellitus" not in body, (
+            f"{path.name} carries a string taken from the samples"
+        )
+
+    # The quarantine still says what recurrence does not prove — the operator
+    # decides what to keep while looking at the list, not four sections above it.
+    assert _flat(STATIC_LIST_NOTE) in _flat(quarantine)
+    for claim in ("not patient data", "boilerplate", "template labels"):
+        assert claim not in quarantine, f"the quarantine calls the list {claim!r}"
+
+    # And the two travelling files still point at it, so nothing is silently lost.
+    for name in ("template.html", "DRAFT.md"):
+        assert UNPLACED_NAME in (pack_dir / name).read_text(encoding="utf-8"), (
+            f"{name} drops the strings without saying where they went"
         )
 
 

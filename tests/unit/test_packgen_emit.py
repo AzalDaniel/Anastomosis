@@ -25,7 +25,11 @@ from typer.testing import CliRunner  # noqa: E402
 
 from anastomosis.cli import app  # noqa: E402
 from anastomosis.packgen import PackAnalysis, analyze, extract_samples  # noqa: E402
-from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT, emit_draft_pack  # noqa: E402
+from anastomosis.packgen.emit import (  # noqa: E402
+    SAME_PATIENT_CAVEAT,
+    UNPLACED_NAME,
+    emit_draft_pack,
+)
 from anastomosis.reconstruct.packs import PackManifest, discover_packs  # noqa: E402
 
 _W, _H = 612.0, 792.0
@@ -149,19 +153,21 @@ def test_emit_is_byte_identical(analysis: PackAnalysis, tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_unplaced_static_text_lands_in_comment_block(
+def test_unplaced_static_text_lands_in_the_quarantine(
     analysis: PackAnalysis, tmp_path: Path
 ) -> None:
-    """A static string that maps to no model field must appear verbatim in the
-    UNPLACED comment — never silently dropped (losslessness invariant)."""
+    """A static string that maps to no model field must survive verbatim.
+
+    Losslessness is unchanged by the move to UNPLACED.txt — only the file it
+    survives IN changed. The template keeps a pointer, so the operator is told
+    where the strings went rather than left to discover they are missing.
+    """
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
-    assert "UNPLACED STATIC TEXT — position manually" in html
+    assert f"UNPLACED STATIC TEXT — see {UNPLACED_NAME}" in html
     # "Confidential Example Clinic" maps to no known field → must be preserved.
-    comment_start = html.index("<!-- UNPLACED STATIC TEXT")
-    comment_end = html.index("-->", comment_start)
-    comment = html[comment_start:comment_end]
-    assert "Confidential Example Clinic" in comment
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    assert "Confidential Example Clinic" in quarantine
 
 
 def test_placed_labels_map_to_header_fields(analysis: PackAnalysis, tmp_path: Path) -> None:
@@ -184,9 +190,10 @@ def test_no_static_string_is_dropped(analysis: PackAnalysis, tmp_path: Path) -> 
     none is silently lost."""
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
     for static in analysis.static_text:
-        # Either present verbatim, or its label stem matched a header slot.
-        present = static in html
+        # Either preserved verbatim somewhere, or its label stem matched a slot.
+        present = static in quarantine or static in html
         labelish = any(
             static.lower().startswith(prefix)
             for prefix in ("dob", "date of birth", "provider", "seen by", "patient", "name", "sex")
@@ -295,16 +302,23 @@ def test_yaml_active_heading_chars_still_validate(tmp_path: Path) -> None:
     assert status.available, status.diagnosis
 
 
-def test_arrow_in_static_text_cannot_escape_comment(tmp_path: Path) -> None:
-    """A static string containing ``-->`` must be neutralized so it cannot close
-    the UNPLACED comment early (losslessness + well-formed output)."""
+def test_arrow_in_static_text_cannot_escape_a_comment_it_is_not_in(tmp_path: Path) -> None:
+    """The hazard is gone by construction now, and that is the stronger fix.
+
+    A sample string containing ``-->`` used to need escaping because it was
+    written inside an HTML comment, where it could close the comment early and
+    spill the rest into the rendered page. It is not written there any more, so
+    there is no comment for it to escape — and it survives unescaped in the
+    quarantine, which is plain text and has no delimiters to break.
+
+    Escaping the string was a correct fix for the file it was in. Not putting
+    it in that file is a correct fix for the file.
+    """
     pack_dir = emit_draft_pack(_hostile_analysis(), name="hostile", display="X", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
-    comment_start = html.index("<!-- UNPLACED STATIC TEXT")
-    comment_end = html.index("-->", comment_start)
-    comment = html[comment_start:comment_end]
-    assert "boiler --&gt; plate" in comment
-    assert "boiler --> plate" not in comment
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    assert "boiler --> plate" in quarantine, "the string still has to survive"
+    assert "boiler" not in html, "no sample-derived string belongs in the template"
 
 
 def test_exotic_page_size_falls_back_to_renderable_named_size(tmp_path: Path) -> None:
@@ -617,8 +631,15 @@ def test_jinja_delimiters_in_unplaced_text_stay_literal(tmp_path: Path) -> None:
     )
     pack_dir = emit_draft_pack(analysis, name="unplaced_probe", display="X", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
-    comment_start = html.index("<!-- UNPLACED STATIC TEXT")
-    comment = html[comment_start : html.index("-->", comment_start)]
-    assert "{{ 7*7 }}" not in comment
-    assert "{% if True %}" not in comment
-    assert "&#123;&#123; 7*7 &#125;&#125;" in comment
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+
+    # Jinja parses HTML comments, so raw braces written into the template would
+    # evaluate against the live render context even from inside one. Escaping
+    # them was the first repair; keeping sample text out of the template
+    # entirely is the one that cannot be got wrong again — a delimiter that is
+    # not in the file has nothing to evaluate it.
+    assert "{{ 7*7 }}" not in html
+    assert "{% if True %}" not in html
+    assert "Boilerplate" not in html
+    # And it is preserved, literally, where nothing will ever render it.
+    assert "Boilerplate {{ 7*7 }} {% if True %}RAN{% endif %}" in quarantine
