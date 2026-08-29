@@ -130,6 +130,7 @@ _ALLOWLIST_TABLES = {
     "_GISO_MAPPED": "patient-gender-identity-sexual-orientation",
     "_GOAL_MAPPED": "patient-goals",
     "_GUARANTOR_MAPPED": "patient-guarantor",
+    "_HEALTH_CONCERN_MAPPED": "patient-health-concerns",
     "_IMMUNIZATION_MAPPED": "patient-immunizations",
     "_INSURANCE_MAPPED": "patient-insurances",
     "_MEDICATION_MAPPED": "patient-medications",
@@ -138,6 +139,7 @@ _ALLOWLIST_TABLES = {
     "_PRESCRIPTION_MAPPED": "patient-prescriptions",
     "_RACE_MAPPED": "patient-race",
     "_REACTION_MAPPED": "patient-allergy-reactions",
+    "_SCREENING_EVENT_MAPPED": "patient-encounter-events",
     "_SUPERBILL_JOINED_MAPPED": "superbill-insurances",
 }
 
