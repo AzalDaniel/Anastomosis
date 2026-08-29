@@ -21,7 +21,8 @@ EHI exports are full of temporal traps this module exists to absorb:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, tzinfo
+import re
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
 __all__ = [
@@ -33,19 +34,68 @@ __all__ = [
     "to_local",
 ]
 
-# Formats beyond ISO 8601 seen in real exports, most common first.
+# Formats beyond ISO 8601 seen in real exports, most common first. C-CDA TS
+# blobs are NOT here — see _parse_hl7_ts for why strptime cannot read them.
 _FORMATS = (
     "%m/%d/%Y %I:%M:%S %p",  # 3/14/2019 1:59:26 PM   (PF/Tebra TSV timestamps)
     "%m/%d/%Y %H:%M:%S",  # 03/14/2019 13:59:26
     "%m/%d/%Y %H:%M",  # 3/14/2019 13:59
     "%m/%d/%Y",  # 3/14/2019              (DOB-style)
-    "%Y%m%d%H%M%S%z",  # 20190314135926-0500    (C-CDA TS with UTC offset)
-    "%Y%m%d%H%M%S",  # 20190314135926         (C-CDA TS)
-    "%Y%m%d",  # 20190314               (C-CDA date-only TS)
+)
+
+# An HL7 v3 / C-CDA TS is a run of digits whose LENGTH is its precision:
+# "2023", "202305", "20230510", ... through "20230510150405", optionally with
+# fractional seconds and an offset. strptime cannot be trusted with these.
+# Its %m/%d/%H/%M/%S each match one OR TWO digits, so a 10-digit hour-precision
+# value does not fail — it re-segments. "2023051015" came back as 2023-05-01,
+# nine days wrong, with no exception and no ledger entry. Reading the fields by
+# position is what makes a length we do not handle raise instead of guess.
+_HL7_TS = re.compile(
+    r"(?P<year>\d{4})(?P<month>\d{2})?(?P<day>\d{2})?"
+    r"(?P<hour>\d{2})?(?P<minute>\d{2})?(?P<second>\d{2})?"
+    r"(?:\.\d+)?"  # fractional seconds: legal, and below our resolution
+    r"(?P<tz>Z|[+-]\d{2}:?\d{2})?"
 )
 
 
+def _hl7_offset(raw: str | None) -> tzinfo | None:
+    if raw is None:
+        return None
+    if raw == "Z":
+        return UTC
+    hours, minutes = int(raw[1:3]), int(raw[-2:])
+    delta = timedelta(hours=hours, minutes=minutes)
+    return timezone(-delta if raw[0] == "-" else delta)
+
+
+def _parse_hl7_ts(text: str) -> datetime | None:
+    """Read a C-CDA TS by field position. ``None`` if it is not one."""
+    match = _HL7_TS.fullmatch(text)
+    if match is None:
+        return None
+    # Precision truncates from the right, and the pattern enforces that on its
+    # own: the fields are greedy and in order, so a later one cannot be filled
+    # unless every coarser one already is. No separate ordering check needed.
+    parts = {name: match.group(name) for name in ("month", "day", "hour", "minute", "second")}
+    try:
+        return datetime(
+            year=int(match.group("year")),
+            month=int(parts["month"] or 1),
+            day=int(parts["day"] or 1),
+            hour=int(parts["hour"] or 0),
+            minute=int(parts["minute"] or 0),
+            second=int(parts["second"] or 0),
+            tzinfo=_hl7_offset(match.group("tz")),
+        )
+    except ValueError:
+        # Shaped like a TS but out of range (month 15, day 32). Fall through so
+        # the remaining formats get a look and the caller sees parse_dt's error.
+        return None
+
+
 def _parse_raw(text: str) -> datetime | None:
+    if (parsed := _parse_hl7_ts(text)) is not None:
+        return parsed
     try:
         # Handles ISO dates, "YYYY-MM-DD HH:MM:SS[.ffffff]", offsets, and "Z".
         return datetime.fromisoformat(text)
