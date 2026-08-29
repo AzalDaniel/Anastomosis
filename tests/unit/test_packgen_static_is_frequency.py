@@ -22,9 +22,12 @@ directly above the values two patients shared. Those are the words the
 operator reads at the moment they decide what to keep, so they are the ones
 that mattered most. The sweep below now covers the emitted files too.
 
-This file holds the reproduction and pins the wording that now tells the truth
-about it. It does NOT assert the threshold, which is the maintainer's call —
-raising it to a true intersection changes what every learned pack contains.
+This file holds that reproduction. The split is no longer a frequency count: a
+string now has to be on EVERY sample AND own a place on the page nothing else
+occupies, so the shared diagnosis and the shared ethnicity below no longer
+reach the pack at all. What survives is the residual the filter cannot catch —
+a value ALL of the patients share, in a fixed cell, with no competitor to give
+it away — and the wording that tells the operator to look for exactly that.
 
 PHI: the fixture below is synthetic by construction — invented names, a
 textbook diagnosis, and a standard OMB ethnicity category. Nothing copied.
@@ -38,19 +41,41 @@ import pytest
 
 from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT
 
-#: Three different patients. Two share a diagnosis and an ethnicity, which is
-#: an ordinary thing for two patients to do.
+#: The shared diagnosis this issue reproduced. Two of the three patients carry
+#: it, which is an ordinary thing for two patients to do — and used to be
+#: enough to promote it to template chrome.
+_SHARED_DX = "Type 2 diabetes mellitus"
+
+#: The same diagnosis again, on EVERY patient, in a problem list whose rows
+#: shift with how many diagnoses came before. Frequency cannot touch this one:
+#: it is on every sample. What gives it away is the page — each row it lands in
+#: holds somebody else's diagnosis in another chart, so it never owns a slot.
+_LISTED_DX = "Essential hypertension"
+
+#: What ALL THREE share, in a FIXED cell. This is the residual: no sample ever
+#: prints anything else in that slot, so nothing distinguishes it from a label
+#: the form printed, and it still reaches the pack. Quarantined and captioned
+#: rather than claimed to be safe — the tests below hold that line.
+_SHARED_PAYER = "Cascadia Health"
+
+#: name, assessment (two of three share it), ethnicity (ditto), and a problem
+#: list that puts _LISTED_DX at a different row in each chart.
 _PATIENTS = (
-    ("Alder Quill", "Type 2 diabetes mellitus", "Not Hispanic or Latino"),
-    ("Brannoc Vane", "Type 2 diabetes mellitus", "Not Hispanic or Latino"),
-    ("Cressida Yew", "Seasonal allergic rhinitis", "Hispanic or Latino"),
+    ("Alder Quill", _SHARED_DX, "Not Hispanic or Latino", (_LISTED_DX, "Vitamin D deficiency")),
+    ("Brannoc Vane", _SHARED_DX, "Not Hispanic or Latino", ("Chronic sinusitis", _LISTED_DX)),
+    (
+        "Cressida Yew",
+        "Seasonal allergic rhinitis",
+        "Hispanic or Latino",
+        ("Iron deficiency anemia", "Migraine without aura", _LISTED_DX),
+    ),
 )
 
 
 def _samples(tmp_path: Path) -> list[Path]:
     pymupdf = pytest.importorskip("pymupdf", reason="the learner reads PDFs")
     paths = []
-    for index, (name, diagnosis, ethnicity) in enumerate(_PATIENTS):
+    for index, (name, diagnosis, ethnicity, problems) in enumerate(_PATIENTS):
         doc = pymupdf.open()
         page = doc.new_page()
         y = 72.0
@@ -62,6 +87,10 @@ def _samples(tmp_path: Path) -> list[Path]:
             diagnosis,  # a per-patient value, in two
             "Ethnicity:",
             ethnicity,  # ditto
+            "Payer:",
+            _SHARED_PAYER,  # a value every sample shares, in a fixed cell
+            "Problem list:",
+            *problems,  # a shared diagnosis at a row that moves
             "Signed electronically",  # real chrome
         ):
             page.insert_text((72, y), line, fontsize=11)
@@ -73,46 +102,126 @@ def _samples(tmp_path: Path) -> list[Path]:
     return paths
 
 
-def test_a_value_two_patients_share_classifies_as_template_text(tmp_path: Path) -> None:
-    """The reproduction, kept live so the caveat below cannot become untrue.
+def test_a_value_two_patients_share_no_longer_classifies_as_template_text(
+    tmp_path: Path,
+) -> None:
+    """The reproduction, now run against the fix.
 
-    If a later change makes the split content-aware — a label shape, a stable
-    page position, anything but frequency — this test fails, and the words it
-    guards need revisiting in the same breath.
+    The assessment and the ethnicity are on two of three charts, so the
+    every-sample rule is what stops them. "Signed electronically" is on all
+    three, at the same place every time, so it is kept — a filter that took the
+    labels with it would be no use.
     """
     from anastomosis.packgen import analyze, extract_samples
 
     analysis = analyze(extract_samples(_samples(tmp_path)))
     static = set(analysis.static_text)
 
-    # The genuine chrome is there, which is the part that works.
-    assert {"VISIT NOTE", "Patient:", "Assessment:"} <= static, sorted(static)
+    assert {"VISIT NOTE", "Patient:", "Assessment:", "Signed electronically"} <= static, sorted(
+        static
+    )
 
-    # And so are two values belonging to patients, because two of three
-    # patients happened to share them.
-    assert "Type 2 diabetes mellitus" in static, sorted(static)
-    assert "Not Hispanic or Latino" in static, sorted(static)
+    assert _SHARED_DX not in static, sorted(static)
+    assert "Not Hispanic or Latino" not in static, sorted(static)
 
-    # A value in exactly ONE sample is still excluded — the narrower guarantee
-    # frequency does support, and the only one now claimed.
-    for name, _diagnosis, _ethnicity in _PATIENTS:
+    # And a value in exactly one sample, as before.
+    for name, *_rest in _PATIENTS:
         assert name not in static, f"{name!r} reached the static set"
+
+
+def test_a_shared_diagnosis_on_every_chart_is_caught_by_the_page_not_the_count(
+    tmp_path: Path,
+) -> None:
+    """The case frequency cannot reach, and the reason the rule has two halves.
+
+    This diagnosis is on all three charts, so being on every sample says
+    nothing about it. What settles it is where it lands: the problem list puts
+    it at a different row in each chart, and every row it occupies holds
+    somebody else's diagnosis in one of the others. It never owns a place on
+    the page, so it is not the form's furniture.
+    """
+    from anastomosis.packgen import analyze, extract_samples
+
+    analysis = analyze(extract_samples(_samples(tmp_path)))
+    static = set(analysis.static_text)
+
+    # The premise: it really is on every sample, so the count cannot exclude it.
+    assert all(_LISTED_DX in problems for *_head, problems in _PATIENTS)
+    assert _LISTED_DX not in static, sorted(static)
+    # While the label above the list, which does hold still, is kept.
+    assert "Problem list:" in static, sorted(static)
+
+
+def test_a_value_only_one_chart_carries_is_excluded_however_alone_it_stands(
+    tmp_path: Path,
+) -> None:
+    """The half the count still has to do, and the reason the rule keeps it.
+
+    Owning a slot means nothing else was ever printed there — and a line only
+    ONE chart has, at a spot no other chart reaches, owns its slot by default.
+    Nobody was competing for it because nobody else got that far down the page.
+    So being on every sample is not redundant with the page test; it is what
+    catches the value that is alone rather than fixed.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="the learner reads PDFs")
+    from anastomosis.packgen import analyze, extract_samples
+
+    alone = "Penicillin anaphylaxis"
+    paths = []
+    for index, extra in enumerate([(), (alone,)]):
+        doc = pymupdf.open()
+        page = doc.new_page()
+        y = 72.0
+        for line in ("VISIT NOTE", "Allergies:", *extra):
+            page.insert_text((72, y), line, fontsize=11)
+            y += 18
+        path = tmp_path / f"one{index}.pdf"
+        doc.save(str(path))
+        doc.close()
+        paths.append(path)
+
+    static = set(analyze(extract_samples(paths)).static_text)
+    assert "Allergies:" in static, sorted(static)
+    assert alone not in static, sorted(static)
+
+
+def test_a_value_every_patient_shares_still_gets_through(tmp_path: Path) -> None:
+    """The residual, stated rather than hoped away.
+
+    Nothing on the page distinguishes a payer all three patients share, printed
+    in the same cell every time, from a label the form printed there. No filter
+    that reads only the samples can. So it still reaches the pack — which is
+    why the list is quarantined and captioned, and why the caveat tells the
+    operator to look for this exact shape.
+    """
+    from anastomosis.packgen import analyze, extract_samples
+
+    analysis = analyze(extract_samples(_samples(tmp_path)))
+    assert _SHARED_PAYER in set(analysis.static_text)
 
 
 def test_the_caveat_names_the_failure_that_actually_happens() -> None:
     """It warned about one patient's chart handed in three times, and stopped there.
 
-    That failure is real and the wording for it stays. What was missing is the
+    That failure is real and the wording for it stays. What was missing was the
     one #200 reproduced: distinct patients, which the prompt asks the operator
     to confirm, and which the confirmation therefore implied was the safe case.
+
+    The examples it names have moved with the fix, and had to. A shared
+    diagnosis and a shared ethnicity are caught now, so telling an operator to
+    hunt for those would send them looking for the wrong thing; what still gets
+    through is a value EVERY sample shares in a fixed cell, so those are what
+    the caveat names.
     """
     caveat = SAME_PATIENT_CAVEAT
 
     assert "MUST be from DIFFERENT patients" in caveat
     assert "NOT on their own enough" in caveat
     # Named, so the operator knows what to look for in the list.
-    for kind in ("diagnosis", "ethnicity", "referring provider", "clinic address"):
+    for kind in ("referring provider", "clinic address", "phone number"):
         assert kind in caveat, f"the caveat does not mention a shared {kind}"
+    # And that recurring is not the proof it reads as.
+    assert "not a proof" in caveat
     # And what to do about it.
     assert "delete anything that belongs to a patient" in caveat
 
@@ -199,19 +308,18 @@ def test_sample_text_lands_in_the_quarantine_and_in_no_other_file(tmp_path: Path
         analysis, name="acme_soap", display="ACME Clinic", out_dir=tmp_path / "out"
     )
 
-    # The premise: this fixture really does produce the leak worth quarantining.
-    # Two of its three patients share this diagnosis, so it recurs and promotes.
+    # The premise: this fixture really does produce something worth quarantining.
+    # All three of its patients share this payer, in the same cell, so nothing
+    # on the page tells it apart from a label (see the residual test above).
     quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
-    assert "Type 2 diabetes mellitus" in quarantine, "the fixture lost the reproduction"
+    assert _SHARED_PAYER in quarantine, "the fixture lost the reproduction"
 
     # And it is in NOTHING else the generator wrote.
     for path in sorted(pack_dir.rglob("*")):
         if not path.is_file() or path.name == UNPLACED_NAME:
             continue
         body = path.read_text(encoding="utf-8", errors="replace")
-        assert "Type 2 diabetes mellitus" not in body, (
-            f"{path.name} carries a string taken from the samples"
-        )
+        assert _SHARED_PAYER not in body, f"{path.name} carries a string taken from the samples"
 
     # The quarantine still says what recurrence does not prove — the operator
     # decides what to keep while looking at the list, not four sections above it.
@@ -251,5 +359,5 @@ def test_a_single_sample_draft_does_not_claim_nothing_was_dropped(tmp_path: Path
     assert "deliberate withholding" in draft
     # And the withholding held: no sample-derived text in either file.
     template = (pack_dir / "template.html").read_text(encoding="utf-8")
-    for name, _diagnosis, _ethnicity in _PATIENTS[:1]:
+    for name, *_rest in _PATIENTS[:1]:
         assert name not in draft and name not in template

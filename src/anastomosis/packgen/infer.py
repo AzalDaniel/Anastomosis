@@ -11,14 +11,20 @@ within a tolerance), not DBSCAN — a practice operator must be able to read why
 a column or type level was inferred.
 
 PHI rule: the only span text that ever reaches a human-readable summary is the
-*static* text — strings recurring across a supermajority of samples. "Which
-are by construction template labels/headings, not per-patient values" is what
-followed, and a count of samples cannot settle who wrote a string: with three
-samples the bar is two, so anything two patients happen to share lands in the
-static set (#200). The half the count does settle: a string seen in only one
-sample is per-patient by definition and never appears in
-:meth:`PackAnalysis.summary_lines`. That half, and only that, is asserted in
-the tests.
+*static* text. That used to mean "recurring across a supermajority of samples",
+described as "by construction template labels/headings, not per-patient
+values" — and a count of samples cannot settle who wrote a string. With three
+samples the bar was two, so anything two patients happened to share landed in
+the static set (#200, reproduced).
+
+It now takes two things: a string must be on EVERY sample, and it must own a
+place on the page that nothing else ever occupies. The second is the test
+frequency could not do — a label is printed BY the form and holds its slot on
+every chart, while a value is printed INTO the form and shares its slot with
+whatever the next patient had there. Still a filter rather than a proof: a
+value every sample happens to share, in a fixed cell, has no competitor to
+give it away, which is why the summary is captioned for a person to read
+rather than presented as safe.
 
 CAVEAT: the split assumes samples are DISTINCT patients/encounters — copies
 of one patient's chart make that patient's values recur like template text
@@ -63,9 +69,14 @@ __all__ = [
 _SIZE_TOLERANCE = 0.25  # type-scale font-size cluster width
 _COLUMN_TOLERANCE = 1.0  # x0 column-start cluster width
 
-# A candidate is "static" when it recurs across at least this fraction of
-# samples. Recurring is all the constant decides; it is not the same as
-# belonging to the form, and a value two patients share clears the bar.
+# A section HEADING is recurring when it appears in at least this fraction of
+# samples — a supermajority rather than all of them, because a chart whose
+# allergies section is empty may not print that heading at all.
+#
+# It used to decide the static-text list too, and could not: recurring is a
+# frequency count, and a value two patients share recurs exactly like a label
+# the form prints. That list now asks a question about the page instead (see
+# `infer_static_text`).
 _STATIC_FRACTION = 0.6
 
 _HEADING_ROLES = ("h1", "h2", "h3")
@@ -297,27 +308,69 @@ def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCan
     return candidates
 
 
-def infer_static_text(samples: Sequence[DocumentSample]) -> list[str]:
-    """All normalized span texts recurring in >= 60% of samples — the label
-    vocabulary (e.g. ``"DOB:"``, ``"Provider:"``) — minus section headings.
+#: How finely a span's origin is bucketed when asking "is this the same place
+#: on the page". Two points — about the jitter a font metric introduces between
+#: two renders of one form, and well under the height of a table row, so two
+#: patients' values in the same cell land in the same bucket and are seen to be
+#: competing for it.
+_SLOT_TOLERANCE = 2.0
 
-    These are MOSTLY the strings that are the same on every chart: field labels,
-    running headers, empty-state text. Section headings (from
-    :func:`infer_section_taxonomy`) are subtracted so the two outputs do not
-    double-count.
 
-    "Per-patient values recur in fewer samples, and are excluded" is what this
-    said, and it is not true — it reads a frequency count as a proof of
-    authorship. With three samples the bar is two, so any value two patients
-    share lands here: a common diagnosis, an ethnicity, a referring provider,
-    a clinic address (#200, reproduced). The count of samples is doing work
-    only the content can do.
+def _slot(span: Span) -> tuple[int, int, int]:
+    """Where on the page this span sits, bucketed — a printed form's slot."""
+    x0, y0 = span.bbox[0], span.bbox[1]
+    return (span.page_index, round(x0 / _SLOT_TOLERANCE), round(y0 / _SLOT_TOLERANCE))
 
-    The one thing frequency does settle: a value appearing in exactly ONE
-    sample is per-patient and is excluded. That is the guarantee this list
-    carries, and it is narrower than the name "static" suggests.
+
+def _exclusive_slots(samples: Sequence[DocumentSample]) -> set[str]:
+    """Texts that OWN a place on the page: some slot where, across every
+    sample, nothing else was ever printed.
+
+    This is the content test a frequency count cannot do. A field label is
+    printed by the form, so its slot holds the same string on every chart. A
+    value is printed into the form, so its slot holds whatever that patient's
+    data put there — and two patients who share a value are then visibly
+    competing for a slot with everyone who does not.
+
+    It is a filter, not a proof. A value every single sample happens to share,
+    sitting in a fixed cell, has no competitor to give it away and still gets
+    through — which is why the emitted list stays quarantined and captioned for
+    the operator to read rather than treated as safe.
     """
-    threshold = _static_threshold(len(samples))
+    occupants: dict[tuple[int, int, int], set[str]] = {}
+    for sample in samples:
+        for span in sample.spans:
+            text = _normalize(span.text)
+            if text:
+                occupants.setdefault(_slot(span), set()).add(text)
+    return {next(iter(texts)) for texts in occupants.values() if len(texts) == 1}
+
+
+def infer_static_text(samples: Sequence[DocumentSample]) -> list[str]:
+    """The label vocabulary (``"DOB:"``, ``"Provider:"``) — text that belongs to
+    the FORM rather than to a patient — minus section headings.
+
+    Two tests, and a string has to pass both:
+
+    * it appears in EVERY sample, not a supermajority of them. The 0.6 rule
+      that used to decide this alone put the bar at two of three, so any value
+      two patients shared — a common diagnosis, an ethnicity — was promoted to
+      template chrome and written into the pack (#200, reproduced). The section
+      taxonomy still uses the supermajority, and should: a heading can be
+      legitimately absent from a chart whose section is empty, while a label
+      that is not on every chart is not this form's furniture.
+    * it OWNS a place on the page (:func:`_exclusive_slots`) — some slot where
+      nothing else was ever printed across the whole sample set. That is the
+      part frequency cannot do: it distinguishes the string the form prints
+      from the string printed INTO the form at that spot.
+
+    Neither test is a proof of authorship, and together they are still not one:
+    a value every sample happens to share, in a fixed cell, has no competitor
+    to give it away. What they do is take the count of samples out of a job it
+    was never able to do. The output stays quarantined and captioned for the
+    operator (see ``UNPLACED.txt`` and ``STATIC_LIST_NOTE``), because the last
+    word on whether a string belongs to a patient is a person's.
+    """
     seen: dict[str, set[int]] = {}
     for sample in samples:
         for span in sample.spans:
@@ -325,11 +378,14 @@ def infer_static_text(samples: Sequence[DocumentSample]) -> list[str]:
             if not text:
                 continue
             seen.setdefault(text, set()).add(sample.index)
+    everywhere = {sample.index for sample in samples}
+    owns_a_slot = _exclusive_slots(samples)
     headings = {c.text for c in infer_section_taxonomy(samples)}
-    static = sorted(
-        text for text, samps in seen.items() if len(samps) >= threshold and text not in headings
+    return sorted(
+        text
+        for text, samps in seen.items()
+        if samps >= everywhere and text in owns_a_slot and text not in headings
     )
-    return static
 
 
 # --------------------------------------------------------------------------- #

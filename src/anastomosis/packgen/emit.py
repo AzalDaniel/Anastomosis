@@ -104,13 +104,14 @@ SAME_PATIENT_CAVEAT = (
     "become indistinguishable from template text, and WILL be emitted as "
     "labels here. If the samples were not distinct patients, discard this "
     "draft.\n\n"
-    "Distinct patients are NOT on their own enough. The split is a frequency "
-    "count, and any value two patients happen to share — a common diagnosis, "
-    "an ethnicity, a referring provider, a clinic address, a phone number — "
-    "recurs often enough to be classified as template text and is emitted "
-    "the same way. With three samples the bar is two. Read the static labels "
-    "below and delete anything that belongs to a patient rather than to the "
-    "form."
+    "Distinct patients are NOT on their own enough. A string reaches the "
+    "static list by appearing in EVERY sample and by owning a place on the "
+    "page that nothing else ever occupies — a good filter, and not a proof. "
+    "A value all of your patients happen to share, printed in a fixed cell — "
+    "a referring provider, a clinic address, a phone number — sits in that "
+    "cell on every chart with no competitor to give it away, and looks exactly "
+    "like a label the form printed. Read the static labels below and delete "
+    "anything that belongs to a patient rather than to the form."
 )
 
 # SAME_PATIENT_CAVEAT says this at length at the top of DRAFT.md; this says it
@@ -121,9 +122,10 @@ SAME_PATIENT_CAVEAT = (
 # moment they are looking at the strings and deciding what to keep. A caveat
 # only works if it is still true where the reader is.
 STATIC_LIST_NOTE = (
-    "Recurring is a frequency count, not proof of who wrote a string: a value "
-    "two patients share recurs the same way. Delete anything here that belongs "
-    "to a patient rather than to the form."
+    "These strings are on every sample and own a spot nothing else uses. That "
+    "is a filter, not proof of who wrote them: a value all of your patients "
+    "share, in a fixed cell, passes it. Delete anything here that belongs to a "
+    "patient rather than to the form."
 )
 
 # Static strings that, after normalization, signal a known patient-header model
