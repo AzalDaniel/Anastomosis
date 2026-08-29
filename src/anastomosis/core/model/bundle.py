@@ -22,6 +22,24 @@ from .document import DocumentArtifact
 from .encounter import Encounter
 from .patient import Patient
 
+#: The record collections a rendered chart is expected to be able to show — and
+#: the vocabulary a pack uses to say which of them its own layout carries (see
+#: ``PackCoverage`` in :mod:`anastomosis.reconstruct.packs`). QA reads both
+#: sides so it can tell "this chart lost the problem list" from "this layout
+#: has no problem list".
+#:
+#: Vitals are deliberately not here. They are encounter-scoped rather than
+#: patient-scoped, and they already have two checks of their own — one for the
+#: values on this visit's chart, one for measurements attached to no visit at
+#: all.
+CHARTABLE_KINDS: tuple[str, ...] = (
+    "conditions",
+    "allergies",
+    "medications",
+    "immunizations",
+    "results",
+)
+
 
 class PatientRecord(AnastBase):
     """The unit that flows through the pipeline: one patient, whole chart.

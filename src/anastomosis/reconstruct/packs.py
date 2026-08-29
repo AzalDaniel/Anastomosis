@@ -41,11 +41,26 @@ from typing import Any, cast
 from uuid import uuid4
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
+from anastomosis.core.model import CHARTABLE_KINDS
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
-__all__ = ["LoadedPack", "PackManifest", "PackStatus", "SectionFlag", "discover_packs"]
+__all__ = [
+    "LoadedPack",
+    "PackCoverage",
+    "PackManifest",
+    "PackStatus",
+    "SectionFlag",
+    "discover_packs",
+]
 
 _BUILTIN_DIR = Path(__file__).resolve().parent.parent / "packs"
 
@@ -94,6 +109,69 @@ class FilenameRules(BaseModel):
         return value
 
 
+class PackCoverage(BaseModel):
+    """What this layout carries out of the record, and what it leaves out.
+
+    QA holds both the record and the rendered page, so it can see when a
+    populated collection reached neither. What it cannot see on its own is
+    whether that is a defect or the layout: a SOAP visit note has no problem
+    list by design, and a forensic chart replica very much does. Without a
+    statement from the pack, the same evidence has to be read two ways, so the
+    suite read it the generous way and every omission graded clean.
+
+    Both halves are required of a shipped pack. ``carries`` names the kinds
+    whose absence from a page is a failure; ``omits`` maps each remaining kind
+    to the reason its layout has no place for it, and QA reports those as
+    counted-but-expected rather than green. A kind in neither is not excused —
+    it is undeclared, and the guard test in ``tests/unit/test_packs.py`` says
+    so, because an exemption you get by forgetting is the kind that outlives
+    the reason for it.
+
+    A pack that declares nothing at all (an external pack written before this
+    field existed) is treated as conservatively as it can be: every kind is
+    verified, and a total absence warns rather than fails, with the finding
+    naming this field as the fix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    carries: list[str] = Field(default_factory=list)
+    omits: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("carries")
+    @classmethod
+    def _carries_are_known_kinds(cls, value: list[str]) -> list[str]:
+        unknown = sorted(set(value) - set(CHARTABLE_KINDS))
+        if unknown:
+            raise ValueError(f"coverage.carries: unknown kind(s) {unknown}")
+        return value
+
+    @field_validator("omits")
+    @classmethod
+    def _omits_are_known_kinds_with_reasons(cls, value: dict[str, str]) -> dict[str, str]:
+        unknown = sorted(set(value) - set(CHARTABLE_KINDS))
+        if unknown:
+            raise ValueError(f"coverage.omits: unknown kind(s) {unknown}")
+        blank = sorted(kind for kind, reason in value.items() if not reason.strip())
+        if blank:
+            raise ValueError(f"coverage.omits: {blank} need a reason, not an empty string")
+        # Collapse whitespace: these reasons are written as folded YAML scalars
+        # and come back with the block's line breaks and trailing newline still
+        # in them, which then land mid-sentence in a QA finding.
+        return {kind: " ".join(reason.split()) for kind, reason in value.items()}
+
+    @model_validator(mode="after")
+    def _no_kind_is_both(self) -> PackCoverage:
+        both = sorted(set(self.carries) & set(self.omits))
+        if both:
+            raise ValueError(f"coverage: {both} listed as both carried and omitted")
+        return self
+
+    @property
+    def declared(self) -> bool:
+        return bool(self.carries or self.omits)
+
+
 class PackManifest(BaseModel):
     """Schema of ``pack.yaml``."""
 
@@ -116,6 +194,10 @@ class PackManifest(BaseModel):
     tokens: dict[str, str] = Field(default_factory=dict)
     # Header fields the L3 delivery verification reads back off the PDF.
     verify_header_fields: list[str] = Field(default_factory=list)
+    # Which record collections this layout renders, and why it skips the rest.
+    # Optional so a pack written before the field stays loadable; QA treats an
+    # undeclared pack conservatively rather than as fully covered.
+    coverage: PackCoverage = Field(default_factory=PackCoverage)
 
 
 @dataclass(frozen=True)

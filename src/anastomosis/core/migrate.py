@@ -301,6 +301,7 @@ def _run_pack_mode(
 _CCDA_DOC_CHECKS: tuple[str, ...] = (
     "data_integrity",
     "layout_pagination",
+    "record_coverage",
     "unattributed_vitals",
 )
 
@@ -369,7 +370,7 @@ def _run_ccda_standard_qa(
     WITH A REASON (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently
     omitted.
     """
-    from anastomosis.core.model import Encounter
+    from anastomosis.core.model import CHARTABLE_KINDS, Encounter
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
     from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
@@ -403,7 +404,18 @@ def _run_ccda_standard_qa(
         encounter = Encounter(id=record.patient.id, patient_id=record.patient.id)
         documents.append((ccda_standard_doc_path(charts, record), encounter, anchor_record))
 
-    report = run_qa(documents, section_flags={}, page_size=_CCDA_PAGE_SIZE, checks=checks)
+    report = run_qa(
+        documents,
+        section_flags={},
+        page_size=_CCDA_PAGE_SIZE,
+        # The standard view is HL7's own stylesheet over the whole record, so
+        # every chartable kind IS on the page and an absence is a defect rather
+        # than a layout choice. Measured, not assumed: over the Synthea fixture
+        # this view puts all 13 of that record's conditions, immunizations and
+        # laboratory results on the page.
+        carries=frozenset(CHARTABLE_KINDS),
+        checks=checks,
+    )
     # Record the encounter-scoped checks as skipped-with-reason (never omitted),
     # so the report shows the SAME check set the neutral path reports.
     for doc_qa in report.documents:

@@ -137,3 +137,22 @@ tokens:
 # (the wrong-chart defense). These appear in the 3-column PATIENT/ENCOUNTER
 # header block.
 verify_header_fields: [patient_name, dob, dos]
+
+# What this layout carries out of the record, and what it does not (QA's
+# coverage check reads both halves — an absence it was told to expect is
+# counted and reported; one it was not is a failure). The forensic replica
+# renders the standing lists, so four of the five are carried and their
+# absence from a page means something broke.
+coverage:
+  carries:
+    - conditions
+    - allergies
+    - medications
+    - immunizations
+  omits:
+    results: >
+      the Observations section is one of the static sections described in
+      RULES.md: the gold standard preserves no populated example, so the row
+      layout is unknown and the section renders its empty state. Tracked in
+      issue #236 — when the layout is known this moves to carries and the
+      check starts enforcing it.

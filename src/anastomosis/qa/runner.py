@@ -48,6 +48,16 @@ class QAReport:
         return sum(1 for doc in self.documents if doc.verdict is verdict)
 
     @property
+    def not_carried(self) -> int:
+        """Record items this run's layout had no place for, across every chart.
+
+        Three green counts over a batch that dropped the problem list is an
+        accurate statement about the checks and a false one about the run, so
+        the number travels up to the stage rail beside them.
+        """
+        return sum(r.not_carried for doc in self.documents for r in doc.results)
+
+    @property
     def ok(self) -> bool:
         return self.count(Verdict.FAIL) == 0
 
@@ -58,6 +68,8 @@ def run_qa(
     section_flags: dict[str, bool] | None = None,
     page_size: str = "Letter",
     render_tz: str | None = None,
+    carries: frozenset[str] | None = None,
+    omits: dict[str, str] | None = None,
     checks: list[QACheck] | None = None,
 ) -> QAReport:
     """Apply every check to every document; check crashes are check bugs and
@@ -67,6 +79,12 @@ def run_qa(
     whenever one is known: a check that reasons about the render day has to read
     the same clock the pack stamped the page with, or its verdict depends on
     where the operator happens to be sitting.
+
+    ``carries``/``omits`` are the layout's own statement about which record
+    kinds it renders (a pack's ``coverage`` block). Passing neither is allowed
+    and means undeclared, which the coverage check treats as conservatively as
+    it can — it verifies every kind and softens its verdict, because with no
+    statement it cannot tell a lost section from a layout that never had one.
     """
     active = checks if checks is not None else engine_checks()
     report = QAReport()
@@ -77,6 +95,8 @@ def run_qa(
             section_flags=section_flags or {},
             page_size=page_size,
             render_tz=render_tz,
+            carries=carries or frozenset(),
+            omits=omits or {},
         )
         # Extract the PDF's text + geometry once for this document; the engine
         # checks share it instead of each re-opening the file (up to 4x per run).
@@ -97,7 +117,10 @@ def run_qa(
 def write_report(report: QAReport, out_dir: Path) -> Path:
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
-        "summary": {v.value: report.count(v) for v in Verdict},
+        "summary": {
+            **{v.value: report.count(v) for v in Verdict},
+            "not_carried": report.not_carried,
+        },
         "documents": [
             {
                 "file": doc.path.name,

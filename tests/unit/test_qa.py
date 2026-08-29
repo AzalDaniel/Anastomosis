@@ -570,11 +570,17 @@ def test_an_addendum_is_verified_like_a_section(tmp_path: Path) -> None:
     assert findings == ["addendum 1 is not on the document"]
 
 
-def test_an_encounter_with_no_narrative_passes_vacuously(tmp_path: Path) -> None:
+def test_an_encounter_with_no_narrative_passes_and_says_it_was_vacuous(tmp_path: Path) -> None:
     """Not every encounter carries a note. Having nothing to verify is a pass,
-    not a warning — the check must not become noise on ordinary charts."""
+    not a warning — the check must not become noise on ordinary charts.
+
+    But it says so. A bare pass over a check that found nothing to check reads,
+    in a report, exactly like a pass over a chart it verified, which is how a
+    run that dropped a record came back with five green lines under it.
+    """
     verdict, findings = _result(_qa(make_pdf(tmp_path / "plain.pdf", GOOD_LINES)), "note_body")
-    assert (verdict, findings) == (Verdict.PASS, [])
+    assert verdict is Verdict.PASS
+    assert findings == ["this encounter carries no narrative to verify"]
 
 
 def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
@@ -593,7 +599,9 @@ def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
     off = run_qa([(pdf, record.encounters[0], record)], section_flags={"addenda": False})
 
     assert _result(on, "note_body")[0] is Verdict.FAIL
-    assert _result(off, "note_body") == (Verdict.PASS, [])
+    off_verdict, off_findings = _result(off, "note_body")
+    assert off_verdict is Verdict.PASS
+    assert off_findings == ["this encounter carries no narrative to verify"]
 
 
 def test_a_vital_on_no_encounter_is_caught_by_the_check_the_others_cannot_be(
@@ -682,3 +690,160 @@ def test_the_ccda_view_reports_every_check_the_neutral_path_does() -> None:
     assert registered - placed == set(), "a registered check named in neither table"
     assert placed - registered == set(), "a table names a check that is not registered"
     assert set(_CCDA_DOC_CHECKS).isdisjoint(_CCDA_SKIPPED_CHECKS), "run it or skip it, not both"
+
+
+# --- record coverage: did the chart carry the record? ------------------------
+#
+# The gap this closes: every other check reads the page and asks whether what is
+# there is well-formed, so a chart that dropped almost everything passed all of
+# them. These tests come in pairs — the same record against a page that carries
+# it and a page that does not — because a coverage check that cannot tell those
+# two apart is the bug, not the fix.
+
+COVERAGE_LINES = [
+    *GOOD_LINES,
+    "Type 2 diabetes mellitus",
+    "Penicillin G",
+    "Lisinopril 10 mg tablet",
+    "Influenza, seasonal, injectable",
+    "Hemoglobin A1c",
+]
+
+
+def _covered_record() -> PatientRecord:
+    from anastomosis.core.model import (
+        AllergyIntolerance,
+        Condition,
+        Immunization,
+        MedicationStatement,
+    )
+
+    record = _record()
+    pid = record.patient.id
+    record.conditions.append(Condition(patient_id=pid, display="Type 2 diabetes mellitus"))
+    record.allergies.append(AllergyIntolerance(patient_id=pid, substance="Penicillin G"))
+    record.medications.append(
+        MedicationStatement(patient_id=pid, display_name="Lisinopril 10 mg tablet")
+    )
+    record.immunizations.append(
+        Immunization(patient_id=pid, vaccine="Influenza, seasonal, injectable")
+    )
+    record.observations.append(
+        Observation(
+            patient_id=pid,
+            encounter_id=ENC,
+            category=ObservationCategory.LABORATORY,
+            code="4548-4",
+            display="Hemoglobin A1c",
+            value="6.1",
+        )
+    )
+    return record
+
+
+ALL_KINDS = frozenset({"conditions", "allergies", "medications", "immunizations", "results"})
+
+
+def _coverage(
+    pdf: Path,
+    record: PatientRecord,
+    *,
+    carries: frozenset[str] | None = None,
+    omits: dict[str, str] | None = None,
+) -> tuple[Verdict, list[str], int]:
+    report = run_qa(
+        [(pdf, record.encounters[0], record)],
+        carries=carries,
+        omits=omits,
+        checks=[c for c in engine_checks() if c.name == "record_coverage"],
+    )
+    result = report.documents[0].results[0]
+    return result.verdict, result.findings, report.not_carried
+
+
+def test_coverage_passes_when_the_chart_carries_the_record(tmp_path: Path) -> None:
+    pdf = make_pdf(tmp_path / "full.pdf", COVERAGE_LINES)
+    verdict, findings, not_carried = _coverage(pdf, _covered_record(), carries=ALL_KINDS)
+    assert verdict is Verdict.PASS, findings
+    assert findings == []
+    assert not_carried == 0
+
+
+def test_coverage_fails_when_a_carried_kind_reaches_no_page(tmp_path: Path) -> None:
+    """The #239 shape: the record holds five kinds, the page holds none of them,
+    and before this check every verdict was green."""
+    pdf = make_pdf(tmp_path / "empty.pdf", GOOD_LINES)  # header + vitals only
+    verdict, findings, _ = _coverage(pdf, _covered_record(), carries=ALL_KINDS)
+    assert verdict is Verdict.FAIL
+    for kind in sorted(ALL_KINDS):
+        assert any(f"none of the 1 {kind}" in f for f in findings), (kind, findings)
+
+
+def test_coverage_of_an_undeclared_pack_warns_rather_than_fails(tmp_path: Path) -> None:
+    """No statement from the pack means the check cannot tell a lost section
+    from a layout that never had one — so it says both, loudly, and softens."""
+    pdf = make_pdf(tmp_path / "empty.pdf", GOOD_LINES)
+    verdict, findings, _ = _coverage(pdf, _covered_record())
+    assert verdict is Verdict.WARN
+    assert any("does not say what its layout carries" in f for f in findings)
+
+
+def test_coverage_counts_a_declared_omission_instead_of_grading_it_clean(tmp_path: Path) -> None:
+    """A layout with no problem list is not a defect. It is also not nothing:
+    the count travels to the run summary so a clean report cannot mean a chart
+    that dropped the record."""
+    pdf = make_pdf(tmp_path / "note.pdf", GOOD_LINES)
+    omits = {kind: f"no {kind} block in this layout" for kind in sorted(ALL_KINDS)}
+    verdict, findings, not_carried = _coverage(pdf, _covered_record(), omits=omits)
+    assert verdict is Verdict.PASS
+    assert not_carried == 5
+    assert any("1 conditions not carried by this layout" in f for f in findings)
+
+
+def test_coverage_says_so_when_the_record_holds_nothing_to_compare(tmp_path: Path) -> None:
+    """A check that finds nothing to check must say so, or absence of data
+    reads as presence of quality."""
+    pdf = make_pdf(tmp_path / "bare.pdf", GOOD_LINES)
+    verdict, findings, _ = _coverage(pdf, _record(), carries=ALL_KINDS)
+    assert verdict is Verdict.PASS
+    assert any("nothing to compare" in f for f in findings)
+
+
+def test_coverage_reports_items_it_cannot_look_for(tmp_path: Path) -> None:
+    """A medication with no name at all is still a medication the record holds.
+    Counting only the nameable ones would let a source that lost every label
+    report full coverage."""
+    from anastomosis.core.model import MedicationStatement
+
+    record = _record()
+    record.medications.append(MedicationStatement(patient_id=record.patient.id))
+    pdf = make_pdf(tmp_path / "nameless.pdf", GOOD_LINES)
+    verdict, findings, _ = _coverage(pdf, record, carries=ALL_KINDS)
+    assert verdict is Verdict.PASS  # nothing to look for is not a failure to find
+    assert any("carry no description or code" in f for f in findings)
+
+
+def test_coverage_does_not_accept_a_label_embedded_in_another_word(tmp_path: Path) -> None:
+    """ "Fever" must not be satisfied by "Fever blister" — the same boundary
+    reasoning as the identity predicates, one step down in stakes."""
+    from anastomosis.core.model import Condition
+
+    record = _record()
+    record.conditions.append(Condition(patient_id=record.patient.id, display="Fever"))
+    pdf = make_pdf(tmp_path / "embedded.pdf", [*GOOD_LINES, "Fevers blistering"])
+    verdict, findings, _ = _coverage(pdf, record, carries=ALL_KINDS)
+    assert verdict is Verdict.FAIL
+    assert any("none of the 1 conditions" in f for f in findings)
+
+
+def test_vitals_check_says_when_it_had_nothing_to_verify(tmp_path: Path) -> None:
+    """The vacuous pass #239 named: the check for vitals graded a chart with no
+    vitals on it as correct, because it validated the values it found and found
+    none."""
+    record = PatientRecord(patient=_record().patient, encounters=_record().encounters)
+    report = run_qa(
+        [(make_pdf(tmp_path / "novitals.pdf", GOOD_LINES), record.encounters[0], record)]
+    )
+    verdict, findings = _result(report, "vitals_loinc")
+    assert verdict is Verdict.PASS
+    assert findings == ["no vital signs on this encounter to verify"]
