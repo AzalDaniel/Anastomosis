@@ -1,24 +1,62 @@
 """Tests for the shared atomic-write helper (core/atomic.py).
 
-The property under test in every failure case: a crash mid-write must never
+The property under test in every failure case: a write that fails must never
 leave a stray ``.NAME.<pid>.tmp`` file behind, and must never leave a partial
 file at the target either — the tmp+os.replace+unlink-on-failure shape every
 write site in the codebase now shares.
+
+A run that is *killed* unwinds nothing, so it does leave its temp behind. The
+other half of the property is that the next write to the same target reaps it,
+and that it reaps only the temps whose writer is provably gone.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import stat
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
+import anastomosis
 from anastomosis.core.atomic import atomic_replace, atomic_write_text
+
+#: Where the child processes below must import the helper from. It comes off
+#: the already-imported package rather than from whatever a fresh interpreter
+#: would find, because an editable install and a checked-out worktree can
+#: disagree and a child testing the other copy would prove nothing.
+_PACKAGE_PATH = str(Path(anastomosis.__file__).resolve().parents[1])
+
+#: A writer that parks inside the atomic_replace window with its temp on disk,
+#: announces the temp's name, and waits to be killed.
+_KILLED_WRITER = textwrap.dedent(
+    """
+    import sys
+    import time
+    from pathlib import Path
+
+    from anastomosis.core.atomic import atomic_replace
+
+    with atomic_replace(Path(sys.argv[1])) as tmp:
+        tmp.write_bytes(b"%PDF-1.7 half a chart")
+        print(tmp.name, flush=True)
+        time.sleep(300)
+    """
+)
 
 
 def _tmp_files(directory: Path) -> list[Path]:
     return [p for p in directory.iterdir() if p.name.startswith(".") and p.name.endswith(".tmp")]
+
+
+def _child_env() -> dict[str, str]:
+    inherited = os.environ.get("PYTHONPATH", "")
+    path = _PACKAGE_PATH + (os.pathsep + inherited if inherited else "")
+    return {**os.environ, "PYTHONPATH": path}
 
 
 def test_atomic_write_text_creates_target(tmp_path: Path) -> None:
@@ -93,3 +131,75 @@ def test_atomic_write_text_mode_sets_owner_only_permissions(tmp_path: Path) -> N
     target = tmp_path / "trust.json"
     atomic_write_text(target, "{}", mode=0o600)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGKILL and the pid probe are POSIX-only")
+def test_a_killed_writers_temp_is_reaped_by_the_next_write(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The failure the except-handler cannot reach: SIGKILL inside the window.
+
+    Nothing unwinds, so the temp stays; and because its name carries the dead
+    run's pid, a rerun picks a different name, replaces the target and hands
+    the operator a directory that looks complete with a half-written chart
+    hidden in it. The rerun itself has to be what clears it.
+    """
+    target = tmp_path / "Chart_0001.pdf"
+    child = subprocess.Popen(
+        [sys.executable, "-c", _KILLED_WRITER, str(target)],
+        stdout=subprocess.PIPE,
+        text=True,
+        env=_child_env(),
+    )
+    try:
+        assert child.stdout is not None
+        stale_name = child.stdout.readline().strip()
+        assert stale_name, "the child never reached the atomic_replace window"
+    finally:
+        child.kill()
+        # Reap the zombie: an unwaited-for child is still a live pid to
+        # os.kill, and the sweep would (correctly) decline to touch its temp.
+        child.wait(timeout=30)
+
+    stale = tmp_path / stale_name
+    assert _tmp_files(tmp_path) == [stale], "the kill was supposed to leave a temp behind"
+
+    with caplog.at_level(logging.WARNING, logger="anastomosis.core.atomic"):
+        atomic_write_text(target, "%PDF-1.7 the rerun's chart")
+
+    assert _tmp_files(tmp_path) == [], "the dead run's temp outlived a later write"
+    assert target.read_text(encoding="utf-8") == "%PDF-1.7 the rerun's chart"
+
+    swept = [r.getMessage() for r in caplog.records if r.name == "anastomosis.core.atomic"]
+    assert swept, "the sweep deleted patient-derived bytes without saying so"
+    # Counted, never named: the temp is named for the chart, the chart for a person.
+    assert "1" in swept[0]
+    assert stale_name not in swept[0]
+    assert str(tmp_path) not in swept[0]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the pid probe is POSIX-only")
+def test_a_live_writers_temp_is_left_alone(tmp_path: Path) -> None:
+    """Never over-clean. A second run writing the same target is mid-render into
+    its own temp; deleting that destroys a chart being written right now, which
+    is a worse outcome than the leftover the sweep exists to remove."""
+    target = tmp_path / "Chart_0001.pdf"
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
+    try:
+        theirs = tmp_path / f".{target.name}.{live.pid}.tmp"
+        theirs.write_bytes(b"%PDF-1.7 another run's work in progress")
+        atomic_write_text(target, "ours")
+        assert theirs.exists(), "the sweep deleted a live run's temp file"
+    finally:
+        live.kill()
+        live.wait(timeout=30)
+
+
+def test_a_temp_whose_pid_will_not_parse_is_left_alone(tmp_path: Path) -> None:
+    """Same rule from the other side: a name the sweep cannot read a pid out of
+    is not a file it has established anything about, so it is not its to delete."""
+    target = tmp_path / "report.json"
+    stranger = tmp_path / f".{target.name}.notapid.tmp"
+    stranger.write_text("someone else's file", encoding="utf-8")
+    atomic_write_text(target, "{}")
+    assert stranger.exists(), "the sweep deleted a temp it could not identify"
