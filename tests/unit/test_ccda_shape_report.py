@@ -91,12 +91,21 @@ def test_it_counts_the_facts_that_went_nowhere(tool: object, tmp_path: Path) -> 
     """The reason to run this at all.
 
     A document can parse cleanly and still produce a record whose values reach
-    no chart. On the shipped fixture every observation is attached to no
-    encounter — the same defect the external audit reproduced independently —
-    and a report that only counted `observations` would call that a success.
+    no chart. When this counter was written, all eight of the fixture's
+    observations were attached to no encounter — the defect the external audit
+    reproduced independently — and a report that only counted `observations`
+    would have called that a success.
+
+    Seven of those eight are attached now (#258), and this test is what that
+    fix looks like from the outside. The eighth is a smoking status, which the
+    linker declines to place on a visit on purpose: social history is a fact
+    about the patient, not a measurement taken at an appointment, and hanging
+    it on whichever encounter shares its calendar day would be a guess dressed
+    as a record. So the number to assert is not zero, and pinning it exactly is
+    the point — a counter that only ever says "some" cannot tell a fix from a
+    regression.
     """
     out = tmp_path / "report.json"
-    rc = tool.main.__wrapped__ if hasattr(tool.main, "__wrapped__") else None  # noqa: F841
     import sys
 
     argv = sys.argv
@@ -109,9 +118,22 @@ def test_it_counts_the_facts_that_went_nowhere(tool: object, tmp_path: Path) -> 
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["documents_parsed"] >= 1
     totals = report["totals"]
-    assert totals["observations"] > 0, "the fixture does carry observations"
+    assert totals["observations"] == 8, "the fixture does carry observations"
     assert "observations_unattributed" in totals, "and the report must say so"
-    assert totals["observations_unattributed"] == totals["observations"]
+    assert totals["observations_unattributed"] == 1, "only the social-history one"
+
+    # A counter at zero must still be IN the report. Absent reads as "the tool
+    # did not look", and this report is evidence sent back by someone we cannot
+    # ask a follow-up question.
+    for counter in (
+        "observations_dangling_encounter",
+        "observations_no_value",
+        "encounters_no_date",
+        "encounters_no_type",
+        "conditions_no_display",
+    ):
+        assert counter in totals, f"{counter} must be stated even when it is zero"
+    assert totals["observations_dangling_encounter"] == 0, "and none point at a ghost"
 
     # And the file it wrote carries no patient text — the guard ran for real.
     tool._assert_safe(report)  # type: ignore[attr-defined]
