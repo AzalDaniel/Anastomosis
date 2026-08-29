@@ -225,9 +225,11 @@ def deliver_outputs(
         elif dc.kind == "ccda":
             from anastomosis.deliver.ccda_export import deliver_ccda
 
-            paths = deliver_ccda(result.records, dc.out_dir)
+            ccda = deliver_ccda(result.records, dc.out_dir)
             outcomes["ccda"] = DeliveryOutcome(
-                kind="ccda", out_dir=dc.out_dir, counts={"patients": len(paths)}
+                kind="ccda",
+                out_dir=dc.out_dir,
+                counts={"patients": len(ccda.paths), "missing": ccda.missing_count},
             )
     return outcomes
 

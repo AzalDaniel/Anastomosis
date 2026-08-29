@@ -397,7 +397,15 @@ def _print_shortfall(outcome: DeliveryOutcome) -> None:
     where = {"archive": "the archive", "bundle": "the bundles"}.get(outcome.kind, "it")
     missing = counts.get("missing", 0)
     unattributed = counts.get("unattributed", 0)
-    if missing:
+    if missing and outcome.kind == "ccda":
+        # A different shortfall from the archive's: nothing was misfiled, a
+        # patient simply has no document. Said as that, not as a chart count.
+        console.print(
+            f"  [yellow]{_plural(missing, 'patient', 'patients')} "
+            f"{'has' if missing == 1 else 'have'} no C-CDA document[/yellow]; "
+            f"the export is incomplete."
+        )
+    elif missing:
         console.print(
             f"  [yellow]{_plural(missing, 'chart', 'charts')} this run rendered "
             f"{'is' if missing == 1 else 'are'} missing from {where}.[/yellow] "
