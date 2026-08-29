@@ -3,7 +3,7 @@ corpus trips exactly the check built to catch it."""
 
 import os
 import stat
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,7 @@ from anastomosis.core.model import (  # noqa: E402
     PatientRecord,
     SectionKind,
 )
+from anastomosis.core.timeutil import to_local  # noqa: E402
 from anastomosis.qa import (  # noqa: E402
     QAReport,
     Verdict,
@@ -272,6 +273,79 @@ def test_staleness_catches_generic_soap_signature_format(tmp_path: Path) -> None
     verdict, findings = _result(_qa(pdf), "date_staleness")
     assert verdict is Verdict.WARN
     assert findings
+
+
+# UTC+14 and UTC-12, the two ends of the inhabited offset range. They are 26
+# hours apart, so at every instant at least one of them is on a different
+# calendar day than the machine running the tests — which is what makes the two
+# cases below asymmetric. A check that quietly reads the host's day cannot
+# satisfy both, wherever the suite happens to run.
+_FAR_APART_ZONES = ("Etc/GMT-14", "Etc/GMT+12")
+
+
+def _day_in(zone: str) -> date:
+    return to_local(datetime.now(UTC), zone).date()
+
+
+@pytest.mark.parametrize("zone", _FAR_APART_ZONES)
+def test_staleness_reads_the_day_the_pack_rendered_in(tmp_path: Path, zone: str) -> None:
+    """A render-day stamp is stale where the chart was rendered, not where the
+    operator is sitting.
+
+    The packs stamp their "as of" dates in the pack's timezone, so a check
+    reading the host's day agreed with them only by luck of geography: one
+    byte-identical chart, carrying its own render-day stamp, warned on a machine
+    twelve hours west and passed on one in the practice's own zone.
+    """
+    stamp = _day_in(zone).strftime("%B %d, %Y")
+    record = _record()
+    pdf = make_pdf(tmp_path / "m.pdf", [*GOOD_LINES, f"Current Medications (as of {stamp})"])
+    report = run_qa([(pdf, record.encounters[0], record)], render_tz=zone)
+    verdict, findings = _result(report, "date_staleness")
+    assert verdict is Verdict.WARN
+    assert findings
+
+
+def test_staleness_stops_asking_the_host_once_it_has_the_render_clock(tmp_path: Path) -> None:
+    """The same divergence seen from the other side: with the pack's clock in
+    hand, a date that is today only HERE is just a date on an old chart, and
+    reporting it would put the operator's location back in the verdict."""
+    host_day = date.today()
+    zone = next(z for z in _FAR_APART_ZONES if _day_in(z) != host_day)
+    stamp = host_day.strftime("%B %d, %Y")
+    record = _record()
+    pdf = make_pdf(tmp_path / "m.pdf", [*GOOD_LINES, f"Printed {stamp}"])
+    report = run_qa([(pdf, record.encounters[0], record)], render_tz=zone)
+    verdict, findings = _result(report, "date_staleness")
+    assert verdict is Verdict.PASS
+    assert not findings
+
+
+def test_the_pipeline_hands_qa_the_clock_the_engine_renders_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The check can only share the pack's clock if the QA stage passes it, so
+    the wiring is pinned here rather than assumed. Read off the engine, not off
+    the manifest a second time — two readings are how the pack and its QA drift
+    back apart."""
+    import anastomosis.qa as qa_module
+    from anastomosis.pipeline import _run_qa_stage
+    from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
+
+    status = discover_packs()["generic_soap"]
+    assert status.pack is not None, status.diagnosis
+    engine = ReconstructionEngine(status.pack, lambda: None)  # never rendered here
+
+    captured: dict[str, object] = {}
+
+    def fake_run_qa(documents: object, **kwargs: object) -> QAReport:
+        captured.update(kwargs)
+        return QAReport()
+
+    monkeypatch.setattr(qa_module, "run_qa", fake_run_qa)
+    _run_qa_stage([], RenderResult(), engine, tmp_path, "Letter", lambda event: None)
+    assert captured["render_tz"] == status.pack.manifest.timezone
 
 
 def test_pymupdf_open_called_once_per_document_per_run(
