@@ -53,6 +53,7 @@ from anastomosis.core.model import (
     Prescription,
     PrescriptionTransaction,
     Provenance,
+    ScreeningEvent,
     SectionKind,
 )
 from anastomosis.core.textutil import clean_numeric, format_phone, html_to_text, sanitize_soap_html
@@ -1057,6 +1058,69 @@ def _map_goal(row: Row, patient_id: str) -> Goal:
     )
 
 
+_HEALTH_CONCERN_MAPPED = frozenset(
+    {"PatientPracticeGuid", "HealthConcernNote", "StartDate", "IsActive"}
+)
+
+
+def _map_health_concern(row: Row, patient_id: str) -> Goal:
+    """A health concern, which carries a goal's four facts and so reuses Goal.
+
+    ``HealthConcernNote`` is the row's own free text, and it fills the chart's
+    DESCRIPTION column — the same column ``Goal`` fills for the Goals section
+    directly below it. A concern may instead point at a diagnosis or an allergy
+    (``DiagnosisGuid`` / ``PatientAllergyGuid``, both optional in v9), and which
+    of the note and that record's own name Practice Fusion printed is not
+    something the dictionary settles; those guids ride into ``extensions`` whole
+    rather than being resolved here on a guess. Like ``patient-goals`` the table
+    has no guid of its own, so provenance points at the owning patient.
+    """
+    return Goal(
+        patient_id=patient_id,
+        description=_s(row, "HealthConcernNote"),
+        effective=_d(row, "StartDate"),
+        active=_b(row, "IsActive"),
+        extensions=_ext(row, _HEALTH_CONCERN_MAPPED),
+        provenance=_prov("patient-health-concerns", patient_id),
+    )
+
+
+_SCREENING_EVENT_MAPPED = frozenset(
+    {
+        "PatientPracticeGuid",
+        "EncounterGuid",
+        "EncounterEventGuid",
+        "EventName",
+        "ResultValue",
+        "EventComments",
+        "IsNegated",
+    }
+)
+
+
+def _map_screening_event(row: Row) -> ScreeningEvent:
+    """One clinical-worksheet event — what the chart calls Screenings /
+    Interventions / Assessments.
+
+    ``IsNegated`` is read rather than left to ``extensions`` because it inverts
+    the meaning of the row: an event the clinician marked as not performed,
+    rendered beside the ones that were, would tell the reader the opposite of
+    what happened. Everything the section does not print — the event's category,
+    status, reason and result codes, the due/start/end times — rides along.
+    """
+    return ScreeningEvent(
+        id=_s(row, "EncounterEventGuid") or "",
+        patient_id=_s(row, "PatientPracticeGuid") or "",
+        encounter_id=_s(row, "EncounterGuid"),
+        name=_s(row, "EventName"),
+        result=_s(row, "ResultValue"),
+        comments=_s(row, "EventComments"),
+        negated=_b(row, "IsNegated"),
+        extensions=_ext(row, _SCREENING_EVENT_MAPPED),
+        provenance=_prov("patient-encounter-events", _s(row, "EncounterEventGuid")),
+    )
+
+
 # --- shared actors -------------------------------------------------------------
 
 
@@ -1242,6 +1306,16 @@ def _unmapped_tables(
 # column and the parent whose ids that key must name. superbill-insurances,
 # providers, and facilities are deliberately absent: they are read in full, not
 # sliced by an owning record, so no row of theirs can be orphaned.
+#
+# The two encounter child tables below — patient-encounter-observations and
+# patient-encounter-events — are keyed on the PATIENT, not the encounter, so a
+# row whose EncounterGuid names no encounter in this export lands on the patient
+# and is refused by nothing. It is not lost (it still narrates to the loss
+# ledger), but nothing renders it either, because both sections are drawn per
+# encounter. v9 types EncounterGuid non-nullable on both tables, so this needs a
+# malformed export to happen at all; key them on the encounter and a real export
+# missing one encounter row would fail the whole patient instead of one section.
+# That trade is why they sit here, and it is a chart gap, not data loss.
 _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     # patient-demographics is the patient table itself, so the only way one of
     # its rows fails is a MISSING key — which would drop that whole patient.
@@ -1260,6 +1334,7 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     ("patient-family-medical-history", _PATIENT_KEY, "patient"),
     ("patient-encounters", _PATIENT_KEY, "patient"),
     ("patient-encounter-observations", _PATIENT_KEY, "patient"),
+    ("patient-encounter-events", _PATIENT_KEY, "patient"),
     ("patient-diagnoses", _PATIENT_KEY, "patient"),
     ("patient-allergy", _PATIENT_KEY, "patient"),
     ("patient-medications", _PATIENT_KEY, "patient"),
@@ -1268,6 +1343,7 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     ("patient-immunizations", _PATIENT_KEY, "patient"),
     ("patient-advance-directives", _PATIENT_KEY, "patient"),
     ("patient-goals", _PATIENT_KEY, "patient"),
+    ("patient-health-concerns", _PATIENT_KEY, "patient"),
     ("patient-documents", _PATIENT_KEY, "patient"),
     ("patient-encounter-addendums", "EncounterGuid", "encounter"),
     ("patient-encounter-diagnoses", "EncounterGuid", "encounter"),
@@ -1463,6 +1539,7 @@ def map_export(
     addenda_by_encounter = _by(export["patient-encounter-addendums"], "EncounterGuid")
     encounter_dx_by_encounter = _by(export["patient-encounter-diagnoses"], "EncounterGuid")
     obs_by_patient = _by(export["patient-encounter-observations"], "PatientPracticeGuid")
+    events_by_patient = _by(export["patient-encounter-events"], "PatientPracticeGuid")
     dx_by_patient = _by(export["patient-diagnoses"], "PatientPracticeGuid")
     allergy_by_patient = _by(export["patient-allergy"], "PatientPracticeGuid")
     reactions_by_allergy = _by(export["patient-allergy-reactions"], "PatientAllergyGuid")
@@ -1473,6 +1550,7 @@ def map_export(
     imm_by_patient = _by(export["patient-immunizations"], "PatientPracticeGuid")
     ad_by_patient = _by(export["patient-advance-directives"], "PatientPracticeGuid")
     goals_by_patient = _by(export["patient-goals"], "PatientPracticeGuid")
+    concerns_by_patient = _by(export["patient-health-concerns"], "PatientPracticeGuid")
     docs_by_patient = _by(export["patient-documents"], "PatientPracticeGuid")
     demo_groups = _DemographicsGroups.build(export)  # pinned-notes/giso/race/ethnicity/guarantor
 
@@ -1588,6 +1666,10 @@ def map_export(
                 for row in ad_by_patient.get(guid, [])
             ],
             goals=[_map_goal(row, guid) for row in goals_by_patient.get(guid, [])],
+            health_concerns=[
+                _map_health_concern(row, guid) for row in concerns_by_patient.get(guid, [])
+            ],
+            screening_events=[_map_screening_event(row) for row in events_by_patient.get(guid, [])],
             coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
                 _map_document(row, guid, attachments) for row in docs_by_patient.get(guid, [])

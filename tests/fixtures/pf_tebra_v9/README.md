@@ -41,11 +41,22 @@ What genuinely remains undocumented is **serialization, not names**:
 * Cell *values* throughout are synthetic, and always were. Only the names came
   from the vendor.
 
-Verified-absent facts this fixture honors: there is **no MRN/PRN column**
-anywhere in v9 (identity is `PatientPracticeGuid`); there is **no dedicated
+Verified-absent facts this fixture honors: patient identity is
+`PatientPracticeGuid` and `patient-demographics` carries **no record-number
+column**; there is **no dedicated
 vitals table** (vitals are LOINC-coded rows in
 `patient-encounter-observations.tsv`); SOAP narrative lives directly on
 `patient-encounters.tsv` (`Subjective`/`Objective`/`Assessment`/`Plan`).
+
+This ledger used to say there is no MRN/PRN column *anywhere* in v9. That is
+wrong, and the PF pack's blank PRN header is the consequence: exactly one column
+in the 85-table dictionary carries a patient's record number,
+`patient-superbills.PatientContactCode` ("Code assigned to a patient's medical
+record"). No column anywhere is spelled `PRN`. The pack reads
+`PatientContactCode` and nothing else; wiring it means mapping
+`patient-superbills`, which this fixture does not yet carry — a 70-column
+identity-and-billing table that needs its own review, not a column added to a
+table that already exists.
 
 Social history (issue #7, **verified against a real Tebra/PF v9 export**):
 free-prose history is the `patient-med-history.tsv` table

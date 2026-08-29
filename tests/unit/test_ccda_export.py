@@ -55,6 +55,7 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
     PrescriptionTransaction,
+    ScreeningEvent,
     SectionKind,
 )
 from anastomosis.core.model.patient import Address
@@ -1408,6 +1409,29 @@ def _maximal_record() -> PatientRecord:
         AdvanceDirective(patient_id=pid, directive="MaxDirectiveDNR", recorded_at=_AT)
     ]
     goals = [Goal(patient_id=pid, description="MaxGoal", effective=date(2018, 1, 1), active=True)]
+    # Health concerns reuse Goal and, like goals, have no structured C-CDA
+    # emitter — so the oracle below is what proves they reach the loss
+    # narrative instead of falling out of the export unremarked.
+    health_concerns = [
+        Goal(
+            patient_id=pid,
+            description="MaxHealthConcern",
+            effective=date(2017, 2, 3),
+            active=False,
+        )
+    ]
+    # Screening events have no structured C-CDA emitter either, so the oracle
+    # is what proves they narrate instead of vanishing on export.
+    screening_events = [
+        ScreeningEvent(
+            patient_id=pid,
+            encounter_id="feedface-0000-0000-0000-0000000000a1",
+            name="MaxScreeningName",
+            result="MaxScreeningResult",
+            comments="MaxScreeningComments",
+            negated=True,
+        )
+    ]
     coverages = [
         Coverage(
             patient_id=pid,
@@ -1520,6 +1544,8 @@ def _maximal_record() -> PatientRecord:
         past_medical_history=past_medical_history,
         advance_directives=advance_directives,
         goals=goals,
+        health_concerns=health_concerns,
+        screening_events=screening_events,
         coverages=coverages,
         documents=documents,
         practitioners=practitioners,

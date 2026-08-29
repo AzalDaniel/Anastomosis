@@ -375,6 +375,8 @@ class _RecordViewIndex:
     historical_medications: list[MedicationStatement]
     prescriptions_by_id: dict[str, Prescription]
     allergies_by_category: dict[AllergyCategory, list[Any]]
+    active_concerns: list[Any]
+    inactive_concerns: list[Any]
     active_goals: list[Any]
     inactive_goals: list[Any]
     smoking: Observation | None
@@ -404,6 +406,11 @@ class _RecordViewIndex:
         allergies_by_category: dict[AllergyCategory, list[Any]] = {}
         for allergy in record.allergies:
             allergies_by_category.setdefault(allergy.category, []).append(allergy)
+
+        active_concerns: list[Any] = []
+        inactive_concerns: list[Any] = []
+        for concern in record.health_concerns:
+            (active_concerns if concern.active else inactive_concerns).append(concern)
 
         active_goals: list[Any] = []
         inactive_goals: list[Any] = []
@@ -437,6 +444,8 @@ class _RecordViewIndex:
             historical_medications=historical_meds,
             prescriptions_by_id={p.id: p for p in record.prescriptions},
             allergies_by_category=allergies_by_category,
+            active_concerns=active_concerns,
+            inactive_concerns=inactive_concerns,
             active_goals=active_goals,
             inactive_goals=inactive_goals,
             smoking=smoking,
@@ -456,7 +465,10 @@ def _demographics(patient: Patient) -> dict[str, Any]:
         "last_name": patient.family_name,
         "sex": patient.sex,
         "dob": patient.birth_date.strftime("%m/%d/%Y") if patient.birth_date else None,
-        "death_date": _ext(patient, "DateOfDeath"),
+        # DeathDate is what patient-demographics spells it; DateOfDeath was a
+        # name no v9 table has, so the DATE OF DEATH cell printed "-" over an
+        # export that carried the date.
+        "death_date": _ext(patient, "DeathDate"),
         "race": ", ".join(patient.race) or None,
         "ethnicity": ", ".join(patient.ethnicity) or None,
         "language": patient.language,
@@ -565,7 +577,13 @@ def build_record_context(
 
     # --- demographics (the unified 6-col table) --------------------------------
     demo = _demographics(patient)
-    prn = _ext(patient, "PatientContactCode") or _ext(patient, "PRN")
+    # PatientContactCode is the one column in v9 that carries a patient's record
+    # number, and it lives on patient-superbills — a table the pf_tebra adapter
+    # does not map yet, so this reads None on a PF export and the header prints
+    # "-". LOUD: the alternative spelling this used to fall back to ("PRN") is a
+    # column no v9 table has, and a chain over invented names is how a wrong
+    # guess hides (#248). One real name, blank until the table is mapped.
+    prn = _ext(patient, "PatientContactCode")
 
     # --- insurance / payment ---------------------------------------------------
     active_cov = index.active_coverages
@@ -628,6 +646,8 @@ def build_record_context(
         for d in record.advance_directives
         if d.directive
     ]
+    active_concerns = [_concern_view(c) for c in index.active_concerns]
+    inactive_concerns = [_concern_view(c) for c in index.inactive_concerns]
     active_goals = [_concern_view(g) for g in index.active_goals]
     inactive_goals = [_concern_view(g) for g in index.inactive_goals]
 
@@ -669,10 +689,10 @@ def build_record_context(
         "family_history": family_history,
         "family_history_freetext": None,
         "advance_directives": advance_directives,
+        "active_concerns": active_concerns,
+        "inactive_concerns": inactive_concerns,
         "active_goals": active_goals,
         "inactive_goals": inactive_goals,
-        # screenings (events not modeled in EHI -> empty state)
-        "screening_events": [],  # LOUD: patient-encounter-events not modeled yet
         # logo + tokens
         "logo_data_uri": _logo_data_uri(tokens, pack_root),
         "tokens": tokens,
@@ -728,6 +748,11 @@ def build_context(
     # --- diagnoses attached to this encounter ----------------------------------
     encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
 
+    # --- screenings / interventions / assessments ------------------------------
+    screening_events = [
+        _screening_view(e) for e in _screening_events(record, record_cache).get(encounter.id, [])
+    ]
+
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
     subjective = soap.get(SectionKind.SUBJECTIVE) or soap.get(SectionKind.NARRATIVE)
@@ -775,6 +800,8 @@ def build_context(
         "flowsheet_vitals_label": bool(flowsheet_columns),
         # diagnoses attached to this encounter
         "encounter_diagnoses": encounter_dx,
+        # screenings / interventions / assessments
+        "screening_events": screening_events,
         # SOAP
         "subjective_html": subjective.html if subjective else None,
         "objective_html": objective.html if objective else None,
@@ -840,7 +867,58 @@ def _allergy_views(items: list[Any]) -> dict[str, list[dict[str, str | None]]]:
 
 
 def _concern_view(obj: Any) -> dict[str, str | None]:
-    return {"description": obj.description, "date": _fmt_date_short(obj.effective) or "-"}
+    """A concern or goal as the template renders it.
+
+    Both cells fall back to the pack's "-" rather than to nothing: a row whose
+    description is absent still says a concern EXISTS on this chart, and
+    dropping it would lose that. The template interpolates these straight, so
+    passing None through would print the literal token ``None`` where a
+    clinician reads a diagnosis — a Python repr on a medical record, which is
+    worse than an honest blank.
+    """
+    return {
+        "description": obj.description or "-",
+        "date": _fmt_date_short(obj.effective) or "-",
+    }
+
+
+def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str | None, list[Any]]:
+    """Screening events grouped by encounter id, built once per record.
+
+    Same shape and the same reason as ``observations_by_encounter``: the pack
+    asks per encounter, and a chart with thirty of them should not rescan the
+    collection thirty times.
+    """
+    index: dict[str | None, list[Any]] | None = cache.get("screening_events_by_encounter")
+    if index is None:
+        index = {}
+        for event in record.screening_events:
+            index.setdefault(event.encounter_id, []).append(event)
+        cache["screening_events_by_encounter"] = index
+    return index
+
+
+def _screening_view(event: Any) -> dict[str, Any]:
+    """One Screenings/Interventions/Assessments row.
+
+    ``negated`` reaches the template rather than being resolved into the text
+    here: the section prints name, result and comments, and an event the
+    clinician marked as not performed has to be readable as such or the row
+    claims the opposite of what the export says.
+
+    ``name`` falls back to the pack's "-" for the same reason ``_concern_view``
+    does. Result and comments are each wrapped in a template conditional and
+    simply vanish when absent, but the name is interpolated bare — an event
+    that reached us without one would otherwise print the token ``None`` as the
+    name of a screening. The row still has to appear: the export says something
+    happened at this visit, and that is the fact worth keeping.
+    """
+    return {
+        "name": event.name or "-",
+        "result": event.result,
+        "comments": event.comments,
+        "negated": event.negated,
+    }
 
 
 def _immunization_view(imm: Any, tz: str) -> dict[str, str | None]:
