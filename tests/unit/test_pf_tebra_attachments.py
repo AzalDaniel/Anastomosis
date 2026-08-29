@@ -51,6 +51,49 @@ def test_a_document_row_resolves_to_the_file_it_names(export: Path) -> None:
     assert document.sha256 == expected
 
 
+def test_an_extensionless_blob_still_reports_its_pages(export: Path) -> None:
+    """The shape a real export actually has.
+
+    Attachments are written into ``binary-content/`` under the storage GUID with
+    no extension — all 9,955 of them in the export this was measured against —
+    and the type is stated in the row's ``OriginalFileExtension`` instead. The
+    finder already copes (it indexes by stem) and so does the media type (it
+    reads that column first), but the page count keyed on the stored file's
+    suffix, so it matched nothing and every attachment in a real export came
+    back with no page count — including the PDFs, which are most of them.
+
+    Renaming the fixture blob is the whole test: same bytes, same row, the one
+    difference being the thing a real export does differently.
+    """
+    blob = export / BLOB
+    blob.rename(blob.with_suffix(""))
+
+    (document,) = _documents(export)
+
+    assert document.path == BLOB.removesuffix(".pdf"), "found by stem, extension or not"
+    assert document.mime_type == "application/pdf", "the ROW says what it is"
+    assert document.page_count == 2, "and a real export's attachments still count their pages"
+
+
+def test_a_blob_the_row_does_not_call_a_pdf_reports_no_pages(export: Path) -> None:
+    """The other half: the declared type is believed when it says 'not a PDF'.
+
+    Real exports carry HL7 v2 messages, JPEGs, legacy Office documents and video
+    in the same extensionless ``binary-content/`` folder. None of those has a
+    page count, and reaching for one would only produce a warning per file.
+    """
+    blob = export / BLOB
+    blob.rename(blob.with_suffix(""))
+    table = export / "patient-documents.tsv"
+    rows = table.read_text(encoding="utf-8").replace("\t.pdf\t", "\t.jpg\t")
+    table.write_text(rows, encoding="utf-8")
+
+    (document,) = _documents(export)
+
+    assert document.mime_type == "image/jpeg"
+    assert document.page_count is None
+
+
 def test_the_recorded_path_stays_inside_the_export(export: Path) -> None:
     """A chart travels to another EHR. The operator's directory does not go too.
 
