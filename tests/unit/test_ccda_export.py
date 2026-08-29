@@ -1668,6 +1668,53 @@ def test_no_undeclared_loss_whichever_section_takes_the_encounter(
     assert not undeclared, f"silently lost for a {shape} encounter: {'; '.join(undeclared)}"
 
 
+# A field the emitter round-trips AND the narrative also carries. The one that
+# earns it: Identifier.kind is not fully recoverable, because the parser rebuilds
+# the kind from the id's OID and only SSN has one — an MRN comes back as
+# SOURCE_GUID. So the whole field is narrated, and the two kinds that happen to
+# survive structurally are carried twice as a consequence of the one that cannot.
+_PARTIALLY_RECOVERABLE = frozenset({"patient.identifiers[].kind"})
+
+
+def test_a_field_the_export_round_trips_is_not_also_narrated(tmp_path: Path) -> None:
+    """The bound the losslessness invariant does not have.
+
+    That invariant is one-directional: it forbids losing a field, and says
+    nothing about carrying one twice. So nothing anywhere checked that
+    ``_EXPORTED_FIELDS`` is load-bearing — emptying it entirely passes all 1815
+    tests, while every field that already round-trips structurally also gets
+    written into the ledger. Not a loss, so no oracle objects; just a document
+    that grows, and a ledger whose entries stop meaning "this did not survive".
+    That is the same growth the generation fix bounded from the other end.
+
+    Stated as a property rather than a count, so it survives new fields: a value
+    recovered on its own field path structurally must not ALSO come back as a
+    narrative line for that path, except where the field is only partly
+    recoverable and the narrative is what makes it whole.
+    """
+    original = _maximal_record()
+    out = tmp_path / "max.xml"
+    out.write_bytes(build_ccd(original))
+    reingested = parse_document(out)
+    structured = _structured_values(reingested)
+    narrated = _narrated_values(reingested)
+
+    redundant = sorted(
+        {
+            _field_path(path)
+            for path, value in _walk_leaves(dumped(original))
+            if not _is_declared_loss(path)
+            and _survives(structured, _field_path(path), _collapse(value))
+            and _survives(narrated, _field_path(path), _collapse(value))
+        }
+        - _PARTIALLY_RECOVERABLE
+    )
+    assert not redundant, (
+        "carried both structurally and in the loss narrative, so the emitter's "
+        "consumed-field allowlist is not doing its job: " + "; ".join(redundant)
+    )
+
+
 # --- determinism + well-formedness -------------------------------------------
 
 
