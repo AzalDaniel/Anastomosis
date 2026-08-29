@@ -57,6 +57,18 @@ SLOT_GUIDANCE: Mapping[str, str] = {
     "upload_success_marker": "an element that appears only after a successful upload",
     "documents_tab": "(optional) the tab/link that opens the Documents area",
     "upload_open_button": "(optional) the button that opens the upload dialog",
+    # The upload dialog's own fields. Vendor-neutral like the rest: each names
+    # the ROLE an operator looks for on their screen, and each is skippable —
+    # a dialog that never asks for a category has no category slot to point at.
+    # Where a dialog numbers its fields per queued document, ``{idx}`` written
+    # into the selector stands in for the row number.
+    "upload_filename_input": "(optional) the box holding the document's display name",
+    "upload_category_select": "(optional) the dropdown choosing the document's category",
+    "upload_status_select": "(optional) the dropdown choosing the document's status",
+    "upload_date_input": "(optional) the box holding the document's date",
+    "upload_patient_prefill": "(optional) the box showing which patient the dialog will file for",
+    "upload_provider_select": "(optional) the dropdown choosing the provider to file under",
+    "upload_comments_input": "(optional) the box for a note attached to the document",
 }
 
 _SELECTORS_FILE = "selectors.yaml"

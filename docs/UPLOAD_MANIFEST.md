@@ -22,7 +22,7 @@ upload path, and nothing more.
 | --- | --- | --- |
 | `pack` | run | The template pack that rendered these charts, so the upload side can reload the pack manifest L3 reads `verify_header_fields` from. One render run renders through one pack and the verifier holds one pack for the run, so the name is recorded once rather than per item. `null` when no Jinja pack was involved (the whole-patient ccda-standard view) — a genuine "L3 has nothing to check", not a lost field. |
 | `expected_pages` | item | The page count of the PDF **as rendered**, so L1 asserts "exactly N pages" instead of only "at least one". |
-| `date_of_service` | item | The encounter date L3's `dos` header field is checked against. That is the **only** encounter field L3 reads, so it is the only one carried: no sections, no clinical content. |
+| `date_of_service` | item | The encounter date L3's `dos` header field is checked against, and — read from the same key on the same item — the document date a destination's filing dialog is handed when its pack discovered a date field. That is the **only** encounter field either one reads, so it is the only one carried: no sections, no clinical content. A `null` is the render run saying it had no date; a pack that needs one then refuses the item rather than filing it under whatever the form defaulted to. |
 
 ## v1 — still loadable
 

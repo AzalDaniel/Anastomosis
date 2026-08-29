@@ -16,7 +16,7 @@ with no Playwright anywhere. A real Playwright ``Page`` does not match
 ``PageLike`` directly; :class:`PlaywrightPageAdapter` wraps one (with a lazy
 import, like :func:`anastomosis.deliver.browser.cdp.connect_over_cdp`).
 
-Two safety properties are baked into the shapes here:
+Three safety properties are baked into the shapes here:
 
 * **No selector is invented.** A pack ships every selector slot marked
   ``DISCOVER`` until an operator fills it via ``anast destination init``;
@@ -29,16 +29,26 @@ Two safety properties are baked into the shapes here:
   :class:`~anastomosis.deliver.browser.errors.PermanentDeliveryError` — filing
   against a guessed row is the wrong-patient failure this subsystem exists to
   prevent.
+* **What the form took is read back.** A pack may describe the upload dialog's
+  own fields (the optional ``upload_*`` slots below), and where it does, the
+  driver does not assume the page accepted what it typed: the document date is
+  read back and must still be the date it was given, and the patient the dialog
+  prefilled must still be the one the chart banner confirmed. Both are
+  permanent failures — a form that would not take a value files the same wrong
+  thing on every retry.
 
-PHI rule (load-bearing): this module NEVER logs search text, banner text, or
-row text. It logs slot *names*, counts, and ``exc_tag`` type names only — the
-search term is a patient name, the banner and rows carry names and DOBs.
+PHI rule (load-bearing): this module NEVER logs search text, banner text, row
+text, or anything typed into or read back from the upload dialog. It logs slot
+*names*, booleans, counts, and ``exc_tag`` type names only — the search term is
+a patient name, the banner and rows carry names and DOBs, and the dialog's
+prefill is a patient name beside a date of service.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -50,6 +60,7 @@ from anastomosis.deliver.browser.errors import (
     DeliveryError,
     PermanentDeliveryError,
     TransientDeliveryError,
+    WrongPatientError,
 )
 from anastomosis.destinations.base import (
     DestinationPatient,
@@ -96,11 +107,56 @@ _REQUIRED_SLOTS: tuple[str, ...] = (
 )
 
 # Optional selector slots: a pack may leave these unset (empty string) — the
-# driver clicks them only when configured.
+# driver acts on them only when configured.
+#
+# The first two are navigation — one more click on the way to the form. The
+# rest are the upload FORM itself, and they exist because attaching a file is
+# almost never the whole job: a real filing dialog asks for a display name, a
+# category, a status, a document date and a note, offers a provider to file
+# under, and shows the patient it believes it is filing for. A pack that could
+# not name those fields left them at whatever the portal defaulted to, which is
+# how a chart lands uncategorised, undated and under nobody.
+#
+# Every one of them is OPTIONAL, and that is load-bearing rather than lenient: a
+# pack that leaves them blank must drive exactly the five actions it drove
+# before they existed, so no selectors.yaml already discovered in the field
+# changes behaviour or stops loading.
 _OPTIONAL_SLOTS: tuple[str, ...] = (
     "documents_tab",
     "upload_open_button",
+    "upload_filename_input",
+    "upload_category_select",
+    "upload_status_select",
+    "upload_date_input",
+    "upload_patient_prefill",
+    "upload_provider_select",
+    "upload_comments_input",
 )
+
+# The subset of optional slots that live inside the upload form. They are the
+# ones the row-index token below is rendered into, and the ones the driver
+# fills/reads rather than clicks.
+_FORM_SLOTS: frozenset[str] = frozenset(
+    {
+        "upload_filename_input",
+        "upload_category_select",
+        "upload_status_select",
+        "upload_date_input",
+        "upload_patient_prefill",
+        "upload_provider_select",
+        "upload_comments_input",
+    }
+)
+
+# The row-index token a form slot may carry. A dialog that can queue several
+# documents at once numbers its controls per row (``#fileNameInput0``,
+# ``#fileNameInput1``), so a pack writes the row-agnostic ``#fileNameInput{idx}``
+# rather than a row number it does not mean. This engine files ONE document per
+# dialog, so the rendered row is always :data:`_SINGLE_ROW_INDEX`; the token
+# exists so the pack can state the portal's real shape, not so the driver can
+# pretend to a batching flow it does not have.
+_ROW_INDEX_TOKEN = "{idx}"  # noqa: S105 — a selector placeholder, not a secret
+_SINGLE_ROW_INDEX = 0
 
 
 @runtime_checkable
@@ -140,6 +196,28 @@ class PageLike(Protocol):
 
     def set_input_files(self, selector: str, path: str) -> None:
         """Set the file-input matched by ``selector`` to the file at ``path``."""
+        ...
+
+    def select_option(self, selector: str, value: str, *, by_label: bool = False) -> None:
+        """Choose ``value`` in the ``<select>`` matched by ``selector``.
+
+        ``by_label`` matches an option's visible LABEL rather than its value
+        attribute, because the label is usually the only half an operator can
+        read off their own screen — a vendor's option values are often opaque
+        ids. Raises when the select offers no matching option: a dropdown that
+        will not take the configured choice is a structural mismatch, never a
+        field to leave at whatever it happened to default to.
+        """
+        ...
+
+    def input_value(self, selector: str) -> str:
+        """Return the CURRENT value of the form control matched by ``selector``.
+
+        Distinct from :meth:`text_content`, and the distinction is the point: a
+        control's value lives in a DOM property, not in its text. This is the
+        readback verb — the one that turns "we typed it" into "the page took
+        it".
+        """
         ...
 
     def wait_for_selector(self, selector: str, timeout_ms: int) -> None:
@@ -198,6 +276,20 @@ class PlaywrightPageAdapter:
     ) -> None:  # pragma: no cover - needs playwright
         self._page.set_input_files(selector, path)
 
+    def select_option(
+        self, selector: str, value: str, *, by_label: bool = False
+    ) -> None:  # pragma: no cover - needs playwright
+        # Playwright takes label= and value= as different keyword arguments and
+        # raises when neither matches an option — which is exactly the signal
+        # the driver turns into a permanent failure, so it is not swallowed here.
+        if by_label:
+            self._page.select_option(selector, label=value)
+        else:
+            self._page.select_option(selector, value=value)
+
+    def input_value(self, selector: str) -> str:  # pragma: no cover - needs playwright
+        return str(self._page.input_value(selector) or "")
+
     def wait_for_selector(
         self, selector: str, timeout_ms: int
     ) -> None:  # pragma: no cover - needs playwright
@@ -248,9 +340,18 @@ class SelectorMap:
     upload_file_input: str
     upload_submit: str
     upload_success_marker: str
-    # optional
+    # optional — navigation
     documents_tab: str = ""
     upload_open_button: str = ""
+    # optional — the upload form's own fields. A form slot may carry the
+    # ``{idx}`` row-index token; the driver renders it for the row it fills.
+    upload_filename_input: str = ""
+    upload_category_select: str = ""
+    upload_status_select: str = ""
+    upload_date_input: str = ""
+    upload_patient_prefill: str = ""
+    upload_provider_select: str = ""
+    upload_comments_input: str = ""
 
     @classmethod
     def required_slots(cls) -> tuple[str, ...]:
@@ -269,16 +370,33 @@ class SelectorMap:
         1. Every required slot must be present and a non-empty string — a
            missing/blank required slot is a malformed pack (``KeyError`` /
            ``ValueError`` naming the slot).
-        2. Any slot whose value still starts with ``DISCOVER`` is undiscovered;
+        2. Every declared slot must be one this loader knows. A name it does not
+           know is a ``ValueError`` that says which — see below.
+        3. Any slot whose value still starts with ``DISCOVER`` is undiscovered;
            if any required slot is undiscovered, raise :class:`PackNotReadyError`
            listing them all and the wizard command (an undiscovered OPTIONAL
            slot is treated as "skip" — left empty — not a blocker).
+
+        Step 2 exists because the alternative is the quietest failure this file
+        can produce. The loop below reads a CLOSED list of slot names, so a
+        selector written under any other key — a typo, a slot renamed between
+        versions, a field an operator hoped would be honoured — was read by
+        nobody and reported to nobody, and the pack still announced itself
+        ready. An operator who discovered a selector and watched the form field
+        stay empty had no way to find out why.
         """
         missing = [s for s in _REQUIRED_SLOTS if s not in data]
         if missing:
             raise KeyError(
                 f"destination pack {pack_name!r} selectors missing required slot(s): "
                 f"{', '.join(missing)}"
+            )
+
+        unknown = sorted(set(data) - set(_REQUIRED_SLOTS) - set(_OPTIONAL_SLOTS))
+        if unknown:
+            raise ValueError(
+                f"destination pack {pack_name!r} declares unknown selector slot(s): "
+                f"{', '.join(unknown)}"
             )
 
         values: dict[str, str] = {}
@@ -300,11 +418,93 @@ class SelectorMap:
                 # An optional slot left at DISCOVER is simply "not discovered
                 # yet" — treat it as skipped (empty) rather than a blocker.
                 value = ""
+            if _ROW_INDEX_TOKEN in value and slot not in _FORM_SLOTS:
+                # Only the form slots are rendered against a row, so the token
+                # anywhere else would reach the page verbatim and match nothing.
+                raise ValueError(
+                    f"destination pack {pack_name!r} selector {slot!r} carries the "
+                    f"{_ROW_INDEX_TOKEN} row token, which only the upload form's "
+                    f"slots render"
+                )
             values[slot] = value
 
         if undiscovered:
             raise PackNotReadyError(pack_name, tuple(undiscovered))
         return cls(**values)
+
+
+def _unconfigured(pack_name: str, slot: str) -> str:
+    """The refusal for a discovered form slot whose config names no value.
+
+    Half a configuration is worse than none here: the pack has said the portal
+    demands this field, and nothing has said what belongs in it. Filling it
+    anyway would mean inventing a value that lands on a patient's chart.
+    """
+    return (
+        f"destination pack {pack_name!r} discovered selector slot {slot!r} but its "
+        f"config names no value for it"
+    )
+
+
+def _render_date(fmt: str, value: date) -> str:
+    """Render ``value`` through a ``%m/%d/%Y``-style template, from date parts.
+
+    Supports the common ``strftime`` directives a date needs —
+    ``%m``/``%d``/``%Y``/``%y`` (zero-padded) and ``%-m``/``%-d`` (unpadded) —
+    built BY HAND from ``value.month``/``.day``/``.year`` so the result is
+    identical on every platform (the ``date_renderings`` lesson in
+    :mod:`anastomosis.deliver.verify.levels`; ``%-d``/``%-m`` are glibc-only and
+    this runs on Windows CI too). A literal ``%%`` is an escaped percent; any
+    other ``%X`` is passed through unchanged.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(fmt):
+        ch = fmt[i]
+        if ch != "%":
+            out.append(ch)
+            i += 1
+            continue
+        # A trailing bare '%' is passed through literally.
+        token = fmt[i : i + 3] if fmt[i + 1 : i + 2] == "-" else fmt[i : i + 2]
+        out.append(_date_token(token, value))
+        i += len(token)
+    return "".join(out)
+
+
+def _date_token(token: str, value: date) -> str:
+    return {
+        "%m": f"{value.month:02d}",
+        "%-m": str(value.month),
+        "%d": f"{value.day:02d}",
+        "%-d": str(value.day),
+        "%Y": str(value.year),
+        "%y": f"{value.year % 100:02d}",
+        "%%": "%",
+    }.get(token, token)
+
+
+def _date_parts(text: str) -> tuple[str, ...]:
+    """The numeric runs of ``text``, leading zeros stripped, in order.
+
+    How two renderings of one date are compared when we do not know how the
+    portal chose to write it back: ``"1/19/2023"`` and ``"01/19/2023"`` both
+    reduce to ``("1", "19", "2023")``, so a widget that pads what it was given
+    is not mistaken for one that ignored it. Anything non-numeric is a
+    boundary, so a changed separator or a trailing space still matches — while
+    a changed day, or a day and month swapped, does not. An empty readback
+    reduces to ``()`` and matches nothing, which is the fail-closed answer.
+
+    Known limit, stated rather than papered over: a widget that echoes the date
+    back with a time appended (``"1/19/2023 12:00 AM"``) contributes those
+    digits too, so this refuses an upload it could have allowed. That is the
+    side to be wrong on — the alternative, comparing only the first three runs,
+    would also wave through a form that had quietly replaced the date. Whether
+    any real portal does this cannot be known from here; it wants one
+    authorized run against a staging portal, and a pack that hits it should be
+    fixed by loosening this with that evidence rather than on a guess.
+    """
+    return tuple(part.lstrip("0") or "0" for part in re.findall(r"\d+", text))
 
 
 @dataclass(frozen=True)
@@ -319,6 +519,17 @@ class BrowserPackConfig:
     Windows CI too). ``search_by`` selects which fields are typed into the search
     box; ``result_match`` is fixed to ``exact_name_dob`` in v1 — the SAFE mode
     that never guesses past an ambiguous result.
+
+    The ``upload_*`` knobs are what the driver types into the upload form's
+    fields, and each stays ``None`` until an operator names it. A ``None``
+    against a slot the pack never discovered changes nothing; a ``None`` against
+    a slot it DID discover is a half-configured pack and refuses, because the
+    pack has said the form demands that field and the config has not said what
+    belongs in it. ``upload_date_format`` is deliberately separate from
+    ``dob_format``: a portal's patient search and its filing dialog need not
+    write a date the same way, and assuming they do types a date the form then
+    silently reformats. ``select_by`` says whether a dropdown choice names an
+    option's visible label or its value attribute.
     """
 
     name: str
@@ -327,43 +538,26 @@ class BrowserPackConfig:
     search_by: Literal["name", "dob", "both"] = "both"
     result_match: Literal["exact_name_dob"] = "exact_name_dob"
     success_timeout_ms: int = 30000
+    upload_category_label: str | None = None
+    upload_status_label: str | None = None
+    upload_provider_label: str | None = None
+    upload_comment: str | None = None
+    upload_date_format: str = "%m/%d/%Y"
+    select_by: Literal["label", "value"] = "label"
 
     def render_dob(self, value: date) -> str:
-        """Render ``value`` using ``dob_format`` from the integer date parts.
+        """Render ``value`` using ``dob_format`` from the integer date parts."""
+        return _render_date(self.dob_format, value)
 
-        Supports the common ``strftime`` directives a DOB needs —
-        ``%m``/``%d``/``%Y``/``%y`` (zero-padded) and ``%-m``/``%-d`` (unpadded)
-        — built BY HAND from ``value.month``/``.day``/``.year`` so the result is
-        identical on every platform (the ``date_renderings`` lesson in
-        :mod:`anastomosis.deliver.verify.levels`). A literal ``%%`` is an escaped
-        percent; any other ``%X`` is passed through unchanged.
+    def render_upload_date(self, value: date) -> str:
+        """Render ``value`` for the upload form's date field.
+
+        The same hand-rolled tokenizer as :meth:`render_dob` — never platform
+        ``strftime`` — against ``upload_date_format``, so the two dates a pack
+        writes can differ in shape without either one going through the
+        platform's locale.
         """
-        out: list[str] = []
-        i = 0
-        fmt = self.dob_format
-        while i < len(fmt):
-            ch = fmt[i]
-            if ch != "%":
-                out.append(ch)
-                i += 1
-                continue
-            # A trailing bare '%' is passed through literally.
-            token = fmt[i : i + 3] if fmt[i + 1 : i + 2] == "-" else fmt[i : i + 2]
-            out.append(self._dob_token(token, value))
-            i += len(token)
-        return "".join(out)
-
-    @staticmethod
-    def _dob_token(token: str, value: date) -> str:
-        return {
-            "%m": f"{value.month:02d}",
-            "%-m": str(value.month),
-            "%d": f"{value.day:02d}",
-            "%-d": str(value.day),
-            "%Y": str(value.year),
-            "%y": f"{value.year % 100:02d}",
-            "%%": "%",
-        }.get(token, token)
+        return _render_date(self.upload_date_format, value)
 
 
 class BrowserPackDestination:
@@ -391,6 +585,12 @@ class BrowserPackDestination:
         # Releases OUR Playwright driver + CDP connection on close() — NEVER the
         # operator's browser. None in standalone/test use (no owned resources).
         self._teardown = teardown
+        # The patient the banner readback last CONFIRMED, held only so the
+        # upload dialog can be asked the same question a second time from
+        # inside itself. The engine banner-checks immediately before every
+        # upload, so this is never stale by more than one step; a failed check
+        # clears it, and an upload that needs it and finds None refuses.
+        self._verified_patient: Patient | None = None
 
     # --- Destination protocol ---
 
@@ -432,7 +632,11 @@ class BrowserPackDestination:
         return None
 
     def close(self) -> None:
-        return None
+        # Still a no-op on the page. It does drop the banner's confirmation,
+        # though: a recycled session may come back on a different page, and a
+        # confirmation that outlived the session it was made in is the one
+        # thing that could wave a dialog through unchecked.
+        self._verified_patient = None
 
     def release(self) -> None:
         """Release OUR owned Playwright driver + CDP connection — once, at run end.
@@ -548,6 +752,11 @@ class BrowserPackDestination:
         name_ok = self._name_present(banner_name, expected)
         dob_ok = self._dob_present(banner_dob, expected)
         matches = name_ok and dob_ok
+        # Remember WHO was confirmed, so an upload dialog that prefills a
+        # patient can be checked against the same expectation. A miss clears
+        # it: the engine is about to abort, and a stale confirmation left
+        # behind would be the one thing able to wave the next upload through.
+        self._verified_patient = expected if matches else None
         logger.info(
             "banner check: name_ok=%s dob_ok=%s (slots patient_banner_name/dob)",
             name_ok,
@@ -577,8 +786,10 @@ class BrowserPackDestination:
 
         Step order (the wizard's discovery order, and what the e2e test pins):
         optional ``documents_tab`` click, optional ``upload_open_button`` click,
-        set the file input, click submit, wait for the success marker. A timeout
-        waiting for the success marker is a
+        set the file input, fill whatever upload-form slots the pack discovered
+        (:meth:`_fill_upload_form` — nothing at all when it discovered none),
+        click submit, wait for the success marker. A timeout waiting for the
+        success marker is a
         :class:`~anastomosis.deliver.browser.errors.TransientDeliveryError`
         (retryable — a slow page, not a permanent failure).
 
@@ -592,6 +803,7 @@ class BrowserPackDestination:
         if self._selectors.upload_open_button:
             self._page.click(self._selectors.upload_open_button)
         self._page.set_input_files(self._selectors.upload_file_input, str(item.file_path))
+        self._fill_upload_form(item)
         self._page.click(self._selectors.upload_submit)
         try:
             self._page.wait_for_selector(
@@ -618,6 +830,157 @@ class BrowserPackDestination:
         )
         # Browser uploads rarely echo a doc id or size — L6 read-back verifies.
         return UploadReceipt(destination_doc_id=None, echoed_size_bytes=None)
+
+    # --- the upload form (PHI-safe: slot names and booleans only) ---
+
+    def _fill_upload_form(self, item: UploadItem) -> None:
+        """Fill the upload form's fields, then read back the two that must be right.
+
+        Every slot here is optional and skipped when the pack left it unset, so
+        a pack that discovered none of them still drives exactly the five
+        actions it always drove. The order walks the dialog the way an operator
+        reads it: name, category, status, date, the patient it says it is
+        filing for, provider, note.
+
+        Two of these are not fields but GATES, and both fail PERMANENTLY rather
+        than transiently, because retrying a form that would not take a value
+        just files the same wrong thing again:
+
+        * the date the portal echoes back must be the date it was given — a
+          date widget that quietly ignored the text it was handed would
+          otherwise file a chart under whatever date it was already showing;
+        * the patient the dialog prefilled must still be the patient the banner
+          confirmed. The banner readback happens before the dialog opens; this
+          asks the same question from INSIDE it, after the file is attached and
+          before anything is committed, and it is the only check that can see a
+          dialog disagreeing with the chart behind it.
+
+        PHI: nothing here reaches a log line or an exception message except
+        slot names and booleans. The prefill readback is a patient's name, the
+        note may carry one, and the date is a date of service.
+        """
+        sel = self._selectors
+        if sel.upload_filename_input:
+            # The destination renders this string in its documents list, and
+            # the duplicate scan compares that list against item.fingerprint —
+            # so typing the fingerprint is what lets a resumed run recognise a
+            # document it already filed instead of filing it twice.
+            self._page.fill(self._form_selector(sel.upload_filename_input), item.fingerprint)
+        if sel.upload_category_select:
+            self._choose(
+                sel.upload_category_select,
+                self._config.upload_category_label,
+                slot="upload_category_select",
+            )
+        if sel.upload_status_select:
+            self._choose(
+                sel.upload_status_select,
+                self._config.upload_status_label,
+                slot="upload_status_select",
+            )
+        if sel.upload_date_input:
+            self._type_document_date(item)
+        if sel.upload_patient_prefill:
+            self._check_dialog_patient()
+        if sel.upload_provider_select:
+            self._choose(
+                sel.upload_provider_select,
+                self._config.upload_provider_label,
+                slot="upload_provider_select",
+            )
+        if sel.upload_comments_input:
+            if self._config.upload_comment is None:
+                raise PermanentDeliveryError(_unconfigured(self.name, "upload_comments_input"))
+            self._page.fill(
+                self._form_selector(sel.upload_comments_input), self._config.upload_comment
+            )
+
+    def _choose(self, selector: str, label: str | None, *, slot: str) -> None:
+        """Pick the configured option in one of the form's dropdowns.
+
+        A dropdown that does not offer the configured choice is a structural
+        mismatch — the portal's option list has changed, or the pack was
+        pointed at the wrong ``<select>`` — and the right answer is to stop,
+        not to leave the field at "Please select" and file anyway. The message
+        names the SLOT and never the choice: a provider's name is a person.
+        """
+        if label is None:
+            raise PermanentDeliveryError(_unconfigured(self.name, slot))
+        try:
+            self._page.select_option(
+                self._form_selector(selector),
+                label,
+                by_label=self._config.select_by == "label",
+            )
+        except DeliveryError:
+            # Already carries the engine's routing semantics — never re-wrap.
+            raise
+        except Exception as exc:
+            logger.error(
+                "upload form: slot %s would not take its configured choice (%s)",
+                slot,
+                exc_tag(exc),
+            )
+            raise PermanentDeliveryError(
+                f"upload form slot {slot!r} does not offer the configured choice"
+            ) from exc
+
+    def _type_document_date(self, item: UploadItem) -> None:
+        """Type the item's date of service, then confirm the form kept it.
+
+        An item with no date of service against a pack that discovered the date
+        field is a refusal, not a blank: the pack has said this portal files
+        documents by date, and a chart filed under the form's default date is
+        misfiled in the way that is hardest to notice later.
+        """
+        if item.date_of_service is None:
+            raise PermanentDeliveryError(
+                f"destination pack {self.name!r} discovered selector slot "
+                f"'upload_date_input' but this item carries no date of service"
+            )
+        selector = self._form_selector(self._selectors.upload_date_input)
+        typed = self._config.render_upload_date(item.date_of_service)
+        self._page.fill(selector, typed)
+        echoed = self._page.input_value(selector) or ""
+        if _date_parts(echoed) != _date_parts(typed):
+            logger.error("upload form: slot upload_date_input did not echo back what it was given")
+            raise PermanentDeliveryError(
+                "upload form slot 'upload_date_input' did not echo back the date it was given"
+            )
+
+    def _check_dialog_patient(self) -> None:
+        """Confirm the dialog's prefilled patient is the one the banner confirmed.
+
+        Fails closed in both directions. A readback that does not carry the
+        expected name is the wrong-patient signal the whole subsystem exists
+        for, so it raises the same
+        :class:`~anastomosis.deliver.browser.errors.WrongPatientError` the
+        engine turns a failed banner check into — the run aborts, this item and
+        every item after it. And no confirmed patient to compare against is
+        itself a refusal: the alternative is to file having checked nothing
+        while a discovered slot says a check was expected.
+        """
+        expected = self._verified_patient
+        if expected is None:
+            raise PermanentDeliveryError(
+                f"destination pack {self.name!r} discovered selector slot "
+                f"'upload_patient_prefill' but no banner readback confirmed a patient"
+            )
+        prefilled = self._page.input_value(
+            self._form_selector(self._selectors.upload_patient_prefill)
+        )
+        matches = self._name_present(prefilled or "", expected)
+        logger.info("upload form: dialog patient matches banner=%s", matches)
+        if not matches:
+            raise WrongPatientError(
+                "upload dialog prefilled a different patient than the banner confirmed "
+                "(slot upload_patient_prefill)"
+            )
+
+    @staticmethod
+    def _form_selector(selector: str, index: int = _SINGLE_ROW_INDEX) -> str:
+        """Render a form slot's ``{idx}`` row token for the row being filled."""
+        return selector.replace(_ROW_INDEX_TOKEN, str(index))
 
     # --- matching helpers (PHI-safe: never log the values they compare) ---
 

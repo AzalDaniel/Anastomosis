@@ -46,6 +46,17 @@ selectors:
   upload_file_input: "DISCOVER — run: anast destination init tebra"
   upload_submit: "DISCOVER — run: anast destination init tebra"
   upload_success_marker: "DISCOVER — run: anast destination init tebra"
-  # optional
+  # optional — navigation
   documents_tab: "DISCOVER — run: anast destination init tebra"
   upload_open_button: "DISCOVER — run: anast destination init tebra"
+  # optional — the upload dialog's own fields. Undiscovered means "skip", so a
+  # practice whose dialog does not ask for one of these leaves it blank and the
+  # driver never touches it. Where a dialog numbers its fields per queued
+  # document, a discovered selector may write {idx} for the row number.
+  upload_filename_input: "DISCOVER — run: anast destination init tebra"
+  upload_category_select: "DISCOVER — run: anast destination init tebra"
+  upload_status_select: "DISCOVER — run: anast destination init tebra"
+  upload_date_input: "DISCOVER — run: anast destination init tebra"
+  upload_patient_prefill: "DISCOVER — run: anast destination init tebra"
+  upload_provider_select: "DISCOVER — run: anast destination init tebra"
+  upload_comments_input: "DISCOVER — run: anast destination init tebra"

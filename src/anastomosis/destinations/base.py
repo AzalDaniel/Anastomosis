@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -57,6 +58,13 @@ class UploadItem:
     ``item_key`` is the stable identity used by the tracking ledger; build it
     as ``f"{encounter_id}:{sha256[:12]}"`` so the same source file resolves
     to the same row across runs (the resumability anchor).
+
+    PHI note on ``date_of_service``: it is the one patient-derived value on
+    this type, carried because a destination whose filing dialog asks for a
+    document date has to be given the right one. It is never logged (the
+    engine logs ``item_key`` through ``safe_log_id`` and nothing else), and it
+    reaches disk only in the upload manifest, which already carries it and
+    already lives inside the hardened output directory.
     """
 
     item_key: str
@@ -68,6 +76,10 @@ class UploadItem:
     # Destination-comparable identity for the duplicate scan. Defaults to the
     # file name; packs override when the destination exposes something better.
     fingerprint: str = ""
+    # The encounter's date of service, when the render run knew it. ``None``
+    # means it did not — a destination that needs a document date refuses the
+    # item rather than filing it under whatever the form defaulted to.
+    date_of_service: date | None = None
 
     def __post_init__(self) -> None:
         if not self.fingerprint:

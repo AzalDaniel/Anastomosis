@@ -15,6 +15,20 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A destination pack can describe the filing dialog it actually meets.**
+  Attaching the file was the whole vocabulary: a pack could name a file input
+  and a submit button and nothing else, so a chart filed through the browser
+  route landed uncategorised, undated, in whatever status the form defaulted
+  to and under no provider. Seven optional slots now describe the dialog —
+  display name, category, status, date, the patient it prefills, provider,
+  note — and the page seam gained the two verbs needed to drive and read them
+  (`select_option`, `input_value`). Every slot is optional and skipped when
+  unset, so an already-discovered `selectors.yaml` keeps meaning exactly what
+  it meant. Two of the fields are gates rather than fields: the date the form
+  echoes back must be the date it was given, and the patient the dialog
+  prefills must still be the one the chart banner confirmed — the last
+  wrong-patient check before anything is committed, and the only one that can
+  see inside the dialog. (ANV2-005)
 - **A run that is happening now says so.** Every view narrated a run in one
   line on screen and none of it reached a screen reader — a click produced
   silence. One always-present polite region carries it, written together with
@@ -54,6 +68,14 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **A selector under a name the loader does not know is now refused, loudly.**
+  It used to be dropped on the floor: the loader read a closed list of slot
+  names, so a typo'd or stale key was read by nobody and reported to nobody
+  while the pack still announced itself ready — an operator who discovered a
+  selector and watched the field stay empty had no way to find out why. This
+  is a breaking change for a hand-edited `selectors.yaml` carrying such a key,
+  which will now fail to load with the offending name in the message.
+  (ANV2-005)
 - **A layout or an export format is shown by the name its author typed.** Both
   registries carry a `display` field now; `anast info` leads with the name and
   dims the id beside it. The front end's hard-coded `ccda → "C-CDA"` exception
