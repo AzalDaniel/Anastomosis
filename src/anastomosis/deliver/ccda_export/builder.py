@@ -122,7 +122,10 @@ _PHONE_USE: dict[ContactKind, str] = {
 
 # canonical sex display → administrativeGenderCode @code (parser reads
 # @displayName first, so the displayName we emit is what actually round-trips).
-_SEX_CODE = {"Female": "F", "Male": "M"}
+# Keyed on the lowercased source string. The real Practice Fusion Gender column
+# holds "M"/"F" — the reference generator translates {'M': 'Male', 'F': 'Female'}
+# off it — so an exact-match table over "Female"/"Male" matched no real patient.
+_SEX_CODE = {"f": "F", "female": "F", "m": "M", "male": "M"}
 
 # Extension keys this format round-trips through native structured slots (each
 # is emitted by the model's own structured entry and read back onto that model
@@ -434,13 +437,22 @@ def _patient_demographics(role: etree._Element, patient: Patient) -> None:
 
     if patient.sex is None:
         _el(person, "administrativeGenderCode", nullFlavor="NI")
-    else:
+    elif (sex_code := _SEX_CODE.get(patient.sex.strip().lower())) is not None:
         _el(
             person,
             "administrativeGenderCode",
-            code=_SEX_CODE.get(patient.sex, "UN"),
-            displayName=patient.sex,
+            code=sex_code,
+            displayName=patient.sex,  # verbatim: the round trip reads this first
             codeSystem=OID_GENDER,
+        )
+    else:
+        # Not an AdministrativeGender concept, so say so. "UN" is the real code
+        # for Undifferentiated — a clinical claim about the patient, not a shrug
+        # at an unrecognised string, and the receiver cannot tell the difference.
+        _text_el(
+            _el(person, "administrativeGenderCode", nullFlavor="OTH"),
+            "originalText",
+            patient.sex,
         )
     _nullable(person, "birthTime", _ts_date(patient.birth_date) if patient.birth_date else None)
 

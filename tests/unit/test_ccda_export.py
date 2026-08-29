@@ -1935,3 +1935,48 @@ def parse_document_bytes(data: bytes) -> PatientRecord:
         path = Path(d) / "doc.xml"
         path.write_bytes(data)
         return parse_document(path)
+
+
+@pytest.mark.parametrize(
+    ("source_sex", "expect_code"),
+    [("F", "F"), ("M", "M"), ("Female", "F"), ("male", "M"), ("f", "F")],
+)
+def test_the_real_gender_spellings_get_a_real_gender_code(
+    source_sex: str, expect_code: str
+) -> None:
+    """The lookup used to be exact-match over "Female"/"Male" (#242).
+
+    The real Practice Fusion Gender column holds "M"/"F" — the reference
+    generator translates {'M': 'Male', 'F': 'Female'} off it — so every one of
+    2,167 patients fell through to "UN", Undifferentiated. A receiving EHR reads
+    the normative @code; @displayName is decorative in CDA. Sex-keyed decision
+    support, screening reminders and reference ranges all mis-key on that.
+    """
+    blob = build_ccd(
+        PatientRecord(patient=Patient(id="feedface-0000-0000-0000-000000000001", sex=source_sex))
+    )
+    text = blob.decode() if isinstance(blob, bytes) else str(blob)
+    (emitted,) = re.findall(r"<administrativeGenderCode[^>]*/>", text)
+    assert f'code="{expect_code}"' in emitted
+    assert 'code="UN"' not in emitted
+    # displayName stays verbatim — the parser reads it first, so it is the round trip.
+    assert f'displayName="{source_sex}"' in emitted
+
+
+def test_an_unmapped_gender_is_nullFlavoured_not_given_a_fabricated_code(tmp_path: Path) -> None:
+    """ "UN" is the real code for Undifferentiated — a clinical claim about the
+    patient, not a shrug at a string we did not recognise, and the receiver
+    cannot tell the two apart. Say nothing, and carry the source spelling.
+    """
+    blob = build_ccd(
+        PatientRecord(patient=Patient(id="feedface-0000-0000-0000-000000000001", sex="Nonbinary"))
+    )
+    text = blob.decode() if isinstance(blob, bytes) else str(blob)
+    assert 'nullFlavor="OTH"' in text
+    assert 'code="UN"' not in text
+    assert "<originalText>Nonbinary</originalText>" in text
+
+    # And it survives the round trip rather than being lost to the nullFlavor.
+    path = tmp_path / "ccd.xml"
+    path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
+    assert parse_document(path).patient.sex == "Nonbinary"
