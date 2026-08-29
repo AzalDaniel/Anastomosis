@@ -469,3 +469,90 @@ def test_one_unreadable_document_is_refused_by_position_not_anonymously(tmp_path
     assert "ValueError" in message
     # The file name is a patient value in a real C-CDA export, so it must not appear.
     assert "patient_03" not in message
+
+
+_NARRATIVE_REFS_CCD = """<?xml version="1.0"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <recordTarget><patientRole><id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name>
+    <administrativeGenderCode code="F" displayName="Female" codeSystem="2.16.840.1.113883.5.1"/>
+    <birthTime value="19850314"/></patient></patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/><title>Problems</title>
+      <text><list><item ID="prob1">Chronic obstructive pulmonary disease</item></list></text>
+      <entry><act classCode="ACT" moodCode="EVN"><entryRelationship typeCode="SUBJ">
+        <observation classCode="OBS" moodCode="EVN">
+          <code code="55607006" codeSystem="2.16.840.1.113883.6.96"/>
+          <effectiveTime><low value="20230510"/></effectiveTime>
+          <value xsi:type="CD" code="13645005" codeSystem="2.16.840.1.113883.6.96">
+            <originalText><reference value="#prob1"/></originalText>
+          </value>
+        </observation></entryRelationship></act></entry>
+    </section></component>
+    <component><section>
+      <code code="34109-9" codeSystem="2.16.840.1.113883.6.1"/><title>Notes</title>
+      <text><paragraph ID="n1">SUBJECTIVE: cough x3d. PLAN: fluids and rest.</paragraph></text>
+      <entry><act classCode="ACT" moodCode="EVN">
+        <id root="feedface-0000-4000-8000-00000000e001"/>
+        <code code="34109-9" displayName="Note" codeSystem="2.16.840.1.113883.6.1"/>
+        <text><reference value="#n1"/></text>
+        <author><time value="20230510"/></author>
+      </act></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_a_narrative_reference_is_read_as_the_words_it_points_at(tmp_path: Path) -> None:
+    """Linking a coded entry to its narrative by ``<reference value="#id"/>`` is
+    THE standard C-CDA mechanism, and a reference element carries no text of its
+    own (#243).
+
+    So a problem whose originalText is a reference arrived unnamed — a blank row
+    on the chart's problem list — and a note whose body is a reference arrived
+    empty, rendering the visit as a blank SOAP note, while the words sat a few
+    elements away in the same document.
+    """
+    (tmp_path / "refs.xml").write_text(_NARRATIVE_REFS_CCD, encoding="utf-8")
+
+    (record,) = list(get_source("ccda").load(tmp_path))
+
+    (condition,) = record.conditions
+    assert condition.display == "Chronic obstructive pulmonary disease", "the problem lost its name"
+
+    (encounter,) = record.encounters
+    (section,) = encounter.sections
+    assert section.text == "SUBJECTIVE: cough x3d. PLAN: fluids and rest.", "the note body was lost"
+
+
+def test_a_reference_naming_an_id_the_document_lacks_is_left_alone(tmp_path: Path) -> None:
+    """Unresolvable is not the same as resolvable-to-nothing: a dangling
+    reference must not invent text, and must not take the document down.
+    """
+    dangling = _NARRATIVE_REFS_CCD.replace('value="#prob1"', 'value="#nosuchid"')
+    (tmp_path / "refs.xml").write_text(dangling, encoding="utf-8")
+
+    (record,) = list(get_source("ccda").load(tmp_path))
+
+    (condition,) = record.conditions
+    assert condition.display is None, "a dangling reference must not fabricate a name"
+    # The note half still resolves — one bad reference does not poison the rest.
+    (encounter,) = record.encounters
+    assert encounter.sections[0].text == "SUBJECTIVE: cough x3d. PLAN: fluids and rest."
+
+
+def test_a_reference_carrying_its_own_fallback_text_keeps_it(tmp_path: Path) -> None:
+    """Some writers put the words inline AND point at the narrative. The inline
+    text is what the document already says, so resolving must not overwrite it.
+    """
+    inline = _NARRATIVE_REFS_CCD.replace(
+        '<reference value="#prob1"/>', '<reference value="#prob1">Emphysema</reference>'
+    )
+    (tmp_path / "refs.xml").write_text(inline, encoding="utf-8")
+
+    (record,) = list(get_source("ccda").load(tmp_path))
+
+    (condition,) = record.conditions
+    assert condition.display == "Emphysema", "the document's own words were overwritten"
