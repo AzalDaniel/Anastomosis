@@ -29,6 +29,7 @@ from typing import Any, Protocol
 from jinja2 import Environment, FileSystemLoader
 
 from anastomosis.core.atomic import atomic_replace
+from anastomosis.core.conservation import Conservation
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -87,6 +88,33 @@ class RenderResult:
     # (encounter_id, exception type name) — never exception text.
     failed: list[tuple[str, str]] = field(default_factory=list)
     documents: list[RenderedDoc] = field(default_factory=list)
+
+
+def _render_conservation(offered: int, result: RenderResult) -> Conservation:
+    """The canonical -> rendered seam: every encounter ends in exactly one of
+    three columns.
+
+    This holds by construction today — ``_render_one`` appends to exactly one
+    list on every path — which is the point. The class of defect it exists for
+    is the one where that stops being true and nothing notices: an early return
+    that forgets to record the encounter, an exception caught a level too high,
+    two encounters allocated one filename. Then the run reports the survivors
+    as though they were everything, which is how two encounters became one page
+    and a clean report.
+
+    A run that raised (an unavailable renderer) never reaches this: it has no
+    books to balance because it has no result.
+    """
+    return Conservation(
+        stage="canonical -> rendered",
+        unit="encounter",
+        offered=offered,
+        dispositions={
+            "rendered": len(result.rendered),
+            "skipped": len(result.skipped),
+            "failed": len(result.failed),
+        },
+    )
 
 
 class ReconstructionEngine:
@@ -198,6 +226,10 @@ class ReconstructionEngine:
         template = self._env.get_template(self._pack.template_path.name)
         result = RenderResult()
         claimed: set[Path] = set()
+        # Counted here rather than from `records`: the argument is an Iterable
+        # and may be a generator, so len() is not available and consuming it
+        # twice is not either.
+        offered = 0
         try:
             for record in records:
                 # One cache dict per record, shared across that record's
@@ -206,11 +238,13 @@ class ReconstructionEngine:
                 # content is pack-specific; the seam is not. Output is unchanged.
                 record_cache: dict[str, Any] = {}
                 for encounter in record.encounters:
+                    offered += 1
                     self._render_one(
                         encounter, record, template, out, force, claimed, result, record_cache
                     )
         finally:
             self._retire_renderer()
+        _render_conservation(offered, result).check()
         # Persist the render index so downstream deliverers (archive, bundle) can attribute
         # PDFs by patient_id directly, instead of reverse-inferring ownership from the leading
         # ``{family}_{given}_`` prefix — two same-name patients would misattribute silently.

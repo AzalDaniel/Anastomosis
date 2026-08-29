@@ -51,6 +51,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_text
+from anastomosis.core.conservation import Conservation
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -151,6 +152,53 @@ class ArchiveResult:
     #: loss — they are on disk — but nobody will open that directory unless
     #: they are told it has something in it.
     unattributed_count: int = 0
+
+
+def _chart_conservation(
+    render_index: RenderIndex | None,
+    records: list[PatientRecord],
+    pdfs_dir: Path | None,
+    *,
+    delivered: int,
+    unattributed: int,
+    missing: int,
+) -> Conservation:
+    """The canonical -> delivered seam: every chart this run has to answer for
+    ends somewhere nameable.
+
+    Two sources of obligation, and the union of them is what must balance:
+
+    * every chart the render index NAMES for a patient being delivered — the
+      run said it produced these, so their absence from the archive is a loss
+      even though no file is malformed;
+    * every PDF actually sitting in the charts directory — including ones the
+      index does not name, which is how a chart written by an earlier run, or
+      by a run whose index write failed, still gets accounted for instead of
+      being left behind.
+
+    Three dispositions and no fourth: copied to its patient, swept into
+    ``unattributed/`` because nothing could attribute it, or counted missing.
+    This is the shape #110 walked through — five attachments in the export and
+    zero in the output, with every artifact check passing because each artifact
+    that existed was fine.
+    """
+    named: set[str] = set()
+    if render_index is not None:
+        for record in records:
+            named.update(render_index.for_patient(record.patient.id))
+    on_disk: set[str] = set()
+    if pdfs_dir is not None and pdfs_dir.is_dir():
+        on_disk = {path.name for path in pdfs_dir.glob("*.pdf")}
+    return Conservation(
+        stage="canonical -> delivered",
+        unit="chart",
+        offered=len(named | on_disk),
+        dispositions={
+            "delivered": delivered,
+            "unattributed": unattributed,
+            "missing": missing,
+        },
+    )
 
 
 class ArchiveDeliverer:
@@ -271,6 +319,15 @@ class ArchiveDeliverer:
         # it and either rescues it into unattributed/ or cannot, and only then
         # is it missing. Counting it above as well would count one chart twice.
         missing_count += sweep_failures
+
+        _chart_conservation(
+            render_index,
+            records_list,
+            pdfs_dir,
+            delivered=pdf_count,
+            unattributed=unattributed_count,
+            missing=missing_count,
+        ).check()
 
         index_path = self._write_index(
             out,
