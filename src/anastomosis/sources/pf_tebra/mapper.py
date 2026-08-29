@@ -1308,15 +1308,25 @@ def _sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def _page_count(path: Path) -> int | None:
+def _page_count(path: Path, mime_type: str) -> int | None:
     """Pages in a PDF attachment; None for anything else, or an unreadable one.
 
     A scanned record's page count is the difference between a chart that says
     "7 pages attached" and one that silently shows the first. Non-PDF
     attachments have no page count to give, and a PDF that will not open is
     reported as unknown rather than as zero — zero would read as "nothing here".
+
+    Which attachments are PDFs is decided by the type the export declares, not
+    by the stored file's name. A real export writes every attachment into
+    ``binary-content/`` under its storage GUID with no extension at all — all
+    9,955 of them in the export this was measured against — and states the type
+    in the row's ``OriginalFileExtension`` instead, which is exactly why
+    :func:`_mime_type` reads that column first. Keying on the filename meant the
+    suffix test never matched, so every attachment in a real export reported no
+    page count, the PDFs included. The synthetic fixture names its one blob
+    ``.pdf``, so nothing here ever noticed.
     """
-    if path.suffix.lower() != ".pdf":
+    if mime_type != "application/pdf":
         return None
     try:
         import pymupdf
@@ -1354,14 +1364,15 @@ def _map_document(row: Row, guid: str, attachments: Attachments | None) -> Docum
     """
     storage = _s(row, "DocumentStorageGuid") or _s(row, "DocumentGuid") or ""
     blob = attachments.find(storage) if attachments else None
+    mime_type = _mime_type(row, blob)
     return DocumentArtifact(
         id=_s(row, "DocumentGuid") or "",
         patient_id=guid,
         title=_s(row, "DocumentName"),
         path=attachments.relative(blob) if attachments and blob else None,
         sha256=_sha256(blob) if blob else None,
-        mime_type=_mime_type(row, blob),
-        page_count=_page_count(blob) if blob else None,
+        mime_type=mime_type,
+        page_count=_page_count(blob, mime_type) if blob else None,
         generated_at=_dt(row, "DocumentDate"),
         extensions=_ext(row, frozenset({"PatientPracticeGuid", "DocumentGuid", "DocumentName"})),
         provenance=_prov("patient-documents", _s(row, "DocumentGuid")),
