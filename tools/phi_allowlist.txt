@@ -11,6 +11,11 @@ diagnosiscodeequivalents
 lastmodifiedbyproviderguid
 patientinsuranceplanguid
 transactiondisplaydatetimeutc
+# patient-medications.tsv column — v9 spells the last-modified stamp on this
+# ONE table with a Display prefix. Reached the repo when the mapper was
+# corrected to the vendor's spelling (#247), and it is 30 chars, so the same
+# opaque-token pass hashed it out of the predecessor's source as the four above.
+displaylastmodifieddatetimeutc
 # patient-guarantor.tsv column (gpdfs:951 consumes it; same v9 dictionary).
 billingpatientrelationshipoption
 

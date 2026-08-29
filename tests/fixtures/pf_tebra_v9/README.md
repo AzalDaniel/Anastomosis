@@ -16,27 +16,30 @@ subset: 29 tables, 3 patients, 6 encounters.
 
 ### VERIFIED vs INFERRED
 
-Column spellings are verified against the v9 dictionary **except** the
-following, where the public dictionary doesn't enumerate the columns and the
-spellings here are this project's best inference (the adapter reads these
-tolerantly — corrections from a real export only require fixing this fixture):
+**Every column name in this fixture is now checked against the vendor**, by
+`tests/unit/test_v9_schema_reference.py` against the column list in
+`tests/reference/pf_v9_columns.json`. Nothing here is spelled on inference any
+more, and nothing can go back to being spelled on inference without the suite
+saying so.
 
-* `providers.tsv`, `facilities.tsv` — name/address column spellings
-* `patient-guarantor.tsv`, `patient-education.tsv`,
-  `patient-financial-resources.tsv` — all columns
-* `superbill-insurances.tsv` — columns mirror the predecessor's
-  `generate_pdfs.py` loader (`PatientInsurancePlanGuid` / `PlanName` /
-  `PayerName` / `PlanType`, the three-tier PF insurance-TYPE join); synthetic
-  values throughout
-* `patient-allergy-reactions.tsv` — link/`Reaction` columns
-* `patient-immunizations.tsv` — `DateAdministered`/`ExpirationDate`/`Comment`
-* `patient-family-history-diagnoses.tsv` — `Diagnosis` display column
+This section used to list nine exemptions, on the belief that the public
+dictionary "doesn't enumerate the columns" for those tables. It enumerates all
+85 of them, and the exemption was doing real damage: 25 invented column names
+across 12 tables, self-consistent between fixture and mapper, green in every
+test, and refused outright by the first real export (#247). The lesson worth
+keeping is that one — an exemption from checking is where the drift lives, and
+"the vendor doesn't say" is worth re-testing before it is believed.
+
+What genuinely remains undocumented is **serialization, not names**:
+
 * `DiagnosisCodeEquivalents` *format* (`SYSTEM:code|SYSTEM:code`) — the column
-  is verified, its serialization is not publicly documented
+  is in the dictionary; how its value is packed is not.
 * Null literal (`\N`), date spellings, and the `1/1/0001 12:00:00 AM`
   sentinel — **deliberately mixed** here (also empty cells and ISO dates)
   because the real serialization is publicly undocumented; the adapter must
   tolerate all of them anyway.
+* Cell *values* throughout are synthetic, and always were. Only the names came
+  from the vendor.
 
 Verified-absent facts this fixture honors: patient identity is
 `PatientPracticeGuid` and `patient-demographics` carries **no record-number
@@ -72,6 +75,14 @@ export (the predecessor emitted them as empty strings), so the adapter maps them
 to nothing rather than inventing a column. Education, financial resources,
 occupation/industry, and tribal affiliation DO have their own documented v9
 tables (mapped via `_SOCIAL_TABLES`).
+
+Education and financial resources are shaped as a questionnaire rather than a
+single field — `Question`, `Answer`, `SnomedCode` — so the answer is the
+observation's value and the question rides beside it in extensions. Neither
+carries an assessment date, only a LastModified stamp, so both observations
+come through undated: when a row was last edited is not when the patient was
+asked, and dating the answer from the stamp would state something the export
+does not.
 
 ## Traps deliberately baked in (what the adapter tests assert)
 
