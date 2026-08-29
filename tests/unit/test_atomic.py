@@ -261,11 +261,21 @@ def test_a_bracket_in_a_chart_name_is_not_a_glob_pattern(tmp_path: Path) -> None
     ``safe_name`` keeps ``[`` and ``]``, and an unescaped bracket makes the
     glob ask a different question than the one intended — matching another
     chart's temps, or silently none at all.
+
+    Asserted against the PATTERN rather than against a deletion, because
+    deletion is POSIX-only: `_writer_is_gone` has no liveness probe to offer on
+    Windows and keeps every temp there, so an end-to-end assertion would pass
+    on Linux and fail on Windows while saying nothing about the escaping. The
+    escaping is what is wrong on both.
     """
+    import glob as globmod
+
     target = tmp_path / "Chart_[A-Z].pdf"
-    dead = tmp_path / f".{target.name}.999999.tmp"
-    dead.write_bytes(b"%PDF-1.7 half a chart")
+    mine = tmp_path / f".{target.name}.999999.tmp"
+    mine.write_bytes(b"%PDF-1.7 half a chart")
 
-    atomic_write_text(target, "ours")
+    escaped = list(tmp_path.glob(f".{globmod.escape(target.name)}.*.tmp"))
+    naive = list(tmp_path.glob(f".{target.name}.*.tmp"))
 
-    assert not dead.exists(), "the bracketed name never matched its own temp"
+    assert escaped == [mine], "the escaped pattern must find the temp it is about"
+    assert naive == [], "the unescaped pattern reads [A-Z] as a character class"
