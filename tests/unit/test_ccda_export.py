@@ -2228,3 +2228,116 @@ def test_an_encounter_with_no_type_says_no_information() -> None:
     assert code.get("nullFlavor") == "NI"
     assert code.get("code") is None and code.get("codeSystem") is None
     assert list(code) == [], "nothing to show, so nothing shown"
+
+
+# --- how much of what a destination receives is preservation (#118) -----------
+#
+# The C-CDA is the one artifact handed to somebody else's EHR. On a real
+# Practice Fusion export the preserved-source-fields section was 97% of it —
+# 1.6 MB of narrative accompanying 49 KB of clinical content — and nothing
+# measured it, so the operator found out when the destination refused the file.
+
+
+def test_a_document_reports_its_size_and_its_preservation_share() -> None:
+    from anastomosis.deliver.ccda_export.builder import measure_ccd
+
+    record = _generation_record()
+    measured = measure_ccd(build_ccd(record))
+
+    assert measured.total_bytes == len(build_ccd(record))
+    assert 0 < measured.preserved_bytes < measured.total_bytes
+    assert 0.0 < measured.preserved_share < 1.0
+
+
+def test_a_record_with_nothing_unmapped_measures_no_preservation() -> None:
+    """Zero is the honest answer, not a division error or a missing key."""
+    from anastomosis.core.model import Patient, PatientRecord
+    from anastomosis.deliver.ccda_export.builder import measure_ccd
+
+    bare = PatientRecord(
+        patient=Patient(
+            id="feedface-0000-0000-0000-0000000000ff",
+            given_name="Synthia",
+            family_name="Probe",
+        )
+    )
+    measured = measure_ccd(build_ccd(bare))
+    assert measured.preserved_bytes == 0
+    assert measured.preserved_share == 0.0
+    assert measured.total_bytes > 0
+
+
+def test_an_empty_document_has_a_share_rather_than_a_zero_division() -> None:
+    from anastomosis.deliver.ccda_export.builder import CcdMeasurement
+
+    assert CcdMeasurement(total_bytes=0, preserved_bytes=0).preserved_share == 0.0
+
+
+def test_the_export_reports_the_shape_of_what_it_wrote(tmp_path: Path) -> None:
+    from anastomosis.deliver.ccda_export import deliver_ccda
+
+    records = [_generation_record(), _generation_record()]
+    records[1].patient.id = "feedface-0000-0000-0000-0000000000ab"
+    # A second, bigger chart, so "largest" is a distinct number from "total".
+    records[1].patient.notes = "N" * 4096
+    result = deliver_ccda(records, tmp_path / "ccda")
+
+    assert len(result.paths) == 2
+    # Totals across the batch, and the LARGEST single document — a
+    # destination's size limit applies per document, so the total is the wrong
+    # number to compare against one.
+    assert result.total_bytes == sum(p.stat().st_size for p in result.paths)
+    assert result.largest_bytes == max(p.stat().st_size for p in result.paths)
+    assert result.largest_bytes < result.total_bytes
+    assert 0 < result.preserved_bytes < result.total_bytes
+
+
+def _preservation_heavy_record() -> PatientRecord:
+    """A chart the way a real vendor export produces one: a little clinical
+    content and a lot of source fields C-CDA has no structured slot for.
+
+    The shipped synthetic fixtures are too small to show the ratio #118
+    measured, which is exactly why it went unseen until a real Practice Fusion
+    export was run. Sixty invented vendor keys reproduce the SHAPE without any
+    real data — the point is the proportion, not the values.
+    """
+    record = _generation_record()
+    record.patient.extensions.update(
+        {f"pf_tebra:VendorField{n:02d}": f"synthetic value {n}" * 8 for n in range(60)}
+    )
+    return record
+
+
+def test_an_ordinary_export_does_not_cry(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The other half of the pair. A check that fires on the normal case is one
+    operators learn to skip, so a chart whose preservation is a minority of the
+    document says nothing."""
+    from anastomosis.deliver.ccda_export import deliver_ccda
+
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.ccda_export.deliverer"):
+        result = deliver_ccda([_generation_record()], tmp_path / "ccda")
+
+    assert result.preserved_share < 0.5
+    assert not [
+        r.getMessage() for r in caplog.records if "preserved source fields" in r.getMessage()
+    ]
+
+
+def test_a_mostly_preservation_export_says_so_before_the_destination_does(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The 'found out the hard way' failure this closes.
+
+    The warning is about THIS tool's own output — what a given EHR will accept
+    is not something it can know — so it reports the share and points at the
+    destination's own limit rather than inventing one.
+    """
+    from anastomosis.deliver.ccda_export import deliver_ccda
+
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.ccda_export.deliverer"):
+        result = deliver_ccda([_preservation_heavy_record()], tmp_path / "ccda")
+
+    assert result.preserved_share >= 0.5, "the fixture no longer reproduces the shape"
+    warnings = [r.getMessage() for r in caplog.records]
+    assert any("preserved source fields" in m for m in warnings), warnings
+    assert any("per-document size limit" in m for m in warnings), warnings

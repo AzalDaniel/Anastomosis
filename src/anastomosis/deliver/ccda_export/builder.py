@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -73,7 +74,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.patient import Address
 
-__all__ = ["DECLARED_LOSSES", "build_ccd"]
+__all__ = ["DECLARED_LOSSES", "CcdMeasurement", "build_ccd", "measure_ccd"]
 
 logger = logging.getLogger(__name__)
 
@@ -1200,6 +1201,51 @@ def _serialize(path: str, value: Any) -> list[str]:
 
 
 # --- top-level assembly ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CcdMeasurement:
+    """How big this document is, and how much of it is preservation.
+
+    The C-CDA is the one artifact handed to somebody else's EHR, and on a real
+    Practice Fusion export the preserved-source-fields section was 97% of it —
+    1.6 MB of narrative accompanying 49 KB of clinical content, 33x the payload
+    it travels with. Nothing is wrong with the document; the losslessness
+    guarantee is working exactly as designed. What was missing was any way for
+    an operator to know the shape of what they are about to hand over, before
+    the destination is the one that tells them.
+
+    Bytes are of the serialized section as it sits in the document, so the two
+    numbers are directly comparable and the share is meaningful. Counts only —
+    nothing here is derived from a patient's values.
+    """
+
+    total_bytes: int
+    preserved_bytes: int
+
+    @property
+    def preserved_share(self) -> float:
+        """0.0-1.0. Zero for an empty document rather than a division error."""
+        return self.preserved_bytes / self.total_bytes if self.total_bytes else 0.0
+
+
+def measure_ccd(xml: bytes) -> CcdMeasurement:
+    """Measure a built CCD: total size, and the size of the 51899-3 section.
+
+    Reads the document back rather than instrumenting the builder, so the
+    number is of the bytes actually written — the thing the destination
+    receives — rather than of an intermediate the serializer might still
+    change. Exactly one 51899-3 section is ever emitted by this builder (see
+    ``_loss_narrative_section``); a document carrying none measures zero, which
+    is the honest answer for a record with nothing unmapped.
+    """
+    root = etree.fromstring(xml)
+    preserved = 0
+    for section in root.iter(f"{{{V3}}}section"):
+        code = section.find(f"{{{V3}}}code")
+        if code is not None and code.get("code") == LOINC_EXTENSIONS:
+            preserved += len(etree.tostring(section))
+    return CcdMeasurement(total_bytes=len(xml), preserved_bytes=preserved)
 
 
 def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes:

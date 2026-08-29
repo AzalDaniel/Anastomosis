@@ -30,11 +30,17 @@ from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import budgeted_name
 from anastomosis.deliver._shared import claim_delivered_name
 
-from .builder import build_ccd
+from .builder import build_ccd, measure_ccd
 
 __all__ = ["CcdaExportResult", "deliver_ccda"]
 
 logger = logging.getLogger(__name__)
+
+
+#: Report the preservation share above this fraction. Half is the point where
+#: most of what a destination receives is not clinical content, which is the
+#: operator's business whether or not their endpoint would accept the file.
+_PRESERVATION_SHARE_WARN = 0.5
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,23 @@ class CcdaExportResult:
 
     paths: list[Path]
     missing_count: int
+    #: Bytes across every document written, and how many of them are the
+    #: preserved-source-fields section. The C-CDA is the one artifact handed to
+    #: somebody else's EHR, and on a real export the preservation block was 97%
+    #: of it — a well-formed document doing exactly what the losslessness
+    #: guarantee promises, and 33x the size of the clinical payload it travels
+    #: with. Nothing measured it, so the operator found out when the
+    #: destination refused the file.
+    total_bytes: int = 0
+    preserved_bytes: int = 0
+    #: The single largest document. A destination's size limit applies per
+    #: document, not per batch, so the total is the wrong number to compare
+    #: against one.
+    largest_bytes: int = 0
+
+    @property
+    def preserved_share(self) -> float:
+        return self.preserved_bytes / self.total_bytes if self.total_bytes else 0.0
 
 
 def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExportResult:
@@ -70,6 +93,9 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExpor
     written: list[Path] = []
     claimed: dict[str, str] = {}
     missing = 0
+    total_bytes = 0
+    preserved_bytes = 0
+    largest_bytes = 0
     for index, record in enumerate(records):
         # Budgeted against ``out``: an over-long path would otherwise raise
         # OSError inside the write below, and the batch-continues handler would
@@ -78,7 +104,12 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExpor
         claim_delivered_name(claimed, pid, record.patient.id, kind="C-CDA document")
         target = out / f"{pid}.xml"
         try:
-            atomic_write_bytes(target, build_ccd(record))
+            xml = build_ccd(record)
+            atomic_write_bytes(target, xml)
+            measured = measure_ccd(xml)
+            total_bytes += measured.total_bytes
+            preserved_bytes += measured.preserved_bytes
+            largest_bytes = max(largest_bytes, measured.total_bytes)
         except Exception as exc:
             # One malformed record must not sink the batch; log the exception
             # TYPE only (its message may embed PHI) and move on. But "move on"
@@ -92,4 +123,29 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExpor
     # PHI: never log the output path — an operator dir named after a patient
     # would enter the logs (SECURITY.md: never a path). Counts only.
     logger.info("ccda export complete: %d of %d patient(s)", len(written), len(records))
-    return CcdaExportResult(paths=written, missing_count=missing)
+    result = CcdaExportResult(
+        paths=written,
+        missing_count=missing,
+        total_bytes=total_bytes,
+        preserved_bytes=preserved_bytes,
+        largest_bytes=largest_bytes,
+    )
+    if result.preserved_share >= _PRESERVATION_SHARE_WARN:
+        # Said before the destination says it. This is a line THIS tool draws
+        # about its own output, not a vendor limit: what a given EHR will
+        # accept is not something this tool can know, and the destination
+        # registry's no-hallucination rule forbids inventing one. What is
+        # knowable is the shape of the document, and most of it not being
+        # clinical content is worth an operator's attention — an importer that
+        # renders unrecognised sections will show a physician a wall of
+        # preserved key/value narrative beside their actual chart.
+        logger.warning(
+            "%.0f%% of the exported C-CDA is preserved source fields "
+            "(%d of %d bytes; largest document %d bytes) — check your "
+            "destination's per-document size limit before importing",
+            result.preserved_share * 100,
+            preserved_bytes,
+            total_bytes,
+            largest_bytes,
+        )
+    return result

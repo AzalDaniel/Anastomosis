@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
+    from anastomosis.deliver.ccda_export import CcdaExportResult
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import EventSink, PipelineResult, StageEvent
     from anastomosis.reconstruct.ccda_standard import CCDARenderResult
@@ -425,6 +426,24 @@ def _run_ccda_standard_qa(
     settle_qa(report, charts, emit)
 
 
+def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
+    """The C-CDA outcome an operator reads, including its shape.
+
+    Bytes ride beside the patient counts because this document is the one
+    artifact handed to somebody else's EHR: its size is that EHR's problem, and
+    the share of it that is preserved source fields rather than clinical
+    content decides what a physician sees when it opens. Both were invisible
+    until the destination refused a file (#118).
+    """
+    return {
+        "patients": len(result.paths),
+        "missing": result.missing_count,
+        "bytes": result.total_bytes,
+        "preserved_bytes": result.preserved_bytes,
+        "largest_bytes": result.largest_bytes,
+    }
+
+
 def _run_ccda_standard(
     cmd: MigrationCommand, transit: TransitMap, on_event: EventSink | None
 ) -> MigrationResult:
@@ -513,7 +532,7 @@ def _run_ccda_standard(
     ccda_export = DeliveryOutcome(
         kind="ccda",
         out_dir=ccda,
-        counts={"patients": len(ccda_result.paths), "missing": ccda_result.missing_count},
+        counts=_ccda_counts(ccda_result),
     )
     return MigrationResult(
         transit=transit,

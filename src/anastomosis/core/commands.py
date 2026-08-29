@@ -230,7 +230,17 @@ def deliver_outputs(
             outcomes["ccda"] = DeliveryOutcome(
                 kind="ccda",
                 out_dir=dc.out_dir,
-                counts={"patients": len(ccda.paths), "missing": ccda.missing_count},
+                # Bytes beside the counts: this document goes to somebody
+                # else's EHR, so its size and how much of it is preserved
+                # source fields rather than clinical content are the
+                # operator's business before the destination makes them so.
+                counts={
+                    "patients": len(ccda.paths),
+                    "missing": ccda.missing_count,
+                    "bytes": ccda.total_bytes,
+                    "preserved_bytes": ccda.preserved_bytes,
+                    "largest_bytes": ccda.largest_bytes,
+                },
             )
     return outcomes
 
