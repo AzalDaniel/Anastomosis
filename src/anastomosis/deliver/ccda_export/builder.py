@@ -148,7 +148,7 @@ _SMOKING_STATUS_DISPLAY = "Tobacco use"
 # DECLARED_LOSSES — the losses that cannot even ride the 51899-3 loss narrative
 # (NIT 4: structured as {field-path pattern: reason}). Everything else that no
 # structured emitter consumes is serialized into that narrative and recovered
-# from re-ingest as patient.extensions['ccda:section:51899-3'] (see the module
+# from re-ingest as patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] (see the module
 # docstring and :func:`_collect_lost_fields`). Keep this minimal: a field that
 # could be written to the narrative does NOT belong here.
 DECLARED_LOSSES: dict[str, str] = {
@@ -179,8 +179,8 @@ DECLARED_LOSSES: dict[str, str] = {
     "*:narrative-only recovery": (
         "every other populated field with no structured CDA slot (native fields "
         "and vendor extensions alike) is written to the 51899-3 narrative and "
-        "recovered as patient.extensions['ccda:section:51899-3'], NOT back onto "
-        "its original typed model"
+        f"recovered as patient.extensions[{EXT_PRIOR_LOSS_NARRATIVE!r}] as "
+        "discrete entries, NOT back onto its original typed model"
     ),
 }
 
