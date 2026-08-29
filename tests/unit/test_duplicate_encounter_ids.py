@@ -78,3 +78,44 @@ def test_an_ordinary_document_still_delivers(tmp_path: Path) -> None:
     assert result.encounter_count == len(pages), (
         f"reported {result.encounter_count} encounters, wrote {len(pages)} pages"
     )
+
+
+def test_our_own_round_trip_no_longer_doubles_every_visit() -> None:
+    """A C-CDA describes one encounter twice on purpose: as an entry in the
+    46240-8 Encounters section and as the Note Activity documenting it in
+    34109-9. Both legitimately carry the same ``<id root>``.
+
+    The parser appended one Encounter per mention, so a record round-tripped
+    through our own exporter came back with every visit doubled and two objects
+    sharing an id — which ArchiveDeliverer then refused, blaming a source that
+    had done nothing wrong (#242).
+    """
+    import tempfile
+
+    from anastomosis.deliver.ccda_export.builder import build_ccd
+    from anastomosis.sources import get_source
+
+    fixture = _FIXTURES / "pf_tebra_v9"
+    records = list(get_source("pf-tebra").load(fixture))
+
+    for record in records:
+        blob = build_ccd(record)
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "ccd.xml"
+            path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
+            reingested = parse_document(path)
+
+        assert len(reingested.encounters) == len(record.encounters), "a visit was doubled"
+        ids = [e.id for e in reingested.encounters]
+        assert len(ids) == len(set(ids)), "two encounters came back sharing one id"
+
+    # And the fold keeps both halves rather than dropping one of them.
+    blob = build_ccd(records[0])
+    with tempfile.TemporaryDirectory() as scratch:
+        path = Path(scratch) / "ccd.xml"
+        path.write_bytes(blob if isinstance(blob, bytes) else blob.encode())
+        folded = parse_document(path).encounters[0]
+
+    assert folded.encounter_type == "SOAP", "the Encounters half was lost"
+    assert folded.note_type == "SOAP note", "the Notes half was lost"
+    assert folded.sections, "the note body was lost"
