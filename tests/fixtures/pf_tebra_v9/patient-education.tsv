@@ -1,2 +1,2 @@
-PatientPracticeGuid	EducationLevel	EffectiveDate
-feedface-0000-0000-0000-000000000002	High school graduate	3/3/2020
+PatientPracticeGuid	Question	Answer	SnomedCode
+feedface-0000-0000-0000-000000000002	What is the highest grade or level of school you have completed?	High school graduate	

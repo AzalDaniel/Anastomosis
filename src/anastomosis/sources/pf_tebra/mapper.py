@@ -86,12 +86,18 @@ _ICD10_RE = re.compile(r"\b([A-TV-Z][0-9]{2}(?:\.[0-9A-Z]{1,4})?)\b")
 _SNOMED_RE = re.compile(r"\b([0-9]{6,18})\b")
 
 # Social-history observation labels, keyed by (table, value column).
+#
+# patient-education and patient-financial-resources are shaped as a screening
+# questionnaire rather than a single field: Question, Answer and a SNOMED code
+# for the answer. The Answer is the value; the Question rides into extensions
+# beside it, because "High school graduate" means something different depending
+# on what was asked.
 _SOCIAL_TABLES = (
     ("patient-smokingstatus", "TobaccoUseDescription", "Tobacco use"),
-    ("occupation-industry", "Occupation", "Occupation"),
+    ("occupation-industry", "OccupationName", "Occupation"),
     ("occupation-industry", "IndustryName", "Industry"),
-    ("patient-education", "EducationLevel", "Education"),
-    ("patient-financial-resources", "FinancialResource", "Financial resources"),
+    ("patient-education", "Answer", "Education"),
+    ("patient-financial-resources", "Answer", "Financial resources"),
     ("tribal-affiliation", "TribalAffiliation", "Tribal affiliation"),
 )
 
@@ -592,15 +598,19 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
             value = _s(row, value_col)
             if value is None:
                 continue
-            # EffectiveDate/EffectiveDateFrom/RecordedDate in that priority order:
-            # the clinical assessment date wins over the administrative entry
-            # date; the other value survives in extensions.
+            # EffectiveDate (smoking status) then EffectiveDateFrom
+            # (occupation/industry) — the only two clinical assessment dates
+            # v9 puts on these tables. A third spelling, RecordedDate, used to
+            # sit at the end of this chain and is on no table in the export.
+            #
+            # Education, financial resources and tribal affiliation carry no
+            # assessment date at all, only a LastModified stamp. That stays out
+            # of this chain on purpose: when a row was last edited is not when
+            # the patient was asked, and putting one where the other belongs
+            # would date the answer wrongly rather than leave it undated. The
+            # stamp still rides into extensions, so nothing is lost.
             effective = next(
-                (
-                    d
-                    for c in ("EffectiveDate", "EffectiveDateFrom", "RecordedDate")
-                    if (d := _dt(row, c))
-                ),
+                (d for c in ("EffectiveDate", "EffectiveDateFrom") if (d := _dt(row, c))),
                 None,
             )
             observations.append(
@@ -746,7 +756,7 @@ _MEDICATION_MAPPED = frozenset(
         "Route",
         "ProductStrength",
         "MedicationDiscontinuedReasonName",
-        "LastModifiedDateTimeUtc",
+        "DisplayLastModifiedDateTimeUtc",
     }
 )
 
@@ -767,7 +777,7 @@ def _map_medication(row: Row, prescription_ids: list[str]) -> MedicationStatemen
         sig=_s(row, "Sig"),
         start=_d(row, "StartDate"),
         stop=stop,
-        last_modified_at=_dt(row, "LastModifiedDateTimeUtc"),
+        last_modified_at=_dt(row, "DisplayLastModifiedDateTimeUtc"),
         active=stop is None and discontinued is None,
         prescription_ids=prescription_ids,
         extensions=_ext(row, _MEDICATION_MAPPED),
@@ -787,7 +797,6 @@ _PRESCRIPTION_MAPPED = frozenset(
         "Sig",
         "Quantity",
         "NumberOfRefills",
-        "Refills",
     }
 )
 
@@ -810,10 +819,11 @@ def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
     # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS otherwise
     # (see resolve_display_date).
     display_date = resolve_display_date(transactions, prefix, _dt(row, "DateOfService"))
-    # Refills: NumberOfRefills, falling back to Refills.
-    refills = clean_numeric(row.get("NumberOfRefills"))
-    if refills is None:
-        refills = clean_numeric(row.get("Refills"))  # -1 sentinel → None
+    # NumberOfRefills, and only that. A fallback to a bare `Refills` used to sit
+    # here; v9 spells that column on no table, so the fallback could only ever
+    # fire over an export we invented, and having it made the read look like it
+    # tolerated two vendor spellings when there is one (#248).
+    refills = clean_numeric(row.get("NumberOfRefills"))  # -1 sentinel → None
     return Prescription(
         id=guid,
         patient_id=_s(row, "PatientPracticeGuid") or "",

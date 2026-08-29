@@ -1,2 +1,2 @@
-PatientPracticeGuid	FinancialResource	EffectiveDate
-feedface-0000-0000-0000-000000000003	State medical assistance	1/10/2022
+PatientPracticeGuid	Question	Answer	SnomedCode
+feedface-0000-0000-0000-000000000003	In the past year, have you had trouble paying for basics like food, housing or medicine?	State medical assistance	

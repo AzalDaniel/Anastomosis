@@ -588,8 +588,8 @@ def test_superbill_insurance_unjoined_row_preserved_non_attributingly(tmp_path: 
     assert loaded[P3].coverages == []  # still self-pay: the orphan row joins nothing
     assert loaded[P3].extensions["pf_tebra:unjoined_superbill_insurances"] == [
         {
-            "pf_tebra:SuperbillGuid": "feedface-5b11-0000-0000-000000000099",
-            "pf_tebra:PayerName": "Acme Indemnity",
+            "pf_tebra:BillingHeaderGuid": "feedface-5b11-0000-0000-000000000099",
+            "pf_tebra:BillingPatientInsuranceName": "Acme Indemnity",
             "pf_tebra:PlanName": "Acme Catastrophic",
             "pf_tebra:PlanType": "EPO",
             "pf_tebra:LastModifiedDateTimeUtc": "6/2/2023 1:45:09 PM",
@@ -659,7 +659,7 @@ def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     assert guarantor.address is not None and guarantor.address.city == "Springfield"
     assert [(p.kind.value, p.value) for p in guarantor.phones] == [("phone_home", "(206) 555-0163")]
     # Columns the mapping doesn't consume land in extensions (losslessness).
-    assert guarantor.extensions == {"pf_tebra:MiddleName": "Q"}
+    assert guarantor.extensions == {"pf_tebra:MiddleInitial": "Q"}
     record = records[P1]
     encounter = next(e for e in record.encounters if e.id == E1)
     provider = record.practitioner(encounter.provider_id)
@@ -727,7 +727,14 @@ def test_social_observation_prefers_clinical_effective_date() -> None:
     assert obs[0].effective_at == parse_dt("2021-03-15")  # EffectiveDate, not RecordedDate
     assert obs[0].extensions["pf_tebra:RecordedDate"] == "2023-09-01"  # not lost
 
-    # Only the administrative date present: it is the last-resort fallback.
+    # And with ONLY the administrative date, the observation goes undated.
+    #
+    # This used to assert the opposite — that RecordedDate was the last-resort
+    # fallback — which was a rule invented here rather than read from the
+    # vendor: `RecordedDate` is a column on no table in the v9 export, so the
+    # fallback could only ever fire over a row we made up (#247). An undated
+    # observation is the honest answer, and the surplus column still rides into
+    # extensions, so choosing not to date it costs nothing.
     only_recorded = {
         "patient-smokingstatus": [
             {
@@ -739,7 +746,8 @@ def test_social_observation_prefers_clinical_effective_date() -> None:
         **empty_socials,
     }
     obs2 = _social_observations(only_recorded, guid)
-    assert obs2[0].effective_at == parse_dt("2023-09-01")
+    assert obs2[0].effective_at is None
+    assert obs2[0].extensions["pf_tebra:RecordedDate"] == "2023-09-01"
 
 
 # --- the superbill TYPE join must not carry one patient's row onto another ------
