@@ -106,6 +106,7 @@ def test_engine_checks_registered() -> None:
         "date_staleness",
         "layout_pagination",
         "note_body",
+        "unattributed_vitals",
         "vitals_loinc",
     }
 
@@ -593,3 +594,91 @@ def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
 
     assert _result(on, "note_body")[0] is Verdict.FAIL
     assert _result(off, "note_body") == (Verdict.PASS, [])
+
+
+def test_a_vital_on_no_encounter_is_caught_by_the_check_the_others_cannot_be(
+    tmp_path: Path,
+) -> None:
+    """The gap the external audit walked straight through.
+
+    Every other check starts from what the encounter claims, so a record whose
+    observations name no encounter gives them nothing to compare and they all
+    pass. The audit's probe found exactly that: eight vitals in the record, a
+    chart carrying none of them, five green ticks. So this asserts the two
+    facts together — the old checks still pass, and the new one does not.
+    """
+    record = _record()
+    record.observations[0].encounter_id = None
+    pdf = make_pdf(tmp_path / "silent.pdf", GOOD_LINES)
+    report = run_qa([(pdf, record.encounters[0], record)])
+
+    assert _result(report, "vitals_loinc")[0] is Verdict.PASS, "it looks only at the encounter"
+    verdict, findings = _result(report, "unattributed_vitals")
+    assert verdict is Verdict.FAIL
+    assert findings == ["vital Systolic blood pressure is on no encounter, so it is on no chart"]
+
+
+def test_an_observation_naming_a_visit_that_is_not_there_fails(tmp_path: Path) -> None:
+    """Worse than the unattached case, because it looks attached.
+
+    The value names an encounter, so nothing about it reads as orphaned — and
+    the encounter does not exist, so no chart renders it either. Caught for
+    every category, not just vitals: a lab result pointing at a visit this
+    record does not have is broken whatever it measures.
+    """
+    record = _record()
+    record.observations[1].encounter_id = "feedface-dead-0000-0000-00000000beef"
+    record.observations[1].category = ObservationCategory.LABORATORY
+    pdf = make_pdf(tmp_path / "dangling.pdf", GOOD_LINES)
+
+    verdict, findings = _result(
+        run_qa([(pdf, record.encounters[0], record)]), "unattributed_vitals"
+    )
+    assert verdict is Verdict.FAIL
+    assert findings == ["Heart rate names an encounter this record does not have"]
+
+
+def test_a_social_history_observation_on_no_encounter_is_not_a_finding(tmp_path: Path) -> None:
+    """The normal case, and the reason this check is narrow.
+
+    A smoking status is a fact about the patient rather than something measured
+    at an appointment, and the C-CDA linker leaves it unattached on purpose.
+    Reporting it would put a finding on the chart of every patient ever asked
+    about tobacco — and a check that fires on the ordinary case is one an
+    operator stops reading, which costs more than it catches.
+    """
+    record = _record()
+    record.observations.append(
+        Observation(
+            patient_id=record.patient.id,
+            encounter_id=None,
+            category=ObservationCategory.SOCIAL_HISTORY,
+            display="Tobacco use",
+            value="Never smoker",
+        )
+    )
+    pdf = make_pdf(tmp_path / "social.pdf", GOOD_LINES)
+
+    assert _result(run_qa([(pdf, record.encounters[0], record)]), "unattributed_vitals") == (
+        Verdict.PASS,
+        [],
+    )
+
+
+def test_the_ccda_view_reports_every_check_the_neutral_path_does() -> None:
+    """A check must never fall out of the standard-C-CDA report unnoticed.
+
+    That path runs two document-generic checks and records the encounter-scoped
+    ones as skipped-with-reason, and its own comment promises the report shows
+    the same check set as the neutral path. Nothing enforced it, so when
+    `note_body` was registered it landed in neither table and was silently
+    omitted from every whole-patient report — the exact thing the promise ruled
+    out. Registering a check is now enough to be reminded to place it.
+    """
+    from anastomosis.core.migrate import _CCDA_DOC_CHECKS, _CCDA_SKIPPED_CHECKS
+
+    placed = set(_CCDA_DOC_CHECKS) | set(_CCDA_SKIPPED_CHECKS)
+    registered = {check.name for check in engine_checks()}
+    assert registered - placed == set(), "a registered check named in neither table"
+    assert placed - registered == set(), "a table names a check that is not registered"
+    assert set(_CCDA_DOC_CHECKS).isdisjoint(_CCDA_SKIPPED_CHECKS), "run it or skip it, not both"

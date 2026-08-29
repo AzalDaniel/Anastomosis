@@ -275,6 +275,52 @@ class LayoutPaginationCheck:
         return CheckResult(self.name, Verdict.WARN if warn_only else Verdict.FAIL, findings)
 
 
+class UnattributedVitalsCheck:
+    """A measurement that survived ingest and will appear on no chart at all.
+
+    :class:`VitalsLoincCheck` asks whether the vitals FOR THIS ENCOUNTER
+    reached the page. When nothing in the record names the encounter, that
+    list is empty and the question answers itself — five checks pass over a
+    record holding eight vitals and a chart showing none of them. That vacuous
+    pass is the gap this fills, and it is the one shape the other checks
+    cannot see, because they all start from what the encounter claims.
+
+    Two failures, and they are not the same one:
+
+    * A vital sign attached to no encounter. A blood pressure is taken at a
+      visit by definition, so one that names no visit has lost the link on
+      the way in, and no per-encounter section can render it.
+    * An observation of any kind pointing at an encounter this record does not
+      contain. Worse than the first, because it looks attributed — the value
+      names a visit, and the visit is not there.
+
+    Deliberately silent about the third case: a NON-vital observation with no
+    encounter. A smoking status is a fact about the patient rather than
+    something measured at an appointment, and the C-CDA linker declines to
+    place it on a visit on purpose. Flagging it would put a finding on every
+    chart of every patient who has ever been asked about tobacco, and a check
+    that cries on the normal case is a check operators learn to skip.
+
+    The finding belongs to the record, not to any one document, so it is
+    repeated on each chart. That is the honest reporting: every chart really
+    is missing the value, and there is no one document to pin it to.
+    """
+
+    name = "unattributed_vitals"
+
+    def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
+        known = {enc.id for enc in ctx.record.encounters}
+        findings: list[str] = []
+        for obs in ctx.record.observations:
+            label = obs.display or obs.code or "observation"
+            if obs.encounter_id is None:
+                if obs.category == ObservationCategory.VITAL_SIGNS:
+                    findings.append(f"vital {label} is on no encounter, so it is on no chart")
+            elif obs.encounter_id not in known:
+                findings.append(f"{label} names an encounter this record does not have")
+        return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
+
+
 class VitalsLoincCheck:
     """Every charted vital value for the encounter appears on the document."""
 
@@ -388,6 +434,7 @@ for _check in (
     DataIntegrityCheck(),
     LayoutPaginationCheck(),
     NoteBodyCheck(),
+    UnattributedVitalsCheck(),
     VitalsLoincCheck(),
     DateStalenessCheck(),
 ):

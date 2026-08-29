@@ -237,10 +237,10 @@ src/anastomosis/
 │                     template chrome, so the draft ships a caveat saying to read
 │                     the labels before trusting them.
 ├── qa/               every rendered document is verified. CheckResult{pass|warn|fail}
-│                     over data_integrity, layout_pagination, vitals_loinc, and
-│                     date_staleness checks, with BOUNDARY-ANCHORED matching because
-│                     naive substring matching false-passes missing content; a FAIL
-│                     exits the pipeline nonzero.
+│                     over data_integrity, layout_pagination, note_body, vitals_loinc,
+│                     unattributed_vitals and date_staleness, with BOUNDARY-ANCHORED
+│                     matching because naive substring matching false-passes missing
+│                     content; a FAIL exits the pipeline nonzero.
 ├── deliver/
 │   ├── archive/      ARCHIVIST output: static, zero-network, `file://`-openable
 │   │                 archive — strict CSP, relative assets only, per-encounter HTML,

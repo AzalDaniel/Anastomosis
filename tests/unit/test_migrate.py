@@ -545,20 +545,21 @@ def test_migrate_ccda_standard_runs_qa_and_writes_report(
     # Every document PASSES (DOB identity anchor present, non-blank Letter page).
     assert report["summary"]["fail"] == 0
 
-    # All four engine checks appear per document: the two document-generic checks
-    # RAN; the two encounter-scoped checks are recorded as skipped WITH A REASON
-    # (never silently omitted).
+    # EVERY registered engine check appears per document: the document-generic
+    # ones RAN, the encounter-scoped ones are recorded as skipped WITH A REASON,
+    # and none is silently omitted. Derived from the registry rather than listed:
+    # this assertion used to name four checks literally, which meant that when
+    # `note_body` was registered the test kept passing while the report quietly
+    # stopped mentioning it — the test pinned the omission in place.
+    from anastomosis.qa.base import engine_checks
+
+    registered = {check.name for check in engine_checks()}
     for doc in report["documents"]:
         by_check = {c["check"]: c for c in doc["checks"]}
-        assert set(by_check) == {
-            "data_integrity",
-            "layout_pagination",
-            "vitals_loinc",
-            "date_staleness",
-        }
-        assert by_check["data_integrity"]["verdict"] == "pass"
-        assert by_check["layout_pagination"]["verdict"] == "pass"
-        for skipped in ("vitals_loinc", "date_staleness"):
+        assert set(by_check) == registered
+        for ran in ("data_integrity", "layout_pagination", "unattributed_vitals"):
+            assert by_check[ran]["verdict"] == "pass"
+        for skipped in ("vitals_loinc", "date_staleness", "note_body"):
             assert by_check[skipped]["verdict"] == "pass"
             assert any("skipped" in f for f in by_check[skipped]["findings"])
 
