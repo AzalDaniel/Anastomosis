@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
 from anastomosis.core.model import Encounter, ObservationCategory
-from anastomosis.core.timeutil import all_date_spellings
+from anastomosis.core.timeutil import all_date_spellings, to_local
 
 from .base import CheckResult, QAContext, Verdict, register_check
 
@@ -294,13 +294,33 @@ class VitalsLoincCheck:
         return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
 
 
+def _render_day(ctx: QAContext) -> date:
+    """The day it was where the chart was rendered.
+
+    Goes through the same ``to_local`` the packs stamp their dates with, so the
+    check and the page can never disagree about what "today" means — the
+    argument already made for ``_date_spellings`` above, applied to the clock
+    instead of the spelling. It was ``date.today()``, the HOST's day, and once
+    the packs moved off host-local a byte-identical chart bearing its own
+    render-day stamp warned on a UTC-12 machine and passed on an Eastern one.
+    Silently passing is the bad half of that: the check's sensitivity moved with
+    the operator.
+
+    No pack timezone means nobody rendered in a declared zone (the C-CDA path
+    builds its documents without a pack), and the host's day is all there is.
+    """
+    if ctx.render_tz is None:
+        return date.today()  # noqa: DTZ011 — no pack clock to borrow; the host's day it is
+    return to_local(datetime.now(UTC), ctx.render_tz).date()
+
+
 class DateStalenessCheck:
     """A render-day date on the chart usually means a template used now()."""
 
     name = "date_staleness"
 
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
-        today = date.today()  # noqa: DTZ011 — local render day is exactly the point
+        today = _render_day(ctx)
         if ctx.encounter.date_of_service == today:
             return CheckResult(self.name, Verdict.PASS, [])
         text = _document_text(pdf_path, ctx)

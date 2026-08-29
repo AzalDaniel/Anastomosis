@@ -109,6 +109,11 @@ class ReconstructionEngine:
             key: flag.default for key, flag in pack.manifest.sections.items()
         }
         self.section_flags.update(section_overrides or {})
+        # The clock this engine renders in. It already reaches the pack through
+        # `cfg["timezone"]` below; QA needs the same value to work out which day
+        # "today" was for these documents, and reading it off the manifest a
+        # second time is how the two drift apart.
+        self.timezone: str = pack.manifest.timezone
         self._env = Environment(
             loader=FileSystemLoader(pack.root), autoescape=True, keep_trailing_newline=True
         )
