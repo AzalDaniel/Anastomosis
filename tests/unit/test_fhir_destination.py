@@ -760,11 +760,19 @@ def test_the_duplicate_scan_refuses_a_cross_origin_next_link() -> None:
 # between. These hold the order as a decision.
 
 
-def _searched_by(patient: Patient) -> str:
-    """The system of the identifier the resolver would search by."""
+def _searched_by(patient: Patient, *, allow_ssn: bool = False) -> str:
+    """The system of the identifier the resolver would search by.
+
+    Returns a parenthesised description instead when no identifier is used:
+    the demographic fallback, or the refusal to search at all.
+    """
     from anastomosis.deliver.fhir_api.destination import FhirApiDestination as D
 
-    params, matched = D._search_params(D.__new__(D), patient)
+    destination = D.__new__(D)
+    destination._search_by_ssn = allow_ssn
+    params, matched = D._search_params(destination, patient)
+    if not params:
+        return f"(no search: {','.join(matched)})"
     if "identifier" not in params:
         return f"(demographics: {','.join(matched)})"
     return params["identifier"].split("|", 1)[0]
@@ -795,15 +803,62 @@ def test_the_search_identifier_is_chosen_not_inherited_from_document_order() -> 
         ((IdentifierKind.SSN, IdentifierKind.PRN), "prn"),
         ((IdentifierKind.SSN, IdentifierKind.OTHER), "other"),
         ((IdentifierKind.MRN, IdentifierKind.SOURCE_GUID), "source_guid"),
-        ((IdentifierKind.SSN,), "ssn"),  # the last resort, still reachable
     ],
 )
-def test_the_ssn_is_the_last_identifier_reached_for(
+def test_anything_else_a_patient_carries_is_preferred_to_the_ssn(
     carried: tuple[IdentifierKind, ...], expected: str
 ) -> None:
     from anastomosis.core.fhir import export
 
     assert _searched_by(_patient_with(*carried)) == export.IDENTIFIER_SYSTEMS[expected]
+    # And with the SSN allowed, the answer does not move: turning the option on
+    # changes what happens for patients carrying nothing else, and nobody else.
+    assert (
+        _searched_by(_patient_with(*carried), allow_ssn=True)
+        == (export.IDENTIFIER_SYSTEMS[expected])
+    )
+
+
+def test_an_ssn_only_patient_is_not_searched_for_by_default() -> None:
+    """The question #232 left open, answered the conservative way.
+
+    Search params ride in the query string, which the destination and every
+    proxy between record in a request line — not a place this tool can clean up
+    afterwards. So an SSN goes there when the operator asks for it and not
+    because the patient had nothing else.
+    """
+    assert _searched_by(_patient_with(IdentifierKind.SSN)).startswith("(no search:")
+
+
+def test_an_ssn_only_patient_does_not_slide_into_a_demographic_match() -> None:
+    """The failure mode that would make this fix worse than the bug.
+
+    Demographics exists for a patient the source gave no identity at all.
+    Letting a withheld SSN fall through to it would trade a query-string
+    exposure for a name-and-DOB match on a stranger, which is the wrong-patient
+    failure this whole subsystem exists to prevent.
+    """
+    patient = Patient(
+        id="feedface-0000-0000-0000-0000000000ae",
+        family_name="Testpatient",
+        given_name="Synthia",
+        birth_date=date(1980, 1, 2),
+        identifiers=[Identifier(kind=IdentifierKind.SSN, value="900-00-0000")],
+    )
+    answer = _searched_by(patient)
+    assert answer.startswith("(no search:")
+    assert "demographics" not in answer
+
+
+def test_the_operator_can_still_reach_an_ssn_only_patient() -> None:
+    """A destination that really does hold its patients under nothing else is
+    not locked out — it is opted into, once, by the person who knows that."""
+    from anastomosis.core.fhir import export
+
+    assert (
+        _searched_by(_patient_with(IdentifierKind.SSN), allow_ssn=True)
+        == (export.IDENTIFIER_SYSTEMS["ssn"])
+    )
 
 
 def test_two_identifiers_of_one_kind_keep_source_order() -> None:
@@ -817,7 +872,9 @@ def test_two_identifiers_of_one_kind_keep_source_order() -> None:
     )
     from anastomosis.deliver.fhir_api.destination import FhirApiDestination as D
 
-    params, _ = D._search_params(D.__new__(D), patient)
+    destination = D.__new__(D)
+    destination._search_by_ssn = False
+    params, _ = D._search_params(destination, patient)
     assert params["identifier"].endswith("|first")
 
 

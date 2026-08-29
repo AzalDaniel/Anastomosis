@@ -408,10 +408,10 @@ def test_wizard_happy_path_with_yes(tmp_path: Path) -> None:
     assert (out / "acme_soap" / "DRAFT.md").is_file()
     # The summary is shown, and the caveat reaches the operator. Asserted on its
     # CONTENT rather than the heading above it: the heading said "Same-patient
-    # caveat", and the caveat is no longer only about that — two DIFFERENT
-    # patients sharing a value is the failure that actually happens (#200).
+    # caveat", and the caveat is no longer only about that — a value the samples
+    # share is the failure that actually happens (#200).
     assert "MUST be from DIFFERENT patients" in result.stdout
-    assert "two patients happen to share" in result.stdout
+    assert "NOT on their own enough" in result.stdout
     assert "Inferred design" in result.stdout
 
 

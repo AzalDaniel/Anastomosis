@@ -73,6 +73,7 @@ def _make_fhir_destination(
     *,
     bearer_token: str | None = None,
     create_missing_patients: bool = False,
+    search_by_ssn: bool = False,
 ) -> object:
     from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
 
@@ -80,6 +81,7 @@ def _make_fhir_destination(
         base_url,
         bearer_token=bearer_token,
         create_missing_patients=create_missing_patients,
+        search_by_ssn=search_by_ssn,
     )
 
 

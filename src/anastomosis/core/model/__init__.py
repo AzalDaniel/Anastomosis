@@ -7,7 +7,7 @@ guarantee) and optional ``provenance`` tracing back to source rows.
 
 from .actors import Facility, Practitioner
 from .base import AnastBase, Provenance
-from .bundle import PatientRecord
+from .bundle import CHARTABLE_KINDS, PatientRecord
 from .clinical import (
     AdvanceDirective,
     AllergyCategory,
@@ -39,6 +39,7 @@ from .patient import (
 )
 
 __all__ = [
+    "CHARTABLE_KINDS",
     "Addendum",
     "Address",
     "AdvanceDirective",

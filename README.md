@@ -232,10 +232,11 @@ src/anastomosis/
 │                     column grids (deliberately explainable greedy clustering, not a
 │                     black box), get_drawings() fills → design tokens, bold spans
 │                     recurring across a SUPERMAJORITY of samples (60%, so two of
-│                     three) → section taxonomy + static text. That is a frequency
-│                     count, not a proof: a value two patients share classifies as
-│                     template chrome, so the draft ships a caveat saying to read
-│                     the labels before trusting them.
+│                     three) → section taxonomy. Static text is stricter: on EVERY
+│                     sample AND owning a page slot nothing else occupies, because
+│                     a frequency count cannot tell a label the form printed from a
+│                     value two patients share. A filter, not a proof — the draft
+│                     ships a caveat saying to read the labels before trusting them.
 ├── qa/               every rendered document is verified. CheckResult{pass|warn|fail}
 │                     over data_integrity, layout_pagination, note_body, vitals_loinc,
 │                     unattributed_vitals and date_staleness, with BOUNDARY-ANCHORED

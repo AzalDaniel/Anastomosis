@@ -36,6 +36,12 @@ class CheckResult:
     check: str
     verdict: Verdict
     findings: list[str] = field(default_factory=list)
+    #: Record items this document was never going to show, because the layout
+    #: has no place for them. Only the coverage check sets it, and it exists so
+    #: the run-level summary can say so: a report reading "1 pass, 0 warn,
+    #: 0 fail" over a chart that dropped thirteen clinical facts is accurate
+    #: about each check and wrong about the run.
+    not_carried: int = 0
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,22 @@ class QAContext:
     #: with. ``None`` means no pack said (the C-CDA path, a third-party context),
     #: and a check falls back to the host's day.
     render_tz: str | None = None
+    #: The record kinds this layout renders (see ``PackCoverage``). A kind here
+    #: that reaches no page is a defect.
+    carries: frozenset[str] = frozenset()
+    #: The record kinds this layout has no place for, each with the reason. Their
+    #: absence is expected, counted, and reported — never graded as a pass with
+    #: nothing said.
+    omits: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def coverage_declared(self) -> bool:
+        """Did whoever built this context say what the layout carries?
+
+        No is not a pass. It means the coverage check has to verify every kind
+        and soften its verdict, because it cannot tell a defect from a design.
+        """
+        return bool(self.carries or self.omits)
 
 
 class QACheck(Protocol):

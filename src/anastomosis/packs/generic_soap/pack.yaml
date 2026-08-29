@@ -35,3 +35,27 @@ tokens:
   body_font: "Georgia, 'Times New Roman', serif"
 
 verify_header_fields: [patient_name, dob, dos]
+
+# What this layout carries out of the record, and what it does not — QA reads
+# both halves so it can tell a chart that LOST the problem list from a layout
+# that never had one. A visit note is a note about one visit; the standing
+# lists belong to a chart summary, and this pack does not render one. None of
+# this is lost data: the same facts go to the destination in the structured
+# C-CDA payload and sit beside the PDFs in the archive's bundle.json. What
+# they do not do is appear on this page, and QA now says so with a count
+# instead of grading the omission clean.
+coverage:
+  omits:
+    conditions: >
+      a visit note states this encounter's assessment in the note body; the
+      standing problem list belongs to a chart summary this pack does not render
+    allergies: >
+      no allergy block in a SOAP note layout — allergies are a chart-level list
+    medications: >
+      no medication list in a SOAP note layout; today's prescribing is prose in
+      the Plan section
+    immunizations: >
+      no immunization table in a SOAP note layout
+    results: >
+      the vitals table carries what was measured at this visit; laboratory
+      results are a separate report and this layout has no section for them

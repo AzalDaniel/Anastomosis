@@ -271,9 +271,10 @@ def pack_init(
         )
 
     # NOT "PHI-safe summary", which is what this said. The static labels below
-    # are chosen by how often a string recurred, and a value two patients share
-    # recurs — so this list can carry patient data and the operator has to read
-    # it as such (#200).
+    # have to be on every sample AND hold a spot nothing else uses, which is a
+    # good filter and not a proof — a value all of these patients share, in a
+    # fixed cell, still passes it. So the list can carry patient data and the
+    # operator has to read it as such (#200).
     _cli.console.print("\n[bold]Inferred design[/bold] — read the static labels before confirming:")
     for line in analysis_result.summary:
         _cli.console.print(f"  {line}")

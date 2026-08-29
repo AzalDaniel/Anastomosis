@@ -41,6 +41,8 @@ EXPECTED_ENCOUNTERS = 1
 EXPECTED_OBSERVATIONS = 20
 EXPECTED_CONDITIONS = 1
 EXPECTED_IMMUNIZATIONS = 1
+# Of the 20 observations: 11 laboratory, 8 vital signs, 1 social history.
+EXPECTED_LAB_RESULTS = 11
 
 
 def _chromium_or_skip() -> None:
@@ -111,6 +113,8 @@ def test_full_pipeline_reconstruct_qa_archive(records: list[PatientRecord], tmp_
         ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
         section_flags=engine.section_flags,
         page_size=manifest.page.size,
+        carries=engine.carries,
+        omits=engine.omits,
     )
     # Hard invariant: zero FAILs. WARNs are allowed (Synthea is sparse), but
     # this exact fixture is stable at a clean full PASS.
@@ -118,6 +122,13 @@ def test_full_pipeline_reconstruct_qa_archive(records: list[PatientRecord], tmp_
     assert len(report.documents) == len(result.documents)
     assert report.count(Verdict.PASS) == 1
     assert report.count(Verdict.WARN) == 0
+
+    # And the part three green counts used to hide. This pack is a visit note:
+    # the record's 1 condition, 1 immunization and 11 laboratory results have
+    # no section to land in, so they are counted rather than graded clean. If
+    # the number moves, either the fixture changed or a chart started losing
+    # something the layout does carry — both worth stopping for.
+    assert report.not_carried == EXPECTED_CONDITIONS + EXPECTED_IMMUNIZATIONS + EXPECTED_LAB_RESULTS
 
     # --- archive delivery ---------------------------------------------------
     archive = tmp_path / "archive"
