@@ -779,14 +779,22 @@ body {
 <table class="data-table with-bottom-divider">
   <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
   <tbody>
-    <tr><td colspan="2" class="no-record">No active health concerns recorded.</td></tr>
+    {% if active_concerns %}
+      {% for c in active_concerns %}<tr><td>{{ c.description }}</td><td>{{ c.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No active health concerns recorded.</td></tr>
+    {% endif %}
   </tbody>
 </table>
 <div class="section-header">Inactive health concerns</div>
 <table class="data-table with-bottom-divider">
   <thead><tr><th style="width:70%">DESCRIPTION</th><th style="width:30%">EFFECTIVE DATE</th></tr></thead>
   <tbody>
-    <tr><td colspan="2" class="no-record">No inactive health concerns recorded</td></tr>
+    {% if inactive_concerns %}
+      {% for c in inactive_concerns %}<tr><td>{{ c.description }}</td><td>{{ c.date }}</td></tr>{% endfor %}
+    {% else %}
+      <tr><td colspan="2" class="no-record">No inactive health concerns recorded</td></tr>
+    {% endif %}
   </tbody>
 </table>
 {% endif %}

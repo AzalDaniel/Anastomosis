@@ -142,6 +142,8 @@ def test_record_view_index_splits_match_naive_filtering(records: list[Any]) -> N
         assert idx.conditions_by_id == {c.id: c for c in record.conditions}
         assert idx.active_medications == [m for m in record.medications if m.active]
         assert idx.prescriptions_by_id == {p.id: p for p in record.prescriptions}
+        assert idx.active_concerns == [c for c in record.health_concerns if c.active]
+        assert idx.inactive_concerns == [c for c in record.health_concerns if not c.active]
         for category, items in idx.allergies_by_category.items():
             assert items == [a for a in record.allergies if a.category == category]
 
@@ -175,6 +177,10 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
             Goal(patient_id=pid, active=True),
             Goal(patient_id=pid, active=False),
         ],
+        health_concerns=[
+            Goal(patient_id=pid, description="concern-active", active=True),
+            Goal(patient_id=pid, description="concern-inactive", active=False),
+        ],
     )
     idx = _RecordViewIndex.build(record)
     # active coverages sorted by benefit order (tie keeps source order); inactive split out.
@@ -183,6 +189,9 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
     # active/inactive goals are not swapped.
     assert [g.active for g in idx.active_goals] == [True]
     assert [g.active for g in idx.inactive_goals] == [False]
+    # nor are health concerns, which share the Goal shape and split the same way.
+    assert [c.description for c in idx.active_concerns] == ["concern-active"]
+    assert [c.description for c in idx.inactive_concerns] == ["concern-inactive"]
     # duplicate condition id: last wins, matching {c.id: c for c in conditions}.
     assert idx.conditions_by_id["c1"].active is False
 
@@ -370,6 +379,78 @@ def test_empty_state_strings_present(pack: LoadedPack) -> None:
     blob = template.render(**pack.build_context(enc, empty_record, cfg))
     for empty in _EMPTY_STATES:
         assert empty in blob, f"missing empty-state string: {empty!r}"
+
+
+def _one_encounter_record(**collections: Any) -> Any:
+    """A minimal renderable record: one SOAP encounter and whatever collection
+    the caller is exercising."""
+    from anastomosis.core.model import Encounter, NoteSection, Patient, PatientRecord, SectionKind
+
+    return PatientRecord(
+        patient=Patient(given_name="Section", family_name="Coverage"),
+        encounters=[
+            Encounter(
+                id="feedface-sect-0000-0000-000000000000",
+                patient_id="feedface-sect",
+                chief_complaint="Section coverage",
+                encounter_type="SOAP",
+                sections=[NoteSection(kind=SectionKind.SUBJECTIVE, html="<p>x</p>", text="x")],
+            )
+        ],
+        **collections,
+    )
+
+
+def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> None:
+    """A chart over a record that HAS health concerns must show them and stop
+    printing the empty state — the section used to be two hard-coded no-record
+    rows with no variable behind them, so an export carrying concerns rendered
+    "No active health concerns recorded." on top of them.
+
+    The two sections are asserted independently: an active-only record must keep
+    the inactive empty state, because a section with genuinely nothing in it
+    still owes the chart reader that string.
+    """
+    from datetime import date
+
+    from anastomosis.core.model import Goal
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000cc"
+    both = _one_encounter_record(
+        health_concerns=[
+            Goal(
+                patient_id=pid,
+                description="Uncontrolled blood pressure",
+                effective=date(2023, 3, 4),
+                active=True,
+            ),
+            Goal(
+                patient_id=pid,
+                description="Contact dermatitis, resolved",
+                effective=date(2021, 3, 4),
+                active=False,
+            ),
+        ]
+    )
+    html = template.render(**pack.build_context(both.encounters[0], both, cfg))
+    assert "Uncontrolled blood pressure" in html
+    assert "03/04/23" in html  # the effective date, in the pack's MM/DD/YY form
+    assert "Contact dermatitis, resolved" in html
+    assert "No active health concerns recorded." not in html
+    assert "No inactive health concerns recorded" not in html
+    # The headings stay outside the conditional: every static section renders.
+    assert "Active health concerns" in html and "Inactive health concerns" in html
+
+    active_only = _one_encounter_record(
+        health_concerns=[Goal(patient_id=pid, description="Prediabetes", active=True)]
+    )
+    html = template.render(**pack.build_context(active_only.encounters[0], active_only, cfg))
+    assert "Prediabetes" in html
+    assert "No active health concerns recorded." not in html
+    assert "No inactive health concerns recorded" in html
 
 
 # --- context wiring ------------------------------------------------------------

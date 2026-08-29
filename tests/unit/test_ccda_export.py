@@ -1408,6 +1408,17 @@ def _maximal_record() -> PatientRecord:
         AdvanceDirective(patient_id=pid, directive="MaxDirectiveDNR", recorded_at=_AT)
     ]
     goals = [Goal(patient_id=pid, description="MaxGoal", effective=date(2018, 1, 1), active=True)]
+    # Health concerns reuse Goal and, like goals, have no structured C-CDA
+    # emitter — so the oracle below is what proves they reach the loss
+    # narrative instead of falling out of the export unremarked.
+    health_concerns = [
+        Goal(
+            patient_id=pid,
+            description="MaxHealthConcern",
+            effective=date(2017, 2, 3),
+            active=False,
+        )
+    ]
     coverages = [
         Coverage(
             patient_id=pid,
@@ -1520,6 +1531,7 @@ def _maximal_record() -> PatientRecord:
         past_medical_history=past_medical_history,
         advance_directives=advance_directives,
         goals=goals,
+        health_concerns=health_concerns,
         coverages=coverages,
         documents=documents,
         practitioners=practitioners,

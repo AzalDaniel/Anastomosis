@@ -112,6 +112,7 @@ KNOWN_TABLES = (
     "patient-immunizations",
     "patient-advance-directives",
     "patient-goals",
+    "patient-health-concerns",
     "patient-documents",
     "providers",
     "facilities",

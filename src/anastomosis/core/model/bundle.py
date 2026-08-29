@@ -42,6 +42,11 @@ class PatientRecord(AnastBase):
     past_medical_history: list[PastMedicalHistory] = []
     advance_directives: list[AdvanceDirective] = []
     goals: list[Goal] = []
+    # A health concern carries the same four facts a goal does — whose it is,
+    # what it says, when it started, whether it is still live — so it reuses
+    # Goal rather than a second class spelled identically. (A HealthConcern
+    # model existed once and was deleted in 0.7.0 for never being populated.)
+    health_concerns: list[Goal] = []
     coverages: list[Coverage] = []
     documents: list[DocumentArtifact] = []
     practitioners: list[Practitioner] = []

@@ -643,6 +643,92 @@ def test_goals_are_mapped_and_split_by_active(tmp_path: Path) -> None:
     assert "pf_tebra:unmapped:patient-goals" not in loaded[P1].extensions
 
 
+# Real v9 spellings (the public data dictionary's patient-health-concerns page):
+# the note is the row's own free text, StartDate/IsActive carry the rest, and the
+# two reference guids are optional.
+_CONCERN_COLUMNS = [
+    "PatientPracticeGuid",
+    "HealthConcernType",
+    "DiagnosisGuid",
+    "PatientAllergyGuid",
+    "HealthConcernNote",
+    "IsActive",
+    "StartDate",
+]
+
+
+def test_health_concerns_are_mapped_and_split_by_active(tmp_path: Path) -> None:
+    """``patient-health-concerns`` feeds ``record.health_concerns``, which the
+    SOAP pack's Active and Inactive health-concern sections read. Until it was
+    mapped those sections printed "No active health concerns recorded." over an
+    export that had concerns in it — the same defect patient-goals had (#236).
+    """
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-health-concerns",
+        _CONCERN_COLUMNS,
+        [
+            [
+                P1,
+                "Diagnosis",
+                "feedface-d000-0000-0000-0000000000c1",
+                "",
+                "Blood pressure trending up",
+                "True",
+                "03/04/2023",
+            ],
+            [
+                P1,
+                "Allergy",
+                "",
+                "feedface-a000-0000-0000-0000000000c2",
+                "Resolved after changing detergent",
+                "False",
+                "03/04/2021",
+            ],
+        ],
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+    bp, detergent = loaded[P1].health_concerns
+    assert (bp.description, bp.effective, bp.active) == (
+        "Blood pressure trending up",
+        date(2023, 3, 4),
+        True,
+    )
+    assert (detergent.description, detergent.active) == (
+        "Resolved after changing detergent",
+        False,
+    )
+    # The concern's type and what it points at are not resolved into the
+    # description — they ride along instead of being dropped.
+    assert bp.extensions["pf_tebra:HealthConcernType"] == "Diagnosis"
+    assert bp.extensions["pf_tebra:DiagnosisGuid"] == "feedface-d000-0000-0000-0000000000c1"
+    assert detergent.extensions["pf_tebra:PatientAllergyGuid"] == (
+        "feedface-a000-0000-0000-0000000000c2"
+    )
+    # A patient with no concern rows gets an empty list, not a phantom concern.
+    assert loaded[P2].health_concerns == []
+    # And the table is mapped now, so it must not ALSO be preserved as unmapped.
+    assert "pf_tebra:unmapped:patient-health-concerns" not in loaded[P1].extensions
+
+
+def test_health_concern_with_a_dangling_patient_refuses_the_run(tmp_path: Path) -> None:
+    """Moving a table from unmapped to KNOWN moves it out of the preservation
+    path and into the key closure. Registering it in ``_FOREIGN_KEYS`` is what
+    keeps a concern keyed to nobody a refusal instead of a silent drop — without
+    it the row is grouped under a guid no record asks for and vanishes.
+    """
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-health-concerns",
+        _CONCERN_COLUMNS,
+        [[GHOST, "Diagnosis", "", "", "A concern on no known patient", "True", "03/04/2023"]],
+    )
+    with pytest.raises(OrphanRowsError) as exc:
+        list(get_source("pf-tebra").load(export))
+    assert "patient-health-concerns" in str(exc.value)
+
+
 def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     cleo = records[P3]
     guarantor = cleo.patient.guarantor

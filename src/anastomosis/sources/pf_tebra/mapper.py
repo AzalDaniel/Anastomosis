@@ -1047,6 +1047,33 @@ def _map_goal(row: Row, patient_id: str) -> Goal:
     )
 
 
+_HEALTH_CONCERN_MAPPED = frozenset(
+    {"PatientPracticeGuid", "HealthConcernNote", "StartDate", "IsActive"}
+)
+
+
+def _map_health_concern(row: Row, patient_id: str) -> Goal:
+    """A health concern, which carries a goal's four facts and so reuses Goal.
+
+    ``HealthConcernNote`` is the row's own free text, and it fills the chart's
+    DESCRIPTION column — the same column ``Goal`` fills for the Goals section
+    directly below it. A concern may instead point at a diagnosis or an allergy
+    (``DiagnosisGuid`` / ``PatientAllergyGuid``, both optional in v9), and which
+    of the note and that record's own name Practice Fusion printed is not
+    something the dictionary settles; those guids ride into ``extensions`` whole
+    rather than being resolved here on a guess. Like ``patient-goals`` the table
+    has no guid of its own, so provenance points at the owning patient.
+    """
+    return Goal(
+        patient_id=patient_id,
+        description=_s(row, "HealthConcernNote"),
+        effective=_d(row, "StartDate"),
+        active=_b(row, "IsActive"),
+        extensions=_ext(row, _HEALTH_CONCERN_MAPPED),
+        provenance=_prov("patient-health-concerns", patient_id),
+    )
+
+
 # --- shared actors -------------------------------------------------------------
 
 
@@ -1258,6 +1285,7 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     ("patient-immunizations", _PATIENT_KEY, "patient"),
     ("patient-advance-directives", _PATIENT_KEY, "patient"),
     ("patient-goals", _PATIENT_KEY, "patient"),
+    ("patient-health-concerns", _PATIENT_KEY, "patient"),
     ("patient-documents", _PATIENT_KEY, "patient"),
     ("patient-encounter-addendums", "EncounterGuid", "encounter"),
     ("patient-encounter-diagnoses", "EncounterGuid", "encounter"),
@@ -1463,6 +1491,7 @@ def map_export(
     imm_by_patient = _by(export["patient-immunizations"], "PatientPracticeGuid")
     ad_by_patient = _by(export["patient-advance-directives"], "PatientPracticeGuid")
     goals_by_patient = _by(export["patient-goals"], "PatientPracticeGuid")
+    concerns_by_patient = _by(export["patient-health-concerns"], "PatientPracticeGuid")
     docs_by_patient = _by(export["patient-documents"], "PatientPracticeGuid")
     demo_groups = _DemographicsGroups.build(export)  # pinned-notes/giso/race/ethnicity/guarantor
 
@@ -1578,6 +1607,9 @@ def map_export(
                 for row in ad_by_patient.get(guid, [])
             ],
             goals=[_map_goal(row, guid) for row in goals_by_patient.get(guid, [])],
+            health_concerns=[
+                _map_health_concern(row, guid) for row in concerns_by_patient.get(guid, [])
+            ],
             coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
                 _map_document(row, guid, attachments) for row in docs_by_patient.get(guid, [])

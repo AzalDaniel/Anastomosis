@@ -375,6 +375,8 @@ class _RecordViewIndex:
     historical_medications: list[MedicationStatement]
     prescriptions_by_id: dict[str, Prescription]
     allergies_by_category: dict[AllergyCategory, list[Any]]
+    active_concerns: list[Any]
+    inactive_concerns: list[Any]
     active_goals: list[Any]
     inactive_goals: list[Any]
     smoking: Observation | None
@@ -404,6 +406,11 @@ class _RecordViewIndex:
         allergies_by_category: dict[AllergyCategory, list[Any]] = {}
         for allergy in record.allergies:
             allergies_by_category.setdefault(allergy.category, []).append(allergy)
+
+        active_concerns: list[Any] = []
+        inactive_concerns: list[Any] = []
+        for concern in record.health_concerns:
+            (active_concerns if concern.active else inactive_concerns).append(concern)
 
         active_goals: list[Any] = []
         inactive_goals: list[Any] = []
@@ -437,6 +444,8 @@ class _RecordViewIndex:
             historical_medications=historical_meds,
             prescriptions_by_id={p.id: p for p in record.prescriptions},
             allergies_by_category=allergies_by_category,
+            active_concerns=active_concerns,
+            inactive_concerns=inactive_concerns,
             active_goals=active_goals,
             inactive_goals=inactive_goals,
             smoking=smoking,
@@ -628,6 +637,8 @@ def build_record_context(
         for d in record.advance_directives
         if d.directive
     ]
+    active_concerns = [_concern_view(c) for c in index.active_concerns]
+    inactive_concerns = [_concern_view(c) for c in index.inactive_concerns]
     active_goals = [_concern_view(g) for g in index.active_goals]
     inactive_goals = [_concern_view(g) for g in index.inactive_goals]
 
@@ -669,6 +680,8 @@ def build_record_context(
         "family_history": family_history,
         "family_history_freetext": None,
         "advance_directives": advance_directives,
+        "active_concerns": active_concerns,
+        "inactive_concerns": inactive_concerns,
         "active_goals": active_goals,
         "inactive_goals": inactive_goals,
         # screenings (events not modeled in EHI -> empty state)
