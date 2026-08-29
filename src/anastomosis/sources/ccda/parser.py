@@ -766,6 +766,33 @@ _PARSER = etree.XMLParser(
 )
 
 
+def _inline_narrative_references(root: _Element) -> None:
+    """Give every ``<reference value="#id"/>`` the narrative text it points at.
+
+    Linking a coded entry to its human-readable narrative by reference is THE
+    standard C-CDA mechanism, and a ``<reference>`` element carries no text of
+    its own. So a problem whose ``<originalText>`` is a reference came through
+    unnamed, and a Note Activity whose ``<text>`` is a reference came through
+    empty — while the words sat a few elements away in the same document.
+
+    Resolved once per document by filling in each reference's own text, so every
+    reader downstream (originalText, entry text, note bodies) sees the words
+    without knowing references exist. A reference naming an id the document does
+    not define is left alone rather than guessed at.
+    """
+    targets = {node.get("ID"): node for node in root.iter() if node.get("ID")}
+    if not targets:
+        return
+    for reference in root.iter(_q("reference")):
+        value = (reference.get("value") or "").strip()
+        if not value.startswith("#"):
+            continue
+        # A reference carrying its own fallback text keeps it; an id the document
+        # does not define resolves to None, which leaves the reference as it was.
+        if not reference.text:
+            reference.text = _text_content(targets.get(value[1:]))
+
+
 def parse_document(path: Path) -> PatientRecord:
     """Parse one C-CDA / CCD XML file into a :class:`PatientRecord`.
 
@@ -776,6 +803,8 @@ def parse_document(path: Path) -> PatientRecord:
     root = tree.getroot()
     if etree.QName(root).localname != "ClinicalDocument" or root.tag != _q("ClinicalDocument"):
         raise ValueError(f"{path.name}: not a C-CDA ClinicalDocument (root <{root.tag}>)")
+
+    _inline_narrative_references(root)
 
     source_file = path.name
     doc_meta: dict[str, Any] = {}
