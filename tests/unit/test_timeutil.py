@@ -167,3 +167,37 @@ def test_age_display_clinical_buckets(dob: date, on: date, expected: str) -> Non
 def test_age_display_rejects_future_dob() -> None:
     with pytest.raises(ValueError, match="after"):
         age_display(date(2030, 1, 1), date(2024, 1, 1))
+
+
+def test_hour_precision_ts_is_read_by_position_not_re_segmented() -> None:
+    """The defect this parser exists to prevent (#241).
+
+    ``strptime``'s %m/%d/%H/%M/%S each match one OR TWO digits, so a 10-digit
+    hour-precision TS did not fail — it re-segmented. "2023051015" came back as
+    2023-05-01: nine days wrong, no exception, nothing in the loss ledger. The
+    reference implementation reads value[:8] and gets the 10th, so the two
+    disagreed by nine days on the same string.
+    """
+    assert parse_date("2023051015") == date(2023, 5, 10)
+    assert parse_date("20230510") == date(2023, 5, 10)
+    assert parse_dt("202305101504") == datetime(2023, 5, 10, 15, 4, tzinfo=UTC)
+
+
+def test_legal_hl7_precisions_parse_instead_of_raising() -> None:
+    """A TS's length IS its precision; year and year-month are legal HL7 v3."""
+    assert parse_date("2023") == date(2023, 1, 1)
+    assert parse_date("202305") == date(2023, 5, 1)
+    assert parse_date("20230510150405.000") == date(2023, 5, 10)
+    assert parse_dt("20230510150405.000-0500") == datetime(
+        2023, 5, 10, 15, 4, 5, tzinfo=timezone(-timedelta(hours=5))
+    )
+    assert parse_dt("20230510150405Z") == datetime(2023, 5, 10, 15, 4, 5, tzinfo=UTC)
+
+
+def test_a_digit_run_we_cannot_place_still_raises() -> None:
+    """Narrowed, not loosened. A length the pattern does not cover must not be
+    guessed at — that is the whole point of reading fields by position.
+    """
+    for bad in ("202305101", "2023051015060708", "20231510", "20230532"):
+        with pytest.raises(ValueError, match=r"unrecognized|month|day"):
+            parse_date(bad)
