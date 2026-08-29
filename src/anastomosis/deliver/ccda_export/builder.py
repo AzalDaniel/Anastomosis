@@ -1003,10 +1003,41 @@ def _observation_consumed(item: dict[str, Any]) -> frozenset[str]:
     return frozenset()
 
 
+def _encounter_consumed(item: dict[str, Any]) -> frozenset[str]:
+    """Leaf paths the structured emitters consume for ONE encounter dump.
+
+    Two independent gates decide, and an encounter can clear neither. The
+    Encounters section takes only encounters that have an ``encounter_type``
+    (:func:`_structured_encounters`); the Notes section takes only those with
+    note content (:func:`_notes`, via ``Encounter.has_note_content``).
+
+    The allowlist used to be flat, so it claimed all five fields for every
+    encounter regardless. An encounter with a date but no type and no note —
+    a real visit, just a thin one — was written by no emitter at all, while the
+    claim still suppressed its fields from the loss narrative. Its
+    ``date_of_service`` therefore appeared nowhere in the document: not
+    structured, not narrated, and not a declared loss. The record's own
+    losslessness oracle catches exactly this, and would have caught it here,
+    but every encounter it tests carries a type.
+
+    Same shape as :func:`_observation_consumed`: consumption follows what the
+    emitters actually take, not what the collection could take in principle.
+    """
+    consumed: set[str] = set()
+    if item.get("encounter_type") is not None:
+        consumed |= {"date_of_service", "encounter_type"}
+    sections = item.get("sections") or []
+    if any((section.get("text") or "").strip() for section in sections):
+        consumed |= {"note_type", "sections[].text", "sections[].kind"}
+    return frozenset(consumed)
+
+
 # Per-collection hook returning the consumed-field set for one item dump.
-# Constant for every collection except observations (category-dependent).
+# Constant except where a gate decides per item (observations by category,
+# encounters by which of the two sections will actually take them).
 _CONSUMED: dict[str, object] = dict(_EXPORTED_FIELDS)
 _CONSUMED["observations"] = _observation_consumed
+_CONSUMED["encounters"] = _encounter_consumed
 
 
 def _consumed_fields(attr: str, item: dict[str, Any]) -> frozenset[str]:

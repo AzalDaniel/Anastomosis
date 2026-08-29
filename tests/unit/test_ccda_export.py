@@ -1628,6 +1628,27 @@ def _survives(recovered: dict[str, set[str]], path: str, value: str) -> bool:
     return value in candidates or any(value in candidate for candidate in candidates)
 
 
+def _undeclared_losses(original: PatientRecord, out: Path) -> list[str]:
+    """Populated leaves of ``original`` that survive re-ingest in no form.
+
+    A leaf passes if it comes back (a) on its own field path structurally,
+    (b) narrated under that path in the 51899-3 section, or (c) matched by a
+    DECLARED_LOSSES pattern. Anything else is a silent loss.
+    """
+    out.write_bytes(build_ccd(original))
+    reingested = parse_document(out)
+    recovered = _structured_values(reingested)
+    for field, values in _narrated_values(reingested).items():
+        recovered.setdefault(field, set()).update(values)
+
+    return [
+        f"{'.'.join(str(p) for p in path)} = {value!r}"
+        for path, value in _walk_leaves(dumped(original))
+        if not _is_declared_loss(path)
+        and not _survives(recovered, _field_path(path), _collapse(value))
+    ]
+
+
 def test_no_undeclared_native_loss(tmp_path: Path) -> None:
     """Every populated leaf of the source record must come back from re-ingest
     ON ITS OWN FIELD PATH — structurally, or as a narrative line naming that
@@ -1637,26 +1658,63 @@ def test_no_undeclared_native_loss(tmp_path: Path) -> None:
     pass a value that came back on the WRONG field (a cross-field collision) or
     on another patient's model (a misattribution), which is corruption, not
     preservation."""
-    original = _maximal_record()
-    out = tmp_path / "max.xml"
-    out.write_bytes(build_ccd(original))
-    reingested = parse_document(out)
-    recovered = _structured_values(reingested)
-    for field, values in _narrated_values(reingested).items():
-        recovered.setdefault(field, set()).update(values)
-
-    undeclared: list[str] = []
-    for path, value in _walk_leaves(dumped(original)):
-        if _is_declared_loss(path):
-            continue  # (c) covered by a DECLARED_LOSSES pattern
-        if _survives(recovered, _field_path(path), _collapse(value)):
-            continue  # (a) same field on re-ingest OR (b) narrated under that field path
-        undeclared.append(f"{'.'.join(str(p) for p in path)} = {value!r}")
+    undeclared = _undeclared_losses(_maximal_record(), tmp_path / "max.xml")
     assert not undeclared, (
         "fields silently lost (not round-tripped onto their own field path, not "
         "narrated under it in the 51899-3 section, and not a declared loss): "
         + "; ".join(undeclared)
     )
+
+
+@pytest.mark.parametrize(
+    ("shape", "encounter"),
+    [
+        ("typed — the only shape the maximal record has", {"encounter_type": "Office visit"}),
+        # The two that were losing a field. Neither is exotic: a thin visit row
+        # with a date and nothing else, and a note header with no body yet.
+        ("no type, no note content", {}),
+        (
+            "no type, but a note",
+            {
+                "note_type": "SOAP",
+                "sections": [NoteSection(kind=SectionKind.NARRATIVE, text="Reports a cough.")],
+            },
+        ),
+        (
+            "typed, note_type set, no note content",
+            {"encounter_type": "Office visit", "note_type": "SOAP"},
+        ),
+    ],
+)
+def test_no_undeclared_loss_whichever_section_takes_the_encounter(
+    tmp_path: Path, shape: str, encounter: dict[str, object]
+) -> None:
+    """The oracle above, run over every gate combination rather than one.
+
+    Two gates decide where an encounter goes — ``encounter_type`` for the
+    Encounters section, note content for Notes — and an encounter can clear
+    neither. The consumed-field allowlist claimed all five fields regardless,
+    so an encounter no emitter wrote still had its fields suppressed from the
+    narrative. Two shapes lost a field outright: a typeless, noteless visit
+    lost ``date_of_service``, and a note header with no body lost ``note_type``.
+
+    Every encounter in ``_maximal_record`` carries a type, which is the only
+    reason the oracle never saw it.
+    """
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+                date_of_service=date(2023, 5, 10),
+                chief_complaint="Cough for three weeks",
+                **encounter,  # type: ignore[arg-type]
+            )
+        ],
+    )
+    undeclared = _undeclared_losses(record, tmp_path / "shape.xml")
+    assert not undeclared, f"silently lost for a {shape} encounter: {'; '.join(undeclared)}"
 
 
 # --- determinism + well-formedness -------------------------------------------
