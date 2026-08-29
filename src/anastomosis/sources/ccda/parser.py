@@ -32,6 +32,7 @@ is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -864,6 +865,60 @@ def _inline_narrative_references(root: _Element) -> None:
             reference.text = _text_content(targets.get(value[1:]))
 
 
+# Categories a visit may claim. A measurement is taken AT a moment, so a visit
+# on its date says something about where it belongs. Social history does not
+# work that way — smoking status is a standing fact about the patient, not a
+# reading from one afternoon — so it stays record-level, which is also where
+# the packs read it from.
+_VISIT_MEASUREMENTS = frozenset({ObservationCategory.VITAL_SIGNS, ObservationCategory.LABORATORY})
+
+
+def _link_measurements_to_encounters(record: PatientRecord) -> None:
+    """Attach a measurement to the visit it was taken at, when exactly one visit
+    claims that calendar day.
+
+    C-CDA does not require a structural link from a Vital Signs or Results
+    observation back to an Encounter activity, and the documents we see carry
+    none — no ``componentOf/encompassingEncounter``, no ``entryRelationship``
+    naming one — so the document's own timestamps are the only evidence there
+    is. Every other source adapter fills ``encounter_id`` in; this one left it
+    empty, so every observation on a chart grouped under the patient-level
+    ``None`` key and both SOAP packs, which index strictly by encounter id,
+    rendered no vitals at all. The QA check written to catch precisely that
+    reads the same empty index, so it passed on an empty loop while the values
+    were missing from the page — a silent loss with its own guard blinded by
+    the same root cause.
+
+    ONE encounter on the observation's date is evidence; two are not, and the
+    measurement then stays record-level rather than being charted at a visit it
+    may not belong to. Note-only encounters are not candidates: a Note Activity
+    documents a visit, it is not one, and counting it would make every
+    documented visit ambiguous with itself. An ``encounter_id`` a source already
+    stated is never overwritten.
+
+    Runs after the id fold, so a visit described twice — once in Encounters,
+    again as the note documenting it — is one candidate here rather than two.
+    """
+    by_date: dict[date, list[Encounter]] = {}
+    for encounter in record.encounters:
+        # Only `_encounters` sets a type, so this reads as "an entry in the
+        # Encounters section contributed to this visit" rather than as a guess
+        # about what a bare id means.
+        if encounter.date_of_service is not None and encounter.encounter_type is not None:
+            by_date.setdefault(encounter.date_of_service, []).append(encounter)
+    for observation in record.observations:
+        if observation.encounter_id is not None or observation.effective_at is None:
+            continue
+        if observation.category not in _VISIT_MEASUREMENTS:
+            continue
+        # Both sides are the calendar date the document wrote: `parse_dt` keeps
+        # the source's own offset and `parse_date` is that same instant's
+        # `.date()`, so neither has been shifted across midnight on the way here.
+        same_day = by_date.get(observation.effective_at.date(), [])
+        if len(same_day) == 1:
+            observation.encounter_id = same_day[0].id
+
+
 def parse_document(path: Path) -> PatientRecord:
     """Parse one C-CDA / CCD XML file into a :class:`PatientRecord`.
 
@@ -929,4 +984,5 @@ def parse_document(path: Path) -> PatientRecord:
             _capture_narrative(record, section, loinc)
 
     record.encounters = _fold_encounters_sharing_an_id(record.encounters)
+    _link_measurements_to_encounters(record)
     return record
