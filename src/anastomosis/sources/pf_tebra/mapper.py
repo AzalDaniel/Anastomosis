@@ -687,7 +687,7 @@ def _map_condition(row: Row) -> Condition:
 _ALLERGY_MAPPED = frozenset(
     {
         "PatientPracticeGuid",
-        "AllergyGuid",
+        "PatientAllergyGuid",
         "AllergenCategory",
         "Substance",
         "Severity",
@@ -702,14 +702,14 @@ _ALLERGY_CATEGORIES = {
     "environment": AllergyCategory.ENVIRONMENT,
 }
 
-# patient-allergy-reactions columns read: AllergyGuid groups the link rows onto
+# patient-allergy-reactions columns read: PatientAllergyGuid groups the link rows onto
 # their allergy, Reaction feeds `reactions`. ReactionSnomedCode and the table's
 # own (redundant) PatientPracticeGuid survive on the allergy's extensions instead.
-_REACTION_MAPPED = frozenset({"AllergyGuid", "Reaction"})
+_REACTION_MAPPED = frozenset({"PatientAllergyGuid", "Reaction"})
 
 
 def _map_allergy(row: Row, reactions_by_allergy: dict[str, list[Row]]) -> AllergyIntolerance:
-    guid = _s(row, "AllergyGuid") or ""
+    guid = _s(row, "PatientAllergyGuid") or ""
     reaction_rows = reactions_by_allergy.get(guid, [])
     reaction_extensions: dict[str, Any] = {}
     for index, r in enumerate(reaction_rows):
@@ -1064,27 +1064,27 @@ def _map_facilities(export: Export) -> list[Facility]:
     return [
         Facility(
             id=_s(row, "FacilityGuid") or "",
-            name=_s(row, "FacilityName"),
+            name=_s(row, "Name"),
             address_line1=_s(row, "Address1"),
             address_line2=_s(row, "Address2"),
-            city=_s(row, "AddressCity"),
-            state=_s(row, "AddressState"),
-            postal_code=_s(row, "AddressZipCode"),
-            phone=format_phone(_s(row, "PhoneNumber")),
-            fax=format_phone(_s(row, "FaxNumber")),
+            city=_s(row, "City"),
+            state=_s(row, "State"),
+            postal_code=_s(row, "ZipCode"),
+            phone=format_phone(_s(row, "OfficePhone")),
+            fax=format_phone(_s(row, "OfficeFax")),
             extensions=_ext(
                 row,
                 frozenset(
                     {
                         "FacilityGuid",
-                        "FacilityName",
+                        "Name",
                         "Address1",
                         "Address2",
-                        "AddressCity",
-                        "AddressState",
-                        "AddressZipCode",
-                        "PhoneNumber",
-                        "FaxNumber",
+                        "City",
+                        "State",
+                        "ZipCode",
+                        "OfficePhone",
+                        "OfficeFax",
                     }
                 ),
             ),
@@ -1258,7 +1258,7 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     ("patient-documents", _PATIENT_KEY, "patient"),
     ("patient-encounter-addendums", "EncounterGuid", "encounter"),
     ("patient-encounter-diagnoses", "EncounterGuid", "encounter"),
-    ("patient-allergy-reactions", "AllergyGuid", "allergy"),
+    ("patient-allergy-reactions", "PatientAllergyGuid", "allergy"),
     ("prescription-transactions", "PrescriptionGuid", "prescription"),
     ("patient-family-history-diagnoses", "RelativeGuid", "relative"),
 )
@@ -1345,17 +1345,18 @@ def _mime_type(row: Row, blob: Path | None) -> str:
 def _map_document(row: Row, guid: str, attachments: Attachments | None) -> DocumentArtifact:
     """One `patient-documents` row, with its file located if the export has it.
 
-    The row names its file by `DocumentStorageGuid` (older exports reuse
-    `DocumentGuid` for both). A row whose file is not in the export keeps every
+    A v9 `patient-documents` row has no id of its own — `DocumentStorageGuid`
+    names both the file and the row, so it is the identity. A row whose file is
+    not in the export keeps every
     column it carries — they ride in `extensions` to the preserved-fields
     narrative — but claims no path, no digest and no page count, because it has
     none. An artifact that named a file it could not produce would be worse than
     one that admits it has only the metadata.
     """
-    storage = _s(row, "DocumentStorageGuid") or _s(row, "DocumentGuid") or ""
+    storage = _s(row, "DocumentStorageGuid") or ""
     blob = attachments.find(storage) if attachments else None
     return DocumentArtifact(
-        id=_s(row, "DocumentGuid") or "",
+        id=storage,
         patient_id=guid,
         title=_s(row, "DocumentName"),
         path=attachments.relative(blob) if attachments and blob else None,
@@ -1363,8 +1364,10 @@ def _map_document(row: Row, guid: str, attachments: Attachments | None) -> Docum
         mime_type=_mime_type(row, blob),
         page_count=_page_count(blob) if blob else None,
         generated_at=_dt(row, "DocumentDate"),
-        extensions=_ext(row, frozenset({"PatientPracticeGuid", "DocumentGuid", "DocumentName"})),
-        provenance=_prov("patient-documents", _s(row, "DocumentGuid")),
+        extensions=_ext(
+            row, frozenset({"PatientPracticeGuid", "DocumentStorageGuid", "DocumentName"})
+        ),
+        provenance=_prov("patient-documents", storage),
     )
 
 
@@ -1397,7 +1400,7 @@ def map_export(
         {
             "patient": patient_guids,
             "encounter": _ids(export["patient-encounters"], "EncounterGuid"),
-            "allergy": _ids(export["patient-allergy"], "AllergyGuid"),
+            "allergy": _ids(export["patient-allergy"], "PatientAllergyGuid"),
             "prescription": _ids(export["patient-prescriptions"], "PrescriptionGuid"),
             "relative": _ids(export["patient-family-medical-history"], "RelativeGuid"),
         },
@@ -1438,7 +1441,7 @@ def map_export(
     obs_by_patient = _by(export["patient-encounter-observations"], "PatientPracticeGuid")
     dx_by_patient = _by(export["patient-diagnoses"], "PatientPracticeGuid")
     allergy_by_patient = _by(export["patient-allergy"], "PatientPracticeGuid")
-    reactions_by_allergy = _by(export["patient-allergy-reactions"], "AllergyGuid")
+    reactions_by_allergy = _by(export["patient-allergy-reactions"], "PatientAllergyGuid")
     meds_by_patient = _by(export["patient-medications"], "PatientPracticeGuid")
     rx_by_patient = _by(export["patient-prescriptions"], "PatientPracticeGuid")
     tx_by_rx = _by(export["prescription-transactions"], "PrescriptionGuid")
