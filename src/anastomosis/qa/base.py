@@ -57,6 +57,10 @@ class QAContext:
     #: with. ``None`` means no pack said (the C-CDA path, a third-party context),
     #: and a check falls back to the host's day.
     render_tz: str | None = None
+    #: How many render-day date stamps this layout places on purpose. More than
+    #: this many on a page is the accidental-now() defect the staleness check
+    #: exists for; this many or fewer is the layout doing what it says.
+    render_day_stamps: int = 0
     #: The record kinds this layout renders (see ``PackCoverage``). A kind here
     #: that reaches no page is a defect.
     carries: frozenset[str] = frozenset()

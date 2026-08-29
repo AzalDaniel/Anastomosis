@@ -68,6 +68,7 @@ def run_qa(
     section_flags: dict[str, bool] | None = None,
     page_size: str = "Letter",
     render_tz: str | None = None,
+    render_day_stamps: int = 0,
     carries: frozenset[str] | None = None,
     omits: dict[str, str] | None = None,
     checks: list[QACheck] | None = None,
@@ -79,6 +80,10 @@ def run_qa(
     whenever one is known: a check that reasons about the render day has to read
     the same clock the pack stamped the page with, or its verdict depends on
     where the operator happens to be sitting.
+
+    ``render_day_stamps`` is how many render-day dates the layout prints on
+    purpose (see the manifest field of that name); the staleness check counts
+    against it rather than treating the first one as a defect.
 
     ``carries``/``omits`` are the layout's own statement about which record
     kinds it renders (a pack's ``coverage`` block). Passing neither is allowed
@@ -95,6 +100,7 @@ def run_qa(
             section_flags=section_flags or {},
             page_size=page_size,
             render_tz=render_tz,
+            render_day_stamps=render_day_stamps,
             carries=carries or frozenset(),
             omits=omits or {},
         )

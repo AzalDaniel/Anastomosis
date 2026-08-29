@@ -698,6 +698,7 @@ def _run_qa_stage(
         section_flags=engine.section_flags,
         page_size=page_size,
         render_tz=engine.timezone,
+        render_day_stamps=engine.render_day_stamps,
         carries=engine.carries,
         omits=engine.omits,
     )

@@ -145,6 +145,7 @@ class ReconstructionEngine:
         # What this layout says it carries out of the record, for QA's
         # coverage check. Read off the manifest once, here, for the same
         # reason the timezone is: two readers of one file drift.
+        self.render_day_stamps: int = pack.manifest.render_day_stamps
         self.carries: frozenset[str] = frozenset(pack.manifest.coverage.carries)
         self.omits: dict[str, str] = dict(pack.manifest.coverage.omits)
         self._env = Environment(

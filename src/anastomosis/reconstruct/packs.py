@@ -194,6 +194,20 @@ class PackManifest(BaseModel):
     tokens: dict[str, str] = Field(default_factory=dict)
     # Header fields the L3 delivery verification reads back off the PDF.
     verify_header_fields: list[str] = Field(default_factory=list)
+    #: How many places this layout stamps the RENDER DAY on purpose.
+    #:
+    #: ``DateStalenessCheck`` treats today's date on an old chart as the
+    #: signature of a template that called now() by mistake, which is usually
+    #: exactly what it is. The Practice Fusion replica stamps it deliberately,
+    #: once, in the medication list's "as of" heading — a forensic rule from
+    #: the gold standard, not a bug — so that pack warned on 100% of its
+    #: documents forever, and a signal that is always on is not a signal.
+    #:
+    #: A COUNT rather than a boolean, so the check stays alive on a pack that
+    #: declares one: more render-day dates on the page than the layout admits
+    #: to is still the accidental-now() defect, and still warns. Exempting the
+    #: pack outright would have traded a useless warning for a blind check.
+    render_day_stamps: int = Field(default=0, ge=0)
     # Which record collections this layout renders, and why it skips the rest.
     # Optional so a pack written before the field stays loadable; QA treats an
     # undeclared pack conservatively rather than as fully covered.

@@ -55,6 +55,7 @@ from collections.abc import Iterable
 
 __all__ = [
     "date_token_present",
+    "date_token_spans",
     "name_fragment_present",
     "name_parts_present",
     "name_present",
@@ -217,6 +218,27 @@ def name_present(expected_name: str, haystack: str) -> bool:
     :func:`name_parts_present`, which keeps multi-word fields contiguous.
     """
     return name_parts_present(expected_name.split(), haystack)
+
+
+def date_token_spans(rendering: str, haystack: str) -> list[tuple[int, int]]:
+    """WHERE a rendered date stands alone in ``haystack``, not merely whether.
+
+    Same normalization and same boundaries as :func:`date_token_present` — it
+    is the counting form of that predicate, kept beside it so the two can never
+    disagree about what "the date is here" means. Spans index the NORMALIZED
+    haystack, so they are useful for counting and de-duplicating occurrences
+    across spellings, not for slicing the caller's original text.
+
+    A caller that needs "is it here at all" wants the predicate; a caller that
+    needs "is it here MORE times than the layout admits to" wants this. That
+    second question is what lets a pack stamp the render day on purpose without
+    the staleness check going blind to a template that stamps it by accident.
+    """
+    needle = normalize(rendering)
+    if not needle:
+        return []
+    pattern = rf"(?<![\w.]){re.escape(needle)}{_VALUE_TRAILING}"
+    return [match.span() for match in re.finditer(pattern, normalize(haystack))]
 
 
 def date_token_present(rendering: str, haystack: str) -> bool:
