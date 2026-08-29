@@ -97,8 +97,30 @@ _INSTALL_TIMEOUT = 300
 _UNINSTALL_TIMEOUT = 300
 _DOCTOR_TIMEOUT = 300
 _GUI_TIMEOUT = 120
-#: How long the dashboard gets to finish its bridge round-trip once attached.
-_DASHBOARD_TIMEOUT_MS = 30_000
+
+# Coming-alive budgets, one per thing being waited for (milliseconds). One
+# 30-second budget used to cover all three, and it failed a release gate on a
+# slow runner with no diff to blame: the same commit passed on re-run, and the
+# failing runner was ~43s slower before it gave up (#270). A gate that can go
+# red without a change causing it costs a cycle of trust every time, and this
+# is the only step that installs the real installer and drives the real
+# WebView2 window.
+#
+# Three budgets rather than one, because the failure message is the point: a
+# timeout now says WHICH of the three never happened, and the log prints how
+# long each took even when they pass — so the margin shrinking is visible while
+# it is still fine, rather than discovered when it runs out.
+#
+# Sized for a cold VM moments after installing 1.67 GB across 2585 files, not
+# for a warm one. Raising a budget does not weaken what is asserted; it only
+# changes how long the step is willing to wait for it, and every assertion
+# below is unchanged.
+#: The page appearing in the attached WebView2 at all.
+_PAGE_TIMEOUT_MS = 60_000
+#: The bridge reporting live — pywebview + WebView2 cold start, the expensive one.
+_BRIDGE_TIMEOUT_MS = 90_000
+#: The first info() round-trip, once the bridge is already live.
+_INFO_TIMEOUT_MS = 30_000
 
 
 class SmokeFailure(Exception):
@@ -356,16 +378,7 @@ def _assert_dashboard_rendered(expectations: ModuleType) -> None:
         browser = playwright.chromium.connect_over_cdp(_CDP_URL)
         try:
             page = _dashboard_page(browser)
-            # The app's machine liveness signals (mirrors expectations.py's
-            # contract): the bridge reports live AND info() answered — the
-            # About popover carries a non-empty data-version only after the
-            # real round-trip.
-            page.wait_for_function(
-                "() => document.documentElement.dataset.bridge === 'live'"
-                " && !!(document.querySelector('#about-version')"
-                " && document.querySelector('#about-version').dataset.version)",
-                timeout=_DASHBOARD_TIMEOUT_MS,
-            )
+            _await_liveness(page)
             problems = expectations.check_dashboard(page)
             for problem in problems:
                 print(f"  dashboard: {problem}")
@@ -468,18 +481,91 @@ def _await_cdp(process: subprocess.Popen[bytes]) -> None:
     )
 
 
+def _elapsed_ms(started: float) -> int:
+    return int((time.monotonic() - started) * 1000)
+
+
+#: The app's two machine liveness signals, in the order they can happen, each
+#: with the budget for what it is actually waiting for. Mirrors expectations.py's
+#: contract: the bridge reports live, and then info() has answered — the About
+#: popover carries a non-empty data-version only after the real round-trip.
+_LIVENESS_STEPS: tuple[tuple[str, str, int], ...] = (
+    (
+        "the bridge going live",
+        "() => document.documentElement.dataset.bridge === 'live'",
+        _BRIDGE_TIMEOUT_MS,
+    ),
+    (
+        "the first info() round-trip",
+        "() => !!(document.querySelector('#about-version')"
+        " && document.querySelector('#about-version').dataset.version)",
+        _INFO_TIMEOUT_MS,
+    ),
+)
+
+
+def _liveness_state(page: Page) -> str:
+    """What the page says about itself, for a timeout message.
+
+    A wait that ends with "Timeout 30000ms exceeded" says the budget ran out
+    and nothing else — the reader cannot tell a hung bridge from a slow one, so
+    the whole failure reads as noise. This reports the state the page was
+    actually in when the budget ran out. Defensive: a page that cannot be
+    evaluated at all is itself the diagnosis, and must not replace the real
+    failure with an error of its own.
+    """
+    try:
+        return str(
+            page.evaluate(
+                "() => `bridge=${document.documentElement.dataset.bridge ?? 'unset'}"
+                " about-version=${document.querySelector('#about-version')"
+                " ? (document.querySelector('#about-version').dataset.version || 'empty')"
+                " : 'absent'}`"
+            )
+        )
+    except Exception as exc:
+        return f"the page could not be read ({type(exc).__name__})"
+
+
+def _await_liveness(page: Page) -> None:
+    """Wait for each liveness signal in turn, and say how long each took.
+
+    One compound predicate under one budget used to cover both, so a timeout
+    named neither and the elapsed time was invisible until it was too long.
+    Waiting for them separately costs nothing — they happen in this order
+    anyway — and buys a failure message that names the signal that never
+    arrived, plus a pass that shows how much of its budget it used.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    for label, predicate, budget_ms in _LIVENESS_STEPS:
+        started = time.monotonic()
+        try:
+            page.wait_for_function(predicate, timeout=budget_ms)
+        except PlaywrightTimeout:
+            raise SmokeFailure(
+                f"{label} never happened within {budget_ms // 1000}s ({_liveness_state(page)})"
+            ) from None
+        print(f"  {label}: {_elapsed_ms(started)} ms of {budget_ms} ms")
+
+
 def _dashboard_page(browser: Browser) -> Page:
     """The WebView2 page showing index.html (the window's only document)."""
-    deadline = time.monotonic() + 30
+    started = time.monotonic()
+    deadline = started + _PAGE_TIMEOUT_MS / 1000
     while time.monotonic() < deadline:
         pages = [page for context in browser.contexts for page in context.pages]
         for page in pages:
             if page.url.endswith("index.html"):
+                print(f"  page attached after {_elapsed_ms(started)} ms")
                 return page
         if pages:
+            print(
+                f"  page attached after {_elapsed_ms(started)} ms (no index.html; took the first)"
+            )
             return pages[0]
         time.sleep(1)
-    raise SmokeFailure("the attached WebView2 exposed no page")
+    raise SmokeFailure(f"the attached WebView2 exposed no page within {_PAGE_TIMEOUT_MS // 1000}s")
 
 
 def _kill_tree(process: subprocess.Popen[bytes]) -> None:
