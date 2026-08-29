@@ -414,7 +414,9 @@ import anastomosis.destinations.loader as dest_loader  # noqa: E402
 from anastomosis.destinations.browserpack import SelectorMap  # noqa: E402
 from anastomosis.destinations.loader import load_destination_pack  # noqa: E402
 
-# Eleven slots in canonical order: 9 required + 2 optional.
+# Every slot in canonical order, required first. Read off the SelectorMap
+# rather than listed, so the wizard round-trip keeps covering the whole prompt
+# run as the pack learns to describe more of the destination's upload form.
 _ALL_SLOTS = (*SelectorMap.required_slots(), *SelectorMap.optional_slots())
 
 

@@ -307,8 +307,20 @@ def _item_from_json(
     value is the render run saying it did not know the value, while an ABSENT
     key means the file does not match the version it declares — a defect, so it
     raises. A v1 entry carries neither and yields ``None`` for both.
+
+    The date of service is read ONCE and handed out twice: returned beside the
+    item for the encounter map L3 verifies against, and set on the item itself
+    for a destination whose filing dialog asks for a document date. No new
+    field is written, so this stays a v2 file — the value was already there.
     """
+    pages: int | None = None
+    dos: date | None = None
     try:
+        if version >= MANIFEST_VERSION:
+            raw_pages = entry["expected_pages"]
+            raw_dos = entry["date_of_service"]
+            pages = None if raw_pages is None else int(raw_pages)
+            dos = None if raw_dos is None else date.fromisoformat(str(raw_dos))
         item = UploadItem(
             item_key=entry["item_key"],
             encounter_id=entry["encounter_id"],
@@ -318,13 +330,10 @@ def _item_from_json(
             sha256=entry["sha256"],
             size_bytes=int(entry["size_bytes"]),
             fingerprint=entry["fingerprint"],
+            # None on a v1 entry, which had no such field: a pack that needs a
+            # document date then refuses the item rather than inventing one.
+            date_of_service=dos,
         )
-        if version < MANIFEST_VERSION:  # v1: no ladder fields to read
-            return item, None, None
-        raw_pages = entry["expected_pages"]
-        raw_dos = entry["date_of_service"]
-        pages = None if raw_pages is None else int(raw_pages)
-        dos = None if raw_dos is None else date.fromisoformat(str(raw_dos))
     except (KeyError, TypeError, ValueError) as exc:
         raise ManifestError(
             f"upload manifest {path} item entry is malformed ({type(exc).__name__})"

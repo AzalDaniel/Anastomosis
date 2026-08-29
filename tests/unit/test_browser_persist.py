@@ -211,6 +211,41 @@ def test_v2_round_trip_carries_pack_expected_pages_and_dos(tmp_path: Path) -> No
     assert encounter.chief_complaint is None
 
 
+def test_the_item_carries_its_own_date_of_service(tmp_path: Path) -> None:
+    """The date reaches the upload DRIVER, not only the verifier.
+
+    A destination whose filing dialog asks for a document date has to be handed
+    the right one; before this the date reached the encounter map L3 checks
+    against and stopped there, so the driver had nothing to type. Read once,
+    handed out twice — no new field is written, so the file stays v2.
+    """
+    docs, records = _pdf_fixture(tmp_path)
+    out_dir = tmp_path / "out"
+    write_upload_manifest(docs, records, out_dir, pack="generic_soap")
+
+    manifest = load_upload_manifest(out_dir)
+
+    [item] = manifest.items
+    assert item.date_of_service == DOS
+    assert manifest.encounters[ENC_A].date_of_service == DOS
+    # Still a v2 file: the value was already in it, nothing new was written.
+    written = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert written["version"] == MANIFEST_VERSION
+
+
+def test_a_v1_item_has_no_date_of_service_to_carry(tmp_path: Path) -> None:
+    """A v1 tree never recorded one, so the item says None and a pack that
+    needs a document date refuses it — never a date invented on the way past."""
+    docs, records = _pdf_fixture(tmp_path)
+    out_dir = tmp_path / "out"
+    write_upload_manifest(docs, records, out_dir, pack="generic_soap")
+    _downgrade_to_v1(out_dir)
+
+    [item] = load_upload_manifest(out_dir).items
+
+    assert item.date_of_service is None
+
+
 def test_v2_item_with_no_encounter_records_a_null_dos(tmp_path: Path) -> None:
     """The whole-patient ccda-standard view has no encounter — null, never a guess.
 
