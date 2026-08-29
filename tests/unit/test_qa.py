@@ -847,3 +847,98 @@ def test_vitals_check_says_when_it_had_nothing_to_verify(tmp_path: Path) -> None
     verdict, findings = _result(report, "vitals_loinc")
     assert verdict is Verdict.PASS
     assert findings == ["no vital signs on this encounter to verify"]
+
+
+# --- a stamp the layout declares is not a stale date -------------------------
+#
+# The Practice Fusion replica stamps the render day into the medication list's
+# "as of" heading on purpose — GOLD §5, a forensic rule from the original
+# charts. So it warned on 100% of its documents, forever, and a warning that is
+# always on is one operators learn to skip: the state the check flags became
+# indistinguishable from the state the pack is permanently in (#194).
+
+
+def _stale(pdf: Path, *, declared: int = 0) -> tuple[Verdict, list[str]]:
+    record = _record()
+    report = run_qa(
+        [(pdf, record.encounters[0], record)],
+        render_day_stamps=declared,
+        checks=[c for c in engine_checks() if c.name == "date_staleness"],
+    )
+    result = report.documents[0].results[0]
+    return result.verdict, result.findings
+
+
+def test_a_declared_render_day_stamp_is_not_a_stale_date(tmp_path: Path) -> None:
+    stamp = date.today().strftime("%B %d, %Y")
+    pdf = make_pdf(tmp_path / "m.pdf", [*GOOD_LINES, f"Current Medications (as of {stamp})"])
+    verdict, findings = _stale(pdf, declared=1)
+    assert verdict is Verdict.PASS
+    # Said out loud, not passed in silence — the check reports what it counted.
+    assert findings == ["1 of 1 declared render-day stamp(s) on the page"]
+
+
+def test_one_more_stamp_than_declared_still_warns(tmp_path: Path) -> None:
+    """The reason this is a count and not an exemption.
+
+    A pack that declares one stamp and prints four has a template calling now()
+    somewhere it should not — the exact defect this check exists for. Exempting
+    the pack outright would have traded a useless warning for a blind check.
+    """
+    stamp = date.today().strftime("%B %d, %Y")
+    pdf = make_pdf(
+        tmp_path / "m.pdf",
+        [*GOOD_LINES, f"Current Medications (as of {stamp})", f"Printed {stamp}"],
+    )
+    verdict, findings = _stale(pdf, declared=1)
+    assert verdict is Verdict.WARN
+    assert any("appears 2 time(s)" in f and "declares 1" in f for f in findings)
+
+
+def test_a_pack_that_declares_nothing_still_warns_on_the_first_stamp(tmp_path: Path) -> None:
+    """The behaviour every other pack keeps: undeclared means zero allowed."""
+    stamp = date.today().strftime("%B %d, %Y")
+    pdf = make_pdf(tmp_path / "m.pdf", [*GOOD_LINES, f"Printed {stamp}"])
+    verdict, findings = _stale(pdf)
+    assert verdict is Verdict.WARN
+    assert any("appears 1 time(s)" in f for f in findings)
+
+
+def test_each_printed_date_counts_once_per_accepted_spelling() -> None:
+    """One printed date is one stamp, whichever spelling the pack used.
+
+    The counter unions match POSITIONS rather than summing per-spelling hits.
+    Measured: with today's spelling set no two of them can match the same
+    printed date anyway — the boundary rule keeps "8/29/2026" out of
+    "08/29/2026" and "Aug 29, 2026" out of "August 29, 2026" — so the union is
+    defensive rather than load-bearing, and this test does not pretend
+    otherwise. What it does pin is the arithmetic a false warning would come
+    from: each spelling is one stamp, two printed dates are two, and a run of
+    digits that merely contains today is none.
+    """
+    from anastomosis.core.timeutil import all_date_spellings
+    from anastomosis.qa.checks import _render_day_occurrences
+
+    today = date(2026, 8, 29)
+    # Every accepted spelling, one at a time: each is one printed date.
+    for spelling in sorted(all_date_spellings(today)):
+        assert _render_day_occurrences(today, f"Current Medications (as of {spelling})") == 1, (
+            spelling
+        )
+    assert _render_day_occurrences(today, "08/29/2026 and again 08/29/2026") == 2
+    assert _render_day_occurrences(today, "nothing dated here") == 0
+    # A date that only LOOKS like today, embedded in a longer run of digits,
+    # is not a stamp — the boundary rule the identity predicates carry.
+    assert _render_day_occurrences(today, "ref 108/29/20261") == 0
+
+
+def test_the_pf_pack_declares_the_stamp_it_actually_places() -> None:
+    """The declaration is a claim about the template, so it is checked against
+    the template rather than trusted."""
+    from anastomosis.reconstruct import discover_packs
+
+    pack = discover_packs()["practice_fusion_soap"].pack
+    assert pack is not None
+    assert pack.manifest.render_day_stamps == 1
+    template = pack.template_path.read_text(encoding="utf-8")
+    assert template.count("{{ meds_as_of }}") == pack.manifest.render_day_stamps

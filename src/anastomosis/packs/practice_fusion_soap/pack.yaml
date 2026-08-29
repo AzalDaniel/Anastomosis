@@ -138,6 +138,14 @@ tokens:
 # header block.
 verify_header_fields: [patient_name, dob, dos]
 
+# The medication list's "as of" heading carries the RENDER DAY, not the
+# encounter date — GOLD §5, a forensic rule from the original charts, which
+# print the day the chart was produced. QA's staleness check counts render-day
+# dates against this number instead of treating the first one as a template
+# that called now() by mistake; more than one on a page is still that defect
+# and still warns. See issue #194.
+render_day_stamps: 1
+
 # What this layout carries out of the record, and what it does not (QA's
 # coverage check reads both halves — an absence it was told to expect is
 # counted and reported; one it was not is a failure). The forensic replica

@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
+from anastomosis.core.identity import (
+    date_token_present,
+    date_token_spans,
+    name_fragment_present,
+    token_present,
+)
 from anastomosis.core.model import (
     CHARTABLE_KINDS,
     Encounter,
@@ -559,8 +564,41 @@ def _render_day(ctx: QAContext) -> date:
     return to_local(datetime.now(UTC), ctx.render_tz).date()
 
 
+def _render_day_occurrences(today: date, text: str) -> int:
+    """How many times today's date stands alone on this page.
+
+    Counted across every accepted spelling, unioned by POSITION rather than
+    summed, so one printed date is one stamp no matter how many spellings
+    reach it. With today's spelling set none of them overlap — the boundary
+    rule keeps "8/29/2026" out of "08/29/2026" — so the union is defensive
+    rather than load-bearing; it is what stops a spelling added later from
+    silently turning a pack that stamps once into a pack that appears to stamp
+    twice, which would be a false warning on the one layout this exists for.
+    """
+    spans: set[tuple[int, int]] = set()
+    for spelling in _date_spellings(today):
+        spans.update(date_token_spans(spelling, text))
+    return len(spans)
+
+
 class DateStalenessCheck:
-    """A render-day date on the chart usually means a template used now()."""
+    """A render-day date on the chart usually means a template used now().
+
+    Usually, not always. The Practice Fusion replica stamps the render day into
+    the medication list's "as of" heading on purpose — a forensic rule carried
+    from the gold standard, which prints the day the chart was produced rather
+    than the day of the visit. So that pack warned on every document it ever
+    rendered, and a warning that is always on is one operators learn to skip:
+    the state the check flags became indistinguishable from the state the pack
+    is permanently in.
+
+    The layout says how many stamps it places (``render_day_stamps`` in
+    pack.yaml) and this counts against that number. A pack that declares one
+    and prints one is doing what it said; a pack that declares one and prints
+    four has a template calling now() somewhere it should not, and still warns.
+    Declaring an exemption would have traded a useless warning for a blind
+    check, which is the worse of the two.
+    """
 
     name = "date_staleness"
 
@@ -568,13 +606,24 @@ class DateStalenessCheck:
         today = _render_day(ctx)
         if ctx.encounter.date_of_service == today:
             return CheckResult(self.name, Verdict.PASS, [])
-        text = _document_text(pdf_path, ctx)
-        findings = [
-            f"today's date ({spelling}) appears on a chart dated {ctx.encounter.date_of_service}"
-            for spelling in sorted(_date_spellings(today))
-            if _date_present(spelling, text)
-        ]
-        return CheckResult(self.name, Verdict.WARN if findings else Verdict.PASS, findings)
+        found = _render_day_occurrences(today, _document_text(pdf_path, ctx))
+        declared = ctx.render_day_stamps
+        if found <= declared:
+            if declared:
+                return CheckResult(
+                    self.name,
+                    Verdict.PASS,
+                    [f"{found} of {declared} declared render-day stamp(s) on the page"],
+                )
+            return CheckResult(self.name, Verdict.PASS, [])
+        return CheckResult(
+            self.name,
+            Verdict.WARN,
+            [
+                f"today's date appears {found} time(s) on a chart dated "
+                f"{ctx.encounter.date_of_service}; this layout declares {declared}"
+            ],
+        )
 
 
 class NoteBodyCheck:
