@@ -608,6 +608,31 @@ def _immunizations(section: _Element, patient_id: str, source_file: str) -> list
 # --- vitals + results --------------------------------------------------------
 
 
+def _observation_value(value: _Element | None) -> tuple[str | None, str | None]:
+    """``(value, unit)`` from any C-CDA result form, not just ``xsi:type="PQ"``.
+
+    Reading only the PQ shape (``@value``/``@unit``) left every qualitative
+    result empty while still producing an Observation carrying its LOINC code —
+    a finalized result that says nothing, which a receiver reads as "no result"
+    rather than as the Negative or Trace the document actually recorded.
+    """
+    if value is None:
+        return None, None
+    if (quantity := _attr(value, "value")) is not None:  # PQ, INT, REAL
+        return quantity, _attr(value, "unit")
+    if (coded := _attr(value, "displayName")) is not None:  # CD
+        return coded, None
+    low, high = _find(value, "v3:low"), _find(value, "v3:high")  # IVL_PQ
+    bounds = [_attr(end, "value") for end in (low, high)]
+    if any(bounds):
+        lo, hi = bounds
+        return ("-".join(part for part in bounds if part) if lo and hi else (lo or hi)), (
+            _attr(low, "unit") or _attr(high, "unit")
+        )
+    # ST / ED and anything else that carries its result as element text.
+    return _text_content(value), None
+
+
 def _measurements(
     section: _Element,
     patient_id: str,
@@ -622,15 +647,15 @@ def _measurements(
             continue
         for component in _findall(organizer, "v3:component/v3:observation"):
             code = _find(component, "v3:code")
-            value = _find(component, "v3:value")
+            reading, unit = _observation_value(_find(component, "v3:value"))
             out.append(
                 Observation(
                     patient_id=patient_id,
                     category=category,
                     code=_attr(code, "code"),
                     display=_attr(code, "displayName"),
-                    value=_attr(value, "value"),
-                    unit=_attr(value, "unit"),
+                    value=reading,
+                    unit=unit,
                     effective_at=_ts(component, "v3:effectiveTime")
                     or _ts(organizer, "v3:effectiveTime"),
                     provenance=_prov(source_file, _val_attr(component, "v3:id", "root")),

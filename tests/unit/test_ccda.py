@@ -384,3 +384,55 @@ def test_fhir_round_trip_is_lossless(record: PatientRecord) -> None:
     )
     assert _dumps(rebuilt.conditions) == _dumps(record.conditions)
     assert _dumps(rebuilt.allergies) == _dumps(record.allergies)
+
+
+_VALUE_TYPES_CCD = """<?xml version="1.0"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <recordTarget><patientRole><id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name>
+    <administrativeGenderCode code="F" displayName="Female" codeSystem="2.16.840.1.113883.5.1"/>
+    <birthTime value="19850314"/></patient></patientRole></recordTarget>
+  <component><structuredBody><component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/><title>Results</title>
+    <entry><organizer classCode="BATTERY" moodCode="EVN"><statusCode code="completed"/>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <code code="2345-7" displayName="Glucose" codeSystem="2.16.840.1.113883.6.1"/>
+        <effectiveTime value="20230510"/>
+        <value xsi:type="PQ" value="99" unit="mg/dL"/></observation></component>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <code code="5811-5" displayName="Specific gravity" codeSystem="2.16.840.1.113883.6.1"/>
+        <effectiveTime value="20230510"/>
+        <value xsi:type="ST">1.015</value></observation></component>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <code code="664-3" displayName="Poikilocytosis" codeSystem="2.16.840.1.113883.6.1"/>
+        <effectiveTime value="20230510"/>
+        <value xsi:type="CD" code="260385009" displayName="Negative"/></observation></component>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <code code="6690-2" displayName="WBC" codeSystem="2.16.840.1.113883.6.1"/>
+        <effectiveTime value="20230510"/>
+        <value xsi:type="IVL_PQ"><low value="4.0" unit="10*3/uL"/>
+        <high value="11.0" unit="10*3/uL"/></value></observation></component>
+    </organizer></entry></section></component></structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_every_ccda_value_type_keeps_its_result(tmp_path: Path) -> None:
+    """Only ``xsi:type="PQ"`` used to be read (#243).
+
+    Every other form left ``Observation.value`` as None while the Observation was
+    still created carrying its LOINC code — a finalized result that says nothing.
+    A receiving EHR reads that as "no result" rather than as the Negative or
+    Trace the document actually recorded, and qualitative results are a large
+    fraction of any real lab feed.
+    """
+    (tmp_path / "values.xml").write_text(_VALUE_TYPES_CCD, encoding="utf-8")
+
+    (record,) = list(get_source("ccda").load(tmp_path))
+    readings = {o.display: (o.value, o.unit) for o in record.observations}
+
+    assert readings["Glucose"] == ("99", "mg/dL")  # PQ, the one that always worked
+    assert readings["Specific gravity"] == ("1.015", None)  # ST — element text
+    assert readings["Poikilocytosis"] == ("Negative", None)  # CD — the coded display
+    assert readings["WBC"] == ("4.0-11.0", "10*3/uL")  # IVL_PQ — a range with its unit
+    assert not [d for d, (v, _) in readings.items() if v is None], "a result lost its value"
