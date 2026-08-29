@@ -153,7 +153,14 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
     assert len(list((out / "charts").glob("*_ccda.pdf"))) == 3
     # Still emits the structured payload for the destination to import — and
     # says so completely: "missing" is present and zero, not absent.
-    assert result.ccda_export.counts == {"patients": 3, "missing": 0}
+    assert result.ccda_export.counts["patients"] == 3
+    assert result.ccda_export.counts["missing"] == 0
+    # And the shape of the document a destination is about to be handed (#118):
+    # its size, and how much of it is preserved source fields rather than
+    # clinical content.
+    assert result.ccda_export.counts["bytes"] > 0
+    assert result.ccda_export.counts["preserved_bytes"] > 0
+    assert result.ccda_export.counts["largest_bytes"] > 0
     assert list((out / "ccda").glob("*.xml"))
     # The upload manifest is written in ccda-standard mode too — one item per
     # patient (the whole-patient view has no per-encounter documents).
@@ -200,7 +207,11 @@ def test_migrate_ccda_standard_counts_a_patient_it_could_not_export(
             qa=False,
         )
     )
-    assert result.ccda_export.counts == {"patients": 2, "missing": 1}
+    assert result.ccda_export.counts["patients"] == 2
+    assert result.ccda_export.counts["missing"] == 1
+    # A patient whose build failed contributes no bytes: the measurement counts
+    # what was written, not what was attempted.
+    assert result.ccda_export.counts["bytes"] > 0
     assert len(list((out / "ccda").glob("*.xml"))) == 2
     # The view PDFs are unaffected — the disagreement is the point.
     assert result.ccda_view is not None

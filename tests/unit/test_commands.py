@@ -103,7 +103,14 @@ def test_run_pipeline_command_delivers_all_three(
     assert result.deliveries["archive"].counts["patients"] == 3
     assert {"patients", "encounters", "pdfs"} <= set(result.deliveries["archive"].counts)
     assert result.deliveries["bundle"].counts == {"patients": 3, "missing": 0}
-    assert result.deliveries["ccda"].counts == {"patients": 3, "missing": 0}
+    ccda_counts = result.deliveries["ccda"].counts
+    assert ccda_counts["patients"] == 3
+    assert ccda_counts["missing"] == 0
+    # The shape of what a destination is about to receive, reported rather than
+    # discovered when the import is refused (#118).
+    assert ccda_counts["bytes"] > 0
+    assert 0 < ccda_counts["preserved_bytes"] <= ccda_counts["bytes"]
+    assert 0 < ccda_counts["largest_bytes"] <= ccda_counts["bytes"]
     # Files landed in the operator-chosen directories.
     assert (tmp_path / "arc" / "index.html").is_file()
     assert any((tmp_path / "bun").iterdir())
