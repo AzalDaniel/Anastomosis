@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from anastomosis.core.model import PatientRecord
-from anastomosis.sources.base import register
+from anastomosis.sources.base import SourceDataError, register
 
 from .parser import parse_document
 
@@ -59,10 +59,37 @@ class CCDAAdapter:
         return False
 
     def load(self, path: Path) -> Iterator[PatientRecord]:
-        for xml_file in sorted(path.glob("*.xml")):
-            head = xml_file.read_bytes()[:_SNIFF_BYTES]
-            if _looks_like_cda(head):
+        """Every CDA document in ``path``, in filename order.
+
+        A document this adapter cannot parse refuses the RUN — a partial
+        migration that silently omits a patient is the failure this project
+        exists to prevent. But refusing has to tell the operator which document
+        to repair, and until now it did not: the exception escaped as an
+        arbitrary error, so the pipeline could only show its type. Against
+        2,103 real documents that left bisecting by hand as the only recourse.
+
+        The document is named by POSITION, not by file name. A C-CDA export
+        names its files after the patient, so a name in an error message is a
+        patient value; a position is not, and ``ls *.xml | sort`` finds it.
+        """
+        documents = [
+            xml_file
+            for xml_file in sorted(path.glob("*.xml"))
+            if _looks_like_cda(xml_file.read_bytes()[:_SNIFF_BYTES])
+        ]
+        for position, xml_file in enumerate(documents, start=1):
+            try:
                 yield parse_document(xml_file)
+            except SourceDataError:
+                raise
+            except Exception as exc:
+                raise SourceDataError(
+                    f"document {position} of {len(documents)}, in filename order, could not be "
+                    f"read ({type(exc).__name__}). The {position - 1} before it parsed; the run "
+                    f"refuses rather than migrating an export with a document missing from it. "
+                    f"The file is identified by position because a C-CDA export names its "
+                    f"documents after the patient."
+                ) from None
 
 
 register(CCDAAdapter())
