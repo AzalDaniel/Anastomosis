@@ -43,6 +43,38 @@ def logical_rows(path: Path) -> tuple[int, str | None]:
         return -1, type(exc).__name__
 
 
+FIXTURE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "pf_tebra_v9"
+
+
+def _fixture_columns_the_vendor_does_not_have(root: Path) -> dict[str, list[str]]:
+    """Fixture headers that name a column the real export has no such column for.
+
+    The shipped fixture is the only thing pinning the adapter's column contract,
+    so a name invented there is invisible: the suite agrees with the fixture and
+    nobody checks the fixture against the vendor. That is how the adapter came to
+    key patient-allergy on AllergyGuid when v9 spells it PatientAllergyGuid, which
+    refused the run outright (#247).
+
+    This comparison lives here rather than in a test because the answer needs a
+    REAL export, and the real schema cannot be checked in: the PHI scanner's
+    deny-list is seeded from real-export tokens, so genuine column names trip it.
+    Column names only ever leave this function — no rows, no values.
+    """
+    drift: dict[str, list[str]] = {}
+    for path in sorted(FIXTURE.glob("*.tsv")):
+        real = root / path.name
+        if not real.exists():
+            continue
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            fixture_header = next(csv.reader(fh, delimiter="\t"), [])
+        with real.open(encoding="utf-8-sig", newline="") as fh:
+            real_header = set(next(csv.reader(fh, delimiter="\t"), []))
+        invented = [c for c in fixture_header if c and c not in real_header]
+        if invented:
+            drift[path.stem] = invented
+    return drift
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("export_dir", type=Path)
@@ -152,12 +184,16 @@ def main() -> int:
             "seconds": round(time.time() - t0, 1),
         }
 
+    report["fixture_columns_the_vendor_lacks"] = _fixture_columns_the_vendor_does_not_have(root)
+
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True))
     load = report["load"]
     print(f"load: {load}")
     print(f"tables whose two row counts disagree: {report['counts_disagree'] or 'none'}")
     print(f"cross-patient suspects (#234): {report['cross_patient_suspects'] or 'none'}")
     print(f"map: {report.get('map')}")
+    drift = report["fixture_columns_the_vendor_lacks"]
+    print(f"fixture columns this export has no such column for: {drift or 'none'}")
     print(f"\nwrote {args.out}")
     return 0
 
