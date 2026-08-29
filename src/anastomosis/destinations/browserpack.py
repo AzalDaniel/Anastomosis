@@ -494,6 +494,15 @@ def _date_parts(text: str) -> tuple[str, ...]:
     boundary, so a changed separator or a trailing space still matches — while
     a changed day, or a day and month swapped, does not. An empty readback
     reduces to ``()`` and matches nothing, which is the fail-closed answer.
+
+    Known limit, stated rather than papered over: a widget that echoes the date
+    back with a time appended (``"1/19/2023 12:00 AM"``) contributes those
+    digits too, so this refuses an upload it could have allowed. That is the
+    side to be wrong on — the alternative, comparing only the first three runs,
+    would also wave through a form that had quietly replaced the date. Whether
+    any real portal does this cannot be known from here; it wants one
+    authorized run against a staging portal, and a pack that hits it should be
+    fixed by loosening this with that evidence rather than on a guess.
     """
     return tuple(part.lstrip("0") or "0" for part in re.findall(r"\d+", text))
 
