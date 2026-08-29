@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from functools import cache
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -627,15 +628,27 @@ def _observation_value(value: _Element | None) -> tuple[str | None, str | None]:
         return quantity, _attr(value, "unit")
     if (coded := _attr(value, "displayName")) is not None:  # CD
         return coded, None
-    low, high = _find(value, "v3:low"), _find(value, "v3:high")  # IVL_PQ
-    bounds = [_attr(end, "value") for end in (low, high)]
-    if any(bounds):
-        lo, hi = bounds
-        return ("-".join(part for part in bounds if part) if lo and hi else (lo or hi)), (
-            _attr(low, "unit") or _attr(high, "unit")
-        )
+    if (interval := _interval_value(value)) is not None:  # IVL_PQ
+        return interval
     # ST / ED and anything else that carries its result as element text.
     return _text_content(value), None
+
+
+def _interval_value(value: _Element) -> tuple[str | None, str | None] | None:
+    """``(reading, unit)`` for an IVL_PQ, or ``None`` when it is not one.
+
+    A range with both ends reads ``low-high``; one open end reads as the end it
+    has, because "under 5" is still a result and dropping the number to avoid
+    picking a spelling for the missing half would lose it. ``None`` means the
+    element carried no bound at all, which is the caller's cue to keep looking
+    rather than to record an empty range.
+    """
+    low, high = _find(value, "v3:low"), _find(value, "v3:high")
+    lo, hi = (_attr(end, "value") for end in (low, high))
+    if not (lo or hi):
+        return None
+    reading = f"{lo}-{hi}" if lo and hi else (lo or hi)
+    return reading, _attr(low, "unit") or _attr(high, "unit")
 
 
 def _measurements(
@@ -806,20 +819,42 @@ def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounte
         if not _folds_together(seen, encounter):
             kept_apart.append(encounter)
             continue
-        update: dict[str, object] = {}
-        for name in type(encounter).model_fields:
-            if name in _ENCOUNTER_IDENTITY_FIELDS:
-                continue
-            incoming = getattr(encounter, name)
-            if name in _ENCOUNTER_LIST_FIELDS:
-                update[name] = [*(getattr(seen, name) or []), *(incoming or [])]
-            elif name == "extensions":
-                if incoming:
-                    update[name] = {**(getattr(seen, name) or {}), **incoming}
-            elif getattr(seen, name) is None and incoming is not None:
-                update[name] = incoming
-        folded[encounter.id] = seen.model_copy(update=update)
+        folded[encounter.id] = seen.model_copy(update=_folded_fields(seen, encounter))
     return [folded[key] for key in order] + kept_apart
+
+
+def _folded_fields(seen: Encounter, incoming: Encounter) -> dict[str, object]:
+    """The fields to copy from ``incoming`` onto ``seen``, by kind.
+
+    Three rules, and which one applies is a property of the field rather than
+    of the visit: lists concatenate in the order the halves were read,
+    extensions merge with the later half winning a shared key, and every other
+    scalar is filled in only where the first half left a gap. Identity fields
+    are excluded — the halves already agree on those, which is what let them
+    fold at all.
+    """
+    update: dict[str, object] = {}
+    for name in _ENCOUNTER_LIST_FIELDS:
+        update[name] = [*(getattr(seen, name) or []), *(getattr(incoming, name) or [])]
+    if extensions := incoming.extensions:
+        update["extensions"] = {**(seen.extensions or {}), **extensions}
+    for name in _folded_scalar_fields(type(incoming)):
+        value = getattr(incoming, name)
+        if getattr(seen, name) is None and value is not None:
+            update[name] = value
+    return update
+
+
+@cache
+def _folded_scalar_fields(model: type[Encounter]) -> tuple[str, ...]:
+    """Every field folded by the fill-a-gap rule: not identity, list or extensions.
+
+    Derived from the model rather than listed here, so a field added to
+    Encounter is folded by default instead of being silently skipped by a
+    hand-written tuple nobody remembered to extend.
+    """
+    handled = {*_ENCOUNTER_IDENTITY_FIELDS, *_ENCOUNTER_LIST_FIELDS, "extensions"}
+    return tuple(name for name in model.model_fields if name not in handled)
 
 
 # --- top-level assembly ------------------------------------------------------
