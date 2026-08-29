@@ -17,8 +17,10 @@ PHI rule (non-negotiable): sample PDFs may be named after patients and carry
 per-patient values, so this package stores an opaque sample *index* — never a
 file path — and never logs sample-derived text. The only span text that ever
 escapes into a human-readable summary is the *static* text recurring across
-samples (template labels/headings, which are by construction not patient
-data); a value seen in only one sample never appears in a summary.
+samples. "(Template labels/headings, which are by construction not patient
+data)" is what this said; recurrence is a count, and a value two patients
+happen to share recurs and escapes alongside the labels (#200). The half it
+does settle: a value seen in only one sample never appears in a summary.
 
 CAVEAT (operator guidance, not enforceable by math): the static/per-patient
 split assumes samples come from DIFFERENT patients/encounters. Hand this

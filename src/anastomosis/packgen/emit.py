@@ -41,7 +41,9 @@ Design choices, grounded in the pack contracts read above:
   and a single-sample run emits no sample-derived text at all. What the operator
   is owed is the rest of it, which is why ``SAME_PATIENT_CAVEAT`` now says that
   distinct patients are not on their own enough, and asks them to read the
-  labels rather than trust them.
+  labels rather than trust them — and why ``STATIC_LIST_NOTE`` repeats it in
+  one sentence directly above the strings themselves, in both emitted files. A
+  caveat at the top of a document does not survive the scroll down to the list.
 * **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
   (sorted keys, fixed float formatting, deterministic section ordering).
 """
@@ -49,6 +51,7 @@ Design choices, grounded in the pack contracts read above:
 from __future__ import annotations
 
 import re
+import textwrap
 from pathlib import Path
 
 from anastomosis.core.output import secure_output_dir
@@ -57,6 +60,7 @@ from .infer import PackAnalysis, PageGeometry, SectionCandidate
 
 __all__ = [
     "SAME_PATIENT_CAVEAT",
+    "STATIC_LIST_NOTE",
     "emit_draft_pack",
 ]
 
@@ -107,6 +111,19 @@ SAME_PATIENT_CAVEAT = (
     "the same way. With three samples the bar is two. Read the static labels "
     "below and delete anything that belongs to a patient rather than to the "
     "form."
+)
+
+# SAME_PATIENT_CAVEAT says this at length at the top of DRAFT.md; this says it
+# again in one sentence, and both emitted surfaces put it directly above the
+# list of strings it is about. What sat there before called the list template
+# chrome and assured the operator in as many words that it held nothing of the
+# patient's — flatly contradicting the caveat four paragraphs up, at the one
+# moment they are looking at the strings and deciding what to keep. A caveat
+# only works if it is still true where the reader is.
+STATIC_LIST_NOTE = (
+    "Recurring is a frequency count, not proof of who wrote a string: a value "
+    "two patients share recurs the same way. Delete anything here that belongs "
+    "to a patient rather than to the form."
 )
 
 # Static strings that, after normalization, signal a known patient-header model
@@ -622,11 +639,16 @@ def _unplaced_comment(unplaced: list[str]) -> str:
     if not unplaced:
         return ""
     body = "\n".join(f"    {_comment_safe(text)}" for text in unplaced)
+    note = textwrap.fill(
+        STATIC_LIST_NOTE, width=71, initial_indent="     ", subsequent_indent="     "
+    )
     return (
         "<!-- UNPLACED STATIC TEXT — position manually.\n"
-        "     These strings recurred across your samples (template labels/\n"
-        "     boilerplate) but did not map to a known model field. Nothing is\n"
-        "     dropped: move each into the template where it belongs.\n"
+        "     These strings recurred across your samples but did not map to a\n"
+        "     known model field.\n"
+        f"{note}\n"
+        "     Nothing is dropped: move what you keep into the template where\n"
+        "     it belongs.\n"
         f"{body}\n"
         "-->\n"
     )
@@ -706,9 +728,32 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
         )
         or "- (none cleared the confidence gate)"
     )
-    unplaced_lines = (
-        "\n".join(f"- {t}" for t in unplaced) or "- (all static text mapped to known header fields)"
-    )
+    if analysis.low_confidence:
+        # _classify_static withholds everything on one sample, so an empty list
+        # here does not mean everything was placed — it means nothing was
+        # written at all. Saying "nothing is dropped" over that would be the
+        # exact inversion of the truth, so this branch says what happened.
+        unplaced_note = (
+            "Nothing is listed. One sample cannot separate the form from the "
+            "patient — every string in it recurs trivially — so no "
+            "sample-derived text was written into `template.html` at all. That "
+            "is a deliberate withholding, not a report that there was nothing "
+            "to place. Re-run with three or more DISTINCT-patient samples."
+        )
+        unplaced_lines = "- (withheld — see above)"
+    else:
+        unplaced_note = (
+            "The strings below recurred across your samples but did not map to "
+            f"a known model field. {STATIC_LIST_NOTE} What you keep is "
+            "preserved verbatim inside an `UNPLACED STATIC TEXT` comment at the "
+            "top of `template.html` — nothing is dropped. Move each into the "
+            "template by hand:"
+        )
+        unplaced_lines = (
+            "\n".join(f"- {t}" for t in unplaced)
+            or "- (all static text mapped to known header fields)"
+        )
+    unplaced_note = textwrap.fill(unplaced_note, width=76)
 
     return f"""# DRAFT pack: {name}
 
@@ -742,10 +787,7 @@ output as a starting point.
 
 ## Unplaced static text
 
-The strings below recurred across your samples (so they are template labels/
-boilerplate, not patient data) but did not map to a known model field. They
-are preserved verbatim inside an `UNPLACED STATIC TEXT` comment at the top of
-`template.html` — nothing is dropped. Move each into the template by hand:
+{unplaced_note}
 
 {unplaced_lines}
 
