@@ -822,3 +822,77 @@ def test_unjoined_superbill_row_with_no_home_patient_refuses(tmp_path: Path) -> 
     with pytest.raises(OrphanRowsError) as excinfo:
         list(get_source("pf-tebra").load(export))
     assert "superbill-insurances" in str(excinfo.value)
+
+
+def test_the_adapter_reads_the_real_v9_column_names() -> None:
+    """The fixture is the only thing pinning the adapter's column contract, so a
+    name invented there is invisible: the suite agrees with the fixture and
+    nobody checks the fixture against the vendor (#247).
+
+    These rows carry ONLY real v9 spellings. Each field below came back empty
+    before, and the allergy key refused the run outright.
+    """
+    from anastomosis.sources.pf_tebra.mapper import (
+        _map_allergy,
+        _map_document,
+        _map_facilities,
+        _map_immunization,
+    )
+
+    # patient-allergy / -reactions are keyed on PatientAllergyGuid, not AllergyGuid.
+    allergy_guid = "feedface-0000-0000-0000-00000000a001"
+    allergy = _map_allergy(
+        {
+            "PatientPracticeGuid": P1,
+            "PatientAllergyGuid": allergy_guid,
+            "AllergenCategory": "Drug",
+            "Substance": "Penicillin",
+            "IsActive": "True",
+        },
+        {allergy_guid: [{"PatientAllergyGuid": allergy_guid, "Reaction": "Hives"}]},
+    )
+    assert allergy.id == allergy_guid, "a dangling allergy key refuses the whole run"
+    assert allergy.reactions == ["Hives"]
+
+    # patient-documents has no id of its own; the storage guid is the identity.
+    storage = "feedface-0000-0000-0000-00000000d001"
+    document = _map_document(
+        {"PatientPracticeGuid": P1, "DocumentStorageGuid": storage, "DocumentName": "Referral"},
+        P1,
+        None,
+    )
+    assert document.id == storage, "an empty document id is unusable downstream"
+
+    # facilities: Name/City/State/ZipCode/OfficePhone/OfficeFax, not the invented spellings.
+    (facility,) = _map_facilities(
+        {
+            "facilities": [
+                {
+                    "FacilityGuid": "feedface-0000-0000-0000-00000000f001",
+                    "Name": "Example Family Medicine",
+                    "Address1": "100 Clinic Way",
+                    "City": "Springfield",
+                    "State": "WA",
+                    "ZipCode": "98101",
+                    "OfficePhone": "2065550199",
+                    "OfficeFax": "2065550198",
+                }
+            ]
+        }
+    )
+    assert facility.name == "Example Family Medicine"
+    assert (facility.city, facility.state, facility.postal_code) == ("Springfield", "WA", "98101")
+    assert facility.phone == "(206) 555-0199"
+
+    # patient-immunizations: the date column was three guessed spellings, all wrong.
+    immunization = _map_immunization(
+        {
+            "PatientPracticeGuid": P1,
+            "ImmunizationGuid": "feedface-0000-0000-0000-00000000i001",
+            "Vaccine": "Influenza",
+            "VaccinationOrEffectiveDate": "10/03/2022",
+            "Comments": "Left deltoid",
+        }
+    )
+    assert immunization.administered_on == date(2022, 10, 3), "every dose came back undated"
+    assert immunization.comment == "Left deltoid"
