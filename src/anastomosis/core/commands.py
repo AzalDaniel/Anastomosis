@@ -22,6 +22,7 @@ Design notes:
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -324,12 +325,42 @@ def _write_pipeline_manifest(
 # `gui` names a BACKEND alongside the wrapper. `import webview` succeeds on a
 # machine with neither GTK nor Qt bindings, and pywebview then raises on launch
 # — so probing the wrapper alone reported the desktop app as ready on a machine
-# where `anast gui` could not start. Either backend will do; pywebview picks.
+# where `anast gui` could not start. WHICH backend that is depends on the
+# platform, so `_gui_requirement` answers for the one we are running on.
+
+
+def _gui_requirement(platform_name: str) -> tuple[str, ...]:
+    """The wrapper plus the drawing backend pywebview would load *here*.
+
+    pywebview picks its backend by platform, so a probe naming one platform's
+    backend is wrong on the others: `gi|qtpy` was hard-coded, and a Windows or
+    macOS install that draws the window perfectly well — GTK and Qt neither
+    installed nor wanted there — reported the desktop app as unavailable.
+
+    Windows draws through WinForms/WebView2 via pythonnet (`clr`) and macOS
+    through Cocoa via PyObjC (`objc`); pywebview depends on those
+    unconditionally on those platforms, so `pip install "anastomosis[gui]"`
+    has already brought them and their presence is fair evidence. GTK and Qt
+    are the Linux/OpenBSD pair, either will do and pywebview picks — but pip
+    installs neither alongside pywebview, which is why the wrapper alone is no
+    evidence there.
+
+    Still only evidence: the Edge WebView2 Runtime a Windows machine also needs
+    is an OS component, not an importable module, so no probe of this shape can
+    see it. `anast doctor` remains the command that actually tries things.
+    """
+    if platform_name == "win32":
+        return ("webview", "clr")
+    if platform_name == "darwin":
+        return ("webview", "objc")
+    return ("webview", "gi|qtpy")
+
+
 _EXTRAS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("render", ("playwright", "pymupdf")),
     ("deliver-browser", ("playwright",)),
     ("fhir", ("fhir.resources",)),
-    ("gui", ("webview", "gi|qtpy")),
+    ("gui", _gui_requirement(sys.platform)),
 )
 
 
