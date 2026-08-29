@@ -46,6 +46,11 @@ class QAContext:
     record: PatientRecord
     section_flags: dict[str, bool] = field(default_factory=dict)
     page_size: str = "Letter"
+    #: The pack's timezone, so a check that needs to know what day it was when
+    #: these documents were rendered asks the same clock the pack stamped them
+    #: with. ``None`` means no pack said (the C-CDA path, a third-party context),
+    #: and a check falls back to the host's day.
+    render_tz: str | None = None
 
 
 class QACheck(Protocol):

@@ -255,15 +255,108 @@ def test_every_extra_has_a_capability_name() -> None:
     assert {extra for extra, _ in _EXTRAS} <= set(CAPABILITY_NAMES)
 
 
+#: The platforms an install can land on, as `sys.platform` spells them. CI runs
+#: two of them (.github/workflows/ci.yml: ubuntu and windows) and pyproject
+#: declares the package OS independent, so macOS is reachable with no lane of
+#: its own — which is why these tests name all three by hand.
+_SUPPORTED_PLATFORMS = ("linux", "win32", "darwin")
+
+
+def _only_these_modules(monkeypatch: pytest.MonkeyPatch, present: set[str]) -> None:
+    """Let the probe see exactly `present`, and nothing else.
+
+    That is how one platform's `pip install "anastomosis[gui]"` can be asked
+    about from any other, without installing a thing. `_module_available` reaches
+    for `find_spec` on every call, so patching it here is enough.
+    """
+    import importlib.util
+
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name: object() if name in present else None
+    )
+
+
 def test_the_gui_probe_asks_for_a_backend_not_just_the_wrapper() -> None:
     """`import webview` succeeds with neither GTK nor Qt bindings present, and
     pywebview then raises on launch — so probing the wrapper alone reported the
-    desktop app as ready on a machine where `anast gui` could not start."""
-    from anastomosis.core.commands import _EXTRAS
+    desktop app as ready on a machine where `anast gui` could not start. That
+    has to hold on every platform, not only the one the test leg runs on."""
+    from anastomosis.core.commands import _gui_requirement
 
-    gui = next(modules for extra, modules in _EXTRAS if extra == "gui")
-    assert any("|" in requirement for requirement in gui), (
-        "the gui probe must require a drawing backend, not only the wrapper"
+    for platform_name in _SUPPORTED_PLATFORMS:
+        requirement = _gui_requirement(platform_name)
+        assert len(requirement) > 1, (
+            f"the gui probe must require a drawing backend on {platform_name}, not only the wrapper"
+        )
+    # Linux is the original case: GTK or Qt, whichever the machine happens to
+    # have, because pywebview tries both there.
+    assert any("|" in requirement for requirement in _gui_requirement("linux"))
+
+
+@pytest.mark.parametrize("platform_name", _SUPPORTED_PLATFORMS)
+def test_the_extras_table_asks_for_the_backend_the_platform_it_runs_on_uses(
+    platform_name: str,
+) -> None:
+    """`_EXTRAS` is what `anast info` and the dashboard header actually report,
+    and it is built once at import, so the honest way to ask what a Windows or
+    macOS box would say is to import it as one. Hard-coding the Linux pair there
+    called the desktop app unavailable on Windows and macOS, however carefully
+    the helper answered.
+    """
+    import subprocess
+    import sys
+
+    from anastomosis.core.commands import _gui_requirement
+
+    probe = (
+        "import sys\n"
+        f"sys.platform = {platform_name!r}\n"
+        "from anastomosis.core.commands import _EXTRAS\n"
+        "print(dict(_EXTRAS)['gui'])\n"
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == str(_gui_requirement(platform_name)), (
+        f"imported as {platform_name}, the extras table asks for {out.stdout.strip()}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "installed"),
+    [
+        # What `pip install "anastomosis[gui]"` leaves behind per platform:
+        # pythonnet and PyObjC are unconditional pywebview dependencies on
+        # Windows and macOS, while GTK/Qt are on nobody's install line and the
+        # operator brings them.
+        ("win32", {"webview", "clr"}),
+        ("darwin", {"webview", "objc"}),
+        ("linux", {"webview", "gi"}),
+        ("linux", {"webview", "qtpy"}),
+    ],
+)
+def test_a_backed_install_reads_as_available_on_every_supported_platform(
+    monkeypatch: pytest.MonkeyPatch, platform_name: str, installed: set[str]
+) -> None:
+    """A machine that can draw the window says so."""
+    from anastomosis.core.commands import _extra_available, _gui_requirement
+
+    _only_these_modules(monkeypatch, installed)
+    assert _extra_available(_gui_requirement(platform_name)), (
+        f"a working {platform_name} install of the desktop app reports itself unavailable"
+    )
+
+
+@pytest.mark.parametrize("platform_name", _SUPPORTED_PLATFORMS)
+def test_the_wrapper_without_a_backend_is_never_enough(
+    monkeypatch: pytest.MonkeyPatch, platform_name: str
+) -> None:
+    """The other half of the same invariant: pywebview installed `--no-deps`,
+    with nothing underneath it to draw with, must not read as ready anywhere."""
+    from anastomosis.core.commands import _extra_available, _gui_requirement
+
+    _only_these_modules(monkeypatch, {"webview"})
+    assert not _extra_available(_gui_requirement(platform_name)), (
+        f"on {platform_name} the wrapper alone reported the desktop app as ready"
     )
 
 

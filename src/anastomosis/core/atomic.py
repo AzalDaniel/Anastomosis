@@ -7,10 +7,18 @@ sees a torn file, and unlink the temp file if anything raises before the
 replace. That shape was hand-rolled independently at each write site; this
 module is the one place it lives now, so every site gets the unlink-on-
 failure safety net without having to remember to write it.
+
+That unlink runs on the way out of a raised exception, so a run that is killed
+outright — SIGKILL, the OOM reaper, the power going — never reaches it and
+leaves its temp on disk. Every write therefore also sweeps the temps left
+beside its own target by writers that are no longer alive; see
+:func:`_reap_dead_temps`.
 """
 
 from __future__ import annotations
 
+import glob
+import logging
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -18,9 +26,83 @@ from pathlib import Path
 
 __all__ = ["atomic_copy", "atomic_replace", "atomic_write_bytes", "atomic_write_text"]
 
+logger = logging.getLogger(__name__)
+
 
 def _tmp_path_for(target: Path) -> Path:
     return target.with_name(f".{target.name}.{os.getpid()}.tmp")
+
+
+def _writer_is_gone(tmp_name: str) -> bool:
+    """True only when the pid embedded in a ``.NAME.<pid>.tmp`` name is dead.
+
+    "No" is always the safe answer here, because it keeps the file, so every
+    case whose truth we cannot read answers no: a name whose pid will not
+    parse, a pid the kernel says is alive, a pid alive under another uid
+    (``os.kill`` raises ``PermissionError``), and a platform that offers no
+    liveness probe at all. Only a pid the kernel positively reports as gone
+    earns the deletion of a file that may hold a patient's chart.
+
+    Best-effort by construction: a recycled pid reads as alive and its temp
+    stays. That leaves a file for an operator to find, which is the side to
+    err on when the alternative is deleting one out from under a live run.
+    """
+    if os.name != "posix":
+        # Windows has no probe to offer: `os.kill(pid, 0)` there does not ask
+        # whether a process is alive, it calls TerminateProcess and makes sure
+        # it is not. With no answer available, we keep the file.
+        return False
+    try:
+        pid = int(tmp_name.removesuffix(".tmp").rsplit(".", 1)[1])
+    except (ValueError, IndexError):
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except (OSError, OverflowError):
+        # EPERM and friends: alive, just not ours to signal. OverflowError is
+        # not an OSError, so without it here a pid too large for a C int would
+        # escape this function and take the caller's write down with it —
+        # `int()` accepts any run of digits a filename offers, `os.kill` raises
+        # on the conversion. Reaping is a courtesy; anything it cannot answer
+        # keeps the file and must never cost the write.
+        return False
+    return False
+
+
+def _reap_dead_temps(target: Path) -> None:
+    """Unlink the ``.NAME.<pid>.tmp`` siblings of ``target`` whose writer died.
+
+    Nothing else on the system will. The temp name carries the pid of the run
+    that made it, so the next run picks a different name, replaces the target
+    cleanly and walks away leaving the corpse; and the archive's orphan sweep
+    globs ``*.pdf``, so a dot-prefixed half-written chart is invisible to the
+    one pass that walks the chart directory. The operator would be handed an
+    output tree that looks complete with a hidden file of patient-derived
+    bytes sitting in it.
+
+    Our own pid is by definition alive, so the temp this very call is about to
+    yield can never be a candidate: the liveness check, not any comparison of
+    names, is what keeps our temp and a concurrent run's temp safe.
+    """
+    reaped = 0
+    # The target's own name is data, not pattern: `safe_name` does not strip
+    # `[`, `]`, `*` or `?`, and an unescaped one of those turns this glob into
+    # a different question than the one being asked — quietly matching another
+    # chart's temps, or none at all.
+    for stale in target.parent.glob(f".{glob.escape(target.name)}.*.tmp"):
+        if not _writer_is_gone(stale.name):
+            continue
+        try:
+            stale.unlink()
+        except OSError:
+            continue  # already gone, or not ours to remove; either way, leave it
+        reaped += 1
+    if reaped:
+        # Counted, never named: a temp under the output tree is named for the
+        # chart it was going to be, which is named for a patient.
+        logger.warning("removed %d stale temp file(s) left by a killed run", reaped)
 
 
 @contextmanager
@@ -30,9 +112,14 @@ def atomic_replace(target: Path) -> Iterator[Path]:
     The caller fills the yielded path however it needs to (an external
     renderer call, a raw write). On ANY exception — including one raised by
     the caller's own recovery logic — the temp file is unlinked and the
-    exception propagates: a crash mid-write never leaves a partial file at
-    ``target`` or a stray temp file behind.
+    exception propagates, so a write that fails leaves neither a partial file
+    at ``target`` nor a stray temp beside it.
+
+    A run that is killed rather than unwound runs no handler and does leave
+    its temp; that one is cleared by the next write to the same target, which
+    is what :func:`_reap_dead_temps` is here for.
     """
+    _reap_dead_temps(target)
     tmp = _tmp_path_for(target)
     try:
         yield tmp
