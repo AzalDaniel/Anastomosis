@@ -99,14 +99,21 @@ _EMPTY_STATES = [
     "No family health history recorded",
     "No family health history (free text) available for this patient.",
     "No advance directives recorded for this patient.",
-    "No implantable devices recorded",
     "No active health concerns recorded.",
     "No inactive goals recorded",
-    "No orders attached to this encounter.",
     "No screenings/interventions/assessments recorded.",
-    "No observations recorded.",
-    "No quality of care events recorded.",
-    "No care plan recorded.",
+]
+
+# The sections this pack renders but cannot reconstruct. Each used to print the
+# vendor's own denial ("No implantable devices recorded") over exports that
+# carry exactly that data; each now says the layout is unknown and points at
+# where the data is. See ``UNRECONSTRUCTED`` in the pack's context.py.
+_UNRECONSTRUCTED_SECTIONS = [
+    "Implantable devices",
+    "Orders",
+    "Observations",
+    "Quality of care",
+    "Care plan",
 ]
 
 
@@ -970,3 +977,119 @@ def test_the_flowsheet_shows_blood_pressure_like_the_per_encounter_rows_do() -> 
     assert by_name["Blood Pressure"] == ["162/104"]
     # The declared display order puts BP between Weight and Temperature.
     assert [row["name"] for row in rows] == ["Weight", "Blood Pressure"]
+
+
+# --- a section that never looked must not deny -------------------------------
+
+
+def _denials_and_their_guards(pack: LoadedPack) -> list[tuple[str, frozenset[str]]]:
+    """Every denial sentence in the template's raw HTML, with the names the
+    enclosing ``{% if %}``/``{% for %}`` tests read.
+
+    Walks the Jinja AST rather than the rendered page, because what matters is
+    not whether a sentence appears for one record but whether ANY record could
+    make it go away. A sentence guarded only by a section-visibility flag is one
+    nothing in the chart can turn off.
+    """
+    from jinja2 import nodes
+
+    denial = re.compile(r">\s*(No\b[^<{]*)", re.S)
+
+    def names(node: Any) -> set[str]:
+        # find_all does not yield the node itself, and `{% if show_devices %}`
+        # is a bare Name — so the self case has to be added, or every simple
+        # guard reads as no guard at all.
+        found = {n.name for n in node.find_all(nodes.Name)}
+        if isinstance(node, nodes.Name):
+            found.add(node.name)
+        return found
+
+    found: list[tuple[str, frozenset[str]]] = []
+
+    def walk(node: Any, guards: frozenset[str]) -> None:
+        if isinstance(node, nodes.If):
+            inner = guards | names(node.test)
+            for child in (*node.body, *node.elif_, *node.else_):
+                walk(child, inner)
+            return
+        if isinstance(node, nodes.For):
+            inner = guards | names(node.iter)
+            for child in (*node.body, *node.else_):
+                walk(child, inner)
+            return
+        if isinstance(node, nodes.TemplateData):
+            for match in denial.finditer(node.data):
+                found.append((" ".join(match.group(1).split()), guards))
+            return
+        for child in node.iter_child_nodes():
+            walk(child, guards)
+
+    source = pack.template_path.read_text(encoding="utf-8")
+    walk(Environment(autoescape=True).parse(source), frozenset())
+    return found
+
+
+def test_no_section_denies_data_it_never_looked_for(pack: LoadedPack) -> None:
+    """The class of bug #236 named: a pack section with no mapper path.
+
+    Six sentences printed the vendor's own denial — "No implantable devices
+    recorded", "No orders attached to this encounter." — over v9 exports that
+    carry a 31-column devices table and 30,640 order rows. The note was not
+    merely incomplete; it asserted a negative the source contradicts.
+
+    Every denial left in the template must be reachable from data: some name in
+    its enclosing condition that is not a ``show_*`` section-visibility flag, so
+    a record with rows in it makes the sentence disappear. A section that cannot
+    be reconstructed says so instead (``UNRECONSTRUCTED``), which claims nothing
+    either way.
+
+    Stated limit: this reads raw HTML, so the ``{{ x or 'No …' }}`` shape is out
+    of its reach. That shape is data-driven by construction in the social-history
+    block, and the three places where the left side was a constant rather than a
+    record value are gone — see the reconciliation test below, which pins them.
+    """
+    stuck = [
+        (text, sorted(guards))
+        for text, guards in _denials_and_their_guards(pack)
+        if not {g for g in guards if not g.startswith("show_")}
+    ]
+    assert stuck == [], f"denial(s) no record can displace: {stuck}"
+
+
+def test_unreconstructed_sections_say_so_instead_of_denying(
+    pack: LoadedPack, records: list[Any]
+) -> None:
+    """Each section the pack cannot reconstruct renders its heading and the
+    notice — present on the page, honest about why it is empty."""
+    from anastomosis.packs.practice_fusion_soap.context import UNRECONSTRUCTED
+
+    env = _env(pack)
+    blob = env.get_template(pack.template_path.name).render(
+        **pack.build_context(records[0].encounters[0], records[0], _cfg(pack))
+    )
+    for heading in _UNRECONSTRUCTED_SECTIONS:
+        assert f">{heading}<" in blob, f"missing section heading: {heading!r}"
+    assert blob.count(UNRECONSTRUCTED) >= len(_UNRECONSTRUCTED_SECTIONS)
+    for gone in (
+        "No implantable devices recorded",
+        "No orders attached to this encounter.",
+        "No observations recorded.",
+        "No quality of care events recorded.",
+        "No care plan recorded.",
+    ):
+        assert gone not in blob, f"still denying: {gone!r}"
+
+
+def test_no_reconciliation_answer_is_invented(pack: LoadedPack, records: list[Any]) -> None:
+    """ "Was medication reconciliation completed? No selection made" answers for
+    the clinician. A v9 export carries no reconciliation column at all — the
+    vendor's 85-table dictionary has no such field — so the three answers come
+    from the source or not at all."""
+    from anastomosis.packs.practice_fusion_soap.context import UNRECONSTRUCTED_SHORT
+
+    ctx = pack.build_context(records[0].encounters[0], records[0], _cfg(pack))
+    for key in ("diag_recon_text", "allergy_recon_text", "med_recon_text"):
+        assert ctx[key] is None, f"{key} was invented: {ctx[key]!r}"
+    blob = _env(pack).get_template(pack.template_path.name).render(**ctx)
+    assert "No selection made" not in blob
+    assert UNRECONSTRUCTED_SHORT in blob

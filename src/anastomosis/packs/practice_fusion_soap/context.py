@@ -493,6 +493,37 @@ def _demographics(patient: Patient) -> dict[str, Any]:
     }
 
 
+#: What a section says when this pack cannot reconstruct it.
+#:
+#: Six sections used to print the vendor's own empty state — "No implantable
+#: devices recorded", "No orders attached to this encounter." — over exports
+#: that carry exactly that data. The note was not merely incomplete; it
+#: asserted a negative the source contradicts, which is the one thing this
+#: project promises not to do.
+#:
+#: The reason those sections are static is NOT that v9 has no data path. It
+#: does: `patient-healthcare-devices` is a 31-column table, `patient-lab-orders`
+#: and `patient-lab-order-items` carry the orders (LabType separates diagnostic
+#: from imaging), and `patient-encounter-observations` carries the observations.
+#: What is missing is the ROW LAYOUT — the forensic gold standard preserves no
+#: populated example of these sections, so the pack does not invent one.
+#:
+#: So the notice claims nothing either way. It says the layout is unknown and
+#: points at where the data actually is, which is true whether the export
+#: carried anything or not.
+#:
+#: No apostrophe on purpose: autoescape turns one into ``&#39;``, and the
+#: string then stops matching itself anywhere it is compared to the page.
+UNRECONSTRUCTED = (
+    "Not reconstructed — this layout has no verified format for this section. "
+    "Whatever the export carries is preserved in the structured record for this patient."
+)
+
+#: The same statement as an inline answer, for the quality-of-care rows, where
+#: the full sentence would be answering a yes/no question with a paragraph.
+UNRECONSTRUCTED_SHORT = "Not reconstructed"
+
+
 def _section_flags(sections: dict[str, bool]) -> dict[str, bool]:
     """The per-section show/hide flags the template gates on (all default ON)."""
     return {
@@ -670,8 +701,14 @@ def build_record_context(
         # diagnoses / allergies
         "current_diagnoses": current_dx,
         "historical_diagnoses": historical_dx,
-        "diag_recon_text": None,  # LOUD: no reconciliation column in EHI
-        "allergy_recon_text": None,  # LOUD: same; falls to "No selection made"
+        # No reconciliation answer is in a v9 export — the vendor's own column
+        # dictionary has no such field across all 85 tables. These stay in the
+        # context because a source that DOES carry the answer (a C-CDA, say)
+        # would fill them; None means nobody said, and the template answers
+        # "not reconstructed" rather than "No selection made", which would be a
+        # claim about what the clinician did.
+        "diag_recon_text": None,
+        "allergy_recon_text": None,
         "drug_allergies": drug_allergies,
         "food_allergies": food_allergies,
         "env_allergies": env_allergies,
@@ -679,7 +716,7 @@ def build_record_context(
         "active_medications": active_meds,
         "historical_medications": historical_meds,
         "meds_as_of": meds_as_of,
-        "med_recon_text": "No selection made",  # GOLD §5#10 (hard-coded)
+        "med_recon_text": None,
         # immunizations
         "immunizations": [_immunization_view(i, tz) for i in record.immunizations],
         # social history
@@ -693,6 +730,9 @@ def build_record_context(
         "inactive_concerns": inactive_concerns,
         "active_goals": active_goals,
         "inactive_goals": inactive_goals,
+        # what a section says when this pack cannot reconstruct it
+        "unreconstructed": UNRECONSTRUCTED,
+        "unreconstructed_short": UNRECONSTRUCTED_SHORT,
         # logo + tokens
         "logo_data_uri": _logo_data_uri(tokens, pack_root),
         "tokens": tokens,

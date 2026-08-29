@@ -117,6 +117,28 @@ than an honest empty state, and this pack does not guess. What unblocks them is
 a real chart that shows one of them filled in — not more of the export, which
 has been there the whole time.
 
+What those six print, though, has changed. They used to carry the vendor's own
+empty state — "No implantable devices recorded", "No orders attached to this
+encounter." — which is a sentence telling the chart reader the patient has none
+of these. Over an export with a devices table and 30,640 order rows in it, that
+sentence is false, and the project's promise is that a chart never asserts
+something it did not check. So each of the six now renders `UNRECONSTRUCTED`
+(context.py): *not reconstructed, this layout has no verified format for this
+section, whatever the export carries is in the structured record.* It claims
+nothing either way and it says where to look.
+
+Quality of care went the same way for the same reason. Its three reconciliation
+questions defaulted to "No selection made", which answers for the clinician.
+A v9 export carries no reconciliation column at all — checked across the
+vendor's 85-table dictionary, which has no such field anywhere — so the three
+answers come from a source that has one, or they say "Not reconstructed".
+
+The guard: `test_no_section_denies_data_it_never_looked_for` walks the
+template's Jinja AST and requires every remaining denial sentence to sit behind
+a condition naming a data variable, not just a `show_*` visibility flag. A new
+static empty state cannot be added without wiring data to it or saying it is
+unreconstructed.
+
 ## Medications + escript line (GOLD §5)
 
 - Column header row (grey, 4-col): Active|Historical 35% / SIG 27% / START/STOP
