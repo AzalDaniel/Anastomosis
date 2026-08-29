@@ -9,6 +9,6 @@ list of source fields that do not survive a C-CDA round trip.
 """
 
 from .builder import DECLARED_LOSSES, build_ccd
-from .deliverer import deliver_ccda
+from .deliverer import CcdaExportResult, deliver_ccda
 
-__all__ = ["DECLARED_LOSSES", "build_ccd", "deliver_ccda"]
+__all__ = ["DECLARED_LOSSES", "CcdaExportResult", "build_ccd", "deliver_ccda"]

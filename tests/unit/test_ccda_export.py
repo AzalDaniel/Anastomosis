@@ -1787,7 +1787,7 @@ def test_deliverer_writes_one_xml_per_patient_in_secure_dir(tmp_path: Path) -> N
         ),
     ]
     out = tmp_path / "ccda_out"
-    written = deliver_ccda(records, out)
+    written = deliver_ccda(records, out).paths
     assert len(written) == 2
     # Filenames are patient ids only (no name-derived component).
     names = sorted(p.name for p in written)
@@ -1880,7 +1880,10 @@ def test_no_patient_values_logged_on_deliverer_failure(
     rec = _rich_record()
     with caplog.at_level(logging.DEBUG, logger="anastomosis.deliver.ccda_export.deliverer"):
         written = deliver_ccda([rec], tmp_path / "out")
-    assert written == []
+    assert written.paths == []
+    # The patient that failed to build is COUNTED, not just dropped — the caller
+    # needs a number to report, or a whole chart vanishes behind a green line.
+    assert written.missing_count == 1
     blob = " ".join(r.getMessage() for r in caplog.records)
     assert "RuntimeError" in blob  # the exception type IS logged
     assert "Cora" not in blob and "901-65-4329" not in blob
