@@ -715,7 +715,11 @@ def _encounters(section: _Element, patient_id: str, source_file: str) -> list[En
         if enc is None:
             continue
         code = _find(enc, "v3:code")
-        encounter_type = _attr(code, "displayName")
+        # displayName first — a genuinely coded encounter from another system
+        # names itself there. A nullFlavor code has no displayName to read (_attr
+        # treats the whole element as absent), and its type is in originalText.
+        original_text = _text_content(_find(code, "v3:originalText"))
+        encounter_type = _attr(code, "displayName") or original_text
         out.append(
             Encounter(
                 id=_encounter_id(_val_attr(enc, "v3:id", "root"), source_file, index),
