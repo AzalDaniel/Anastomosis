@@ -56,6 +56,7 @@ def attach_fhir_destination(
     *,
     bearer_token: str | None = None,
     create_missing_patients: bool = False,
+    search_by_ssn: bool = False,
 ) -> FhirApiDestination:
     """Build the FHIR R4 destination for ``base_url`` (the SEAM tests mock).
 
@@ -63,7 +64,10 @@ def attach_fhir_destination(
     request; ``None`` means unauthenticated (the normal case for a local HAPI
     server). ``create_missing_patients`` lets the resolver POST a new
     ``Patient`` when the destination holds none matching — the migration-target
-    case, where the patients have not been moved over yet.
+    case, where the patients have not been moved over yet. ``search_by_ssn``
+    lets a patient carrying no other identifier be looked up by their SSN; off
+    by default, because a search parameter rides in the URL query string and
+    that reaches the destination's access log and every proxy between.
 
     The returned destination owns no browser and no subprocess, so it has no
     ``release()``; :func:`~anastomosis.core.upload_command.run_upload_command`
@@ -73,4 +77,8 @@ def attach_fhir_destination(
     from .destination import FhirApiDestination
 
     endpoint = FhirEndpoint(base_url, bearer_token=bearer_token)
-    return FhirApiDestination(FhirClient(endpoint), create_missing_patients=create_missing_patients)
+    return FhirApiDestination(
+        FhirClient(endpoint),
+        create_missing_patients=create_missing_patients,
+        search_by_ssn=search_by_ssn,
+    )

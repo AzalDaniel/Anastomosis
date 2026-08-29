@@ -89,6 +89,19 @@ def upload_cmd(
             ),
         ),
     ] = True,
+    search_by_ssn: Annotated[
+        bool,
+        typer.Option(
+            "--search-by-ssn/--no-search-by-ssn",
+            help=(
+                "API route: look a patient up by their SSN when they carry no "
+                "other identifier (OFF by default — a search parameter rides in "
+                "the URL query string, which the destination and any proxy log). "
+                "Off, such a patient is not found: with --create-patients that "
+                "makes a duplicate, which is visible and fixable."
+            ),
+        ),
+    ] = False,
     skiplist: Annotated[
         Path | None,
         typer.Option(
@@ -227,6 +240,7 @@ def upload_cmd(
                 base_url,
                 bearer_token=bearer_token,
                 create_missing_patients=create_patients,
+                search_by_ssn=search_by_ssn,
             )
 
         attach = _attach_api
