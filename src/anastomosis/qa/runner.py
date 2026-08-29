@@ -57,10 +57,17 @@ def run_qa(
     *,
     section_flags: dict[str, bool] | None = None,
     page_size: str = "Letter",
+    render_tz: str | None = None,
     checks: list[QACheck] | None = None,
 ) -> QAReport:
     """Apply every check to every document; check crashes are check bugs and
-    surface as CRASH findings rather than aborting the batch."""
+    surface as CRASH findings rather than aborting the batch.
+
+    ``render_tz`` is the timezone the pack rendered these documents in. Pass it
+    whenever one is known: a check that reasons about the render day has to read
+    the same clock the pack stamped the page with, or its verdict depends on
+    where the operator happens to be sitting.
+    """
     active = checks if checks is not None else engine_checks()
     report = QAReport()
     for pdf_path, encounter, record in documents:
@@ -69,6 +76,7 @@ def run_qa(
             record=record,
             section_flags=section_flags or {},
             page_size=page_size,
+            render_tz=render_tz,
         )
         # Extract the PDF's text + geometry once for this document; the engine
         # checks share it instead of each re-opening the file (up to 4x per run).

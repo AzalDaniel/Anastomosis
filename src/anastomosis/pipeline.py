@@ -688,6 +688,7 @@ def _run_qa_stage(
         ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
         section_flags=engine.section_flags,
         page_size=page_size,
+        render_tz=engine.timezone,
     )
     settle_qa(report, out, emit)
     return report

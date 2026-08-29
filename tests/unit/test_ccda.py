@@ -5,7 +5,7 @@ tests/fixtures/ccda/README.md.
 """
 
 import re
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,7 @@ from anastomosis.core.model import (
     AllergyCategory,
     IdentifierKind,
     ObservationCategory,
+    Patient,
     PatientRecord,
 )
 from anastomosis.sources import get_source
@@ -202,6 +203,172 @@ def test_results(record: PatientRecord) -> None:
     assert glucose.unit == "mg/dL"
     creatinine = next(o for o in labs if o.code == "2160-0")
     assert creatinine.value == "0.9"
+
+
+# --- measurements reach the visit they were taken at -------------------------
+
+
+def test_a_measurement_is_charted_at_the_visit_it_was_taken_at(record: PatientRecord) -> None:
+    """The link the packs index by.
+
+    Both SOAP packs group observations strictly by ``encounter.id``, so an
+    observation with no ``encounter_id`` renders nowhere — and this adapter,
+    alone among the sources, never set one. Every vital and lab on the chart sat
+    in the patient-level bucket, the vitals section of every C-CDA-sourced PDF
+    came out empty, and the QA check written to catch that iterated the same
+    empty list and passed on an empty loop.
+
+    The fixture's Notes entry is dated the same day as the office visit; it must
+    not count as a second candidate, or the day would read as ambiguous and
+    nothing would link at all.
+    """
+    office = next(
+        e for e in record.encounters if (e.encounter_type or "").startswith("Office outpatient")
+    )
+    charted = record.observations_for(office.id)
+    assert [o.code for o in charted] == [
+        "8480-6",
+        "8462-4",
+        "8867-4",
+        "29463-7",
+        "8302-2",
+        "2345-7",
+        "2160-0",
+    ]
+    assert next(o for o in charted if o.code == "8480-6").value == "122"
+
+    measurements = [
+        o
+        for o in record.observations
+        if o.category in (ObservationCategory.VITAL_SIGNS, ObservationCategory.LABORATORY)
+    ]
+    assert measurements and all(o.encounter_id == office.id for o in measurements)
+
+    # Smoking status is a standing fact about the patient, not a reading taken
+    # at an appointment, so it stays record-level where the packs read it from.
+    smoking = next(o for o in record.observations if o.display == "Tobacco use")
+    assert smoking.encounter_id is None
+
+    note_only = next(e for e in record.encounters if e.encounter_type is None)
+    assert record.observations_for(note_only.id) == []
+
+
+# Two office visits on one calendar day — ordinary for a patient seen twice, and
+# the case where the document's timestamps stop being evidence about which visit
+# a reading belongs to.
+_TWO_VISITS_ONE_DAY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <id root="feedface-0000-0000-0000-00000000cda3"/>
+  <title>Two-visits-one-day CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000001"/>
+    <patient><name><given>Ada</given><family>Fixture</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="8716-3" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Vital Signs</title>
+      <text>BP 122/78 mm[Hg] (2023-05-10)</text>
+      <entry><organizer classCode="CLUSTER" moodCode="EVN">
+        <id root="feedface-0000-0000-0000-0000000000a1"/>
+        <effectiveTime value="20230510140000-0500"/>
+        <component><observation classCode="OBS" moodCode="EVN">
+          <code code="8480-6" displayName="Systolic blood pressure"
+                codeSystem="2.16.840.1.113883.6.1"/>
+          <effectiveTime value="20230510140000-0500"/>
+          <value xsi:type="PQ" value="122" unit="mm[Hg]"/>
+        </observation></component>
+      </organizer></entry>
+    </section></component>
+    <component><section>
+      <code code="46240-8" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Encounters</title>
+      <text>Two office visits (2023-05-10)</text>
+      <entry><encounter classCode="ENC" moodCode="EVN">
+        <id root="feedface-0000-0000-0000-0000000000e1"/>
+        <code code="99213" displayName="Office outpatient visit 15 minutes"
+              codeSystem="2.16.840.1.113883.6.12"/>
+        <effectiveTime value="20230510"/>
+      </encounter></entry>
+      <entry><encounter classCode="ENC" moodCode="EVN">
+        <id root="feedface-0000-0000-0000-0000000000e2"/>
+        <code code="99214" displayName="Office outpatient visit 25 minutes"
+              codeSystem="2.16.840.1.113883.6.12"/>
+        <effectiveTime value="20230510"/>
+      </encounter></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_two_visits_on_one_day_leave_the_measurement_record_level(tmp_path: Path) -> None:
+    """The restraint half, and the reason this is a link and not a guess.
+
+    A calendar day with one visit on it is evidence about where a reading
+    belongs. A day with two is not, and charting the reading at whichever
+    encounter the parser happened to see first would put a real measurement on a
+    visit it may not have been taken at — the misfiling this project exists to
+    prevent. So it stays record-level, where the archive and the C-CDA export
+    still carry it, rather than being written onto the wrong page.
+    """
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "two_visits.xml"
+    doc.write_text(_TWO_VISITS_ONE_DAY_CCD, encoding="utf-8")
+    parsed = parse_document(doc)
+
+    assert len(parsed.encounters) == 2
+    assert {e.date_of_service for e in parsed.encounters} == {date(2023, 5, 10)}
+    systolic = next(o for o in parsed.observations if o.code == "8480-6")
+    assert systolic.value == "122"  # still parsed, in full
+    assert systolic.encounter_id is None
+    assert all(parsed.observations_for(e.id) == [] for e in parsed.encounters)
+
+
+def test_the_link_is_only_made_on_evidence_the_document_gives() -> None:
+    """Two things the linker declines to do, neither reachable through today's
+    parser but both one small change away.
+
+    If a future reader learns to follow an ``entryRelationship`` to the encounter
+    it names, that link is the document's own statement and a same-day guess must
+    never overwrite it. And a measurement the document never dated has nothing to
+    match on at all.
+    """
+    from anastomosis.core.model import Encounter, Observation
+    from anastomosis.sources.ccda.parser import _link_measurements_to_encounters
+
+    pid = "feedface-0000-0000-0000-000000000001"
+    stated = Observation(
+        patient_id=pid,
+        encounter_id="feedface-0000-0000-0000-0000000000e9",
+        category=ObservationCategory.VITAL_SIGNS,
+        code="8480-6",
+        value="122",
+        effective_at=datetime(2023, 5, 10, 14, 0, tzinfo=UTC),
+    )
+    undated = Observation(
+        patient_id=pid,
+        category=ObservationCategory.VITAL_SIGNS,
+        code="8462-4",
+        value="78",
+    )
+    record = PatientRecord(
+        patient=Patient(id=pid),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id=pid,
+                date_of_service=date(2023, 5, 10),
+                encounter_type="Office outpatient visit 15 minutes",
+            )
+        ],
+        observations=[stated, undated],
+    )
+    _link_measurements_to_encounters(record)
+
+    assert stated.encounter_id == "feedface-0000-0000-0000-0000000000e9"
+    assert undated.encounter_id is None
 
 
 # --- social history ----------------------------------------------------------
