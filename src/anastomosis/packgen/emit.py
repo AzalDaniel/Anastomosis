@@ -41,7 +41,9 @@ Design choices, grounded in the pack contracts read above:
   and a single-sample run emits no sample-derived text at all. What the operator
   is owed is the rest of it, which is why ``SAME_PATIENT_CAVEAT`` now says that
   distinct patients are not on their own enough, and asks them to read the
-  labels rather than trust them.
+  labels rather than trust them — and why ``STATIC_LIST_NOTE`` repeats it in
+  one sentence directly above the strings themselves, in both emitted files. A
+  caveat at the top of a document does not survive the scroll down to the list.
 * **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
   (sorted keys, fixed float formatting, deterministic section ordering).
 """
@@ -49,6 +51,7 @@ Design choices, grounded in the pack contracts read above:
 from __future__ import annotations
 
 import re
+import textwrap
 from pathlib import Path
 
 from anastomosis.core.output import secure_output_dir
@@ -57,6 +60,7 @@ from .infer import PackAnalysis, PageGeometry, SectionCandidate
 
 __all__ = [
     "SAME_PATIENT_CAVEAT",
+    "STATIC_LIST_NOTE",
     "emit_draft_pack",
 ]
 
@@ -107,6 +111,19 @@ SAME_PATIENT_CAVEAT = (
     "the same way. With three samples the bar is two. Read the static labels "
     "below and delete anything that belongs to a patient rather than to the "
     "form."
+)
+
+# SAME_PATIENT_CAVEAT says this at length at the top of DRAFT.md; this says it
+# again in one sentence, and both emitted surfaces put it directly above the
+# list of strings it is about. What sat there before called the list template
+# chrome and assured the operator in as many words that it held nothing of the
+# patient's — flatly contradicting the caveat four paragraphs up, at the one
+# moment they are looking at the strings and deciding what to keep. A caveat
+# only works if it is still true where the reader is.
+STATIC_LIST_NOTE = (
+    "Recurring is a frequency count, not proof of who wrote a string: a value "
+    "two patients share recurs the same way. Delete anything here that belongs "
+    "to a patient rather than to the form."
 )
 
 # Static strings that, after normalization, signal a known patient-header model
@@ -613,22 +630,62 @@ def _escape_html(text: str) -> str:
 
 
 def _unplaced_comment(unplaced: list[str]) -> str:
-    """The UNPLACED STATIC TEXT comment block — losslessness made visible.
+    """A pointer to the quarantine file — never the strings themselves.
 
-    Every static string that did not map to a known model field is emitted
-    here, verbatim and HTML-comment-safe, so the operator can position it by
-    hand. Empty when nothing was unplaced.
+    These strings used to be written into the template verbatim, and that was
+    the wrong file for them. ``template.html`` is the working artifact: it
+    renders every future patient's chart, it is what gets copied when someone
+    derives a second pack from this one, and it is what a colleague is handed
+    when they ask for "the pack". A previous patient's diagnosis sitting in an
+    HTML comment inside it travels everywhere the pack goes, forever, and
+    surviving as a comment is precisely what makes it easy to never notice.
+
+    So the strings live in ONE inert file instead, and this points at it. That
+    makes the operator's remedy a complete action rather than a diligent one:
+    deleting :data:`UNPLACED_NAME` purges every sample-derived string the
+    generator kept, with nothing of the kind left behind in a file they have to
+    remember to also check.
     """
     if not unplaced:
         return ""
-    body = "\n".join(f"    {_comment_safe(text)}" for text in unplaced)
     return (
-        "<!-- UNPLACED STATIC TEXT — position manually.\n"
-        "     These strings recurred across your samples (template labels/\n"
-        "     boilerplate) but did not map to a known model field. Nothing is\n"
-        "     dropped: move each into the template where it belongs.\n"
-        f"{body}\n"
+        "<!-- UNPLACED STATIC TEXT — see " + UNPLACED_NAME + ".\n"
+        "     Strings that recurred across your samples but mapped to no known\n"
+        "     model field are listed there, not here: this file renders real\n"
+        "     charts and travels with the pack, and a sample-derived string in\n"
+        "     it would travel too. Nothing is dropped — move what you keep from\n"
+        f"     {UNPLACED_NAME} into this template where it belongs, and delete\n"
+        "     that file when you are done with it.\n"
         "-->\n"
+    )
+
+
+#: The one file a generated pack puts sample-derived text in. Named so that
+#: deleting it is an obvious and complete act: an operator who removes it has
+#: removed every string the learner carried out of their charts.
+UNPLACED_NAME = "UNPLACED.txt"
+
+
+def _render_unplaced_file(unplaced: list[str]) -> str:
+    """The quarantine file: the strings, and why they need reading.
+
+    Plain text on purpose. It is not Jinja, not YAML and not Markdown, so
+    nothing renders it, nothing imports it, and no tool downstream picks it up
+    by accident — it exists to be read once by a person and then deleted.
+    """
+    note = textwrap.fill(STATIC_LIST_NOTE, width=76)
+    body = "\n".join(unplaced)
+    return (
+        "UNPLACED STATIC TEXT\n"
+        "====================\n\n"
+        "These strings recurred across your samples but did not map to a known\n"
+        "model field, so the generator could not place them and did not guess.\n\n"
+        f"{note}\n\n"
+        "Move what belongs to the form into template.html, then delete this\n"
+        "file. It is the only file in this pack carrying text taken from your\n"
+        "samples, so deleting it is the whole job.\n\n"
+        "--------------------------------------------------------------------\n"
+        f"{body}\n"
     )
 
 
@@ -706,9 +763,36 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
         )
         or "- (none cleared the confidence gate)"
     )
-    unplaced_lines = (
-        "\n".join(f"- {t}" for t in unplaced) or "- (all static text mapped to known header fields)"
-    )
+    if analysis.low_confidence:
+        # _classify_static withholds everything on one sample, so an empty list
+        # here does not mean everything was placed — it means nothing was
+        # written at all. Saying "nothing is dropped" over that would be the
+        # exact inversion of the truth, so this branch says what happened.
+        unplaced_note = (
+            "Nothing was written. One sample cannot separate the form from the "
+            "patient — every string in it recurs trivially — so no "
+            "sample-derived text was written into this pack at all. That "
+            "is a deliberate withholding, not a report that there was nothing "
+            "to place. Re-run with three or more DISTINCT-patient samples."
+        )
+        unplaced_lines = "- (withheld — see above)"
+    else:
+        unplaced_note = (
+            "Strings that recurred across your samples but mapped to no known "
+            f"model field are in `{UNPLACED_NAME}`. {STATIC_LIST_NOTE} They are "
+            "listed there rather than here, and no longer inside "
+            "`template.html`, because both this file and that one travel with "
+            "the pack: a string in either would be copied into every pack "
+            "derived from it. Nothing is dropped — move what belongs to the "
+            f"form into `template.html`, then delete `{UNPLACED_NAME}`, which "
+            "is the only file here holding text taken from your charts."
+        )
+        unplaced_lines = (
+            f"- see `{UNPLACED_NAME}` ({len(unplaced)} string(s) to read and place)"
+            if unplaced
+            else "- (all static text mapped to known header fields)"
+        )
+    unplaced_note = textwrap.fill(unplaced_note, width=76)
 
     return f"""# DRAFT pack: {name}
 
@@ -742,10 +826,7 @@ output as a starting point.
 
 ## Unplaced static text
 
-The strings below recurred across your samples (so they are template labels/
-boilerplate, not patient data) but did not map to a known model field. They
-are preserved verbatim inside an `UNPLACED STATIC TEXT` comment at the top of
-`template.html` — nothing is dropped. Move each into the template by hand:
+{unplaced_note}
 
 {unplaced_lines}
 
@@ -794,4 +875,9 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     (pack_dir / "DRAFT.md").write_text(
         _render_draft_md(analysis, name=name, display=display), encoding="utf-8"
     )
+    # The quarantine, and only when there is something to quarantine: an empty
+    # UNPLACED.txt in every pack would train operators to ignore the name.
+    _, unplaced = _classify_static(analysis)
+    if unplaced:
+        (pack_dir / UNPLACED_NAME).write_text(_render_unplaced_file(unplaced), encoding="utf-8")
     return pack_dir

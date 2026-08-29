@@ -11,14 +11,20 @@ within a tolerance), not DBSCAN — a practice operator must be able to read why
 a column or type level was inferred.
 
 PHI rule: the only span text that ever reaches a human-readable summary is the
-*static* text — strings recurring across a supermajority of samples, which are
-by construction template labels/headings, not per-patient values. A string
-seen in only one sample is per-patient by definition and never appears in
-:meth:`PackAnalysis.summary_lines`. This is asserted in the tests.
+*static* text — strings recurring across a supermajority of samples. "Which
+are by construction template labels/headings, not per-patient values" is what
+followed, and a count of samples cannot settle who wrote a string: with three
+samples the bar is two, so anything two patients happen to share lands in the
+static set (#200). The half the count does settle: a string seen in only one
+sample is per-patient by definition and never appears in
+:meth:`PackAnalysis.summary_lines`. That half, and only that, is asserted in
+the tests.
 
 CAVEAT: the split assumes samples are DISTINCT patients/encounters — copies
 of one patient's chart make that patient's values recur like template text
-and surface as "static". Operator guidance, restated by the wizard.
+and surface as "static". Distinct patients are not on their own enough
+either; :data:`anastomosis.packgen.emit.SAME_PATIENT_CAVEAT` says why, and the
+wizard restates it.
 """
 
 from __future__ import annotations
@@ -57,8 +63,9 @@ __all__ = [
 _SIZE_TOLERANCE = 0.25  # type-scale font-size cluster width
 _COLUMN_TOLERANCE = 1.0  # x0 column-start cluster width
 
-# A candidate is "static" (template, not per-patient) when it recurs across at
-# least this fraction of samples.
+# A candidate is "static" when it recurs across at least this fraction of
+# samples. Recurring is all the constant decides; it is not the same as
+# belonging to the form, and a value two patients share clears the bar.
 _STATIC_FRACTION = 0.6
 
 _HEADING_ROLES = ("h1", "h2", "h3")
@@ -237,10 +244,11 @@ def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCan
     """Recurring heading-level texts → the pack's section-heading taxonomy.
 
     A heading-level span is one whose (font, size, bold) cluster carries an
-    h-role in the inferred type scale. A candidate is STATIC (a template
-    heading, not per-patient data) when its normalized text recurs across at
-    least ``ceil(0.6 * N)`` samples; per-patient data, with N >= 2 samples,
-    does not recur and is dropped here.
+    h-role in the inferred type scale. A candidate is kept when its normalized
+    text recurs across at least ``ceil(0.6 * N)`` samples. That drops any
+    per-patient heading no two charts happen to share, which is a smaller
+    claim than dropping per-patient headings — see :func:`infer_static_text`
+    for what counting samples can and cannot settle.
 
     With a SINGLE sample everything recurs trivially (threshold 1), so every
     heading is returned flagged low-confidence (``count == 1``). More samples

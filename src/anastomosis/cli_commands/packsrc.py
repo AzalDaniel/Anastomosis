@@ -235,8 +235,10 @@ def pack_init(
     )
 
     # Analyze step (confirmed=False): validate the name, collect + harvest the
-    # samples, and produce the PHI-safe summary. The shared core does the work;
-    # this command presents it and runs the interactive confirm.
+    # samples, and produce the summary — not "the PHI-safe summary", which is
+    # what this said and what the print below stopped calling it. The shared
+    # core does the work; this command presents it and runs the interactive
+    # confirm.
     analysis_result = run_pack_init(
         PackInitCommand(
             samples=samples, name=name, display=display, out_dir=out_dir, confirmed=False

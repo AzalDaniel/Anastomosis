@@ -14,6 +14,14 @@ with three samples the bar is two — so a diagnosis or an ethnicity that two of
 three DIFFERENT patients share classifies as template chrome and is written
 verbatim into ``template.html`` and ``DRAFT.md`` (#200).
 
+That sweep read the source files and the GUI markup, and missed the copies
+emit.py writes *into* the pack: the header of the UNPLACED comment in
+``template.html`` and the "Unplaced static text" paragraph in ``DRAFT.md``,
+both of which called the list "template labels/boilerplate, not patient data"
+directly above the values two patients shared. Those are the words the
+operator reads at the moment they decide what to keep, so they are the ones
+that mattered most. The sweep below now covers the emitted files too.
+
 This file holds the reproduction and pins the wording that now tells the truth
 about it. It does NOT assert the threshold, which is the maintainer's call —
 raising it to a true intersection changes what every learned pack contains.
@@ -110,23 +118,39 @@ def test_the_caveat_names_the_failure_that_actually_happens() -> None:
 
 
 def test_no_surface_promises_the_list_is_free_of_patient_data() -> None:
-    """Three places said so; the list cannot keep that promise."""
+    """Every place that said so; the list cannot keep that promise."""
     from anastomosis.gui.shell import _WEB_DIR
 
+    # A source sweep can only forbid a phrasing the file does not also quote,
+    # and this codebase confesses in quotations — the docstrings that used to
+    # make the claim now print it back with "is what this said" after it. So
+    # the entries below are the wordings no file states OR quotes; the emitted
+    # files, which carry no such commentary, are swept properly two tests down.
     repo = Path(__file__).resolve().parents[2]
+    packgen = repo / "src" / "anastomosis" / "packgen"
     claims = {
-        repo / "src" / "anastomosis" / "packgen" / "emit.py": "never recur and never reach here",
-        repo / "src" / "anastomosis" / "packgen" / "infer.py": "never per-patient",
-        repo
-        / "src"
-        / "anastomosis"
-        / "cli_commands"
-        / "packsrc.py": "Inferred design[/bold] (PHI-safe summary)",
+        packgen / "emit.py": (
+            "never recur and never reach here",
+            # The two that survived the #200 sweep because emit.py writes them
+            # INTO the pack rather than saying them about it.
+            "(template labels/",
+            "boilerplate, not patient data",
+        ),
+        packgen / "infer.py": (
+            "never per-patient",
+            'A candidate is "static" (template, not per-patient)',
+        ),
+        repo / "src" / "anastomosis" / "cli_commands" / "packsrc.py": (
+            "Inferred design[/bold] (PHI-safe summary)",
+            "produce the PHI-safe summary",
+        ),
     }
-    for path, claim in claims.items():
-        assert claim not in path.read_text(encoding="utf-8"), (
-            f"{path.name} still claims {claim!r}, which the frequency split cannot support"
-        )
+    for path, forbidden in claims.items():
+        body = path.read_text(encoding="utf-8")
+        for claim in forbidden:
+            assert claim not in body, (
+                f"{path.name} still claims {claim!r}, which the frequency split cannot support"
+            )
 
     # The GUI said it in the plainest words of the three, and said it twice —
     # once over the learned LABELS, once over the learned column MATCH-UP. Only
@@ -141,3 +165,91 @@ def test_no_surface_promises_the_list_is_free_of_patient_data() -> None:
     # "this string is absent" check trips on the comment explaining why it is
     # absent, which is how this test failed twice while the markup was right.
     assert "value two patients happen to share repeats too" in markup
+
+
+def _flat(text: str) -> str:
+    """Whitespace-insensitive compare — the note is line-wrapped per surface."""
+    return " ".join(text.split())
+
+
+def test_sample_text_lands_in_the_quarantine_and_in_no_other_file(tmp_path: Path) -> None:
+    """One file carries text taken from the samples, and deleting it is the job.
+
+    This assertion is the inverse of the one it replaces, and deliberately so.
+    That test pinned the shared diagnosis as PRESENT in template.html and
+    DRAFT.md — it was documenting the leak while checking the wording printed
+    above it. Wording was the right fix for the claim; it is not a fix for the
+    string being in those files.
+
+    Both of them travel. template.html renders every future patient's chart and
+    is what gets copied when a second pack is derived from this one; DRAFT.md
+    is the sheet handed over with it. A previous patient's diagnosis in either
+    is carried everywhere the pack goes, and being an HTML comment is what
+    makes it easy never to notice.
+
+    So the strings sit in UNPLACED.txt, which renders nothing and is imported by
+    nothing, and the operator's remedy stops depending on their diligence: they
+    delete one file rather than reading two and remembering a third.
+    """
+    from anastomosis.packgen import analyze, extract_samples
+    from anastomosis.packgen.emit import STATIC_LIST_NOTE, UNPLACED_NAME, emit_draft_pack
+
+    analysis = analyze(extract_samples(_samples(tmp_path)))
+    pack_dir = emit_draft_pack(
+        analysis, name="acme_soap", display="ACME Clinic", out_dir=tmp_path / "out"
+    )
+
+    # The premise: this fixture really does produce the leak worth quarantining.
+    # Two of its three patients share this diagnosis, so it recurs and promotes.
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    assert "Type 2 diabetes mellitus" in quarantine, "the fixture lost the reproduction"
+
+    # And it is in NOTHING else the generator wrote.
+    for path in sorted(pack_dir.rglob("*")):
+        if not path.is_file() or path.name == UNPLACED_NAME:
+            continue
+        body = path.read_text(encoding="utf-8", errors="replace")
+        assert "Type 2 diabetes mellitus" not in body, (
+            f"{path.name} carries a string taken from the samples"
+        )
+
+    # The quarantine still says what recurrence does not prove — the operator
+    # decides what to keep while looking at the list, not four sections above it.
+    assert _flat(STATIC_LIST_NOTE) in _flat(quarantine)
+    for claim in ("not patient data", "boilerplate", "template labels"):
+        assert claim not in quarantine, f"the quarantine calls the list {claim!r}"
+
+    # And the two travelling files still point at it, so nothing is silently lost.
+    for name in ("template.html", "DRAFT.md"):
+        assert UNPLACED_NAME in (pack_dir / name).read_text(encoding="utf-8"), (
+            f"{name} drops the strings without saying where they went"
+        )
+
+
+def test_a_single_sample_draft_does_not_claim_nothing_was_dropped(tmp_path: Path) -> None:
+    """One sample withholds every string, and the draft used to report the opposite.
+
+    With ``low_confidence`` the emitter writes no sample-derived text at all —
+    the right call. But DRAFT.md read the empty result as "all static text
+    mapped to known header fields" and repeated the losslessness line under it,
+    telling the operator the pack held everything the learner saw.
+    """
+    from anastomosis.packgen import analyze, extract_samples
+    from anastomosis.packgen.emit import emit_draft_pack
+
+    analysis = analyze(extract_samples(_samples(tmp_path)[:1]))
+    assert analysis.low_confidence is True
+    assert analysis.static_text, "the fixture must give the learner something to withhold"
+
+    pack_dir = emit_draft_pack(
+        analysis, name="acme_soap", display="ACME Clinic", out_dir=tmp_path / "out"
+    )
+    draft = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
+
+    assert "nothing is dropped" not in draft
+    assert "all static text mapped to known header fields" not in draft
+    assert "deliberate withholding" in draft
+    # And the withholding held: no sample-derived text in either file.
+    template = (pack_dir / "template.html").read_text(encoding="utf-8")
+    for name, _diagnosis, _ethnicity in _PATIENTS[:1]:
+        assert name not in draft and name not in template
