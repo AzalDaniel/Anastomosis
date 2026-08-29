@@ -8,12 +8,19 @@ doesn't ship.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from anastomosis.core.identity import date_token_present, name_fragment_present, token_present
-from anastomosis.core.model import Encounter, ObservationCategory
+from anastomosis.core.model import (
+    CHARTABLE_KINDS,
+    Encounter,
+    Observation,
+    ObservationCategory,
+    PatientRecord,
+)
 from anastomosis.core.timeutil import all_date_spellings, to_local
 
 from .base import CheckResult, QAContext, Verdict, register_check
@@ -23,6 +30,7 @@ __all__ = [
     "DateStalenessCheck",
     "LayoutPaginationCheck",
     "NoteBodyCheck",
+    "RecordCoverageCheck",
     "VitalsLoincCheck",
 ]
 
@@ -321,6 +329,190 @@ class UnattributedVitalsCheck:
         return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
 
 
+#: Observation categories that are RESULTS — something measured and reported
+#: back. Vital signs are excluded because they are encounter-scoped and have
+#: two checks of their own; social history and screening are excluded because
+#: each is somebody else's section on the chart, with its own empty state.
+#: "Other" is included deliberately: an uncategorised observation is a value a
+#: source handed us and we could not classify, which is the last thing that
+#: should quietly go unlooked-for.
+_RESULT_CATEGORIES = frozenset({ObservationCategory.LABORATORY, ObservationCategory.OTHER})
+
+
+def _first(*candidates: str | None) -> str | None:
+    """The first field with something in it, or None if a record item has no
+    name at all. The fallback order goes from what a person reads down to what
+    a machine reads — a chart printing the ICD-10 instead of the description
+    has still carried the diagnosis."""
+    return next((value for value in candidates if value), None)
+
+
+#: Where each chartable kind lives in the record, and how one of its items
+#: would be named on a page. One entry per item INCLUDING the unnamed ones: a
+#: medication with no name is still a medication the record holds, and counting
+#: only the nameable ones would let a source that lost every label report full
+#: coverage.
+_COVERAGE_LABELS: dict[str, Callable[[PatientRecord], list[str | None]]] = {
+    "conditions": lambda r: [_first(c.display, c.icd10, c.snomed) for c in r.conditions],
+    "allergies": lambda r: [a.substance for a in r.allergies],
+    "medications": lambda r: [
+        _first(m.display_name, m.generic_name, m.brand_name) for m in r.medications
+    ],
+    "immunizations": lambda r: [i.vaccine for i in r.immunizations],
+    "results": lambda r: [
+        _first(o.display, o.code) for o in r.observations if o.category in _RESULT_CATEGORIES
+    ],
+}
+
+
+def _coverage_labels(record: PatientRecord, kind: str) -> list[str | None]:
+    """How each item of ``kind`` would be named on a chart, in record order.
+
+    ``KeyError`` for an unknown kind rather than an empty list: callers iterate
+    :data:`CHARTABLE_KINDS`, so a miss means the vocabulary grew and this table
+    did not, and returning nothing would read as a record holding nothing.
+    """
+    return _COVERAGE_LABELS[kind](record)
+
+
+def _label_present(label: str, normalized_text: str) -> bool:
+    """Is this clinical label on the page as its own phrase?
+
+    Both sides are already whitespace-collapsed and case-folded by
+    :func:`_normalize` — the renderer re-wraps and the extractor re-breaks, and
+    packs disagree about capitalisation. The word boundaries are what stop
+    "Fever" from being satisfied by "Fever blister": the same reasoning as the
+    identity predicates, one step down in stakes. Not those predicates
+    themselves, because a diagnosis is not a name and does not want the
+    hyphen-and-apostrophe rules that keep "Ann" out of "Mary-Ann".
+    """
+    needle = _normalize(label)
+    if not needle:
+        return False
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", normalized_text) is not None
+
+
+@dataclass(frozen=True)
+class _KindCoverage:
+    """What one record kind did on one page."""
+
+    kind: str
+    held: int  # items in the record
+    named: int  # of those, ones with a label to look for
+    found: int  # of those, ones on the page
+
+
+def _kind_coverage(record: PatientRecord, kind: str, text: str) -> _KindCoverage:
+    labels = _coverage_labels(record, kind)
+    named = [label for label in labels if label]
+    found = sum(1 for label in named if _label_present(label, text))
+    return _KindCoverage(kind=kind, held=len(labels), named=len(named), found=found)
+
+
+def _unlookable(cov: _KindCoverage) -> list[str]:
+    """Items of this kind that carry nothing to search the page for."""
+    if cov.named == cov.held:
+        return []
+    return [
+        f"{cov.held - cov.named} {cov.kind} carry no description or code to look for on the page"
+    ]
+
+
+def _absent_from_page(cov: _KindCoverage) -> list[str]:
+    """The some/none boundary, which is the whole signal.
+
+    A chart printing eight of eleven results is abbreviating; one printing zero
+    has lost the section. Partial misses are deliberately not reported — that
+    is what keeps this quiet on ordinary charts.
+    """
+    if not cov.named or cov.found:
+        return []
+    return [f"none of the {cov.named} {cov.kind} in the record are on this chart"]
+
+
+class RecordCoverageCheck:
+    """Did the chart carry the record, or only the parts the layout is good at?
+
+    Every other check reads the page and asks whether what is there is
+    well-formed. None of them asks whether what was in the record got there, so
+    a chart could drop almost all of it and still be graded clean: a real
+    Synthea patient rendered down to a header line and the words UNSIGNED NOTE,
+    with five green checks under it, because each check found nothing of its
+    kind to object to and nothing objects to finding nothing.
+
+    So this one compares the two sides QA has been holding all along. For each
+    kind of clinical fact the record carries, it asks whether ANY of them
+    reached the page. The interesting signal is entirely at the boundary
+    between some and none — a chart that prints eight of eleven results is
+    abbreviating, a chart that prints zero has lost the section — so a partial
+    miss is deliberately not a finding. That keeps the check quiet on the
+    normal case, which is the difference between a check operators read and a
+    check they learn to skip.
+
+    Absence alone does not say whether something broke, though. A SOAP visit
+    note has no problem list by design and a forensic chart replica very much
+    does, and the same empty page means opposite things in the two. So the pack
+    says which it is (``coverage`` in pack.yaml) and this check grades
+    accordingly:
+
+    * a kind the layout claims to carry, wholly absent — FAIL;
+    * a kind the layout says it has no place for — the count is reported and
+      carried up to the run summary, never graded green-with-nothing-said;
+    * a pack that declares neither — every kind is checked and an absence
+      WARNs, with the finding naming the field that would sharpen it. The
+      conservative direction on purpose: you opt into an exemption in a
+      reviewed file, you do not get one by leaving something out.
+
+    Findings name kinds and counts, never a diagnosis or a drug — a coverage
+    line travels into run reports, and the label it would quote is the chart.
+    """
+
+    name = "record_coverage"
+
+    def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
+        text = _normalize(_document_text(pdf_path, ctx))
+        seen = [_kind_coverage(ctx.record, kind, text) for kind in CHARTABLE_KINDS]
+        held = [cov for cov in seen if cov.held]
+        if not held:
+            return CheckResult(
+                self.name,
+                Verdict.PASS,
+                ["record carries none of " + ", ".join(CHARTABLE_KINDS) + ": nothing to compare"],
+            )
+
+        findings: list[str] = []
+        absent: list[str] = []
+        not_carried = 0
+        for cov in held:
+            reason = ctx.omits.get(cov.kind)
+            if reason is not None:
+                not_carried += cov.held
+                findings.append(f"{cov.held} {cov.kind} not carried by this layout: {reason}")
+                continue
+            findings.extend(_unlookable(cov))
+            absent.extend(_absent_from_page(cov))
+
+        if not ctx.coverage_declared:
+            findings.append(
+                "this pack does not say what its layout carries "
+                "(pack.yaml: coverage.carries / coverage.omits), so an absence "
+                "below is a warning rather than a failure"
+            )
+        verdict = Verdict.PASS
+        if absent:
+            verdict = Verdict.FAIL if ctx.coverage_declared else Verdict.WARN
+        return CheckResult(self.name, verdict, absent + findings, not_carried=not_carried)
+
+
+def _charted_vitals(ctx: QAContext) -> list[Observation]:
+    """This encounter's vital signs that carry a value to look for."""
+    return [
+        obs
+        for obs in ctx.record.observations_for(ctx.encounter.id)
+        if obs.category == ObservationCategory.VITAL_SIGNS and obs.value
+    ]
+
+
 class VitalsLoincCheck:
     """Every charted vital value for the encounter appears on the document."""
 
@@ -329,13 +521,20 @@ class VitalsLoincCheck:
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
         if not ctx.section_flags.get("vitals", True):
             return CheckResult(self.name, Verdict.PASS, ["vitals section disabled by flags"])
+        charted = _charted_vitals(ctx)
+        if not charted:
+            # Say so. A check that finds nothing to check and returns a bare
+            # pass lets absence of data read as presence of quality, and that
+            # is exactly how a chart with no vitals on it and eight in the
+            # record came back green.
+            return CheckResult(
+                self.name, Verdict.PASS, ["no vital signs on this encounter to verify"]
+            )
         text = _document_text(pdf_path, ctx)
         findings = [
             f"vital {obs.display or obs.code} value {obs.value!r} not found"
-            for obs in ctx.record.observations_for(ctx.encounter.id)
-            if obs.category == ObservationCategory.VITAL_SIGNS
-            and obs.value
-            and not _present(obs.value, text)
+            for obs in charted
+            if not _present(obs.value or "", text)
         ]
         return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
 
@@ -408,11 +607,16 @@ class NoteBodyCheck:
     name = "note_body"
 
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
+        bodies = _note_bodies(ctx.encounter, ctx.section_flags)
+        if not bodies:
+            return CheckResult(
+                self.name, Verdict.PASS, ["this encounter carries no narrative to verify"]
+            )
         text = _normalize(_document_text(pdf_path, ctx))
         findings: list[str] = []
         warnings: list[str] = []
 
-        for label, body in _note_bodies(ctx.encounter, ctx.section_flags):
+        for label, body in bodies:
             chunks = _chunks(body)
             if not chunks:
                 continue
@@ -434,6 +638,7 @@ for _check in (
     DataIntegrityCheck(),
     LayoutPaginationCheck(),
     NoteBodyCheck(),
+    RecordCoverageCheck(),
     UnattributedVitalsCheck(),
     VitalsLoincCheck(),
     DateStalenessCheck(),

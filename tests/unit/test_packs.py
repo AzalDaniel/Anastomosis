@@ -133,3 +133,54 @@ def test_first_definition_wins_user_shadows_builtin(tmp_path: Path) -> None:
     statuses = discover_packs([a, b], allow_external=True)
     pack = statuses["demo_soap"].pack
     assert pack is not None and pack.manifest.version == "1.0"
+
+
+# --- coverage: what a layout carries out of the record ----------------------
+
+
+def test_every_shipped_pack_places_every_kind_in_exactly_one_half() -> None:
+    """A kind in neither ``carries`` nor ``omits`` is not excused — it is
+    forgotten, and QA cannot tell a lost section from a layout that never had
+    one.
+
+    This is the guard, and it is the reason the declaration is two lists rather
+    than one: with only ``carries``, leaving a kind out reads identically to
+    deciding the layout has no place for it, and nothing would ever ask which
+    it was. Add a kind to ``CHARTABLE_KINDS`` and this fails until every
+    shipped pack has said something about it.
+    """
+    from anastomosis.core.model import CHARTABLE_KINDS
+
+    for name, status in sorted(discover_packs().items()):
+        assert status.pack is not None, status.diagnosis
+        coverage = status.pack.manifest.coverage
+        placed = set(coverage.carries) | set(coverage.omits)
+        missing = sorted(set(CHARTABLE_KINDS) - placed)
+        assert not missing, f"{name} says nothing about {missing}"
+
+
+def test_a_pack_may_not_claim_a_kind_both_ways(tmp_path: Path) -> None:
+    manifest = GOOD_MANIFEST + (
+        "coverage:\n  carries: [conditions]\n  omits: {conditions: 'no problem list here'}\n"
+    )
+    make_pack(tmp_path, manifest=manifest)
+    status = discover_packs([tmp_path], allow_external=True)["demo_soap"]
+    assert status.pack is None
+    assert status.diagnosis is not None and "carried and omitted" in status.diagnosis
+
+
+def test_a_pack_may_not_omit_a_kind_without_saying_why(tmp_path: Path) -> None:
+    """An empty reason is how an exemption outlives the reason for it."""
+    manifest = GOOD_MANIFEST + "coverage:\n  omits: {conditions: ''}\n"
+    make_pack(tmp_path, manifest=manifest)
+    status = discover_packs([tmp_path], allow_external=True)["demo_soap"]
+    assert status.pack is None
+    assert status.diagnosis is not None and "need a reason" in status.diagnosis
+
+
+def test_a_pack_may_not_invent_a_kind(tmp_path: Path) -> None:
+    manifest = GOOD_MANIFEST + "coverage:\n  carries: [horoscopes]\n"
+    make_pack(tmp_path, manifest=manifest)
+    status = discover_packs([tmp_path], allow_external=True)["demo_soap"]
+    assert status.pack is None
+    assert status.diagnosis is not None and "unknown kind" in status.diagnosis

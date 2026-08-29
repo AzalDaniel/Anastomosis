@@ -637,16 +637,17 @@ def settle_qa(report: QAReport, out: Path, emit: EventSink) -> None:
     from anastomosis.qa import Verdict, write_report
 
     write_report(report, out)
-    emit(
-        StageEvent(
-            STAGE_QA,
-            counts={
-                "pass": report.count(Verdict.PASS),
-                "warn": report.count(Verdict.WARN),
-                "fail": report.count(Verdict.FAIL),
-            },
-        )
-    )
+    counts = {
+        "pass": report.count(Verdict.PASS),
+        "warn": report.count(Verdict.WARN),
+        "fail": report.count(Verdict.FAIL),
+    }
+    # Only when there is something to say. Three green counts over a batch whose
+    # layout had no place for the problem list is true of every check and false
+    # of the run, and the rail is where an operator reads the run.
+    if report.not_carried:
+        counts["not_carried"] = report.not_carried
+    emit(StageEvent(STAGE_QA, counts=counts))
     if not report.ok:
         raise PipelineError(
             f"QA failed: {report.count(Verdict.FAIL)} document(s)", exit_code=1, kind="qa_failed"
@@ -689,6 +690,8 @@ def _run_qa_stage(
         section_flags=engine.section_flags,
         page_size=page_size,
         render_tz=engine.timezone,
+        carries=engine.carries,
+        omits=engine.omits,
     )
     settle_qa(report, out, emit)
     return report

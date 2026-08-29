@@ -557,7 +557,8 @@ def test_migrate_ccda_standard_runs_qa_and_writes_report(
     for doc in report["documents"]:
         by_check = {c["check"]: c for c in doc["checks"]}
         assert set(by_check) == registered
-        for ran in ("data_integrity", "layout_pagination", "unattributed_vitals"):
+        ran_checks = ("data_integrity", "layout_pagination", "record_coverage")
+        for ran in (*ran_checks, "unattributed_vitals"):
             assert by_check[ran]["verdict"] == "pass"
         for skipped in ("vitals_loinc", "date_staleness", "note_body"):
             assert by_check[skipped]["verdict"] == "pass"
@@ -586,7 +587,10 @@ def test_migrate_ccda_standard_qa_fail_exits_nonzero(
     fails = {
         c["check"] for doc in report["documents"] for c in doc["checks"] if c["verdict"] == "fail"
     }
-    assert fails == {"data_integrity"}
+    # Coverage fails alongside it, and truthfully: the placeholder page carries
+    # neither the identity anchor nor any of the record's clinical facts. Two
+    # checks, two different things wrong with the same page.
+    assert fails == {"data_integrity", "record_coverage"}
 
 
 def test_migrate_ccda_standard_no_qa_writes_no_report(
