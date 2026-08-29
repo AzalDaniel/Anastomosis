@@ -866,7 +866,7 @@ body {
 <div class="section-header">Screenings/ Interventions/ Assessments</div>
 {% if screening_events %}
   {% for ev in screening_events %}
-  <div class="simple-row">{{ ev.name }}{% if ev.result %}: {{ ev.result }}{% endif %}{% if ev.comments %} - {{ ev.comments }}{% endif %}</div>
+  <div class="simple-row">{% if ev.negated %}Not performed — {% endif %}{{ ev.name }}{% if ev.result %}: {{ ev.result }}{% endif %}{% if ev.comments %} - {{ ev.comments }}{% endif %}</div>
   {% endfor %}
 {% else %}
   <div class="no-record">No screenings/interventions/assessments recorded.</div>

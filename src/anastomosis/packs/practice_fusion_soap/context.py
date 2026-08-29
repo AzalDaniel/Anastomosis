@@ -693,8 +693,6 @@ def build_record_context(
         "inactive_concerns": inactive_concerns,
         "active_goals": active_goals,
         "inactive_goals": inactive_goals,
-        # screenings (events not modeled in EHI -> empty state)
-        "screening_events": [],  # LOUD: patient-encounter-events not modeled yet
         # logo + tokens
         "logo_data_uri": _logo_data_uri(tokens, pack_root),
         "tokens": tokens,
@@ -750,6 +748,11 @@ def build_context(
     # --- diagnoses attached to this encounter ----------------------------------
     encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
 
+    # --- screenings / interventions / assessments ------------------------------
+    screening_events = [
+        _screening_view(e) for e in _screening_events(record, record_cache).get(encounter.id, [])
+    ]
+
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
     subjective = soap.get(SectionKind.SUBJECTIVE) or soap.get(SectionKind.NARRATIVE)
@@ -797,6 +800,8 @@ def build_context(
         "flowsheet_vitals_label": bool(flowsheet_columns),
         # diagnoses attached to this encounter
         "encounter_diagnoses": encounter_dx,
+        # screenings / interventions / assessments
+        "screening_events": screening_events,
         # SOAP
         "subjective_html": subjective.html if subjective else None,
         "objective_html": objective.html if objective else None,
@@ -863,6 +868,38 @@ def _allergy_views(items: list[Any]) -> dict[str, list[dict[str, str | None]]]:
 
 def _concern_view(obj: Any) -> dict[str, str | None]:
     return {"description": obj.description, "date": _fmt_date_short(obj.effective) or "-"}
+
+
+def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str | None, list[Any]]:
+    """Screening events grouped by encounter id, built once per record.
+
+    Same shape and the same reason as ``observations_by_encounter``: the pack
+    asks per encounter, and a chart with thirty of them should not rescan the
+    collection thirty times.
+    """
+    index: dict[str | None, list[Any]] | None = cache.get("screening_events_by_encounter")
+    if index is None:
+        index = {}
+        for event in record.screening_events:
+            index.setdefault(event.encounter_id, []).append(event)
+        cache["screening_events_by_encounter"] = index
+    return index
+
+
+def _screening_view(event: Any) -> dict[str, Any]:
+    """One Screenings/Interventions/Assessments row.
+
+    ``negated`` reaches the template rather than being resolved into the text
+    here: the section prints name, result and comments, and an event the
+    clinician marked as not performed has to be readable as such or the row
+    claims the opposite of what the export says.
+    """
+    return {
+        "name": event.name,
+        "result": event.result,
+        "comments": event.comments,
+        "negated": event.negated,
+    }
 
 
 def _immunization_view(imm: Any, tz: str) -> dict[str, str | None]:

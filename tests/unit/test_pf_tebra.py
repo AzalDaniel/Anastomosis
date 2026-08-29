@@ -729,6 +729,71 @@ def test_health_concern_with_a_dangling_patient_refuses_the_run(tmp_path: Path) 
     assert "patient-health-concerns" in str(exc.value)
 
 
+# Real v9 spellings (the public data dictionary's patient-encounter-events page).
+_EVENT_COLUMNS = [
+    "PatientPracticeGuid",
+    "EncounterGuid",
+    "EncounterEventGuid",
+    "EventName",
+    "ResultValue",
+    "EventComments",
+    "IsNegated",
+    "EventCategory",
+]
+_EV1 = "feedface-ev00-0000-0000-000000000001"
+_EV2 = "feedface-ev00-0000-0000-000000000002"
+
+
+def test_encounter_events_are_mapped_and_keep_their_negation(tmp_path: Path) -> None:
+    """``patient-encounter-events`` feeds ``record.screening_events``, which the
+    SOAP pack's Screenings/Interventions/Assessments section reads. The pack
+    hard-coded that variable to an empty list under a LOUD comment naming this
+    very table, so the section denied every screening an export carried.
+    """
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-encounter-events",
+        _EVENT_COLUMNS,
+        [
+            [P1, E1, _EV1, "PHQ-2", "2", "Follow up next visit", "False", "Screening"],
+            [P1, E1, _EV2, "Tobacco cessation counseling", "", "", "True", "Intervention"],
+        ],
+    )
+    loaded = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
+    phq2, counselling = loaded[P1].screening_events
+    assert (phq2.encounter_id, phq2.name, phq2.result, phq2.comments, phq2.negated) == (
+        E1,
+        "PHQ-2",
+        "2",
+        "Follow up next visit",
+        False,
+    )
+    # The flag that inverts the row's meaning is a field, not an extension.
+    assert counselling.negated is True
+    assert counselling.name == "Tobacco cessation counseling"
+    # Columns the section does not print ride along instead of being dropped.
+    assert phq2.extensions["pf_tebra:EventCategory"] == "Screening"
+    # A patient with no event rows gets an empty list, not a phantom event.
+    assert loaded[P2].screening_events == []
+    # And the table is mapped now, so it must not ALSO be preserved as unmapped.
+    assert "pf_tebra:unmapped:patient-encounter-events" not in loaded[P1].extensions
+
+
+def test_encounter_event_on_no_known_patient_refuses_the_run(tmp_path: Path) -> None:
+    """The event is placed by the patient who owns it, so a row keyed to nobody
+    would be grouped once and never read again. Registering the table in the key
+    closure keeps that a refusal instead of a silent drop."""
+    export = _export_with_extra_table(
+        tmp_path / "export",
+        "patient-encounter-events",
+        _EVENT_COLUMNS,
+        [[GHOST, E1, _EV1, "PHQ-2", "2", "", "False", "Screening"]],
+    )
+    with pytest.raises(OrphanRowsError) as exc:
+        list(get_source("pf-tebra").load(export))
+    assert "patient-encounter-events" in str(exc.value)
+
+
 def test_guarantor_and_shared_actors(records: dict[str, PatientRecord]) -> None:
     cleo = records[P3]
     guarantor = cleo.patient.guarantor

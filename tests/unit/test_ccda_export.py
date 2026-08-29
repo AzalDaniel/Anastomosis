@@ -55,6 +55,7 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
     PrescriptionTransaction,
+    ScreeningEvent,
     SectionKind,
 )
 from anastomosis.core.model.patient import Address
@@ -1419,6 +1420,18 @@ def _maximal_record() -> PatientRecord:
             active=False,
         )
     ]
+    # Screening events have no structured C-CDA emitter either, so the oracle
+    # is what proves they narrate instead of vanishing on export.
+    screening_events = [
+        ScreeningEvent(
+            patient_id=pid,
+            encounter_id="feedface-0000-0000-0000-0000000000a1",
+            name="MaxScreeningName",
+            result="MaxScreeningResult",
+            comments="MaxScreeningComments",
+            negated=True,
+        )
+    ]
     coverages = [
         Coverage(
             patient_id=pid,
@@ -1532,6 +1545,7 @@ def _maximal_record() -> PatientRecord:
         advance_directives=advance_directives,
         goals=goals,
         health_concerns=health_concerns,
+        screening_events=screening_events,
         coverages=coverages,
         documents=documents,
         practitioners=practitioners,

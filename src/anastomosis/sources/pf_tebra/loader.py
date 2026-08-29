@@ -96,6 +96,7 @@ KNOWN_TABLES = (
     "patient-encounters",
     "patient-encounter-addendums",
     "patient-encounter-observations",
+    "patient-encounter-events",
     "patient-diagnoses",
     "patient-encounter-diagnoses",
     "patient-allergy",

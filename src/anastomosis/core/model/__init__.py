@@ -22,6 +22,7 @@ from .clinical import (
     PastMedicalHistory,
     Prescription,
     PrescriptionTransaction,
+    ScreeningEvent,
 )
 from .coverage import Coverage
 from .document import DocumentArtifact
@@ -69,5 +70,6 @@ __all__ = [
     "Prescription",
     "PrescriptionTransaction",
     "Provenance",
+    "ScreeningEvent",
     "SectionKind",
 ]

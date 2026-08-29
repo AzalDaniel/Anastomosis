@@ -443,6 +443,80 @@ def test_header_reads_the_columns_v9_actually_spells(pack: LoadedPack) -> None:
     assert "PRN-4242" not in html
 
 
+def test_screenings_render_per_encounter_and_keep_their_negation(pack: LoadedPack) -> None:
+    """The Screenings/Interventions/Assessments section was starved by a
+    hard-coded empty list, so it printed "No screenings/interventions/assessments
+    recorded." over every export that had them.
+
+    Two things are asserted beyond the row appearing at all. The section is
+    encounter-scoped, so an event belonging to another visit must not leak into
+    this one. And an event the clinician marked as not performed must not read
+    as one that was — that is the row stating the opposite of the export.
+    """
+    from anastomosis.core.model import (
+        Encounter,
+        NoteSection,
+        Patient,
+        PatientRecord,
+        ScreeningEvent,
+        SectionKind,
+    )
+
+    env = _env(pack)
+    template = env.get_template(pack.template_path.name)
+    cfg = _cfg(pack)
+    pid = "feedface-0000-0000-0000-0000000000ee"
+    this_visit = "feedface-ev00-0000-0000-000000000001"
+    other_visit = "feedface-ev00-0000-0000-000000000002"
+
+    def encounter(eid: str) -> Any:
+        return Encounter(
+            id=eid,
+            patient_id=pid,
+            chief_complaint="Screening coverage",
+            encounter_type="SOAP",
+            sections=[NoteSection(kind=SectionKind.SUBJECTIVE, html="<p>x</p>", text="x")],
+        )
+
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Screening", family_name="Coverage"),
+        encounters=[encounter(this_visit), encounter(other_visit)],
+        screening_events=[
+            ScreeningEvent(
+                patient_id=pid,
+                encounter_id=this_visit,
+                name="PHQ-2",
+                result="2",
+                comments="Follow up next visit",
+            ),
+            ScreeningEvent(
+                patient_id=pid,
+                encounter_id=this_visit,
+                name="Tobacco cessation counseling",
+                negated=True,
+            ),
+            ScreeningEvent(patient_id=pid, encounter_id=other_visit, name="Fall risk assessment"),
+        ],
+    )
+    html = template.render(**pack.build_context(record.encounters[0], record, cfg))
+    assert "PHQ-2: 2 - Follow up next visit" in html
+    assert "No screenings/interventions/assessments recorded." not in html
+    # The other visit's event stays on the other visit.
+    assert "Fall risk assessment" not in html
+    # And the negated one cannot be read as having happened.
+    assert "Not performed — Tobacco cessation counseling" in html
+
+    # The second encounter sees its own event and neither of the first's.
+    html = template.render(**pack.build_context(record.encounters[1], record, cfg))
+    assert "Fall risk assessment" in html
+    assert "PHQ-2" not in html
+
+    # A record with no events at all still owes the reader the empty state.
+    bare = _one_encounter_record()
+    html = template.render(**pack.build_context(bare.encounters[0], bare, cfg))
+    assert "No screenings/interventions/assessments recorded." in html
+
+
 def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> None:
     """A chart over a record that HAS health concerns must show them and stop
     printing the empty state — the section used to be two hard-coded no-record

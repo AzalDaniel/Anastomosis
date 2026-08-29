@@ -15,6 +15,7 @@ from .clinical import (
     Observation,
     PastMedicalHistory,
     Prescription,
+    ScreeningEvent,
 )
 from .coverage import Coverage
 from .document import DocumentArtifact
@@ -47,6 +48,7 @@ class PatientRecord(AnastBase):
     # Goal rather than a second class spelled identically. (A HealthConcern
     # model existed once and was deleted in 0.7.0 for never being populated.)
     health_concerns: list[Goal] = []
+    screening_events: list[ScreeningEvent] = []
     coverages: list[Coverage] = []
     documents: list[DocumentArtifact] = []
     practitioners: list[Practitioner] = []
