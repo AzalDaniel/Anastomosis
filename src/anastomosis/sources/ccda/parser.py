@@ -281,7 +281,11 @@ def _patient(clinical_doc: _Element, source_file: str, doc_meta: dict[str, Any])
     gender = _find(patient, "v3:administrativeGenderCode")
     sex = _attr(gender, "displayName")
     if sex is None and gender is not None:
-        sex = _SEX_BY_CODE.get(_attr(gender, "code") or "")
+        # nullFlavor="OTH" carries the source spelling in originalText — that is
+        # where an unmapped gender string lives, so read it before the code.
+        sex = _text_content(_find(gender, "v3:originalText")) or _SEX_BY_CODE.get(
+            _attr(gender, "code") or ""
+        )
 
     source_id = next(
         (i.value for i in _identifiers(patient_role) if i.kind == IdentifierKind.SSN), None
