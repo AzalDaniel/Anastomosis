@@ -587,7 +587,7 @@ body {
 
 <!-- CURRENT MEDICATIONS (as of render-day). Active + Historical drug blocks. -->
 <div class="section-header">Current Medications (as of {{ meds_as_of }})</div>
-<div class="meds-recon">Was medication reconciliation completed?<br>{{ med_recon_text }}</div>
+<div class="meds-recon">Was medication reconciliation completed?<br>{{ med_recon_text or unreconstructed_short }}</div>
 
 <table class="meds-col-header"><colgroup>
   <col style="width:35%"><col style="width:27%"><col style="width:18%"><col style="width:20%">
@@ -764,15 +764,14 @@ body {
 {% endif %}
 
 {% if show_devices %}
-<!-- IMPLANTABLE DEVICES (keep-together). Static, but not for the reason this
-     comment used to give: v9 does carry the data, in a 31-column
+<!-- IMPLANTABLE DEVICES (keep-together). v9 DOES carry this: a 31-column
      patient-healthcare-devices table. What is missing is the row layout — the
-     gold standard preserves no populated example of this section — so the pack
-     prints the empty state rather than inventing one. Same for IMAGING ORDERS
-     under Orders. RULES.md has the whole correction. -->
+     gold standard preserves no populated example — so the section says it was
+     not reconstructed rather than claiming the patient has no devices. Same
+     for Orders and Observations below. RULES.md has the whole correction. -->
 <div class="keep-together">
 <div class="section-header">Implantable devices</div>
-<div class="no-record">No implantable devices recorded</div>
+<div class="no-record">{{ unreconstructed }}</div>
 </div>
 {% endif %}
 
@@ -856,11 +855,11 @@ body {
 <div class="section-header">Orders</div>
 <div class="sub-header">LAB ORDERS</div>
 <div class="orders-block with-bottom-divider">
-<div class="no-record">No orders attached to this encounter.</div>
+<div class="no-record">{{ unreconstructed }}</div>
 </div>
 <div class="sub-header">IMAGING ORDERS</div>
 <div class="orders-block with-bottom-divider">
-<div class="no-record">No orders attached to this encounter.</div>
+<div class="no-record">{{ unreconstructed }}</div>
 </div>
 {% endif %}
 
@@ -879,22 +878,25 @@ body {
 <!-- OBSERVATIONS (keep-together, no bottom divider). -->
 <div class="keep-together">
 <div class="section-header">Observations</div>
-<div class="no-record">No observations recorded.</div>
+<div class="no-record">{{ unreconstructed }}</div>
 </div>
 
-<!-- QUALITY OF CARE (keep-together) — bold answers, "No selection made" default. -->
+<!-- QUALITY OF CARE (keep-together) — bold answers. The default was "No
+     selection made", which answers for the clinician: a v9 export carries no
+     reconciliation column at all (checked against the vendor's 85-table
+     dictionary), so the honest answer is that nobody here knows. -->
 <div class="keep-together">
 <div class="section-header">Quality of care</div>
-<div class="quality-row">Was diagnosis reconciliation completed?<br><strong>{{ diag_recon_text or 'No selection made' }}</strong></div>
-<div class="quality-row">Was medication allergy reconciliation completed?<br><strong>{{ allergy_recon_text or 'No selection made' }}</strong></div>
-<div class="quality-row">Was medication reconciliation completed?<br><strong>{{ med_recon_text or 'No selection made' }}</strong></div>
-<div class="quality-row last">No quality of care events recorded.</div>
+<div class="quality-row">Was diagnosis reconciliation completed?<br><strong>{{ diag_recon_text or unreconstructed_short }}</strong></div>
+<div class="quality-row">Was medication allergy reconciliation completed?<br><strong>{{ allergy_recon_text or unreconstructed_short }}</strong></div>
+<div class="quality-row">Was medication reconciliation completed?<br><strong>{{ med_recon_text or unreconstructed_short }}</strong></div>
+<div class="quality-row last">{{ unreconstructed }}</div>
 </div>
 
 <!-- CARE PLAN (keep-together). -->
 <div class="keep-together">
 <div class="section-header">Care plan</div>
-<div class="no-record">No care plan recorded.</div>
+<div class="no-record">{{ unreconstructed }}</div>
 </div>
 
 {% if show_addenda and addendums %}
