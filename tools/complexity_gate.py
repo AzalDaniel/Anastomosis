@@ -67,8 +67,14 @@ def _radon_json() -> dict[str, list[dict[str, object]]]:
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
-        check=True,
+        check=False,
     )
+    if proc.returncode != 0:
+        # Echo radon's own stderr: "No module named radon" is a one-line
+        # diagnosis, and a swallowed CalledProcessError already cost one CI
+        # round to un-swallow.
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(f"complexity gate: radon exited {proc.returncode}")
     return json.loads(proc.stdout)
 
 
