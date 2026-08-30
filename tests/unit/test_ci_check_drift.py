@@ -32,6 +32,7 @@ _GATE_MARKERS: tuple[tuple[str, str], ...] = (
     ("ruff format --check .", "ruff format --check"),
     ("python -m mypy", "mypy"),  # CI may use bare `mypy` or `python -m mypy`
     ("pytest", "pytest"),
+    ("python tools/complexity_gate.py", "tools/complexity_gate.py"),
     ("python tools/phi_scan.py", "tools/phi_scan.py"),
 )
 
