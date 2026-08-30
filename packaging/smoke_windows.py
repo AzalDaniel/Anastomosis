@@ -75,6 +75,25 @@ _ENV_PATH_VALUE = "Path"
 #: The directory the task puts on PATH ({app}\cli in anastomosis.iss).
 _CLI_SUBDIR = "cli"
 
+#: The installer-owned marker anastomosis.iss writes ([Registry]) and both of
+#: its repair paths gate on. Read in BOTH registry views, and reported beside
+#: every measurement: a step gated on this marker does NOTHING when it is
+#: missing, and "was the marker there, and in which view" is the first question
+#: a failure of those steps asks. It went unanswered once already.
+_MARKER_KEY = r"Software\Anastomosis"
+_MARKER_VALUE = "PathAdded"
+
+#: One installer log per step of the PATH cycle, kept apart so no run can
+#: overwrite the evidence of the run before it.
+_PATH_LOG_NOPATH = "anastomosis-install-nopath.log"
+_PATH_LOG_UPGRADE = "anastomosis-install-upgrade-{attempt}.log"
+_PATH_LOG_REPAIR = "anastomosis-install-repair.log"
+_PATH_LOG_UNINSTALL = "anastomosis-uninstall-repair.log"
+
+#: How much of a log a failure carries with it. Bounded because the point is a
+#: diagnosis a reader can take in, not the whole install transcript.
+_LOG_TAIL_LINES = 40
+
 #: The DOM expectations shared with the Linux GUI lane (tests/gui_e2e).
 _EXPECTATIONS = _ROOT / "tests" / "gui_e2e" / "expectations.py"
 
@@ -651,13 +670,25 @@ def _uninstaller() -> Path:
     raise SmokeFailure("no recorded uninstaller (registry UninstallString and unins000.exe absent)")
 
 
-def uninstall() -> None:
-    """Uninstall silently and prove the machine is clean afterwards."""
+def uninstall(*, log_name: str = "anastomosis-uninstall.log") -> None:
+    """Uninstall silently and prove the machine is clean afterwards.
+
+    Logged, and to a name the caller chooses, for the same reason the installs
+    are: the uninstaller is where the PATH segment is stripped, so when the
+    count afterwards is wrong its log is the only account of what it decided.
+    """
     uninstaller = _uninstaller()
-    print(f"uninstalling with {uninstaller}")
+    log = _temp_dir() / log_name
+    print(f"uninstalling with {uninstaller} (log: {log})")
     try:
         result = _run(
-            [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+            [
+                str(uninstaller),
+                "/VERYSILENT",
+                "/SUPPRESSMSGBOXES",
+                "/NORESTART",
+                f"/LOG={log}",
+            ],
             timeout=_UNINSTALL_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -838,6 +869,89 @@ def _write_machine_path(value: str) -> None:
         winreg.SetValueEx(key, _ENV_PATH_VALUE, 0, winreg.REG_EXPAND_SZ, value)
 
 
+def _marker_state() -> str:
+    """The ownership marker as EACH registry view sees it.
+
+    Both views, always, because a [Registry] entry and a [Code] read need not
+    land in the same one on 64-bit Windows, and a marker written where the
+    installer cannot read it looks exactly like a marker that was never
+    written. Naming the view turns that pair of guesses into an observation.
+    """
+    import winreg
+
+    seen: list[str] = []
+    for label, view in (
+        ("64-bit", winreg.KEY_WOW64_64KEY),
+        ("32-bit", winreg.KEY_WOW64_32KEY),
+    ):
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE, _MARKER_KEY, 0, winreg.KEY_READ | view
+            ) as key:
+                value, _kind = winreg.QueryValueEx(key, _MARKER_VALUE)
+        except OSError as exc:
+            seen.append(f"{label} view: absent ({type(exc).__name__})")
+        else:
+            seen.append(f"{label} view: {value}")
+    return "; ".join(seen)
+
+
+def _dump_tail(label: str, path: Path, lines: int = _LOG_TAIL_LINES) -> None:
+    """Print the end of one installer log, between markers.
+
+    Bounded to a tail because the decisions this step is accused of getting
+    wrong are made at the end of a run, and an unbounded install transcript
+    buries them. An absent file says so: "the uninstaller wrote no log" is
+    itself a finding, and printing nothing would hide it.
+    """
+    print(f"----- {label}: {path} (last {lines} lines) -----")
+    if not path.is_file():
+        print("(absent)")
+    else:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"(unreadable: {type(exc).__name__})")
+        else:
+            tail = text.splitlines()[-lines:]
+            print("\n".join(tail) if tail else "(empty)")
+    print(f"----- end of {label} -----")
+
+
+def _dump_path_diagnostics() -> None:
+    """What the failed PATH cycle left behind: the marker, then the two logs.
+
+    Only ever called from the failure path. Defensive by design, the same rule
+    the GUI dump follows: a diagnostic must never replace the real failure with
+    an error of its own — and this one reads the registry, on a machine where
+    something about the registry has just gone wrong.
+    """
+    try:
+        print(f"ownership marker {_MARKER_KEY}\\{_MARKER_VALUE} -> {_marker_state()}")
+        _dump_tail("the repair upgrade's installer log", _temp_dir() / _PATH_LOG_REPAIR)
+        _dump_tail("the uninstaller log", _temp_dir() / _PATH_LOG_UNINSTALL)
+    except Exception as exc:
+        print(f"warning: the PATH diagnostics could not be read ({type(exc).__name__})")
+
+
+def _measure(index: int, directory: str) -> int:
+    """One step of the matrix, measured and reported as it happens.
+
+    Everything a reader needs on one line: which step, what it counted, what it
+    owed, and the marker state. A count on its own cannot say WHY a step
+    failed — the two repair steps do nothing at all when the marker is missing,
+    and that is exactly how they failed the first time this shipped: three
+    passing counts, two failing ones, and no way to tell a broken collapse from
+    an absent gate. So the marker rides along on the passing steps too, where a
+    reader can see it was there all the way up to the step that lost it.
+    """
+    label, expected = _PATH_MATRIX[index]
+    count = _count_owned(_machine_path(), directory)
+    print(f"  after {label}: {count} owned segment(s), expected {expected}")
+    print(f"    marker {_marker_state()}")
+    return count
+
+
 def _duplicate_owned_segment(directory: str) -> None:
     """Put the machine PATH back into the state the shipped installer left it in.
 
@@ -866,6 +980,10 @@ def check_path_matrix(installer: Path) -> None:
     does not put it back breaks every step after it. The restore itself reports
     rather than raises — it runs while an earlier failure is unwinding, and a
     diagnostic must never replace the failure it is describing.
+
+    Any failure takes the marker state and the tails of the two logs with it.
+    This step runs where nobody can go and look afterwards, and the first time
+    it went red it reported five numbers and nothing that explained them.
     """
     directory = _cli_dir()
     original = _machine_path()
@@ -873,46 +991,41 @@ def check_path_matrix(installer: Path) -> None:
     observed: list[int] = []
     print(f"the machine PATH holds {len(_path_segments(original))} segment(s) before seeding")
     try:
-        _write_machine_path(";".join([original, *_user_path_segments()]))
-        before = _machine_path()
-        install(
-            installer,
-            merge_tasks="!addtopath",
-            log_name="anastomosis-install-nopath.log",
-        )
-        observed.append(_count_owned(_machine_path(), directory))
-        for attempt in (1, 2):
-            install(
-                installer,
-                merge_tasks="addtopath",
-                log_name=f"anastomosis-install-upgrade-{attempt}.log",
-            )
-            observed.append(_count_owned(_machine_path(), directory))
-        # The remaining two steps are the repair: hand the installer the PATH an
-        # earlier build left, once before an upgrade and once before the
-        # uninstall, and require each to come back to the right count.
-        _duplicate_owned_segment(directory)
-        install(
-            installer,
-            merge_tasks="addtopath",
-            log_name="anastomosis-install-repair.log",
-        )
-        observed.append(_count_owned(_machine_path(), directory))
-        _duplicate_owned_segment(directory)
-        uninstall()
-        after = _machine_path()
-        observed.append(_count_owned(after, directory))
+        try:
+            _write_machine_path(";".join([original, *_user_path_segments()]))
+            before = _machine_path()
+            install(installer, merge_tasks="!addtopath", log_name=_PATH_LOG_NOPATH)
+            observed.append(_measure(len(observed), directory))
+            for attempt in (1, 2):
+                install(
+                    installer,
+                    merge_tasks="addtopath",
+                    log_name=_PATH_LOG_UPGRADE.format(attempt=attempt),
+                )
+                observed.append(_measure(len(observed), directory))
+            # The remaining two steps are the repair: hand the installer the
+            # PATH an earlier build left, once before an upgrade and once
+            # before the uninstall, and require each to come back to the right
+            # count.
+            _duplicate_owned_segment(directory)
+            install(installer, merge_tasks="addtopath", log_name=_PATH_LOG_REPAIR)
+            observed.append(_measure(len(observed), directory))
+            _duplicate_owned_segment(directory)
+            uninstall(log_name=_PATH_LOG_UNINSTALL)
+            after = _machine_path()
+            observed.append(_measure(len(observed), directory))
+            problems = _matrix_problems(observed)
+            problems.extend(_preservation_problems(before, after, directory))
+            if problems:
+                raise SmokeFailure("; ".join(problems))
+        except Exception:
+            _dump_path_diagnostics()
+            raise
     finally:
         try:
             _write_machine_path(original)
         except OSError as exc:
             print(f"warning: the machine PATH was not restored ({type(exc).__name__})")
-    for (label, expected), seen in zip(_PATH_MATRIX, observed, strict=True):
-        print(f"  after {label}: {seen} owned segment(s), expected {expected}")
-    problems = _matrix_problems(observed)
-    problems.extend(_preservation_problems(before, after, directory))
-    if problems:
-        raise SmokeFailure("; ".join(problems))
     print(f"the seeded user segments survived the cycle: {_render(_user_path_segments())}")
 
 

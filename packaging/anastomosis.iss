@@ -125,6 +125,13 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 ; Installer-owned marker: written under the SAME task + Check conditions as the
 ; PATH append above, so it exists IFF this installer actually added the segment
 ; (not when the task was unchecked, nor when the dir was already on PATH).
+; That "SAME Check" is load-bearing and is NOT the same as "asks the same
+; question twice": Inno evaluates a Check immediately before processing its own
+; entry, in order, so by the time this one is reached the entry above has
+; already appended the directory. NeedsAddPath therefore answers once per run
+; and hands both entries that one answer — see the memo in [Code]. A second live
+; lookup here reads "already on PATH", skips the marker, and leaves an installer
+; that added a segment it can never prove it owns.
 ; CurUninstallStepChanged consults it and strips the segment only when we own it,
 ; so a pre-existing/manual entry is never corrupted. uninsdeletevalue removes the
 ; marker on uninstall; uninsdeletekeyifempty tidies the empty key afterwards.
@@ -153,6 +160,12 @@ const
   EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
   OwnerKey = 'Software\Anastomosis';
   OwnerValue = 'PathAdded';
+
+var
+  // The add-to-PATH decision, made once per run and shared by both [Registry]
+  // entries. NeedsAddPath owns them and explains why they exist.
+  PathAddDecided: Boolean;
+  PathAddNeeded: Boolean;
 
 function WebView2Installed(): Boolean;
 var
@@ -285,17 +298,31 @@ function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
+  // Two things to get right here, and the first fix for #281 got only one.
+  //
   // Inno does NOT expand constants in a Check function's string parameter, so
-  // this must do it itself. Comparing the literal '{app}\cli' against a PATH
-  // that holds the expanded directory never matches, and that is the whole of
-  // the defect: the check said "not there yet" every single time, so every
-  // upgrade appended the directory again.
-  if not RegQueryStringValue(HKLM, EnvKey, 'Path', OrigPath) then
+  // this expands it itself. Comparing the literal '{app}\cli' against a PATH
+  // that holds the expanded directory never matches, which is why the check
+  // said "not there yet" every single time and every upgrade appended again.
+  //
+  // And the answer is computed ONCE per run, then handed to every caller. Both
+  // [Registry] entries hang off this Check, and Inno evaluates a Check
+  // immediately before processing its own entry, in order — so the marker
+  // entry is reached only after the PATH entry above it has already appended
+  // the directory. Looking the PATH up a second time answers "already there",
+  // and the marker that both repair paths gate on is silently never written:
+  // no collapse, and an uninstall that walks away leaving the directory on
+  // PATH forever. Expanding the constant is what exposed that, because before
+  // it the comparison could not match and this always returned True.
+  if not PathAddDecided then
   begin
-    Result := True;
-    exit;
+    PathAddDecided := True;
+    if RegQueryStringValue(HKLM, EnvKey, 'Path', OrigPath) then
+      PathAddNeeded := not PathHasDir(OrigPath, ExpandConstant(Param))
+    else
+      PathAddNeeded := True;
   end;
-  Result := not PathHasDir(OrigPath, ExpandConstant(Param));
+  Result := PathAddNeeded;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

@@ -214,12 +214,14 @@ class _FakeInstaller:
         expand: bool = True,
         collapse: bool = True,
         remove_all: bool = True,
+        shared_decision: bool = True,
     ) -> None:
         self.path = path
         self.marker = False
         self.expand = expand
         self.collapse = collapse
         self.remove_all = remove_all
+        self.shared_decision = shared_decision
         self.actions: list[str] = []
 
     def read(self) -> str:
@@ -250,9 +252,16 @@ class _FakeInstaller:
         present = self.expand and any(self._is_ours(s) for s in self.path.split(";"))
         if not present:
             self.path = f"{self.path};{_DIR}"
-            self.marker = True
+            # The marker is a SECOND [Registry] entry carrying the same Check,
+            # evaluated after the append above has already landed.
+            # shared_decision=False models asking the PATH again there instead
+            # of reusing the one answer: it reads "already present", the marker
+            # is never written, and both repair paths lose the gate they need.
+            self.marker = self.shared_decision or not any(
+                self._is_ours(s) for s in self.path.split(";")
+            )
 
-    def uninstall(self) -> None:
+    def uninstall(self, **_: object) -> None:
         self.actions.append("uninstall")
         if self.marker:  # CurUninstallStepChanged(usUninstall)
             kept = []
@@ -280,6 +289,9 @@ def machine(smoke: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
         fake = _FakeInstaller(_START_PATH, **flags)
         monkeypatch.setattr(smoke, "_machine_path", fake.read)
         monkeypatch.setattr(smoke, "_write_machine_path", fake.write)
+        # The marker read is part of the same registry seam, and the cycle asks
+        # for it after every step: off Windows there is no winreg to answer.
+        monkeypatch.setattr(smoke, "_marker_state", lambda: f"64-bit view: {int(fake.marker)}")
         monkeypatch.setattr(smoke, "install", fake.install)
         monkeypatch.setattr(smoke, "uninstall", fake.uninstall)
         monkeypatch.setattr(smoke, "_cli_dir", lambda: _DIR)
@@ -290,10 +302,17 @@ def machine(smoke: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
 
 
 def test_the_cycle_passes_against_an_installer_that_behaves(
-    smoke: ModuleType, machine: Callable[..., _FakeInstaller]
+    smoke: ModuleType, machine: Callable[..., _FakeInstaller], capsys: Any
 ) -> None:
     """Five steps in the order #281 requires, and the machine PATH handed back
-    exactly as it was found — seeds removed, nothing else moved."""
+    exactly as it was found — seeds removed, nothing else moved.
+
+    And every step reports the ownership marker beside its count, on the
+    passing steps too. That is the whole story of the cycle in one column:
+    nothing owned, then claimed by the upgrade, then given back — and when a
+    step goes red, the reader can see which one lost it. The first red run
+    reported counts alone, and the marker turned out to be the answer.
+    """
     fake = machine()
     smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
     assert fake.actions == [
@@ -305,6 +324,13 @@ def test_the_cycle_passes_against_an_installer_that_behaves(
     ]
     assert fake.path == _START_PATH
 
+    out = capsys.readouterr().out
+    markers = [line.strip() for line in out.splitlines() if line.strip().startswith("marker ")]
+    assert len(markers) == len(smoke._PATH_MATRIX)
+    assert markers[0] == "marker 64-bit view: 0"
+    assert markers[1] == "marker 64-bit view: 1"
+    assert markers[-1] == "marker 64-bit view: 0"
+
 
 @pytest.mark.parametrize(
     ("guard", "step"),
@@ -312,6 +338,7 @@ def test_the_cycle_passes_against_an_installer_that_behaves(
         ("expand", "the second identical add-to-PATH upgrade"),
         ("collapse", "an upgrade over a PATH an earlier build duplicated"),
         ("remove_all", "the uninstall, over a PATH an earlier build duplicated"),
+        ("shared_decision", "an upgrade over a PATH an earlier build duplicated"),
     ],
 )
 def test_the_cycle_rejects_each_of_the_shipped_defects(
@@ -368,3 +395,115 @@ def test_a_restore_that_cannot_run_does_not_replace_the_real_failure(
     with pytest.raises(smoke.SmokeFailure) as excinfo:
         smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
     assert "the installer exited with code 1" in str(excinfo.value)
+
+
+def test_the_cycle_reproduces_the_runner_failure_this_step_was_written_for(
+    smoke: ModuleType, machine: Callable[..., _FakeInstaller]
+) -> None:
+    """0, 1, 1, 2, 3 — what the real runner measured when the two [Registry]
+    entries each asked the PATH for themselves. The append worked perfectly,
+    which is why the first three steps passed and only the two marker-gated
+    ones went red: an installer can add a segment and still be unable to prove
+    it owns it."""
+    machine(shared_decision=False)
+    with pytest.raises(smoke.SmokeFailure) as excinfo:
+        smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
+    message = str(excinfo.value)
+    assert message.startswith("after an upgrade over a PATH an earlier build duplicated: 2 owned")
+    assert "the uninstall, over a PATH an earlier build duplicated: 3 owned" in message
+
+
+def test_the_uninstall_writes_a_log_of_its_own(
+    smoke: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The uninstaller is where the PATH segment is stripped, so when the count
+    afterwards is wrong its log is the only account of what it decided — and
+    the PATH cycle's uninstall needs a name of its own, or the first cycle's
+    uninstall log is what a reader ends up staring at."""
+    seen: list[list[str]] = []
+
+    def fake_run(cmd: list[str], *, timeout: int) -> Any:
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(smoke, "_run", fake_run)
+    monkeypatch.setattr(smoke, "_temp_dir", lambda: tmp_path)
+    monkeypatch.setattr(smoke, "_uninstaller", lambda: tmp_path / "unins000.exe")
+    monkeypatch.setattr(smoke, "_has_payload", lambda _app: False)
+    monkeypatch.setattr(smoke, "_start_menu_group", lambda: tmp_path / "absent")
+
+    smoke.uninstall()
+    smoke.uninstall(log_name=smoke._PATH_LOG_UNINSTALL)
+
+    logs = [arg for cmd in seen for arg in cmd if arg.startswith("/LOG=")]
+    assert len(logs) == 2
+    assert len(set(logs)) == 2
+    assert logs[1].endswith(smoke._PATH_LOG_UNINSTALL)
+
+
+def test_a_log_tail_is_bounded_and_says_so_when_there_is_none(
+    smoke: ModuleType, tmp_path: Path, capsys: Any
+) -> None:
+    """An unbounded transcript buries the decisions it is printed for, and a
+    silently skipped absent file hides the finding that the log was never
+    written at all."""
+    log = tmp_path / "install.log"
+    log.write_text("\n".join(f"line {index}" for index in range(60)), encoding="utf-8")
+    smoke._dump_tail("an installer log", log, lines=40)
+    smoke._dump_tail("a log nobody wrote", tmp_path / "missing.log")
+
+    out = capsys.readouterr().out
+    assert "line 59" in out
+    assert "line 20" in out
+    assert "line 19" not in out
+    assert "(absent)" in out
+
+
+def test_a_diagnostic_that_cannot_run_does_not_replace_the_failure(
+    smoke: ModuleType,
+    machine: Callable[..., _FakeInstaller],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+) -> None:
+    """The dump runs while a real failure is unwinding, and it reads a registry
+    and a temp directory on a machine where something has already gone wrong.
+    An error of its own there would replace the count that failed with a
+    traceback about the log it was trying to print."""
+    machine(shared_decision=False)
+
+    def refuse() -> Path:
+        raise RuntimeError("the temp directory is gone")
+
+    monkeypatch.setattr(smoke, "_temp_dir", refuse)
+    with pytest.raises(smoke.SmokeFailure) as excinfo:
+        smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
+
+    assert "an upgrade over a PATH an earlier build duplicated" in str(excinfo.value)
+    assert "the PATH diagnostics could not be read (RuntimeError)" in capsys.readouterr().out
+
+
+def test_a_failing_cycle_carries_its_own_diagnosis(
+    smoke: ModuleType,
+    machine: Callable[..., _FakeInstaller],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    """The whole reason this exists. The first red run reported five numbers
+    and nothing that explained them, and the answer — whether the marker the
+    two failing steps gate on was ever written — was one registry read away."""
+    machine(shared_decision=False)
+    monkeypatch.setattr(smoke, "_temp_dir", lambda: tmp_path)
+    monkeypatch.setattr(smoke, "_marker_state", lambda: "64-bit view: absent; 32-bit view: absent")
+    (tmp_path / smoke._PATH_LOG_REPAIR).write_text(
+        "\n".join(f"line {index}" for index in range(60)), encoding="utf-8"
+    )
+
+    with pytest.raises(smoke.SmokeFailure):
+        smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
+
+    out = capsys.readouterr().out
+    assert "ownership marker Software\\Anastomosis\\PathAdded -> 64-bit view: absent" in out
+    assert "line 59" in out
+    assert "line 19" not in out
+    assert "the uninstaller log" in out
