@@ -233,3 +233,13 @@ results, never sample contents or original patient-document filenames.
   showed four intended changed files, five commits ahead, zero behind. Actual
   suppression dismissal remains unproved until the repaired workflow executes
   on `main` after merge.
+- GitHub recomputed the retargeted PR as mergeable. The connected
+  ready-for-review mutation failed without changing state because its GraphQL
+  response query asks for removed field `Repository.fullDatabaseId`. The
+  in-app GitHub browser was signed out, with no authenticated Chrome, Edge, or
+  extension browser available. A squash merge locked to head `d81e479` then
+  returned the expected HTTP 405 (`Pull Request is still a draft`); no merge or
+  branch mutation occurred. Requested one exact owner action: click `Ready for
+  review` on PR #318, but do not merge. Resume by rechecking the head/checks and
+  running the already-prepared locked squash merge with Claude and Codex
+  co-author trailers.

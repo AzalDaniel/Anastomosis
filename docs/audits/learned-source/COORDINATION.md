@@ -64,8 +64,15 @@ merged-head gate before approval.
    format, mypy (148 source files), 2,248 passed / 7 skipped, complexity, PHI
    scan, and diff check all green. GitHub CI and CodeQL completed successfully.
    GitHub was recomputing mergeability immediately after retargeting; re-query
-   before marking ready/merging. The first post-merge `main` run must prove the
-   action actually dismisses a suppressed alert before #310 relies on it.
+   showed mergeable. The connected ready-for-review mutation then failed on a
+   connector GraphQL schema defect (`Repository.fullDatabaseId`); the in-app
+   browser was signed out and no authenticated Chrome/Edge/extension browser
+   was connected. A locked direct squash attempt correctly returned HTTP 405
+   because the PR remains draft. **Only remaining action:** the owner clicks
+   `Ready for review` on PR #318; Codex then re-verifies head `d81e479`,
+   squash-merges, and inspects the first `main` CodeQL run. The first post-merge
+   run must prove the action actually dismisses a suppressed alert before #310
+   relies on it.
 2. PR #310: update from `main` only after #318 lands; resolve deliberately,
    rerun the complete gate, inspect CodeQL results, then make ready/merge.
 3. PR #320, `Read the header: who wrote it, who signed it, and where`:
