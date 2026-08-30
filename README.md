@@ -1,6 +1,6 @@
 # Anastomosis
 
-> Reconstruct, verify, and re-home clinical records.
+> Lossless medical-records migration between electronic healthcare systems — platform-agnostic and physician-friendly.
 
 **anastomosis** *(n., medicine)* — a surgical connection between two structures.
 This toolkit is that connection for electronic health records.

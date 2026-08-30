@@ -135,7 +135,7 @@ def main(
         help="Show the version and exit.",
     ),
 ) -> None:
-    """Reconstruct, verify, and re-home clinical records."""
+    """Lossless medical-records migration — platform-agnostic and physician-friendly."""
     # Install the redacting log handler for every ``anast`` command (the root
     # logger otherwise falls back to an unredacted lastResort handler). Wired
     # here at the entry point, never at import time; the call is idempotent.
