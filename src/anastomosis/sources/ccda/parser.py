@@ -44,7 +44,7 @@ is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
@@ -1422,6 +1422,36 @@ def _merge_facility_extensions(seen: dict[str, Any], incoming: dict[str, Any]) -
     return merged
 
 
+def _mergeable(seen: Facility, incoming: Facility) -> Iterator[tuple[str, Any, Any]]:
+    """Each field the merge may consider, with both namings' values beside it.
+
+    Identity, provenance and the lossless tail are excluded: the first two are
+    what established these are the same organization, and the third merges by
+    its own rule rather than field by field.
+    """
+    for name in type(seen).model_fields:
+        if name not in _FACILITY_SKIP:
+            yield name, getattr(seen, name), getattr(incoming, name)
+
+
+def _stated(seen: Facility, incoming: Facility) -> Iterator[tuple[str, Any, Any]]:
+    """Fields both namings filled in — the only ones that can disagree."""
+    return (
+        (name, old, new)
+        for name, old, new in _mergeable(seen, incoming)
+        if old is not None and new is not None
+    )
+
+
+def _unstated(seen: Facility, incoming: Facility) -> Iterator[tuple[str, Any, Any]]:
+    """Fields the first naming left empty and the second can fill."""
+    return (
+        (name, old, new)
+        for name, old, new in _mergeable(seen, incoming)
+        if old is None and new is not None
+    )
+
+
 def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
     """One organization named twice is one facility; the second naming fills gaps.
 
@@ -1431,27 +1461,14 @@ def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
     rule two halves of one encounter fold by, for the same reason: writing one
     over the other would silently pick a winner.
     """
-    conflicts = [
-        name
-        for name in type(seen).model_fields
-        if name not in _FACILITY_SKIP
-        and getattr(seen, name) is not None
-        and getattr(incoming, name) is not None
-        and getattr(seen, name) != getattr(incoming, name)
-    ]
+    conflicts = [name for name, old, new in _stated(seen, incoming) if old != new]
     if conflicts:
         # Field names/counts only: neither organization value reaches the error.
         raise ValueError(
             "C-CDA organization identifier is reused with conflicting facility fields "
             f"({len(conflicts)} fields)"
         )
-    update: dict[str, object] = {
-        name: getattr(incoming, name)
-        for name in type(seen).model_fields
-        if name not in _FACILITY_SKIP
-        and getattr(seen, name) is None
-        and getattr(incoming, name) is not None
-    }
+    update: dict[str, object] = {name: new for name, _old, new in _unstated(seen, incoming)}
     if incoming.extensions:
         update["extensions"] = _merge_facility_extensions(seen.extensions, incoming.extensions)
     return seen.model_copy(update=update) if update else seen
