@@ -9,6 +9,12 @@ name: Windows package
 # INSTALLED exe (a file the installer fails to lay down, or a broken install
 # layout, fails the build) — so a broken package fails CI instead of shipping.
 #
+# The same build is then packed a SECOND way, as an MSIX for the Microsoft Store
+# (#292). No rebuild: packaging/build_msix.py stages the dists this job already
+# produced. It is deliberately unsigned — the Store re-signs what it ingests,
+# which is the whole reason the artifact exists — so the .msix is a submission
+# artifact, not a download; the Inno installer above stays the download.
+#
 # On a version tag the installer is attached to the GitHub release by a separate,
 # write-scoped job, so users can download and run it like a normal Windows app.
 # A manual dispatch can also PUBLISH that release: main-only, with the tag
@@ -172,10 +178,25 @@ jobs:
             --out "dist/installer/Anastomosis-${{ steps.ver.outputs.version }}-sbom.cdx.json"
           if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed" }
 
+      - name: Pack the MSIX for the Microsoft Store
+        # The second door onto the SAME build (#292): build_msix.py stages the
+        # dist/ layout the installer just packaged, renders AppxManifest.xml.in
+        # into it, and runs the Windows SDK's makeappx. Nothing is rebuilt and
+        # nothing is signed — the Store re-signs what it ingests, so this
+        # package needs no certificate and cannot be side-loaded.
+        #
+        # After the smoke gate for the same reason the SBOM is: these are the
+        # bytes the installer just proved it can lay down and run. Identity is
+        # left at build_msix.py's local-validation default; the Partner Center
+        # pair is substituted at submission, not in CI, because it is account
+        # state rather than build state.
+        run: python packaging/build_msix.py --version ${{ steps.ver.outputs.version }}
+
       - name: Upload the installer
         # !cancelled() so the installer is available for download even when the
         # smoke-test above fails — the surest way to debug a Windows-only install
-        # issue is the installer itself.
+        # issue is the installer itself. The MSIX rides in the same artifact so
+        # the release job downloads one thing and attaches all three.
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -183,6 +204,7 @@ jobs:
           path: |
             dist/installer/*.exe
             dist/installer/*.cdx.json
+            dist/installer/*.msix
           if-no-files-found: error
 
   release:
@@ -288,6 +310,7 @@ jobs:
           files: |
             installer/*.exe
             installer/*.cdx.json
+            installer/*.msix
           fail_on_unmatched_files: true
           # The curated CHANGELOG section, with GitHub's auto-generated "What's
           # Changed" PR list appended after it.

@@ -91,6 +91,17 @@ issue and fixed in its own pull request.
 
 ### Release
 
+- **One build, two doors: the Windows package job now also emits an MSIX for
+  the Microsoft Store.** The installer is unsigned, so every download meets
+  SmartScreen; the Store re-signs each package it ingests with Microsoft's own
+  certificate, which is a trusted publisher signature this project does not
+  have to buy. The new artifact is packed from the SAME Nuitka layout the Inno
+  installer packages — no second build, no chance of the two drifting — and
+  ships beside the installer and the SBOM on the release. `anast` stays
+  invocable by name through an app-execution alias, the MSIX-native answer to
+  the installer's optional PATH task. Nothing about the EXE path changed, and
+  nothing here signs anything: a package this repo signed would carry a
+  certificate nobody trusts. (#292)
 - **The shipped SBOMs name a version.** `dynamic = ["version"]` left both
   documents describing a root component with `version: null` — and dropped the
   package itself from the inventory — so the SBOM could not answer the one
