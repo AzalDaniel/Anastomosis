@@ -94,6 +94,10 @@ dev = [
   "hypothesis>=6.0",
   "ruff>=0.5",
   "mypy>=1.10",
+  # The complexity ratchet (tools/complexity_gate.py) reads radon's JSON;
+  # xenon rides along for humans who want the threshold view directly.
+  "radon>=6.0,<7.0",
+  "xenon>=0.9,<1.0",
   "types-PyYAML",
   "lxml-stubs",
   "pre-commit>=3.7",

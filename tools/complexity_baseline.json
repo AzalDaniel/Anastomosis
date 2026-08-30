@@ -1,0 +1,380 @@
+{
+  "_comment": "Complexity ratchet baseline - see tools/complexity_gate.py. Regenerate ONLY in a commit that reduces debt or documents why it moved.",
+  "blocks": {
+    "src/anastomosis/cli_commands/migrate.py::_resolve_migration_profile": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/cli_commands/packsrc.py::pack_init": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/cli_commands/packsrc.py::source_init": {
+      "cc": 16,
+      "rank": "C"
+    },
+    "src/anastomosis/cli_commands/upload.py::upload_cmd": {
+      "cc": 26,
+      "rank": "D"
+    },
+    "src/anastomosis/core/commands.py::run_pipeline_command": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/core/fhir/export.py::_observation": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/core/fhir/export.py::_patient": {
+      "cc": 30,
+      "rank": "D"
+    },
+    "src/anastomosis/core/fhir/export.py::to_bundle": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/core/fhir/ingest.py::_encounter": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/core/fhir/ingest.py::_patient": {
+      "cc": 19,
+      "rank": "C"
+    },
+    "src/anastomosis/core/fhir/ingest.py::from_bundle": {
+      "cc": 25,
+      "rank": "D"
+    },
+    "src/anastomosis/core/output.py::_dacl_section": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/core/source_init_command.py::run_source_init_command": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/core/sourcelearn.py::_infer_grouping": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/core/sourcelearn.py::build_mapping": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/core/sourcelearn.py::round_trip": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/core/textutil.py::_SoapHtmlSanitizer._emit_start": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/archive/archive.py::ArchiveDeliverer._copy_patient_attachments": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/archive/archive.py::ArchiveDeliverer._route_unattributed_pdfs": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/archive/archive.py::ArchiveDeliverer._write_patient_page": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/browser/engine.py::UploadEngine.run": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/browser/persist.py::load_upload_manifest": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/bundle/bundle.py::BundleDeliverer.deliver_records": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/ccda_export/builder.py::_walk_value": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/fhir_api/destination.py::FhirApiDestination._same_origin_path": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/render_index.py::RenderIndex.load": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/verify/levels.py::L6RoundTrip": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/deliver/verify/levels.py::L6RoundTrip.run": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/destinations/browserpack.py::SelectorMap.from_yaml_dict": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/gui/consoles/upload.py::_upload_preflight": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/packgen/infer.py::infer_page_geometry": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/packgen/infer.py::infer_type_scale": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/generic_soap/context.py::build_context": {
+      "cc": 16,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_RecordViewIndex": {
+      "cc": 21,
+      "rank": "D"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_RecordViewIndex.build": {
+      "cc": 20,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_build_flowsheet": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_coverage_view": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_demographics": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_encounter_vital_rows": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_flowsheet_record_index": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_med_display_name": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::_payment": {
+      "cc": 22,
+      "rank": "D"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::build_context": {
+      "cc": 33,
+      "rank": "E"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py::build_record_context": {
+      "cc": 28,
+      "rank": "D"
+    },
+    "src/anastomosis/pipeline.py::_carry_attachments": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/pipeline.py::run_pipeline": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::DataIntegrityCheck": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::DataIntegrityCheck.run": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::LayoutPaginationCheck": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::NoteBodyCheck": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::RecordCoverageCheck": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/qa/checks.py::_note_bodies": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packs.py::_iter_candidate_dirs": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/ccda/parser.py::_patient": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/ccda/parser.py::parse_document": {
+      "cc": 17,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/__init__.py::_resources_from_file": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_allergy": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_artifact": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_assemble": {
+      "cc": 36,
+      "rank": "E"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_coverage": {
+      "cc": 21,
+      "rank": "D"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_encounter": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_facility": {
+      "cc": 15,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_medication": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_note_section": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_observations": {
+      "cc": 27,
+      "rank": "D"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_patient": {
+      "cc": 32,
+      "rank": "E"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_practitioner": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_race_ethnicity": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::_unconsumed": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py::records_from_resources": {
+      "cc": 33,
+      "rank": "E"
+    },
+    "src/anastomosis/sources/learned/interpreter.py::LearnedSourceAdapter._build_patient": {
+      "cc": 13,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/oracle_ehi/mapper.py::map_export": {
+      "cc": 16,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/pf_tebra/mapper.py::_map_patient": {
+      "cc": 19,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/pf_tebra/mapper.py::_unmapped_tables": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/sources/pf_tebra/mapper.py::map_export": {
+      "cc": 38,
+      "rank": "E"
+    }
+  },
+  "modules": {
+    "src/anastomosis/cli_commands/destination.py": {
+      "avg": 5.875,
+      "rank": "B"
+    },
+    "src/anastomosis/cli_commands/migrate.py": {
+      "avg": 9.3333,
+      "rank": "B"
+    },
+    "src/anastomosis/cli_commands/packsrc.py": {
+      "avg": 9.75,
+      "rank": "B"
+    },
+    "src/anastomosis/cli_commands/upload.py": {
+      "avg": 26.0,
+      "rank": "D"
+    },
+    "src/anastomosis/core/fhir/export.py": {
+      "avg": 6.5652,
+      "rank": "B"
+    },
+    "src/anastomosis/core/fhir/ingest.py": {
+      "avg": 5.9048,
+      "rank": "B"
+    },
+    "src/anastomosis/core/source_init_command.py": {
+      "avg": 5.2,
+      "rank": "B"
+    },
+    "src/anastomosis/deliver/archive/archive.py": {
+      "avg": 5.1579,
+      "rank": "B"
+    },
+    "src/anastomosis/deliver/bundle/bundle.py": {
+      "avg": 5.2,
+      "rank": "B"
+    },
+    "src/anastomosis/packs/generic_soap/context.py": {
+      "avg": 16.0,
+      "rank": "C"
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py": {
+      "avg": 8.9412,
+      "rank": "B"
+    },
+    "src/anastomosis/pipeline.py": {
+      "avg": 5.3529,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/ccda/parser.py": {
+      "avg": 5.093,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/fhir_r4/__init__.py": {
+      "avg": 6.0,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py": {
+      "avg": 8.2292,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/learned/reader.py": {
+      "avg": 5.6,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/pf_tebra/escript.py": {
+      "avg": 6.0,
+      "rank": "B"
+    },
+    "src/anastomosis/sources/pf_tebra/mapper.py": {
+      "avg": 5.7347,
+      "rank": "B"
+    }
+  },
+  "tool": "radon cc -j src"
+}
