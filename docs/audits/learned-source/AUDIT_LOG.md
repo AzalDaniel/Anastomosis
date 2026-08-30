@@ -243,3 +243,32 @@ results, never sample contents or original patient-document filenames.
   review` on PR #318, but do not merge. Resume by rechecking the head/checks and
   running the already-prepared locked squash merge with Claude and Codex
   co-author trailers.
+
+## 2026-08-31 - PR #320 participation identifier integrity
+
+- Independently reviewed PR #320 at original head
+  `9232980c6cc971f597dabd6ef206764fe70bbdbf`. The implementation extracted the
+  new C-CDA participation actors, but treated an HL7 CDA `II` as its `root`
+  alone. The normative model makes `extension` the identifier within the scope
+  of `root`; root-only handling could collapse distinct providers or facilities
+  under one assigning authority and silently discarded actor extensions.
+- Repaired facility identity to use the complete root-plus-extension pair while
+  retaining the established root link. Provider and organization extensions
+  are now conserved in `ccda:id`; facilities with one root and different
+  extensions remain distinct. An exact duplicate II carrying conflicting
+  canonical facility facts now raises a value-free error rather than selecting
+  the first value. Three regressions pin these cases.
+- Committed the repair as `a7e1932b64ec76789a098978c683679bac8668b7`
+  with the repository owner identity and transparent Codex co-authorship, then
+  pushed it to the existing `claude/who-wrote-this-note` PR branch.
+- Focused C-CDA/FHIR verification completed at **147 passed**; Ruff, formatting,
+  focused mypy for the parser, and `git diff --check` were green. Added an
+  independent serialization boundary test using the installed FHIR R4B model;
+  all **39 participation tests passed**. Committed and pushed that proof as
+  `5ef91d37374b5ef5a6418336f3731a87f7c0c71f`.
+- GitHub confirms PR #320 remains open, draft, and mergeable at the exact
+  `5ef91d3` head. It still requires synchronization with current `main`, the full
+  repository gate, and a PHI-free real-corpus aggregate check after PR #318
+  lands. The conservation ledger still credits id-bearing actors by root only,
+  and the internal FHIR round trip does not preserve provenance; neither
+  limitation is represented as solved.

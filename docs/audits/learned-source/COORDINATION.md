@@ -76,10 +76,23 @@ merged-head gate before approval.
 2. PR #310: update from `main` only after #318 lands; resolve deliberately,
    rerun the complete gate, inspect CodeQL results, then make ready/merge.
 3. PR #320, `Read the header: who wrote it, who signed it, and where`:
-   open, draft, mergeable at head `9232980c6cc971f597dabd6ef206764fe70bbdbf`.
-   It adds C-CDA participation extraction plus FHIR type-preserving round trip.
-   It intentionally does not close #312 because two no-id constructs remain
-   uncreditable by the conservation ledger.
+   open, draft, mergeable at reviewed head
+   `5ef91d37374b5ef5a6418336f3731a87f7c0c71f`. It adds C-CDA participation
+   extraction plus FHIR type-preserving round trip. Independent review found
+   that the first implementation treated CDA `II` as `root` only even though
+   `extension` is the identifier within that root's scope. Codex pushed
+   `a7e1932` to retain the complete provider/organization identifier, separate
+   facilities whose extensions differ, and fail value-free when the same
+   complete facility II carries conflicting canonical facts. Focused C-CDA and
+   FHIR lane: **147 passed**; Ruff, formatting, focused mypy, and diff check
+   green. Codex then pushed `5ef91d3`, validating the routed output with the
+   installed FHIR R4B models; the 39 participation tests passed. Full repository
+   gate and real-corpus aggregate validation remain pending. The branch must be
+   synchronized with current `main` after #318 lands. It intentionally does not
+   close #312 because two no-id constructs remain uncreditable by the
+   conservation ledger. The ledger still links id-bearing actors by root, so
+   root-plus-extension evidence and FHIR provenance survival require explicit
+   follow-up rather than an unmeasured claim.
 
 Measured follow-up issues from the conservation instrument:
 
