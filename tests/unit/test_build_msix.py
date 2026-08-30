@@ -451,6 +451,37 @@ def test_the_msix_is_attached_to_the_github_release() -> None:
         assert wanted in files, f"the release must carry {wanted}"
 
 
+def test_the_msix_provenance_is_attested_too() -> None:
+    """The package reaches the Store unsigned by design and comes back
+    re-signed by Microsoft, so between this workflow and Partner Center the
+    provenance attestation is the only thing that can answer who built it.
+    It must be attested after it lands on the runner and before it is
+    attached, same as the exe and the SBOM already are (#282, #289)."""
+    steps = _workflow()["jobs"]["release"]["steps"]
+    download = _step_index(steps, "Download the built installer")
+    attest = _step_index(steps, "Attest build provenance")
+    attach = _step_index(steps, "Attach it to the release")
+    assert download < attest < attach
+    subjects = steps[attest]["with"]["subject-path"]
+    assert "installer/*.msix" in subjects, (
+        "the MSIX must be attested alongside the exe and the SBOM; an artifact "
+        "on the release page with no attestation is one nobody can check."
+    )
+
+
+def test_the_release_notes_say_the_msix_is_not_a_download() -> None:
+    """It sits on the Releases page beside an installer, and an unsigned MSIX
+    does not install — so the page has to say what it is before somebody
+    double-clicks it and reads a Windows error instead."""
+    steps = _workflow()["jobs"]["release"]["steps"]
+    run = steps[_step_index(steps, "Extract this version's CHANGELOG section")]["run"]
+    assert ".msix" in run
+    assert "not a download" in run, (
+        "the release notes must say plainly that the .msix is a Store "
+        "submission artifact rather than something to install"
+    )
+
+
 def test_the_packaging_lane_still_triggers_on_its_own_sources() -> None:
     """The new files live under packaging/, which the push filter already
     covers — asserted rather than assumed, because a manifest or logo change

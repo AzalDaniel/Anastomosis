@@ -314,7 +314,14 @@ jobs:
             echo '```'
             echo "gh attestation verify Anastomosis-Setup-${ver}.exe --repo AzalDaniel/Anastomosis"
             echo "gh attestation verify Anastomosis-${ver}-sbom.cdx.json --repo AzalDaniel/Anastomosis"
+            echo "gh attestation verify Anastomosis-${ver}.msix --repo AzalDaniel/Anastomosis"
             echo '```'
+            echo ""
+            # Say what the .msix is before somebody double-clicks it (#292). It
+            # is on this page because the Store submission is fetched from here
+            # and because its provenance is attested above — not because it is a
+            # download. Unsigned MSIX packages do not install.
+            echo "**The \`.msix\` is a Microsoft Store submission artifact, not a download.** It is unsigned on purpose: the Store re-signs every package it ingests, which is what lets a Store install carry a trusted publisher signature. Download the \`Setup\` exe above to install Anastomosis yourself."
           } >> RELEASE_NOTES.md
           echo "----- release notes -----"; cat RELEASE_NOTES.md
 
@@ -326,17 +333,23 @@ jobs:
 
       - name: Attest build provenance (SLSA)
         # Same pattern release.yml already uses for the PyPI path (#282): proves
-        # WHICH workflow run produced this exact exe/SBOM pair, so `gh attestation
-        # verify` can check the file against this repo instead of trusting it on
+        # WHICH workflow run produced these exact bytes, so `gh attestation
+        # verify` can check a file against this repo instead of trusting it on
         # sight. This is NOT a substitute for signing — it says nothing about
         # publisher identity, only provenance — which is why the release notes
         # below still label the installer unsigned. Runs only in this tag/publish-
         # gated job, never for the ordinary branch-push validation build above.
+        #
+        # The MSIX is attested alongside them (#292). It reaches the Store
+        # unsigned by design and comes back re-signed by Microsoft, so between
+        # this workflow and Partner Center the provenance attestation is the only
+        # thing that can answer "did AzalDaniel/Anastomosis build this package?"
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: |
             installer/*.exe
             installer/*.cdx.json
+            installer/*.msix
 
       - name: Attach it to the release
         # Third-party action pinned to a full commit SHA (supply-chain hardening
