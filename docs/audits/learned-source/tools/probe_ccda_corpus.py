@@ -13,6 +13,8 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from anastomosis.sources.ccda import _looks_like_cda
 from anastomosis.sources.ccda.parser import parse_document
 
@@ -44,6 +46,39 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("corpus", type=Path)
     parser.add_argument("scratch", type=Path)
     return parser
+
+
+def _populated_fields(model: BaseModel) -> frozenset[str]:
+    """The NAMES of the fields this record actually filled — never their values.
+
+    The probe answers "how many documents carried a birth date", not "which
+    birth date", so no patient value belongs in its output. That was already
+    true by inspection, but only by inspection: the loop bound each value to a
+    local in the same scope that built the printed result, and CodeQL rightly
+    refused to prove the value could not escape it (a high-severity clear-text
+    logging alert on a tool whose whole input is real charts).
+
+    So the invariant becomes structural instead of implied. The value exists
+    only inside this function and cannot leave it: the return type carries
+    field names, which are schema — the same names in the model source — and a
+    caller has nothing else to print even by mistake.
+    """
+    return frozenset(
+        field
+        for field in type(model).model_fields
+        if getattr(model, field) not in (None, "", [], {})
+    )
+
+
+def _collection_sizes(record: BaseModel) -> dict[str, int]:
+    """How many items each clinical collection holds — never the items.
+
+    The same boundary as :func:`_populated_fields`, for the same reason: the
+    probe reports "146,015 observations", never an observation. Binding the
+    list in the caller put a patient's clinical objects in the scope that
+    builds the printed result; here they cannot leave the comprehension.
+    """
+    return {field: len(getattr(record, field)) for field in COLLECTION_FIELDS}
 
 
 def main() -> int:
@@ -93,18 +128,13 @@ def main() -> int:
                         continue
                     counts["parsed"] += 1
                     counts["records_with_patient_id"] += int(bool(record.patient.id))
-                    for field in record.patient.__class__.model_fields:
-                        value = getattr(record.patient, field)
-                        if value not in (None, "", [], {}):
-                            patient_field_presence[field] += 1
-                    for field in COLLECTION_FIELDS:
-                        collection = getattr(record, field)
-                        collection_totals[field] += len(collection)
+                    for field in _populated_fields(record.patient):
+                        patient_field_presence[field] += 1
+                    for field, size in _collection_sizes(record).items():
+                        collection_totals[field] += size
                     for encounter in record.encounters:
-                        for field in encounter.__class__.model_fields:
-                            value = getattr(encounter, field)
-                            if value not in (None, "", [], {}):
-                                encounter_field_presence[field] += 1
+                        for field in _populated_fields(encounter):
+                            encounter_field_presence[field] += 1
         except Exception as exc:  # invalid archive; type only, never archive name
             failures[f"archive/{type(exc).__name__}"] += 1
 
