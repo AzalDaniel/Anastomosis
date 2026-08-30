@@ -137,13 +137,18 @@ jobs:
       - name: Build the installer
         run: iscc /DAppVersion=${{ steps.ver.outputs.version }} packaging\anastomosis.iss
 
-      - name: Smoke-test the installer (install, doctor, real window, uninstall)
+      - name: Smoke-test the installer (install, doctor, real window, uninstall, PATH)
         # The second anti-assumption gate, end to end the way a user meets the
         # artifact: silent install -> installed layout -> installed `anast
         # doctor` -> the dashboard actually renders inside the shipped WebView2
         # window (Playwright over CDP; DOM expectations shared with the Linux
-        # gui-e2e lane) -> silent uninstall leaves no payload behind. Any FAIL
-        # exits non-zero and fails the build.
+        # gui-e2e lane) -> silent uninstall leaves no payload behind -> a second
+        # cycle counting what the optional add-to-PATH task leaves in the
+        # MACHINE PATH across a task-off install, two identical upgrades, and an
+        # upgrade and an uninstall over a PATH put back into the state an
+        # earlier build left it in (#281: the installer used to append a segment
+        # per upgrade and leave a dead one behind, which every step above passes
+        # straight through). Any FAIL exits non-zero and fails the build.
         run: python packaging/smoke_windows.py
 
       - name: Generate the installer SBOM (CycloneDX)
