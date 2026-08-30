@@ -116,9 +116,7 @@ def test_conservation_every_offered_row_is_attributed_or_held() -> None:
 
     records, held = _mapped(export)
 
-    attributed = [
-        row for record in records.values() for row in record.extensions.get(EXT_KEY, [])
-    ]
+    attributed = [row for record in records.values() for row in record.extensions.get(EXT_KEY, [])]
     quarantined = [row for entry in held for row in entry.rows]
     assert len(attributed) + len(quarantined) == len(offered)
     # Not just the arithmetic: the very rows, each exactly once.
@@ -206,8 +204,12 @@ def test_an_insurance_row_with_a_blank_patient_key_cannot_vouch_for_an_owner() -
 
     row = _eligibility(plan)
     grouped, held = _partition_joined(
-        ELIGIBILITIES, [row], "PatientInsurancePlanGuid", "patient-insurances",
-        owners, frozenset({P1, P2}),
+        ELIGIBILITIES,
+        [row],
+        "PatientInsurancePlanGuid",
+        "patient-insurances",
+        owners,
+        frozenset({P1, P2}),
     )
     assert grouped == {}
     (entry,) = held
@@ -221,8 +223,10 @@ def test_a_mixed_eligibility_table_resolves_the_exact_rows_and_holds_the_rest() 
     export = read_export(FIXTURE)
     plan_row = export["patient-insurances"][0]
     exact = _eligibility(plan_row["PatientInsurancePlanGuid"])
-    dangling = {**_eligibility("feedface-aaaa-0000-0000-000000nomatch"),
-                "PatientInsuranceEligibilityGuid": "feedface-0000-0000-0000-00000000e002"}
+    dangling = {
+        **_eligibility("feedface-aaaa-0000-0000-000000nomatch"),
+        "PatientInsuranceEligibilityGuid": "feedface-0000-0000-0000-00000000e002",
+    }
     export[ELIGIBILITIES] = [exact, dangling]
 
     records, held = _mapped(export)

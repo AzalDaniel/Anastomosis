@@ -1317,9 +1317,9 @@ def _partition_direct(
         if guid is None:
             buckets.setdefault("PatientPracticeGuid is blank", []).append(row)
         elif guid not in patient_guids:
-            buckets.setdefault(
-                "PatientPracticeGuid names no patient in this export", []
-            ).append(row)
+            buckets.setdefault("PatientPracticeGuid names no patient in this export", []).append(
+                row
+            )
         else:
             grouped.setdefault(guid, []).append(row)
     return grouped, _held(table, buckets)
@@ -1354,12 +1354,23 @@ def _partition_joined(
                 f"{join_col} joins {parent} rows owned by more than one patient", []
             ).append(row)
         elif (owner := next(iter(owners))) not in patient_guids:
-            buckets.setdefault(
-                f"the patient {parent} names is not in this export", []
-            ).append(row)
+            buckets.setdefault(f"the patient {parent} names is not in this export", []).append(row)
         else:
             grouped.setdefault(owner, []).append(row)
     return grouped, _held(table, buckets)
+
+
+def _log_quarantined(quarantined: list[QuarantinedRows]) -> None:
+    """One WARNING for the whole hold — counts and schema names, never a value."""
+    if not quarantined:
+        return
+    logger.warning(
+        "pf_tebra: quarantined %d row(s) from %d unmapped table(s) that "
+        "attribute to no patient (see quarantine.json in the output): %s",
+        sum(len(entry.rows) for entry in quarantined),
+        len({entry.table for entry in quarantined}),
+        sorted({entry.table for entry in quarantined}),
+    )
 
 
 def _unmapped_tables(
@@ -1399,9 +1410,7 @@ def _unmapped_tables(
         elif table in _INDIRECT_JOINS:
             join_col, parent = _INDIRECT_JOINS[table]
             owners = _join_owners(export.get(parent, []), join_col)
-            grouped, held = _partition_joined(
-                table, rows, join_col, parent, owners, patient_guids
-            )
+            grouped, held = _partition_joined(table, rows, join_col, parent, owners, patient_guids)
         else:
             no_path.append(table)
             continue
@@ -1410,15 +1419,7 @@ def _unmapped_tables(
         quarantined.extend(held)
     if no_path:
         raise UnsupportedTablesError(sorted(no_path))
-    if quarantined:
-        # Counts and schema names only — never a row value, never a guid.
-        logger.warning(
-            "pf_tebra: quarantined %d row(s) from %d unmapped table(s) that "
-            "attribute to no patient (see quarantine.json in the output): %s",
-            sum(len(entry.rows) for entry in quarantined),
-            len({entry.table for entry in quarantined}),
-            sorted({entry.table for entry in quarantined}),
-        )
+    _log_quarantined(quarantined)
     return by_patient, quarantined
 
 

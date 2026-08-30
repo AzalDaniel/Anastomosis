@@ -45,9 +45,10 @@ if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
-    from anastomosis.sources.base import SourceAdapter
+    from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
 __all__ = [
+    "QUARANTINE_FILENAME",
     "STAGE_DETECT",
     "STAGE_INGEST",
     "STAGE_MANIFEST",
@@ -55,7 +56,6 @@ __all__ = [
     "STAGE_RECONSTRUCT",
     "PipelineError",
     "PipelineResult",
-    "QUARANTINE_FILENAME",
     "StageEvent",
     "load_records",
     "parse_section_overrides",
@@ -411,10 +411,18 @@ def settle_quarantine(adapter: SourceAdapter, out: Path) -> dict[str, int]:
     """
     from anastomosis.core.output import secure_output_dir
 
-    held = list(getattr(adapter, "quarantine", ()) or ())
+    held = list(getattr(adapter, "quarantine", ()))
     if not held:
         (out / QUARANTINE_FILENAME).unlink(missing_ok=True)
         return {}
+    payload, total = _quarantine_payload(held)
+    _write_json(secure_output_dir(out) / QUARANTINE_FILENAME, payload)
+    return {"quarantined": total}
+
+
+def _quarantine_payload(held: list[QuarantinedRows]) -> tuple[dict[str, object], int]:
+    """``quarantine.json``'s shape: grouped by table and reason, rows verbatim,
+    sorted for a deterministic artifact; plus the total for the INGEST event."""
     total = sum(len(entry.rows) for entry in held)
     payload: dict[str, object] = {
         "quarantine": [
@@ -427,8 +435,7 @@ def settle_quarantine(adapter: SourceAdapter, out: Path) -> dict[str, int]:
         ],
         "total_rows": total,
     }
-    _write_json(secure_output_dir(out) / QUARANTINE_FILENAME, payload)
-    return {"quarantined": total}
+    return payload, total
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
