@@ -718,3 +718,12 @@ def test_every_actor_survives_the_bundle_round_trip(record: PatientRecord) -> No
     assert [p.model_dump(mode="json", exclude={"provenance"}) for p in rebuilt.practitioners] == [
         p.model_dump(mode="json", exclude={"provenance"}) for p in record.practitioners
     ]
+
+
+def test_actor_resources_validate_against_fhir_r4b(record: PatientRecord) -> None:
+    """Internal equality is not enough: the three routed resource types must
+    also satisfy the external FHIR schema a receiving system reads."""
+    pytest.importorskip("fhir.resources", reason="schema validation needs the fhir extra")
+    from fhir.resources.R4B.bundle import Bundle
+
+    Bundle.model_validate(to_bundle(record))
