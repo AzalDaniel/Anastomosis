@@ -1,5 +1,11 @@
 # Learn-from-sample audit: lossless handoff
 
+> **2026-08-31 live-state override:** read `COORDINATION.md` first. It records
+> Claude's post-handoff review, the current remote SHAs, merged conservation
+> harness, live PR dependency order, and the crash-safe commit/push protocol.
+> Historical “uncommitted” and `bbc48a6` statements below describe the original
+> checkpoint and must not be mistaken for current GitHub state.
+
 Last reconciled: 2026-08-30, Asia/Karachi. This is the first file a future
 Codex or Claude session should read. It is deliberately PHI-free: do not add
 patient values, original sample names, screenshots, credentials, or private

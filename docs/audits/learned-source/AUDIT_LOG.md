@@ -161,3 +161,20 @@ results, never sample contents or original patient-document filenames.
 - #308 records the verified architecture and aggregate corpus findings, current
   P0 patch, exact remaining P0/P1 work, no-PHI rule, measured acceptance contract,
   and Claude-implementation/Codex-review handoff.
+
+## 2026-08-31 - Claude work recovered and local branch synchronized
+
+- Read both supplied Claude transcripts and independently compared them with the
+  local Git history, connected GitHub PR metadata, and live commit graph.
+- Confirmed the original 19-file Codex audit is safe in commit `dae8938` and is
+  recognized by GitHub as authored/committed by `AzalDaniel`.
+- Fetched GitHub after the ordinary sandboxed fetch was denied access to
+  `.git/FETCH_HEAD`; the narrowly approved `git fetch` succeeded.
+- Verified a clean fast-forward from `dae8938` to remote audit head `71e7a51`.
+  No local change was discarded or merged heuristically.
+- Live GitHub main was `28b219e`; PR #310 was open/draft, six commits ahead and
+  two behind. PR #318 and PR #320 were open/draft/mergeable. PRs #306, #307,
+  #311, #316, and #319 were independently confirmed merged.
+- Added `COORDINATION.md` as the new write-ahead recovery record. It captures the
+  exact refs, Claude review changes, conservation findings, merge train, owner +
+  Codex attribution rule, and idempotent resume commands.

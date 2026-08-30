@@ -5,6 +5,11 @@ Last updated: 2026-08-30 (Asia/Karachi)
 **Primary recovery entry:** read `HANDOFF.md` first. It supersedes stale task
 ordering below while retaining this file's historical checkpoints.
 
+**2026-08-31 override:** read `COORDINATION.md` before `HANDOFF.md`. The branch
+is committed/pushed and was fast-forwarded locally to `71e7a51`; live main was
+`28b219e`. PR #310 remains draft and depends on PR #318. This file retains the
+older checkpoints for audit history.
+
 This file is the PHI-free recovery source for the ongoing audit. Update it before
 and after material changes so the work can resume without relying on chat history.
 Never record patient values, original sample filenames, credentials, or private
