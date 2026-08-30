@@ -113,14 +113,25 @@ Name: "{autodesktop}\Anastomosis"; Filename: "{app}\gui\Anastomosis.exe"; Tasks:
 ; Append the CLI directory to the MACHINE PATH (idempotent; only if the task is
 ; checked). This is a per-machine install (elevated), so the machine PATH — not
 ; HKCU — is the correct target: under elevation HKCU is the elevating admin's
-; hive, not the user who will run `anast`. The NeedsAddPath check avoids a
-; duplicate segment; CurUninstallStepChanged strips it on uninstall.
+; hive, not the user who will run `anast`. NeedsAddPath expands the constant it
+; is handed before comparing — Inno does not expand constants in a Check
+; parameter, and the literal '{app}\cli' matched no PATH on earth, so every
+; upgrade appended the directory again; CurStepChanged collapses what earlier
+; builds already duplicated and CurUninstallStepChanged strips every occurrence
+; on uninstall.
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
   ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\cli"; \
   Tasks: addtopath; Check: NeedsAddPath('{app}\cli')
 ; Installer-owned marker: written under the SAME task + Check conditions as the
 ; PATH append above, so it exists IFF this installer actually added the segment
 ; (not when the task was unchecked, nor when the dir was already on PATH).
+; That "SAME Check" is load-bearing and is NOT the same as "asks the same
+; question twice": Inno evaluates a Check immediately before processing its own
+; entry, in order, so by the time this one is reached the entry above has
+; already appended the directory. NeedsAddPath therefore answers once per run
+; and hands both entries that one answer — see the memo in [Code]. A second live
+; lookup here reads "already on PATH", skips the marker, and leaves an installer
+; that added a segment it can never prove it owns.
 ; CurUninstallStepChanged consults it and strips the segment only when we own it,
 ; so a pre-existing/manual entry is never corrupted. uninsdeletevalue removes the
 ; marker on uninstall; uninsdeletekeyifempty tidies the empty key afterwards.
@@ -141,9 +152,20 @@ Filename: "{app}\gui\Anastomosis.exe"; Description: "Launch Anastomosis"; \
 
 [Code]
 // The machine PATH lives here (REG_EXPAND_SZ); the optional task appends to it,
-// and CurUninstallStepChanged strips it back out.
+// CurStepChanged collapses anything an earlier build duplicated, and
+// CurUninstallStepChanged strips it back out. The ownership marker is written
+// under the same conditions as the append, so all three agree on which segment
+// is ours to touch.
 const
   EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+  OwnerKey = 'Software\Anastomosis';
+  OwnerValue = 'PathAdded';
+
+var
+  // The add-to-PATH decision, made once per run and shared by both [Registry]
+  // entries. NeedsAddPath owns them and explains why they exist.
+  PathAddDecided: Boolean;
+  PathAddNeeded: Boolean;
 
 function WebView2Installed(): Boolean;
 var
@@ -165,51 +187,184 @@ begin
       'pv', pv) and (pv <> '') and (pv <> '0.0.0.0'));
 end;
 
+// --- the one PATH segment this installer owns -------------------------------
+
+function CliDir(): string;
+begin
+  // The directory the [Registry] entry appends, expanded — the one segment this
+  // installer may edit. NeedsAddPath is handed the same constant as a Check
+  // parameter instead, so the .iss keeps saying out loud, on the entry itself,
+  // which directory that entry means.
+  Result := ExpandConstant('{app}\cli');
+end;
+
+// Whether the CLI directory is already reachable from PATH.
+//
+// Trailing-slash policy, one half of it: a PATH directory keeps its identity
+// across a trailing backslash — 'X\cli' and 'X\cli\' send `anast` to the same
+// place — so a user who already spelled it the second way must not be given a
+// second segment. The other half is in RewriteOwnedSegments, which is spelling-
+// exact: we decline to ADD generously and only ever REMOVE what we wrote.
+function PathHasDir(Value, Dir: string): Boolean;
+var
+  Bounded, Bare: string;
+begin
+  Bounded := ';' + Uppercase(Value) + ';';
+  Bare := Uppercase(Dir);
+  while (Length(Bare) > 1) and (Bare[Length(Bare)] = '\') do
+    Delete(Bare, Length(Bare), 1);
+  // Anchored on the ';' delimiters. An unanchored Pos would find this directory
+  // inside a sibling like '...\cli2' or inside '...\cli\bin' and conclude PATH
+  // already had it, so the CLI would silently never be on PATH at all.
+  Result := (Pos(';' + Bare + ';', Bounded) > 0) or
+            (Pos(';' + Bare + '\;', Bounded) > 0);
+end;
+
+// Rebuild Value keeping at most Keep segments spelled exactly like Dir, and
+// report through Found how many it held.
+//
+// Everything we do not own — empty segments, siblings, a user's own lookalike,
+// the separators around all of them — is copied through byte for byte. This is
+// the machine PATH: every other program on the box depends on the parts of it
+// that are not ours, and an installer that rewrites those has done far more
+// damage than the duplicate it came to fix.
+function RewriteOwnedSegments(Value, Dir: string; Keep: Integer;
+  var Found: Integer): string;
+var
+  Rest, Seg, Wanted: string;
+  P, Kept: Integer;
+  First, Done, Take: Boolean;
+begin
+  Result := '';
+  Found := 0;
+  Kept := 0;
+  First := True;
+  Done := False;
+  Rest := Value;
+  Wanted := Uppercase(Dir);
+  while not Done do
+  begin
+    P := Pos(';', Rest);
+    if P = 0 then
+    begin
+      Seg := Rest;
+      Done := True;
+    end
+    else
+    begin
+      Seg := Copy(Rest, 1, P - 1);
+      Rest := Copy(Rest, P + 1, Length(Rest) - P);
+    end;
+    Take := True;
+    if Uppercase(Seg) = Wanted then
+    begin
+      Found := Found + 1;
+      // Past the quota: drop this occurrence, and with it the separator that
+      // would have followed. Counting runs to the END of the value rather than
+      // stopping at the first match — stopping is what left a dead segment
+      // behind on a machine the duplicate bug had already touched.
+      Take := Kept < Keep;
+      if Take then
+        Kept := Kept + 1;
+    end;
+    if Take then
+    begin
+      if First then
+      begin
+        Result := Seg;
+        First := False;
+      end
+      else
+        Result := Result + ';' + Seg;
+    end;
+  end;
+end;
+
+function InstallerOwnsPathSegment(): Boolean;
+var
+  Marker: Cardinal;
+begin
+  // The marker is written under the SAME task + Check conditions as the append
+  // ([Registry]), so it exists IFF this installer put the segment there. Absent
+  // means the segment is the user's: theirs to keep, never ours to collapse or
+  // strip.
+  Result := False;
+  if not RegQueryDWordValue(HKLM, OwnerKey, OwnerValue, Marker) then
+    exit;
+  Result := Marker = 1;
+end;
+
 function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
-  if not RegQueryStringValue(HKLM, EnvKey, 'Path', OrigPath) then
+  // Two things to get right here, and the first fix for #281 got only one.
+  //
+  // Inno does NOT expand constants in a Check function's string parameter, so
+  // this expands it itself. Comparing the literal '{app}\cli' against a PATH
+  // that holds the expanded directory never matches, which is why the check
+  // said "not there yet" every single time and every upgrade appended again.
+  //
+  // And the answer is computed ONCE per run, then handed to every caller. Both
+  // [Registry] entries hang off this Check, and Inno evaluates a Check
+  // immediately before processing its own entry, in order — so the marker
+  // entry is reached only after the PATH entry above it has already appended
+  // the directory. Looking the PATH up a second time answers "already there",
+  // and the marker that both repair paths gate on is silently never written:
+  // no collapse, and an uninstall that walks away leaving the directory on
+  // PATH forever. Expanding the constant is what exposed that, because before
+  // it the comparison could not match and this always returned True.
+  if not PathAddDecided then
   begin
-    Result := True;
-    exit;
+    PathAddDecided := True;
+    if RegQueryStringValue(HKLM, EnvKey, 'Path', OrigPath) then
+      PathAddNeeded := not PathHasDir(OrigPath, ExpandConstant(Param))
+    else
+      PathAddNeeded := True;
   end;
-  // Idempotent: only add if the dir is not already a PATH segment.
-  Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+  Result := PathAddNeeded;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Cur, Fixed: string;
+  Found: Integer;
+begin
+  // Repair a machine an earlier build already duplicated, before the [Registry]
+  // entries are processed: ssInstall runs first, so the Check above then sees
+  // the collapsed value and appends nothing. That ordering is what makes the
+  // whole cycle idempotent — however many times this installer has run, and
+  // however many times it runs again, exactly one owned segment survives.
+  if CurStep <> ssInstall then
+    exit;
+  if not InstallerOwnsPathSegment() then
+    exit;
+  if not RegQueryStringValue(HKLM, EnvKey, 'Path', Cur) then
+    exit;
+  Fixed := RewriteOwnedSegments(Cur, CliDir(), 1, Found);
+  // Only when there is something to collapse: ChangesEnvironment makes every
+  // window on the machine handle a settings broadcast, and a no-op rewrite of
+  // the machine PATH is a risk taken for nothing.
+  if Found > 1 then
+    RegWriteExpandStringValue(HKLM, EnvKey, 'Path', Fixed);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Cur, Seg: string;
-  P: Integer;
-  Marker: Cardinal;
+  Cur, Stripped: string;
+  Found: Integer;
 begin
-  // Strip the CLI directory we may have appended to the machine PATH. Without
-  // this an "add to PATH" install would leave a dead segment behind forever.
-  // Match the segment delimiter-anchored (';<dir>;' inside ';<PATH>;'), exactly
-  // as NeedsAddPath does on the way in, so a sibling like '...\cli2' can never
-  // be partially matched and a correct PATH is never mangled.
+  // Strip EVERY segment we appended. Without this an "add to PATH" install
+  // leaves a dead directory on PATH forever; removing only the first match,
+  // which is what this used to do, still left one behind on any machine that
+  // had taken a second copy from the duplicate bug.
   if CurUninstallStep <> usUninstall then
     exit;
-  // Gate on the installer-owned marker ([Registry]): only strip the segment if
-  // WE actually added it. If the marker is absent (task unchecked, or the dir
-  // already pre-existed so NeedsAddPath returned False and we never appended),
-  // leave PATH untouched — the segment belongs to the user, not to us.
-  if not RegQueryDWordValue(HKLM, 'Software\Anastomosis', 'PathAdded', Marker) then
-    exit;
-  if Marker <> 1 then
+  if not InstallerOwnsPathSegment() then
     exit;
   if not RegQueryStringValue(HKLM, EnvKey, 'Path', Cur) then
     exit;
-  Seg := ExpandConstant('{app}\cli');
-  // Position of ';<dir>;' within the synthetic ';<PATH>;' (1 = at the very
-  // start; >1 = a real separator precedes it).
-  P := Pos(';' + Uppercase(Seg) + ';', ';' + Uppercase(Cur) + ';');
-  if P = 0 then
-    exit;
-  if P = 1 then
-    Delete(Cur, 1, Length(Seg) + 1)       // "<dir>;..." -> drop the leading entry + its separator
-  else
-    Delete(Cur, P - 1, Length(Seg) + 1);  // "...;<dir>..." -> drop the separator + entry
-  RegWriteExpandStringValue(HKLM, EnvKey, 'Path', Cur);
+  Stripped := RewriteOwnedSegments(Cur, CliDir(), 0, Found);
+  if Found > 0 then
+    RegWriteExpandStringValue(HKLM, EnvKey, 'Path', Stripped);
 end;
