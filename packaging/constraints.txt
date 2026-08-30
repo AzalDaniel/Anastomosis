@@ -23,7 +23,7 @@ playwright==1.56.0
 # Anastomosis.exe no longer exits immediately — it stays up for the full launch
 # window with both captured streams empty (a GUI-subsystem exe prints nothing).
 # Keep the pin until a later pywebview is verified against the frozen build.
-pywebview==6.2
+pywebview==6.2.1
 
 # Freezing the Windows app. Nuitka compiles what ships; a floating version can
 # change the frozen layout, the DLLs pulled in, or the standalone bootstrap
