@@ -197,3 +197,39 @@ results, never sample contents or original patient-document filenames.
   only from accepted `main` code and assert that exact condition in the test.
   PR #318 is not approved or mergeable by policy until the repair and focused
   tests are pushed and independently verified.
+
+## 2026-08-31 - PR #318 repaired and fully gated
+
+- GitHub would not accept `REQUEST_CHANGES` from the owner account on its own
+  pull request (HTTP 422), so the same evidence was submitted as a blocking
+  `COMMENT` review, ID `5061819799`; no false review state was recorded.
+- Repaired `.github/workflows/codeql.yml` so `advanced-security/dismiss-alerts`
+  can run only when `github.event_name == 'push'` and
+  `github.ref == 'refs/heads/main'`. PRs, feature-branch pushes, and schedules
+  still analyze/upload SARIF but cannot mutate alert state.
+- Updated the CodeQL config header and `SECURITY.md` to state the same trust
+  boundary. Strengthened `test_codeql_policy.py` to require exactly one
+  dismissal step and the exact push-to-main guard rather than a word-presence
+  proxy. Focused result: **9 passed**; Ruff and format checks green.
+- Committed repair `d81e4799d8f3aeff878815111fa2610b2c751b8e` as
+  `AzalDaniel`, with `Co-authored-by: Codex <noreply@openai.com>`, and pushed it
+  to `claude/a-suppression-that-does-nothing`. GitHub independently confirmed
+  the author, committer, trailer, and PR head.
+- The literal `bash tools/check.sh` wrapper could not start in this Windows
+  checkout because Git had materialized the shell file with CRLF
+  (`pipefail\r`). Ran its exact gates with the repository `.venv` instead. The
+  first pytest attempt exposed only an inaccessible default Windows pytest temp
+  root; reran with an explicit isolated writable `--basetemp` and cache plugin
+  disabled. Terminal results: preflight passed; Ruff passed; 318 files formatted;
+  mypy passed across 148 source files; **2,248 passed, 7 skipped in 385.86s**;
+  complexity passed; PHI scan clean; `git diff --check` passed.
+- Removed only two test-created disposable artifacts after inspection:
+  `pytest-pr318` under the writable coordination workspace and an untracked
+  Chromium `debug.log` containing only transport warnings. Repository checkout
+  returned clean.
+- GitHub Actions on the repaired head completed successfully: CI run
+  `33334006283` and CodeQL run `33334006311`. Explicitly retargeted PR #318 from
+  merged stack parent `claude/two-halves-of-one-action` to `main`; compare then
+  showed four intended changed files, five commits ahead, zero behind. Actual
+  suppression dismissal remains unproved until the repaired workflow executes
+  on `main` after merge.

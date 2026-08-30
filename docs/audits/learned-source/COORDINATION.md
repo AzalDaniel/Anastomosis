@@ -13,10 +13,10 @@ temporary directories are not recovery state.
 - Local checkout:
   `C:\Users\azald\Documents\Codex\2026-08-29\github-plugin-github-openai-curated-remote-3\work\Anastomosis`.
 - Working branch: `codex/learned-source-integrity`.
-- Local and remote audit head at the start of the PR #318 review unit:
-  `b4251bb56bd447baca4ccefd32b702c2255b16b9`. This includes the first
-  crash-safe coordination checkpoint and is superseded only by later pushed
-  ledger commits recorded below.
+- Local and remote audit head before the PR #318 terminal-results checkpoint:
+  `02e72826c299c572fe4242eb3c00c12ab220ea2f`. This includes the first
+  crash-safe coordination checkpoint and the independently verified PR #318
+  blocker. Later pushed ledger commits supersede it without rewriting history.
 - Live GitHub `main` when reconciled:
   `28b219e1fbfac5547ee8427cb13c2e9b9ad30b3b`.
 - Pull request: https://github.com/AzalDaniel/Anastomosis/pull/310.
@@ -51,15 +51,21 @@ merged-head gate before approval.
 ## Live merge train at reconciliation
 
 1. PR #318, `A suppression that does nothing is worse than no suppression`:
-   open, draft, mergeable at head `6277d8488185ea1e34ff0b86a4fe9372d4b3e3fc`.
-   It is the prerequisite CodeQL policy/mechanism change, but **must not merge
-   at that head**. Independent review verified the pinned action, `sarif-id`,
-   `sarif-file`, and CodeQL `output` wiring against the actions' own metadata,
-   then found that its guard is true on every `claude/**` push. An unmerged
-   feature branch can therefore dismiss repository alerts with
-   `security-events: write`. Restrict mutation to accepted `main` code (the
-   intended repair is an explicit push-to-`refs/heads/main` condition) and pin
-   that exact trust boundary in `test_codeql_policy.py` before reconsidering.
+   open and draft at repaired head
+   `d81e4799d8f3aeff878815111fa2610b2c751b8e`. The original
+   `6277d8488185ea1e34ff0b86a4fe9372d4b3e3fc` head **must not merge**:
+   independent review found its guard true on every `claude/**` push, allowing
+   unmerged code to dismiss alerts with `security-events: write`. Codex repaired
+   the guard to an exact accepted push to `refs/heads/main`, strengthened the
+   regression, corrected policy text, committed as the owner plus transparent
+   Codex co-author, and pushed directly to the existing PR branch. The PR was
+   explicitly retargeted from its already-merged stack parent to live `main`;
+   its diff is now only four intended files. Local full gate: preflight, Ruff,
+   format, mypy (148 source files), 2,248 passed / 7 skipped, complexity, PHI
+   scan, and diff check all green. GitHub CI and CodeQL completed successfully.
+   GitHub was recomputing mergeability immediately after retargeting; re-query
+   before marking ready/merging. The first post-merge `main` run must prove the
+   action actually dismisses a suppressed alert before #310 relies on it.
 2. PR #310: update from `main` only after #318 lands; resolve deliberately,
    rerun the complete gate, inspect CodeQL results, then make ready/merge.
 3. PR #320, `Read the header: who wrote it, who signed it, and where`:
