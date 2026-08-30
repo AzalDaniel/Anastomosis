@@ -15,6 +15,13 @@ name: Windows package
 # asserted against the package version and the release action creating tag
 # v<version> on this ref (set the `publish` input to opt in).
 #
+# That release job also attests build provenance for the exe and its SBOM
+# (actions/attest-build-provenance, same pattern as the PyPI path in
+# release.yml) and labels the installer unsigned in the release notes: it has
+# no Authenticode signature, so provenance ("this workflow run produced these
+# bytes") is what `gh attestation verify` can check today, not publisher
+# identity — signing is a separate decision the project owner makes (#282).
+#
 # Triggers: manual (validate by default, or publish via the `publish` input);
 # pushes to main (or the active dev branch) that touch the app/packaging (so
 # pipeline changes are validated); and version tags (release builds). Path
@@ -219,6 +226,8 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write # Sigstore signing for the provenance attestation (#282)
+      attestations: write # persist the attestation to GitHub
     steps:
       - name: Check out the repo (for the CHANGELOG release notes)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -286,6 +295,24 @@ jobs:
             echo "Move the '## [Unreleased]' notes under that heading and re-tag." >&2
             exit 1
           fi
+          # Label plainly, every release, until a certificate exists (#282): a
+          # SHA-256 or an attestation says WHICH bytes and WHICH workflow run,
+          # neither says WHO signed it, and this installer has no Authenticode
+          # signature (packaging/anastomosis.iss requires a SignTool define this
+          # workflow does not supply). Appended after the non-empty check above
+          # so a missing CHANGELOG section still fails loudly instead of
+          # shipping a release note that says only this.
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "**This Windows installer is unsigned.** It carries no Authenticode signature, so Windows will not show a verified publisher. Verify it was built by this repository's release workflow instead of trusting it on sight:"
+            echo ""
+            echo '```'
+            echo "gh attestation verify Anastomosis-Setup-${ver}.exe --repo AzalDaniel/Anastomosis"
+            echo "gh attestation verify Anastomosis-${ver}-sbom.cdx.json --repo AzalDaniel/Anastomosis"
+            echo '```'
+          } >> RELEASE_NOTES.md
           echo "----- release notes -----"; cat RELEASE_NOTES.md
 
       - name: Download the built installer
@@ -293,6 +320,20 @@ jobs:
         with:
           name: anastomosis-windows-installer
           path: installer
+
+      - name: Attest build provenance (SLSA)
+        # Same pattern release.yml already uses for the PyPI path (#282): proves
+        # WHICH workflow run produced this exact exe/SBOM pair, so `gh attestation
+        # verify` can check the file against this repo instead of trusting it on
+        # sight. This is NOT a substitute for signing — it says nothing about
+        # publisher identity, only provenance — which is why the release notes
+        # below still label the installer unsigned. Runs only in this tag/publish-
+        # gated job, never for the ordinary branch-push validation build above.
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            installer/*.exe
+            installer/*.cdx.json
 
       - name: Attach it to the release
         # Every action in this file — first-party actions/* included — is

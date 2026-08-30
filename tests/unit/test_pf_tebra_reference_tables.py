@@ -29,6 +29,7 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
 from anastomosis.sources import get_source
+from anastomosis.sources.base import QuarantinedRows
 from anastomosis.sources.pf_tebra.loader import UnsupportedTablesError, read_export
 from anastomosis.sources.pf_tebra.mapper import (
     _patient_scoped_guids,
@@ -78,15 +79,26 @@ def test_a_table_with_no_patient_key_and_no_identity_is_still_refused() -> None:
     assert "mystery-notes" in str(caught.value)
 
 
-def test_a_table_pointing_at_patients_this_export_lacks_is_still_refused() -> None:
-    """A patient key naming somebody absent is not a directory — it is an orphan."""
+def test_a_table_pointing_at_patients_this_export_lacks_is_quarantined_not_refused() -> None:
+    """A patient key naming somebody absent is not a directory — it is an orphan.
+
+    Since #280 an orphan no longer takes the run down with it: the row is held
+    in quarantine (verbatim, with the reason) and the migration proceeds. It
+    still lands on NO patient — held is not guessed.
+    """
     export = read_export(FIXTURE)
-    export["stray-rows"] = [{"PatientPracticeGuid": "feedface-dead-0000-0000-00000000beef"}]
+    stray = {"PatientPracticeGuid": "feedface-dead-0000-0000-00000000beef"}
+    export["stray-rows"] = [stray]
 
-    with pytest.raises(UnsupportedTablesError) as caught:
-        list(map_export(export))
+    held: list[QuarantinedRows] = []
+    records = list(map_export(export, on_quarantine=held.extend))
 
-    assert "stray-rows" in str(caught.value)
+    (entry,) = held
+    assert entry.table == "stray-rows"
+    assert entry.rows == (stray,)
+    assert "names no patient" in entry.reason
+    for record in records:
+        assert "pf_tebra:unmapped:stray-rows" not in record.extensions
 
 
 def test_a_directory_is_recognised_by_its_shape_not_by_its_name() -> None:
@@ -117,29 +129,36 @@ def test_a_table_with_a_patient_key_is_never_read_as_a_directory() -> None:
     assert "pf_tebra:unmapped:patient-widgets" in record.extensions
 
 
-def test_a_directory_that_names_a_patient_record_is_refused_not_broadcast() -> None:
+def test_a_directory_that_names_a_patient_record_joins_to_its_one_owner() -> None:
     """The #234 shape: no patient column, a unique guid of its own, and a foreign
     key into patient scope. Classified as a directory it was copied whole into
-    EVERY record — 773 rows x 2,167 patients on the real export. It must refuse.
+    EVERY record — 773 rows x 2,167 patients on the real export. Refusing was
+    the first fix; #280 finishes it: the join is DECLARED (_INDIRECT_JOINS),
+    and a row resolving to exactly one known patient lands on that patient —
+    never broadcast, never guessed. The join's failure modes are pinned in
+    test_pf_quarantine.py.
     """
     export = read_export(FIXTURE)
-    plan = export["patient-insurances"][0]["PatientInsurancePlanGuid"]
-    export["patient-insurance-eligibilities"] = [
-        {
-            "PatientInsuranceEligibilityGuid": "feedface-0000-0000-0000-00000000e001",
-            "PatientInsurancePlanGuid": plan,
-            "CopayAmount": "25.00",
-        }
-    ]
+    plan_row = export["patient-insurances"][0]
+    plan = plan_row["PatientInsurancePlanGuid"]
+    owner = plan_row["PatientPracticeGuid"]
+    eligibility = {
+        "PatientInsuranceEligibilityGuid": "feedface-0000-0000-0000-00000000e001",
+        "PatientInsurancePlanGuid": plan,
+        "CopayAmount": "25.00",
+    }
+    export["patient-insurance-eligibilities"] = [eligibility]
 
     # It is self-keyed, so the old rule called it a directory.
     assert _self_keyed(export["patient-insurance-eligibilities"]) is not None
     assert "patient-insurance-eligibilities" not in _reference_tables(export)
 
-    # And with no patient key to attribute it by, the run refuses rather than guessing.
-    with pytest.raises(UnsupportedTablesError) as caught:
-        list(map_export(export))
-    assert "patient-insurance-eligibilities" in str(caught.value)
+    records = list(map_export(export))
+    (owned,) = [r for r in records if r.patient.id == owner]
+    assert owned.extensions["pf_tebra:unmapped:patient-insurance-eligibilities"] == [eligibility]
+    for record in records:
+        if record.patient.id != owner:
+            assert "pf_tebra:unmapped:patient-insurance-eligibilities" not in record.extensions
 
 
 def test_the_five_real_practice_directories_are_still_carried() -> None:
