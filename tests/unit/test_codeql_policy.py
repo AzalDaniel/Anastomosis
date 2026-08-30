@@ -6,7 +6,8 @@ record of how they came to be):
 * The advanced workflow (``.github/workflows/codeql.yml``) triggers on push,
   pull request, and a schedule; the analyzing job holds ``security-events:
   write`` so its SARIF can upload; and every third-party action is pinned to a
-  full 40-hex commit SHA (never a floating tag).
+  full 40-hex commit SHA (never a floating tag). The alert-mutating dismissal
+  step can run only after accepted code is pushed to ``main``.
 * The config (``.github/codeql/codeql-config.yml``) selects the
   ``security-extended`` suite (which ships the built-in ``AlertSuppression.ql``
   query that honors inline ``# codeql[...]`` comments — no extra pack needed)
@@ -136,6 +137,58 @@ def test_workflow_actions_are_sha_pinned() -> None:
         assert _SHA_RE.fullmatch(pin), f"action {ref!r} is not pinned to a 40-hex SHA"
 
 
+# A `uses:` line together with the trailing `# vX.Y.Z` human-readable version
+# comment. PyYAML discards YAML comments, so the co-versioning check below
+# reads the file as text rather than through `_load_yaml`.
+_USES_LINE_RE = re.compile(r"^\s*-?\s*uses:\s*(\S+)@([0-9a-f]{40})\s*#\s*(\S+)\s*$")
+
+
+def _codeql_action_pins() -> dict[str, tuple[str, str]]:
+    """``{"init": (sha, version), "analyze": (sha, version)}`` for the two
+    ``github/codeql-action/*`` steps, read straight from the file's text."""
+    pins: dict[str, tuple[str, str]] = {}
+    for line in CODEQL_WORKFLOW.read_text(encoding="utf-8").splitlines():
+        match = _USES_LINE_RE.match(line)
+        if not match:
+            continue
+        ref, sha, version = match.groups()
+        if ref == "github/codeql-action/init":
+            pins["init"] = (sha, version)
+        elif ref == "github/codeql-action/analyze":
+            pins["analyze"] = (sha, version)
+    return pins
+
+
+def test_codeql_init_and_analyze_share_one_version() -> None:
+    """``init`` and ``analyze`` are two steps of ONE CodeQL Action release, and
+    the Action rejects a run where they disagree. Dependabot tracks each
+    `uses:` line as an independent dependency — that gap is exactly how a
+    weekly batch once bumped `analyze` alone and left `init` a version
+    behind, because the ecosystem's PR limit was already spent on other
+    updates by the time `init`'s turn came. This is a property of the
+    committed file, checked directly, rather than something inferred from how
+    the two pins arrived here."""
+    pins = _codeql_action_pins()
+    assert "init" in pins and "analyze" in pins, (
+        "codeql.yml must declare both a github/codeql-action/init and a "
+        "github/codeql-action/analyze step, each SHA-pinned with a trailing "
+        "`# vX.Y.Z` comment"
+    )
+    init_sha, init_version = pins["init"]
+    analyze_sha, analyze_version = pins["analyze"]
+    assert init_sha == analyze_sha, (
+        f"codeql-action/init ({init_sha}) and codeql-action/analyze "
+        f"({analyze_sha}) are pinned to different commits; the CodeQL Action "
+        "refuses to run when init and analyze disagree on version."
+    )
+    assert init_version == analyze_version, (
+        f"codeql-action/init ({init_version}) and codeql-action/analyze "
+        f"({analyze_version}) carry different version comments even though "
+        "their SHAs must move together — the comment is the human-readable "
+        "half of the same invariant."
+    )
+
+
 def test_init_step_references_config_file() -> None:
     """The codeql-action init step points at the committed config, which exists."""
     doc = _load_yaml(CODEQL_WORKFLOW)
@@ -150,6 +203,49 @@ def test_init_step_references_config_file() -> None:
         f"init step config-file must be the committed config; got {config_refs!r}"
     )
     assert CODEQL_CONFIG.is_file(), "the referenced codeql-config.yml does not exist"
+
+
+def test_the_suppression_mechanism_is_actually_wired_up() -> None:
+    """A `# codeql[...]` comment only clears an alert if this step runs.
+
+    The suite computes the suppression into the SARIF and code scanning ignores
+    it; `advanced-security/dismiss-alerts` is what reads it back and dismisses
+    the alert through the API. Six suppressions sat in `src/` doing nothing
+    because that step was missing, so the tests below — which check that every
+    suppression is well formed and documented — were all passing over a control
+    that did not exist. This is the one that would have caught it.
+    """
+    doc = _load_yaml(CODEQL_WORKFLOW)
+    steps = [step for job in doc.get("jobs", {}).values() for step in job.get("steps", [])]
+
+    analyze = [s for s in steps if "codeql-action/analyze" in s.get("uses", "")]
+    assert len(analyze) == 1, "expected exactly one codeql-action/analyze step"
+    assert analyze[0].get("id") == "analyze", (
+        "the analyze step needs an `id` so the dismissal step can name its upload"
+    )
+    output = analyze[0].get("with", {}).get("output")
+    assert output, "the analyze step needs `output:` so the SARIF exists on disk to be read"
+
+    dismiss = [s for s in steps if "dismiss-alerts" in s.get("uses", "")]
+    assert len(dismiss) == 1, (
+        f"expected exactly one dismissal step, found {len(dismiss)}: every "
+        "`# codeql[...]` suppression in this repository is decoration without "
+        "one, and multiple mutators widen the alert-state trust boundary"
+    )
+    inputs = dismiss[0].get("with", {})
+    assert inputs.get("sarif-id") == "${{ steps.analyze.outputs.sarif-id }}", (
+        "the dismissal step must take the sarif-id of the upload it is dismissing from"
+    )
+    assert str(inputs.get("sarif-file", "")).startswith(f"{output}/"), (
+        f"the dismissal step reads {inputs.get('sarif-file')!r}, which is not in the "
+        f"{output!r} directory the analyze step writes"
+    )
+    guard = str(dismiss[0].get("if", ""))
+    assert guard == "github.event_name == 'push' && github.ref == 'refs/heads/main'", (
+        "the dismissal step mutates repository alert state with security-events: write; "
+        "it must run only for accepted code pushed to main, never from a pull request, "
+        "feature branch, or scheduled scan"
+    )
 
 
 # --- config -------------------------------------------------------------------

@@ -49,6 +49,22 @@ id (`feedface-0000-0000-0000-00000000cda1`).
 Document-level metadata (`ccda:documentId`, `ccda:effectiveTime`,
 `ccda:title`) is also stored in `patient.extensions`.
 
+## Header actors
+
+| Header element | Trap exercised by the adapter test |
+| --- | --- |
+| `author/assignedAuthor` | header author → `Practitioner` carrying `extensions["ccda:participation"] = "author"`; its `suffix`, `addr` and `telecom` have no Practitioner field and ride `extensions` |
+| `author` inside the Note Activity | the note's OWN author → a second `Practitioner`, and the note `Encounter`'s `provider_id` |
+| `assignedAuthor/representedOrganization` | → `Facility` |
+| `custodian/.../representedCustodianOrganization` | → the SAME `Facility` (one `<id root>`, one organization); the author's half supplies the name, the custodian's the address and phone |
+
+The header author and the note author deliberately share one `<id root>`, and
+the author's organization shares one with the custodian — both ordinary C-CDA.
+That makes this fixture the case where the ingest ledger cannot credit either
+construct (a root two constructs share cannot say which of them an object came
+from) even though both now parse, which
+`tests/unit/test_ccda_ledger.py` asserts by name.
+
 ## Conventions honored
 
 * All GUID-shaped ids start with `feedface-` (PHI scanner requirement).

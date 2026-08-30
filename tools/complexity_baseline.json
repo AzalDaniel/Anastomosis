@@ -312,11 +312,11 @@
       "rank": "D"
     },
     "src/anastomosis/core/fhir/export.py": {
-      "avg": 6.5652,
+      "avg": 5.9259,
       "rank": "B"
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "avg": 5.9048,
+      "avg": 5.8636,
       "rank": "B"
     },
     "src/anastomosis/core/source_init_command.py": {
@@ -337,10 +337,6 @@
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py": {
       "avg": 8.7714,
-      "rank": "B"
-    },
-    "src/anastomosis/sources/ccda/parser.py": {
-      "avg": 5.093,
       "rank": "B"
     },
     "src/anastomosis/sources/fhir_r4/__init__.py": {

@@ -11,6 +11,15 @@
 # suppressions instead. The query selection lives in
 # ./.github/codeql/codeql-config.yml and the suppression policy is governed by
 # the "Code scanning & suppression policy (auditable)" section of SECURITY.md.
+#
+# Those inline suppressions need the dismissal step at the end of this job to
+# mean anything. The suite does run AlertSuppression.ql, and the suppression it
+# computes does travel in the uploaded SARIF — but code scanning ignores the
+# SARIF's `suppressions[]` property, so the alert stays open and a pull request
+# touching that line still fails. This repository believed otherwise for six
+# call sites until #310 proved it on a correctly-formed comment. The step below
+# reads the property back and dismisses the matching alerts through the API,
+# which is the only thing that turns the convention into a control.
 name: CodeQL
 
 on:
@@ -34,9 +43,31 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # init and analyze are two halves of one release: the CodeQL Action
+      # rejects a run where they disagree, so they carry the same SHA/version
+      # on purpose (test_codeql_policy.py pins that the two never drift).
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: python
           config-file: ./.github/codeql/codeql-config.yml
-      - uses: github/codeql-action/analyze@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
+      # `output` writes the SARIF to disk as well as uploading it; the dismissal
+      # step reads that copy, and `id` is what lets it name the upload it
+      # belongs to. One language, so the file is python.sarif.
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        id: analyze
+        with:
+          output: sarif-results
+
+      # Turn the inline `# codeql[rule-id]` comments into actual dismissals.
+      # Alert state is repository state: only an accepted push to main may
+      # mutate it. Pull requests, feature-branch pushes, and scheduled scans
+      # still upload SARIF, but they can never dismiss an alert.
+      - name: Dismiss suppressed alerts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: advanced-security/dismiss-alerts@a18f986bdb40edba0dd7a74382c15d4a3d50a1c8 # v2
+        with:
+          sarif-id: ${{ steps.analyze.outputs.sarif-id }}
+          sarif-file: sarif-results/python.sarif
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
