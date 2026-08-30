@@ -30,9 +30,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: pip install ruff
+      - run: pip install ruff radon
       - run: ruff check .
       - run: ruff format --check .
+      - run: python tools/complexity_gate.py
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
   # as one of the gates; this lane closes the drift where mypy is a local
