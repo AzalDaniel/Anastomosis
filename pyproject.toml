@@ -21,7 +21,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "anastomosis"
-description = "Reconstruct, verify, and re-home clinical records. An open-source toolkit for EHR migration, archival, and record liberation."
+description = "Lossless medical-records migration between electronic healthcare systems - platform-agnostic and physician-friendly."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
