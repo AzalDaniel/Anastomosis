@@ -16,7 +16,7 @@ import hashlib
 import logging
 import mimetypes
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -59,6 +59,7 @@ from anastomosis.core.model import (
 from anastomosis.core.textutil import clean_numeric, format_phone, html_to_text, sanitize_soap_html
 from anastomosis.core.timeutil import age_at
 from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
+from anastomosis.sources.base import QuarantinedRows
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
 from .loader import (
@@ -1263,43 +1264,162 @@ def _reference_tables(export: Export) -> dict[str, list[Row]]:
     return found
 
 
+# Unmapped tables whose rows reach their patient through ANOTHER table's key.
+# {table: (join column, parent table)} — the parent carries _PATIENT_KEY. A join
+# is DECLARED, never inferred: on the real export patient-insurance-eligibilities
+# has no patient column, and its PatientInsurancePlanGuid keys exactly one
+# patient-insurances row per value (773 rows, 773 exact resolutions, 0
+# ambiguous). A join-shaped table nobody declared still refuses the run —
+# guessing a graph walk is how a chart lands on the wrong patient.
+_INDIRECT_JOINS: dict[str, tuple[str, str]] = {
+    "patient-insurance-eligibilities": ("PatientInsurancePlanGuid", "patient-insurances"),
+}
+
+
+def _join_owners(parent_rows: list[Row], join_col: str) -> dict[str, frozenset[str]]:
+    """Each populated ``join_col`` value -> the set of patients whose parent rows carry it.
+
+    The value, not just its existence: an indirect join resolves only when this
+    set has exactly one member. A parent row whose own patient key is blank
+    contributes nothing (it cannot vouch for an owner it does not name).
+    """
+    owners: dict[str, set[str]] = {}
+    for row in parent_rows:
+        key = _s(row, join_col)
+        owner = _s(row, _PATIENT_KEY)
+        if key is not None and owner is not None:
+            owners.setdefault(key, set()).add(owner)
+    return {key: frozenset(guids) for key, guids in owners.items()}
+
+
+def _held(table: str, buckets: dict[str, list[Row]]) -> list[QuarantinedRows]:
+    """Fold reason-keyed buckets into :class:`QuarantinedRows`, dropping empties."""
+    return [
+        QuarantinedRows(table, reason, tuple(rows))
+        for reason, rows in sorted(buckets.items())
+        if rows
+    ]
+
+
+def _partition_direct(
+    table: str, rows: list[Row], patient_guids: frozenset[str]
+) -> tuple[dict[str, list[Row]], list[QuarantinedRows]]:
+    """Split a ``PatientPracticeGuid``-keyed table into attributable and held rows.
+
+    Every row lands in exactly one place: on its named patient, or in
+    quarantine under the precise way its key failed. Nothing is guessed and
+    nothing is dropped — conservation by construction, pinned by tests.
+    """
+    grouped: dict[str, list[Row]] = {}
+    buckets: dict[str, list[Row]] = {}
+    for row in rows:
+        guid = _s(row, _PATIENT_KEY)
+        if guid is None:
+            buckets.setdefault("PatientPracticeGuid is blank", []).append(row)
+        elif guid not in patient_guids:
+            buckets.setdefault(
+                "PatientPracticeGuid names no patient in this export", []
+            ).append(row)
+        else:
+            grouped.setdefault(guid, []).append(row)
+    return grouped, _held(table, buckets)
+
+
+def _partition_joined(
+    table: str,
+    rows: list[Row],
+    join_col: str,
+    parent: str,
+    owners_by_key: dict[str, frozenset[str]],
+    patient_guids: frozenset[str],
+) -> tuple[dict[str, list[Row]], list[QuarantinedRows]]:
+    """Resolve a declared indirect join row by row — exactly one owner, or held.
+
+    Zero owners is a dangling key and several owners is an ambiguity; both
+    quarantine, because broadcasting a row to every candidate or picking the
+    first is a misfiled chart. The reasons name schema (columns and tables),
+    never a key's value.
+    """
+    grouped: dict[str, list[Row]] = {}
+    buckets: dict[str, list[Row]] = {}
+    for row in rows:
+        key = _s(row, join_col)
+        owners = owners_by_key.get(key, frozenset()) if key is not None else frozenset()
+        if key is None:
+            buckets.setdefault(f"{join_col} is blank", []).append(row)
+        elif not owners:
+            buckets.setdefault(f"{join_col} finds no owning patient in {parent}", []).append(row)
+        elif len(owners) > 1:
+            buckets.setdefault(
+                f"{join_col} joins {parent} rows owned by more than one patient", []
+            ).append(row)
+        elif (owner := next(iter(owners))) not in patient_guids:
+            buckets.setdefault(
+                f"the patient {parent} names is not in this export", []
+            ).append(row)
+        else:
+            grouped.setdefault(owner, []).append(row)
+    return grouped, _held(table, buckets)
+
+
 def _unmapped_tables(
     export: Export, patient_guids: frozenset[str], reference: dict[str, list[Row]] | None = None
-) -> dict[str, dict[str, list[Row]]]:
+) -> tuple[dict[str, dict[str, list[Row]]], list[QuarantinedRows]]:
     """Account for EVERY table the mapper does not consume — losslessly.
 
-    Returns ``{patient_guid: {table_name: [rows verbatim]}}`` for unmapped tables
-    whose every row attributes to a KNOWN patient via ``PatientPracticeGuid``;
-    the mapper stashes those rows in the owning patient's ``extensions`` so no
-    field is dropped.
+    Returns ``({patient_guid: {table_name: [rows verbatim]}}, quarantined)``.
+    A table with a ``PatientPracticeGuid`` column is PARTITIONED: rows naming a
+    known patient land in that patient's ``extensions``; rows whose key is blank
+    or names nobody are quarantined with the rest of the table intact. A table
+    in :data:`_INDIRECT_JOINS` resolves each row through its declared join, and
+    only an exactly-one-owner resolution attributes — zero or several owners
+    quarantine the row. The old behavior refused a 369,094-row table over 695
+    dangling rows (#280); the new one preserves the attributable majority and
+    holds the broken few where an operator can see them.
 
     ``reference`` names the practice-level tables :func:`_reference_tables`
     recognised; they are carried at record scope instead and so are not orphans.
 
-    What is left over is genuinely unattributable — a table with a patient
-    column whose rows point at patients this export does not contain, or one
-    with neither a patient key nor an identity of its own. That cannot be placed
-    anywhere in a per-patient model, so the run is refused
+    A table with NO path to a patient — no key column, no declared join, no
+    practice-level identity — still refuses the run
     (:class:`UnsupportedTablesError`): failing closed beats silently discarding
-    clinical data. Empty tables are ignored (nothing to lose).
+    clinical data, and beats guessing a join nobody vouched for. Empty tables
+    are ignored (nothing to lose).
     """
     by_patient: dict[str, dict[str, list[Row]]] = {}
-    orphans: list[str] = []
+    quarantined: list[QuarantinedRows] = []
+    no_path: list[str] = []
     practice_level = set(reference or {})
     for table in sorted(set(export) - set(KNOWN_TABLES)):
         rows = export[table]
         if not rows or table in practice_level:
             continue
-        grouped = _by(rows, "PatientPracticeGuid")
-        attributed = sum(len(group) for group in grouped.values())
-        if attributed != len(rows) or any(guid not in patient_guids for guid in grouped):
-            orphans.append(table)
+        if _PATIENT_KEY in rows[0]:
+            grouped, held = _partition_direct(table, rows, patient_guids)
+        elif table in _INDIRECT_JOINS:
+            join_col, parent = _INDIRECT_JOINS[table]
+            owners = _join_owners(export.get(parent, []), join_col)
+            grouped, held = _partition_joined(
+                table, rows, join_col, parent, owners, patient_guids
+            )
+        else:
+            no_path.append(table)
             continue
         for guid, guid_rows in grouped.items():
             by_patient.setdefault(guid, {})[table] = guid_rows
-    if orphans:
-        raise UnsupportedTablesError(sorted(orphans))
-    return by_patient
+        quarantined.extend(held)
+    if no_path:
+        raise UnsupportedTablesError(sorted(no_path))
+    if quarantined:
+        # Counts and schema names only — never a row value, never a guid.
+        logger.warning(
+            "pf_tebra: quarantined %d row(s) from %d unmapped table(s) that "
+            "attribute to no patient (see quarantine.json in the output): %s",
+            sum(len(entry.rows) for entry in quarantined),
+            len({entry.table for entry in quarantined}),
+            sorted({entry.table for entry in quarantined}),
+        )
+    return by_patient, quarantined
 
 
 # Every KNOWN table the mapper reads by slicing a per-key grouping, with the key
@@ -1471,8 +1591,32 @@ def _map_document(row: Row, guid: str, attachments: Attachments | None) -> Docum
     )
 
 
+def _unjoined_superbills(
+    plan_types: _PlanTypeLookup, export: Export, patient_guids: frozenset[str]
+) -> dict[str, list[Row]]:
+    """The superbill-insurances rows that joined no coverage, grouped per patient.
+
+    These are placed by their OWN PatientPracticeGuid, so a row whose guid is
+    blank or names nobody in this export has no home and would vanish here.
+    superbill-insurances sits outside _check_key_closure (it is read in full,
+    never sliced), so this is the only place that can catch it — a KNOWN
+    table's row, so it keeps the fail-closed :class:`OrphanRowsError` stance
+    rather than the unmapped tables' quarantine. Counts only — never a guid.
+    """
+    unjoined_rows = plan_types.unjoined(
+        export["patient-insurances"], export["superbill-insurances"]
+    )
+    homeless = sum(1 for row in unjoined_rows if _s(row, _PATIENT_KEY) not in patient_guids)
+    if homeless:
+        raise OrphanRowsError({"superbill-insurances": homeless})
+    return _by(unjoined_rows, _PATIENT_KEY)
+
+
 def map_export(
-    export: Export, *, attachments: Attachments | None = None
+    export: Export,
+    *,
+    attachments: Attachments | None = None,
+    on_quarantine: Callable[[list[QuarantinedRows]], None] | None = None,
 ) -> Iterator[PatientRecord]:
     """Join the loaded tables into one PatientRecord per patient.
 
@@ -1480,6 +1624,13 @@ def map_export(
     over the same export directory — the files the ``patient-documents`` rows
     point at. Without it the rows still map, carrying their metadata and no
     file; the adapter always passes it.
+
+    ``on_quarantine`` receives the rows :func:`_unmapped_tables` held back —
+    ALWAYS, empty list included, so a caller keeping state (the adapter) is
+    reset by a clean load rather than left showing the previous export's
+    quarantine. It fires before the first record is yielded: the partition is
+    settled up front, so a consumer that stops early still saw the whole
+    accounting.
     """
 
     # Losslessness: account for every table the mapper does not consume, and for
@@ -1487,7 +1638,9 @@ def map_export(
     # refusal happens cleanly, before partial output).
     patient_guids = _ids(export["patient-demographics"], _PATIENT_KEY)
     reference_tables = _reference_tables(export)
-    unmapped_by_patient = _unmapped_tables(export, patient_guids, reference_tables)
+    unmapped_by_patient, quarantined = _unmapped_tables(export, patient_guids, reference_tables)
+    if on_quarantine is not None:
+        on_quarantine(quarantined)
     if reference_tables:
         # Table NAMES are schema, not PHI — safe to log; row values are not.
         logger.info(
@@ -1521,18 +1674,7 @@ def map_export(
     # _FOREIGN_KEYS), so a row that joins no coverage at all is found here, once,
     # rather than through _check_key_closure; preserved per patient below instead
     # of being dropped (see _PlanTypeLookup.unjoined).
-    unjoined_rows = plan_types.unjoined(
-        export["patient-insurances"], export["superbill-insurances"]
-    )
-    # These are placed by their OWN PatientPracticeGuid, so a row whose guid is
-    # blank or names nobody in this export has no home and would vanish here.
-    # superbill-insurances sits outside _check_key_closure (it is read in full,
-    # never sliced), so this is the only place that can catch it. Counts only —
-    # never a guid value.
-    homeless = sum(1 for row in unjoined_rows if _s(row, _PATIENT_KEY) not in patient_guids)
-    if homeless:
-        raise OrphanRowsError({"superbill-insurances": homeless})
-    unjoined_superbill_by_patient = _by(unjoined_rows, _PATIENT_KEY)
+    unjoined_superbill_by_patient = _unjoined_superbills(plan_types, export, patient_guids)
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
     # Encounter-keyed link tables, pre-grouped once (see _DemographicsGroups).
