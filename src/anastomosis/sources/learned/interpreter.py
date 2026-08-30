@@ -229,14 +229,18 @@ class LearnedSourceAdapter:
                     extensions[f"learned:{self.name}:{column}"] = value
         return extensions
 
-    def _build_patient(
-        self,
-        base_row: Row,
-        group_key: str,
-        extensions: dict[str, object],
-        file_name: str,
-        resolved_values: dict[str, object] | None = None,
-    ) -> Patient:
+    def _patient_parts(
+        self, base_row: Row, resolved_values: dict[str, object] | None
+    ) -> tuple[dict[str, object], dict[str, str], list[ContactPoint], list[Identifier]]:
+        """Route each mapped patient value to the model shape that holds it.
+
+        Four destinations, because the canonical patient does not store these
+        alike: an address is one assembled object, phones and email are typed
+        contact points, SSN/MRN/PRN are typed identifiers, and everything else
+        is a plain field. ``resolved_values`` carries the first-nonblank values
+        agreed across an encounter-grained group; without it each value is read
+        from the one row.
+        """
         scalars: dict[str, object] = {}
         address: dict[str, str] = {}
         telecom: list[ContactPoint] = []
@@ -261,7 +265,17 @@ class LearnedSourceAdapter:
                 )
             else:  # patient.<scalar>
                 scalars[plan.target_path.split(".", 1)[1]] = value
+        return scalars, address, telecom, identifiers
 
+    def _build_patient(
+        self,
+        base_row: Row,
+        group_key: str,
+        extensions: dict[str, object],
+        file_name: str,
+        resolved_values: dict[str, object] | None = None,
+    ) -> Patient:
+        scalars, address, telecom, identifiers = self._patient_parts(base_row, resolved_values)
         patient_id = clean_cell(base_row.get(self._patient_key))
         if patient_id is not None:
             # Front of the list so a reader sees the identity this mapping keyed
@@ -285,9 +299,15 @@ class LearnedSourceAdapter:
         )
         return self._construct(Patient, kwargs, "patient")
 
-    def _build_encounter(
-        self, row: Row, patient_id: str, encounter_id: str, with_extensions: bool, file_name: str
-    ) -> Encounter:
+    def _encounter_parts(self, row: Row) -> tuple[dict[str, object], list[NoteSection]]:
+        """Route each mapped encounter value: narrative sections, or plain fields.
+
+        The mirror of :meth:`_patient_parts`, and split for the same reason —
+        the routing table is one concern and assembling the model is another.
+        A SOAP body arrives as source markup, so it is sanitised for render and
+        shadowed as text for search/QA; neither is allowed to be empty-string
+        where the model means absent.
+        """
         scalars: dict[str, object] = {}
         sections: list[NoteSection] = []
         for plan in self._encounter_plan:
@@ -307,6 +327,12 @@ class LearnedSourceAdapter:
                 )
             else:  # encounter.<scalar>
                 scalars[plan.target_path.split(".", 1)[1]] = value
+        return scalars, sections
+
+    def _build_encounter(
+        self, row: Row, patient_id: str, encounter_id: str, with_extensions: bool, file_name: str
+    ) -> Encounter:
+        scalars, sections = self._encounter_parts(row)
         kwargs: dict[str, object] = dict(scalars)
         kwargs["id"] = encounter_id
         kwargs["patient_id"] = patient_id

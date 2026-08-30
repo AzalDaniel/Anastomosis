@@ -233,36 +233,51 @@ def _ndjson_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     return records
 
 
+def _clean_csv_row(row: dict[str | None, object], header: list[str], path: Path, line: int) -> Row:
+    """One DictReader row as a plain str->str mapping, or a loud refusal.
+
+    ``DictReader`` files surplus cells under the ``None`` key and leaves a list
+    there, so a row wider than its header arrives looking like an ordinary row
+    with one odd entry. Reading that shape as data is how a shifted cell
+    becomes a patient's value under the wrong column name; both shapes refuse.
+    Counts only — never the cell.
+    """
+    if None in row:
+        overflow = row[None]
+        overflow_count = len(overflow) if isinstance(overflow, list) else 1
+        raise MappingError(
+            f"CSV source {path} row {line} has {overflow_count} cells "
+            f"beyond its {len(header)} headers"
+        )
+    clean: Row = {}
+    for column, value in row.items():
+        if column is None or isinstance(value, list):
+            raise MappingError(f"CSV source {path} row {line} has malformed cells")
+        clean[column] = value  # type: ignore[assignment]
+    return clean
+
+
+def _read_delimited(path: Path, fmt: SourceFormat) -> list[Row]:
+    """Every row of a CSV/TSV source, header-validated and shape-checked."""
+    try:
+        with path.open(encoding=fmt.encoding, newline="") as handle:
+            header = next(csv.reader(handle, delimiter=_delimiter(fmt)), None)
+            if header is None:
+                raise MappingError(f"source file {path} is empty (no header row)")
+            _validate_csv_header(header, path)
+            reader = csv.DictReader(handle, fieldnames=header, delimiter=_delimiter(fmt))
+            rows = [
+                _clean_csv_row(row, header, path, line) for line, row in enumerate(reader, start=2)
+            ]
+            return _bound_rows(rows, header, fmt, path)
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise MappingError(f"cannot read source file {path}: {type(exc).__name__}") from exc
+
+
 def read_rows(path: Path, fmt: SourceFormat) -> list[Row]:
     """Read every row into authored-header dicts (loud on malformed input)."""
     if fmt.type in ("csv", "tsv"):
-        try:
-            with path.open(encoding=fmt.encoding, newline="") as handle:
-                header = next(csv.reader(handle, delimiter=_delimiter(fmt)), None)
-                if header is None:
-                    raise MappingError(f"source file {path} is empty (no header row)")
-                _validate_csv_header(header, path)
-                reader = csv.DictReader(handle, fieldnames=header, delimiter=_delimiter(fmt))
-                csv_rows: list[Row] = []
-                for row_number, row in enumerate(reader, start=2):
-                    if None in row:
-                        overflow = row[None]
-                        overflow_count = len(overflow) if isinstance(overflow, list) else 1
-                        raise MappingError(
-                            f"CSV source {path} row {row_number} has {overflow_count} cells "
-                            f"beyond its {len(header)} headers"
-                        )
-                    clean_row: Row = {}
-                    for column, value in row.items():
-                        if column is None or isinstance(value, list):
-                            raise MappingError(
-                                f"CSV source {path} row {row_number} has malformed cells"
-                            )
-                        clean_row[column] = value
-                    csv_rows.append(clean_row)
-                return _bound_rows(csv_rows, header, fmt, path)
-        except (OSError, UnicodeError, csv.Error) as exc:
-            raise MappingError(f"cannot read source file {path}: {type(exc).__name__}") from exc
+        return _read_delimited(path, fmt)
     records = (
         _json_records(path, fmt.encoding)
         if fmt.type == "json"

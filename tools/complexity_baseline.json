@@ -281,10 +281,6 @@
       "cc": 33,
       "rank": "E"
     },
-    "src/anastomosis/sources/learned/interpreter.py::LearnedSourceAdapter._build_patient": {
-      "cc": 13,
-      "rank": "C"
-    },
     "src/anastomosis/sources/oracle_ehi/mapper.py::map_export": {
       "cc": 16,
       "rank": "C"
@@ -353,10 +349,6 @@
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
       "avg": 8.2292,
-      "rank": "B"
-    },
-    "src/anastomosis/sources/learned/reader.py": {
-      "avg": 5.6,
       "rank": "B"
     },
     "src/anastomosis/sources/pf_tebra/escript.py": {

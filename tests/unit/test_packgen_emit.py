@@ -697,3 +697,32 @@ def test_jinja_delimiters_in_unplaced_text_stay_literal(tmp_path: Path) -> None:
     assert "Boilerplate" not in html
     # And it is preserved, literally, where nothing will ever render it.
     assert "Boilerplate {{ 7*7 }} {% if True %}RAN{% endif %}" in quarantine
+
+
+# --- published vocabulary vs. sample content ---------------------------------
+
+
+def test_a_published_heading_is_schema_and_ships_in_the_pack() -> None:
+    """Subjective is SOAP; Allergies is a C-CDA section title. Both are
+    published vocabulary printed on every chart in the country, so they carry
+    no patient and belong in the pack — a manifest whose sections all read
+    "Inferred section 3" has thrown away the one thing the learner learned."""
+    from anastomosis.packgen.emit import published_heading
+
+    assert published_heading("Subjective") == "Subjective"
+    assert published_heading("SUBJECTIVE:") == "SUBJECTIVE"  # the chart's own spelling
+    assert published_heading("  allergies  ") == "allergies"
+    assert published_heading("Assessment and Plan") == "Assessment and Plan"
+
+
+def test_a_string_that_is_not_published_vocabulary_stays_quarantined() -> None:
+    """The #200 shape: a value every sample happened to share reads exactly like
+    template furniture. Matching is EXACT, so a heading that merely contains a
+    published word is not admitted — that is how a provider's name riding on a
+    section title stays out of a reusable file."""
+    from anastomosis.packgen.emit import published_heading
+
+    assert published_heading("Assessment by Dr Fixture") is None
+    assert published_heading("Kinfolk Probe") is None
+    assert published_heading("Springfield Family Practice") is None
+    assert published_heading("") is None

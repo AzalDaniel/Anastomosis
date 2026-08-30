@@ -40,6 +40,7 @@ Design choices, grounded in the pack contracts read above:
 
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
@@ -352,6 +353,90 @@ def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]]
     return placed, unplaced
 
 
+#: Section headings that are PUBLISHED CLINICAL VOCABULARY, not sample content.
+#:
+#: The quarantine below exists because a string that recurs across samples can
+#: be a form's label OR a value every sample happened to share — a provider's
+#: name on every page reads exactly like template furniture (#200). But a
+#: heading that matches the standard vocabulary is neither: "Subjective" and
+#: "Allergies" are SOAP and C-CDA section names, published by HL7 and printed
+#: on every chart in the country. They are schema, in the same sense a table
+#: name is schema, and the pf_tebra loader has always said so.
+#:
+#: Withholding them costs the learner the one thing it exists to learn — a pack
+#: whose sections read "Inferred section 1" cannot reproduce a layout — while
+#: protecting nothing: no patient is identified by the word "Assessment".
+#: Everything NOT in this set keeps the numbered placeholder and the
+#: quarantine, so an unrecognised recurring string is still treated as
+#: potential PHI. The set is deliberately small and closed: matching is exact
+#: (after the same normalisation inference already applies), so a heading like
+#: "Assessment by Dr Fixture" is not in it and stays quarantined.
+_PUBLISHED_SECTION_HEADINGS = frozenset(
+    {
+        # SOAP, the note structure every ambulatory chart uses.
+        "subjective",
+        "objective",
+        "assessment",
+        "plan",
+        "assessment and plan",
+        "chief complaint",
+        "history of present illness",
+        "review of systems",
+        "physical exam",
+        "physical examination",
+        # C-CDA section titles (the LOINC-coded sections in ccda_codes).
+        "allergies",
+        "allergies and adverse reactions",
+        "medications",
+        "problems",
+        "problem list",
+        "immunizations",
+        "results",
+        "vital signs",
+        "vitals",
+        "social history",
+        "family history",
+        "encounters",
+        "procedures",
+        "plan of treatment",
+        "goals",
+        "health concerns",
+        "insurance",
+        "payers",
+        "advance directives",
+        "functional status",
+        "medical equipment",
+        "past medical history",
+        "notes",
+        "addenda",
+    }
+)
+
+
+def _section_key(candidate: SectionCandidate, index: int) -> str:
+    """The pack.yaml key for one inferred section.
+
+    A published heading gets a readable key derived from its own words, so the
+    manifest reads as the chart does; anything else keeps the positional key,
+    which reveals nothing about the string it stands for.
+    """
+    known = published_heading(candidate.text)
+    if known is None:
+        return f"inferred_section_{index}"
+    return "_".join(word for word in re.split(r"\W+", known.casefold()) if word)
+
+
+def published_heading(text: str) -> str | None:
+    """The canonical spelling when ``text`` is published vocabulary, else None.
+
+    Case and surrounding punctuation vary by vendor ("SUBJECTIVE:", "Subjective"),
+    so the comparison folds both; the returned label is the sample's own
+    spelling, which is what the operator recognises on their chart.
+    """
+    folded = text.strip().strip(":").strip().casefold()
+    return text.strip().strip(":").strip() if folded in _PUBLISHED_SECTION_HEADINGS else None
+
+
 def _quarantined_text(analysis: PackAnalysis) -> list[str]:
     """Every raw sample-derived string the generated pack retains.
 
@@ -365,6 +450,8 @@ def _quarantined_text(analysis: PackAnalysis) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for text in (*analysis.static_text, *(candidate.text for candidate in analysis.sections)):
+        if published_heading(text) is not None:
+            continue  # schema, not sample content — it ships in the pack itself
         if text not in seen:
             seen.add(text)
             result.append(text)
@@ -440,12 +527,14 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
         # the template by hand); default off so a draft never asserts a section
         # the engine cannot yet populate.  The raw heading remains only in the
         # quarantine file; this stable placeholder preserves order and metadata.
-        key = f"inferred_section_{index}"
+        known = published_heading(candidate.text)
+        key = _section_key(candidate, index)
         lines.append(f"  {key}:")
-        lines.append(f'    label: "Inferred section {index}"')
+        lines.append(f"    label: {_yaml_scalar(known or f'Inferred section {index}')}")
         lines.append("    default: false")
+        named = f"{known!r} " if known else ""
         description = (
-            f"Inferred heading section {index} (role {candidate.role}; "
+            f"Inferred heading section {index} {named}(role {candidate.role}; "
             f"seen in {candidate.count}/{analysis.sample_count} samples)"
         )
         lines.append(f"    description: {_yaml_scalar(description)}")
