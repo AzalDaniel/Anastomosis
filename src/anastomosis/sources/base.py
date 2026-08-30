@@ -18,12 +18,14 @@ time, no metaclass magic, defensive lookups with diagnoses.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from anastomosis.core.model import PatientRecord
 
 __all__ = [
+    "QuarantinedRows",
     "SourceAdapter",
     "SourceDataError",
     "available_sources",
@@ -48,6 +50,33 @@ class SourceDataError(Exception):
     refusal that names schema + counts should subclass this; one that could
     embed a value must not.
     """
+
+
+@dataclass(frozen=True)
+class QuarantinedRows:
+    """Rows an adapter could not place on any patient — held, never dropped.
+
+    A real export dangles: a few hundred rows out of hundreds of thousands
+    whose patient key is blank or names nobody the export contains. Refusing
+    the whole run over them blocks every attributable row behind the broken
+    few; attaching them to a guessed patient is the one sin this product
+    promises never to commit. So they are quarantined: the rows verbatim,
+    the table they came from, and one PHI-free ``reason`` naming the exact
+    way attribution failed (schema words only — a column that is blank, a
+    key that matches nothing — never a value from the row).
+
+    An adapter that quarantines exposes ``quarantine`` (a list of these,
+    reset on every ``load``) once a load has been fully consumed; the
+    pipeline reads it with ``getattr`` so adapters with nothing to hold
+    back need no attribute at all. The pipeline persists the held rows to
+    ``quarantine.json`` in the output directory — which already holds the
+    rendered charts, so the rows travel no further than the charts do —
+    and everything else (events, logs, CLI) carries counts only.
+    """
+
+    table: str
+    reason: str
+    rows: tuple[dict[str, str | None], ...]
 
 
 @runtime_checkable

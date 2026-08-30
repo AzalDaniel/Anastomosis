@@ -12,5 +12,6 @@ python -m mypy
 # sys.path and CI's bare `pytest` does not, so the two disagreed about what was
 # importable and this script's first line stopped being true.
 pytest
+python tools/complexity_gate.py
 python tools/phi_scan.py
 echo "ALL GATES GREEN"

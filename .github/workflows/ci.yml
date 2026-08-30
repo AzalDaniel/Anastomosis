@@ -30,9 +30,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: pip install ruff
+      - run: pip install ruff radon
       - run: ruff check .
       - run: ruff format --check .
+      - run: python tools/complexity_gate.py
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
   # as one of the gates; this lane closes the drift where mypy is a local
@@ -72,7 +73,9 @@ jobs:
       # pymupdf: the QA stage is core pipeline behavior and must be tested on
       # every OS/Python combo (Chromium itself stays in the e2e lane).
       # fhir.resources: the FHIR bundle schema-validation test must run here.
-      - run: pip install -e . pytest pytest-socket hypothesis pymupdf "fhir.resources>=8.1"
+      # radon: the complexity gate's live self-test runs the real gate, and
+      # the gate shells out to radon — absent, the self-test fails on every leg.
+      - run: pip install -e . pytest pytest-socket hypothesis pymupdf radon "fhir.resources>=8.1"
       - run: pytest -m "not e2e and not slow"
 
   # Separate lane: installs the rendering stack (Playwright Chromium) and runs

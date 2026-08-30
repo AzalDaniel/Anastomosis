@@ -181,12 +181,21 @@ def _resolve_source_and_load(
         StageEvent,
         load_records,
         resolve_source,
+        settle_quarantine,
     )
 
     adapter = resolve_source(cmd.export_dir, cmd.source)
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
     records = load_records(adapter, cmd.export_dir)
-    emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
+    # Rows the adapter held back land in <out>/quarantine.json, beside the
+    # charts/ and ccda/ folders, and their count rides the INGEST event —
+    # the same settlement run_pipeline makes, for the same rail.
+    emit(
+        StageEvent(
+            STAGE_INGEST,
+            counts={"records": len(records), **settle_quarantine(adapter, cmd.out_dir)},
+        )
+    )
     return adapter, records
 
 
