@@ -190,10 +190,13 @@ The audited suppression sites are exactly:
   the *name* of the matched field, never a value) —
   `py/clear-text-logging-sensitive-data`
 - `docs/audits/learned-source/tools/probe_ccda_corpus.py` (the corpus probe
-  prints aggregate counts and model field names; a patient record crosses
-  into the two helpers that build them, which is what the scanner sees) —
+  prints integer counts under keys that are string literals declared in the
+  file; all it takes from a chart is a yes/no and a length) —
   `py/clear-text-logging-sensitive-data`, `PHI-FREE-BY-CONSTRUCTION`, proven
-  by `tests/unit/test_corpus_probe_emits_no_values.py`
+  by `tests/unit/test_corpus_probe_emits_no_values.py`, which parses a chart
+  and requires that none of its strings appear in the printed output. The
+  suppression is a backstop rather than the fix: CodeQL never told us which
+  flow it objected to, so the probe was restructured until no flow existed.
 
 A policy test pins this list: every inline suppression under `src/` and
 `docs/` must sit beside one of the two rationales and appear in the list

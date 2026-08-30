@@ -2,13 +2,17 @@
 
 The probe reads real charts, so "it only prints counts" cannot rest on
 inspection. CodeQL said as much: it flagged the output line as clear-text
-logging of sensitive information because a patient model crosses into the
-helpers that build the printed result, and no scanner can see that only field
-NAMES come back. The finding is a false positive, and the honest way to hold
-that position is a test that would fail if it ever stopped being one.
+logging of sensitive information, and kept flagging it after the reporting
+moved behind helpers, because a patient's record crossed into them and no
+scanner can see that only field NAMES come back.
 
-So this feeds the boundary a record whose every string is a sentinel no schema
-contains, and requires that not one of them survives into the probe's output.
+The answer was to stop needing the argument. Every key the probe can print is
+now a string literal declared in the probe itself, and the only thing it takes
+from a chart is a yes/no and a length. This file holds both ends of that: the
+declared vocabulary really is the schema (so the probe cannot quietly report on
+a field that no longer exists, or miss one that appeared), and a chart parsed
+by the real parser contributes not one of its own strings to the output.
+
 A future edit that starts emitting a value — a birth date, a name, an
 observation's text — fails here rather than in somebody's log.
 """
@@ -17,37 +21,28 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from datetime import date
+import sys
+import zipfile
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
-from anastomosis.core.model import (
-    Encounter,
-    Observation,
-    Patient,
-    PatientRecord,
-)
+import pytest
 
-_PROBE = (
-    Path(__file__).resolve().parents[2]
-    / "docs"
-    / "audits"
-    / "learned-source"
-    / "tools"
-    / "probe_ccda_corpus.py"
-)
+from anastomosis.core.model import Encounter, Patient, PatientRecord
+from anastomosis.sources.ccda.parser import parse_document
 
-#: Strings that appear in no field name, no LOINC code, and no model default —
-#: so finding one in the output can only mean a value escaped.
-SENTINELS = (
-    "zzsentinelgiven",
-    "zzsentinelfamily",
-    "zzsentinelnote",
-    "zzsentineldisplay",
-)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_PROBE = REPO_ROOT / "docs" / "audits" / "learned-source" / "tools" / "probe_ccda_corpus.py"
+_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "ccda" / "feedface_ccd.xml"
+#: Short strings are excluded from the leak check: a two- or three-letter value
+#: collides with ordinary JSON punctuation and field names by accident, which
+#: would make the test fail for a reason that is not a leak.
+_MIN_LEAKABLE = 4
 
 
-def _probe() -> ModuleType:
+@pytest.fixture(scope="module")
+def probe() -> ModuleType:
     """Import the probe by path; it lives under docs/, not in the package."""
     spec = importlib.util.spec_from_file_location("probe_ccda_corpus", _PROBE)
     assert spec is not None and spec.loader is not None
@@ -56,80 +51,80 @@ def _probe() -> ModuleType:
     return module
 
 
-def _sentinel_record() -> PatientRecord:
-    """One record whose every free-text field carries a sentinel."""
-    patient = Patient(
-        id="feedface-0000-0000-0000-0000000000aa",
-        given_name="zzsentinelgiven",
-        family_name="zzsentinelfamily",
-        birth_date=date(1985, 3, 14),
-        notes="zzsentinelnote",
-    )
-    return PatientRecord(
-        patient=patient,
-        encounters=[
-            Encounter(
-                id="feedface-e000-0000-0000-0000000000aa",
-                patient_id=patient.id,
-                date_of_service=date(2024, 1, 2),
-                chief_complaint="zzsentinelnote",
-            )
-        ],
-        observations=[
-            Observation(
-                id="feedface-0000-0000-0000-0000000000ob",
-                patient_id=patient.id,
-                display="zzsentineldisplay",
-            )
-        ],
-    )
+def _strings(value: Any, found: set[str]) -> None:
+    """Every string anywhere in a dumped record, however deeply nested."""
+    if isinstance(value, str):
+        found.add(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _strings(item, found)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _strings(item, found)
 
 
-def test_the_boundary_returns_field_names_never_field_values() -> None:
-    """_populated_fields answers WHICH fields were filled, not with what."""
-    probe = _probe()
-    record = _sentinel_record()
+def test_the_declared_vocabulary_is_the_schema(probe: ModuleType) -> None:
+    """The probe's literal field names match the models exactly, both ways.
 
-    populated = probe._populated_fields(record.patient)
-
-    assert "given_name" in populated  # the name is reported…
-    assert "birth_date" in populated
-    for name in populated:
-        assert name in type(record.patient).model_fields  # …and it is schema
-    assert not any(sentinel in " ".join(populated) for sentinel in SENTINELS)
-
-
-def test_collection_sizes_are_integers_and_nothing_else() -> None:
-    """_collection_sizes answers HOW MANY observations, never which one."""
-    probe = _probe()
-
-    sizes = probe._collection_sizes(_sentinel_record())
-
-    assert sizes["observations"] == 1
-    assert sizes["conditions"] == 0
-    assert all(isinstance(size, int) for size in sizes.values())
-    assert not any(sentinel in json.dumps(sizes) for sentinel in SENTINELS)
-
-
-def test_no_sentinel_survives_into_a_serialised_probe_result() -> None:
-    """The end the scanner cared about: what would actually be printed.
-
-    Builds the probe's own result shape from the sentinel record and serialises
-    it exactly as the probe does. A value reaching the output would show up
-    here as a sentinel in the JSON — which is the whole claim, mechanised.
+    Written out rather than read off the model at runtime, they could drift from
+    it; this is what stops that. A field added to Patient and not added here
+    would go unreported without anyone noticing.
     """
-    probe = _probe()
-    record = _sentinel_record()
+    assert probe.PATIENT_FIELDS == tuple(Patient.model_fields)
+    assert probe.ENCOUNTER_FIELDS == tuple(Encounter.model_fields)
+    empty = PatientRecord(patient=Patient(id="x"))
+    for name in probe.COLLECTION_FIELDS:
+        assert isinstance(getattr(empty, name), list), f"{name} is not a collection on the record"
 
-    result = {
-        "patient_field_presence": dict.fromkeys(probe._populated_fields(record.patient), 1),
-        "encounter_field_presence": dict.fromkeys(probe._populated_fields(record.encounters[0]), 1),
-        "collection_totals": probe._collection_sizes(record),
+
+def test_a_filled_field_is_answered_yes_or_no_and_nothing_more(probe: ModuleType) -> None:
+    """The one function a chart's values reach returns a bool, so a caller
+    cannot accidentally carry the value forward."""
+    for empty in (None, "", [], {}):
+        assert probe._is_filled(empty) is False
+    for filled in ("zzsentinel", ["x"], {"k": "v"}, 0):
+        assert probe._is_filled(filled) is True
+
+
+def test_no_string_from_a_parsed_chart_appears_in_the_probes_output(
+    probe: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The end the scanner cared about, exercised end to end.
+
+    Runs the probe over an archive holding a real (synthetic) C-CDA, takes every
+    string the parser found in that chart, and requires that none of them reach
+    what the probe printed. This is the claim the suppression makes, mechanised:
+    if any value ever escapes into the output, this fails.
+    """
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    with zipfile.ZipFile(corpus / "bundle.zip", "w") as bundle:
+        bundle.write(_FIXTURE, arcname="chart.xml")
+
+    argv = sys.argv
+    sys.argv = ["probe_ccda_corpus", str(corpus), str(tmp_path / "scratch")]
+    try:
+        assert probe.main() == 0
+    finally:
+        sys.argv = argv
+
+    printed = capsys.readouterr().out.strip()
+    result = json.loads(printed)
+    assert result["counts"]["parsed"] == 1, "the fixture did not parse; the test proves nothing"
+
+    declared = set(probe.PATIENT_FIELDS) | set(probe.ENCOUNTER_FIELDS)
+    assert set(result["patient_field_presence"]) <= declared
+    assert set(result["encounter_field_presence"]) <= declared
+    assert set(result["collection_totals"]) == set(probe.COLLECTION_FIELDS)
+    assert all(isinstance(count, int) for count in result["collection_totals"].values())
+
+    chart: set[str] = set()
+    _strings(parse_document(_FIXTURE).model_dump(mode="json"), chart)
+    leakable = {
+        text
+        for text in chart
+        if len(text) >= _MIN_LEAKABLE and text not in declared | set(probe.COLLECTION_FIELDS)
     }
-    serialised = json.dumps(result, sort_keys=True)
-
-    for sentinel in SENTINELS:
-        assert sentinel not in serialised, f"a patient value reached the probe's output: {sentinel}"
-    # And the identity that is not a free-text field is gone too: the probe
-    # counts records_with_patient_id, it never prints the id.
-    assert "feedface" not in serialised
+    assert leakable, "the fixture carries no distinctive strings; the test proves nothing"
+    for text in sorted(leakable):
+        assert text not in printed, "a value from the chart reached the probe's output"

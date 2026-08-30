@@ -3,6 +3,15 @@
 The probe never prints archive/member names, XML text, identifiers, or exception
 messages. A single fixed scratch filename is reused so patient-derived archive
 names cannot escape into diagnostics. Output is aggregate JSON only.
+
+The vocabulary it reports in is written out below rather than read off a model
+at runtime. That is the whole safety argument: every key the probe can print is
+a string literal in this file, every value is an integer, and the only thing
+derived from a patient's chart is a boolean asked in an `if` and a length. A
+value has no route to the output even if someone edits the loops carelessly.
+:mod:`tests.unit.test_corpus_probe_emits_no_values` holds both halves of that —
+the vocabulary matching the schema exactly, and a parsed chart's own strings
+being absent from what the probe prints.
 """
 
 from __future__ import annotations
@@ -13,13 +22,56 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from pydantic import BaseModel
-
+from anastomosis.core.model import PatientRecord
 from anastomosis.sources.ccda import _looks_like_cda
 from anastomosis.sources.ccda.parser import parse_document
 
 MAX_XML_BYTES = 64 * 1024 * 1024
 SNIFF_BYTES = 4096
+PATIENT_FIELDS = (
+    "id",
+    "extensions",
+    "provenance",
+    "given_name",
+    "middle_name",
+    "family_name",
+    "suffix",
+    "birth_date",
+    "sex",
+    "gender_identity",
+    "sexual_orientation",
+    "race",
+    "ethnicity",
+    "language",
+    "marital_status",
+    "mothers_maiden_name",
+    "contact_preference",
+    "status",
+    "notes",
+    "identifiers",
+    "telecom",
+    "addresses",
+    "contacts",
+    "guarantor",
+)
+ENCOUNTER_FIELDS = (
+    "id",
+    "extensions",
+    "provenance",
+    "patient_id",
+    "date_of_service",
+    "chief_complaint",
+    "encounter_type",
+    "note_type",
+    "provider_id",
+    "facility_id",
+    "signed_by_id",
+    "signed_at",
+    "last_modified_at",
+    "sections",
+    "addenda",
+    "diagnosis_ids",
+)
 COLLECTION_FIELDS = (
     "encounters",
     "observations",
@@ -48,37 +100,92 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _populated_fields(model: BaseModel) -> frozenset[str]:
-    """The NAMES of the fields this record actually filled — never their values.
+def _is_filled(value: object) -> bool:
+    """Whether a field carried anything — asked of the value, answered as yes/no.
 
-    The probe answers "how many documents carried a birth date", not "which
-    birth date", so no patient value belongs in its output. That was already
-    true by inspection, but only by inspection: the loop bound each value to a
-    local in the same scope that built the printed result, and CodeQL rightly
-    refused to prove the value could not escape it (a high-severity clear-text
-    logging alert on a tool whose whole input is real charts).
-
-    So the invariant becomes structural instead of implied. The value exists
-    only inside this function and cannot leave it: the return type carries
-    field names, which are schema — the same names in the model source — and a
-    caller has nothing else to print even by mistake.
+    The value reaches here and goes no further: the caller learns only which
+    branch to take, and the name it counts under is a literal from this module.
     """
-    return frozenset(
-        field
-        for field in type(model).model_fields
-        if getattr(model, field) not in (None, "", [], {})
-    )
+    return value not in (None, "", [], {})
 
 
-def _collection_sizes(record: BaseModel) -> dict[str, int]:
-    """How many items each clinical collection holds — never the items.
+class Tally:
+    """The counters the probe prints, keyed only by the literals above."""
 
-    The same boundary as :func:`_populated_fields`, for the same reason: the
-    probe reports "146,015 observations", never an observation. Binding the
-    list in the caller put a patient's clinical objects in the scope that
-    builds the printed result; here they cannot leave the comprehension.
-    """
-    return {field: len(getattr(record, field)) for field in COLLECTION_FIELDS}
+    def __init__(self) -> None:
+        self.counts: Counter[str] = Counter()
+        self.failures: Counter[str] = Counter()
+        self.collections: Counter[str] = Counter()
+        self.patient_fields: Counter[str] = Counter()
+        self.encounter_fields: Counter[str] = Counter()
+
+    def add_record(self, record: PatientRecord) -> None:
+        """Account for one parsed chart without keeping any part of it."""
+        patient = record.patient
+        if _is_filled(patient.id):
+            self.counts["records_with_patient_id"] += 1
+        for name in PATIENT_FIELDS:
+            if _is_filled(getattr(patient, name)):
+                self.patient_fields[name] += 1
+        for name in COLLECTION_FIELDS:
+            self.collections[name] += len(getattr(record, name))
+        for encounter in record.encounters:
+            for name in ENCOUNTER_FIELDS:
+                if _is_filled(getattr(encounter, name)):
+                    self.encounter_fields[name] += 1
+
+    def result(self) -> dict[str, object]:
+        return {
+            "limits": {"max_xml_bytes": MAX_XML_BYTES},
+            "counts": dict(sorted(self.counts.items())),
+            "failure_types": dict(sorted(self.failures.items())),
+            "collection_totals": dict(sorted(self.collections.items())),
+            "patient_field_presence": dict(sorted(self.patient_fields.items())),
+            "encounter_field_presence": dict(sorted(self.encounter_fields.items())),
+        }
+
+
+def _payload(bundle: zipfile.ZipFile, member: zipfile.ZipInfo, tally: Tally) -> bytes | None:
+    """The member's bytes if it is a C-CDA within the size ceiling, else None."""
+    try:
+        with bundle.open(member) as stream:
+            head = stream.read(SNIFF_BYTES)
+            if not _looks_like_cda(head):
+                tally.counts["non_cda_xml"] += 1
+                return None
+            remainder = stream.read(MAX_XML_BYTES + 1 - len(head))
+    except Exception as exc:  # structural archive failure; type only
+        tally.failures[type(exc).__name__] += 1
+        return None
+    payload = head + remainder
+    if len(payload) > MAX_XML_BYTES:
+        tally.counts["oversized_xml"] += 1
+        return None
+    return payload
+
+
+def _scan_archive(archive: Path, candidate: Path, tally: Tally) -> None:
+    """Walk one archive, parsing every C-CDA member it holds."""
+    with zipfile.ZipFile(archive) as bundle:
+        for member in sorted(bundle.infolist(), key=lambda item: item.filename):
+            if member.is_dir() or not member.filename.lower().endswith(".xml"):
+                continue
+            tally.counts["xml_members"] += 1
+            if member.file_size > MAX_XML_BYTES:
+                tally.counts["oversized_xml"] += 1
+                continue
+            payload = _payload(bundle, member, tally)
+            if payload is None:
+                continue
+            tally.counts["cda_candidates"] += 1
+            try:
+                candidate.write_bytes(payload)
+                record = parse_document(candidate)
+            except Exception as exc:  # parser failure; never print message
+                tally.failures[type(exc).__name__] += 1
+                continue
+            tally.counts["parsed"] += 1
+            tally.add_record(record)
 
 
 def main() -> int:
@@ -86,80 +193,26 @@ def main() -> int:
     args.scratch.mkdir(parents=True, exist_ok=True)
     candidate = args.scratch / "candidate.xml"
 
-    archives = sorted(args.corpus.glob("*.zip"))
-    counts: Counter[str] = Counter()
-    failures: Counter[str] = Counter()
-    collection_totals: Counter[str] = Counter()
-    patient_field_presence: Counter[str] = Counter()
-    encounter_field_presence: Counter[str] = Counter()
-
-    for archive in archives:
-        counts["archives"] += 1
+    tally = Tally()
+    for archive in sorted(args.corpus.glob("*.zip")):
+        tally.counts["archives"] += 1
         try:
-            with zipfile.ZipFile(archive) as bundle:
-                members = sorted(bundle.infolist(), key=lambda item: item.filename)
-                for member in members:
-                    if member.is_dir() or not member.filename.lower().endswith(".xml"):
-                        continue
-                    counts["xml_members"] += 1
-                    if member.file_size > MAX_XML_BYTES:
-                        counts["oversized_xml"] += 1
-                        continue
-                    try:
-                        with bundle.open(member) as stream:
-                            head = stream.read(SNIFF_BYTES)
-                            if not _looks_like_cda(head):
-                                counts["non_cda_xml"] += 1
-                                continue
-                            remainder = stream.read(MAX_XML_BYTES + 1 - len(head))
-                    except Exception as exc:  # structural archive failure; type only
-                        failures[type(exc).__name__] += 1
-                        continue
-                    payload = head + remainder
-                    if len(payload) > MAX_XML_BYTES:
-                        counts["oversized_xml"] += 1
-                        continue
-                    counts["cda_candidates"] += 1
-                    try:
-                        candidate.write_bytes(payload)
-                        record = parse_document(candidate)
-                    except Exception as exc:  # parser failure; never print message
-                        failures[type(exc).__name__] += 1
-                        continue
-                    counts["parsed"] += 1
-                    if record.patient.id:  # tested, never carried into a count
-                        counts["records_with_patient_id"] += 1
-                    for field in _populated_fields(record.patient):
-                        patient_field_presence[field] += 1
-                    for field, size in _collection_sizes(record).items():
-                        collection_totals[field] += size
-                    for encounter in record.encounters:
-                        for field in _populated_fields(encounter):
-                            encounter_field_presence[field] += 1
+            _scan_archive(archive, candidate, tally)
         except Exception as exc:  # invalid archive; type only, never archive name
-            failures[f"archive/{type(exc).__name__}"] += 1
+            tally.failures[f"archive/{type(exc).__name__}"] += 1
 
     if candidate.exists():
         candidate.unlink()
-    result = {
-        "limits": {"max_xml_bytes": MAX_XML_BYTES},
-        "counts": dict(sorted(counts.items())),
-        "failure_types": dict(sorted(failures.items())),
-        "collection_totals": dict(sorted(collection_totals.items())),
-        "patient_field_presence": dict(sorted(patient_field_presence.items())),
-        "encounter_field_presence": dict(sorted(encounter_field_presence.items())),
-    }
-    # PHI-FREE-BY-CONSTRUCTION: `result` holds integers and the field NAMES
-    # declared on the models — the same strings that appear in core/model.py —
-    # and nothing else; :func:`_populated_fields` and :func:`_collection_sizes`
-    # are the boundaries that make that structural rather than merely true.
-    # CodeQL still flags this line because a patient record crosses into those
-    # helpers and no scanner can see that only names come back, so the
-    # suppression is paired with a test that fails if a value ever does:
-    # tests/unit/test_corpus_probe_emits_no_values.py.
+    # PHI-FREE-BY-CONSTRUCTION: every key below is a string literal declared at
+    # the top of this file and every value is an integer; nothing a chart
+    # carried can reach this line. The restructuring above is the actual fix —
+    # CodeQL never told us which flow it objected to, so this stays as a
+    # backstop rather than a claim that the scanner was appeased. The guarantee
+    # is held by tests/unit/test_corpus_probe_emits_no_values.py, which parses a
+    # chart and requires none of its strings to appear in this output.
     # codeql[py/clear-text-logging-sensitive-data]
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0 if counts["parsed"] == counts["cda_candidates"] else 1
+    print(json.dumps(tally.result(), sort_keys=True, separators=(",", ":")))
+    return 0 if tally.counts["parsed"] == tally.counts["cda_candidates"] else 1
 
 
 if __name__ == "__main__":
