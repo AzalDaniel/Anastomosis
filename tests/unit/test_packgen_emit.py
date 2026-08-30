@@ -2,7 +2,7 @@
 
 No Chromium: a small set of synthetic 'sample' PDFs is built directly with
 PyMuPDF (same approach as ``test_packgen_infer``), so the analysis → emit path,
-the manifest schema validity, the losslessness of unplaced static text, the
+the manifest schema validity, the sample-text quarantine boundary, the
 same-patient caveat, determinism, and the wizard's confirm/abort/exit-code
 behavior are all asserted without a browser.
 
@@ -98,10 +98,9 @@ def test_the_draft_pack_is_hardened_like_anything_else_holding_phi(
 
     Hand the tool three copies of ONE patient's chart — the mistake
     `SAME_PATIENT_CAVEAT` exists to warn about — and that patient's name, DOB
-    and MRN recur in 100% of samples, become indistinguishable from template
-    text, and are written into template.html and DRAFT.md as "static labels".
-    This directory used to take the process umask (0755, files 0644) with no
-    PHI README, while both sibling wizards hardened theirs to 0700.
+    and MRN recur in 100% of samples and become indistinguishable from template
+    text. Raw strings are quarantined, but the directory still needs a PHI
+    warning and owner-only permissions.
     """
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
 
@@ -149,7 +148,7 @@ def test_emit_is_byte_identical(analysis: PackAnalysis, tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Losslessness: unplaced static text never vanishes
+# Sample-text quarantine: raw static text never vanishes or travels
 # --------------------------------------------------------------------------- #
 
 
@@ -158,9 +157,8 @@ def test_unplaced_static_text_lands_in_the_quarantine(
 ) -> None:
     """A static string that maps to no model field must survive verbatim.
 
-    Losslessness is unchanged by the move to UNPLACED.txt — only the file it
-    survives IN changed. The template keeps a pointer, so the operator is told
-    where the strings went rather than left to discover they are missing.
+    Raw sample text is retained in UNPLACED.txt and the template keeps a
+    pointer, so the operator can find and remove it as one complete action.
     """
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
@@ -170,35 +168,33 @@ def test_unplaced_static_text_lands_in_the_quarantine(
     assert "Confidential Example Clinic" in quarantine
 
 
-def test_placed_labels_map_to_header_fields(analysis: PackAnalysis, tmp_path: Path) -> None:
-    """DOB:/Provider: are recognized labels → emitted in the patient header,
-    not in the unplaced comment."""
+def test_exact_header_tokens_map_to_canonical_header_labels(
+    analysis: PackAnalysis, tmp_path: Path
+) -> None:
+    """Exact known tokens retain a slot without reproducing sample text."""
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
-    comment_start = html.index("<!-- UNPLACED STATIC TEXT")
-    comment_end = html.index("-->", comment_start)
-    comment = html[comment_start:comment_end]
-    # The label text is placed in the header (after the comment block).
-    assert "DOB:" not in comment
-    assert "Provider:" not in comment
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    # The fixed vocabulary is independent of the samples; their raw tokens are
+    # still retained only in the quarantine file.
+    assert "Birth date" in html
+    assert "Clinician" in html
+    assert "DOB:" not in html
+    assert "Provider:" not in html
+    assert "DOB:" in quarantine
+    assert "Provider:" in quarantine
     assert "{{ dob }}" in html
     assert "provider.name" in html
 
 
-def test_no_static_string_is_dropped(analysis: PackAnalysis, tmp_path: Path) -> None:
-    """Every static string is either a placed header label or in the comment —
-    none is silently lost."""
+def test_every_static_string_is_quarantined(analysis: PackAnalysis, tmp_path: Path) -> None:
+    """All raw static text is retained only in the quarantine file."""
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
     quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
     for static in analysis.static_text:
-        # Either preserved verbatim somewhere, or its label stem matched a slot.
-        present = static in quarantine or static in html
-        labelish = any(
-            static.lower().startswith(prefix)
-            for prefix in ("dob", "date of birth", "provider", "seen by", "patient", "name", "sex")
-        )
-        assert present or labelish, f"static string dropped: {static!r}"
+        assert static in quarantine, f"static string dropped: {static!r}"
+        assert static not in html, f"static string leaked into the template: {static!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +215,8 @@ def test_draft_md_lists_sections_and_geometry(analysis: PackAnalysis, tmp_path: 
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
     draft = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
     assert "612x792pt" in draft
-    assert "SUBJECTIVE" in draft  # an inferred heading section
+    assert "Inferred section 1" in draft  # safe heading placeholder
+    assert "SUBJECTIVE" not in draft
 
 
 # --------------------------------------------------------------------------- #
@@ -292,14 +289,72 @@ def _hostile_analysis(width: float = 500.0, height: float = 700.0) -> PackAnalys
 
 
 def test_yaml_active_heading_chars_still_validate(tmp_path: Path) -> None:
-    """An inferred heading containing a colon/quote must not break pack.yaml —
-    it is emitted as a quoted scalar, so the manifest still loads."""
+    """Hostile inferred heading text is quarantined and the manifest still loads."""
     pack_dir = emit_draft_pack(_hostile_analysis(), name="hostile", display="X", out_dir=tmp_path)
     data = yaml.safe_load((pack_dir / "pack.yaml").read_text(encoding="utf-8"))
     manifest = PackManifest.model_validate(data)
     assert "hostile" == manifest.name
     status = discover_packs([pack_dir.parent], allow_external=True)["hostile"]
     assert status.available, status.diagnosis
+    raw_heading = 'WEIRD: heading "quote" -> arrow'
+    assert raw_heading in (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    assert raw_heading not in (pack_dir / "pack.yaml").read_text(encoding="utf-8")
+
+
+def test_raw_provider_value_and_heading_patient_value_are_quarantined(tmp_path: Path) -> None:
+    """The broad old header regex and heading interpolation cannot leak again."""
+    from anastomosis.packgen.infer import PackAnalysis, SectionCandidate
+
+    base = _hostile_analysis()
+    provider_value = "Provider: Dr. Shared Fixed-Cell"
+    heading_patient_value = "Patient Tessa Quarantine (MRN 000731)"
+    analysis = PackAnalysis(
+        sample_count=3,
+        type_scale=base.type_scale,
+        sections=(
+            SectionCandidate(
+                text=heading_patient_value,
+                role="h1",
+                count=3,
+                median_y_fraction=0.2,
+                all_pages_first=True,
+            ),
+        ),
+        static_text=(provider_value, "DOB:"),
+        column_grid=base.column_grid,
+        page_breaks=base.page_breaks,
+        page_geometry=base.page_geometry,
+        design_tokens=base.design_tokens,
+    )
+    pack_dir = emit_draft_pack(analysis, name="quarantine_probe", display="X", out_dir=tmp_path)
+
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
+    for raw in (provider_value, heading_patient_value, "DOB:"):
+        assert raw in quarantine
+        for path in pack_dir.iterdir():
+            if path.is_file() and path.name != UNPLACED_NAME:
+                assert raw not in path.read_text(encoding="utf-8"), f"{raw!r} leaked to {path.name}"
+
+    # ``Provider: Dr X`` is not an exact token, so it must not earn even the
+    # fixed ``Clinician`` label. The exact DOB token retains only its canonical
+    # safe label, while the heading gets a numbered placeholder and metadata.
+    html = (pack_dir / "template.html").read_text(encoding="utf-8")
+    manifest = PackManifest.model_validate(
+        yaml.safe_load((pack_dir / "pack.yaml").read_text(encoding="utf-8"))
+    )
+    assert "Clinician" not in html
+    assert "Birth date" in html
+    assert manifest.sections["inferred_section_1"].label == "Inferred section 1"
+    assert "role h1" in manifest.sections["inferred_section_1"].description
+    assert discover_packs([pack_dir.parent], allow_external=True)["quarantine_probe"].available
+
+    (pack_dir / UNPLACED_NAME).unlink()
+    for path in pack_dir.iterdir():
+        if path.is_file():
+            body = path.read_text(encoding="utf-8")
+            assert provider_value not in body
+            assert heading_patient_value not in body
+            assert "DOB:" not in body
 
 
 def test_arrow_in_static_text_cannot_escape_a_comment_it_is_not_in(tmp_path: Path) -> None:
@@ -576,9 +631,8 @@ def test_display_with_newline_cannot_rekey_the_manifest(tmp_path: Path) -> None:
     assert "injected" not in statuses
 
 
-def test_jinja_delimiters_in_static_text_stay_literal(tmp_path: Path) -> None:
-    """SHOULD-FIX regression: sample-derived text containing Jinja delimiters
-    must be neutralized — emitted as entities, never executable."""
+def test_jinja_delimiters_in_static_text_stay_quarantined(tmp_path: Path) -> None:
+    """Sample-derived Jinja delimiters never enter the executable template."""
     from anastomosis.packgen.infer import (
         ColumnGrid,
         DesignTokens,
@@ -609,15 +663,15 @@ def test_jinja_delimiters_in_static_text_stay_literal(tmp_path: Path) -> None:
     )
     pack_dir = emit_draft_pack(analysis, name="jinja_probe", display="X", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
+    quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
     assert "{{ 7*7 }}" not in html
     assert "{% for x in y %}" not in html
-    assert "&#123;&#123; 7*7 &#125;&#125;" in html
+    assert "Provider {{ 7*7 }} {% for x in y %}" in quarantine
+    assert "DOB:" in quarantine
 
 
 def test_jinja_delimiters_in_unplaced_text_stay_literal(tmp_path: Path) -> None:
-    """The UNPLACED path (non-field static text) must neutralize delimiters
-    too — Jinja parses HTML comments, so raw braces there would evaluate
-    against the live render context (the half the first repair missed)."""
+    """The quarantine is plain text, so raw delimiters remain inert there."""
     base = _hostile_analysis()
     analysis = PackAnalysis(
         sample_count=base.sample_count,

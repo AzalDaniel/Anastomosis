@@ -27,6 +27,8 @@ from typing import Any
 __all__ = [
     "DocumentSample",
     "DrawnRect",
+    "NoExtractableTextError",
+    "OcrRequiredError",
     "Span",
     "extract_document",
     "extract_samples",
@@ -38,6 +40,25 @@ _FLAG_ITALIC = 1 << 1
 _FLAG_BOLD = 1 << 4
 
 _RENDER_EXTRA_HINT = "layout learning needs the render extra: pip install 'anastomosis[render]'"
+
+
+class OcrRequiredError(ValueError):
+    """A rendered page has raster content but no extractable text spans.
+
+    Pack generation deliberately does not attempt OCR: learning a layout from
+    an image-only page would otherwise make a generic-looking draft while
+    silently missing that page's semantics.  The message contains only the
+    batch-local sample/page indices, never source text or a path.
+    """
+
+
+class NoExtractableTextError(ValueError):
+    """A sample contains no extractable text and no page needing OCR.
+
+    This is distinct from :class:`OcrRequiredError`: an empty/vector-only PDF
+    cannot be learned from, but it is not an OCR candidate.  Its message is
+    likewise limited to the opaque batch-local sample index.
+    """
 
 
 def _bbox4(rect: Any) -> tuple[float, float, float, float]:
@@ -134,6 +155,17 @@ def _spans_for_page(page: Any, page_index: int, width: float, height: float) -> 
     return spans
 
 
+def _has_raster_images(page: Any) -> bool:
+    """Return whether a page displays a raster image, without reading its text.
+
+    ``get_image_info`` reports images actually displayed on this page (rather
+    than merely inherited image resources), and only exposes rendering
+    metadata.  That lets the caller reject image-only pages without retaining
+    or reporting any source-derived content.
+    """
+    return bool(page.get_image_info())
+
+
 def _rects_for_page(page: Any, page_index: int) -> tuple[list[DrawnRect], int]:
     rects: list[DrawnRect] = []
     dropped_curves = 0
@@ -188,10 +220,15 @@ def extract_document(pdf_path: Path, index: int) -> DocumentSample:
             width = round(float(page.rect.width), 1)
             height = round(float(page.rect.height), 1)
             page_sizes.append((width, height))
-            spans.extend(_spans_for_page(page, page_index, width, height))
+            page_spans = _spans_for_page(page, page_index, width, height)
+            if not page_spans and _has_raster_images(page):
+                raise OcrRequiredError(f"sample #{index} page #{page_index} requires OCR")
+            spans.extend(page_spans)
             page_rects, curves = _rects_for_page(page, page_index)
             rects.extend(page_rects)
             dropped_curves += curves
+        if not spans:
+            raise NoExtractableTextError(f"sample #{index} has no extractable text")
         return DocumentSample(
             index=index,
             pages=len(page_sizes),
@@ -214,6 +251,10 @@ def extract_samples(pdf_paths: Sequence[Path]) -> list[DocumentSample]:
     for index, path in enumerate(pdf_paths):
         try:
             samples.append(extract_document(path, index))
+        except (NoExtractableTextError, OcrRequiredError):
+            # These failures already carry a PHI-safe, opaque sample index.
+            # Keep their specific type so run_pack_init can surface exc_tag.
+            raise
         except Exception as exc:
             raise ValueError(f"sample #{index} unreadable ({path}): {exc}") from exc
     return samples

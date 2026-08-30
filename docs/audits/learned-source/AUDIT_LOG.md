@@ -1,0 +1,163 @@
+# Learned Sample and Migration Audit - Append-Only Log
+
+Keep entries PHI-free and value-free. Record commands by purpose and aggregate
+results, never sample contents or original patient-document filenames.
+
+## 2026-08-30 - Recovery checkpoint
+
+- Recovered branch `codex/learned-source-integrity` at `e143cfe` with six intended
+  P0 files modified and no unrelated changes detected.
+- Confirmed the 6.30 GB local corpus and 53 synthetically named extracted PDFs.
+- Confirmed lint and type gates passed; corrected the remembered pytest file list
+  because `tests/unit/test_packgen_analyze.py` does not exist.
+- User clarified scope as the complete Learn-from-sample plus Migration-toggle
+  workflow, including destination-EHR formatting and end-to-end document emission.
+- Hyper-V access remained blocked for shell identity `A\codexsandboxoffline`; only
+  user `A\azald` was a Hyper-V Administrators member when checked.
+- Docker client was present, but no engine pipe was available when checked.
+- User subsequently reported starting `Anastomosis-Audit`; runtime recheck pending.
+
+## 2026-08-30 - Adversarial learned-source matrix
+
+- Audited baseline `bbc48a6` without editing implementation or the six existing
+  P0 files.
+- Enumerated real learned-source, packgen, migration, GUI, C-CDA/FHIR,
+  whole-record QA, and PF-quarantine tests. Confirmed the previously referenced
+  packgen-analyze test file does not exist.
+- Re-ran the learned-source gate: 70 passed in 10.26 seconds.
+- Recorded the P0/P1/P2 adversarial matrix in `ADVERSARIAL_MATRIX.md`. The
+  highest-priority missing proofs are conflicting duplicate encounter keys,
+  blank/ambiguous learned identities, mapped-transform outcome accounting, and
+  end-to-end learned-source conservation through C-CDA and FHIR.
+- The larger packgen/PF/whole-record focused collection was started but its
+  runner output ended without a final summary; it is intentionally not recorded
+  as passing and must be rerun to a terminal result.
+
+## 2026-08-30 - Runtime and upstream reconciliation
+
+- Approved read-only runtime checks confirmed the authorized VM and the existing
+  `anastomosis-fhir-hapi` container are running normally.
+- Fetched GitHub and found five new main commits through `bbc48a6`, including the
+  Claude-authored PF quarantine, whole-record QA, PATH, packaging, and supply-chain
+  changes. None overlapped the six local P0 files.
+- Paused code-reading agents, fast-forwarded cleanly to `bbc48a6`, verified the P0
+  diff remained intact, and resumed agents against the current system.
+- `git diff --check`, Ruff, and Mypy passed after the fast-forward.
+- A focused pytest run showed no failures in partial progress but was terminated by
+  the requested Codex restart; it will be rerun and is not recorded as passing.
+
+## 2026-08-30 - Architecture trace completed
+
+- Completed a PHI-free, read-only trace of GUI Teach/Migrate/Uploads through
+  controller, migration/pipeline, learned/C-CDA/FHIR/vendor adapters, packgen,
+  pack trust, render/QA, routing, and delivery.
+- Recorded verified controls, prepared-versus-delivered boundary, disconnected
+  learned-layout handoff, generic SOAP/FHIR limitations, and required
+  fail-closed target state machine in `ARCHITECTURE_TRACE.md`.
+- No source or test files were changed; the six pre-existing P0 modifications
+  remain untouched.
+
+## 2026-08-30 - EHR layout research memo
+
+- Added `RESEARCH_EHR_LAYOUT.md`, a PHI-free primary-source memo covering ONC
+  EHI, FHIR/US Core, C-CDA, public vendor format/version variability, and
+  permissive/open-source layout and visual-regression candidates.
+- Defined the interoperability-versus-visual-emulation boundary and measurable
+  Learn-from-sample, review, Migration-toggle, semantic-fidelity, provenance,
+  determinism, and visual-regression acceptance gates.
+- No patient/sample values, filenames, screenshots, or source-code files were
+  inspected or changed; this entry records research only and does not assert
+  vendor-native or clinical-accuracy equivalence.
+
+## 2026-08-30 - Offline OCR decision record
+
+- Added `OCR_DECISION.md`, a PHI-free, official-source-only decision record for
+  offline OCR/layout evidence on image-only and mixed raster/native clinical
+  PDF pages.
+- Recommended a pinned Tesseract CLI TSV+hOCR worker as the lightweight default;
+  RapidOCR/ONNX as an optional cross-platform polygon/score pass; and Docling
+  or PaddleOCR PP-StructureV3 only as separately packaged heavy layout options.
+- Recorded Windows VM and cross-platform packaging, model/license manifests,
+  CPU/RAM/time/network gates, deterministic coordinate handling, OCR confidence
+  limits, and the rule that OCR is layout evidence rather than clinical truth.
+- Added explicit mixed-page policy: preserve native text separately, OCR only
+  raster/ambiguous regions when transforms are known, deduplicate/conflict-hold
+  overlaps, and fail closed when provenance is ambiguous. No source/P0 files,
+  existing research memo, patient/sample values, filenames, or screenshots were
+  inspected or changed.
+
+## 2026-08-30 - PDF and C-CDA corpus evidence
+
+- Parsed all 53 synthetically indexed PDFs: 802 Letter pages, zero encrypted,
+  rotated, timed-out, or unreadable samples. Native extraction returned zero
+  words for every file; 52/53 had raster images, 264 images total.
+- Visually inspected representative rasterized pages under the PDF skill's
+  render-and-inspect rule. They contain structured clinical layouts, but no
+  source-derived values or filenames are recorded here.
+- Added a fail-closed image-only sample gate and synthetic regressions. The gate
+  does not yet classify large clinical rasters with small native-text overlays.
+- Ran the aggregate-only C-CDA corpus probe: all 2,103 candidates parsed with
+  patient identity. Recorded aggregate collection counts in `HANDOFF.md`; note
+  sections and several clinical collections were zero, so semantic-conservation
+  analysis remains mandatory.
+
+## 2026-08-30 - Learned runtime integrity
+
+- Added value-free refusal for blank patient keys, duplicate patient-grain rows,
+  duplicate nonblank encounter keys, and conflicting transformed patient values
+  across encounter-grain rows.
+- Added deterministic first-nonblank resolution for sparse repeated demographics
+  when all nonblank transformed values agree.
+- Agent gates reported Ruff and mypy passing and 32 focused tests passing. Root
+  still must mechanically format and run the combined integrated lane.
+
+## 2026-08-30 - Offline OCR decision
+
+- Added `OCR_DECISION.md` from primary/official project documentation. It selects
+  a pinned, network-disabled Tesseract 5 CLI worker as the smallest default OCR
+  observation layer, RapidOCR/ONNX as an optional disagreement/polygon pass, and
+  Docling/Paddle only as optional heavy layout adjudicators.
+- OCR output is explicitly non-clinical observation evidence. Engine, model,
+  config, rasterizer, coordinates, resource limits, and hashes must be recorded;
+  high-risk values require structured corroboration or review.
+
+## 2026-08-30 - Lossless handoff checkpoint
+
+- Added `HANDOFF.md` as the authoritative PHI-free resume document with exact
+  repository path, branch/base, dirty files, implemented defects, caveats,
+  aggregate evidence, runtime permissions, test commands, and ordered P0/P1 work.
+- No Supermemory API/tool was available in this session; Git-tracked audit files
+  are the durable source of truth and will be redundantly preserved on GitHub
+  after the validated branch is pushed.
+
+## 2026-08-30 - First root integrated gate
+
+- Applied Ruff formatting to all 11 changed Python source/test files: seven were
+  mechanically reformatted and four were already formatted.
+- Root `ruff check`, focused mypy (five source files), and `git diff --check`
+  all passed.
+- The 161-test integrated learned/packgen/PF/record-summary lane completed with
+  160 passes and one failure. The failing legacy regression expected duplicate
+  patient-grain rows to collapse first and appear as a dropped column. The new
+  P0 runtime correctly refused the invalid duplicate grain before building any
+  record. Updated the regression to assert this stronger, value-free refusal;
+  the same full lane is being rerun and is not yet recorded as green.
+
+## 2026-08-30 - Root integrated gate green
+
+- Reformatted the adjusted regression and reran the identical combined lane with
+  a fresh isolated pytest base. Terminal result: **161 passed in 37.65 seconds**.
+- No interrupted/partial run was counted. This proves only the enumerated focused
+  learned-source, packgen, pack-init, pack-trust, PF-quarantine, and whole-record
+  tests; full repository unit/integration/E2E/GUI/packaging lanes remain pending.
+
+## 2026-08-30 - GitHub recovery issue
+
+- Queried the connected GitHub account and confirmed writes authenticate as
+  `AzalDaniel`. The local `gh` CLI is absent, so the connected GitHub API was
+  used directly rather than treating that as a blocker.
+- Inspected all open repository issues to avoid duplication, then created #308:
+  https://github.com/AzalDaniel/Anastomosis/issues/308.
+- #308 records the verified architecture and aggregate corpus findings, current
+  P0 patch, exact remaining P0/P1 work, no-PHI rule, measured acceptance contract,
+  and Claude-implementation/Codex-review handoff.
