@@ -475,7 +475,10 @@ body {
   </tbody>
 </table>
 {% else %}
-<div class="no-record" style="border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 4px;">No vitals recorded</div>
+{# An absence is a claim. With vitals elsewhere in the record, the bare
+   sentence denies what the record holds, so it scopes itself to this visit and
+   says how many are missing from this page. Counts only, never values. #}
+<div class="no-record" style="border-bottom: 0.8pt solid var(--pf-border); padding-bottom: 4px;">{% if vitals_elsewhere %}No vitals recorded for this visit — {{ vitals_elsewhere }} elsewhere in the record (see record summary){% else %}No vitals recorded{% endif %}</div>
 {% endif %}
 {% endif %}
 
@@ -507,7 +510,7 @@ body {
   </tbody>
 </table>
 {% else %}
-<div class="no-record" style="padding-left: 12px;">No events recorded for Vitals.</div>
+<div class="no-record" style="padding-left: 12px;">{% if vitals_elsewhere %}No events recorded for Vitals at prior visits — {{ vitals_elsewhere }} elsewhere in the record (see record summary).{% else %}No events recorded for Vitals.{% endif %}</div>
 {% endif %}
 {% endif %}
 
@@ -871,7 +874,7 @@ body {
   <div class="simple-row">{% if ev.negated %}Not performed — {% endif %}{{ ev.name }}{% if ev.result %}: {{ ev.result }}{% endif %}{% if ev.comments %} - {{ ev.comments }}{% endif %}</div>
   {% endfor %}
 {% else %}
-  <div class="no-record">No screenings/interventions/assessments recorded.</div>
+  <div class="no-record">{% if screenings_elsewhere %}No screenings/interventions/assessments recorded for this visit — {{ screenings_elsewhere }} elsewhere in the record (see record summary).{% else %}No screenings/interventions/assessments recorded.{% endif %}</div>
 {% endif %}
 </div>
 

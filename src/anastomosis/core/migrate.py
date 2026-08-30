@@ -297,52 +297,17 @@ def _run_pack_mode(
 # --- standard-C-CDA-view QA -------------------------------------------------
 #
 # The neutral/pack path reaches QA through ``run_pipeline``'s ``_run_qa_stage``
-# (one document per encounter). The standard-C-CDA-view path has no per-encounter
-# documents — it renders ONE whole-patient PDF each — so it needs its own QA
-# stage. Only the two DOCUMENT-GENERIC engine checks apply to a whole-patient
-# view; the encounter-scoped checks are recorded as skipped-with-reason rather
-# than silently omitted (the L0-L6 skip-with-reason ethos).
-
-# The engine checks that apply to a whole-patient standard C-CDA view.
-# ``unattributed_vitals`` belongs here rather than below because it never reads
-# ``ctx.encounter`` at all: it asks whether the RECORD's observations name
-# encounters the record contains, which is as fair a question of a whole-patient
-# document as of a per-encounter one.
-_CCDA_DOC_CHECKS: tuple[str, ...] = (
-    "data_integrity",
-    "layout_pagination",
-    "record_coverage",
-    "unattributed_vitals",
-)
-
-# The encounter-scoped engine checks, recorded as skipped WITH A REASON (not
-# omitted). A skip is Verdict.PASS + a ``skipped: ...`` finding — the same idiom
-# ``VitalsLoincCheck`` uses when its section is disabled.
+# (one document per encounter, PLUS the record summaries that path renders). The
+# standard-C-CDA-view path has no per-encounter documents — it renders ONE
+# whole-patient PDF each — so it needs its own QA stage.
 #
-# Between them these two tables must name EVERY registered check, which is the
-# whole point of the skip-with-reason ethos and which nothing used to enforce:
-# ``note_body`` was registered later and landed in neither, so the one path that
-# promised never to omit a check silently omitted it. The parity test named
-# below is now what keeps this honest.
-_CCDA_SKIPPED_CHECKS: dict[str, str] = {
-    "vitals_loinc": (
-        "skipped: vitals are encounter-scoped; the standard C-CDA view is a "
-        "whole-patient document with no single-encounter vitals context"
-    ),
-    "date_staleness": (
-        "skipped: date-staleness compares the chart against one encounter's date "
-        "of service; the standard C-CDA view is whole-patient (no single DOS)"
-    ),
-    "note_body": (
-        "skipped: note-body verifies one encounter's Subjective/Objective/"
-        "Assessment/Plan bodies; the standard C-CDA view is whole-patient and "
-        "carries no single encounter's note"
-    ),
-}
-
-# The standard C-CDA view always renders on Letter geometry (see
-# ``reconstruct.ccda_standard.renderer._default_renderer``).
-_CCDA_PAGE_SIZE = "Letter"
+# HOW a whole-patient document is graded is not this module's business, and used
+# to be: the check subset, the skip reasons, the DOB identity anchor and the
+# ``carries=CHARTABLE_KINDS`` posture lived here, and the pack pipeline now
+# renders the SAME view as its record summary. Two copies of that policy would
+# drift, and the direction they drift is a document graded more leniently in one
+# path than the other. It lives once in :mod:`anastomosis.qa.wholepatient`; this
+# stage only decides WHICH documents and WHERE the report lands.
 
 
 def _run_ccda_standard_qa(
@@ -359,79 +324,25 @@ def _run_ccda_standard_qa(
     optional ``render`` extra) downgrades QA to a no-op with a skip event, exactly
     as the neutral path does.
 
-    It runs the two DOCUMENT-GENERIC engine checks over each per-patient PDF:
-
-    * ``data_integrity`` — the patient identity anchor is on the page. The HL7
-      stylesheet canonicalizes the patient NAME (uppercase family + non-breaking
-      spaces), so the shared date/name matcher cannot assert the mixed-case name;
-      the per-record context therefore anchors the check on the DOB (the identity
-      anchor this view renders in a matchable spelling) using the check's OWN
-      conditional skips — a falsy ``display_name`` skips the name sub-check and a
-      DOS-less encounter skips the DOS sub-check. This is the "appropriate
-      per-record context" for a whole-patient document.
-    * ``layout_pagination`` — no empty/blank pages; page geometry as declared.
-
-    * ``unattributed_vitals`` — no measurement in the record points at a visit
-      the record does not have. It reads the record rather than the encounter,
-      so a whole-patient document can answer it as well as a per-encounter one.
-
-    The encounter-scoped checks (``vitals_loinc``, ``date_staleness``,
-    ``note_body``) cannot be satisfied per-patient; they are recorded as skipped
-    WITH A REASON (:data:`_CCDA_SKIPPED_CHECKS`) in the report, never silently
-    omitted.
+    The grading itself — document-generic checks run, encounter-scoped checks
+    recorded as skipped-with-reason, every chartable kind declared carried — is
+    :func:`anastomosis.qa.whole_patient_report`, shared with the record summaries
+    the pack pipeline writes into every bundle.
     """
-    from anastomosis.core.model import CHARTABLE_KINDS, Encounter
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
     from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
     try:
-        from anastomosis.qa import Verdict, run_qa
-        from anastomosis.qa.base import CheckResult, engine_checks
+        from anastomosis.qa import whole_patient_report
     except ImportError as exc:
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
         return
 
-    by_name = {check.name: check for check in engine_checks()}
-    checks = [by_name[name] for name in _CCDA_DOC_CHECKS]
-
-    documents: list[tuple[Path, Encounter, PatientRecord]] = []
-    for record in records:
-        # Anchor data_integrity on the DOB: a patient copy with the name blanked
-        # (display_name falsy → the name sub-check self-skips) and a DOS-less
-        # encounter (the DOS sub-check self-skips). See the docstring for why the
-        # mixed-case name is not assertable against the HL7 stylesheet's output.
-        anchor_patient = record.patient.model_copy(
-            update={
-                "given_name": None,
-                "middle_name": None,
-                "family_name": None,
-                "suffix": None,
-            }
-        )
-        anchor_record = record.model_copy(update={"patient": anchor_patient})
-        encounter = Encounter(id=record.patient.id, patient_id=record.patient.id)
-        documents.append((ccda_standard_doc_path(charts, record), encounter, anchor_record))
-
-    report = run_qa(
-        documents,
-        section_flags={},
-        page_size=_CCDA_PAGE_SIZE,
-        # The standard view is HL7's own stylesheet over the whole record, so
-        # every chartable kind IS on the page and an absence is a defect rather
-        # than a layout choice. Measured, not assumed: over the Synthea fixture
-        # this view puts all 13 of that record's conditions, immunizations and
-        # laboratory results on the page.
-        carries=frozenset(CHARTABLE_KINDS),
-        checks=checks,
+    report = whole_patient_report(
+        (ccda_standard_doc_path(charts, record), record) for record in records
     )
-    # Record the encounter-scoped checks as skipped-with-reason (never omitted),
-    # so the report shows the SAME check set the neutral path reports.
-    for doc_qa in report.documents:
-        for name, reason in _CCDA_SKIPPED_CHECKS.items():
-            doc_qa.results.append(CheckResult(name, Verdict.PASS, [reason]))
-
     settle_qa(report, charts, emit)
 
 

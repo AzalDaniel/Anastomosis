@@ -49,6 +49,7 @@ from anastomosis.reconstruct.packctx import (
     format_local_dt,
     observations_by_encounter,
     record_cache_of,
+    vitals_elsewhere_in_record,
 )
 
 # --- vitals --------------------------------------------------------------------
@@ -779,6 +780,13 @@ def build_context(
     ]
     enc_vital_rows = _encounter_vital_rows(enc_vitals)
     vitals_obs_dt = next((o.effective_at for o in enc_vitals if o.effective_at), None)
+    # Vitals the record holds and this visit did not claim. Both vitals blocks
+    # print an absence when they find nothing — "No vitals recorded", "No events
+    # recorded for Vitals." — and over a record that HAS vitals those sentences
+    # deny what the record says. They keep their voice and gain the count plus a
+    # pointer to the record summary that carries them. Counts only: a
+    # measurement belongs in a vitals table, not in an absence notice.
+    vitals_elsewhere = vitals_elsewhere_in_record(record, encounter.id, record_cache)
 
     # vitals flowsheet — prior encounters only, most-recent 10 columns (GOLD §8).
     # The vital-by-encounter scan is built ONCE per record (memoized in
@@ -789,9 +797,9 @@ def build_context(
     encounter_dx = _encounter_diagnoses(index.conditions_by_id, encounter)
 
     # --- screenings / interventions / assessments ------------------------------
-    screening_events = [
-        _screening_view(e) for e in _screening_events(record, record_cache).get(encounter.id, [])
-    ]
+    by_encounter = _screening_events(record, record_cache)
+    screening_events = [_screening_view(e) for e in by_encounter.get(encounter.id, [])]
+    screenings_elsewhere = _elsewhere_count(by_encounter, encounter.id)
 
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
@@ -833,6 +841,7 @@ def build_context(
         "cc_text": encounter.chief_complaint,
         # vitals
         "enc_vitals_rows": enc_vital_rows,
+        "vitals_elsewhere": vitals_elsewhere,
         "vitals_date": _fmt_date_short(dos),
         "vitals_time": _fmt_time(vitals_obs_dt, tz),
         "flowsheet_columns": flowsheet_columns,
@@ -842,6 +851,7 @@ def build_context(
         "encounter_diagnoses": encounter_dx,
         # screenings / interventions / assessments
         "screening_events": screening_events,
+        "screenings_elsewhere": screenings_elsewhere,
         # SOAP
         "subjective_html": subjective.html if subjective else None,
         "objective_html": objective.html if objective else None,
@@ -920,6 +930,19 @@ def _concern_view(obj: Any) -> dict[str, str | None]:
         "description": obj.description or "-",
         "date": _fmt_date_short(obj.effective) or "-",
     }
+
+
+def _elsewhere_count(by_encounter: dict[str | None, list[Any]], encounter_id: str) -> int:
+    """How many items of an encounter-grouped family belong to some OTHER visit.
+
+    The empty state of a section that finds nothing here is a claim, and it is
+    only true when the record holds nothing of that family either. Items under
+    ``None`` — belonging to no visit at all — count, because they are the ones
+    with nowhere on a visit note to land.
+
+    A count, never a value: this number is rendered onto a chart.
+    """
+    return sum(len(items) for eid, items in by_encounter.items() if eid != encounter_id)
 
 
 def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str | None, list[Any]]:

@@ -204,6 +204,17 @@ jobs:
         # smoke-test above fails — the surest way to debug a Windows-only install
         # issue is the installer itself. The MSIX rides in the same artifact so
         # the release job downloads one thing and attaches all three.
+        #
+        # Deliberately un-attested here in `build`: this artifact only ever
+        # travels to the `release` job of this SAME run, through this upload
+        # and Actions' own artifact storage — nothing outside this run ever
+        # consumes it directly. Widening `id-token: write` onto a job that
+        # runs on every ordinary push, to attest something with no outside
+        # consumer, buys nothing and only grows the credential surface. The
+        # `release` job below — gated to version tags and explicit publish
+        # dispatches — is where the SAME artifacts get attested, right before
+        # they ship to an actual outside consumer (the GitHub Releases page);
+        # see its "Attest build provenance" step.
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -227,6 +238,15 @@ jobs:
     # the (null) input.
     if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
+    # Secret isolation contract: this is the only job in this file scoped to a
+    # GitHub Environment. Whatever secrets a future code-signing step needs —
+    # this is the job that would attach a signed installer — get added to the
+    # `release` environment's secret store, never to the repo or org level, so
+    # the `build` job above (runs on every ordinary push, no elevated creds)
+    # can never read them. Referencing the environment here is what makes it
+    # exist and what this job runs under; turning on its protection rules
+    # (required reviewers, a wait timer) is a repo-settings step for a human.
+    environment: release
     permissions:
       contents: write
       id-token: write # Sigstore signing for the provenance attestation (#282)
@@ -352,8 +372,12 @@ jobs:
             installer/*.msix
 
       - name: Attach it to the release
-        # Third-party action pinned to a full commit SHA (supply-chain hardening
-        # for this write-scoped job); first-party actions/* stay on major tags.
+        # Every action in this file — first-party actions/* included — is
+        # pinned to a full commit SHA, never a tag: a maintainer force-moving
+        # `v6` (or any major-version tag) changes what runs here without
+        # changing a line of this repo. The comment after `@` names the
+        # version for humans; the SHA is the only thing Actions actually
+        # trusts.
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           # On tag runs tag_name equals the ref name (asserted above) and the tag
