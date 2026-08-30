@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
+from _render_fakes import write_text_pdf
 
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
@@ -52,17 +53,7 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import pymupdf
-
-        from anastomosis.core.textutil import html_to_text
-
-        doc = pymupdf.open()
-        page = doc.new_page(width=612, height=792)
-        page.insert_textbox(
-            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
-        )
-        doc.save(str(pdf_path))
-        doc.close()
+        write_text_pdf(html, pdf_path)
 
     def close(self) -> None:
         pass
@@ -155,7 +146,9 @@ def test_run_pipeline_end_to_end_emits_stage_sequence(
     assert done["records"] == 3
     assert done["rendered"] == 6
     assert done["failed"] == 0
-    assert done["pass"] == 6
+    # 6 charts + the 3 whole-patient record summaries the bundle now carries:
+    # QA grades every document in the output, and the summaries are documents.
+    assert done["pass"] == 9
     assert (tmp_path / "out").glob("*.pdf")
     assert len(list((tmp_path / "out").glob("*.pdf"))) == 6
 
@@ -171,7 +164,8 @@ def test_run_pipeline_progress_carries_counts(
     by_stage = {e["stage"]: e for e in progress}
     assert by_stage["ingest"]["records"] == 3
     assert by_stage["reconstruct"]["rendered"] == 6
-    assert by_stage["qa"]["pass"] == 6
+    # 6 charts + 3 record summaries — see the stage-sequence test above.
+    assert by_stage["qa"]["pass"] == 9
 
 
 # --- per-patient detail (GUI parity: names/DOB/note-counts, local display) --

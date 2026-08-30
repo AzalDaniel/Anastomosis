@@ -29,10 +29,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from anastomosis.core.model import Observation, PatientRecord
+from anastomosis.core.model import Observation, ObservationCategory, PatientRecord
 from anastomosis.core.timeutil import to_local
 
-__all__ = ["format_local_dt", "observations_by_encounter", "record_cache_of"]
+__all__ = [
+    "format_local_dt",
+    "observations_by_encounter",
+    "record_cache_of",
+    "vitals_elsewhere_in_record",
+]
 
 
 def format_local_dt(value: datetime | None, tz: str) -> str | None:
@@ -71,3 +76,32 @@ def observations_by_encounter(
     grouped = record.observations_by_encounter()
     record_cache["obs_by_encounter"] = grouped
     return grouped
+
+
+def vitals_elsewhere_in_record(
+    record: PatientRecord, encounter_id: str, record_cache: dict[str, Any]
+) -> int:
+    """Vital signs the record holds that THIS visit did not claim.
+
+    A visit note selects by encounter, so a section that finds nothing prints
+    its empty state — and an empty state is a claim. "No vitals recorded" over
+    a record holding eight of them, taken at another visit or at none, is the
+    chart denying what the record says, which is the one thing this project
+    promises not to do. A section cannot fix that by rendering the other
+    visits' measurements (they are not this visit's), so it says how many there
+    are and points at the record summary that carries them.
+
+    A count, never a value: this number travels into a rendered chart, a golden
+    snapshot and a test, and a measurement is the chart.
+
+    Observations attached to NO encounter count too — they are the ones with no
+    visit to reach and therefore the ones most at risk of appearing nowhere.
+    """
+    grouped = observations_by_encounter(record, record_cache)
+    return sum(
+        1
+        for eid, observations in grouped.items()
+        if eid != encounter_id
+        for observation in observations
+        if observation.category == ObservationCategory.VITAL_SIGNS
+    )

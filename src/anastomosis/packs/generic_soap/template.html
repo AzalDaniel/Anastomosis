@@ -63,6 +63,13 @@
       <tr><td>{{ v.display or v.code }}</td><td>{{ v.value }}</td><td>{{ v.unit or "" }}</td></tr>
     {% endfor %}
   </table>
+{% elif vitals_elsewhere %}
+  {# The visit has no vitals and the record has some. Dropping the section
+     silently would read as "no vitals for this patient"; the count says what
+     is missing from THIS page and where the whole record is. Counts only —
+     a measurement belongs on a chart, not in an absence notice. #}
+  <h2 class="section">Vitals</h2>
+  <div class="section-body">None recorded for this visit — {{ vitals_elsewhere }} elsewhere in the record (see record summary).</div>
 {% endif %}
 
 {% if social_history %}

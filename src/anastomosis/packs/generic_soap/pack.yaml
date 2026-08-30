@@ -41,9 +41,10 @@ verify_header_fields: [patient_name, dob, dos]
 # that never had one. A visit note is a note about one visit; the standing
 # lists belong to a chart summary, and this pack does not render one. None of
 # this is lost data: the same facts go to the destination in the structured
-# C-CDA payload and sit beside the PDFs in the archive's bundle.json. What
-# they do not do is appear on this page, and QA now says so with a count
-# instead of grading the omission clean.
+# C-CDA payload, sit beside the PDFs in the archive's bundle.json, and are
+# rendered for a reader in the whole-patient record summary every run writes
+# into `record-summary/`. What they do not do is appear on this page, and QA
+# now says so with a count instead of grading the omission clean.
 coverage:
   omits:
     conditions: >

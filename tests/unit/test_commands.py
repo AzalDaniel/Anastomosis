@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from _render_fakes import write_text_pdf
 
 import anastomosis.reconstruct.chromium as chromium
 from anastomosis.core.commands import (
@@ -33,17 +34,7 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import pymupdf
-
-        from anastomosis.core.textutil import html_to_text
-
-        doc = pymupdf.open()
-        page = doc.new_page(width=612, height=792)
-        page.insert_textbox(
-            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
-        )
-        doc.save(str(pdf_path))
-        doc.close()
+        write_text_pdf(html, pdf_path)
 
     def close(self) -> None:
         pass

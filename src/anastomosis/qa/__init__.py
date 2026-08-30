@@ -9,6 +9,7 @@ layout-specific checks through the same registry.
 
 from .base import CheckResult, QACheck, QAContext, Verdict, engine_checks, register_check
 from .runner import DocumentQA, QAReport, run_qa, write_report
+from .wholepatient import whole_patient_report
 
 __all__ = [
     "CheckResult",
@@ -20,5 +21,6 @@ __all__ = [
     "engine_checks",
     "register_check",
     "run_qa",
+    "whole_patient_report",
     "write_report",
 ]
