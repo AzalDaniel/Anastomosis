@@ -122,3 +122,15 @@ def test_the_baseline_file_is_violations_only() -> None:
         assert entry["rank"] not in ("A", "B"), entry
     for entry in baseline["modules"].values():
         assert entry["rank"] != "A", entry
+
+
+def test_windows_paths_measure_to_the_same_keys_as_posix_paths() -> None:
+    """Radon reports OS-native separators. The baseline is written once, on
+    whichever OS regenerated it, and read on all four CI legs — so the keys
+    must agree. The day they did not, every Windows leg saw the entire
+    baseline as missing and reported 93 phantom regressions."""
+    windows = measure(_report(("src\\pkg\\mod.py", "sprawl", "Mapper", 14)))
+    posix = measure(_report(("src/pkg/mod.py", "sprawl", "Mapper", 14)))
+    assert windows == posix
+    assert set(windows["blocks"]) == {"src/pkg/mod.py::Mapper.sprawl"}
+    assert set(windows["modules"]) == {"src/pkg/mod.py"}
