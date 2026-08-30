@@ -12,7 +12,7 @@
 # the rendering goldens and the Chromium bundled in the installer from drifting
 # apart — one pin governs the test lanes, the goldens, and the build. Bump it and
 # regenerate the goldens (python tools/regen_goldens.py) in the same change.
-playwright==1.56.0
+playwright==1.62.0
 
 # Desktop GUI. The library range (pywebview>=6.2,<7.0) is deliberately narrow
 # but still floats inside 6.x, and floats to 6.2.1 — which upstream reports as
