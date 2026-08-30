@@ -288,6 +288,7 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
     """
     from anastomosis.pipeline import (
         STAGE_DETECT,
+        STAGE_INGEST,
         STAGE_MANIFEST,
         STAGE_QA,
         STAGE_RECONSTRUCT,
@@ -333,7 +334,16 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 f"manifest: [green]{event.counts['items']} item(s)[/green] "
                 f"{arrow} upload_manifest.json"
             )
-        # The ingest stage prints no CLI line of its own (the original printed none).
+        elif event.stage == STAGE_INGEST:
+            # The ordinary ingest line stays silent (the original printed
+            # none) — but rows held back with no patient to own them are the
+            # run's honesty, and a run that quarantined anything must not
+            # read as green until someone has looked.
+            if quarantined := event.counts.get("quarantined", 0):
+                console.print(
+                    f"[yellow]{quarantined} row(s) quarantined — no patient to "
+                    f"own them[/yellow] {arrow} quarantine.json"
+                )
 
     return _print_event
 

@@ -45,9 +45,10 @@ if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
-    from anastomosis.sources.base import SourceAdapter
+    from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
 __all__ = [
+    "QUARANTINE_FILENAME",
     "RECORD_SUMMARY_DIRNAME",
     "STAGE_DETECT",
     "STAGE_INGEST",
@@ -276,6 +277,12 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
 #: an export that a later `anast archive` may no longer be able to reach.
 ATTACHMENTS_DIRNAME = "attachments"
 
+#: Where a run persists the rows its adapter could not place on any patient
+#: (see :class:`~anastomosis.sources.base.QuarantinedRows`). Written into the
+#: same hardened output directory as the charts — the rows travel no further
+#: than the charts do — while events, logs, and the CLI carry counts only.
+QUARANTINE_FILENAME = "quarantine.json"
+
 
 #: What the charts in an output directory were rendered from: which layout, and
 #: which sections were switched on. Kept so a later run into the same directory
@@ -384,6 +391,52 @@ def _selection_exclusions(records: list[PatientRecord]) -> list[dict[str, str]]:
                     }
                 )
     return exclusions
+
+
+def settle_quarantine(adapter: SourceAdapter, out: Path) -> dict[str, int]:
+    """Persist what the adapter held back; return the INGEST event's extra counts.
+
+    Both orchestrators (``run_pipeline`` and ``core.migrate``) settle the
+    quarantine the same way for the same reason ``settle_qa`` is shared: an
+    operator reading the stage rail cannot tell which one produced the run.
+    The held rows go to ``quarantine.json`` verbatim — inside the hardened
+    output directory, which already holds the full charts — grouped by table
+    and PHI-free reason, so a reviewer can decide what the dangling rows were
+    and whether the export needs repair. The returned ``{"quarantined": N}``
+    rides the INGEST event; empty when nothing was held, so a clean run's
+    event payload is byte-identical to before this artifact existed.
+
+    A clean run also REMOVES a stale ``quarantine.json``: re-running into the
+    same folder after repairing the export must not leave last run's held rows
+    reading as this run's.
+    """
+    from anastomosis.core.output import secure_output_dir
+
+    held = list(getattr(adapter, "quarantine", ()))
+    if not held:
+        (out / QUARANTINE_FILENAME).unlink(missing_ok=True)
+        return {}
+    payload, total = _quarantine_payload(held)
+    _write_json(secure_output_dir(out) / QUARANTINE_FILENAME, payload)
+    return {"quarantined": total}
+
+
+def _quarantine_payload(held: list[QuarantinedRows]) -> tuple[dict[str, object], int]:
+    """``quarantine.json``'s shape: grouped by table and reason, rows verbatim,
+    sorted for a deterministic artifact; plus the total for the INGEST event."""
+    total = sum(len(entry.rows) for entry in held)
+    payload: dict[str, object] = {
+        "quarantine": [
+            {
+                "table": entry.table,
+                "reason": entry.reason,
+                "rows": [dict(row) for row in entry.rows],
+            }
+            for entry in sorted(held, key=lambda entry: (entry.table, entry.reason))
+        ],
+        "total_rows": total,
+    }
+    return payload, total
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -605,7 +658,12 @@ def run_pipeline(
     _guard_render_settings(out, settings, force=force)
 
     records = load_records(adapter, export_dir)
-    emit(StageEvent(STAGE_INGEST, counts={"records": len(records)}))
+    emit(
+        StageEvent(
+            STAGE_INGEST,
+            counts={"records": len(records), **settle_quarantine(adapter, out)},
+        )
+    )
 
     try:
         result = engine.run(records, out, force=force)

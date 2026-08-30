@@ -16,13 +16,18 @@ key names no record in the export (:class:`OrphanRowsError`).
 from __future__ import annotations
 
 import csv
+import json
+import logging
 from dataclasses import dataclass
+from functools import cache
+from importlib import resources
 from pathlib import Path
 
 from anastomosis.sources.base import SourceDataError
 
 __all__ = [
     "KNOWN_TABLES",
+    "V9_REFERENCE_COLUMNS",
     "Attachments",
     "Export",
     "MalformedExportError",
@@ -44,17 +49,21 @@ _TABLE_SUFFIX = ".tsv"
 class UnsupportedTablesError(SourceDataError):
     """An export carries tables the adapter can neither map nor losslessly keep.
 
-    Raised by the mapper when an unmapped table has no patient key to attribute
-    its rows to — failing closed beats silently discarding clinical data. The
-    message names the offending table(s) only (schema names, never row values).
+    Raised by the mapper when an unmapped table offers NO path to a patient:
+    no ``PatientPracticeGuid`` column, no declared indirect join, and no
+    practice-level identity of its own. Failing closed beats silently
+    discarding clinical data. A table that HAS a patient path never lands
+    here any more — its attributable rows are preserved and its dangling
+    ones quarantined — so this message no longer misdiagnoses a few blank
+    keys as a missing column. Schema names only, never row values.
     """
 
     def __init__(self, tables: list[str]) -> None:
         self.tables = tables
         super().__init__(
-            "export contains unmapped tables that cannot be attributed to a patient "
-            f"(no PatientPracticeGuid column): {tables}. Map them in the adapter, or "
-            "remove them from the export, before migrating."
+            "export contains unmapped tables with no path to a patient (no "
+            f"PatientPracticeGuid column and no declared join): {tables}. Map "
+            "them in the adapter, or remove them from the export, before migrating."
         )
 
 
@@ -127,6 +136,57 @@ KNOWN_TABLES = (
 _OVERFLOW_KEY = "__overflow__"
 
 
+@cache
+def v9_reference_columns() -> dict[str, tuple[str, ...]]:
+    """The vendor's own v9 column dictionary, shipped with the adapter.
+
+    One copy, used by the loader's vendor-defect recovery below and by the
+    schema-reference tests — extracted from the vendor documentation, names
+    only, nothing patient-derived. Cached because the loader may consult it
+    once per table read.
+    """
+    raw = resources.files("anastomosis.sources.pf_tebra").joinpath("pf_v9_columns.json")
+    tables: dict[str, list[str]] = json.loads(raw.read_text(encoding="utf-8"))
+    return {name: tuple(cols) for name, cols in tables.items()}
+
+
+#: Alias kept for discoverability from the package surface.
+V9_REFERENCE_COLUMNS = v9_reference_columns
+
+
+#: Header defects the VENDOR ships, verified against real exports and repaired
+#: only when everything about the observed shape agrees with the repair.
+#:
+#: ``patient-contacts``: two independent real v9 exports carry this exact
+#: five-column header — it is another table's schema pasted over the contacts
+#: table, ending in the two modification columns in the wrong order — while
+#: every data row underneath has the 15 cells the vendor's own dictionary
+#: documents for the table. The header is the anomaly; the rows are not. An
+#: export with rows under that header is unloadable without this, and "fix
+#: the export before migrating" is not an instruction an operator can follow
+#: by hand against PHI they must not edit.
+#:
+#: The repair is deliberately narrow. It applies only when the table name AND
+#: the exact anomalous header AND a uniform row width equal to the reference
+#: column count all hold; any other surplus — mixed widths, one extra cell, a
+#: different header — still refuses as corruption. Recovery logs the table
+#: name and row count only, never a value.
+_VENDOR_HEADER_DEFECTS: dict[tuple[str, tuple[str, ...]], str] = {
+    (
+        "patient-contacts",
+        (
+            "PatientPracticeGuid",
+            "NoteType",
+            "NoteText",
+            "LastModifiedDateTimeUtc",
+            "LastModifiedByUserGuid",
+        ),
+    ): "patient-contacts",
+}
+
+logger = logging.getLogger(__name__)
+
+
 class MalformedExportError(SourceDataError):
     """A TSV row does not line up with its header (likely an unquoted tab in a
     cell). The message names the file and physical line only — never row values."""
@@ -152,6 +212,10 @@ def read_table(root: Path, name: str) -> list[Row]:
     # utf-8-sig: tolerate a BOM, which Windows-produced exports may carry.
     with path.open(encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t", restkey=_OVERFLOW_KEY)
+        header = tuple(reader.fieldnames or ())
+        reference = _VENDOR_HEADER_DEFECTS.get((name, header))
+        if reference is not None:
+            return _read_with_repaired_header(name, path, v9_reference_columns()[reference])
         rows: list[Row] = []
         for row in reader:
             # Raise only when a surplus cell carries DATA — an unquoted tab split a
@@ -166,6 +230,46 @@ def read_table(root: Path, name: str) -> list[Row]:
                 raise MalformedExportError(name, reader.line_num)
             rows.append(dict(row))
         return rows
+
+
+def _read_with_repaired_header(name: str, path: Path, columns: tuple[str, ...]) -> list[Row]:
+    """Read a table whose header is a registered vendor defect, under the
+    reference schema instead.
+
+    Fail-closed at every step: EVERY data row must have exactly the reference
+    width. One row wider, narrower, or the header repeated mid-file, and the
+    whole table refuses as corruption — the repair never widens into a general
+    tolerance for misshapen rows.
+    """
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.reader(fh, delimiter="\t")
+        next(reader)  # the anomalous header, already matched exactly by the caller
+        rows: list[Row] = []
+        for cells in reader:
+            if not cells:  # a blank line, as DictReader would also skip
+                continue
+            if len(cells) != len(columns):
+                raise MalformedExportError(name, reader.line_num)
+            rows.append(dict(zip(columns, cells, strict=True)))
+    # Counts and schema only — a contacts row is a person's name and address.
+    logger.warning(
+        "%s.tsv: vendor header defect repaired from the v9 reference schema "
+        "(%d column(s) in the shipped header, %d in the reference; %d row(s) read)",
+        name,
+        len(_anomalous_header_for(name)),
+        len(columns),
+        len(rows),
+    )
+    return rows
+
+
+def _anomalous_header_for(name: str) -> tuple[str, ...]:
+    """The registered anomalous header for ``name`` (exists by construction
+    when called from the repair path)."""
+    for (table, header), _reference in _VENDOR_HEADER_DEFECTS.items():
+        if table == name:
+            return header
+    raise KeyError(name)
 
 
 def read_export(root: Path) -> Export:
