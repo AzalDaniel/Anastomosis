@@ -168,6 +168,17 @@ that has not been accepted cannot mutate it with `security-events: write`.
 That post-acceptance step is what makes every suppression below an auditable
 control rather than a convention.
 
+One consequence is worth stating here rather than leaving to be discovered.
+Because dismissal happens only after a merge, a pull request that *introduces*
+a suppressed line still fails its own code-scanning check: the alert is new in
+that pull request, and nothing has yet accepted the code that suppresses it.
+It clears on `main` once the push lands. So a red code-scanning check on a pull
+request that adds a suppression is expected, and the reviewer's job is to judge
+whether the suppression is justified — not to wait for a green that cannot
+arrive before merge. That is a deliberate trade, and the alternative is worse:
+letting unmerged code dismiss alerts would destroy the audit trail this policy
+exists to keep.
+
 This was not a theoretical gap. Six suppressions sat in `src/` doing nothing
 until a seventh, correctly formed and correctly placed, failed to clear its
 alert in #310 and made the mechanism visible.
