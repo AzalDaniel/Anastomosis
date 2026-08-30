@@ -123,6 +123,15 @@ runtime; if your machine lacks it the installer fetches and installs it silently
 Start-menu shortcut) and the `anast` command-line tool (an optional "add to
 PATH" task), and registers a normal uninstaller.
 
+**First run and code signing:** the installer is currently unsigned, so
+SmartScreen shows "Windows protected your PC" on first run — choose
+*More info → Run anyway*. Every release carries verifiable build provenance
+(`gh attestation verify Anastomosis-Setup-<version>.exe --repo AzalDaniel/Anastomosis`),
+and this project uses free code signing provided by
+[SignPath.io](https://signpath.io), with certificates issued by the
+[SignPath Foundation](https://signpath.org) — signed releases begin once the
+Foundation's onboarding completes.
+
 > **Offline/air-gapped machines:** the WebView2 step downloads from Microsoft, so
 > on a machine without internet *and* without WebView2 already present, install
 > the [Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
