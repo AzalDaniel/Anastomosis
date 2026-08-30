@@ -1048,8 +1048,16 @@ class _Actors:
         if organization is None:
             return
         self.add_facility((organization,))
-        if (root := _val_attr(organization, "v3:id", "root")) is not None:
-            practitioner.extensions[f"ccda:{role.organization.removeprefix('v3:')}"] = root
+        identifier = _find(organization, "v3:id")
+        key = f"ccda:{role.organization.removeprefix('v3:')}"
+        if (root := _attr(identifier, "root")) is not None:
+            practitioner.extensions[key] = root
+        # CDA II identity is the pair: extension is unique only inside root.
+        # Keep the established root-valued key for compatibility and retain the
+        # other half explicitly so a downstream resolver cannot join the actor
+        # to a different organization under the same assigning authority.
+        if (extension := _attr(identifier, "extension")) is not None:
+            practitioner.extensions[f"{key}Extension"] = extension
 
 
 #: What a role element can state about who took part. An informant is routinely
@@ -1091,18 +1099,21 @@ def _participant_id(source_file: str, participation: str, index: int) -> str:
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:{participation}:{index}"))
 
 
-def _facility_id(root: str | None, source_file: str, index: int) -> str:
+def _facility_id(root: str | None, extension: str | None, source_file: str, index: int) -> str:
     """Stable facility id, mirroring :func:`_patient_id`.
 
-    Keyed on the organization's own id root so the practice named by the author
-    and again by the custodian is ONE facility; an organization the document
-    left unidentified falls back to its position, which is the most a document
-    that named nothing supports.
+    Keyed on the organization's complete CDA II. ``extension`` is a unique
+    identifier only within ``root``; using the root alone merges different
+    facilities that share an assigning authority. A root-only UUID can stay
+    verbatim, while any compound identifier is deterministically namespaced.
+    An organization the document left unidentified falls back to its position,
+    which is the most a document that named nothing supports.
     """
-    if root and _GUID_RE.match(root):
+    if root and extension is None and _GUID_RE.match(root):
         return root
     if root:
-        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:organization:{root}"))
+        compound = f"{len(root)}:{root}:{extension or ''}"
+        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:organization:{compound}"))
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:organization:{index}"))
 
 
@@ -1192,7 +1203,13 @@ def _residual_ids(entity: _Element, consumed: str | None) -> list[dict[str, str]
     out: list[dict[str, str]] = []
     for node in _findall(entity, "v3:id"):
         root, extension = _attr(node, "root"), _attr(node, "extension")
-        if root is not None and root in (consumed, OID_NPI):
+        if root == OID_NPI:
+            continue
+        # ``source_id`` consumes only a root. When an II also has an extension,
+        # that extension remains clinical provenance and must survive here;
+        # otherwise every provider under one assigning authority becomes
+        # indistinguishable after ingest.
+        if root is not None and root == consumed and extension is None:
             continue
         if pair := {
             key: value for key, value in (("root", root), ("extension", extension)) if value
@@ -1354,19 +1371,25 @@ def _facility(nodes: Sequence[_Element], source_file: str, index: int) -> Facili
     field is taken from the first element that states it, in the order CDA
     nests them, so a document that fills either half is read the same way.
     """
-    root = _attr(_first(nodes, "v3:id"), "root")
+    identifier = _first(nodes, "v3:id")
+    root = _attr(identifier, "root")
+    extension = _attr(identifier, "extension")
     address = _first(nodes, "v3:addr")
     lines = [
         line for node in _findall(address, "v3:streetAddressLine") if (line := _text_content(node))
     ]
     phone, fax, residue = _facility_contacts(_every(nodes, "v3:telecom"))
     extensions: dict[str, Any] = {}
+    if extension is not None:
+        extensions["ccda:id"] = [
+            {key: value for key, value in (("root", root), ("extension", extension)) if value}
+        ]
     if residue:
         extensions["ccda:telecom"] = residue
     if len(lines) > 2:
         extensions["ccda:streetAddressLine"] = lines[2:]
     return Facility(
-        id=_facility_id(root, source_file, index),
+        id=_facility_id(root, extension, source_file, index),
         name=_text_content(_first(nodes, "v3:name")),
         address_line1=lines[0] if lines else None,
         address_line2=lines[1] if len(lines) > 1 else None,
@@ -1383,6 +1406,22 @@ def _facility(nodes: Sequence[_Element], source_file: str, index: int) -> Facili
 _FACILITY_SKIP = frozenset({"id", "provenance", "extensions"})
 
 
+def _merge_facility_extensions(seen: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge lossless tails without choosing a winner for conflicting facts."""
+    merged = dict(seen)
+    for key, value in incoming.items():
+        previous = merged.get(key)
+        if previous is None:
+            merged[key] = value
+        elif previous == value:
+            continue
+        elif isinstance(previous, list) and isinstance(value, list):
+            merged[key] = [*previous, *(item for item in value if item not in previous)]
+        else:
+            raise ValueError("C-CDA organization identifier has conflicting extension facts")
+    return merged
+
+
 def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
     """One organization named twice is one facility; the second naming fills gaps.
 
@@ -1392,6 +1431,20 @@ def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
     rule two halves of one encounter fold by, for the same reason: writing one
     over the other would silently pick a winner.
     """
+    conflicts = [
+        name
+        for name in type(seen).model_fields
+        if name not in _FACILITY_SKIP
+        and getattr(seen, name) is not None
+        and getattr(incoming, name) is not None
+        and getattr(seen, name) != getattr(incoming, name)
+    ]
+    if conflicts:
+        # Field names/counts only: neither organization value reaches the error.
+        raise ValueError(
+            "C-CDA organization identifier is reused with conflicting facility fields "
+            f"({len(conflicts)} fields)"
+        )
     update: dict[str, object] = {
         name: getattr(incoming, name)
         for name in type(seen).model_fields
@@ -1400,7 +1453,7 @@ def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
         and getattr(incoming, name) is not None
     }
     if incoming.extensions:
-        update["extensions"] = {**incoming.extensions, **seen.extensions}
+        update["extensions"] = _merge_facility_extensions(seen.extensions, incoming.extensions)
     return seen.model_copy(update=update) if update else seen
 
 

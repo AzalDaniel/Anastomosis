@@ -485,6 +485,67 @@ def test_one_organization_named_twice_is_one_facility(record: PatientRecord) -> 
     assert len({f.id for f in record.facilities}) == len(record.facilities)
 
 
+def test_organization_extension_is_part_of_identity(tmp_path: Path) -> None:
+    """CDA II makes an extension unique only within its root. Two locations
+    under one assigning authority are two facilities, never one first-wins row."""
+    header = """
+    <author><assignedAuthor>
+      <id root="1.2.3.4" extension="provider-1"/>
+      <assignedPerson><name><given>Ada</given><family>Fixture</family></name></assignedPerson>
+      <representedOrganization>
+        <id root="1.2.3.5" extension="east"/><name>Sample East</name>
+      </representedOrganization>
+    </assignedAuthor></author>
+    <custodian><assignedCustodian><representedCustodianOrganization>
+      <id root="1.2.3.5" extension="west"/><name>Sample West</name>
+    </representedCustodianOrganization></assignedCustodian></custodian>
+    """
+    parsed = parse_document(_write(tmp_path, header=header))
+
+    assert {facility.name for facility in parsed.facilities} == {"Sample East", "Sample West"}
+    assert len({facility.id for facility in parsed.facilities}) == 2
+    author = _sole(parsed, "author")
+    assert author.extensions["ccda:representedOrganization"] == "1.2.3.5"
+    assert author.extensions["ccda:representedOrganizationExtension"] == "east"
+
+
+def test_actor_identifier_extension_is_not_consumed_by_its_root(tmp_path: Path) -> None:
+    """Provenance currently credits the root, but that must not discard the
+    extension that identifies this provider inside the assigning authority."""
+    header = """
+    <author><assignedAuthor>
+      <id root="1.2.3.4" extension="provider-42"/>
+      <assignedPerson><name><given>Ada</given><family>Fixture</family></name></assignedPerson>
+    </assignedAuthor></author>
+    """
+    author = _sole(parse_document(_write(tmp_path, header=header)), "author")
+
+    assert author.provenance is not None and author.provenance.source_id == "1.2.3.4"
+    assert author.extensions["ccda:id"] == [{"root": "1.2.3.4", "extension": "provider-42"}]
+
+
+def test_one_complete_organization_id_cannot_hide_conflicting_fields(tmp_path: Path) -> None:
+    """If the exact same II names two incompatible facilities, picking the first
+    silently loses the second. Refuse value-free instead of inventing a winner."""
+    header = """
+    <author><assignedAuthor>
+      <id root="1.2.3.4"/>
+      <assignedPerson><name><given>Ada</given><family>Fixture</family></name></assignedPerson>
+      <representedOrganization>
+        <id root="1.2.3.5" extension="same"/><name>Sample East</name>
+      </representedOrganization>
+    </assignedAuthor></author>
+    <custodian><assignedCustodian><representedCustodianOrganization>
+      <id root="1.2.3.5" extension="same"/><name>Sample West</name>
+    </representedCustodianOrganization></assignedCustodian></custodian>
+    """
+    with pytest.raises(ValueError, match="conflicting facility fields") as excinfo:
+        parse_document(_write(tmp_path, header=header))
+
+    assert "Sample East" not in str(excinfo.value)
+    assert "Sample West" not in str(excinfo.value)
+
+
 def test_a_role_identified_only_by_its_npi_claims_no_source_id(tmp_path: Path) -> None:
     """The NPI arc is a code system, not an instance identifier — every provider
     in the country shares that root — so crediting a parse to it would attribute
