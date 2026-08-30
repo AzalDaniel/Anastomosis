@@ -336,15 +336,11 @@
       "rank": "B"
     },
     "src/anastomosis/packs/generic_soap/context.py": {
-      "avg": 16.0,
-      "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py": {
-      "avg": 8.9412,
+      "avg": 9.0,
       "rank": "B"
     },
-    "src/anastomosis/pipeline.py": {
-      "avg": 5.1053,
+    "src/anastomosis/packs/practice_fusion_soap/context.py": {
+      "avg": 8.7714,
       "rank": "B"
     },
     "src/anastomosis/sources/ccda/parser.py": {

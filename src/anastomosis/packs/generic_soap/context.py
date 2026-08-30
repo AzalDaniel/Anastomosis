@@ -14,6 +14,25 @@ from anastomosis.reconstruct.packctx import (
 )
 
 
+def _vitals_elsewhere(
+    encounter: Encounter, record: PatientRecord, sections: dict[str, bool], record_cache: Any
+) -> int:
+    """How many vitals this visit did not claim, or zero if the section is off.
+
+    The layout drops the whole section when a visit has none, and a dropped
+    section over a record that holds eight measurements reads as "this patient
+    has no vitals" — the same denial an empty-state sentence would make, in a
+    quieter voice.
+
+    Zero when the operator switched the section off: a suppressed section makes
+    no claim to correct, and disclosing a count there would put back exactly what
+    they asked to keep off the page.
+    """
+    if not sections.get("vitals", True):
+        return 0
+    return vitals_elsewhere_in_record(record, encounter.id, record_cache)
+
+
 def build_context(
     encounter: Encounter, record: PatientRecord, cfg: dict[str, Any]
 ) -> dict[str, Any]:
@@ -36,18 +55,6 @@ def build_context(
     ]
     age = age_display(patient.birth_date, dos) if patient.birth_date and dos else None
     signer = record.practitioner(encounter.signed_by_id)
-    # How many vitals this visit did not claim. The layout drops the whole
-    # section when a visit has none, and a dropped section over a record that
-    # holds eight measurements reads as "this patient has no vitals" — the same
-    # denial an empty-state sentence would make, in a quieter voice. Zero when
-    # the operator switched the section off: a suppressed section makes no claim
-    # to correct, and disclosing a count there would put back exactly what they
-    # asked to keep off the page.
-    vitals_elsewhere = (
-        vitals_elsewhere_in_record(record, encounter.id, record_cache)
-        if sections.get("vitals", True)
-        else 0
-    )
 
     return {
         "patient": patient,
@@ -58,7 +65,7 @@ def build_context(
         "dos": dos.strftime("%B %d, %Y") if dos else "Undated",
         "note_sections": [s for s in encounter.sections if not s.is_empty],
         "vitals": vitals if sections.get("vitals", True) else [],
-        "vitals_elsewhere": vitals_elsewhere,
+        "vitals_elsewhere": _vitals_elsewhere(encounter, record, sections, record_cache),
         "addenda": encounter.addenda if sections.get("addenda", True) else [],
         "coverages": record.coverages if sections.get("insurance", False) else [],
         "social_history": (

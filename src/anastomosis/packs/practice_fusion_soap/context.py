@@ -799,9 +799,7 @@ def build_context(
     # --- screenings / interventions / assessments ------------------------------
     by_encounter = _screening_events(record, record_cache)
     screening_events = [_screening_view(e) for e in by_encounter.get(encounter.id, [])]
-    screenings_elsewhere = sum(
-        len(events) for eid, events in by_encounter.items() if eid != encounter.id
-    )
+    screenings_elsewhere = _elsewhere_count(by_encounter, encounter.id)
 
     # --- SOAP sections (sanitize_soap_html output rides NoteSection.html) -------
     soap = {s.kind: s for s in encounter.sections}
@@ -932,6 +930,19 @@ def _concern_view(obj: Any) -> dict[str, str | None]:
         "description": obj.description or "-",
         "date": _fmt_date_short(obj.effective) or "-",
     }
+
+
+def _elsewhere_count(by_encounter: dict[str | None, list[Any]], encounter_id: str) -> int:
+    """How many items of an encounter-grouped family belong to some OTHER visit.
+
+    The empty state of a section that finds nothing here is a claim, and it is
+    only true when the record holds nothing of that family either. Items under
+    ``None`` — belonging to no visit at all — count, because they are the ones
+    with nowhere on a visit note to land.
+
+    A count, never a value: this number is rendered onto a chart.
+    """
+    return sum(len(items) for eid, items in by_encounter.items() if eid != encounter_id)
 
 
 def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str | None, list[Any]]:
