@@ -122,6 +122,58 @@ def test_workflow_actions_are_sha_pinned() -> None:
         assert _SHA_RE.fullmatch(pin), f"action {ref!r} is not pinned to a 40-hex SHA"
 
 
+# A `uses:` line together with the trailing `# vX.Y.Z` human-readable version
+# comment. PyYAML discards YAML comments, so the co-versioning check below
+# reads the file as text rather than through `_load_yaml`.
+_USES_LINE_RE = re.compile(r"^\s*-?\s*uses:\s*(\S+)@([0-9a-f]{40})\s*#\s*(\S+)\s*$")
+
+
+def _codeql_action_pins() -> dict[str, tuple[str, str]]:
+    """``{"init": (sha, version), "analyze": (sha, version)}`` for the two
+    ``github/codeql-action/*`` steps, read straight from the file's text."""
+    pins: dict[str, tuple[str, str]] = {}
+    for line in CODEQL_WORKFLOW.read_text(encoding="utf-8").splitlines():
+        match = _USES_LINE_RE.match(line)
+        if not match:
+            continue
+        ref, sha, version = match.groups()
+        if ref == "github/codeql-action/init":
+            pins["init"] = (sha, version)
+        elif ref == "github/codeql-action/analyze":
+            pins["analyze"] = (sha, version)
+    return pins
+
+
+def test_codeql_init_and_analyze_share_one_version() -> None:
+    """``init`` and ``analyze`` are two steps of ONE CodeQL Action release, and
+    the Action rejects a run where they disagree. Dependabot tracks each
+    `uses:` line as an independent dependency — that gap is exactly how a
+    weekly batch once bumped `analyze` alone and left `init` a version
+    behind, because the ecosystem's PR limit was already spent on other
+    updates by the time `init`'s turn came. This is a property of the
+    committed file, checked directly, rather than something inferred from how
+    the two pins arrived here."""
+    pins = _codeql_action_pins()
+    assert "init" in pins and "analyze" in pins, (
+        "codeql.yml must declare both a github/codeql-action/init and a "
+        "github/codeql-action/analyze step, each SHA-pinned with a trailing "
+        "`# vX.Y.Z` comment"
+    )
+    init_sha, init_version = pins["init"]
+    analyze_sha, analyze_version = pins["analyze"]
+    assert init_sha == analyze_sha, (
+        f"codeql-action/init ({init_sha}) and codeql-action/analyze "
+        f"({analyze_sha}) are pinned to different commits; the CodeQL Action "
+        "refuses to run when init and analyze disagree on version."
+    )
+    assert init_version == analyze_version, (
+        f"codeql-action/init ({init_version}) and codeql-action/analyze "
+        f"({analyze_version}) carry different version comments even though "
+        "their SHAs must move together — the comment is the human-readable "
+        "half of the same invariant."
+    )
+
+
 def test_init_step_references_config_file() -> None:
     """The codeql-action init step points at the committed config, which exists."""
     doc = _load_yaml(CODEQL_WORKFLOW)

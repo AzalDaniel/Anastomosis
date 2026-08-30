@@ -20,6 +20,21 @@
 # they open immediately and are never held back by the cooldown below. A
 # security fix waiting out a week-long cooldown would defeat the point of
 # shipping it fast.
+#
+# `groups` is not a noise-reduction knob here — it exists because
+# `open-pull-requests-limit` split a pair that had to move together. Two
+# `uses:` pins can be two halves of one thing Dependabot tracks as unrelated
+# dependencies: `github/codeql-action/init` and `.../analyze` are the init and
+# analyze steps of one CodeQL release, and `actions/upload-artifact` /
+# `download-artifact` are the write and read sides of one artifact format.
+# The first weekly batch bumped `.../analyze` alone (PR #305) because the
+# limit above was already spent on five other PRs, leaving `init` a version
+# behind — a mismatch the CodeQL Action rejects outright. A single group
+# covering every github-actions update turns that whole batch into one PR, so
+# the limit can never again cut a version-matched pair in half; the same
+# group on `pip` closes the identical gap should a future pip dependency
+# split across packages that must stay in lockstep. A grouped update lands or
+# fails as a unit — it cannot half-land.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -29,6 +44,10 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
@@ -37,3 +56,7 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    groups:
+      pip-dependencies:
+        patterns:
+          - "*"
