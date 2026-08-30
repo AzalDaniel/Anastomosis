@@ -150,11 +150,25 @@ contract — regressions in any of them are security findings:
 An advanced CodeQL workflow is committed at
 [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml): the
 `security-extended` suite on every push and pull request plus a weekly
-schedule — which ships the built-in `AlertSuppression.ql` query, so inline
-`# codeql[...]` comments are honored with no extra pack. (One-time
-repository setting: GitHub rejects advanced-setup SARIF uploads while
-code-scanning *default setup* is enabled, so default setup must be
-disabled in Settings → Code security for this workflow's results to land.)
+schedule. (One-time repository setting: GitHub rejects advanced-setup SARIF
+uploads while code-scanning *default setup* is enabled, so default setup
+must be disabled in Settings → Code security for this workflow's results to
+land.)
+
+Inline suppression takes two steps, and this policy previously described
+only the first. The suite ships `AlertSuppression.ql`, which computes each
+`# codeql[...]` comment into the uploaded SARIF — but code scanning ignores
+the SARIF's `suppressions[]` property, so on its own the comment changes
+nothing: the alert stays open and a pull request touching that line still
+fails its check. The workflow's final step, `advanced-security/dismiss-alerts`,
+reads the property back and dismisses the matching alerts through the API.
+That step is what makes every suppression below a control rather than a
+convention, and it is skipped for pull requests from forks, since it holds
+`security-events: write`.
+
+This was not a theoretical gap. Six suppressions sat in `src/` doing nothing
+until a seventh, correctly formed and correctly placed, failed to clear its
+alert in #310 and made the mechanism visible.
 
 Anastomosis's product surface is writing patient records to disk under the
 operator's control, which the `py/clear-text-storage-sensitive-data` rule
