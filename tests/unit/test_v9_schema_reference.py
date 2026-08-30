@@ -20,7 +20,11 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _FIXTURE = _ROOT / "tests" / "fixtures" / "pf_tebra_v9"
-_REFERENCE = _ROOT / "tests" / "reference" / "pf_v9_columns.json"
+# The reference ships INSIDE the adapter now (the loader's vendor-header-defect
+# repair reads its column orders at runtime), so the tests read the same copy
+# the product does — two copies would drift exactly the way fixture-vs-vendor
+# once did.
+_REFERENCE = _ROOT / "src" / "anastomosis" / "sources" / "pf_tebra" / "pf_v9_columns.json"
 
 
 def _vendor() -> dict[str, list[str]]:
