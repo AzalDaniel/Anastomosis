@@ -6,7 +6,8 @@ record of how they came to be):
 * The advanced workflow (``.github/workflows/codeql.yml``) triggers on push,
   pull request, and a schedule; the analyzing job holds ``security-events:
   write`` so its SARIF can upload; and every third-party action is pinned to a
-  full 40-hex commit SHA (never a floating tag).
+  full 40-hex commit SHA (never a floating tag). The alert-mutating dismissal
+  step can run only after accepted code is pushed to ``main``.
 * The config (``.github/codeql/codeql-config.yml``) selects the
   ``security-extended`` suite (which ships the built-in ``AlertSuppression.ql``
   query that honors inline ``# codeql[...]`` comments — no extra pack needed)
@@ -188,6 +189,49 @@ def test_init_step_references_config_file() -> None:
         f"init step config-file must be the committed config; got {config_refs!r}"
     )
     assert CODEQL_CONFIG.is_file(), "the referenced codeql-config.yml does not exist"
+
+
+def test_the_suppression_mechanism_is_actually_wired_up() -> None:
+    """A `# codeql[...]` comment only clears an alert if this step runs.
+
+    The suite computes the suppression into the SARIF and code scanning ignores
+    it; `advanced-security/dismiss-alerts` is what reads it back and dismisses
+    the alert through the API. Six suppressions sat in `src/` doing nothing
+    because that step was missing, so the tests below — which check that every
+    suppression is well formed and documented — were all passing over a control
+    that did not exist. This is the one that would have caught it.
+    """
+    doc = _load_yaml(CODEQL_WORKFLOW)
+    steps = [step for job in doc.get("jobs", {}).values() for step in job.get("steps", [])]
+
+    analyze = [s for s in steps if "codeql-action/analyze" in s.get("uses", "")]
+    assert len(analyze) == 1, "expected exactly one codeql-action/analyze step"
+    assert analyze[0].get("id") == "analyze", (
+        "the analyze step needs an `id` so the dismissal step can name its upload"
+    )
+    output = analyze[0].get("with", {}).get("output")
+    assert output, "the analyze step needs `output:` so the SARIF exists on disk to be read"
+
+    dismiss = [s for s in steps if "dismiss-alerts" in s.get("uses", "")]
+    assert len(dismiss) == 1, (
+        f"expected exactly one dismissal step, found {len(dismiss)}: every "
+        "`# codeql[...]` suppression in this repository is decoration without "
+        "one, and multiple mutators widen the alert-state trust boundary"
+    )
+    inputs = dismiss[0].get("with", {})
+    assert inputs.get("sarif-id") == "${{ steps.analyze.outputs.sarif-id }}", (
+        "the dismissal step must take the sarif-id of the upload it is dismissing from"
+    )
+    assert str(inputs.get("sarif-file", "")).startswith(f"{output}/"), (
+        f"the dismissal step reads {inputs.get('sarif-file')!r}, which is not in the "
+        f"{output!r} directory the analyze step writes"
+    )
+    guard = str(dismiss[0].get("if", ""))
+    assert guard == "github.event_name == 'push' && github.ref == 'refs/heads/main'", (
+        "the dismissal step mutates repository alert state with security-events: write; "
+        "it must run only for accepted code pushed to main, never from a pull request, "
+        "feature branch, or scheduled scan"
+    )
 
 
 # --- config -------------------------------------------------------------------

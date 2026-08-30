@@ -9,9 +9,16 @@
 # sites, are governed by the "Code scanning & suppression policy (auditable)"
 # section of SECURITY.md.
 #
-# Inline `# codeql[query-id]` suppression is a built-in query
-# (`AlertSuppression.ql`) shipped inside every standard query pack, including
-# `security-extended` below — no extra pack is needed to honor it.
+# Inline `# codeql[query-id]` suppression takes TWO things, and for a long time
+# this file claimed it took one. `AlertSuppression.ql` does ship inside every
+# standard query pack, `security-extended` included, and it does compute the
+# suppression into the uploaded SARIF. Code scanning then ignores it: the alert
+# stays open and a pull request touching that line still fails. The dismissal
+# step at the end of .github/workflows/codeql.yml is the second thing — after
+# accepted code is pushed to main, it reads the SARIF's `suppressions[]`
+# property back and dismisses the matching alerts through the API. It cannot run
+# from a pull request or feature branch. Without that step every comment below
+# is decoration.
 name: Anastomosis CodeQL config
 
 queries:
