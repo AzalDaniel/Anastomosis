@@ -161,10 +161,12 @@ only the first. The suite ships `AlertSuppression.ql`, which computes each
 the SARIF's `suppressions[]` property, so on its own the comment changes
 nothing: the alert stays open and a pull request touching that line still
 fails its check. The workflow's final step, `advanced-security/dismiss-alerts`,
-reads the property back and dismisses the matching alerts through the API.
-That step is what makes every suppression below a control rather than a
-convention, and it is skipped for pull requests from forks, since it holds
-`security-events: write`.
+reads the property back and dismisses the matching alerts through the API only
+after accepted code is pushed to `main`. It never runs for a pull request,
+feature-branch push, or scheduled scan: alert state is repository state, so code
+that has not been accepted cannot mutate it with `security-events: write`.
+That post-acceptance step is what makes every suppression below an auditable
+control rather than a convention.
 
 This was not a theoretical gap. Six suppressions sat in `src/` doing nothing
 until a seventh, correctly formed and correctly placed, failed to clear its

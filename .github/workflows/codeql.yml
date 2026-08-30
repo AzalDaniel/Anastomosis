@@ -60,11 +60,11 @@ jobs:
           output: sarif-results
 
       # Turn the inline `# codeql[rule-id]` comments into actual dismissals.
-      # Skipped for a pull request from a fork: this step holds
-      # security-events: write and dismisses alerts, so it must not be
-      # reachable by code the repository has not accepted.
+      # Alert state is repository state: only an accepted push to main may
+      # mutate it. Pull requests, feature-branch pushes, and scheduled scans
+      # still upload SARIF, but they can never dismiss an alert.
       - name: Dismiss suppressed alerts
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: advanced-security/dismiss-alerts@a18f986bdb40edba0dd7a74382c15d4a3d50a1c8 # v2
         with:
           sarif-id: ${{ steps.analyze.outputs.sarif-id }}

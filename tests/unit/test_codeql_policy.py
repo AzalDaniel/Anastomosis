@@ -6,7 +6,8 @@ record of how they came to be):
 * The advanced workflow (``.github/workflows/codeql.yml``) triggers on push,
   pull request, and a schedule; the analyzing job holds ``security-events:
   write`` so its SARIF can upload; and every third-party action is pinned to a
-  full 40-hex commit SHA (never a floating tag).
+  full 40-hex commit SHA (never a floating tag). The alert-mutating dismissal
+  step can run only after accepted code is pushed to ``main``.
 * The config (``.github/codeql/codeql-config.yml``) selects the
   ``security-extended`` suite (which ships the built-in ``AlertSuppression.ql``
   query that honors inline ``# codeql[...]`` comments — no extra pack needed)
@@ -212,9 +213,10 @@ def test_the_suppression_mechanism_is_actually_wired_up() -> None:
     assert output, "the analyze step needs `output:` so the SARIF exists on disk to be read"
 
     dismiss = [s for s in steps if "dismiss-alerts" in s.get("uses", "")]
-    assert dismiss, (
-        "no dismissal step: every `# codeql[...]` suppression in this repository "
-        "is decoration without it, and SECURITY.md claims otherwise."
+    assert len(dismiss) == 1, (
+        f"expected exactly one dismissal step, found {len(dismiss)}: every "
+        "`# codeql[...]` suppression in this repository is decoration without "
+        "one, and multiple mutators widen the alert-state trust boundary"
     )
     inputs = dismiss[0].get("with", {})
     assert inputs.get("sarif-id") == "${{ steps.analyze.outputs.sarif-id }}", (
@@ -225,8 +227,10 @@ def test_the_suppression_mechanism_is_actually_wired_up() -> None:
         f"{output!r} directory the analyze step writes"
     )
     guard = str(dismiss[0].get("if", ""))
-    assert "fork" in guard or "head.repo" in guard, (
-        "the dismissal step holds security-events: write and must not run for a fork's PR"
+    assert guard == "github.event_name == 'push' && github.ref == 'refs/heads/main'", (
+        "the dismissal step mutates repository alert state with security-events: write; "
+        "it must run only for accepted code pushed to main, never from a pull request, "
+        "feature branch, or scheduled scan"
     )
 
 
