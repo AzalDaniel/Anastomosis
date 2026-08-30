@@ -178,3 +178,22 @@ results, never sample contents or original patient-document filenames.
 - Added `COORDINATION.md` as the new write-ahead recovery record. It captures the
   exact refs, Claude review changes, conservation findings, merge train, owner +
   Codex attribution rule, and idempotent resume commands.
+
+## 2026-08-31 - PR #318 independent security review blocker
+
+- Verified the exact PR #318 workflow and policy test from remote head
+  `6277d8488185ea1e34ff0b86a4fe9372d4b3e3fc`; `git diff --check` passed.
+- Verified from the pinned actions' own metadata that
+  `advanced-security/dismiss-alerts` accepts `sarif-id` and `sarif-file`, and
+  that `github/codeql-action/analyze` accepts `output` and emits `sarif-id`.
+  Those input names are not the defect.
+- Found a merge-blocking trust-boundary defect: the dismissal condition is true
+  for every non-PR event while the workflow triggers on `claude/**` pushes.
+  Consequently, unmerged feature-branch code can use
+  `security-events: write` to dismiss repository alerts. Same-repository PRs
+  are also permitted to run the mutation step.
+- The policy regression only checks for the words `fork` or `head.repo`; it
+  therefore passes the unsafe guard. Required repair: make alert mutation run
+  only from accepted `main` code and assert that exact condition in the test.
+  PR #318 is not approved or mergeable by policy until the repair and focused
+  tests are pushed and independently verified.

@@ -13,8 +13,10 @@ temporary directories are not recovery state.
 - Local checkout:
   `C:\Users\azald\Documents\Codex\2026-08-29\github-plugin-github-openai-curated-remote-3\work\Anastomosis`.
 - Working branch: `codex/learned-source-integrity`.
-- Local and remote audit head after a verified clean fast-forward:
-  `71e7a51dfaa76cce9792aaccea1c84e3c41ce0c1`.
+- Local and remote audit head at the start of the PR #318 review unit:
+  `b4251bb56bd447baca4ccefd32b702c2255b16b9`. This includes the first
+  crash-safe coordination checkpoint and is superseded only by later pushed
+  ledger commits recorded below.
 - Live GitHub `main` when reconciled:
   `28b219e1fbfac5547ee8427cb13c2e9b9ad30b3b`.
 - Pull request: https://github.com/AzalDaniel/Anastomosis/pull/310.
@@ -50,7 +52,14 @@ merged-head gate before approval.
 
 1. PR #318, `A suppression that does nothing is worse than no suppression`:
    open, draft, mergeable at head `6277d8488185ea1e34ff0b86a4fe9372d4b3e3fc`.
-   It is the prerequisite CodeQL policy/mechanism change.
+   It is the prerequisite CodeQL policy/mechanism change, but **must not merge
+   at that head**. Independent review verified the pinned action, `sarif-id`,
+   `sarif-file`, and CodeQL `output` wiring against the actions' own metadata,
+   then found that its guard is true on every `claude/**` push. An unmerged
+   feature branch can therefore dismiss repository alerts with
+   `security-events: write`. Restrict mutation to accepted `main` code (the
+   intended repair is an explicit push-to-`refs/heads/main` condition) and pin
+   that exact trust boundary in `test_codeql_policy.py` before reconsidering.
 2. PR #310: update from `main` only after #318 lands; resolve deliberately,
    rerun the complete gate, inspect CodeQL results, then make ready/merge.
 3. PR #320, `Read the header: who wrote it, who signed it, and where`:
