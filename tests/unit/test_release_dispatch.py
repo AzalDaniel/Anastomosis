@@ -8,7 +8,10 @@ capability and this test keeps their moving parts from drifting:
     write-scoped release job fires on a version tag OR on a dispatch that opts
     in; and the gh-release step creates tag ``v<version>`` at this run's SHA
     (``tag_name`` + ``target_commitish``) while still flagging pre-1.0 builds
-    as prereleases.
+    as prereleases. That same job attests build provenance for the exe and
+    its SBOM (matching the PyPI path's ``attest-build-provenance`` use below)
+    and labels the installer unsigned in the release notes until a signing
+    certificate exists (#282).
   * ``release.yml`` (PyPI Trusted Publishing) is itself dispatchable — a tag
     created with GITHUB_TOKEN does not cascade-trigger its push trigger — and
     its first build step refuses a dispatch from any ref but main.
@@ -94,6 +97,70 @@ def test_windows_gh_release_creates_tag_at_this_ref() -> None:
             f"the gh-release step must carry `{key}` so a dispatch publish creates "
             "tag v<version> at this SHA while keeping the prerelease flag."
         )
+
+
+def test_windows_release_job_has_attestation_permissions() -> None:
+    """The release job needs id-token + attestations to call
+    actions/attest-build-provenance, on top of the contents: write it already
+    holds to attach the release (#282: no build-provenance attestation)."""
+    data = _load(WINDOWS_YML)
+    perms = data["jobs"]["release"]["permissions"]
+    assert perms.get("contents") == "write", (
+        "the release job must keep contents: write for the gh-release upload"
+    )
+    assert perms.get("id-token") == "write", (
+        "the release job must hold id-token: write for Sigstore signing — the "
+        "same grant release.yml's build job already carries for its own "
+        "attest-build-provenance step."
+    )
+    assert perms.get("attestations") == "write", (
+        "the release job must hold attestations: write to persist the "
+        "provenance attestation to GitHub."
+    )
+
+
+def test_windows_release_attests_exe_and_sbom_before_upload() -> None:
+    """Provenance is attested for the downloaded exe/SBOM, after they land on
+    the runner and before they are attached to the release — so what gets
+    attested is exactly what the download-artifact step fetched, not
+    something re-fetched or re-derived later (#282)."""
+    data = _load(WINDOWS_YML)
+    steps = data["jobs"]["release"]["steps"]
+    download = _step_index(steps, "Download the built installer")
+    attest = _step_index(steps, "Attest build provenance")
+    attach = _step_index(steps, "Attach it to the release")
+    assert download < attest < attach, (
+        "actions/attest-build-provenance must run after the installer is "
+        "downloaded and before it is attached to the release"
+    )
+    step = steps[attest]
+    assert str(step.get("uses", "")).startswith("actions/attest-build-provenance@"), (
+        f"expected an actions/attest-build-provenance step, found {step!r}"
+    )
+    subject_path = step["with"]["subject-path"]
+    assert "installer/*.exe" in subject_path
+    assert "installer/*.cdx.json" in subject_path, (
+        "the SBOM must be attested alongside the exe, not just the installer"
+    )
+
+
+def test_windows_release_notes_label_the_installer_unsigned() -> None:
+    """Until a trusted Authenticode certificate exists, every release must say
+    the installer is unsigned and name `gh attestation verify` as the
+    fallback check (#282) — a SHA-256 table is not a substitute for publisher
+    identity, and this release note is the only place a downloader sees
+    that distinction spelled out."""
+    data = _load(WINDOWS_YML)
+    steps = data["jobs"]["release"]["steps"]
+    notes_step = steps[_step_index(steps, "Extract this version's CHANGELOG section")]
+    run = notes_step["run"]
+    assert "unsigned" in run.lower(), (
+        "the release-notes step must plainly label the installer unsigned"
+    )
+    assert "gh attestation verify" in run, (
+        "the release-notes step must point at `gh attestation verify` as the "
+        "supply-chain check that stands in for a publisher signature"
+    )
 
 
 def test_release_yml_is_dispatchable() -> None:
