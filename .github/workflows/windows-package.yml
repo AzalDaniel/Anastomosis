@@ -184,15 +184,16 @@ jobs:
         # smoke-test above fails — the surest way to debug a Windows-only install
         # issue is the installer itself.
         #
-        # Deliberately un-attested: this artifact only ever travels to the
-        # `release` job of this SAME run, through this upload and Actions' own
-        # artifact storage — nothing outside this run ever consumes it
-        # directly. Widening `id-token: write` onto a job that runs on every
-        # ordinary push, to attest something with no outside consumer, buys
-        # nothing and only grows the credential surface. The one build in this
-        # repo that ships to an outside consumer (PyPI, via release.yml) is
-        # where attestation earns its keep — see the comment on that job's
-        # attest step.
+        # Deliberately un-attested here in `build`: this artifact only ever
+        # travels to the `release` job of this SAME run, through this upload
+        # and Actions' own artifact storage — nothing outside this run ever
+        # consumes it directly. Widening `id-token: write` onto a job that
+        # runs on every ordinary push, to attest something with no outside
+        # consumer, buys nothing and only grows the credential surface. The
+        # `release` job below — gated to version tags and explicit publish
+        # dispatches — is where the SAME artifact gets attested, right before
+        # it ships to an actual outside consumer (the GitHub Releases page);
+        # see its "Attest build provenance" step.
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
