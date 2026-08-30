@@ -334,7 +334,7 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            echo "**This Windows installer is unsigned.** It carries no Authenticode signature, so Windows will not show a verified publisher. Verify it was built by this repository's release workflow instead of trusting it on sight:"
+            echo "**This Windows installer is unsigned.** It carries no Authenticode signature, so Windows will not show a verified publisher. This project uses free code signing provided by SignPath.io, with certificates issued by SignPath Foundation; releases are signed once the Foundation's onboarding completes. Until then, verify the file was built by this repository's release workflow instead of trusting it on sight:"
             echo ""
             echo '```'
             echo "gh attestation verify Anastomosis-Setup-${ver}.exe --repo AzalDaniel/Anastomosis"

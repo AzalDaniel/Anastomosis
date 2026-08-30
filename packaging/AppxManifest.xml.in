@@ -89,7 +89,7 @@
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Anastomosis"
-        Description="Reconstruct, verify, and re-home clinical records. An open-source toolkit for EHR migration, archival, and record liberation."
+        Description="Lossless medical-records migration between electronic healthcare systems - platform-agnostic and physician-friendly."
         BackgroundColor="#171310"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />

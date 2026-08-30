@@ -1,6 +1,6 @@
 # Anastomosis
 
-> Reconstruct, verify, and re-home clinical records.
+> Lossless medical-records migration between electronic healthcare systems — platform-agnostic and physician-friendly.
 
 **anastomosis** *(n., medicine)* — a surgical connection between two structures.
 This toolkit is that connection for electronic health records.
@@ -122,6 +122,15 @@ runtime; if your machine lacks it the installer fetches and installs it silently
 (most Windows 10/11 machines already have it). It installs the desktop GUI (a
 Start-menu shortcut) and the `anast` command-line tool (an optional "add to
 PATH" task), and registers a normal uninstaller.
+
+**First run and code signing:** the installer is currently unsigned, so
+SmartScreen shows "Windows protected your PC" on first run — choose
+*More info → Run anyway*. Every release carries verifiable build provenance
+(`gh attestation verify Anastomosis-Setup-<version>.exe --repo AzalDaniel/Anastomosis`),
+and this project uses free code signing provided by
+[SignPath.io](https://signpath.io), with certificates issued by the
+[SignPath Foundation](https://signpath.org) — signed releases begin once the
+Foundation's onboarding completes.
 
 > **Offline/air-gapped machines:** the WebView2 step downloads from Microsoft, so
 > on a machine without internet *and* without WebView2 already present, install

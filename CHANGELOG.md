@@ -13,6 +13,26 @@ Post-0.7.0 audit work: a full pass over the shipped surfaces, driving the real
 CLI and the real GUI rather than reading them, with every finding raised as an
 issue and fixed in its own pull request.
 
+### Added
+
+- **A conservation ledger for C-CDA ingest, and a corpus to run it against.**
+  2,103 real documents went through the adapter, every one parsed, and eleven
+  canonical collections came back empty across all of them — no practitioner,
+  no facility, no coverage, no document, and not one of 12,277 encounters
+  carrying a note. "It parsed" had never been asked to mean anything, because
+  nothing counted what the XML OFFERED, and a count of survivors reads the same
+  whether the loss was zero or total. `sources/ccda/ledger.py` is the other
+  count: it walks the document independently of the parser and gives every
+  section, every `<entry>` and every participation exactly one disposition —
+  structurally parsed, narrative preserved, unsupported, or source-empty —
+  crediting a parse only on evidence (a canonical object whose provenance names
+  an id the construct carries), and balancing its books through the same
+  `Conservation` primitive the render and delivery seams use.
+  `tools/ccda_corpus.py` generates the documents to run it on: deterministic,
+  PHI-free, 6,144 shapes spanning the six C-CDA document types against every
+  combination of ten structural traps, generated at test time and never
+  committed. This measures; it does not fix. (#309)
+
 ### Fixed
 
 - **A destination pack can describe the filing dialog it actually meets.**
