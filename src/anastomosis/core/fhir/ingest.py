@@ -414,15 +414,40 @@ def _coverage(resource: dict[str, Any]) -> Coverage:
     )
 
 
+#: The FHIR types :func:`~anastomosis.core.fhir.export.to_bundle` writes one
+#: canonical Practitioner out as: a clinician, a person related to the patient,
+#: and a system that generated a document. All three come back into the one
+#: collection they left from — reading only the first would type the record
+#: correctly on the way out and lose two thirds of its people on the way back.
+_ACTOR_TYPES = frozenset({"Practitioner", "RelatedPerson", "Device"})
+
+
+def _actors(bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every resource that came from a canonical Practitioner, in BUNDLE order.
+
+    Not read off the by-type grouping: that would return the clinicians, then
+    the relatives, then the devices, and a record whose people came back
+    regrouped is not the record that was written.
+    """
+    return [
+        entry["resource"]
+        for entry in bundle.get("entry", [])
+        if entry["resource"]["resourceType"] in _ACTOR_TYPES
+    ]
+
+
 def _practitioner(resource: dict[str, Any]) -> Practitioner:
     source, fields = _exts(resource)
     name = (resource.get("name") or [{}])[0]
+    # A Device names itself in `deviceName` rather than `name`; it is the same
+    # canonical field on the way back.
+    devices = resource.get("deviceName") or [{}]
     identifiers = resource.get("identifier", [])
     return Practitioner(
         id=resource["id"],
         given_name=(name.get("given") or [None])[0],
         family_name=name.get("family"),
-        display_name=name.get("text"),
+        display_name=name.get("text") or devices[0].get("name"),
         credential=fields.get("credential"),
         npi=identifiers[0]["value"] if identifiers else None,
         extensions=source,
@@ -513,7 +538,7 @@ def from_bundle(bundle: dict[str, Any]) -> PatientRecord:
         family_history=[_family_history(r) for r in grouped.get("FamilyMemberHistory", [])],
         coverages=[_coverage(r) for r in grouped.get("Coverage", [])],
         documents=artifacts,
-        practitioners=[_practitioner(r) for r in grouped.get("Practitioner", [])],
+        practitioners=[_practitioner(r) for r in _actors(bundle)],
         facilities=[_facility(r) for r in grouped.get("Location", [])],
     )
     for name, items in extras.items():

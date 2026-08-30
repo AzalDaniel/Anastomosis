@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from anastomosis.core.conservation import ConservationError
-from anastomosis.core.model import Practitioner, Provenance
+from anastomosis.core.model import PatientRecord, Practitioner, Provenance
 from anastomosis.sources.ccda.ledger import (
     Disposition,
     aggregate,
@@ -94,6 +94,11 @@ def fixture_ledger() -> object:
     return document_ledger(CCDA_FIXTURE)
 
 
+@pytest.fixture(scope="module")
+def fixture_record() -> PatientRecord:
+    return parse_document(CCDA_FIXTURE)
+
+
 def test_a_section_this_adapter_takes_apart_is_counted_as_parsed(fixture_ledger: object) -> None:
     """Problems (11450-4) becomes Condition objects, and the ledger says so —
     the direction that fails silently if the instrument is wired to report loss
@@ -131,14 +136,43 @@ def test_a_section_the_adapter_only_narrates_is_counted_as_narrative(
     assert _sole(fixture_ledger, "section:18776-5") is Disposition.NARRATIVE_PRESERVED
 
 
+def test_the_author_and_the_custodian_now_become_canonical_objects(
+    fixture_record: PatientRecord,
+) -> None:
+    """The 2,103-document finding, closed on the repo's own reference document.
+
+    The author and the custodian were right there in the header and no canonical
+    object came from either. Both do now: the author as a Practitioner carrying
+    the role the document gave them, the practice that holds the chart as a
+    Facility. Asserted against the RECORD rather than the ledger because on this
+    fixture the ledger cannot credit either — see the next test, which is that
+    blind spot named.
+    """
+    authors = [
+        p
+        for p in fixture_record.practitioners
+        if p.extensions.get("ccda:participation") == "author"
+    ]
+    assert [p.name for p in authors] == ["Quinn Authorman", "Quinn Authorman"]
+    assert [f.name for f in fixture_record.facilities] == ["Sample Family Medicine"]
+
+
 @pytest.mark.parametrize("construct", ["participation:author", "participation:custodian"])
-def test_a_participation_with_no_slot_is_named_unsupported(
+def test_a_construct_whose_id_root_is_shared_is_still_not_credited(
     fixture_ledger: object, construct: str
 ) -> None:
-    """The 2,103-document finding, reproduced on one document: the author and
-    the custodian are right there in the header, and no canonical object came
-    from either."""
+    """One root on two constructs credits neither, even now that both are parsed.
+
+    This fixture stamps one provider id on the header author and again on the
+    note that author wrote, and one organization OID on the author's practice
+    and again on the custodian — both ordinary C-CDA. A root two constructs
+    share cannot say which of them an object came from, so the ledger credits
+    neither and counts the instances in ``unlinkable``: its own blind spot,
+    reported rather than resolved in the flattering direction.
+    """
+    row = _row(fixture_ledger, construct)
     assert _sole(fixture_ledger, construct) is Disposition.UNSUPPORTED
+    assert row.unlinkable == row.offered  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -174,10 +208,13 @@ def test_the_fixtures_books_balance(fixture_ledger: object) -> None:
 def test_an_author_the_record_DOES_carry_reads_as_parsed(tmp_path: Path) -> None:
     """The proof that ``unsupported`` above is a measurement.
 
-    Same document, same ledger; the only change is a record that carries a
-    Practitioner whose provenance names the author's id. If the verdict moved,
-    the ledger is reading the record — which is what makes it able to grade the
-    fix that has not been written yet.
+    One author, on an id root nothing else in this document shares. The parser
+    produces a Practitioner whose provenance names that root, and the ledger
+    reads STRUCTURALLY_PARSED — where the same XML read UNSUPPORTED before the
+    extraction landed. Then the same document is measured against a record
+    stripped of its practitioners and the verdict goes back: the ledger is
+    grading the RECORD, not reciting a table of what the parser is believed to
+    do, which is the only way it could grade a fix at all.
     """
     header = """
     <author>
@@ -189,24 +226,18 @@ def test_an_author_the_record_DOES_carry_reads_as_parsed(tmp_path: Path) -> None
     </author>
     """
     path = _write(tmp_path, header=header)
-    assert _sole(document_ledger(path), "participation:author") is Disposition.UNSUPPORTED
-
     record = parse_document(path)
-    record.practitioners.append(
-        Practitioner(
-            given_name="Quinn",
-            family_name="Authorman",
-            provenance=Provenance(
-                source_system="ccda",
-                source_file=path.name,
-                source_id="feedface-auth-0000-0000-000000000009",
-            ),
-        )
-    )
+    assert [p.name for p in record.practitioners] == ["Quinn Authorman"]
+    author = record.practitioners[0]
+    assert author.provenance is not None
+    assert author.provenance.source_id == "feedface-auth-0000-0000-000000000009"
     assert (
         _sole(document_ledger(path, record), "participation:author")
         is Disposition.STRUCTURALLY_PARSED
     )
+
+    record.practitioners = []
+    assert _sole(document_ledger(path, record), "participation:author") is Disposition.UNSUPPORTED
 
 
 def test_an_id_two_constructs_share_credits_neither(tmp_path: Path) -> None:

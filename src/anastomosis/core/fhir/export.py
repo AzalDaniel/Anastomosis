@@ -574,6 +574,49 @@ def _coverage(c: Coverage) -> dict[str, Any]:
     )
 
 
+#: CDA role classes whose actor is somebody in a PERSONAL relationship with the
+#: patient rather than a clinician — a spouse who gave the history, an emergency
+#: contact. Read from the source's own classification (``ccda:role``) rather than
+#: from a list of participation names, because CDA already draws this line and a
+#: role it adds later lands on the safe side of it by default.
+_PERSONAL_ROLES = frozenset({"relatedEntity", "associatedEntity"})
+#: The CDA entity class that is a machine rather than a person.
+_DEVICE_ENTITY = "assignedAuthoringDevice"
+
+
+def _actor(p: Practitioner, patient_id: str) -> dict[str, Any]:
+    """One canonical Practitioner as the FHIR resource it actually is.
+
+    ``PatientRecord`` has one collection of people, so the clinician who signed
+    a note, the spouse who supplied the history and the system that generated
+    the summary all arrive in it together. FHIR types them apart, and the
+    difference is not cosmetic: a bundle that exported the patient's next of kin
+    as a ``Practitioner`` would show a family member on the care team of a chart
+    they only appear beside — a silent misattribution, which this project ranks
+    below the outright loss it replaced.
+
+    A record from any other source carries no ``ccda:role`` and stays a
+    Practitioner, which is what it was.
+    """
+    if p.extensions.get("ccda:entity") == _DEVICE_ENTITY:
+        return _device(p)
+    if p.extensions.get("ccda:role") in _PERSONAL_ROLES:
+        return _related_person(p, patient_id)
+    return _practitioner(p)
+
+
+def _human_name(p: Practitioner) -> list[dict[str, Any]]:
+    return [
+        _prune(
+            {
+                "text": p.display_name,
+                "given": [p.given_name] if p.given_name else [],
+                "family": p.family_name,
+            }
+        )
+    ]
+
+
 def _practitioner(p: Practitioner) -> dict[str, Any]:
     return _prune(
         {
@@ -581,15 +624,48 @@ def _practitioner(p: Practitioner) -> dict[str, Any]:
             "id": p.id,
             "extension": _exts(p, {"credential": p.credential}),
             "identifier": [{"system": NPI, "value": p.npi}] if p.npi else [],
-            "name": [
-                _prune(
-                    {
-                        "text": p.display_name,
-                        "given": [p.given_name] if p.given_name else [],
-                        "family": p.family_name,
-                    }
-                )
-            ],
+            "name": _human_name(p),
+        }
+    )
+
+
+def _related_person(p: Practitioner, patient_id: str) -> dict[str, Any]:
+    """A person related to the patient. ``patient`` is required by FHIR and is
+    the whole point of the type — it says whose relative this is.
+
+    The relationship travels as the document's own words when it named them;
+    the code system behind it, and everything else the participation carried,
+    stays in the lossless tail rather than being translated into a FHIR
+    valueset this mapping cannot verify.
+    """
+    relationship = p.extensions.get("ccda:code")
+    return _prune(
+        {
+            "resourceType": "RelatedPerson",
+            "id": p.id,
+            "extension": _exts(p, {"credential": p.credential}),
+            "identifier": [{"system": NPI, "value": p.npi}] if p.npi else [],
+            "patient": _ref(patient_id),
+            "relationship": [{"text": relationship}] if isinstance(relationship, str) else [],
+            "name": _human_name(p),
+        }
+    )
+
+
+def _device(p: Practitioner) -> dict[str, Any]:
+    """The system that generated a document.
+
+    ``type: other`` because FHIR's device-nametype list has no entry for a CDA
+    ``softwareName``, and picking the nearest-looking one would state something
+    the document did not. Both CDA element names survive verbatim in the
+    lossless tail.
+    """
+    return _prune(
+        {
+            "resourceType": "Device",
+            "id": p.id,
+            "extension": _exts(p, {"credential": p.credential}),
+            "deviceName": ([{"name": p.display_name, "type": "other"}] if p.display_name else []),
         }
     )
 
@@ -673,7 +749,7 @@ def _entries(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def to_bundle(record: PatientRecord) -> dict[str, Any]:
     """Export one PatientRecord as a FHIR R4 Bundle (type=collection)."""
     resources: list[dict[str, Any]] = [_patient(record.patient, record)]
-    resources += [_practitioner(p) for p in record.practitioners]
+    resources += [_actor(p, record.patient.id) for p in record.practitioners]
     resources += [_location(f) for f in record.facilities]
     for encounter in record.encounters:
         resources.append(_encounter(encounter))
