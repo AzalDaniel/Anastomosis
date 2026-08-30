@@ -343,10 +343,6 @@
       "avg": 8.7714,
       "rank": "B"
     },
-    "src/anastomosis/sources/ccda/parser.py": {
-      "avg": 5.093,
-      "rank": "B"
-    },
     "src/anastomosis/sources/fhir_r4/__init__.py": {
       "avg": 6.0,
       "rank": "B"

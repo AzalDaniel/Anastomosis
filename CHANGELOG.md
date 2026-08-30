@@ -35,6 +35,29 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A migrated C-CDA chart says who wrote it again.** The adapter had no
+  extraction for participations at all: across 6,144 generated documents twelve
+  construct classes had a parsed column of exactly zero — `author` (17,390
+  offered), `performer` (5,122), the custodian, the authenticators, the data
+  enterer, the informant, the information recipient, the header participant,
+  the service event and the encompassing encounter — and the 2,103-document
+  audit saw the same absence from the other end. They were not failing; they
+  were never read. The parser now reads the header: each participation becomes
+  a `Practitioner` carrying the role the document gave it, so a legal
+  authenticator is not filed as an informant and a human author is not
+  flattened into the `assignedAuthoringDevice` that generated the summary; the
+  organizations they name become `Facility` entries, deduplicated so the
+  practice named by the author and again by the custodian is one place;
+  `componentOf/encompassingEncounter` becomes the visit the document is about,
+  which is the only place a Progress Note states it. `documentationOf/
+  serviceEvent` keeps its performer but is deliberately NOT charted as a visit —
+  its `effectiveTime` is a care-provision period, and a low bound is not a date
+  of service. Ten of the twelve rows now read fully parsed; the authoring device
+  and a `relatedEntity` informant are extracted too but cannot be CREDITED,
+  because CDA R2 gives neither an `<id>` and the ledger credits a parse only on
+  an id root the construct carries — counted in its `unlinkable` column rather
+  than assumed. (#312)
+
 - **A destination pack can describe the filing dialog it actually meets.**
   Attaching the file was the whole vocabulary: a pack could name a file input
   and a submit button and nothing else, so a chart filed through the browser

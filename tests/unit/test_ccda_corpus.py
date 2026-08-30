@@ -180,24 +180,83 @@ def test_the_corpus_books_balance(scale_report: dict[str, object]) -> None:
     "construct",
     [
         "participation:author",
+        "participation:authenticator",
         "participation:custodian",
-        "participation:performer",
-        "participation:assignedAuthoringDevice",
-        "participation:informant",
-        "participation:legalAuthenticator",
-        "participation:serviceEvent",
+        "participation:dataEnterer",
         "participation:encompassingEncounter",
-        "body:nonXMLBody",
+        "participation:informationRecipient",
+        "participation:legalAuthenticator",
+        "participation:participant",
+        "participation:performer",
+        "participation:serviceEvent",
     ],
 )
-def test_the_named_actors_reach_nothing_at_scale(
+def test_the_named_actors_now_reach_the_record_at_scale(
     scale_report: dict[str, object], construct: str
 ) -> None:
-    """The 2,103-document finding, reproduced on documents anyone can generate:
-    every one of these is offered by the corpus, and not one becomes a canonical
-    object. This test is expected to CHANGE when the extraction lands — that is
-    what makes it the measurement rather than the fix."""
+    """The 2,103-document finding, closed on documents anyone can generate.
+
+    Every one of these was offered by the corpus and reached nothing; each now
+    becomes a canonical object the ledger can trace back to the ``<id root>``
+    the construct carried, with nothing left in the unsupported column. The
+    two constructs still missing from this list are the subject of the next
+    test — they are absent by name rather than by omission.
+    """
     totals = _row(scale_report, construct)
+    assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
+    assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
+
+
+@pytest.mark.parametrize(
+    "construct", ["participation:assignedAuthoringDevice", "participation:informant"]
+)
+def test_an_actor_cda_gives_no_id_cannot_be_credited(
+    scale_report: dict[str, object], construct: str
+) -> None:
+    """Both of these ARE extracted, and the ledger still credits neither.
+
+    CDA R2 gives ``Device`` and ``RelatedEntity`` no ``<id>`` at all, and this
+    instrument credits a parse only on an id root the construct itself carries,
+    so every instance lands in ``unlinkable`` — the blind spot reported rather
+    than resolved in the flattering direction. Widening the evidence rule to
+    close these two would let the instrument certify parses it cannot see.
+    """
+    totals = _row(scale_report, construct)
+    assert totals[Disposition.UNSUPPORTED.value] > 0
+    assert totals.get(Disposition.STRUCTURALLY_PARSED.value, 0) == 0
+
+
+def test_the_generating_system_and_the_informant_still_reach_the_record(
+    corpus: list[tuple[str, bytes]], tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """What the ledger cannot see, the record still carries.
+
+    The authoring device arrives as its own practitioner rather than as a
+    clinician, and an informant who gave only a relationship keeps it — proved
+    against the record, because the reading above cannot prove it and a fact no
+    test holds is a fact the next refactor drops.
+    """
+    directory = tmp_path_factory.mktemp("actors")
+    entities: set[str] = set()
+    informants: set[str] = set()
+    for name, xml in corpus:
+        path = directory / name
+        path.write_bytes(xml)
+        for practitioner in parse_document(path).practitioners:
+            role = practitioner.extensions.get("ccda:participation")
+            entities.add(str(practitioner.extensions.get("ccda:entity")))
+            if role == "informant":
+                informants.add(str(practitioner.extensions.get("ccda:code")))
+        path.unlink()
+    assert "assignedAuthoringDevice" in entities
+    assert informants == {"spouse"}
+
+
+def test_an_unstructured_body_still_reaches_nothing(scale_report: dict[str, object]) -> None:
+    """A scanned referral's whole clinical content is one embedded artifact, and
+    this adapter has no slot for it. Named and counted, not folded into the
+    success column."""
+    totals = _row(scale_report, "body:nonXMLBody")
     assert totals[Disposition.UNSUPPORTED.value] > 0
     assert totals.get(Disposition.STRUCTURALLY_PARSED.value, 0) == 0
 

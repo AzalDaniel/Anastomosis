@@ -20,10 +20,22 @@ generation N-1's whole ledger as a single line and the document grew without
 bound. An UNSTAMPED 51899-3 section is a third party's and keeps round-tripping
 as ordinary foreign narrative.
 
+The header is read as well as the body. A chart says who wrote it, who signed
+it, who holds it and which visit it belongs to in ``author``, ``custodian``,
+``legalAuthenticator`` and ``componentOf`` — and none of that was being read at
+all, so 2,103 audited documents parsed without error and produced not one
+practitioner and not one facility between them. Each participation keeps the
+role the document gave it (``extensions["ccda:participation"]``): a legal
+authenticator is not an informant, and a human author is not the
+``assignedAuthoringDevice`` that generated the summary. A note that arrives with
+no author has lost the answer to "who wrote this" while still looking complete.
+
 Parsing is defensive by design: a missing optional element maps to ``None``, a
 ``nullFlavor`` on an element means "absent", but a file that is not a
 ``ClinicalDocument`` at all raises :exc:`ValueError` — a loud failure, never a
-silent skip (the source-adapter contract).
+silent skip (the source-adapter contract). A role element naming nobody stays
+nobody: CDA requires the wrapper even when it is empty, and a practitioner
+invented from one would put a clinician on the chart that no document claims.
 
 Element names here are limited to the verified C-CDA R2.1 reference; nothing
 is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
@@ -32,6 +44,8 @@ is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
 from pathlib import Path
@@ -71,6 +85,7 @@ from anastomosis.core.model import (
     ContactKind,
     ContactPoint,
     Encounter,
+    Facility,
     Identifier,
     IdentifierKind,
     Immunization,
@@ -80,6 +95,7 @@ from anastomosis.core.model import (
     ObservationCategory,
     Patient,
     PatientRecord,
+    Practitioner,
     Provenance,
     SectionKind,
 )
@@ -237,9 +253,10 @@ def _telecom(patient_role: _Element) -> list[ContactPoint]:
     return out
 
 
-def _addresses(patient_role: _Element) -> list[Address]:
+def _addresses(node_with_addresses: _Element) -> list[Address]:
+    """Every ``<addr>`` on an element — a patientRole, or any role that has one."""
     out: list[Address] = []
-    for node in _findall(patient_role, "v3:addr"):
+    for node in _findall(node_with_addresses, "v3:addr"):
         address = Address(
             line1=_text_content(_find(node, "v3:streetAddressLine")),
             city=_text_content(_find(node, "v3:city")),
@@ -722,7 +739,8 @@ def _encounter_id(root: str | None, source_file: str, index: int) -> str:
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:encounter:{index}"))
 
 
-def _encounters(section: _Element, patient_id: str, source_file: str) -> list[Encounter]:
+def _encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
+    source_file = actors.source_file
     out: list[Encounter] = []
     for index, entry in enumerate(_entries(section)):
         enc = _find(entry, "v3:encounter")
@@ -741,25 +759,45 @@ def _encounters(section: _Element, patient_id: str, source_file: str) -> list[En
                 date_of_service=_ts_date(enc, "v3:effectiveTime")
                 or _ts_date(enc, "v3:effectiveTime/v3:low"),
                 encounter_type=encounter_type,
+                provider_id=_entry_performer(enc, actors),
                 provenance=_prov(source_file, _val_attr(enc, "v3:id", "root")),
             )
         )
     return out
 
 
-def _note_encounters(section: _Element, patient_id: str, source_file: str) -> list[Encounter]:
+def _entry_performer(enc: _Element, actors: _Actors) -> str | None:
+    """Who delivered the care this entry records.
+
+    An encounter that names no performer cannot say which clinician the visit
+    should be attributed to, which is half of what a migrated chart is FOR.
+    """
+    performer = _find(enc, "v3:performer")
+    entity = _find(performer, _ASSIGNED_ENTITY.path)
+    if performer is None or entity is None:
+        return None
+    return actors.add_person(performer, "performer", entity, _ASSIGNED_ENTITY)
+
+
+def _note_encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
+    source_file = actors.source_file
     out: list[Encounter] = []
     for index, entry in enumerate(_entries(section)):
         act = _find(entry, "v3:act")
         if act is None:
             continue
         text = _text_content(_find(act, "v3:text"))
+        # The note's own author, already read out of the document-wide author
+        # pass: this is the answer to "who wrote this note", and it is the one a
+        # reader of the note needs rather than the header's.
+        author = _find(act, "v3:author")
         out.append(
             Encounter(
                 id=_encounter_id(_val_attr(act, "v3:id", "root"), f"{source_file}:note", index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(act, "v3:author/v3:time"),
                 note_type=_val_attr(act, "v3:code", "displayName"),
+                provider_id=None if author is None else actors.authors.get(author),
                 sections=[NoteSection(kind=SectionKind.NARRATIVE, text=text, html=None)],
                 provenance=_prov(source_file, _val_attr(act, "v3:id", "root")),
             )
@@ -857,6 +895,668 @@ def _folded_scalar_fields(model: type[Encounter]) -> tuple[str, ...]:
     return tuple(name for name in model.model_fields if name not in handled)
 
 
+# --- participations: who wrote it, who did it, and where ---------------------
+
+# The NPI arc. An id under this root names the provider nationally and has its
+# own slot on Practitioner; every other id on a role is that role's own
+# identifier.
+OID_NPI = "2.16.840.1.113883.4.6"
+
+
+@dataclass(frozen=True)
+class _Role:
+    """One CDA role element, and where it keeps the person and the organization.
+
+    CDA spells this differently under every participation — an
+    ``assignedEntity`` plays an ``assignedPerson`` and represents an
+    organization, an ``associatedEntity`` plays an ``associatedPerson`` and is
+    scoped by one — so the spellings are written out here rather than derived
+    from the participation's name. Deriving them would be a guess, and a guess
+    at this seam reads a document's spouse as its author.
+
+    ``person`` is a tuple because a document may play a person under another
+    role's spelling; the element actually found is recorded on the practitioner,
+    so the record says what the document said rather than what was expected.
+    """
+
+    path: str
+    person: tuple[str, ...]
+    organization: str | None
+
+
+_ASSIGNED_ENTITY = _Role("v3:assignedEntity", ("v3:assignedPerson",), "v3:representedOrganization")
+_RELATED_ENTITY = _Role("v3:relatedEntity", ("v3:relatedPerson",), None)
+_INTENDED_RECIPIENT = _Role(
+    "v3:intendedRecipient",
+    ("v3:informationRecipient", "v3:assignedPerson"),
+    "v3:receivedOrganization",
+)
+_ASSOCIATED_ENTITY = _Role(
+    "v3:associatedEntity", ("v3:associatedPerson",), "v3:scopingOrganization"
+)
+_ASSIGNED_AUTHOR = _Role("v3:assignedAuthor", ("v3:assignedPerson",), "v3:representedOrganization")
+
+#: The participations besides ``author``: the ElementPath each is found at, and
+#: the role element(s) CDA allows beneath it. One row per participation NAME, and
+#: that name is what lands on the canonical object: a legalAuthenticator is not
+#: an authenticator and neither is an informant, so a record that folded them
+#: together could no longer say who signed the chart and who merely supplied the
+#: history.
+#:
+#: Scope is per-row and argued, not uniform — the same argument the ingest
+#: ledger's own table makes, so the two agree about what they are counting.
+#: ``informant`` is read wherever it appears, because a clinical statement may
+#: name who supplied it and the header's informant does not answer for that one.
+#: Everything else is a DIRECT child of ``ClinicalDocument``: a ``<participant>``
+#: nested inside an allergy entry is the allergen substance and is parsed as one
+#: already, and a walk that reached it would make a practitioner out of a drug.
+_PARTICIPATIONS: tuple[tuple[str, str, tuple[_Role, ...]], ...] = (
+    ("dataEnterer", "v3:dataEnterer", (_ASSIGNED_ENTITY,)),
+    ("informant", ".//v3:informant", (_ASSIGNED_ENTITY, _RELATED_ENTITY)),
+    ("informationRecipient", "v3:informationRecipient", (_INTENDED_RECIPIENT,)),
+    ("legalAuthenticator", "v3:legalAuthenticator", (_ASSIGNED_ENTITY,)),
+    ("authenticator", "v3:authenticator", (_ASSIGNED_ENTITY,)),
+    ("participant", "v3:participant", (_ASSOCIATED_ENTITY,)),
+)
+
+#: Marks the Encounter that came from ``componentOf/encompassingEncounter``.
+#: Read back by :func:`_visit_candidates`, which has to tell the document's own
+#: frame from an entry inside it.
+EXT_ENCOMPASSING = "ccda:componentOf"
+
+
+@dataclass
+class _Actors:
+    """The people and places one document names, gathered as they are read.
+
+    Facilities are keyed and practitioners are not, and the asymmetry is the
+    point. One organization is routinely named by several participations — in
+    most exports the author's practice IS the custodian — and two Facility
+    objects under one id is the collision ``ArchiveDeliverer`` refuses a whole
+    patient for. One person is equally often named twice, but as two different
+    answers: the clinician who wrote the note and the one who legally signed it
+    are separate facts even when they are the same human, so each participation
+    keeps its own Practitioner carrying its own role.
+
+    ``authors`` maps each ``<author>`` element to the practitioner it produced,
+    so a Note Activity can point at the author already read out of it instead of
+    a second pass creating that person twice.
+    """
+
+    source_file: str
+    practitioners: list[Practitioner] = field(default_factory=list)
+    facilities: dict[str, Facility] = field(default_factory=dict)
+    authors: dict[_Element, str] = field(default_factory=dict)
+
+    def add_person(
+        self, participation: _Element, participation_name: str, entity: _Element, role: _Role
+    ) -> str | None:
+        """Record the person a participation names; return the practitioner id.
+
+        ``None`` when the role element names nobody. CDA requires the wrapper
+        even when it is empty — this repo's own exporter writes a bare
+        ``<assignedAuthor/>`` to satisfy the schema — and a Practitioner built
+        from one would be an actor no document ever named.
+        """
+        if not _names_an_actor(entity, role):
+            return None
+        practitioner = _person_practitioner(
+            participation,
+            participation_name,
+            entity,
+            role,
+            self.source_file,
+            len(self.practitioners),
+        )
+        self._link_organization(practitioner, entity, role)
+        self.practitioners.append(practitioner)
+        return practitioner.id
+
+    def add_device(self, author: _Element, entity: _Element) -> str:
+        """Record the SYSTEM an author names; return the practitioner id."""
+        practitioner = _device_practitioner(
+            author, entity, self.source_file, len(self.practitioners)
+        )
+        self._link_organization(practitioner, entity, _ASSIGNED_AUTHOR)
+        self.practitioners.append(practitioner)
+        return practitioner.id
+
+    def add_facility(self, nodes: Sequence[_Element]) -> str | None:
+        """Record an organization; return the facility id it was filed under.
+
+        ``None`` when the elements describe no place at all, for the same reason
+        an empty role names nobody.
+        """
+        if not _describes_a_place(nodes):
+            return None
+        facility = _facility(nodes, self.source_file, len(self.facilities))
+        seen = self.facilities.get(facility.id)
+        self.facilities[facility.id] = facility if seen is None else _fill_gaps(seen, facility)
+        return facility.id
+
+    def _link_organization(self, practitioner: Practitioner, entity: _Element, role: _Role) -> None:
+        """Register the organization a role is scoped by, and remember the link.
+
+        The link rides `extensions` as the ORGANIZATION'S OWN id root rather
+        than the canonical facility id: it is a fact the document stated, and it
+        stays resolvable through the facility's provenance without inventing a
+        field the model does not have.
+        """
+        if role.organization is None:
+            return
+        organization = _find(entity, role.organization)
+        if organization is None:
+            return
+        self.add_facility((organization,))
+        if (root := _val_attr(organization, "v3:id", "root")) is not None:
+            practitioner.extensions[f"ccda:{role.organization.removeprefix('v3:')}"] = root
+
+
+#: What a role element can state about who took part. An informant is routinely
+#: a coded relationship and nothing else ("spouse"), and a header participant an
+#: id and a phone number, so a person element is not the only evidence there is.
+_ACTOR_EVIDENCE = ("v3:id", "v3:code", "v3:telecom", "v3:addr", "v3:assignedAuthoringDevice")
+
+
+def _names_an_actor(entity: _Element, role: _Role) -> bool:
+    """Whether a role element states anything at all about who took part.
+
+    Only a bare wrapper is nobody. CDA requires the wrapper even when it is
+    empty — this repo's own exporter writes a lone ``<assignedAuthor/>`` to
+    satisfy the schema — and a Practitioner built from one would be an actor no
+    document ever named.
+    """
+    if _person_element(entity, role)[0] is not None:
+        return True
+    return any(_find(entity, path) is not None for path in _ACTOR_EVIDENCE)
+
+
+def _describes_a_place(nodes: Sequence[_Element]) -> bool:
+    """Whether organization elements state anything about a place."""
+    return any(
+        _first(nodes, path) is not None for path in ("v3:id", "v3:name", "v3:addr", "v3:telecom")
+    )
+
+
+def _participant_id(source_file: str, participation: str, index: int) -> str:
+    """Stable practitioner id, derived rather than taken from the source root.
+
+    One ``<id root>`` legitimately names two participations — the clinician who
+    wrote the note and then signed it carries the same ``assignedEntity`` id
+    twice — and those are two answers the record has to keep apart, so using the
+    root verbatim would put two objects under one id. ``provenance.source_id``
+    still names the root the document carried, which is what makes the parse
+    attributable back to the element it came from.
+    """
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:{participation}:{index}"))
+
+
+def _facility_id(root: str | None, source_file: str, index: int) -> str:
+    """Stable facility id, mirroring :func:`_patient_id`.
+
+    Keyed on the organization's own id root so the practice named by the author
+    and again by the custodian is ONE facility; an organization the document
+    left unidentified falls back to its position, which is the most a document
+    that named nothing supports.
+    """
+    if root and _GUID_RE.match(root):
+        return root
+    if root:
+        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:organization:{root}"))
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:organization:{index}"))
+
+
+def _first(nodes: Sequence[_Element], path: str) -> _Element | None:
+    """The first match for ``path`` across ``nodes``, in the order given."""
+    for node in nodes:
+        found = _find(node, path)
+        if found is not None:
+            return found
+    return None
+
+
+def _every(nodes: Sequence[_Element], path: str) -> list[_Element]:
+    """Every match for ``path`` across ``nodes``, in the order given."""
+    return [found for node in nodes for found in _findall(node, path)]
+
+
+def _name_parts(name: _Element | None) -> tuple[str | None, str | None, str | None]:
+    """``(given, family, display)`` from a CDA ``<name>``.
+
+    ``display`` is filled only when the document did NOT split the name: a name
+    written as element text still says who this is, and dropping it for having
+    no parts would lose the answer the whole record is here to carry.
+    """
+    given = next((g for node in _findall(name, "v3:given") if (g := _text_content(node))), None)
+    family = _text_content(_find(name, "v3:family"))
+    if given is not None or family is not None:
+        return given, family, None
+    return None, None, _text_content(name)
+
+
+def _name_residue(name: _Element | None) -> dict[str, Any]:
+    """Name parts Practitioner has no field for.
+
+    A credential is deliberately NOT derived from a suffix: "MD" is one and
+    "Jr." is not, and guessing which would print a credential the document never
+    claimed.
+    """
+    out: dict[str, Any] = {}
+    for path, key in (("v3:prefix", "ccda:prefix"), ("v3:suffix", "ccda:suffix")):
+        if (value := _text_content(_find(name, path))) is not None:
+            out[key] = value
+    return out
+
+
+def _person_element(entity: _Element, role: _Role) -> tuple[_Element | None, str | None]:
+    """The person a role plays, and the element name the document used for it."""
+    for path in role.person:
+        found = _find(entity, path)
+        if found is not None:
+            return found, path.removeprefix("v3:")
+    return None, None
+
+
+def _npi(entity: _Element) -> str | None:
+    return next(
+        (
+            extension
+            for node in _findall(entity, "v3:id")
+            if _attr(node, "root") == OID_NPI and (extension := _attr(node, "extension"))
+        ),
+        None,
+    )
+
+
+def _role_source_id(entity: _Element) -> str | None:
+    """The id root a role is identified BY, or ``None`` when it carries none.
+
+    The NPI arc is a code system, not an instance identifier: every provider in
+    the country shares that root, so crediting a parse to it would attribute one
+    document's object by a value that says nothing about this document. A role
+    with only an NPI gets no source id — recorded as unattributable rather than
+    attributed to the wrong thing.
+    """
+    return next(
+        (
+            root
+            for node in _findall(entity, "v3:id")
+            if (root := _attr(node, "root")) and root != OID_NPI
+        ),
+        None,
+    )
+
+
+def _residual_ids(entity: _Element, consumed: str | None) -> list[dict[str, str]]:
+    """Identifiers the mapping did not consume, so a second one is not dropped."""
+    out: list[dict[str, str]] = []
+    for node in _findall(entity, "v3:id"):
+        root, extension = _attr(node, "root"), _attr(node, "extension")
+        if root is not None and root in (consumed, OID_NPI):
+            continue
+        if pair := {
+            key: value for key, value in (("root", root), ("extension", extension)) if value
+        }:
+            out.append(pair)
+    return out
+
+
+def _contact_residue(node: _Element) -> dict[str, Any]:
+    """A role's own address and telecom, which Practitioner has no slot for.
+
+    Kept rather than dropped: the phone number on a note's author is how a
+    receiving practice reaches the clinician who wrote it.
+    """
+    out: dict[str, Any] = {}
+    if values := [value for n in _findall(node, "v3:telecom") if (value := _attr(n, "value"))]:
+        out["ccda:telecom"] = values
+    if addresses := [address.model_dump(exclude_none=True) for address in _addresses(node)]:
+        out["ccda:addr"] = addresses
+    return out
+
+
+def _role_extensions(
+    participation: _Element, participation_name: str, entity: _Element, entity_name: str | None
+) -> dict[str, Any]:
+    """Everything a participation states that no Practitioner field holds.
+
+    ``ccda:participation`` is the load-bearing one: it is the document's own
+    word for what this person did, and it is the difference between "who signed
+    this chart" and "who told us about it".
+    """
+    out: dict[str, Any] = {"ccda:participation": participation_name}
+    if entity_name is not None:
+        out["ccda:entity"] = entity_name
+    for node, attribute, key in (
+        (participation, "typeCode", "ccda:typeCode"),
+        (entity, "classCode", "ccda:classCode"),
+    ):
+        if (value := node.get(attribute)) is not None:
+            out[key] = value
+    for path, attribute, key in (
+        ("v3:time", "value", "ccda:time"),
+        ("v3:signatureCode", "code", "ccda:signatureCode"),
+        ("v3:functionCode", "displayName", "ccda:functionCode"),
+    ):
+        if (value := _val_attr(participation, path, attribute)) is not None:
+            out[key] = value
+    code = _find(entity, "v3:code")
+    if (display := _attr(code, "displayName") or _attr(code, "code")) is not None:
+        out["ccda:code"] = display
+    return out
+
+
+def _person_practitioner(
+    participation: _Element,
+    participation_name: str,
+    entity: _Element,
+    role: _Role,
+    source_file: str,
+    index: int,
+) -> Practitioner:
+    """The human a participation names, carrying the role it named them in."""
+    person, entity_name = _person_element(entity, role)
+    name = _find(person, "v3:name")
+    given, family, display = _name_parts(name)
+    source_id = _role_source_id(entity)
+    extensions = _role_extensions(participation, participation_name, entity, entity_name)
+    extensions |= _name_residue(name)
+    extensions |= _contact_residue(entity)
+    if residual := _residual_ids(entity, source_id):
+        extensions["ccda:id"] = residual
+    return Practitioner(
+        id=_participant_id(source_file, participation_name, index),
+        given_name=given,
+        family_name=family,
+        display_name=display,
+        npi=_npi(entity),
+        extensions=extensions,
+        provenance=_prov(source_file, source_id),
+    )
+
+
+def _device_practitioner(
+    author: _Element, entity: _Element, source_file: str, index: int
+) -> Practitioner:
+    """The system that generated a document, kept apart from the people who write one.
+
+    A human author and an authoring device are different answers to "who wrote
+    this", and a record that cannot tell them apart is worse than one admitting
+    it does not know: an automated summary attributed to a clinician is a
+    statement nobody made. The device keeps ``ccda:entity`` naming the element
+    CDA gave it, so the distinction survives on the object rather than in the
+    reader's memory of where it came from.
+    """
+    device = _find(entity, "v3:assignedAuthoringDevice")
+    model = _text_content(_find(device, "v3:manufacturerModelName"))
+    software = _text_content(_find(device, "v3:softwareName"))
+    source_id = _role_source_id(entity)
+    extensions = _role_extensions(author, "author", entity, "assignedAuthoringDevice")
+    extensions |= _contact_residue(entity)
+    for value, key in ((model, "ccda:manufacturerModelName"), (software, "ccda:softwareName")):
+        if value is not None:
+            extensions[key] = value
+    if residual := _residual_ids(entity, source_id):
+        extensions["ccda:id"] = residual
+    return Practitioner(
+        id=_participant_id(source_file, "author", index),
+        display_name=software or model,
+        extensions=extensions,
+        provenance=_prov(source_file, source_id),
+    )
+
+
+def _facility_contacts(telecoms: list[_Element]) -> tuple[str | None, str | None, list[str]]:
+    """``(phone, fax, everything else)`` from a set of ``<telecom>`` elements.
+
+    First of each kind wins and the rest ride `extensions` rather than
+    overwriting it, because a practice with two lines has two lines.
+    """
+    phone = fax = None
+    residue: list[str] = []
+    for node in telecoms:
+        raw = _attr(node, "value")
+        if raw is None:
+            continue
+        if raw.startswith("tel:") and phone is None:
+            phone = format_phone(raw.removeprefix("tel:"))
+        elif raw.startswith("fax:") and fax is None:
+            fax = format_phone(raw.removeprefix("fax:"))
+        else:
+            residue.append(raw)
+    return phone, fax, residue
+
+
+def _facility(nodes: Sequence[_Element], source_file: str, index: int) -> Facility:
+    """A practice location from the organization element(s) that describe it.
+
+    Several elements rather than one because C-CDA splits a place across them:
+    an ``encompassingEncounter``'s ``healthCareFacility`` carries the id, the
+    ``location`` beneath it carries the name and address, and the
+    ``serviceProviderOrganization`` beside it carries the organization's. Each
+    field is taken from the first element that states it, in the order CDA
+    nests them, so a document that fills either half is read the same way.
+    """
+    root = _attr(_first(nodes, "v3:id"), "root")
+    address = _first(nodes, "v3:addr")
+    lines = [
+        line for node in _findall(address, "v3:streetAddressLine") if (line := _text_content(node))
+    ]
+    phone, fax, residue = _facility_contacts(_every(nodes, "v3:telecom"))
+    extensions: dict[str, Any] = {}
+    if residue:
+        extensions["ccda:telecom"] = residue
+    if len(lines) > 2:
+        extensions["ccda:streetAddressLine"] = lines[2:]
+    return Facility(
+        id=_facility_id(root, source_file, index),
+        name=_text_content(_first(nodes, "v3:name")),
+        address_line1=lines[0] if lines else None,
+        address_line2=lines[1] if len(lines) > 1 else None,
+        city=_text_content(_find(address, "v3:city")),
+        state=_text_content(_find(address, "v3:state")),
+        postal_code=_text_content(_find(address, "v3:postalCode")),
+        phone=phone,
+        fax=fax,
+        extensions=extensions,
+        provenance=_prov(source_file, root),
+    )
+
+
+_FACILITY_SKIP = frozenset({"id", "provenance", "extensions"})
+
+
+def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
+    """One organization named twice is one facility; the second naming fills gaps.
+
+    Neither naming is more authoritative than the other — the author's header
+    and the custodian's block describe the same practice — so nothing already
+    stated is overwritten and only what was missing is filled. That is the same
+    rule two halves of one encounter fold by, for the same reason: writing one
+    over the other would silently pick a winner.
+    """
+    update: dict[str, object] = {
+        name: getattr(incoming, name)
+        for name in type(seen).model_fields
+        if name not in _FACILITY_SKIP
+        and getattr(seen, name) is None
+        and getattr(incoming, name) is not None
+    }
+    if incoming.extensions:
+        update["extensions"] = {**incoming.extensions, **seen.extensions}
+    return seen.model_copy(update=update) if update else seen
+
+
+def _authors(root: _Element, actors: _Actors) -> None:
+    """Every ``<author>`` in the document, header and note alike.
+
+    Document-wide rather than header-only because the clinician who wrote a note
+    is as much the answer to "who wrote this" as the one in the header — and for
+    a reader of that note, it is the ONLY answer that helps. An
+    ``assignedAuthoringDevice`` takes the other branch: it is a system, not a
+    person, and the two must not arrive looking alike.
+    """
+    for author in root.iter(_q("author")):
+        entity = _find(author, _ASSIGNED_AUTHOR.path)
+        if entity is None:
+            continue
+        if _find(entity, "v3:assignedAuthoringDevice") is not None:
+            actors.authors[author] = actors.add_device(author, entity)
+            continue
+        if (actor := actors.add_person(author, "author", entity, _ASSIGNED_AUTHOR)) is not None:
+            actors.authors[author] = actor
+
+
+def _named_participations(root: _Element, actors: _Actors) -> None:
+    """The named actors besides the authors, each keeping the role it carried."""
+    for name, path, roles in _PARTICIPATIONS:
+        for participation in _findall(root, path):
+            for role in roles:
+                entity = _find(participation, role.path)
+                if entity is not None:
+                    actors.add_person(participation, name, entity, role)
+
+
+def _custodians(root: _Element, actors: _Actors) -> None:
+    """The organization holding the record.
+
+    A custodian names no person at all — the element under it is an
+    organization — so it becomes a facility and nothing pretends a human
+    custodied the chart.
+    """
+    for custodian in _findall(root, "v3:custodian"):
+        organization = _find(custodian, "v3:assignedCustodian/v3:representedCustodianOrganization")
+        if organization is not None:
+            actors.add_facility((organization,))
+
+
+def _service_events(root: _Element, actors: _Actors, record: PatientRecord) -> None:
+    """The episode of care the document is about, and who delivered it.
+
+    The performer becomes a Practitioner — that is the answer to "who provided
+    this care". The serviceEvent itself does NOT become an Encounter: its
+    ``effectiveTime`` is the care-provision PERIOD, routinely years wide on a
+    CCD, and charting its low bound as a date of service would invent a visit on
+    a day nothing happened. So its own facts are preserved under
+    ``patient.extensions`` instead, where they are recoverable without claiming
+    to be a visit.
+    """
+    events: list[dict[str, Any]] = []
+    for event in _findall(root, "v3:documentationOf/v3:serviceEvent"):
+        for performer in _findall(event, "v3:performer"):
+            entity = _find(performer, _ASSIGNED_ENTITY.path)
+            if entity is not None:
+                actors.add_person(performer, "performer", entity, _ASSIGNED_ENTITY)
+        if facts := _service_event_facts(event):
+            events.append(facts)
+    if events:
+        record.patient.extensions["ccda:serviceEvent"] = events
+
+
+def _service_event_facts(event: _Element) -> dict[str, Any]:
+    """What a service event states about itself, as plain data.
+
+    Only the values the document actually carried: an absent key and a key
+    holding ``None`` say different things, and this is the one copy of these
+    facts the record keeps.
+    """
+    period = _find(event, "v3:effectiveTime")
+    facts = {
+        "id": _val_attr(event, "v3:id", "root"),
+        "classCode": event.get("classCode"),
+        "code": _val_attr(event, "v3:code", "code"),
+        "display": _val_attr(event, "v3:code", "displayName"),
+        "low": _attr(period, "value") or _val_attr(period, "v3:low", "value"),
+        "high": _val_attr(period, "v3:high", "value"),
+    }
+    return {key: value for key, value in facts.items() if value is not None}
+
+
+def _encompassing_encounters(root: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
+    """The visit the document itself is about.
+
+    A Progress Note routinely says which encounter it documents HERE and nowhere
+    else — such a document has no Encounters section at all — so a reader that
+    looks only at 46240-8 sees a note attached to no visit, which is the shape
+    an unattributed chart arrives in.
+    """
+    source_file = actors.source_file
+    out: list[Encounter] = []
+    for index, enc in enumerate(_findall(root, "v3:componentOf/v3:encompassingEncounter")):
+        code = _find(enc, "v3:code")
+        root_id = _val_attr(enc, "v3:id", "root")
+        _encounter_participants(enc, actors)
+        out.append(
+            Encounter(
+                id=_encounter_id(root_id, f"{source_file}:encompassing", index),
+                patient_id=patient_id,
+                date_of_service=_ts_date(enc, "v3:effectiveTime")
+                or _ts_date(enc, "v3:effectiveTime/v3:low"),
+                encounter_type=_attr(code, "displayName")
+                or _text_content(_find(code, "v3:originalText")),
+                provider_id=_responsible_party(enc, actors),
+                facility_id=_encounter_facility(enc, actors),
+                extensions={EXT_ENCOMPASSING: "encompassingEncounter"},
+                provenance=_prov(source_file, root_id),
+            )
+        )
+    return out
+
+
+def _responsible_party(enc: _Element, actors: _Actors) -> str | None:
+    """The clinician the visit was under — the encounter's own provider."""
+    responsible = _find(enc, "v3:responsibleParty")
+    party = _find(responsible, _ASSIGNED_ENTITY.path)
+    if responsible is None or party is None:
+        return None
+    return actors.add_person(responsible, "responsibleParty", party, _ASSIGNED_ENTITY)
+
+
+def _encounter_participants(enc: _Element, actors: _Actors) -> None:
+    """Everyone else the visit names — the attender, the admitter, the referrer.
+
+    Encounter has one provider slot and these are not it, so they are recorded
+    as the participations they are rather than competing for that field.
+    """
+    for participant in _findall(enc, "v3:encounterParticipant"):
+        entity = _find(participant, _ASSIGNED_ENTITY.path)
+        if entity is not None:
+            actors.add_person(participant, "encounterParticipant", entity, _ASSIGNED_ENTITY)
+
+
+def _encounter_facility(enc: _Element, actors: _Actors) -> str | None:
+    """Where the visit happened, from the encounter's own location."""
+    facility = _find(enc, "v3:location/v3:healthCareFacility")
+    if facility is None:
+        return None
+    nodes = [facility]
+    nodes += [
+        node
+        for path in ("v3:location", "v3:serviceProviderOrganization")
+        if (node := _find(facility, path)) is not None
+    ]
+    return actors.add_facility(tuple(nodes))
+
+
+def _participations(
+    root: _Element, patient_id: str, actors: _Actors, record: PatientRecord
+) -> None:
+    """Everyone and everywhere the document names, into the record.
+
+    The C-CDA header is where a chart says who wrote it, who signed it, who
+    holds it and which visit it belongs to, and none of it was being read: 2,103
+    audited documents parsed without error and produced not one practitioner and
+    not one facility between them. A note that arrives with no author has lost
+    the answer to "who wrote this" while still looking complete, which is the
+    worst shape a surviving record can take.
+    """
+    _authors(root, actors)
+    _named_participations(root, actors)
+    _custodians(root, actors)
+    _service_events(root, actors, record)
+    record.encounters += _encompassing_encounters(root, patient_id, actors)
+
+
 # --- top-level assembly ------------------------------------------------------
 
 
@@ -908,6 +1608,31 @@ def _inline_narrative_references(root: _Element) -> None:
 _VISIT_MEASUREMENTS = frozenset({ObservationCategory.VITAL_SIGNS, ObservationCategory.LABORATORY})
 
 
+def _visit_candidates(record: PatientRecord) -> dict[date, list[Encounter]]:
+    """The visits a measurement may be charted at, indexed by calendar day.
+
+    Only an encounter carrying BOTH a date and a type is a candidate: a
+    note-only encounter documents a visit, it is not one, and counting it would
+    make every documented visit ambiguous with itself.
+
+    A ``componentOf/encompassingEncounter`` is the document's FRAME rather than
+    an entry inside it, so it supplies a candidate only for a day no entry
+    claims. When a document states the visit both ways — in its header and again
+    in the Encounters section — those are one visit stated twice, and admitting
+    both would make the day ambiguous and strand the measurements taken on it.
+    """
+    entries: dict[date, list[Encounter]] = {}
+    frames: dict[date, list[Encounter]] = {}
+    for encounter in record.encounters:
+        if encounter.date_of_service is None or encounter.encounter_type is None:
+            continue
+        index = frames if EXT_ENCOMPASSING in encounter.extensions else entries
+        index.setdefault(encounter.date_of_service, []).append(encounter)
+    for day, framed in frames.items():
+        entries.setdefault(day, framed)
+    return entries
+
+
 def _link_measurements_to_encounters(record: PatientRecord) -> None:
     """Attach a measurement to the visit it was taken at, when exactly one visit
     claims that calendar day.
@@ -934,13 +1659,7 @@ def _link_measurements_to_encounters(record: PatientRecord) -> None:
     Runs after the id fold, so a visit described twice — once in Encounters,
     again as the note documenting it — is one candidate here rather than two.
     """
-    by_date: dict[date, list[Encounter]] = {}
-    for encounter in record.encounters:
-        # Only `_encounters` sets a type, so this reads as "an entry in the
-        # Encounters section contributed to this visit" rather than as a guess
-        # about what a bare id means.
-        if encounter.date_of_service is not None and encounter.encounter_type is not None:
-            by_date.setdefault(encounter.date_of_service, []).append(encounter)
+    by_date = _visit_candidates(record)
     for observation in record.observations:
         if observation.encounter_id is not None or observation.effective_at is None:
             continue
@@ -981,6 +1700,8 @@ def parse_document(path: Path) -> PatientRecord:
     record = PatientRecord(
         patient=patient, provenance=_prov(source_file, doc_meta.get("ccda:documentId"))
     )
+    actors = _Actors(source_file=source_file)
+    _participations(root, pid, actors, record)
 
     for section in _sections(root):
         loinc = _section_code(section)
@@ -1003,9 +1724,9 @@ def parse_document(path: Path) -> PatientRecord:
         elif loinc == LOINC_SOCIAL:
             record.observations += _social_history(section, pid, source_file)
         elif loinc == LOINC_ENCOUNTERS:
-            record.encounters += _encounters(section, pid, source_file)
+            record.encounters += _encounters(section, pid, actors)
         elif loinc == LOINC_NOTES:
-            record.encounters += _note_encounters(section, pid, source_file)
+            record.encounters += _note_encounters(section, pid, actors)
         # Losslessness: the narrative is captured for every section, not only the
         # unparsed ones. The structural parsers above `continue` past an entry
         # whose shape they do not support, so a known section can yield nothing
@@ -1018,6 +1739,8 @@ def parse_document(path: Path) -> PatientRecord:
         else:
             _capture_narrative(record, section, loinc)
 
+    record.practitioners = actors.practitioners
+    record.facilities = list(actors.facilities.values())
     record.encounters = _fold_encounters_sharing_an_id(record.encounters)
     _link_measurements_to_encounters(record)
     return record
