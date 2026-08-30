@@ -159,3 +159,7 @@ sha256:f1c32f11186cf69d64f874cc4c94eb51ca8f696b54b4b6833fb54c6afdd7acc1
 # Exists so CI exercises the blob resolution, which nothing could reach while
 # the fixture had tables but no files.
 sha256:ce9884f02253419ca57d122a4d1395db61e8dd3845b7d67e721cab5aa589177c
+# The Microsoft Store listing's Package/Identity/Publisher CN, issued by
+# Partner Center and embedded in every published package manifest — a public
+# platform identity, not a person's identifier.
+3768f7cb-832a-4a03-bd9a-56171527d9d4

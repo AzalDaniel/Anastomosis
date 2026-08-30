@@ -26,9 +26,10 @@ Run on a Windows runner, after ``build_windows.py``::
 
     python packaging/build_msix.py --version 0.7.0
 
-Identity is a submission-time decision, so ``--identity-name`` and
-``--identity-publisher`` default to local-validation values and the real ones
-come from Partner Center (see the header of ``AppxManifest.xml.in``).
+The identity defaults ARE the Partner Center values for this app's Store
+listing (Product management -> Product identity), so a release build is
+submission-ready with no flags; ``--identity-name``/``--identity-publisher``
+exist for packing against a different listing or a test identity.
 """
 
 from __future__ import annotations
@@ -88,10 +89,12 @@ _MAKEAPPX_GLOB = "bin/*/x64/makeappx.exe"
 #: shape that survives substitution is a bug in the template or here.
 _PLACEHOLDER_RE = re.compile(r"@[A-Z0-9_]+@")
 
-#: Local-validation identity. Partner Center assigns the real pair at
-#: submission; these let a developer pack and inspect a package today.
+#: The Store listing's real identity, verbatim from Partner Center's Product
+#: identity page. Public strings, not secrets — they appear in every published
+#: package's manifest. The Store validates the manifest against exactly these,
+#: so a drifted value fails at submission, loudly, with nothing shipped.
 _DEFAULT_IDENTITY_NAME = "AzalDaniel.Anastomosis"
-_DEFAULT_IDENTITY_PUBLISHER = "CN=Azal Daniel"
+_DEFAULT_IDENTITY_PUBLISHER = "CN=3768F7CB-832A-4A03-BD9A-56171527D9D4"
 
 
 def quad_version(version: str) -> str:
@@ -252,12 +255,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--identity-name",
         default=_DEFAULT_IDENTITY_NAME,
-        help="Partner Center's Package/Identity/Name (default: a local-validation value).",
+        help="Partner Center's Package/Identity/Name (default: this app's Store listing).",
     )
     parser.add_argument(
         "--identity-publisher",
         default=_DEFAULT_IDENTITY_PUBLISHER,
-        help="Partner Center's Package/Identity/Publisher (default: a local-validation value).",
+        help="Partner Center's Package/Identity/Publisher (default: this app's Store listing).",
     )
     return parser.parse_args(argv)
 
