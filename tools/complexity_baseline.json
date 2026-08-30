@@ -316,11 +316,11 @@
       "rank": "D"
     },
     "src/anastomosis/core/fhir/export.py": {
-      "avg": 6.5652,
+      "avg": 5.9259,
       "rank": "B"
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "avg": 5.9048,
+      "avg": 5.8636,
       "rank": "B"
     },
     "src/anastomosis/core/source_init_command.py": {

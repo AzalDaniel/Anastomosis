@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.core.fhir import from_bundle, to_bundle
+from anastomosis.core.fhir.export import _urn
 from anastomosis.core.model import PatientRecord
 from anastomosis.sources.ccda.parser import parse_document
 
@@ -572,3 +574,86 @@ def test_one_person_in_two_roles_stays_two_answers(tmp_path: Path) -> None:
     assert all(
         p.provenance is not None and p.provenance.source_id == shared for p in parsed.practitioners
     )
+
+
+# --- and out the other side, still typed as what they are ---------------------
+
+
+def _resources(record: PatientRecord, resource_type: str) -> list[dict[str, object]]:
+    return [
+        entry["resource"]
+        for entry in to_bundle(record)["entry"]
+        if entry["resource"]["resourceType"] == resource_type
+    ]
+
+
+def test_an_emergency_contact_is_not_exported_as_a_care_provider(
+    record: PatientRecord,
+) -> None:
+    """The patient's next of kin must not reach a receiving system as one of
+    their clinicians.
+
+    ``practitioners`` is this record's only collection of people, so the
+    emergency contact and the spouse who gave the history live there beside the
+    clinicians — but the CDA role class says which is which, and a bundle that
+    ignored it would show a family member on the care team. That is a silent
+    misattribution, which this project ranks as worse than the outright loss
+    that preceded it.
+    """
+    contact = _sole(record, "participant")
+    practitioner_ids = {r["id"] for r in _resources(record, "Practitioner")}
+    assert contact.id not in practitioner_ids
+
+    related = _resources(record, "RelatedPerson")
+    assert {r["id"] for r in related} == {contact.id, _sole(record, "informant").id}
+    by_id = {r["id"]: r for r in related}
+    assert by_id[contact.id]["patient"] == {"reference": _urn(record.patient.id)}
+    assert by_id[_sole(record, "informant").id]["relationship"] == [{"text": "spouse"}]
+
+
+def test_the_generating_system_is_exported_as_a_machine(record: PatientRecord) -> None:
+    """A system that produced a summary is not a clinician who wrote one, and a
+    bundle that typed it as one would put an author's name on an automated
+    document."""
+    device = next(
+        p
+        for p in record.practitioners
+        if p.extensions.get("ccda:entity") == "assignedAuthoringDevice"
+    )
+    assert device.id not in {r["id"] for r in _resources(record, "Practitioner")}
+    exported = _resources(record, "Device")
+    assert [r["id"] for r in exported] == [device.id]
+    assert exported[0]["deviceName"] == [{"name": "Synthetic EHR Export", "type": "other"}]
+
+
+def test_the_clinicians_are_still_practitioners(record: PatientRecord) -> None:
+    """The routing must not overshoot. Everyone CDA puts in a healthcare-provider
+    role — assignedEntity, assignedAuthor, intendedRecipient — is still exported
+    as a Practitioner, and the split is exhaustive: every actor in the record
+    reaches the bundle as exactly one of the three types."""
+    provider_roles = {
+        p.id
+        for p in record.practitioners
+        if p.extensions["ccda:role"] in {"assignedEntity", "assignedAuthor", "intendedRecipient"}
+        and p.extensions.get("ccda:entity") != "assignedAuthoringDevice"
+    }
+    exported = {r["id"] for r in _resources(record, "Practitioner")}
+    assert provider_roles == exported
+    assert _sole(record, "legalAuthenticator").id in exported
+    assert _sole(record, "informationRecipient").id in exported
+
+    everyone = {p.id for p in record.practitioners}
+    typed = exported | {r["id"] for r in _resources(record, "RelatedPerson")}
+    typed |= {r["id"] for r in _resources(record, "Device")}
+    assert typed == everyone
+    assert len(typed) == len(record.practitioners)
+
+
+def test_every_actor_survives_the_bundle_round_trip(record: PatientRecord) -> None:
+    """Typing them correctly must not cost them their place in the record: all
+    three resource types come back into ``practitioners``, in order, carrying
+    the role the document gave them."""
+    rebuilt = from_bundle(to_bundle(record))
+    assert [p.model_dump(mode="json", exclude={"provenance"}) for p in rebuilt.practitioners] == [
+        p.model_dump(mode="json", exclude={"provenance"}) for p in record.practitioners
+    ]

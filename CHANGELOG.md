@@ -56,7 +56,14 @@ issue and fixed in its own pull request.
   and a `relatedEntity` informant are extracted too but cannot be CREDITED,
   because CDA R2 gives neither an `<id>` and the ledger credits a parse only on
   an id root the construct carries — counted in its `unlinkable` column rather
-  than assumed. (#312)
+  than assumed. FHIR export types the three kinds apart on the CDA role class
+  the record now carries: a clinician is a `Practitioner`, a person in a
+  personal relationship with the patient (an emergency contact, a spouse who
+  gave the history) is a `RelatedPerson` referencing that patient, and an
+  authoring device is a `Device` — a bundle that exported all of them as
+  practitioners would show a family member on the care team. All three read
+  back into `practitioners` in bundle order, so correct typing costs them
+  nothing on the round trip. (#312)
 
 - **A destination pack can describe the filing dialog it actually meets.**
   Attaching the file was the whole vocabulary: a pack could name a file input

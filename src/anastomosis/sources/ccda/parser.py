@@ -1216,15 +1216,30 @@ def _contact_residue(node: _Element) -> dict[str, Any]:
 
 
 def _role_extensions(
-    participation: _Element, participation_name: str, entity: _Element, entity_name: str | None
+    participation: _Element,
+    participation_name: str,
+    entity: _Element,
+    role: _Role,
+    entity_name: str | None,
 ) -> dict[str, Any]:
     """Everything a participation states that no Practitioner field holds.
 
-    ``ccda:participation`` is the load-bearing one: it is the document's own
-    word for what this person did, and it is the difference between "who signed
-    this chart" and "who told us about it".
+    Two of these are load-bearing rather than incidental. ``ccda:participation``
+    is the document's own word for what this actor did, and it is the difference
+    between "who signed this chart" and "who told us about it".
+    ``ccda:role`` is the CDA ROLE CLASS, and CDA draws a line with it that this
+    record has to keep: an ``assignedEntity`` is somebody in a healthcare-
+    provider role, a ``relatedEntity`` or ``associatedEntity`` is somebody in a
+    personal relationship with the patient. It is recorded separately from
+    ``ccda:entity`` — which names the person or device element played — because a
+    role routinely names an actor with no person element at all (an emergency
+    contact given as an id and a phone number), and a downstream reader that had
+    to fall back on the participation's NAME would be guessing.
     """
-    out: dict[str, Any] = {"ccda:participation": participation_name}
+    out: dict[str, Any] = {
+        "ccda:participation": participation_name,
+        "ccda:role": role.path.removeprefix("v3:"),
+    }
     if entity_name is not None:
         out["ccda:entity"] = entity_name
     for node, attribute, key in (
@@ -1259,7 +1274,7 @@ def _person_practitioner(
     name = _find(person, "v3:name")
     given, family, display = _name_parts(name)
     source_id = _role_source_id(entity)
-    extensions = _role_extensions(participation, participation_name, entity, entity_name)
+    extensions = _role_extensions(participation, participation_name, entity, role, entity_name)
     extensions |= _name_residue(name)
     extensions |= _contact_residue(entity)
     if residual := _residual_ids(entity, source_id):
@@ -1291,7 +1306,9 @@ def _device_practitioner(
     model = _text_content(_find(device, "v3:manufacturerModelName"))
     software = _text_content(_find(device, "v3:softwareName"))
     source_id = _role_source_id(entity)
-    extensions = _role_extensions(author, "author", entity, "assignedAuthoringDevice")
+    extensions = _role_extensions(
+        author, "author", entity, _ASSIGNED_AUTHOR, "assignedAuthoringDevice"
+    )
     extensions |= _contact_residue(entity)
     for value, key in ((model, "ccda:manufacturerModelName"), (software, "ccda:softwareName")):
         if value is not None:
