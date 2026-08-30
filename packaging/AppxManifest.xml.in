@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Anastomosis MSIX package manifest — TEMPLATE.
+
+  packaging/build_msix.py renders this file into the staged package root as
+  AppxManifest.xml, substituting every at-delimited placeholder below. It
+  refuses to pack a manifest that still carries one, because an unsubstituted
+  placeholder is not rejected by makeappx — it would sail through the build and
+  be refused by Partner Center hours later, which is the worst place to learn
+  about it. (Which is why this comment spells the placeholders out of shape:
+  the refusal cannot tell prose from a value that never got filled in.)
+
+  THE TWO FIELDS THE OWNER REPLACES AT SUBMISSION. Reserve the app name in
+  Partner Center, then open Product -> Product identity; it shows the values
+  the Store assigns to this package, and each is passed to build_msix.py:
+
+    Package/Identity/Name       goes to the "identity name" option, which
+                                fills the Identity/Name attribute below
+                                (it looks like 12345AzalDaniel.Anastomosis)
+    Package/Identity/Publisher  goes to the "identity publisher" option, which
+                                fills the Identity/Publisher attribute below
+                                (it looks like CN=1A2B3C4D-0000-...)
+
+  The defaults build_msix.py substitutes are local-validation values, good
+  enough for makeappx to pack and for a developer to inspect, and wrong for the
+  Store. PublisherDisplayName below is NOT a placeholder: it is the human name
+  the account publishes under, and it must match the Partner Center account's
+  publisher display name at submission — it is spelled here exactly as
+  anastomosis.iss spells AppPublisher.
+
+  This package is deliberately UNSIGNED, and build_msix.py never signs it. The
+  Store re-signs every package it ingests with Microsoft's own certificate,
+  which is the entire reason this artifact exists: a Store install carries a
+  trusted publisher signature this project does not have to buy, and never
+  meets SmartScreen. Signing it here would only produce a certificate nobody
+  trusts. The unsigned consequence is that this .msix cannot be side-loaded by
+  double-clicking it; the Inno Setup installer remains the download for anyone
+  not installing from the Store.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <!-- Version is the 4-part quad build_msix.py derives from the package
+       version — the SAME quad Nuitka stamps into the two exes, so the package
+       and the binaries inside it can never disagree about which build this is.
+       The Store requires the fourth part (revision) to be 0, which it always
+       is: this project versions in three parts. -->
+  <Identity
+    Name="@IDENTITY_NAME@"
+    Publisher="@IDENTITY_PUBLISHER@"
+    Version="@VERSION@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Anastomosis</DisplayName>
+    <PublisherDisplayName>Azal Daniel</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 1809 is the floor the app already has, not a number chosen here: the
+         GUI renders through the Edge WebView2 Runtime, which supports Windows
+         10 1809 and later. MaxVersionTested names the newest build this
+         package has been exercised against; it does not restrict installs. -->
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- The windowed GUI is the app the Store tile launches. The executable
+         path mirrors the installed layout anastomosis.iss lays down ({app}\gui
+         and {app}\cli), so a support answer about "the gui folder" is true of
+         both artifacts. EntryPoint Windows.FullTrustApplication is what marks
+         this a packaged Win32 desktop app rather than a UWP one. -->
+    <Application
+      Id="Anastomosis"
+      Executable="gui\Anastomosis.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Anastomosis"
+        Description="Reconstruct, verify, and re-home clinical records. An open-source toolkit for EHR migration, archival, and record liberation."
+        BackgroundColor="#171310"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- The MSIX-native answer to the installer's optional "add anast to
+             PATH" task. Windows registers an app-execution alias for the CLI
+             exe, so `anast` works in a fresh terminal after a Store install
+             without this package writing to the machine PATH — which a
+             container-isolated package cannot do anyway. The alias must be
+             spelled with its .exe suffix; desktop:ExecutionAlias is the
+             full-trust form of the extension. -->
+        <uap3:Extension
+          Category="windows.appExecutionAlias"
+          Executable="cli\anast.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="anast.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- The one capability a packaged Win32 app declares. It is a RESTRICTED
+         capability (hence the rescap namespace) but an automatically approved
+         one for desktop packages: it says "this is ordinary Win32 code", not
+         "this wants extra privilege". Nothing else is declared, because the
+         app asks the OS for nothing else — it is local-first, and the readiness
+         audit found it writes only to ~/.anastomosis, its own WebView2 profile
+         under %LOCALAPPDATA%, and directories the operator picks. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
