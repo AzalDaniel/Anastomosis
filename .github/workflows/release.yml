@@ -32,6 +32,14 @@ jobs:
   build:
     name: Build distributions
     runs-on: ubuntu-latest
+    # No `environment:` here on purpose. This job runs `python -m build` —
+    # project code — and the whole reason build and publish are separate jobs
+    # (see the header comment) is to keep the code-executing job apart from
+    # anything credentialed. id-token/attestations below are short-lived,
+    # per-run OIDC grants GitHub mints fresh for this job alone, not a stored
+    # secret an environment would gate; pinning this job to `environment:
+    # release` would just re-couple it to the trust boundary that split
+    # exists to keep apart.
     permissions:
       contents: read
       id-token: write # Sigstore signing for the provenance attestation
@@ -140,6 +148,14 @@ jobs:
             --target-python target/bin/python \
             --out "sbom/anastomosis-${version}-sbom.cdx.json"
       - name: Attest build provenance (SLSA)
+        # This is the one build in the repo that attests. It runs only on a
+        # version tag or an explicit publish dispatch — never on an ordinary
+        # push — and what it attests is exactly what ships to PyPI in this
+        # same run, via the `publish` job below. Contrast
+        # windows-package.yml's `build` job, which runs on every push and
+        # deliberately stays un-attested: its installer never leaves this
+        # run's artifact storage unless the sibling `release` job there
+        # decides to publish it (see the comment on its upload step).
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: |
@@ -160,6 +176,14 @@ jobs:
     name: Publish to PyPI (Trusted Publishing)
     needs: build
     runs-on: ubuntu-latest
+    # Secret isolation contract (the same one windows-package.yml's `release`
+    # job runs under, as `environment: release`): this environment is the
+    # only place PyPI Trusted Publishing's OIDC trust — and any future
+    # signing secret — can be read from, so the `build` job above, which
+    # runs project code, never can. Named `pypi` rather than `release`
+    # because PyPI's Trusted Publisher configuration binds to this exact
+    # environment name (see the header comment); renaming it would silently
+    # break publishing.
     environment:
       name: pypi
       url: https://pypi.org/p/anastomosis

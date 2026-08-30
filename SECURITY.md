@@ -136,6 +136,14 @@ contract — regressions in any of them are security findings:
   before they merged.
 - **CI least privilege.** Workflows declare `permissions: contents: read`
   by default; releases require explicit elevation.
+- **CI supply-chain pinning.** Every action any workflow runs — first-party
+  `actions/*` included, not just third-party ones — is pinned to a full
+  commit SHA, never a movable tag. The jobs that attach a release or publish
+  a package (`release` in `windows-package.yml`, `publish` in `release.yml`)
+  run under a dedicated GitHub Environment, isolating whatever secrets a
+  future signing step needs from every build/test job. `.github/dependabot.yml`
+  cools version updates down for a week before they can reach us, on top of
+  GitHub's own default.
 
 ## Code scanning & suppression policy (auditable)
 
