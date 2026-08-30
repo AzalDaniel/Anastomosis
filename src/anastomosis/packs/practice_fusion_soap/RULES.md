@@ -90,6 +90,17 @@ section — heading only when addendum rows exist (GOLD §10). A section that HA
 data must stop printing its empty state: the string is a statement to the chart
 reader that there is nothing to see, and it is only true when there is nothing.
 
+Three of those sections select by ENCOUNTER — vitals for this encounter, the
+vitals flowsheet, screenings — so "nothing to see" can be true of the visit and
+false of the record: a measurement taken at another visit, or carrying no visit
+at all, leaves the section empty while the patient plainly has vitals. Those
+three keep their sentence and scope it to the visit, plus the COUNT of what the
+record holds elsewhere and a pointer to the record summary in the bundle
+(`record-summary/`), which carries the whole record. Counts only, never values:
+the number goes into a chart, a golden and a test, and a measurement is the
+chart. When the record holds none either, the original sentence stands unchanged
+— it is then simply true.
+
 Screenings carries one phrase this port added rather than carried over. An
 encounter event the clinician marked as not performed (`IsNegated`) is prefixed
 `Not performed — `, because printing it beside the events that did happen would

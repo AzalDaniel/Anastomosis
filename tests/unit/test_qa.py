@@ -673,23 +673,28 @@ def test_a_social_history_observation_on_no_encounter_is_not_a_finding(tmp_path:
     )
 
 
-def test_the_ccda_view_reports_every_check_the_neutral_path_does() -> None:
-    """A check must never fall out of the standard-C-CDA report unnoticed.
+def test_the_whole_patient_report_names_every_check_the_neutral_path_does() -> None:
+    """A check must never fall out of a whole-patient report unnoticed.
 
-    That path runs two document-generic checks and records the encounter-scoped
-    ones as skipped-with-reason, and its own comment promises the report shows
-    the same check set as the neutral path. Nothing enforced it, so when
-    `note_body` was registered it landed in neither table and was silently
-    omitted from every whole-patient report — the exact thing the promise ruled
-    out. Registering a check is now enough to be reminded to place it.
+    That grading runs the document-generic checks and records the
+    encounter-scoped ones as skipped-with-reason, and its own docstring promises
+    the report shows the same check set as the neutral path. Nothing enforced it,
+    so when `note_body` was registered it landed in neither table and was
+    silently omitted from every whole-patient report — the exact thing the
+    promise ruled out. Registering a check is now enough to be reminded to place
+    it.
+
+    The tables are shared, so this guards BOTH whole-patient populations at once:
+    the ccda-standard migration's per-patient view and the record summaries every
+    pack-mode bundle now carries.
     """
-    from anastomosis.core.migrate import _CCDA_DOC_CHECKS, _CCDA_SKIPPED_CHECKS
+    from anastomosis.qa.wholepatient import DOC_GENERIC_CHECKS, ENCOUNTER_SCOPED_SKIPS
 
-    placed = set(_CCDA_DOC_CHECKS) | set(_CCDA_SKIPPED_CHECKS)
+    placed = set(DOC_GENERIC_CHECKS) | set(ENCOUNTER_SCOPED_SKIPS)
     registered = {check.name for check in engine_checks()}
     assert registered - placed == set(), "a registered check named in neither table"
     assert placed - registered == set(), "a table names a check that is not registered"
-    assert set(_CCDA_DOC_CHECKS).isdisjoint(_CCDA_SKIPPED_CHECKS), "run it or skip it, not both"
+    assert set(DOC_GENERIC_CHECKS).isdisjoint(ENCOUNTER_SCOPED_SKIPS), "run it or skip it, not both"
 
 
 # --- record coverage: did the chart carry the record? ------------------------

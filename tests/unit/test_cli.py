@@ -3,6 +3,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from _render_fakes import write_text_pdf
 from typer.testing import CliRunner
 
 import anastomosis
@@ -85,17 +86,7 @@ class _FakeChromium:
         pass
 
     def render(self, html: str, pdf_path: Path) -> None:
-        import pymupdf
-
-        from anastomosis.core.textutil import html_to_text
-
-        doc = pymupdf.open()
-        page = doc.new_page(width=612, height=792)
-        page.insert_textbox(
-            pymupdf.Rect(18, 18, 594, 774), html_to_text(html) or "(empty)", fontsize=7
-        )
-        doc.save(str(pdf_path))
-        doc.close()
+        write_text_pdf(html, pdf_path)
 
     def close(self) -> None:
         pass
@@ -111,8 +102,11 @@ def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.exit_code == 0, result.output
     assert "Detected source" in result.output and "pf-tebra" in result.output
     assert "6 rendered" in result.output
-    assert "QA: 6 pass" in result.output
+    # 6 charts + the 3 whole-patient record summaries the bundle now carries.
+    # "rendered" still counts charts; QA counts every document it graded.
+    assert "QA: 9 pass" in result.output
     assert len(list(out.glob("*.pdf"))) == 6
+    assert len(list((out / "record-summary").glob("*.pdf"))) == 3
     assert (out / "_PHI_WARNING_README.txt").exists()
     assert (out / "qa_report.json").exists()
 

@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from anastomosis.sources.base import SourceAdapter
 
 __all__ = [
+    "RECORD_SUMMARY_DIRNAME",
     "STAGE_DETECT",
     "STAGE_INGEST",
     "STAGE_MANIFEST",
@@ -483,6 +484,43 @@ def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path
     return len({name for _, name, _, _ in wanted})
 
 
+#: Where the whole-patient record summaries land inside the output directory,
+#: one PDF per patient beside the per-encounter charts.
+RECORD_SUMMARY_DIRNAME = "record-summary"
+
+
+def _render_record_summaries(records: list[PatientRecord], out: Path, *, force: bool) -> None:
+    """Render one whole-patient record summary per patient into the bundle.
+
+    A visit note is a note about ONE visit, so every layout selects by encounter
+    — and a fact the record holds that no encounter claims (a laboratory result
+    that arrived with no visit attached, a standing list no SOAP note has a
+    section for) reached no page at all. The chart was not wrong; it was
+    partial, and nothing in the bundle said so.
+
+    So the bundle also carries the record. This is HL7's own whole-patient view
+    of the same C-CDA the migration delivers — no encounter is guessed, nothing
+    is invented, and QA grades it with every chartable kind declared carried, so
+    a fact family that reaches neither the charts nor this page fails the run.
+
+    Loud on failure: a summary that did not render is a patient whose record has
+    no whole-record page in the bundle, and the run stops rather than shipping a
+    bundle that quietly lost one. The ``(patient_id, exception-type)`` pairs ride
+    on the error exactly as the per-encounter render failures do — pseudonymous
+    ids and type names, never exception text.
+    """
+    from anastomosis.reconstruct.ccda_standard import render_ccda_standard
+
+    view = render_ccda_standard(records, out / RECORD_SUMMARY_DIRNAME, force=force)
+    if view.failed:
+        raise PipelineError(
+            f"{len(view.failed)} record summary/summaries failed to render",
+            exit_code=1,
+            kind="render_failed",
+            failed=tuple(view.failed),
+        )
+
+
 def run_pipeline(
     *,
     export_dir: Path,
@@ -601,6 +639,12 @@ def run_pipeline(
             failed=tuple(result.failed),
         )
 
+    # The charts are one visit each; this is the record. Rendered before
+    # attachments are carried and before QA, so a bundle that could not carry
+    # the whole record for every patient stops here rather than being graded and
+    # delivered as complete.
+    _render_record_summaries(records, out, force=force)
+
     # `out` is hardened by the engine above, so this is the first point a
     # patient's own files may be written beside their charts.
     carried = _carry_attachments(records, export_dir, out)
@@ -672,6 +716,14 @@ def _run_qa_stage(
 ) -> QAReport | None:
     """Verify every rendered document; return the report (None if QA downgraded).
 
+    Two populations, ONE report. The charts are graded against the pack's own
+    ``carries``/``omits`` — a SOAP note is allowed to have no problem list, and
+    the count it does not carry is reported rather than graded green. The record
+    summaries are graded as whole-patient documents, with every chartable kind
+    declared carried: between them the run cannot come back clean while a fact
+    family the record holds reached no page at all. One report because there is
+    one bundle, and an operator reading two summaries has to reconcile them.
+
     A missing PyMuPDF (the optional ``render`` extra) downgrades QA to a
     no-op rather than failing the run — the only ``ImportError`` allowed to
     soften here, mirroring the original CLI behavior. A failing report raises
@@ -680,7 +732,7 @@ def _run_qa_stage(
     try:
         # The probe, not the whole surface: settle_qa imports what it needs
         # once QA has actually run, and by then pymupdf is known to be here.
-        from anastomosis.qa import run_qa
+        from anastomosis.qa import run_qa, whole_patient_report
     except ImportError as exc:
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
@@ -692,6 +744,8 @@ def _run_qa_stage(
             )
         )
         return None
+    from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
+
     lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
     report = run_qa(
         ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
@@ -701,6 +755,14 @@ def _run_qa_stage(
         render_day_stamps=engine.render_day_stamps,
         carries=engine.carries,
         omits=engine.omits,
+    )
+    # ``documents`` is the report's only state — ``ok`` and ``not_carried`` are
+    # derived from it — so extending it merges the two batches soundly.
+    summaries = out / RECORD_SUMMARY_DIRNAME
+    report.documents.extend(
+        whole_patient_report(
+            (ccda_standard_doc_path(summaries, record), record) for record in records
+        ).documents
     )
     settle_qa(report, out, emit)
     return report
