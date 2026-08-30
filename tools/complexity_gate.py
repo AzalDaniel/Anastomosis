@@ -101,7 +101,13 @@ def measure(report: dict[str, list[dict[str, object]]]) -> dict[str, object]:
     """
     blocks: dict[str, dict[str, object]] = {}
     modules: dict[str, dict[str, object]] = {}
-    for path, entries in sorted(report.items()):
+    for raw_path, entries in sorted(report.items()):
+        # Radon reports OS-native separators; the baseline is written once and
+        # read on every platform, so keys are normalized to forward slashes —
+        # a Windows leg comparing src\a\b.py against src/a/b.py saw the whole
+        # baseline as missing and every standing violation as new (93 phantom
+        # regressions).
+        path = raw_path.replace("\\", "/")
         total = 0
         count = 0
         for entry in entries:
