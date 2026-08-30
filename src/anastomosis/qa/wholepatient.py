@@ -20,7 +20,7 @@ per-encounter way:
 The two tables between them must name EVERY registered check. Nothing enforced
 that when they lived in the migration module, and ``note_body`` was registered
 later and landed in neither — so the one path that promised never to omit a
-check omitted it. ``test_the_ccda_view_reports_every_check_the_neutral_path_does``
+check omitted it. ``test_the_whole_patient_report_names_every_check_the_neutral_path_does``
 is what keeps the promise honest now, and it guards both paths at once because
 both read these tables.
 
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DOC_GENERIC_CHECKS",
     "ENCOUNTER_SCOPED_SKIPS",
+    "WHOLE_PATIENT_CARRIES",
     "WHOLE_PATIENT_PAGE_SIZE",
     "whole_patient_batch",
     "whole_patient_report",
@@ -88,6 +89,15 @@ ENCOUNTER_SCOPED_SKIPS: dict[str, str] = {
 #: The whole-patient view always renders on Letter geometry (see
 #: ``reconstruct.ccda_standard.renderer._default_renderer``).
 WHOLE_PATIENT_PAGE_SIZE = "Letter"
+
+#: Every chartable kind, because this view is the record.
+#:
+#: Named rather than inlined because a kind dropping out of it is INVISIBLE in
+#: the verdicts: ``RecordCoverageCheck`` asks whether coverage was declared at
+#: all and whether a kind is excused by ``omits``, so a kind quietly missing
+#: from this set still fails when it is absent — right up until someone excuses
+#: it. The set is the promise, so the set is what a test pins.
+WHOLE_PATIENT_CARRIES: frozenset[str] = frozenset(CHARTABLE_KINDS)
 
 
 def _anchor_record(record: PatientRecord) -> PatientRecord:
@@ -151,7 +161,7 @@ def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAR
         page_size=WHOLE_PATIENT_PAGE_SIZE,
         # HL7's own stylesheet over the whole record, so every chartable kind IS
         # on the page and an absence is a defect rather than a layout choice.
-        carries=frozenset(CHARTABLE_KINDS),
+        carries=WHOLE_PATIENT_CARRIES,
         checks=[by_name[name] for name in DOC_GENERIC_CHECKS],
     )
     for doc_qa in report.documents:

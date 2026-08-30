@@ -297,11 +297,16 @@ def test_carrying_only_the_attributed_lab_is_not_enough_to_hide_the_other() -> N
 
 
 def test_the_summary_batch_declares_every_chartable_kind_carried() -> None:
-    """The declaration is what turns an absence into a FAIL instead of a WARN.
-    Drop a kind from it and a record family can vanish with the run still clean.
+    """The declaration is what turns an absence into a FAIL instead of a WARN,
+    and a kind missing from it is invisible in the verdicts — ``record_coverage``
+    keys on "was coverage declared at all" plus the ``omits`` excuses, so a kind
+    quietly dropped from the set still fails today and stops failing the moment
+    anyone excuses it. The set is the promise; pin the set.
     """
     from anastomosis.core.model import CHARTABLE_KINDS
-    from anastomosis.qa.wholepatient import whole_patient_batch
+    from anastomosis.qa.wholepatient import WHOLE_PATIENT_CARRIES, whole_patient_batch
+
+    assert WHOLE_PATIENT_CARRIES == frozenset(CHARTABLE_KINDS)
 
     record = _lab_record()
     ((_path, encounter, anchored),) = whole_patient_batch([(Path("summary.pdf"), record)])
