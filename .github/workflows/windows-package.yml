@@ -343,7 +343,7 @@ jobs:
         # changing a line of this repo. The comment after `@` names the
         # version for humans; the SHA is the only thing Actions actually
         # trusts.
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           # On tag runs tag_name equals the ref name (asserted above) and the tag
           # already exists, so target_commitish is unused; on dispatch runs the
