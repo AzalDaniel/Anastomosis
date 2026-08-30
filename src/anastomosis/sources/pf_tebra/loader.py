@@ -49,17 +49,21 @@ _TABLE_SUFFIX = ".tsv"
 class UnsupportedTablesError(SourceDataError):
     """An export carries tables the adapter can neither map nor losslessly keep.
 
-    Raised by the mapper when an unmapped table has no patient key to attribute
-    its rows to — failing closed beats silently discarding clinical data. The
-    message names the offending table(s) only (schema names, never row values).
+    Raised by the mapper when an unmapped table offers NO path to a patient:
+    no ``PatientPracticeGuid`` column, no declared indirect join, and no
+    practice-level identity of its own. Failing closed beats silently
+    discarding clinical data. A table that HAS a patient path never lands
+    here any more — its attributable rows are preserved and its dangling
+    ones quarantined — so this message no longer misdiagnoses a few blank
+    keys as a missing column. Schema names only, never row values.
     """
 
     def __init__(self, tables: list[str]) -> None:
         self.tables = tables
         super().__init__(
-            "export contains unmapped tables that cannot be attributed to a patient "
-            f"(no PatientPracticeGuid column): {tables}. Map them in the adapter, or "
-            "remove them from the export, before migrating."
+            "export contains unmapped tables with no path to a patient (no "
+            f"PatientPracticeGuid column and no declared join): {tables}. Map "
+            "them in the adapter, or remove them from the export, before migrating."
         )
 
 
