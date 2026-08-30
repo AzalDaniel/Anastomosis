@@ -99,7 +99,10 @@ installed at both entry points; output hygiene (`core/output.py` — `0o700`
 on POSIX, NTFS ACL hardening on Windows, PHI-warning README everywhere);
 the pack trust model (built-ins trusted, external packs opt-in); loopback-only
 CDP attach that never stores credentials; PyPI Trusted Publishing with
-Sigstore/PEP 740 attestations.
+Sigstore/PEP 740 attestations; every workflow action pinned to a full commit
+SHA (first-party `actions/*` included) with release/publish jobs isolated
+behind a dedicated GitHub Environment, and a Dependabot cooldown so a
+freshly-cut release cannot reach us for a week.
 
 Still open, ranked, all targeted at M6:
 

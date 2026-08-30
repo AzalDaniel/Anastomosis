@@ -1,0 +1,39 @@
+# Dependabot version updates for Anastomosis.
+#
+# Two ecosystems: `github-actions` (every `uses:` pin across
+# .github/workflows/*.yml — all full commit SHAs, see the pinning comments
+# there) and `pip` (this package's own dependency floors, declared in
+# pyproject.toml). A weekly schedule and a small PR limit keep the noise
+# down; a version-update PR is reviewed like any other change here — nothing
+# in this file auto-merges anything.
+#
+# `cooldown` is the supply-chain half of the story: a release cut yesterday
+# cannot land in front of us today. GitHub ships a 3-day default cooldown as
+# of mid-2026; `default-days: 7` below is a deliberate widening for a project
+# whose product is medical-record handling — a compromised release should
+# have a full week to be noticed and pulled before Dependabot ever proposes
+# it here.
+#
+# Cooldown governs version updates ONLY. Dependabot security updates are a
+# separate repo-settings toggle (Settings -> Code security -> Dependabot
+# security updates) that reacts to a published advisory, not a schedule —
+# they open immediately and are never held back by the cooldown below. A
+# security fix waiting out a week-long cooldown would defeat the point of
+# shipping it fast.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
