@@ -26,7 +26,7 @@
 # it carries PEP 639 license-files exactly the same way. Re-measure before
 # raising this bound; the release workflow asserts the emitted version too, so
 # a bad backend fails the build rather than the irreversible upload.
-requires = ["hatchling>=1.27,<1.30"]
+requires = ["hatchling>=1.32.0,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
