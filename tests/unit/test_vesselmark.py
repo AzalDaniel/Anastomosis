@@ -853,7 +853,13 @@ def test_a_legacy_windows_console_is_never_sent_the_sync_sequences(
     monkeypatch.setattr(vesselmark, "_key_pressed", lambda: True)
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
+    # Both halves state the flag outright. Neither may inherit it from the host:
+    # on a Windows runner rich reports `legacy_windows` TRUE for a fresh console
+    # — the VT probe fails when the stream is redirected — so a test that let
+    # the platform decide would assert the modern path on POSIX and the legacy
+    # path on Windows while appearing to test one thing.
     modern = _console()
+    monkeypatch.setattr(modern, "legacy_windows", False)
     vesselmark._play(modern, GREETING, unicode_dots=True)
     assert "\x1b[?2026h" in _said(modern), (
         "a terminal that can synchronise should still be asked to"
