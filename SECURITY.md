@@ -155,18 +155,35 @@ uploads while code-scanning *default setup* is enabled, so default setup
 must be disabled in Settings → Code security for this workflow's results to
 land.)
 
-Inline suppression takes two steps, and this policy previously described
-only the first. The suite ships `AlertSuppression.ql`, which computes each
-`# codeql[...]` comment into the uploaded SARIF — but code scanning ignores
-the SARIF's `suppressions[]` property, so on its own the comment changes
-nothing: the alert stays open and a pull request touching that line still
-fails its check. The workflow's final step, `advanced-security/dismiss-alerts`,
-reads the property back and dismisses the matching alerts through the API only
-after accepted code is pushed to `main`. It never runs for a pull request,
-feature-branch push, or scheduled scan: alert state is repository state, so code
-that has not been accepted cannot mutate it with `security-events: write`.
-That post-acceptance step is what makes every suppression below an auditable
-control rather than a convention.
+Inline suppression takes **three** things, and this policy has now twice
+described fewer. Each missing one was found by watching the control fail, not
+by reading about it, and the sequence is worth keeping because it is the same
+mistake the product itself must never make.
+
+1. **The suppression query has to run.** `security-extended` ships
+   `AlertSuppression.ql` but does not run it; the CodeQL CLI computes the
+   SARIF's `suppressions[]` property only when that query is requested as a
+   pack. That is the `packs:` line on the workflow's init step. Without it the
+   SARIF carries no suppressions at all.
+2. **Code scanning ignores the property even when it is there.** A correctly
+   formed comment, correctly placed, changes nothing on its own.
+3. **`advanced-security/dismiss-alerts` reads the property back** and dismisses
+   the matching alerts through the API — and only after accepted code is pushed
+   to `main`. It never runs for a pull request, feature-branch push, or
+   scheduled scan: alert state is repository state, so code that has not been
+   accepted cannot mutate it with `security-events: write`.
+
+The history, since a policy that quietly acquires a correct sentence teaches
+nobody: six suppressions sat inert in `src/` until a seventh, correctly formed
+and correctly placed, failed to clear its alert in #310. The dismissal step was
+added — and the alert still did not clear. On the merge of #310 that step ran,
+reported success, indexed nine alerts and dismissed none, because step 1 was
+missing and the SARIF it read was empty of suppressions. A green step that does
+nothing is worse than an absent one, and it survived exactly as long as it took
+to read its log instead of its status.
+
+All three together are what make every suppression below an auditable control
+rather than a convention.
 
 One consequence is worth stating here rather than leaving to be discovered.
 Because dismissal happens only after a merge, a pull request that *introduces*
@@ -179,9 +196,6 @@ arrive before merge. That is a deliberate trade, and the alternative is worse:
 letting unmerged code dismiss alerts would destroy the audit trail this policy
 exists to keep.
 
-This was not a theoretical gap. Six suppressions sat in `src/` doing nothing
-until a seventh, correctly formed and correctly placed, failed to clear its
-alert in #310 and made the mechanism visible.
 
 Anastomosis's product surface is writing patient records to disk under the
 operator's control, which the `py/clear-text-storage-sensitive-data` rule
