@@ -56,6 +56,38 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    # Two pins carry a verification step Dependabot cannot perform, so a bump
+    # it opens is incomplete by construction — and because pip updates arrive
+    # as one grouped pull request, a single incomplete member holds the whole
+    # batch hostage. The August 2026 group was 21 updates blocked on these two.
+    #
+    # Both conditions name `version-update:` types ONLY, which is the whole
+    # point: routine version churn stops, and a Dependabot SECURITY update —
+    # which is not a version-update type — still opens immediately. This
+    # repository has no other advisory path (no pip-audit lane, no OSV scan),
+    # so a blanket `dependency-name` ignore would have quietly traded a
+    # published CVE in a browser-automation library for a tidier queue.
+    ignore:
+      # Bumping playwright means regenerating the rendering goldens in the
+      # SAME change (tools/regen_goldens.py) — packaging/constraints.txt says
+      # so, because one pin governs the test lanes, the goldens and the
+      # Chromium bundled in the installer. Dependabot changes the pin and not
+      # the goldens, which is the shape of a green PR that has already broken
+      # what it was pinned to protect.
+      - dependency-name: "playwright"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # pywebview 6.2.1 fails to import from a Nuitka-frozen Windows build
+      # (upstream issue #1817), and the packaged GUI exe IS a Nuitka standalone
+      # build — so that bump ships an installer whose app exits on launch. CI
+      # cannot see it: no lane freezes the app. Every pywebview bump therefore
+      # needs the packaged-installer smoke run that confirmed 6.2, which is a
+      # human starting a Windows build, not a check a bot can wait on.
+      - dependency-name: "pywebview"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     groups:
       pip-dependencies:
         patterns:
