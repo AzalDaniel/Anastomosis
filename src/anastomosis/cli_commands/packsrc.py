@@ -21,6 +21,7 @@ from anastomosis.core.outcome import declined
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
+    from anastomosis.core.source_init_command import SourceInitResult
 
 
 def _synthetic_preview_record() -> PatientRecord:
@@ -338,6 +339,53 @@ def pack_init(
     _print_pack_next_steps(name, pack_dir, out_dir, preview_path)
 
 
+def _refuse_analysis(
+    analysis: SourceInitResult, *, name: str, example: Path, to: str | None
+) -> None:
+    """Present the analyze step's refusals and exit; return only on the checkpoint.
+
+    Every pre-confirm outcome except ``ConfirmationRequired`` is a refusal with
+    its own line and its own exit code, and the set of them is a table, not
+    logic. It lives here so ``source_init`` reads as the flow it is —
+    analyze, show, confirm, save — rather than as five guard clauses with the
+    flow threaded between them.
+    """
+    from anastomosis import cli as _cli
+
+    refusals: dict[str, tuple[str, int]] = {
+        "UnknownDestination": (
+            f"[red]unknown destination {to!r}[/red] — run "
+            "[cyan]anast destination list[/cyan] to see the names this build carries.",
+            2,
+        ),
+        "InvalidSourceName": (
+            f"[red]invalid mapping name {name!r}[/red] — use a lowercase identifier "
+            "(letters, digits, underscores; starting with a letter)",
+            2,
+        ),
+        "NoExampleFile": (
+            f"[red]no csv/tsv/json/ndjson file found in {example}[/red] — "
+            "point the example at the file itself",
+            2,
+        ),
+        "AmbiguousExample": (
+            f"[red]multiple csv/tsv/json/ndjson files in {example}[/red] — "
+            "point at one structured file, not the directory",
+            2,
+        ),
+        "CannotAnalyze": (
+            f"[red]could not analyze the example[/red] ({analysis.detail})",
+            1,
+        ),
+    }
+    refusal = refusals.get(analysis.error or "")
+    if refusal is not None:
+        _cli.console.print(refusal[0])
+        raise typer.Exit(code=refusal[1])
+    # The only remaining pre-confirm outcome is the expected analyze checkpoint.
+    assert analysis.error == "ConfirmationRequired"
+
+
 @source_app.command("init")
 def source_init(
     example: Annotated[
@@ -363,6 +411,14 @@ def source_init(
             parser=out_dir,
         ),
     ] = None,
+    to: Annotated[
+        str | None,
+        typer.Option(
+            "--to",
+            help="Destination this format is being taught FOR (a registry name, e.g. tebra). "
+            "The mapping records it, and a migration to another destination refuses.",
+        ),
+    ] = None,
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Accept the suggested mapping without confirmation."),
@@ -375,6 +431,10 @@ def source_init(
     only), proposes a mapping to the canonical model, proves the mapping drops no
     column, and saves it. After saving, that format auto-detects like any
     built-in source. Refine the saved ``mapping.json`` and re-run to re-verify.
+
+    Pass ``--to`` to choose the destination BEFORE teaching: the mapping records
+    which destination it was taught for, and a migration that runs it somewhere
+    else refuses instead of mapping one system's columns into another.
     """
     from anastomosis import cli as _cli
     from anastomosis.core.source_init_command import SourceInitCommand, run_source_init_command
@@ -384,32 +444,15 @@ def source_init(
     # flow the GUI source wizard runs); this command presents it and confirms.
     analysis = run_source_init_command(
         SourceInitCommand(
-            example=example, name=name, display=display, out_dir=out_dir, confirmed=False
+            example=example,
+            name=name,
+            display=display,
+            out_dir=out_dir,
+            confirmed=False,
+            destination=to,
         )
     )
-    if analysis.error == "InvalidSourceName":
-        _cli.console.print(
-            f"[red]invalid mapping name {name!r}[/red] — use a lowercase identifier "
-            "(letters, digits, underscores; starting with a letter)"
-        )
-        raise typer.Exit(code=2)
-    if analysis.error == "NoExampleFile":
-        _cli.console.print(
-            f"[red]no csv/tsv/json/ndjson file found in {example}[/red] — "
-            "point the example at the file itself"
-        )
-        raise typer.Exit(code=2)
-    if analysis.error == "AmbiguousExample":
-        _cli.console.print(
-            f"[red]multiple csv/tsv/json/ndjson files in {example}[/red] — "
-            "point at one structured file, not the directory"
-        )
-        raise typer.Exit(code=2)
-    if analysis.error == "CannotAnalyze":
-        _cli.console.print(f"[red]could not analyze the example[/red] ({analysis.detail})")
-        raise typer.Exit(code=1)
-    # The only remaining pre-confirm outcome is the expected analyze checkpoint.
-    assert analysis.error == "ConfirmationRequired"
+    _refuse_analysis(analysis, name=name, example=example, to=to)
 
     _cli.console.print("\n[bold]Analysis[/bold] (PHI-safe — no values shown):")
     for line in analysis.summary:
@@ -430,7 +473,12 @@ def source_init(
     # a round-trip, and save it owner-only — all in the shared core.
     saved = run_source_init_command(
         SourceInitCommand(
-            example=example, name=name, display=display, out_dir=out_dir, confirmed=True
+            example=example,
+            name=name,
+            display=display,
+            out_dir=out_dir,
+            confirmed=True,
+            destination=to,
         )
     )
     if saved.error == "CannotBuildMapping":
@@ -461,6 +509,11 @@ def source_init(
     _cli.console.print(
         f"  Review {saved.mapping_dir / 'MAPPING.md'}; refine mapping.json and re-run if needed."
     )
+    if saved.destination is not None:
+        _cli.console.print(
+            f"  Taught for [cyan]{saved.destination}[/cyan]; migrating it to another "
+            "destination will refuse."
+        )
     # Only a source in the DEFAULT directory is discoverable: `pipeline run` has
     # no `--source-dir` to point at another one (unlike packs, which thread
     # `--pack-dir` — see `pack init` above). Printing the run command for a

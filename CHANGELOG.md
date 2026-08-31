@@ -15,6 +15,37 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A run that names the exact inputs it was prepared under, and refuses when
+  any of them changed.** A migration's charts mean something only in terms of
+  the source that read the export, the destination they were shaped for, and
+  the layout that rendered the pages — and all three are editable underneath an
+  operator between one command and the next. A learned mapping is a JSON file
+  somebody can open; a template pack is a directory; a destination entry is data
+  that gets re-verified. Nothing on disk recorded which versions of them a
+  folder's artifacts came from, so nothing could refuse. `core/profiles.py`
+  gives each one a frozen, content-addressed profile — reusing the digests that
+  already existed, the mapping hash `source_trust.json` records and
+  `packtrust.pack_content_hash`, rather than inventing a second definition of
+  either — and `core/runmanifest.py` writes `run_manifest.json` beside
+  `charts/` and `ccda/` naming all three hashes, the run's inputs (the export
+  directory's path identity, never its contents), the pipeline version, and the
+  run's state. Coming back to that folder recaptures the three profiles from the
+  machine as it now stands: re-running the migration, uploading from it, or
+  recording a delivery against a folder whose source, destination or layout
+  moved refuses loudly and names WHICH one moved, with both digests.
+  `--rebind` is the explicit way to say the earlier artifacts no longer stand.
+  Destinations now declare a product `version` (explicitly `"unversioned"`
+  where no readable version exists — an absence stated rather than implied), and
+  `anast source init --to <destination>` chooses the destination BEFORE
+  teaching, so a mapping taught for one system refuses to run at another and
+  names both ends. The manifest carries no clock: two runs over the same inputs
+  write byte-identical files, which is what makes "did anything change?" a
+  comparison rather than a judgement. `prepared` -> `delivered` -> `verified`
+  is now recorded state rather than only a computed verdict, and every move past
+  `prepared` requires a receipt naming its evidence — `migrate` still writes
+  `prepared` and nothing else, because it still executes no delivery. See
+  [docs/RUN_MANIFEST.md](docs/RUN_MANIFEST.md). (#348)
+
 - **The guided session opens on the mark, not a pipe character.** `anast`
   typed bare on a terminal drew a half-block and a word, which is what a
   product looks like before anyone has decided what it looks like. It now

@@ -52,11 +52,14 @@ from anastomosis.sources.learned.reader import (
     read_rows,
 )
 from anastomosis.sources.learned.spec import (
+    DestinationBinding,
     FieldMapping,
     Grouping,
     MappingError,
     MappingSpec,
     SourceFormat,
+    mapping_content_hash,
+    mapping_json_text,
 )
 from anastomosis.sources.learned.transforms import is_lossy
 
@@ -542,6 +545,7 @@ def build_mapping(
     display: str,
     decisions: dict[str, tuple[str, str]] | None = None,
     now: datetime | None = None,
+    destination_binding: DestinationBinding | None = None,
 ) -> MappingSpec:
     """Assemble a reviewed :class:`MappingSpec` from confirmed decisions.
 
@@ -549,6 +553,11 @@ def build_mapping(
     omitted, the analysis suggestions are accepted as-is. Columns with no
     decision (and no suggestion) are recorded as ``unmapped_source_fields`` —
     still preserved in ``extensions`` by the interpreter, never dropped.
+
+    ``destination_binding`` records the destination the operator chose BEFORE
+    teaching, pinned by its profile hash. ``None`` leaves the mapping unbound —
+    it runs at any destination, which is what every mapping taught before this
+    existed does.
     """
     chosen = _chosen(analysis, decisions)
     reserved = {k for k in (analysis.patient_key, analysis.encounter_key) if k is not None}
@@ -587,6 +596,7 @@ def build_mapping(
             ),
             field_mappings=field_mappings,
             unmapped_source_fields=unmapped,
+            destination_binding=destination_binding,
         )
     except ValidationError as exc:
         raise _refused_review(exc, mapping_id) from None
@@ -706,6 +716,15 @@ def _mapping_markdown(spec: MappingSpec) -> str:
         f"- encounter key: `{spec.grouping.encounter_key}`",
         f"- row scope: {spec.grouping.row_scope}",
         f"- created: {spec.created_at.isoformat()}",
+        *(
+            []
+            if spec.destination_binding is None
+            else [
+                f"- taught for destination: `{spec.destination_binding.destination}` "
+                f"(version {spec.destination_binding.version}, profile "
+                f"`{spec.destination_binding.profile_hash[:12]}`)"
+            ]
+        ),
         "",
         "## Field mappings",
         "",
@@ -753,12 +772,12 @@ def save_mapping(spec: MappingSpec, base_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         target_dir.chmod(stat.S_IRWXU)  # 0700 — owner only, like the other user state
-    mapping_json = json.dumps(spec.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    mapping_json = mapping_json_text(spec)
     _atomic_write(target_dir / "mapping.json", mapping_json, 0o600)
     _atomic_write(target_dir / "MAPPING.md", _mapping_markdown(spec), 0o600)
-    import hashlib
-
-    digest = hashlib.sha256(mapping_json.encode("utf-8")).hexdigest()
-    trust = json.dumps({"mapping_sha256": digest, "human_reviewed": True}, indent=2) + "\n"
+    trust = (
+        json.dumps({"mapping_sha256": mapping_content_hash(spec), "human_reviewed": True}, indent=2)
+        + "\n"
+    )
     _atomic_write(target_dir / "source_trust.json", trust, 0o600)
     return target_dir

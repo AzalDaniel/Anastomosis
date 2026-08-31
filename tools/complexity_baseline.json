@@ -10,7 +10,7 @@
       "rank": "C"
     },
     "src/anastomosis/cli_commands/packsrc.py::source_init": {
-      "cc": 16,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/cli_commands/upload.py::upload_cmd": {
@@ -50,7 +50,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/source_init_command.py::run_source_init_command": {
-      "cc": 13,
+      "cc": 11,
       "rank": "C"
     },
     "src/anastomosis/core/sourcelearn.py::_infer_grouping": {
@@ -292,11 +292,11 @@
       "rank": "B"
     },
     "src/anastomosis/cli_commands/migrate.py": {
-      "avg": 9.3333,
+      "avg": 7.5,
       "rank": "B"
     },
     "src/anastomosis/cli_commands/packsrc.py": {
-      "avg": 8.2,
+      "avg": 6.8333,
       "rank": "B"
     },
     "src/anastomosis/cli_commands/upload.py": {
