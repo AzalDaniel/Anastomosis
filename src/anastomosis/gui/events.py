@@ -10,9 +10,13 @@ on:
   for a stage (records, rendered/skipped/failed, pass/warn/fail, per-deliverer);
   ``fields`` are integers plus PHI-free string labels (e.g. ``deliverer="archive"``).
 * ``{"type": "done",     "flow": str, **counts}`` — the run finished successfully;
-  carries the final roll-up counts.
+  carries the final roll-up counts, and — when the source kept a ledger — a
+  ``source_reading`` list of PHI-free sentences (the migration flow also adds
+  ``outcome`` and ``notice`` strings).
 * ``{"type": "error",    "flow": str, "stage": str, "error": str}`` — a failure;
-  ``error`` is an exception TYPE name or a PHI-free diagnosis, never a traceback.
+  ``error`` is an exception TYPE name or a PHI-free diagnosis, never a
+  traceback. The migration flow's manual-import verdict also carries
+  ``source_reading``.
 
 Flow invariant: every event carries a ``flow`` naming the operation
 family a page owns — one of ``"pipeline"``, ``"migration"``, ``"source_init"``,
@@ -25,8 +29,10 @@ event only ever reaches the page that raised it. ``flow`` is a fixed operation
 label, never patient-derived.
 
 PHI rule (enforced by a test): event *values* are integers, stage names, ids,
-flow labels, and exception type names only — never patient field values and
-never rendered filenames (counts of them, yes; the names, no).
+flow labels, exception type names, and the fixed-word sentences of
+``source_reading`` (counts and the ledger's own template words — see
+``physician_reading``'s contract) — never patient field values and never
+rendered filenames (counts of them, yes; the names, no).
 """
 
 from __future__ import annotations

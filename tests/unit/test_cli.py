@@ -860,5 +860,25 @@ def test_migrate_ccda_prints_what_the_source_offered(
     normalized = " ".join(result.output.split())
     assert "What the source offered, and what arrived:" in normalized
     assert "became data" in normalized
-    assert "loss_ledger.json for the full account" in normalized
+    assert "loss_ledger.json, beside the charts, for the full account" in normalized
     assert (out / "charts" / "loss_ledger.json").is_file()
+
+
+def test_pipeline_run_ccda_prints_what_the_source_offered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The block prints on `anast pipeline run` too — "every run", not only a
+    migration. This is the mutation the reviewer proved invisible: deleting the
+    `_print_source_reading` call in `_run_command` failed nothing before."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    ccda_fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+    out = tmp_path / "charts"
+    result = runner.invoke(
+        app, ["pipeline", "run", str(ccda_fixture), "--source", "ccda", "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    normalized = " ".join(result.output.split())
+    assert "What the source offered, and what arrived:" in normalized
+    assert "became data" in normalized
+    assert (out / "loss_ledger.json").is_file()

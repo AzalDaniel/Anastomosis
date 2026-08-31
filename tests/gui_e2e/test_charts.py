@@ -473,3 +473,47 @@ def test_the_banner_names_only_the_blank_half(gui) -> None:
     banner = app.text("#banner")
     assert "the folder to put the charts in" in banner
     assert "the folder your export is in" not in banner, banner
+
+
+READING = [
+    "Across 1 document the source offered 10 sections: 9 became data, 1 kept as text only, "
+    "0 not credited as data, 0 empty in the source.",
+    "Those sections carried 13 coded entries: 13 became data, 0 kept as text only.",
+]
+
+
+def test_the_source_reading_reaches_the_panel_and_stays_out_of_the_strip(gui) -> None:
+    """#315's charts surface, driven for real: the done event's sentences fill
+    the reading panel; a done WITHOUT the key leaves it hidden; the next run
+    clears it; and the activity strip never stringifies the list into its
+    counts line. The reviewer proved the render call and the NON_COUNT_KEYS
+    entry were both deletable without failing a test — this is that test."""
+    app = gui()
+    page = app.page
+    box = page.locator("#charts-reading")
+    assert box.get_attribute("hidden") is not None
+
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+    page.click("#charts-run")
+    page.wait_for_timeout(120)
+    done = done_event(_FLOW, summary_id="feedfacefeedface", patients=1, rendered=3)
+    done["source_reading"] = READING
+    app.emit(done)
+
+    assert box.is_visible()
+    text = box.text_content() or ""
+    assert "What the source offered, and what arrived" in text
+    assert READING[0] in text and READING[1] in text
+    # The strip speaks counts; the sentences must not be flattened into it.
+    strip = app.text("#log-strip-msg")
+    assert "became data" not in strip
+    assert "source reading" not in strip.lower()
+
+    # A run over a source that keeps no ledger says nothing — no empty frame.
+    page.click("#charts-run")
+    page.wait_for_timeout(120)
+    app.emit(stage_event(_FLOW, "ingest", "start"))
+    assert not box.is_visible(), "last run's account survived into this run"
+    app.emit(done_event(_FLOW, summary_id="feedfacefeedface", patients=1, rendered=3))
+    assert not box.is_visible()

@@ -1171,10 +1171,18 @@ def _merged_row(seen: LedgerRow | None, incoming: LedgerRow) -> LedgerRow:
 #: purpose — "1 became data" and "43 empty in the source" both scan — because a
 #: verb that had to agree would need a plural rule per phrase, and the first
 #: mismatch to slip through would sit in the one report written to be read.
+#:
+#: ``UNSUPPORTED`` deliberately states an epistemic position, not a cause. An
+#: unlinkable instance lands in this column too — on the reference fixture the
+#: record CARRIES both authors while their shared id root forbids crediting
+#: either — so a phrase like "dropped, no place here" would assert, in the one
+#: sentence a physician reads, a loss the module's own docstring only claims as
+#: an upper bound. "Not credited" is what the ledger actually knows, and the
+#: closing blind-spot line says how much of it is "could not check".
 _SAID: Mapping[Disposition, str] = {
     Disposition.STRUCTURALLY_PARSED: "became data",
     Disposition.NARRATIVE_PRESERVED: "kept as text only",
-    Disposition.UNSUPPORTED: "dropped with no place here",
+    Disposition.UNSUPPORTED: "not credited as data",
     Disposition.SOURCE_EMPTY: "empty in the source",
 }
 
@@ -1250,8 +1258,8 @@ def _body_lines(corpus: CorpusLedger) -> list[str]:
         return []
     said = (Disposition.STRUCTURALLY_PARSED, Disposition.UNSUPPORTED)
     return [
-        f"{_n(offered, 'document', 'documents')} carried the whole chart as a scanned "
-        f"or non-XML body: {_account(counts, said)}."
+        f"The whole chart travelled as a scanned or non-XML body "
+        f"{_n(offered, 'time', 'times')}: {_account(counts, said)}."
     ]
 
 

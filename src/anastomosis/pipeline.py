@@ -122,8 +122,9 @@ class PipelineError(Exception):
         self.exit_code = exit_code
         # A stable, PHI-free discriminator the CLI switches on to choose its
         # output line (replaces brittle message-prose matching). One of:
-        # no_source, bad_source, bad_pack, bad_section, bad_output,
-        # bad_destination, output_locked, render_failed, qa_failed, generic.
+        # no_source, bad_source, bad_input, empty_export, bad_pack,
+        # bad_section, bad_output, bad_destination, output_locked,
+        # render_failed, conservation_failed, qa_failed, generic.
         self.kind = kind
         self.failed = failed
 

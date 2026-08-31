@@ -399,7 +399,7 @@ def _print_source_reading(reading: tuple[str, ...]) -> None:
     console.print("[bold]What the source offered, and what arrived:[/bold]")
     for line in reading:
         console.print(f"  {line}")
-    console.print(f"  {_glyphs().arrow} loss_ledger.json for the full account")
+    console.print(f"  {_glyphs().arrow} loss_ledger.json, beside the charts, for the full account")
 
 
 def _print_delivery(outcome: DeliveryOutcome) -> None:
@@ -515,7 +515,10 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
         return
     else:
         # bad_source / bad_output / bad_section / generic: print the PHI-safe
-        # message. Exit code 2 (operator input), per the CLI's exit-code contract.
+        # message. Exit code 2 (operator input), per the CLI's exit-code
+        # contract — except conservation_failed, which lands here too and
+        # carries exit 1: a seam that lost work is the run's failure, not the
+        # operator's input.
         console.print(f"[red]{_escape(message)}[/red]")
 
 
