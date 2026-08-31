@@ -16,7 +16,7 @@ from anastomosis.core.model_paths import ASSEMBLED_ENCOUNTER_PATHS, ASSEMBLED_PA
 from anastomosis.core.sourcelearn import analyze_source, build_mapping
 from anastomosis.sources.learned import discover_learned_specs, register_learned_sources
 from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
-from anastomosis.sources.learned.reader import header_fingerprint
+from anastomosis.sources.learned.reader import header_fingerprint, read_rows
 from anastomosis.sources.learned.spec import (
     FieldMapping,
     Grouping,
@@ -355,3 +355,156 @@ def test_encounter_grained_preserves_per_row_unmapped_values(tmp_path: Path) -> 
     assert len(encounters) == 2  # one per row, even with no encounter field mapped
     colors = {e.extensions.get("learned:labs:LabColor") for e in encounters}
     assert colors == {"red", "blue"}  # both distinct values preserved
+
+
+# --- reader integrity ---------------------------------------------------------
+
+
+def test_normalized_runtime_headers_bind_to_authored_mapping_keys(tmp_path: Path) -> None:
+    # Fingerprinting intentionally ignores case, spacing, punctuation, and
+    # camelCase. The reader must retain that tolerance *and* bind runtime names
+    # back to the authored keys the interpreter plans use.
+    authored = ["patient_id", "first_name"]
+    source = tmp_path / "renamed.csv"
+    _write_csv(source, ["Patient ID", "First Name"], [["p-alias-1", "Ada"]])
+    spec = MappingSpec(
+        mapping_id="alias",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        human_reviewed=True,
+        display="Alias",
+        source_format=SourceFormat(
+            type="csv",
+            delimiter=",",
+            header_fingerprint=header_fingerprint(authored),
+            columns=authored,
+        ),
+        grouping=Grouping(patient_key="patient_id", row_scope="patient"),
+        field_mappings=[FieldMapping(source_path="first_name", target_path="patient.given_name")],
+    )
+
+    record = next(iter(LearnedSourceAdapter(spec).load(source)))
+    assert record.patient.id == "p-alias-1"
+    assert record.patient.given_name == "Ada"
+
+
+@pytest.mark.parametrize(
+    ("header", "row", "columns", "leaks"),
+    [
+        ("PID,PID", "p1,duplicate-secret", ["PID", "Name"], ("duplicate-secret",)),
+        ("PID, ", "p1,blank-secret", ["PID", "Name"], ("blank-secret",)),
+        (
+            "Patient ID,patient_id",
+            "p1,normalized-secret",
+            ["Patient ID", "Name"],
+            ("normalized-secret",),
+        ),
+    ],
+)
+def test_csv_unsafe_headers_fail_without_cell_values(
+    tmp_path: Path, header: str, row: str, columns: list[str], leaks: tuple[str, ...]
+) -> None:
+    source = tmp_path / "unsafe-header.csv"
+    source.write_text(f"{header}\n{row}\n", encoding="utf-8")
+    fmt = SourceFormat(
+        type="csv", delimiter=",", header_fingerprint=header_fingerprint(columns), columns=columns
+    )
+
+    with pytest.raises(MappingError) as excinfo:
+        read_rows(source, fmt)
+    assert all(leak not in str(excinfo.value) for leak in leaks)
+
+
+def test_normalization_colliding_authored_columns_fail_without_cell_values(tmp_path: Path) -> None:
+    source = tmp_path / "ambiguous.csv"
+    source.write_text("patient_id,Name\np1,authored-secret\n", encoding="utf-8")
+    fmt = SourceFormat(
+        type="csv",
+        delimiter=",",
+        header_fingerprint=header_fingerprint(["Patient ID", "patient_id"]),
+        columns=["Patient ID", "patient_id"],
+    )
+
+    with pytest.raises(MappingError) as excinfo:
+        read_rows(source, fmt)
+    assert "authored-secret" not in str(excinfo.value)
+
+
+def test_csv_overflow_cells_fail_without_cell_values(tmp_path: Path) -> None:
+    source = tmp_path / "ragged.csv"
+    source.write_text("PID,Name\np1,visible-name,overflow-secret\n", encoding="utf-8")
+    columns = ["PID", "Name"]
+    fmt = SourceFormat(
+        type="csv", delimiter=",", header_fingerprint=header_fingerprint(columns), columns=columns
+    )
+
+    with pytest.raises(MappingError) as excinfo:
+        read_rows(source, fmt)
+    message = str(excinfo.value)
+    assert "row 2" in message and "beyond its 2 headers" in message
+    assert "visible-name" not in message and "overflow-secret" not in message
+
+
+@pytest.mark.parametrize(
+    ("suffix", "content"),
+    [
+        (".json", '[{"a.b": "literal-secret", "a": {"b": "nested-secret"}}]'),
+        (".ndjson", '{"a.b": "literal-secret", "a": {"b": "nested-secret"}}\n'),
+    ],
+)
+def test_flattened_json_path_collision_fails_without_cell_values(
+    tmp_path: Path, suffix: str, content: str
+) -> None:
+    source = tmp_path / f"collision{suffix}"
+    source.write_text(content, encoding="utf-8")
+    fmt_type = "json" if suffix == ".json" else "ndjson"
+    fmt = SourceFormat(
+        type=fmt_type,  # type: ignore[arg-type]
+        header_fingerprint=header_fingerprint(["a.b"]),
+        columns=["a.b"],
+    )
+
+    with pytest.raises(MappingError) as excinfo:
+        read_rows(source, fmt)
+    message = str(excinfo.value)
+    assert "literal-secret" not in message and "nested-secret" not in message
+
+
+@pytest.mark.parametrize(
+    ("suffix", "content"),
+    [
+        (".json", '[{"PID": "first-secret", "PID": "second-secret"}]'),
+        (".ndjson", '{"PID": "first-secret", "PID": "second-secret"}\n'),
+    ],
+)
+def test_duplicate_json_object_key_fails_without_values(
+    tmp_path: Path, suffix: str, content: str
+) -> None:
+    source = tmp_path / f"duplicate-key{suffix}"
+    source.write_text(content, encoding="utf-8")
+    fmt_type = "json" if suffix == ".json" else "ndjson"
+    fmt = SourceFormat(
+        type=fmt_type,  # type: ignore[arg-type]
+        header_fingerprint=header_fingerprint(["PID"]),
+        columns=["PID"],
+    )
+
+    with pytest.raises(MappingError) as excinfo:
+        read_rows(source, fmt)
+    message = str(excinfo.value)
+    assert "first-secret" not in message and "second-secret" not in message
+
+
+def test_detect_rejects_ambiguous_authored_aliases(tmp_path: Path) -> None:
+    source = tmp_path / "ambiguous-authored.csv"
+    source.write_text("patient_id\np1\n", encoding="utf-8")
+    fmt = SourceFormat(
+        type="csv",
+        delimiter=",",
+        header_fingerprint=header_fingerprint(["Patient ID", "patient_id"]),
+        columns=["Patient ID", "patient_id"],
+    )
+
+    from anastomosis.sources.learned.reader import find_source_file
+
+    with pytest.raises(MappingError):
+        find_source_file(source, fmt)

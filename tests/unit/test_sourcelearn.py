@@ -39,6 +39,53 @@ def test_detect_format_reads_csv_columns_and_fingerprint() -> None:
     assert len(fmt.header_fingerprint) == 64  # sha256 hex
 
 
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("ccd.xml", "<?xml version='1.0'?><ClinicalDocument>secret</ClinicalDocument>"),
+        ("page.html", "<!doctype html><html><body>secret</body></html>"),
+        ("note.pdf", "%PDF-1.7 secret"),
+        ("archive.zip", "PK\x03\x04secret"),
+        ("extensionless_pdf", "  \r\n%PDF-1.7 secret"),
+        ("extensionless", "<ClinicalDocument>secret</ClinicalDocument>"),
+        ("binary", "text\x00secret"),
+    ],
+)
+def test_detect_format_rejects_non_tabular_content_without_leaking_values(
+    tmp_path: Path, name: str, content: str
+) -> None:
+    source = tmp_path / name
+    source.write_bytes(content.encode("utf-8"))
+
+    with pytest.raises(MappingError) as excinfo:
+        detect_format(source)
+    assert "secret" not in str(excinfo.value)
+    assert list(tmp_path.iterdir()) == [source]  # detection creates no mapping artifacts
+
+
+def test_detect_format_preserves_extensionless_delimited_text(tmp_path: Path) -> None:
+    source = tmp_path / "export"
+    source.write_text("PID,First\np1,Ada\n", encoding="utf-8")
+
+    fmt = detect_format(source)
+    assert fmt.type == "csv"
+    assert fmt.columns == ["PID", "First"]
+
+
+def test_detect_format_does_not_read_entire_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "export"
+    source.write_text("PID,First\np1,Ada\n", encoding="utf-8")
+
+    def _forbid_whole_file_read(_path: Path) -> bytes:
+        raise AssertionError("format detection must stream a bounded prefix")
+
+    monkeypatch.setattr(Path, "read_bytes", _forbid_whole_file_read)
+
+    assert detect_format(source).columns == ["PID", "First"]
+
+
 def test_profile_columns_infers_types_and_masks_values() -> None:
     fmt = detect_format(FIXTURE)
     rows = read_rows(FIXTURE, fmt)
@@ -193,10 +240,10 @@ def test_analyze_json_array(tmp_path: Path) -> None:
     assert by_source["last_name"].target_path == "patient.family_name"
 
 
-def test_round_trip_detects_value_level_drop(tmp_path: Path) -> None:
-    # row_scope=patient with duplicate patient rows collapses an un-mapped column
-    # to last-value-wins. round_trip must catch the LOST VALUE, not merely confirm
-    # the column name is present somewhere.
+def test_round_trip_refuses_duplicate_patient_grain_before_value_loss(tmp_path: Path) -> None:
+    # row_scope=patient with duplicate patient rows used to collapse an un-mapped
+    # column to last-value-wins. The runtime now refuses the invalid grain before
+    # building a record, which is stronger than detecting the dropped value later.
     from anastomosis.sources.learned.reader import header_fingerprint
     from anastomosis.sources.learned.spec import Grouping, MappingSpec, SourceFormat
 
@@ -219,4 +266,10 @@ def test_round_trip_detects_value_level_drop(tmp_path: Path) -> None:
     )
     report = round_trip(spec, csv_path)
     assert report.ok is False
-    assert "Color" in report.dropped_columns
+    assert report.record_count == 0
+    assert report.dropped_columns == []
+    assert report.error is not None
+    assert "row_scope='patient'" in report.error
+    assert "PID" in report.error
+    assert "red" not in report.error
+    assert "blue" not in report.error

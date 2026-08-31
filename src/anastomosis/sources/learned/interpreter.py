@@ -9,10 +9,13 @@ file format into canonical :class:`PatientRecord`\\s. New formats are new *data*
 The flat-to-nested fold mirrors the built-in adapters (``pf_tebra._by`` /
 ``fhir_r4.records_from_resources``): rows are grouped by the spec's
 ``patient_key`` into patients, and — when the mapping has encounter fields —
-each row (de-duplicated by ``encounter_key`` when present) becomes an encounter.
-``row_scope`` declares the grain and therefore where un-mapped columns attach
-(patient-grained vs encounter-grained); encounter-grained rows are each their
-own encounter so per-row values are never collapsed. The wizard's
+each encounter-grained row becomes an encounter. Runtime integrity checks
+refuse blank patient keys, duplicate patient-grained rows, conflicting
+patient-scoped values, and repeated non-blank encounter keys rather than
+silently inventing or collapsing identity. ``row_scope`` declares the grain
+and therefore where un-mapped columns attach (patient-grained vs
+encounter-grained); encounter-grained rows are each their own encounter so
+per-row values are never collapsed. The wizard's
 ``round_trip`` proves, per value, that no column is dropped before a mapping is
 ever saved.
 
@@ -175,16 +178,26 @@ class LearnedSourceAdapter:
     def _group_by_patient(self, rows: list[Row]) -> list[tuple[str, list[Row]]]:
         """Group rows by patient key, preserving first-seen order (deterministic).
 
-        A row missing the patient key becomes its own singleton patient under a
-        deterministic synthetic key, so it is never silently dropped.
+        A declared patient key is an identity boundary: a blank/missing key or
+        duplicate patient-grained row is rejected before any record is built.
         """
         order: list[str] = []
         groups: dict[str, list[Row]] = {}
-        for index, row in enumerate(rows):
-            key = clean_cell(row.get(self._patient_key)) or f"__row{index}"
+        for row_number, row in enumerate(rows, start=1):
+            key = clean_cell(row.get(self._patient_key))
+            if key is None:
+                raise MappingError(
+                    f"learned mapping {self.name!r}: blank or missing patient key in "
+                    f"column {self._patient_key!r} (row {row_number})"
+                )
             if key not in groups:
                 groups[key] = []
                 order.append(key)
+            elif self._spec.grouping.row_scope == "patient":
+                raise MappingError(
+                    f"learned mapping {self.name!r}: row_scope='patient' found 2 rows "
+                    f"with the same patient key in column {self._patient_key!r}"
+                )
             groups[key].append(row)
         return [(key, groups[key]) for key in order]
 
@@ -216,15 +229,28 @@ class LearnedSourceAdapter:
                     extensions[f"learned:{self.name}:{column}"] = value
         return extensions
 
-    def _build_patient(
-        self, base_row: Row, group_key: str, extensions: dict[str, object], file_name: str
-    ) -> Patient:
+    def _patient_parts(
+        self, base_row: Row, resolved_values: dict[str, object] | None
+    ) -> tuple[dict[str, object], dict[str, str], list[ContactPoint], list[Identifier]]:
+        """Route each mapped patient value to the model shape that holds it.
+
+        Four destinations, because the canonical patient does not store these
+        alike: an address is one assembled object, phones and email are typed
+        contact points, SSN/MRN/PRN are typed identifiers, and everything else
+        is a plain field. ``resolved_values`` carries the first-nonblank values
+        agreed across an encounter-grained group; without it each value is read
+        from the one row.
+        """
         scalars: dict[str, object] = {}
         address: dict[str, str] = {}
         telecom: list[ContactPoint] = []
         identifiers: list[Identifier] = []
         for plan in self._patient_plan:
-            value = self._value(base_row, plan)
+            value = (
+                self._value(base_row, plan)
+                if resolved_values is None
+                else resolved_values.get(plan.target_path)
+            )
             if value is None:
                 continue
             if plan.target_path in _ADDRESS_PARTS:
@@ -239,7 +265,17 @@ class LearnedSourceAdapter:
                 )
             else:  # patient.<scalar>
                 scalars[plan.target_path.split(".", 1)[1]] = value
+        return scalars, address, telecom, identifiers
 
+    def _build_patient(
+        self,
+        base_row: Row,
+        group_key: str,
+        extensions: dict[str, object],
+        file_name: str,
+        resolved_values: dict[str, object] | None = None,
+    ) -> Patient:
+        scalars, address, telecom, identifiers = self._patient_parts(base_row, resolved_values)
         patient_id = clean_cell(base_row.get(self._patient_key))
         if patient_id is not None:
             # Front of the list so a reader sees the identity this mapping keyed
@@ -263,9 +299,15 @@ class LearnedSourceAdapter:
         )
         return self._construct(Patient, kwargs, "patient")
 
-    def _build_encounter(
-        self, row: Row, patient_id: str, encounter_id: str, with_extensions: bool, file_name: str
-    ) -> Encounter:
+    def _encounter_parts(self, row: Row) -> tuple[dict[str, object], list[NoteSection]]:
+        """Route each mapped encounter value: narrative sections, or plain fields.
+
+        The mirror of :meth:`_patient_parts`, and split for the same reason —
+        the routing table is one concern and assembling the model is another.
+        A SOAP body arrives as source markup, so it is sanitised for render and
+        shadowed as text for search/QA; neither is allowed to be empty-string
+        where the model means absent.
+        """
         scalars: dict[str, object] = {}
         sections: list[NoteSection] = []
         for plan in self._encounter_plan:
@@ -285,6 +327,12 @@ class LearnedSourceAdapter:
                 )
             else:  # encounter.<scalar>
                 scalars[plan.target_path.split(".", 1)[1]] = value
+        return scalars, sections
+
+    def _build_encounter(
+        self, row: Row, patient_id: str, encounter_id: str, with_extensions: bool, file_name: str
+    ) -> Encounter:
+        scalars, sections = self._encounter_parts(row)
         kwargs: dict[str, object] = dict(scalars)
         kwargs["id"] = encounter_id
         kwargs["patient_id"] = patient_id
@@ -312,7 +360,10 @@ class LearnedSourceAdapter:
             encounter_id = clean_cell(row.get(self._encounter_key)) if self._encounter_key else None
             if encounter_id is not None:
                 if encounter_id in seen:
-                    continue  # a duplicate joined row for an encounter already built
+                    raise MappingError(
+                        f"learned mapping {self.name!r}: found 2 rows with the same "
+                        f"non-blank encounter key in column {self._encounter_key!r}"
+                    )
                 seen.add(encounter_id)
             encounter_id = encounter_id or f"{self.name}:{patient_id}:{index}"
             encounters.append(
@@ -320,15 +371,50 @@ class LearnedSourceAdapter:
             )
         return encounters
 
+    def _resolve_encounter_grained_patient_values(self, group_rows: list[Row]) -> dict[str, object]:
+        """Return first non-empty patient values, refusing conflicts across rows.
+
+        Encounter exports commonly repeat demographics, sometimes leaving a
+        repeated value blank. The first non-empty transformed value for each
+        field is deterministic; incompatible non-empty values would make that
+        choice lossy and are therefore rejected.
+        """
+        values_by_target: dict[str, object] = {}
+        for row in group_rows:
+            for plan in self._patient_plan:
+                value = self._value(row, plan)
+                if value is None or (isinstance(value, str) and clean_cell(value) is None):
+                    continue
+                if plan.target_path not in values_by_target:
+                    values_by_target[plan.target_path] = value
+                elif values_by_target[plan.target_path] != value:
+                    raise MappingError(
+                        f"learned mapping {self.name!r}: encounter-grained rows have "
+                        f"conflicting non-empty values for patient field {plan.target_path!r} "
+                        f"from column {plan.source_path!r}"
+                    )
+        return values_by_target
+
     def _assemble(self, group_key: str, group_rows: list[Row], file_name: str) -> PatientRecord:
         encounter_grained = self._spec.grouping.row_scope == "encounter"
+        resolved_patient_values = (
+            self._resolve_encounter_grained_patient_values(group_rows)
+            if encounter_grained
+            else None
+        )
         # Un-mapped columns attach where the grain says: to each encounter when
         # the row is encounter-grained (handled in _build_encounter via
         # with_extensions), else merged onto the patient. In patient-grained mode
         # the canonical assumption is one row per patient, so the merge is
         # lossless; round_trip proves this per value and refuses to save if not.
         patient_extensions = {} if encounter_grained else self._row_extensions(group_rows)
-        patient = self._build_patient(group_rows[0], group_key, patient_extensions, file_name)
+        patient = self._build_patient(
+            group_rows[0],
+            group_key,
+            patient_extensions,
+            file_name,
+            resolved_patient_values,
+        )
         encounters = self._build_encounters(patient.id, group_rows, file_name)
         return PatientRecord(
             patient=patient,

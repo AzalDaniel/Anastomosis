@@ -35,6 +35,15 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The rail read "0 warn, 0 fail" over a chart that abbreviated thirteen
+  facts.** `settle_qa` had carried `not_carried` on the QA stage event since
+  #271's never-green-with-nothing-said rule, but neither frontend said what it
+  meant: the CLI's QA line stopped at pass/warn/fail, and the GUI's rail turned
+  the bare key into "not carried 13", which told an operator nothing about
+  what 13 counted. Both now read the count in the words `qa_report.json`
+  already had — "13 fact(s) carried by the record summary, not the visit
+  charts" — printed only when the count is nonzero, silent on every run that
+  abbreviates nothing. (#297)
 - **A scanned chart is still a chart.** A C-CDA Unstructured Document carries
   its whole clinical content as one embedded or referenced artifact under
   `<nonXMLBody>` — a scanned referral, a faxed discharge summary — instead of

@@ -278,9 +278,10 @@ def test_each_participation_keeps_the_role_it_carried(
 def test_an_informant_who_gave_only_a_relationship_still_arrives_as_one(
     record: PatientRecord,
 ) -> None:
-    """CDA's ``relatedEntity`` has no id, so this one can never be credited by
-    the ingest ledger — but the document did say a spouse supplied the history,
-    and dropping that for want of an identifier would lose the fact itself."""
+    """CDA's ``relatedEntity`` has no id, so nothing but what this informant
+    STATES can ever attribute it — the document said a spouse supplied the
+    history, and dropping that for want of an identifier would lose both the
+    fact and the only evidence the ingest ledger has for it."""
     informant = _sole(record, "informant")
     assert informant.extensions["ccda:code"] == "spouse"
     assert informant.extensions["ccda:classCode"] == "PRS"

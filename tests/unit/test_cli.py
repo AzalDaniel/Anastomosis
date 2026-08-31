@@ -104,7 +104,15 @@ def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.Mon
     assert "6 rendered" in result.output
     # 6 charts + the 3 whole-patient record summaries the bundle now carries.
     # "rendered" still counts charts; QA counts every document it graded.
-    assert "QA: 9 pass" in result.output
+    # not_carried=23 is this fixture's own count (pinned from the actual run,
+    # observed not guessed, same as the Synthea e2e lane): generic_soap omits
+    # conditions/allergies/medications/immunizations/results, and this record
+    # holds some of every kind. Before #297 this figure existed only inside
+    # qa_report.json; the line below is the whole point of that issue.
+    assert (
+        "QA: 9 pass, 0 warn, 0 fail — 23 fact(s) carried by the record summary, "
+        "not the visit charts" in " ".join(result.output.split())
+    )
     assert len(list(out.glob("*.pdf"))) == 6
     assert len(list((out / "record-summary").glob("*.pdf"))) == 3
     assert (out / "_PHI_WARNING_README.txt").exists()
