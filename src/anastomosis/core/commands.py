@@ -458,25 +458,18 @@ def _extra_available(modules: tuple[str, ...]) -> bool:
     )
 
 
-def get_toolkit_info() -> ToolkitInfo:
-    """Probe installed extras, registered sources, and discovered packs.
+def _source_infos() -> list[SourceInfo]:
+    """Every registered adapter, as the pickers and ``anast info`` read it.
 
-    Pure data, no PHI (versions, names, booleans). The single source of truth
-    behind ``anast info`` and :meth:`GuiController.info`.
+    ``getattr``, though the protocol declares ``display``: the registry is
+    open, and an adapter registered by code this repository never type-checked
+    is exactly the case a fallback exists for. It reads as its own id, which is
+    what every adapter read as before. ``selection_rules`` is read the same way
+    for the same reason, and answers empty for a source that has none.
     """
-    import anastomosis
-    import anastomosis.pipeline  # registers built-in source adapters at import
-    from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.packtrust import default_pack_trust
     from anastomosis.sources import available_sources, selection_rules
 
-    extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
-    # `getattr`, though the protocol declares `display`: the registry is open,
-    # and an adapter registered by code this repository never type-checked is
-    # exactly the case a fallback exists for. It reads as its own id, which is
-    # what every adapter read as before. `selection_rules` is read the same way
-    # for the same reason, and answers empty for a source that has none.
-    sources = [
+    return [
         SourceInfo(
             name=adapter.name,
             display=getattr(adapter, "display", "") or adapter.name,
@@ -488,12 +481,21 @@ def get_toolkit_info() -> ToolkitInfo:
         )
         for adapter in available_sources()
     ]
+
+
+def _pack_infos() -> list[PackInfo]:
+    """Every layout a run form may offer, with why an unavailable one is not.
+
+    The trust store is passed so a layout the operator taught (it lands in the
+    per-user pack directory) is discovered here at its confirmed hash and can
+    be SELECTED on the run forms this feeds. Without it every learned layout
+    reported unavailable and only the built-ins were ever offered — a run form
+    that cannot name the layout the app just said it wrote.
+    """
+    from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.packtrust import default_pack_trust
+
     packs: list[PackInfo] = []
-    # The trust store is passed so a layout the operator taught (it lands in the
-    # per-user pack directory) is discovered here at its confirmed hash and can
-    # be SELECTED on the run forms this feeds. Without it every learned layout
-    # reported unavailable and only the built-ins were ever offered — a run form
-    # that cannot name the layout the app just said it wrote.
     for status in discover_packs(trust=default_pack_trust()).values():
         pack = status.pack
         sections: dict[str, dict[str, object]] = {}
@@ -513,4 +515,21 @@ def get_toolkit_info() -> ToolkitInfo:
                 sections=sections,
             )
         )
-    return ToolkitInfo(version=anastomosis.__version__, extras=extras, sources=sources, packs=packs)
+    return packs
+
+
+def get_toolkit_info() -> ToolkitInfo:
+    """Probe installed extras, registered sources, and discovered packs.
+
+    Pure data, no PHI (versions, names, booleans). The single source of truth
+    behind ``anast info`` and :meth:`GuiController.info`.
+    """
+    import anastomosis
+    import anastomosis.pipeline  # registers built-in source adapters at import
+
+    return ToolkitInfo(
+        version=anastomosis.__version__,
+        extras={extra: _extra_available(modules) for extra, modules in _EXTRAS},
+        sources=_source_infos(),
+        packs=_pack_infos(),
+    )
