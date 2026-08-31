@@ -178,7 +178,7 @@
       "rank": "D"
     },
     "src/anastomosis/pipeline.py::_carry_attachments": {
-      "cc": 15,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/pipeline.py::run_pipeline": {
