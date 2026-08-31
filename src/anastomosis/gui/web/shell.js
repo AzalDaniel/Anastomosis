@@ -218,7 +218,16 @@
   const COUNT_TEXT = {
     not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
   };
-  const NON_COUNT_KEYS = ["type", "stage", "state", "flow", "summary_id", "notice", "outcome"];
+  const NON_COUNT_KEYS = [
+    "type",
+    "stage",
+    "state",
+    "flow",
+    "summary_id",
+    "notice",
+    "outcome",
+    "source_reading",
+  ];
   function countsText(event) {
     return Object.keys(event)
       .filter((k) => !NON_COUNT_KEYS.includes(k))
@@ -1791,6 +1800,31 @@
     }
   }
 
+  // ─── What the source offered, and what arrived ────────────────
+  //
+  // The source ledger's reading of a load: sentences composed on the Python
+  // side out of counts and its own fixed words (ledger.physician_reading), so
+  // no patient value can be in them, and this only lays them out. An empty or
+  // missing reading hides the box — every source that keeps no ledger leaves
+  // the screen exactly as it was.
+  function renderReading(box, lines) {
+    if (!box) return;
+    box.textContent = "";
+    if (!Array.isArray(lines) || !lines.length) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    const head = document.createElement("h3");
+    head.textContent = "What the source offered, and what arrived";
+    box.appendChild(head);
+    for (const line of lines) {
+      const p = document.createElement("p");
+      p.textContent = String(line);
+      box.appendChild(p);
+    }
+  }
+
   window.AnastShell = {
     hasApi,
     guardButton,
@@ -1815,12 +1849,18 @@
     initSegmentToggles,
     displayName,
     nameOf,
+    // The chooser and the labelled field around it, so a view can build one of
+    // N where its OPTIONS come from the file in front of the operator (Teach's
+    // per-column corrections) rather than from markup written in advance.
+    makeChooser,
+    makeField,
     fillChooser,
     renderSectionMatrix,
     gatherSections,
     buildRunForm,
     renderPatients,
     clearPatients,
+    renderReading,
     refusalText,
     loadPatients,
     renderCalendar,

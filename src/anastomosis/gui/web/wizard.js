@@ -259,6 +259,7 @@
     if (!pendingRun) return;
     pendingRun = null;
     Shell.clearPatients(el("migrate-patients"), el("migrate-patients-body"));
+    Shell.renderReading(el("migrate-reading"), []);
   }
 
   async function onRun() {
@@ -321,6 +322,7 @@
           "Charts and the transfer document are written. Nothing has been sent yet " +
             "— review the results, then continue on the Uploads screen."
         );
+        Shell.renderReading(el("migrate-reading"), event.source_reading);
         Shell.loadPatients(el("migrate-patients"), el("migrate-patients-body"), event.summary_id);
         break;
       case "error":
@@ -335,6 +337,10 @@
               "destination yourself, or set up a filing assistant with " +
               "`anast destination init`."
           );
+          // The reading matters most on this verdict: the person about to
+          // import by hand should know what the document carries as data and
+          // what as text before the destination shows them.
+          Shell.renderReading(el("migrate-reading"), event.source_reading);
           Shell.showBanner("The migration finished without sending anything. See the note below.");
         } else {
           Shell.showBanner(

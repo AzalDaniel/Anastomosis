@@ -22,6 +22,7 @@ from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.controller import GuiApi, GuiController
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
+CCDA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
 
 # The synthetic fixture's patient names — no event value may contain any of
 # these (PHI probe). Confirmed against patient-demographics.tsv.
@@ -2491,3 +2492,56 @@ def test_a_downgraded_stage_reaches_the_page_as_skipped_not_done() -> None:
     on_event(StageEvent(STAGE_QA, counts={"pass": 6, "warn": 0, "fail": 0}))
     states = [e["state"] for e in emitted if e.get("type") == "stage"]
     assert states == ["start", "done"], states
+
+
+# --- the source ledger's reading reaches the summary panels (#315) ------------
+
+
+def test_a_ccda_run_carries_the_source_reading_to_both_flows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The done event and the return value both carry the load's account —
+    sentences of counts and fixed words, so the PHI event-stream contract
+    holds — and the fixture's own stated values never ride along."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+
+    sink = _RecordingSink()
+    result = GuiController(sink).run_pipeline(
+        str(CCDA_FIXTURE), str(tmp_path / "charts"), source="ccda", qa=False
+    )
+    assert result["ok"] is True
+    reading = result["source_reading"]
+    assert isinstance(reading, list) and any("became data" in line for line in reading)
+    done = next(e for e in sink.events if e.get("type") == "done")
+    assert done["source_reading"] == reading
+    # The fixture patient's stated values stay out of the event stream even
+    # now that prose rides it: the sentences are counts and template words.
+    blob = repr(sink.events)
+    for stated in ("Cora", "Specimen", "Authorman", "feedface"):
+        assert stated not in blob, f"event log leaked {stated!r}"
+
+    sink = _RecordingSink()
+    result = GuiController(sink).run_migration(
+        str(CCDA_FIXTURE), str(tmp_path / "out"), source="ccda", destination="tebra", qa=False
+    )
+    assert result["ok"] is True
+    assert result["source_reading"] == reading  # same load, same account
+    done = next(e for e in sink.events if e.get("type") == "done")
+    assert done["source_reading"] == reading
+
+
+def test_a_ledgerless_run_carries_no_reading_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PF/Tebra keeps no ledger: the done event stays byte-identical to before
+    this surface existed (no empty key to explain), and the return value says
+    () rather than omitting the field a caller would have to probe for."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    sink = _RecordingSink()
+    result = GuiController(sink).run_pipeline(str(FIXTURE), str(tmp_path / "out"), qa=False)
+    assert result["ok"] is True
+    assert result["source_reading"] == []
+    done = next(e for e in sink.events if e.get("type") == "done")
+    assert "source_reading" not in done

@@ -129,7 +129,16 @@
   const COUNT_TEXT = {
     not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
   };
-  const NON_COUNT_KEYS = ["type", "stage", "state", "flow", "summary_id", "notice", "outcome"];
+  const NON_COUNT_KEYS = [
+    "type",
+    "stage",
+    "state",
+    "flow",
+    "summary_id",
+    "notice",
+    "outcome",
+    "source_reading",
+  ];
   function countsText(event) {
     return Object.keys(event)
       .filter((k) => !NON_COUNT_KEYS.includes(k))
@@ -220,6 +229,7 @@
     plannedStages = stagesFor(config);
     settledStages = 0;
     Shell.clearPatients(el("charts-patients"), el("charts-patients-body"));
+    Shell.renderReading(el("charts-reading"), []);
     const frame = el("charts-progress");
     if (frame) frame.classList.remove("is-stopped");
     renderRail(config);
@@ -259,6 +269,7 @@
         if (skippedStages.length) Shell.showBanner(SKIPPED_NOTE.qa);
         setBusy(false);
         setProgress(100);
+        Shell.renderReading(el("charts-reading"), event.source_reading);
         Shell.loadPatients(el("charts-patients"), el("charts-patients-body"), event.summary_id);
         break;
       case "error":

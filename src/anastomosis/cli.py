@@ -395,6 +395,24 @@ def _run_command(cmd: PipelineCommand) -> None:
         outcome = result.deliveries.get(kind)
         if outcome is not None:
             _print_delivery(outcome)
+    _print_source_reading(result.pipeline.source_reading)
+
+
+def _print_source_reading(reading: tuple[str, ...]) -> None:
+    """Print the source ledger's account of the load, when the source kept one.
+
+    The sentences arrive composed (``ledger.physician_reading`` — chart
+    vocabulary, PHI-free by construction), so this only frames them: a heading
+    that says what the block is, and the pointer to ``loss_ledger.json`` where
+    the construct-by-construct account went. Silent for sources that keep no
+    ledger, so every other adapter's output is unchanged.
+    """
+    if not reading:
+        return
+    console.print("[bold]What the source offered, and what arrived:[/bold]")
+    for line in reading:
+        console.print(f"  {line}")
+    console.print(f"  {_glyphs().arrow} loss_ledger.json, beside the charts, for the full account")
 
 
 def _print_delivery(outcome: DeliveryOutcome) -> None:
@@ -524,8 +542,11 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
         # exiting; no extra error line is emitted here — matching the original.
         return
     else:
-        # bad_source / bad_output / bad_section / bad_selection / generic: the
-        # PHI-safe message. Exit code 2 (operator input), per the exit-code contract.
+        # bad_source / bad_output / bad_section / bad_selection / generic:
+        # print the PHI-safe message. Exit code 2 (operator input), per the
+        # CLI's exit-code contract — except conservation_failed, which lands
+        # here too and carries exit 1: a seam that lost work is the run's
+        # failure, not the operator's input.
         console.print(f"[red]{_escape(message)}[/red]")
 
 

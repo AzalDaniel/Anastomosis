@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.gui.controller import GuiApi, GuiController
 from anastomosis.gui.shared import _group_states
 
@@ -38,6 +39,7 @@ __all__ = [
     "CANNED_DESTINATION",
     "CANNED_PATIENTS",
     "CANNED_SOURCE",
+    "CANNED_SOURCE_SUGGESTIONS",
     "api_surface",
     "canned_returns",
     "init_script",
@@ -82,6 +84,50 @@ CANNED_PATIENTS: tuple[dict[str, object], ...] = (
 #: ``_group_states`` the controller uses, so the console's counter tiles are
 #: checked against the real bucketing rather than a hand-typed copy.
 CANNED_LEDGER_COUNTS: dict[str, int] = {"pending": 4, "uploading": 1, "completed": 2, "failed": 1}
+
+#: The learn-a-source proposal the Teach lane opens on — and it is WRONG on
+#: purpose, in the way the deterministic scorer really is wrong: ``VisitId`` is
+#: a visit IDENTIFIER, and column-name similarity has aimed it at the visit
+#: DATE and set it to be read as a date. Correcting that in place, and proving
+#: what the correction puts on the wire, is what the Teach lane drives.
+#:
+#: Synthetic by construction, and by the same rule the real proposal follows:
+#: column names, the profiler's inferred type labels, and its letter-for-letter
+#: digit-for-digit masks. No cell value appears here, because none may.
+CANNED_SOURCE_SUGGESTIONS: tuple[dict[str, object], ...] = (
+    {
+        "source": "MRN",
+        "target": None,
+        "transform": "strip",
+        "confidence": 0.0,
+        "inferred_type": "text",
+        "sample_shape": "NNNNNN",
+    },
+    {
+        "source": "VisitId",
+        "target": "encounter.date_of_service",
+        "transform": "parse_date",
+        "confidence": 0.44,
+        "inferred_type": "text",
+        "sample_shape": "NN-NNN",
+    },
+    {
+        "source": "VisitDate",
+        "target": None,
+        "transform": "strip",
+        "confidence": 0.31,
+        "inferred_type": "date",
+        "sample_shape": "NN/NN/NNNN",
+    },
+    {
+        "source": "Complaint",
+        "target": None,
+        "transform": "strip",
+        "confidence": 0.22,
+        "inferred_type": "text",
+        "sample_shape": "Aaaaa aaaa",
+    },
+)
 
 #: The canned ledger's latest run row (ids, a destination name, ISO stamps).
 CANNED_RUN: dict[str, object] = {
@@ -177,32 +223,17 @@ def canned_returns() -> dict[str, object]:
                 "ok": False,
                 "error": "ConfirmationRequired",
                 "format": "csv",
-                "columns": 6,
-                "patient_key": ["patient_id"],
-                "encounter_key": ["visit_id"],
+                "columns": len(CANNED_SOURCE_SUGGESTIONS),
+                "patient_key": "MRN",
+                "encounter_key": None,
                 "row_scope": "encounter",
-                "mapped": 4,
-                "suggestions": [
-                    {
-                        "source": "patient_id",
-                        "target": "patient.id",
-                        "transform": "identity",
-                        "confidence": 0.99,
-                    },
-                    {
-                        "source": "visit_note",
-                        "target": "document.text",
-                        "transform": "identity",
-                        "confidence": 0.71,
-                    },
-                    {
-                        "source": "clinic_widget_code",
-                        "target": None,
-                        "transform": "identity",
-                        "confidence": 0.0,
-                    },
-                ],
-                "summary": ["6 columns analyzed", "2 unmapped columns ride extensions"],
+                "mapped": 1,
+                "suggestions": [dict(row) for row in CANNED_SOURCE_SUGGESTIONS],
+                "summary": ["4 columns analyzed", "3 unmapped columns ride extensions"],
+                # The closed set every correction chooser is filled from, read
+                # off the real canonical model rather than hand-listed: a field
+                # renamed there changes what the page offers, here too.
+                "targets": sorted(canonical_target_paths()),
             },
             # The upload console's read-only ledger views.
             "upload_status": {

@@ -16,6 +16,7 @@ from pathlib import Path
 from anastomosis.core.model import PatientRecord
 from anastomosis.sources.base import SourceDataError, register
 
+from .ledger import DocumentLedger, document_ledger
 from .parser import parse_document
 
 __all__ = ["CCDAAdapter"]
@@ -48,6 +49,17 @@ class CCDAAdapter:
     display = "C-CDA"
     description = "C-CDA / CCD XML documents (HL7 CDA R2)"
 
+    def __init__(self) -> None:
+        #: One :class:`DocumentLedger` per document the last ``load`` parsed —
+        #: what each offered against what its record kept. Same contract as the
+        #: ``quarantine`` attribute (see ``sources/base.py``): reset when a load
+        #: starts, complete once it has been fully consumed, read by the
+        #: pipeline with ``getattr``. Kept on the hot path deliberately: the
+        #: second walk costs about a millisecond per document — under half a
+        #: parse, noise against a render — and a reading that only exists when
+        #: someone thought to ask for it is how the original loss went unseen.
+        self.ledgers: list[DocumentLedger] = []
+
     def detect(self, path: Path) -> bool:
         for xml_file in path.glob("*.xml"):
             try:
@@ -72,6 +84,7 @@ class CCDAAdapter:
         names its files after the patient, so a name in an error message is a
         patient value; a position is not, and ``ls *.xml | sort`` finds it.
         """
+        self.ledgers = []
         documents = [
             xml_file
             for xml_file in sorted(path.glob("*.xml"))
@@ -79,7 +92,7 @@ class CCDAAdapter:
         ]
         for position, xml_file in enumerate(documents, start=1):
             try:
-                yield parse_document(xml_file)
+                record = parse_document(xml_file)
             except SourceDataError:
                 raise
             except Exception as exc:
@@ -90,6 +103,14 @@ class CCDAAdapter:
                     f"The file is identified by position because a C-CDA export names its "
                     f"documents after the patient."
                 ) from None
+            # Outside the wrap above on purpose: a ledger that cannot balance
+            # its books over this document raises ConservationError, which is
+            # not a document that "could not be read", and folding it into that
+            # message would bury the count that says which column went short.
+            # It propagates bare; ``load_records`` turns it into the same loud
+            # conservation refusal the render seam gets.
+            self.ledgers.append(document_ledger(xml_file, record))
+            yield record
 
 
 register(CCDAAdapter())

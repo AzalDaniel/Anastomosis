@@ -117,6 +117,13 @@
           <div class="stage-rail" id="charts-rail"></div>
         </div>
 
+        <!-- The source ledger's reading: what the export offered against what
+             arrived, in the chart's vocabulary. Filled from the done event's
+             `source_reading` (counts and fixed words only — PHI-free by the
+             composer's contract) and hidden for sources that keep no ledger. -->
+        <section class="panel prose" id="charts-reading"
+                 aria-label="What the source offered, and what arrived" hidden></section>
+
         <!-- Per-patient detail for a finished run: fetched over the bridge after
              `done` and painted with textContent. Shown locally, never logged,
              never carried on an event. -->
@@ -169,6 +176,10 @@
           <div id="migrate-form"></div>
           <div class="prose" id="migrate-result" hidden></div>
         </div>
+
+        <!-- The source ledger's reading — same contract as #charts-reading. -->
+        <section class="panel prose" id="migrate-reading"
+                 aria-label="What the source offered, and what arrived" hidden></section>
 
         <section class="panel" aria-label="Patients in this run">
           <h3>Patients in this run</h3>
@@ -441,8 +452,20 @@
             <h3>Proposed match-up</h3>
             <div class="panel-note">No patient data is shown below.</div>
             <div class="prose" id="format-grouping"></div>
+            <!-- The three grouping answers and every row below them are
+                 controls, not a printout: the proposal IS the edit surface,
+                 and saving revalidates whatever it says. Both are filled in
+                 from the file the operator picked, so they are built in JS. -->
+            <div class="structure" id="format-structure" role="group"
+                 aria-label="How your file is grouped"></div>
             <div class="mapping-table" id="format-mapping" role="table"
                  aria-label="What each column in your file becomes"></div>
+            <details class="advanced" id="format-changes" hidden>
+              <summary>What you changed</summary>
+              <div class="advanced-body">
+                <div class="prose" id="format-changes-list"></div>
+              </div>
+            </details>
             <details class="advanced">
               <summary>Column detail</summary>
               <div class="advanced-body">
