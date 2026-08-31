@@ -23,6 +23,13 @@ The two-step shape the frontends share (the learn-a-source wizard checkpoint):
   PROVE no column is dropped, and only then saves it (owner-only) — returning the
   mapping directory and ``MAPPING.md``.
 
+``destination`` is the destination-before-teaching step: chosen first, resolved
+before the example is analysed, and recorded in the saved mapping as a profile
+hash. A migration that later runs the mapping at a different destination — or at
+the same one after it changed — refuses and names both ends
+(:mod:`anastomosis.core.profiles`). Omitting it teaches unbound, exactly as
+before.
+
 PHI rule (non-negotiable): nothing patient-derived is returned. The proposal
 carries column NAMES, inferred type labels, counts, and digit/letter-masked
 shapes only — never a cell value; the operator's example path is never echoed
@@ -45,7 +52,7 @@ from anastomosis.core.packinit import PACK_NAME_RE
 
 if TYPE_CHECKING:  # the real types, without paying the import at runtime
     from anastomosis.core.sourcelearn import SourceAnalysis
-    from anastomosis.sources.learned.spec import MappingSpec
+    from anastomosis.sources.learned.spec import DestinationBinding, MappingSpec
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +113,12 @@ class SourceInitCommand:
     patient_key: str | None = None
     encounter_key: str | None = None
     row_scope: str | None = None
+    #: The destination this format is being taught FOR, chosen before teaching.
+    #: A registry name; the mapping records the destination's profile hash and a
+    #: later migration to a DIFFERENT destination refuses rather than mapping
+    #: one system's columns into another. ``None`` teaches unbound, which is
+    #: what every mapping taught before this option existed is.
+    destination: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,9 +127,9 @@ class SourceInitResult:
 
     ``ok`` is true only when a mapping was saved. ``error`` is ``None`` on
     success, else an enumerated code (``InvalidSourceName``, ``NoExampleFile``,
-    ``AmbiguousExample``, ``CannotAnalyze``, ``ConfirmationRequired``,
-    ``CannotBuildMapping``, ``MappingLoadFailed``, ``WouldDropColumns``,
-    ``SaveFailed``). The proposal fields (``fmt_type`` .. ``mapped``) are
+    ``AmbiguousExample``, ``UnknownDestination``, ``CannotAnalyze``,
+    ``ConfirmationRequired``, ``CannotBuildMapping``, ``MappingLoadFailed``,
+    ``WouldDropColumns``, ``SaveFailed``). The proposal fields (``fmt_type`` .. ``mapped``) are
     populated whenever analyze succeeded (so a refusal still shows what was
     proposed). ``mapping_dir``/``mapping_md``/``record_count``/``unmapped`` are
     populated only on success. ``dropped_columns`` carries the offending column
@@ -152,6 +165,9 @@ class SourceInitResult:
     #: Every canonical target a review may aim a column at — the closed set the
     #: correction chooser is populated from, sent once with the proposal.
     targets: list[str] = field(default_factory=list)
+    #: The destination this mapping was taught for, echoed back so a frontend
+    #: can show what the format is now bound to. ``None`` for an unbound teach.
+    destination: str | None = None
 
 
 def resolve_example(example: Path) -> tuple[Path | None, str]:
@@ -184,27 +200,10 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
     ``confirmed=True`` builds the mapping, proves it drops no column via a
     round-trip, and saves it owner-only.
     """
-    # Type-guard the name up front so a malformed command returns a code rather
-    # than raising — mirrors run_pack_init's contract.
-    if not isinstance(cmd.name, str) or not PACK_NAME_RE.match(cmd.name):
-        return SourceInitResult(ok=False, error="InvalidSourceName")
-
-    # Asked BEFORE anything is analysed or written, and that ordering is the
-    # fix. Registration already refuses to let a learned mapping shadow a
-    # built-in — correctly, since `get_source("ccda")` must always be the C-CDA
-    # adapter — but it refused at the END, in a log line, after save had
-    # reported success and written the whole directory. An operator saw "saved",
-    # got a folder full of their reviewed work, and could never select it: not
-    # then, not after a restart, because the skip is permanent by design. The
-    # collision is knowable from the name alone, so it is answered from the name
-    # alone, before the operator spends any more of their attention on it.
-    reserved = _reserved(cmd.name)
-    if reserved is not None:
-        return SourceInitResult(ok=False, error=reserved)
-
-    resolved, resolve_error = resolve_example(cmd.example)
-    if resolved is None:
-        return SourceInitResult(ok=False, error=resolve_error)
+    resolved, binding, refusal = _resolve_inputs(cmd)
+    if refusal is not None:
+        return refusal
+    assert resolved is not None  # a None refusal guarantees a resolved example
 
     # Lazy imports so a minimal install loads this module cleanly.
     from anastomosis.core.sourcelearn import (
@@ -223,7 +222,7 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
 
     # The PHI-safe proposal, carried on every post-analyze outcome via
     # dataclasses.replace (which preserves the per-field types mypy checks).
-    proposal = _proposal(analysis)
+    proposal = replace(_proposal(analysis), destination=cmd.destination)
 
     # The review checkpoint: an unconfirmed request refuses and writes nothing,
     # but still returns the proposal so the operator sees what they confirm.
@@ -237,6 +236,7 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
             mapping_id=cmd.name,
             display=cmd.display or cmd.name,
             decisions=cmd.decisions,
+            destination_binding=binding,
         )
     except MappingError as exc:
         # build over column/target NAMES — the message embeds no cell value.
@@ -283,6 +283,78 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
         mapping_md=mapping_md,
         record_count=report.record_count,
         unmapped=len(spec.unmapped_source_fields),
+    )
+
+
+def _resolve_inputs(
+    cmd: SourceInitCommand,
+) -> tuple[Path | None, DestinationBinding | None, SourceInitResult | None]:
+    """Settle everything a teach needs before it reads a single row.
+
+    Four questions, all answerable from the command alone, all cheaper to answer
+    than to analyse an export for: is the name well-formed, is it free, does the
+    example resolve to one file, and does the chosen destination exist. Returns
+    ``(example, binding, None)`` when all four pass, and ``(None, None,
+    refusal)`` on the first that does not.
+
+    They are asked HERE, ahead of the analysis, because each of them makes the
+    analysis pointless — reviewing a proposal for a name that cannot be saved,
+    or for a destination nobody declared, spends an operator's attention on work
+    that was never going to land.
+    """
+    # Type-guard the name up front so a malformed command returns a code rather
+    # than raising — mirrors run_pack_init's contract.
+    if not isinstance(cmd.name, str) or not PACK_NAME_RE.match(cmd.name):
+        return None, None, SourceInitResult(ok=False, error="InvalidSourceName")
+
+    # Registration already refuses to let a learned mapping shadow a built-in —
+    # correctly, since `get_source("ccda")` must always be the C-CDA adapter —
+    # but it refused at the END, in a log line, after save had reported success
+    # and written the whole directory. An operator saw "saved", got a folder
+    # full of their reviewed work, and could never select it: not then, not
+    # after a restart, because the skip is permanent by design. The collision is
+    # knowable from the name alone, so it is answered from the name alone.
+    reserved = _reserved(cmd.name)
+    if reserved is not None:
+        return None, None, SourceInitResult(ok=False, error=reserved)
+
+    resolved, resolve_error = resolve_example(cmd.example)
+    if resolved is None:
+        return None, None, SourceInitResult(ok=False, error=resolve_error)
+
+    binding, binding_error = _destination_binding(cmd.destination)
+    if binding_error is not None:
+        return (
+            None,
+            None,
+            SourceInitResult(ok=False, error=binding_error, destination=cmd.destination),
+        )
+    return resolved, binding, None
+
+
+def _destination_binding(name: str | None) -> tuple[DestinationBinding | None, str | None]:
+    """Resolve the chosen destination to the binding a mapping records.
+
+    Returns ``(binding, None)`` for a known destination, ``(None, None)`` when
+    no destination was chosen (an unbound teach), and ``(None,
+    "UnknownDestination")`` for a name the capability registry does not carry —
+    a refusal, never a guess: binding a mapping to a destination nobody declared
+    would bind it to nothing while looking like it bound it to something.
+    """
+    if name is None:
+        return None, None
+    from anastomosis.core.profiles import ProfileError, capture_destination_profile
+    from anastomosis.sources.learned.spec import DestinationBinding
+
+    try:
+        profile = capture_destination_profile(name)
+    except ProfileError:
+        return None, "UnknownDestination"
+    return (
+        DestinationBinding(
+            destination=profile.name, version=profile.version, profile_hash=profile.profile_hash
+        ),
+        None,
     )
 
 
