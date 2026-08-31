@@ -42,6 +42,14 @@ on:
     - cron: "23 3 * * 1"
 
 # Least-privilege default for every job (mirrors ci.yml).
+# One run per head and per event: a newer push to the same branch or PR
+# supersedes the run already going — the superseded commit's verdict answers a
+# question nobody is still asking. Grouped by workflow+event+ref so a PR's run
+# and main's run of the same workflow never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

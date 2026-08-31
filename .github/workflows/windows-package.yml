@@ -29,10 +29,18 @@ name: Windows package
 # identity — signing is a separate decision the project owner makes (#282).
 #
 # Triggers: manual (validate by default, or publish via the `publish` input);
-# pushes to main (or the active dev branch) that touch the app/packaging (so
-# pipeline changes are validated); and version tags (release builds). Path
-# filters gate branch pushes only — GitHub ignores them for tags, so a tag
-# always builds and the release job runs.
+# pushes to MAIN that touch the app/packaging (so pipeline changes are
+# validated); and version tags (release builds). Path filters gate branch
+# pushes only — GitHub ignores them for tags, so a tag always builds and the
+# release job runs.
+#
+# `claude/**` was removed from `branches` on purpose, and the measurement is
+# why: a working day of ordinary feature pushes launched six overlapping
+# Nuitka builds of half an hour or more, each producing an installer for an
+# intermediate branch state nobody will ever download, and the run history
+# grew past two thousand entries. A branch's correctness is the CI workflow's
+# job; an installer is validated when its inputs reach main, or on demand by
+# dispatching this workflow against the branch.
 
 on:
   workflow_dispatch:
@@ -42,13 +50,19 @@ on:
         type: boolean
         default: false
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
     paths:
       - "packaging/**"
       - ".github/workflows/windows-package.yml"
       - "src/anastomosis/**"
       - "pyproject.toml"
     tags: ["v*"]
+
+# One build per head: a newer push to the same ref supersedes a running build,
+# EXCEPT a tag's — a release build is never cancelled by a later event.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read

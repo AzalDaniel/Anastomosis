@@ -14,6 +14,14 @@ on:
   pull_request:
 
 # Least-privilege default for every job.
+# One run per head and per event: a newer push to the same branch or PR
+# supersedes the run already going — the superseded commit's verdict answers a
+# question nobody is still asking. Grouped by workflow+event+ref so a PR's run
+# and main's run of the same workflow never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
