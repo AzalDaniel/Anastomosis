@@ -10,6 +10,9 @@ load and render with **no engine changes**:
       template.html  — generated Jinja2, mirroring generic_soap's block shape
       context.py     — delegates to the generic_soap context builder
       DRAFT.md       — provenance + the same-patient caveat + next steps
+      OCR_EVIDENCE.md— only when a page was recognized: what was observed,
+                       what disagreed, and what recognized text may not be used
+                       for
 
 A draft is a STARTING POINT, never a finished pack — perfect fidelity is
 explicitly *not* claimed (``DRAFT.md`` says so, and the wizard echoes it). The
@@ -34,6 +37,12 @@ Design choices, grounded in the pack contracts read above:
   look like a label, so raw sample text is quarantined even when an exact known
   header token lets the generated template retain useful structure. A
   single-sample run emits no sample-derived text at all.
+* **OCR provenance**: when a sample page was pixels, the draft says so in
+  every artifact a person opens — a marker in the manifest description, a
+  per-section provenance note, an ``[OCR]`` mark beside each quarantined string
+  that came from recognition, and ``OCR_EVIDENCE.md`` with the page classes,
+  the held conflicts and the engine manifest. A recognized heading is a layout
+  hypothesis and the pack has to read like one.
 * **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
   (sorted keys, fixed float formatting, deterministic section ordering).
 """
@@ -46,13 +55,30 @@ from pathlib import Path
 
 from anastomosis.core.output import secure_output_dir
 
-from .infer import PackAnalysis, PageGeometry, SectionCandidate
+from .evidence import AMBIGUOUS, IMAGE_ONLY, MIXED, MIXED_EVIDENCE, LayoutEvidence
+from .extract import OCR_SPAN_FONT
+from .infer import OCR_EVIDENCE_CAVEAT, PackAnalysis, PageGeometry, SectionCandidate
+from .ocr import NATIVE_OR_SYNTHETIC, NATIVE_TEXT, OCR_OBSERVATION
 
 __all__ = [
+    "OCR_EVIDENCE_NAME",
     "SAME_PATIENT_CAVEAT",
     "STATIC_LIST_NOTE",
     "emit_draft_pack",
 ]
+
+#: The OCR provenance file, written only when something was recognized. An
+#: empty one in every pack would train operators to ignore the name — the same
+#: reasoning that keeps ``UNPLACED.txt`` conditional.
+OCR_EVIDENCE_NAME = "OCR_EVIDENCE.md"
+
+#: How each provenance reads to a person opening the draft.
+_PROVENANCE_LABELS = {
+    NATIVE_TEXT: "native text",
+    NATIVE_OR_SYNTHETIC: "text layer over a scan (may itself be OCR)",
+    OCR_OBSERVATION: "OCR observation",
+    MIXED_EVIDENCE: "native text and OCR observation (both kept)",
+}
 
 # Points per inch — page geometry arrives in points, the manifest wants inches.
 _PT_PER_IN = 72.0
@@ -277,7 +303,13 @@ def _body_font(analysis: PackAnalysis) -> str:
     to generic_soap's stack when no body font was inferred.
     """
     raw = analysis.design_tokens.body_font or analysis.type_scale.body_font
-    if not raw:
+    if not raw or raw == OCR_SPAN_FONT:
+        # A recognized page has no recoverable face: Tesseract writes its text
+        # layer glyphless and black, and the decision record is explicit that
+        # OCR does not recover the source's rendering system. Offering
+        # "OcrObservation" to a CSS stack would be asserting exactly that, so
+        # the draft falls back to the documented default and DRAFT.md says the
+        # body font was not inferred.
         return _DEFAULT_BODY_FONT
     # Drop a PDF subset prefix like "ABCDEF+".
     family = raw.split("+", 1)[-1].strip()
@@ -458,6 +490,126 @@ def _quarantined_text(analysis: PackAnalysis) -> list[str]:
     return result
 
 
+def _quarantine_line(text: str, evidence: LayoutEvidence) -> str:
+    """One quarantine entry, marked when recognition is where it came from.
+
+    The mark is per string, not per file: a batch can be part native and part
+    pixels, and an operator deciding whether a string belongs to the form needs
+    to know which of those they are reading.
+    """
+    return f"[OCR] {text}" if evidence.is_ocr_derived(text) else text
+
+
+def _manifest_ocr_marker(evidence: LayoutEvidence) -> str:
+    """The one sentence pack.yaml's description carries when OCR was used.
+
+    Short on purpose: a picker shows this string, and the detail belongs in
+    ``OCR_EVIDENCE.md``. What it may never do is omit the fact — a manifest
+    that reads identically whether its layout was read or recognized is a
+    manifest that hides the difference.
+    """
+    if not evidence.review_required:
+        return ""
+    classes = evidence.class_counts
+    recognized = classes[IMAGE_ONLY] + classes[MIXED] + classes[AMBIGUOUS]
+    return (
+        f" OCR EVIDENCE: {recognized} of {len(evidence.pages)} sample page(s) carried raster"
+        f" content and were recognized from images, not read; see {OCR_EVIDENCE_NAME}."
+        " Recognized text is layout evidence only and is not clinical truth."
+    )
+
+
+def _conflict_rows(evidence: LayoutEvidence) -> list[str]:
+    """One markdown row per held native/OCR overlap — geometry, never text.
+
+    A disagreement is a disagreement about a value, so the row gives a reviewer
+    the page, the region and the two boxes to look at, and the engine's own
+    score, and stops there.
+    """
+    rows = [
+        "| page | region | kind | OCR box (pt) | native box (pt) | OCR score |",
+        "|---|---|---|---|---|---|",
+    ]
+    for conflict in evidence.conflicts:
+        score = "n/a" if conflict.ocr_confidence is None else f"{conflict.ocr_confidence:.1f}"
+        rows.append(
+            f"| {conflict.page_index} | {conflict.region_id} | {conflict.kind} "
+            f"| {_box(conflict.ocr_bbox_pt)} | {_box(conflict.native_bbox_pt)} | {score} |"
+        )
+    return rows
+
+
+def _box(bbox: tuple[float, float, float, float]) -> str:
+    return "(" + ", ".join(f"{value:.0f}" for value in bbox) + ")"
+
+
+def _render_ocr_evidence_file(analysis: PackAnalysis, *, name: str) -> str:
+    """``OCR_EVIDENCE.md``: what was recognized, what clashed, what it means.
+
+    Written only when something was recognized. It carries counts, page
+    classes, geometry and the engine manifest — and no recognized text at all,
+    which lives (marked) in the quarantine file with every other raw string.
+    """
+    evidence = analysis.evidence
+    classes = "\n".join(
+        f"- {label}: {count} page(s)" for label, count in evidence.class_counts.items() if count
+    )
+    manifest = (
+        "\n".join(f"- `{key}`: {value}" for key, value in evidence.ocr_manifest)
+        or "- (no engine manifest was recorded)"
+    )
+    caveat = textwrap.fill(OCR_EVIDENCE_CAVEAT, width=76)
+    conflicts = (
+        "\n".join(_conflict_rows(evidence))
+        if evidence.conflicts
+        else "- (no native/OCR overlap was found)"
+    )
+    return f"""# OCR evidence for DRAFT pack: {name}
+
+{caveat}
+
+## What this pack may be used for
+
+Recognized geometry MAY suggest: text-line and word boxes, block adjacency,
+columns, repeated header/footer bands, table candidates, spacing, and
+page-break evidence.
+
+Recognized text MAY NOT establish: that a value is clinically correct or
+complete; that an observed font, weight, color or page image is the source
+system's own rendering; or that a higher engine score means higher clinical
+reliability. Tesseract writes its text layer glyphless and black — no face,
+weight or color survives recognition, so this draft's typography is a
+destination choice, not a recovered one.
+
+## Page provenance
+
+{classes}
+
+## Observation counts
+
+- Tokens returned by the engine: {evidence.ocr_token_count}
+- Used as layout evidence: {evidence.ocr_accepted_count}
+- Below the confidence threshold (retained as a count, not promoted):
+  {evidence.below_confidence_count}
+- Duplicates of native text (dropped from the layout candidates, counted here):
+  {evidence.duplicate_count}
+- Native/OCR disagreements (BOTH kept; nothing was resolved):
+  {evidence.disagreement_count}
+
+## Held conflicts
+
+Nothing below was resolved. Where the two streams described the same place, the
+native object and the recognized token were both kept and the page was held for
+review. Boxes are in PDF points; no text appears here by design.
+
+{conflicts}
+
+## Engine manifest
+
+{manifest}
+"""
+
+
 # --------------------------------------------------------------------------- #
 # pack.yaml
 # --------------------------------------------------------------------------- #
@@ -489,7 +641,7 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
         f"  DRAFT pack auto-generated from {analysis.sample_count} sample(s) by",
         f"  'anast pack init --from-samples'. {_oneline(display)}. Review the rendered",
         "  preview against an original sample, edit template.html, and re-render"
-        " — fidelity is NOT guaranteed (see DRAFT.md).",
+        " — fidelity is NOT guaranteed (see DRAFT.md)." + _manifest_ocr_marker(analysis.evidence),
         "locale: en_US",
         "timezone: America/New_York",
         "page:",
@@ -535,7 +687,8 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
         named = f"{known!r} " if known else ""
         description = (
             f"Inferred heading section {index} {named}(role {candidate.role}; "
-            f"seen in {candidate.count}/{analysis.sample_count} samples)"
+            f"seen in {candidate.count}/{analysis.sample_count} samples; "
+            f"evidence: {_PROVENANCE_LABELS.get(candidate.provenance, candidate.provenance)})"
         )
         lines.append(f"    description: {_yaml_scalar(description)}")
 
@@ -781,7 +934,7 @@ def _unplaced_comment(unplaced: list[str]) -> str:
 UNPLACED_NAME = "UNPLACED.txt"
 
 
-def _render_unplaced_file(quarantined: list[str]) -> str:
+def _render_unplaced_file(quarantined: list[str], evidence: LayoutEvidence) -> str:
     """The quarantine file: the strings, and why they need reading.
 
     Plain text on purpose. It is not Jinja, not YAML and not Markdown, so
@@ -789,13 +942,20 @@ def _render_unplaced_file(quarantined: list[str]) -> str:
     by accident — it exists to be read once by a person and then deleted.
     """
     note = textwrap.fill(STATIC_LIST_NOTE, width=76)
-    body = "\n".join(quarantined)
+    body = "\n".join(_quarantine_line(text, evidence) for text in quarantined)
+    ocr_note = (
+        "\nLines marked [OCR] were RECOGNIZED from a page image, not read from\n"
+        "the document. They are layout evidence: treat every character as\n"
+        f"unverified and check it against the original page. See {OCR_EVIDENCE_NAME}.\n"
+        if evidence.review_required
+        else ""
+    )
     return (
         "UNPLACED STATIC TEXT\n"
         "====================\n\n"
         "These are raw strings retained from your samples, including static text\n"
         "and inferred heading candidates. The generator does not reproduce them\n"
-        "in the working pack files.\n\n"
+        f"in the working pack files.\n{ocr_note}\n"
         f"{note}\n\n"
         "Move what belongs to the form into template.html, then delete this\n"
         "file. It is the only file in this pack carrying text taken from your\n"
@@ -857,6 +1017,47 @@ def build_context(
 # --------------------------------------------------------------------------- #
 
 
+def _evidence_one_liner(evidence: LayoutEvidence) -> str:
+    """The Provenance bullet's answer to "was any of this recognized?"."""
+    if not evidence.review_required:
+        return "all native text; no page was recognized from an image"
+    return (
+        f"{evidence.ocr_accepted_count} recognized token(s) used as layout evidence, "
+        f"{evidence.duplicate_count} duplicate(s) and {evidence.disagreement_count} "
+        f"disagreement(s) held for review (see {OCR_EVIDENCE_NAME})"
+    )
+
+
+def _draft_ocr_section(analysis: PackAnalysis) -> str:
+    """The DRAFT.md OCR block, or nothing at all for an all-native batch.
+
+    It sits directly under the same-patient caveat because it is the second
+    thing that decides whether this draft can be trusted, and it repeats the
+    governing sentence verbatim rather than pointing at another file: the
+    person reading DRAFT.md may read nothing else.
+    """
+    evidence = analysis.evidence
+    if not evidence.review_required:
+        return ""
+    caveat = textwrap.fill(OCR_EVIDENCE_CAVEAT, width=76)
+    classes = ", ".join(
+        f"{label} {count}" for label, count in evidence.class_counts.items() if count
+    )
+    return f"""
+## OCR evidence (read this second)
+
+{caveat}
+
+- Sample pages by kind: {classes}
+- Recognized tokens: {evidence.ocr_token_count}
+  ({evidence.ocr_accepted_count} used, {evidence.below_confidence_count} below threshold)
+- Held for review, unresolved: {evidence.duplicate_count} duplicate(s) of native
+  text, {evidence.disagreement_count} native/OCR disagreement(s)
+- Full detail, page classes and the engine manifest: `{OCR_EVIDENCE_NAME}`
+- Strings marked `[OCR]` in `{UNPLACED_NAME}` came from recognition
+"""
+
+
 def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
     geom = analysis.page_geometry
     sections = _section_candidates(analysis)
@@ -875,7 +1076,8 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
     section_lines = (
         "\n".join(
             f"- Inferred section {index} — {c.role}, seen in "
-            f"{c.count}/{analysis.sample_count} samples"
+            f"{c.count}/{analysis.sample_count} samples, evidence: "
+            f"{_PROVENANCE_LABELS.get(c.provenance, c.provenance)}"
             for index, c in enumerate(sections, start=1)
         )
         or "- (none cleared the confidence gate)"
@@ -921,7 +1123,7 @@ output as a starting point.
 ## Same-patient caveat (read this first)
 
 {SAME_PATIENT_CAVEAT}
-
+{_draft_ocr_section(analysis)}
 ## Provenance
 
 - Samples analyzed: {analysis.sample_count}
@@ -933,6 +1135,7 @@ output as a starting point.
 - Heading-band fill: `{_heading_fill(analysis)}`
 - Body font: `{_body_font(analysis)}`
 - Dropped curves (vector art the harvester skipped): {analysis.dropped_curves}
+- Layout evidence: {_evidence_one_liner(analysis.evidence)}
 
 ## Inferred heading sections
 
@@ -992,5 +1195,14 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     # UNPLACED.txt in every pack would train operators to ignore the name.
     quarantined = _quarantined_text(analysis)
     if quarantined:
-        (pack_dir / UNPLACED_NAME).write_text(_render_unplaced_file(quarantined), encoding="utf-8")
+        (pack_dir / UNPLACED_NAME).write_text(
+            _render_unplaced_file(quarantined, analysis.evidence), encoding="utf-8"
+        )
+    # Written only when a page was recognized, for the same reason the
+    # quarantine file is conditional: a file that is always there and usually
+    # empty is a file nobody reads.
+    if analysis.evidence.review_required:
+        (pack_dir / OCR_EVIDENCE_NAME).write_text(
+            _render_ocr_evidence_file(analysis, name=name), encoding="utf-8"
+        )
     return pack_dir

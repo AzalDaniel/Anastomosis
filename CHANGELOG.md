@@ -15,6 +15,54 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **The page that is a picture.** All 53 sample PDFs this product has been
+  shown — 802 pages — carried zero natively extractable words, and 52 of the
+  53 were raster documents. The layout learner refused every one of them, so
+  the only real sample set there is was the one set it could not read. It now
+  asks: `packgen/ocr.py` is a pinned, offline Tesseract CLI worker — TSV and
+  hOCR from one run and cross-checked against each other, an environment built
+  from nothing so no proxy and no tessdata leak in from the shell, one page per
+  process at `OMP_THREAD_LIMIT=1`, a finite pixel cap that downsamples by a
+  recorded rule and a finite page deadline. `allow_network` is in the config
+  schema so the manifest can state it and refuses to be set true. Nothing is
+  ever downloaded.
+
+  What comes back is EVIDENCE, and the distinction is in the data rather than
+  in a docstring. `packgen/evidence.py` classifies every page as native-only,
+  mixed, image-only, ambiguous or empty, and the two streams never merge: a
+  span carries its provenance, a recognized one also carries the engine's
+  score, and a text layer floating inside a page-covering scan is demoted to
+  `native_or_synthetic` because extraction succeeding is not evidence that the
+  text is right. Where the two describe the same pixels the overlap is held —
+  a duplicate is dropped from the layout candidates and COUNTED, a
+  disagreement keeps both and marks the page for review — and nothing picks a
+  winner. Conflict records carry page, region, both boxes and the score, and no
+  text at all, because a disagreement is by construction about a value.
+
+  The emitted draft says all of it where a person will actually read it: a
+  marker in the manifest description, an OCR section in `DRAFT.md` directly
+  under the same-patient caveat, `[OCR]` beside every recognized string in the
+  quarantine file, per-section provenance on each inferred heading, and an
+  `OCR_EVIDENCE.md` carrying the page classes, the held conflicts and the
+  engine manifest. Recognition recovers no face, weight or color, so the draft
+  refuses to offer its sentinel font to a CSS stack and falls back to the
+  documented default. Recognized geometry may suggest lines, columns, bands
+  and page breaks; recognized text may not fill a clinical field, and a
+  high-risk value needs an independent structured source or a person.
+
+  Eight synthetic goldens — short, long, empty, multiline, table, attachment,
+  pagination, font fallback — are drawn, rasterized so the PDF genuinely has no
+  text objects, and run against the real binary, with semantic fidelity and
+  visual geometry reported and gated SEPARATELY so neither can waive the other.
+  Regenerate deliberately with `tools/regen_ocr_goldens.py`.
+
+  With no engine on the machine the fail-closed half stands exactly as it was —
+  a raster page with no text raises and no partial pack is written — and the
+  refusal now names what to install and says nothing is fetched. `pack init`
+  takes `allow_ocr=False` for an operator who wants a pack built only from text
+  that was read. Rationale and the alternatives weighed:
+  `docs/audits/learned-source/OCR_DECISION.md`.
+
 - **The guided session opens on the mark, not a pipe character.** `anast`
   typed bare on a terminal drew a half-block and a word, which is what a
   product looks like before anyone has decided what it looks like. It now

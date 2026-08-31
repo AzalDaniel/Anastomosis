@@ -68,6 +68,12 @@ samples. The v2 upgrade path under evaluation is Granite-Docling-258M
 (Apache-2.0); torch-heavy or license-restricted alternatives (Docling,
 LayoutParser, Marker) stay out.
 
+Pages that are pictures go through the offline OCR worker (Tesseract CLI,
+TSV + hOCR, no network) as LAYOUT EVIDENCE only: provenance stays on every
+span, native/OCR overlaps are held rather than resolved, and a high-risk
+field still needs an independent structured source or a reviewer. The engine
+is optional — absent, the learner refuses and says what to install.
+
 ## Decisions (settled)
 
 1. **License: AGPL-3.0**, no CLA (relicensing impossible — a trust feature),
@@ -194,8 +200,10 @@ Next:
 4. **Security backlog completion** (the open list above) and the PyPI
    install story (`pipx install anastomosis[render]`) as the default path.
 5. **Breadth**: quarterly capability-registry re-verification, the
-   Granite-Docling packgen upgrade evaluation, OCR ingest for
-   scanned-PDF-only practices, a Tauri evaluation, and i18n/EHDS.
+   Granite-Docling packgen upgrade evaluation, a Tauri evaluation, and
+   i18n/EHDS. (OCR ingest for scanned-PDF-only practices has landed for
+   LAYOUT learning; promoting a recognized value into a structured clinical
+   field remains deliberately unbuilt.)
 
 ## Open work (not blocking a release, tracked here)
 
