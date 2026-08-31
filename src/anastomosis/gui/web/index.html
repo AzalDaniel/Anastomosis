@@ -117,6 +117,13 @@
           <div class="stage-rail" id="charts-rail"></div>
         </div>
 
+        <!-- The source ledger's reading: what the export offered against what
+             arrived, in the chart's vocabulary. Filled from the done event's
+             `source_reading` (counts and fixed words only — PHI-free by the
+             composer's contract) and hidden for sources that keep no ledger. -->
+        <section class="panel prose" id="charts-reading"
+                 aria-label="What the source offered, and what arrived" hidden></section>
+
         <!-- Per-patient detail for a finished run: fetched over the bridge after
              `done` and painted with textContent. Shown locally, never logged,
              never carried on an event. -->
@@ -169,6 +176,10 @@
           <div id="migrate-form"></div>
           <div class="prose" id="migrate-result" hidden></div>
         </div>
+
+        <!-- The source ledger's reading — same contract as #charts-reading. -->
+        <section class="panel prose" id="migrate-reading"
+                 aria-label="What the source offered, and what arrived" hidden></section>
 
         <section class="panel" aria-label="Patients in this run">
           <h3>Patients in this run</h3>

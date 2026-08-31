@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
 __all__ = [
+    "LOSS_LEDGER_FILENAME",
     "QUARANTINE_FILENAME",
     "RECORD_SUMMARY_DIRNAME",
     "STAGE_DETECT",
@@ -61,6 +62,7 @@ __all__ = [
     "load_records",
     "parse_section_overrides",
     "run_pipeline",
+    "settle_source_ledger",
 ]
 
 
@@ -136,6 +138,11 @@ class PipelineResult:
     qa_report: QAReport | None
     page_size: str
     source_name: str
+    #: The source ledger's account of the load in chart vocabulary, one
+    #: sentence per line (see ``settle_source_ledger``). Empty for a source
+    #: that keeps no ledger; PHI-free by that function's contract, so a
+    #: frontend may print it verbatim.
+    source_reading: tuple[str, ...] = ()
 
 
 EventSink = Callable[[StageEvent], None]
@@ -249,6 +256,13 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
         records = list(adapter.load(export_dir))
     except PipelineError:
         raise
+    except ConservationError as exc:
+        # The load's own instrument could not account for a document (the
+        # C-CDA adapter ledgers each one as it parses). The same refusal the
+        # render seam gets, for the same reason: the message names the unit
+        # and the column that went short, and nothing downstream may treat
+        # what loaded as the whole set. PHI-safe by Conservation's contract.
+        raise PipelineError(str(exc), exit_code=1, kind="conservation_failed") from None
     except SourceDataError as exc:
         raise PipelineError(
             f"Could not read the {adapter.name} export: {exc}",
@@ -276,6 +290,13 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
 #: attachment has to be HERE by the time delivery runs, not fetched back out of
 #: an export that a later `anast archive` may no longer be able to reach.
 ATTACHMENTS_DIRNAME = "attachments"
+
+#: Where a run publishes what the source offered against what arrived: the
+#: C-CDA ledger's full account, construct by construct (see
+#: ``settle_source_ledger``). Beside the charts like ``quarantine.json``, and
+#: PHI-vetted the same way the shape report is — ``assert_emittable`` walks it
+#: at the point of writing.
+LOSS_LEDGER_FILENAME = "loss_ledger.json"
 
 #: Where a run persists the rows its adapter could not place on any patient
 #: (see :class:`~anastomosis.sources.base.QuarantinedRows`). Written into the
@@ -437,6 +458,34 @@ def _quarantine_payload(held: list[QuarantinedRows]) -> tuple[dict[str, object],
         "total_rows": total,
     }
     return payload, total
+
+
+def settle_source_ledger(adapter: SourceAdapter, out: Path) -> tuple[str, ...]:
+    """Publish the source ledger's account of the load; return its reading.
+
+    The C-CDA adapter ledgers every document as it parses (see issue #315: the
+    instrument shipped in every build and nothing ran it — the operator still
+    could not see what was lost, one level up from the original mistake). Both
+    orchestrators settle it here the way they settle the quarantine: the full
+    construct-by-construct account goes to ``loss_ledger.json`` beside the
+    charts, and the RETURN value is the reading in chart vocabulary — one
+    PHI-free sentence per line, ready for the CLI's end of run and the GUI's
+    summary. An adapter that keeps no ledger (every non-C-CDA source today)
+    returns an empty reading and writes nothing, and a re-run that ledgered
+    nothing removes the stale artifact for the reason ``settle_quarantine``
+    does.
+    """
+    from anastomosis.core.output import secure_output_dir
+
+    ledgers = list(getattr(adapter, "ledgers", ()))
+    if not ledgers:
+        (out / LOSS_LEDGER_FILENAME).unlink(missing_ok=True)
+        return ()
+    from anastomosis.sources.ccda.ledger import aggregate, physician_reading
+
+    corpus = aggregate(ledgers)
+    _write_json(secure_output_dir(out) / LOSS_LEDGER_FILENAME, corpus.as_report())
+    return physician_reading(corpus)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -713,6 +762,7 @@ def run_pipeline(
             counts={"records": len(records), **settle_quarantine(adapter, out)},
         )
     )
+    source_reading = settle_source_ledger(adapter, out)
 
     try:
         result = engine.run(records, out, force=force)
@@ -781,6 +831,7 @@ def run_pipeline(
         qa_report=qa_report,
         page_size=manifest.page.size,
         source_name=adapter.name,
+        source_reading=source_reading,
     )
 
 

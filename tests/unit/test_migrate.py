@@ -32,6 +32,7 @@ from anastomosis.core.migrate import (
 from anastomosis.core.model import PatientRecord
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
+CCDA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
 
 
 class _FakeChromium:
@@ -606,3 +607,70 @@ def test_migrate_ccda_standard_no_qa_writes_no_report(
     out = tmp_path / "out"
     run_migration(_ccda_command(out, qa=False))
     assert not (out / "charts" / REPORT_NAME).exists()
+
+
+# --- the source ledger's reading rides every migration (#315) -----------------
+
+
+def test_migrate_ccda_publishes_the_source_reading_in_both_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A C-CDA migration ends with the load's own account: the same sentences
+    on the result in BOTH render modes, and loss_ledger.json written where
+    that mode keeps its run artifacts (beside quarantine.json)."""
+    import json
+
+    _patch_chromium(monkeypatch)
+    pack_out = tmp_path / "pack"
+    pack = run_migration(
+        MigrationCommand(
+            export_dir=CCDA_FIXTURE,
+            out_dir=pack_out,
+            source="ccda",
+            destination="tebra",
+            qa=False,
+        )
+    )
+    assert pack.source_reading
+    assert any("became data" in line for line in pack.source_reading)
+    assert pack.pipeline is not None
+    assert pack.source_reading == pack.pipeline.source_reading
+    # Pack mode routes through run_pipeline, whose artifacts live in charts/.
+    report = json.loads((pack_out / "charts" / "loss_ledger.json").read_text(encoding="utf-8"))
+    assert report["documents"] == 1
+
+    view_out = tmp_path / "view"
+    view = run_migration(
+        MigrationCommand(
+            export_dir=CCDA_FIXTURE,
+            out_dir=view_out,
+            source="ccda",
+            destination="tebra",
+            render=RENDER_CCDA_STANDARD,
+            qa=False,
+        )
+    )
+    # The SAME load, the SAME account — mode changes the rendering, never the
+    # books (the parity the stage-contract test pins for events, held here for
+    # the reading).
+    assert view.source_reading == pack.source_reading
+    # ccda-standard settles into the out dir itself, beside charts/ and ccda/.
+    assert (view_out / "loss_ledger.json").is_file()
+
+
+def test_migrate_of_a_ledgerless_source_reads_as_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PF/Tebra keeps no document ledger, so the reading is empty and no
+    loss_ledger.json appears — the artifact never claims an account nobody
+    kept."""
+    _patch_chromium(monkeypatch)
+    out = tmp_path / "out"
+    result = run_migration(
+        MigrationCommand(
+            export_dir=FIXTURE, out_dir=out, source="pf-tebra", destination="tebra", qa=False
+        )
+    )
+    assert result.source_reading == ()
+    assert not (out / "charts" / "loss_ledger.json").exists()
+    assert not (out / "loss_ledger.json").exists()

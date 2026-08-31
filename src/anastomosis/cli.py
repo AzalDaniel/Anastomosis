@@ -382,6 +382,24 @@ def _run_command(cmd: PipelineCommand) -> None:
         outcome = result.deliveries.get(kind)
         if outcome is not None:
             _print_delivery(outcome)
+    _print_source_reading(result.pipeline.source_reading)
+
+
+def _print_source_reading(reading: tuple[str, ...]) -> None:
+    """Print the source ledger's account of the load, when the source kept one.
+
+    The sentences arrive composed (``ledger.physician_reading`` — chart
+    vocabulary, PHI-free by construction), so this only frames them: a heading
+    that says what the block is, and the pointer to ``loss_ledger.json`` where
+    the construct-by-construct account went. Silent for sources that keep no
+    ledger, so every other adapter's output is unchanged.
+    """
+    if not reading:
+        return
+    console.print("[bold]What the source offered, and what arrived:[/bold]")
+    for line in reading:
+        console.print(f"  {line}")
+    console.print(f"  {_glyphs().arrow} loss_ledger.json for the full account")
 
 
 def _print_delivery(outcome: DeliveryOutcome) -> None:

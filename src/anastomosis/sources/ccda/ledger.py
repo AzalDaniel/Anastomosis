@@ -130,6 +130,7 @@ __all__ = [
     "aggregate",
     "assert_emittable",
     "document_ledger",
+    "physician_reading",
 ]
 
 #: The seam these books are kept at, named as a crossing (the vocabulary
@@ -1161,6 +1162,141 @@ def _merged_row(seen: LedgerRow | None, incoming: LedgerRow) -> LedgerRow:
         instances=_merge(seen.instances, incoming.instances),
         entries=_merge(seen.entries, incoming.entries),
         unlinkable=seen.unlinkable + incoming.unlinkable,
+    )
+
+
+# --- the reading a physician gets --------------------------------------------
+
+#: What each disposition is called at the end of a run. Number-agnostic on
+#: purpose — "1 became data" and "43 empty in the source" both scan — because a
+#: verb that had to agree would need a plural rule per phrase, and the first
+#: mismatch to slip through would sit in the one report written to be read.
+_SAID: Mapping[Disposition, str] = {
+    Disposition.STRUCTURALLY_PARSED: "became data",
+    Disposition.NARRATIVE_PRESERVED: "kept as text only",
+    Disposition.UNSUPPORTED: "dropped with no place here",
+    Disposition.SOURCE_EMPTY: "empty in the source",
+}
+
+
+def _n(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _account(counts: Mapping[Disposition, int], always: Iterable[Disposition]) -> str:
+    """Every disposition's column, spelled out.
+
+    ``always`` names the columns said even at zero — a zero is a statement here
+    for the reason :class:`LedgerRow` gives — and any OTHER nonzero column is
+    said too, so the sentence's numbers always add back up to the total it
+    opened with. A column dropped for reading smoothly is how a clean report
+    lies.
+    """
+    spoken = set(always)
+    said = [d for d in Disposition if d in spoken or counts.get(d, 0)]
+    return ", ".join(f"{counts.get(d, 0)} {_SAID[d]}" for d in said)
+
+
+def _kind_instances(corpus: CorpusLedger, kind: str) -> Counter[Disposition]:
+    prefix = f"{kind}:"
+    counts: Counter[Disposition] = Counter()
+    for row in corpus.rows:
+        if row.construct.startswith(prefix):
+            counts.update(row.instances)
+    return counts
+
+
+def _sections_lines(corpus: CorpusLedger) -> list[str]:
+    counts = _kind_instances(corpus, _SECTION_KIND)
+    offered = sum(counts.values())
+    documents = _n(corpus.documents, "document", "documents")
+    if not offered:
+        return [f"Across {documents} the source offered no sections."]
+    lines = [
+        f"Across {documents} the source offered {_n(offered, 'section', 'sections')}: "
+        f"{_account(counts, Disposition)}."
+    ]
+    entries: Counter[Disposition] = Counter()
+    for row in corpus.rows:
+        entries.update(row.entries)
+    if sum(entries.values()):
+        said = (Disposition.STRUCTURALLY_PARSED, Disposition.NARRATIVE_PRESERVED)
+        lines.append(
+            f"Those sections carried "
+            f"{_n(sum(entries.values()), 'coded entry', 'coded entries')}: "
+            f"{_account(entries, said)}."
+        )
+    else:
+        lines.append("Those sections carried no coded entries.")
+    return lines
+
+
+def _participations_line(corpus: CorpusLedger) -> str:
+    counts = _kind_instances(corpus, _PARTICIPATION_KIND)
+    offered = sum(counts.values())
+    if not offered:
+        return "No author, informant, or other named participant appears in the source."
+    said = (Disposition.STRUCTURALLY_PARSED, Disposition.UNSUPPORTED)
+    return (
+        f"People and devices around the chart — its authors, informants, performers — "
+        f"were named {_n(offered, 'time', 'times')}: {_account(counts, said)}."
+    )
+
+
+def _body_lines(corpus: CorpusLedger) -> list[str]:
+    counts = _kind_instances(corpus, _BODY_KIND)
+    offered = sum(counts.values())
+    if not offered:
+        return []
+    said = (Disposition.STRUCTURALLY_PARSED, Disposition.UNSUPPORTED)
+    return [
+        f"{_n(offered, 'document', 'documents')} carried the whole chart as a scanned "
+        f"or non-XML body: {_account(counts, said)}."
+    ]
+
+
+def _unlinkable_line(corpus: CorpusLedger) -> str:
+    """The blind spot's own line, said whichever way it went.
+
+    An unlinkable construct already sits in a column above — it is never
+    CREDITED, so it lands on the loss side — and this line says how much of
+    that loss is really "could not check": the reading's one-sided bias,
+    stated in the direction it runs.
+    """
+    unlinkable = sum(row.unlinkable for row in corpus.rows)
+    if not unlinkable:
+        return "Every construct the source offered could be checked one way or the other."
+    return (
+        f"{_n(unlinkable, 'construct', 'constructs')} impossible to check — no identifier "
+        f"this reading can follow — never credited as data, so the loss above can only be "
+        f"overstated, not understated."
+    )
+
+
+def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:
+    """The corpus reading in the vocabulary of the chart, one sentence per line.
+
+    This is the sentence a doctor can act on — "420 became data, 473 kept as
+    text only" — where ``unsupported: 17390`` is not. Deliberately aggregate:
+    no LOINC codes, no template OIDs, no per-section rows. The full account,
+    construct by construct, is :meth:`CorpusLedger.as_report`, written beside
+    the charts as ``loss_ledger.json`` for whoever needs the parser's
+    vocabulary after all.
+
+    The blind spot is published, not buried: ``unlinkable`` gets the closing
+    line whichever way it went, because a reading that only mentions its own
+    uncertainty when convenient is the kind of clean report this project keeps
+    having to unlearn.
+
+    PHI: every sentence is these templates' own words plus integers. Nothing a
+    document stated — no name, no id, no code — can reach a line, because
+    nothing here reads one.
+    """
+    return (
+        *_sections_lines(corpus),
+        _participations_line(corpus),
+        *_body_lines(corpus),
+        _unlinkable_line(corpus),
     )
 
 
