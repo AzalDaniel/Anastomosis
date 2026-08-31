@@ -483,3 +483,32 @@ def test_an_assistant_that_is_not_set_up_is_not_handed_off(gui) -> None:
     # export formats, with no destination setup on it at all.
     assert "anast destination init" in guidance
     assert "Teach screen" not in guidance
+
+
+READING = [
+    "Across 1 document the source offered 10 sections: 9 became data, 1 kept as text only, "
+    "0 not credited as data, 0 empty in the source.",
+]
+
+
+def test_the_source_reading_reaches_the_migrate_panel_on_both_verdicts(gui) -> None:
+    """#315's migrate surface: the sentences render under the prepared verdict,
+    and under the manual-import verdict too — where they matter most, one
+    screen before somebody imports the transfer document by hand."""
+    app = _open(gui)
+    page = app.page
+    box = page.locator("#migrate-reading")
+    assert box.get_attribute("hidden") is not None
+
+    done = done_event(_FLOW, summary_id="feedfacefeedface", ccda_patients=1)
+    done["source_reading"] = READING
+    app.emit(done)
+    assert box.is_visible()
+    assert READING[0] in (box.text_content() or "")
+
+    # The manual-import verdict is an error event in this flow, and carries it.
+    error = error_event(_FLOW, "deliver", "no viable automated route — import by hand")
+    error["source_reading"] = READING
+    app.emit(error)
+    assert box.is_visible()
+    assert READING[0] in (box.text_content() or "")

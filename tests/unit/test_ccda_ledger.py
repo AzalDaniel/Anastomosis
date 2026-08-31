@@ -31,6 +31,7 @@ from anastomosis.sources.ccda.ledger import (
     aggregate,
     assert_emittable,
     document_ledger,
+    physician_reading,
 )
 from anastomosis.sources.ccda.parser import parse_document
 
@@ -857,3 +858,168 @@ def test_a_section_with_narrative_still_parks_no_entries(tmp_path: Path) -> None
     assert not [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
     row = _row(document_ledger(path, record), "section:11450-4")
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+# --- the reading a physician gets ---------------------------------------------
+#
+# #315: the instrument shipped in every build and nothing ran it. Now a load
+# ends with these sentences, so they are held to the same two-directional
+# standard as the rows they summarize: right about what arrived, right about
+# what did not, and incapable of carrying a document's own words.
+
+
+def test_the_reading_speaks_the_fixture_in_chart_vocabulary(fixture_ledger: object) -> None:
+    """The reference document, said the way the issue asked for it: sections
+    and entries credited, the three shared-root participations reported as
+    dropped, and the blind spot published beside them rather than buried."""
+    lines = physician_reading(aggregate([fixture_ledger]))  # type: ignore[list-item]
+    assert lines == (
+        "Across 1 document the source offered 10 sections: 9 became data, "
+        "1 kept as text only, 0 not credited as data, 0 empty in the source.",
+        "Those sections carried 13 coded entries: 13 became data, 0 kept as text only.",
+        "People and devices around the chart — its authors, informants, performers — "
+        "were named 3 times: 0 became data, 3 not credited as data.",
+        "3 constructs impossible to check — no identifier this reading can follow — "
+        "never credited as data, so the loss above can only be overstated, not understated.",
+    )
+
+
+def test_the_readings_numbers_add_back_up(fixture_ledger: object) -> None:
+    """Every accounting sentence's columns sum to the total it opened with.
+
+    The same conservation the rows are held to, asserted on the prose — a
+    sentence that dropped a column for reading smoothly would break here."""
+    sections, entries, people, _blind = physician_reading(
+        aggregate([fixture_ledger])  # type: ignore[list-item]
+    )
+    for line, leading in ((sections, 2), (entries, 1), (people, 1)):
+        numbers = [int(n) for n in re.findall(r"\d+", line)]
+        offered = numbers[leading - 1]
+        assert offered == sum(numbers[leading:]), line
+
+
+def test_a_reading_carries_no_document_value(tmp_path: Path) -> None:
+    """No name, id, code, or title from the document can reach a sentence.
+
+    Proved on a document that states all four, not argued from the composer's
+    shape: the reading is the one artifact written to be pasted somewhere."""
+    body = """
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems For Synthia</title>
+      <text>Synthia Probe still has hypertension.</text>
+    </section></component>
+    """
+    header = """
+    <author><time value="20230510"/><assignedAuthor>
+      <id root="feedface-auth-0000-0000-000000000001"/>
+      <assignedPerson><name><given>Quinn</given><family>Authorman</family></name></assignedPerson>
+    </assignedAuthor></author>
+    """
+    path = _write(tmp_path, body=body, header=header)
+    blob = " ".join(physician_reading(aggregate([document_ledger(path)])))
+    for stated in ("Synthia", "Probe", "Quinn", "Authorman", "feedface", "11450-4", "hypertension"):
+        assert stated not in blob, f"reading leaked {stated!r}"
+
+
+def test_an_unstructured_document_reads_as_its_body(tmp_path: Path) -> None:
+    """The scanned-referral shape gets the sentence that matters: no sections
+    to speak of, and the one body it does have accounted for. The blind-spot
+    line flips to its good-news form — said, not omitted — because this
+    document's constructs could all be checked."""
+    path = tmp_path / "scan.xml"
+    path.write_text(
+        _DOCUMENT.replace(
+            "<component><structuredBody>{body}</structuredBody></component>",
+            '<component><nonXMLBody><text mediaType="application/pdf" '
+            'representation="B64">JVBERi0xLjQK</text></nonXMLBody></component>',
+        ).format(header=""),
+        encoding="utf-8",
+    )
+    lines = physician_reading(aggregate([document_ledger(path)]))
+    assert lines[0] == "Across 1 document the source offered no sections."
+    assert (
+        "The whole chart travelled as a scanned or non-XML body 1 time: "
+        "1 became data, 0 not credited as data." in lines
+    )
+    assert lines[-1] == "Every construct the source offered could be checked one way or the other."
+
+
+def test_a_section_without_entries_says_so(tmp_path: Path) -> None:
+    """ "Carried no coded entries" is a statement, not a skipped line — the
+    reading has to be believable about absences for the reason the rows are."""
+    body = """
+    <component><section>
+      <code code="10164-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>History</title>
+      <text>Story in prose.</text>
+    </section></component>
+    """
+    lines = physician_reading(aggregate([document_ledger(_write(tmp_path, body=body))]))
+    assert "Those sections carried no coded entries." in lines
+
+
+_TWO_AUTHORS = """
+    <author><time value="20230510"/><assignedAuthor>
+      <id root="{first}"/>
+      <assignedPerson><name><given>Quinn</given><family>Authorman</family></name></assignedPerson>
+    </assignedAuthor></author>
+    <author><time value="20230510"/><assignedAuthor>
+      <id root="{second}"/>
+      <assignedPerson><name><given>Rey</given><family>Scribener</family></name></assignedPerson>
+    </assignedAuthor></author>
+"""
+
+
+def test_a_shared_id_root_cannot_put_a_cause_in_the_verdict(tmp_path: Path) -> None:
+    """The review's blocker, pinned: the record CARRIES both authors either
+    way, and the only difference between these two documents is whether their
+    id roots collide. A collision may move the count from credited to
+    uncredited — that is the documented bias — but it must never make the
+    sentence assert a loss with a cause, because the "loss" here is the
+    instrument's blindness, not the adapter's slot."""
+    verdicts = {}
+    for label, second_root in (
+        ("shared", "feedface-auth-0000-0000-000000000001"),
+        ("distinct", "feedface-auth-0000-0000-000000000002"),
+    ):
+        path = tmp_path / f"{label}.xml"
+        path.write_text(
+            _DOCUMENT.format(
+                body="",
+                header=_TWO_AUTHORS.format(
+                    first="feedface-auth-0000-0000-000000000001", second=second_root
+                ),
+            ),
+            encoding="utf-8",
+        )
+        record = parse_document(path)
+        assert len(record.practitioners) == 2, "the adapter has a slot, and used it"
+        verdicts[label] = physician_reading(aggregate([document_ledger(path, record)]))
+    assert any("2 became data" in line for line in verdicts["distinct"])
+    assert any("2 not credited as data" in line for line in verdicts["shared"])
+    assert any("2 constructs impossible to check" in line for line in verdicts["shared"])
+    for word in ("dropped", "no place"):
+        assert word not in " ".join(verdicts["shared"]), f"a cause ({word!r}) was asserted"
+
+
+def test_three_bodies_in_one_document_are_not_three_documents(tmp_path: Path) -> None:
+    """A schema-invalid document with three nonXMLBody components — exactly the
+    input class this instrument is hardened for — must not be read back as
+    three documents two lines under "Across 1 document"."""
+    path = tmp_path / "scan.xml"
+    body_xml = (
+        '<component><nonXMLBody><text mediaType="application/pdf" '
+        'representation="B64">JVBERi0xLjQK</text></nonXMLBody></component>' * 3
+    )
+    path.write_text(
+        _DOCUMENT.replace(
+            "<component><structuredBody>{body}</structuredBody></component>", body_xml
+        ).format(header=""),
+        encoding="utf-8",
+    )
+    lines = physician_reading(aggregate([document_ledger(path)]))
+    assert lines[0] == "Across 1 document the source offered no sections."
+    body_line = next(line for line in lines if "non-XML body" in line)
+    assert body_line.startswith("The whole chart travelled as a scanned or non-XML body 3 times:")
+    assert "3 documents" not in " ".join(lines)

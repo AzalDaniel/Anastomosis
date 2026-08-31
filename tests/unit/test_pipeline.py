@@ -15,8 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.core.conservation import Conservation
 from anastomosis.core.model import Patient, PatientRecord
-from anastomosis.pipeline import PipelineError, load_records
+from anastomosis.pipeline import (
+    LOSS_LEDGER_FILENAME,
+    PipelineError,
+    load_records,
+    settle_source_ledger,
+)
 from anastomosis.sources.fhir_r4.mapper import AmbiguousUnanchoredError
 from anastomosis.sources.pf_tebra.loader import OrphanRowsError
 
@@ -52,6 +58,15 @@ class _RaisesPipelineError(_Adapter):
 class _RaisesOrphanRows(_Adapter):
     def load(self, path: Path) -> Iterator[PatientRecord]:
         raise OrphanRowsError({"patient-medications": 3})
+
+
+class _RaisesConservation(_Adapter):
+    def load(self, path: Path) -> Iterator[PatientRecord]:
+        # The shape the C-CDA adapter produces when its ledger cannot balance
+        # a document's books mid-load (#315): a bare ConservationError out of
+        # the iterator, counts and column names only.
+        Conservation(stage="ccda xml -> canonical", unit="construct", offered=3).check()
+        return iter(())  # pragma: no cover — check() above raises
 
 
 class _RaisesAmbiguous(_Adapter):
@@ -106,6 +121,17 @@ def test_unanchored_resource_types_and_counts_reach_the_operator() -> None:
     assert "Condition (2)" in message
 
 
+def test_an_unbalanced_ledger_is_a_conservation_refusal() -> None:
+    """The load's own instrument failing to account for a document refuses the
+    run under its own name — the message that says which column went short is
+    the repair instruction, and "(ConservationError)" is not."""
+    with pytest.raises(PipelineError) as excinfo:
+        load_records(_RaisesConservation(), Path("."))
+    assert excinfo.value.kind == "conservation_failed"
+    assert excinfo.value.exit_code == 1
+    assert "3 construct(s) went in and never came out" in str(excinfo.value)
+
+
 def test_successful_load_returns_records() -> None:
     records = load_records(_Good(), Path("."))
     assert len(records) == 1
@@ -135,3 +161,37 @@ def test_a_file_given_as_the_export_folder_says_so(tmp_path: Path) -> None:
     with pytest.raises(PipelineError) as excinfo:
         resolve_source(a_file, None)
     assert "is a file, not a folder" in str(excinfo.value)
+
+
+# --- the source ledger settles beside the charts (#315) -----------------------
+
+
+def test_a_ccda_load_settles_its_ledger_and_reading(tmp_path: Path) -> None:
+    """The full account lands in loss_ledger.json, PHI-vetted at the point of
+    writing, and the reading comes back for the frontends — measured off a
+    real load of the reference fixture, not a canned corpus."""
+    import json
+
+    from anastomosis.sources import get_source
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+    adapter = get_source("ccda")
+    records = load_records(adapter, fixture)
+    assert len(records) == 1
+    reading = settle_source_ledger(adapter, tmp_path)
+    assert reading and all(isinstance(line, str) for line in reading)
+    assert any("became data" in line for line in reading)
+    report = json.loads((tmp_path / LOSS_LEDGER_FILENAME).read_text(encoding="utf-8"))
+    assert report["documents"] == 1
+    # The artifact is the vetted corpus report: construct rows, no free text.
+    assert {row["construct"] for row in report["constructs"]} >= {"participation:author"}
+
+
+def test_a_source_without_a_ledger_settles_to_nothing(tmp_path: Path) -> None:
+    """Every non-C-CDA adapter: empty reading, no artifact — and a STALE
+    artifact from a previous run into the same folder is removed, so last
+    run's account cannot read as this run's."""
+    stale = tmp_path / LOSS_LEDGER_FILENAME
+    stale.write_text("{}", encoding="utf-8")
+    assert settle_source_ledger(_Good(), tmp_path) == ()
+    assert not stale.exists()

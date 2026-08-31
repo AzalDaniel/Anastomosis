@@ -116,6 +116,10 @@ class MigrationResult:
     # frontend can show per-patient detail (names/DOB/note counts) in every mode.
     # Local display only — never logged or emitted on an event.
     records: list[PatientRecord]
+    # The source ledger's reading of the load — one PHI-free sentence per line,
+    # same field in both render modes (see ``pipeline.settle_source_ledger``).
+    # Empty for a source that keeps no ledger.
+    source_reading: tuple[str, ...] = ()
 
 
 def _charts_dir(out_dir: Path) -> Path:
@@ -166,14 +170,16 @@ def _validate_outputs(targets: tuple[Path, ...]) -> None:
 
 def _resolve_source_and_load(
     cmd: MigrationCommand, emit: Callable[[StageEvent], None]
-) -> tuple[SourceAdapter, list[PatientRecord]]:
+) -> tuple[SourceAdapter, list[PatientRecord], tuple[str, ...]]:
     """Resolve the adapter and load records, emitting DETECT + INGEST.
 
     Mirrors the same two-step emission sequence ``pipeline.run_pipeline`` uses
     so a migration that does NOT route through the pack pipeline still tells
     the same CLI/GUI presenters the same story in the same order. The events'
     PHI-safety contract is preserved: DETECT carries only the adapter name,
-    INGEST carries only a record count.
+    INGEST carries only a record count. The third element is the source
+    ledger's reading of the load, settled here for the reason the quarantine
+    is: both render modes must publish the same account of the same load.
     """
     from anastomosis.pipeline import (
         STAGE_DETECT,
@@ -182,6 +188,7 @@ def _resolve_source_and_load(
         load_records,
         resolve_source,
         settle_quarantine,
+        settle_source_ledger,
     )
 
     adapter = resolve_source(cmd.export_dir, cmd.source)
@@ -189,14 +196,15 @@ def _resolve_source_and_load(
     records = load_records(adapter, cmd.export_dir)
     # Rows the adapter held back land in <out>/quarantine.json, beside the
     # charts/ and ccda/ folders, and their count rides the INGEST event —
-    # the same settlement run_pipeline makes, for the same rail.
+    # the same settlement run_pipeline makes, for the same rail. The ledger
+    # settles beside it: loss_ledger.json in the same folder.
     emit(
         StageEvent(
             STAGE_INGEST,
             counts={"records": len(records), **settle_quarantine(adapter, cmd.out_dir)},
         )
     )
-    return adapter, records
+    return adapter, records, settle_source_ledger(adapter, cmd.out_dir)
 
 
 def _write_manifest_with_event(
@@ -291,6 +299,7 @@ def _run_pack_mode(
         render_mode=cmd.render,
         pack=pack,
         records=result.pipeline.records,
+        source_reading=result.pipeline.source_reading,
     )
 
 
@@ -408,7 +417,7 @@ def _run_ccda_standard(
 
             # Resolve source + emit DETECT + load + emit INGEST — same shape
             # ``pipeline.run_pipeline`` emits for pack mode.
-            _adapter, records = _resolve_source_and_load(cmd, emit)
+            _adapter, records, source_reading = _resolve_source_and_load(cmd, emit)
 
             view = render_ccda_standard(records, charts, force=cmd.force)
             if view.failed:
@@ -462,6 +471,7 @@ def _run_ccda_standard(
         render_mode=cmd.render,
         pack=None,
         records=records,
+        source_reading=source_reading,
     )
 
 

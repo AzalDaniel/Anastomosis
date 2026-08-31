@@ -147,6 +147,9 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
             f"{len(view.skipped)} skipped, 0 failed {_cli._glyphs().arrow} {charts_dir}"
         )
     _cli._print_delivery(result.ccda_export)
+    # What the source offered against what arrived — the load's own account,
+    # printed where the person who ran the move is already looking.
+    _cli._print_source_reading(result.source_reading)
 
     if save_profile is not None:
         default_migration_profiles().save(

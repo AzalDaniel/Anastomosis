@@ -52,6 +52,23 @@ def test_pf_adapter_does_not_claim_ccda_dir() -> None:
     assert not get_source("pf-tebra").detect(CCDA_FIXTURE)
 
 
+def test_load_keeps_one_ledger_per_document_and_resets(tmp_path: Path) -> None:
+    """#315: the adapter ledgers every document as it parses — one set of books
+    per file, on the same reset-per-load contract as ``quarantine`` — so the
+    pipeline can settle them into the run's report without a third walk."""
+    import shutil
+
+    adapter = get_source("ccda")
+    list(adapter.load(CCDA_FIXTURE))
+    assert len(adapter.ledgers) == 1
+    assert adapter.ledgers[0].constructs_offered > 0
+    # Two copies of the fixture: the next load replaces the books, never appends.
+    for name in ("a.xml", "b.xml"):
+        shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / name)
+    list(adapter.load(tmp_path))
+    assert len(adapter.ledgers) == 2
+
+
 def test_patient_id_is_deterministic_across_loads() -> None:
     """The C-CDA patient id is derived from the source (uuid5), not a fresh
     uuid4, so re-parsing the same document yields the same canonical id — like

@@ -146,6 +146,19 @@ class _RunConsole:
         """Convert a caught exception to the no-traceback error contract."""
         return fail_result(self._emit, self._FLOW, stage, exc)
 
+    @staticmethod
+    def _carry_reading(event: dict[str, object], reading: list[str]) -> dict[str, object]:
+        """Attach the source ledger's reading to an event, when the run has one.
+
+        Only when: a ledgerless run's events stay byte-identical to before this
+        surface existed, with no empty key to explain. The sentences are
+        PHI-free by ``physician_reading``'s contract, which is what lets them
+        ride an event the way the migration flow's ``notice`` does.
+        """
+        if reading:
+            event["source_reading"] = reading
+        return event
+
 
 class PipelineConsole(_RunConsole):
     """The pipeline run flow (reconstruct-and-deliver)."""
@@ -348,8 +361,11 @@ class PipelineConsole(_RunConsole):
         # fetch it immediately. (Why it rides the return value: module docstring.)
         patients = self._patient_rows(summarize_patients(result.pipeline))
         summary_id = self._store.store_summary(patients)
-        self._emit(done_event(self._FLOW, summary_id=summary_id, **rollup))
-        return {"ok": True, **rollup, "patients": patients}
+        reading = list(result.pipeline.source_reading)
+        self._emit(
+            self._carry_reading(done_event(self._FLOW, summary_id=summary_id, **rollup), reading)
+        )
+        return {"ok": True, **rollup, "patients": patients, "source_reading": reading}
 
     def _present_deliveries(
         self, deliveries: dict[str, DeliveryOutcome], rollup: dict[str, int]
@@ -561,10 +577,14 @@ class MigrationConsole(_RunConsole):
         # (error) event, never a silent `done`, exactly as the CLI exits 1 with a
         # loud notice. This keeps CLI/GUI parity: both frontends surface a
         # no-viable-route migration as a manual-import event, never a silent done.
+        reading = list(result.source_reading)
         status = classify_migration(result)
         if status.needs_manual_import:
             notice = manual_import_notice(status)
-            self._emit(error_event(self._FLOW, "deliver", notice))
+            # The reading rides the manual-import verdict too — it matters MOST
+            # here, where a person is about to import the transfer document by
+            # hand and should know what it carries as data and what as text.
+            self._emit(self._carry_reading(error_event(self._FLOW, "deliver", notice), reading))
             return {
                 "ok": False,
                 "error": notice,
@@ -573,6 +593,7 @@ class MigrationConsole(_RunConsole):
                 **rollup,
                 "route": route,
                 "patients": patients,
+                "source_reading": reading,
             }
         # A route resolved: the artifacts + the verified route plan ARE written,
         # but `migrate` executes no delivery route, so the honest verdict is
@@ -583,7 +604,7 @@ class MigrationConsole(_RunConsole):
         done = done_event(self._FLOW, summary_id=summary_id, **rollup)
         done["outcome"] = status.outcome.value
         done["notice"] = notice
-        self._emit(done)
+        self._emit(self._carry_reading(done, reading))
         return {
             "ok": True,
             "outcome": status.outcome.value,
@@ -591,6 +612,7 @@ class MigrationConsole(_RunConsole):
             **rollup,
             "route": route,
             "patients": patients,
+            "source_reading": reading,
         }
 
     @staticmethod
