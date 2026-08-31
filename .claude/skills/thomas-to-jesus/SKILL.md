@@ -41,8 +41,14 @@ by side. Each was inference sounding like observation.
       - A "merged/closed/green" claim re-reads the live state, not the
         memory of having acted.
 - [ ] **The evidence ledger.** Every reported result carries its provenance
-      inline: claim → command → exact output or hash. A claim without a
-      ledger line is testimony and is marked as such.
+      inline: claim → command → exact output or hash → when. A claim without
+      a ledger line is testimony and is marked as such. The template:
+
+      | Claim | Action / command | Exact observation | When | Status |
+      |---|---|---|---|---|
+      | corpus pin holds on merged main | `tools/ccda_corpus.py --ledger --count 6144 --seed 7` | `823a60b6…` 65 lines / 3408 B | 12:45Z | PASS |
+      | ledger costs under half a parse | timed 128-doc run | 0.94 ms/doc vs 2.06 ms/doc | 13:05Z | PASS |
+      | Windows `USERPROFILE` path behaviour | — | no Windows machine here | 14:31Z | UNVERIFIED |
 - [ ] **Second derivation for clinical correctness.** Anything touching
       identity, field mapping, or conservation gets re-derived a second,
       independent way before it is believed once (two documents, two tools,

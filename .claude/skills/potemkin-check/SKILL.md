@@ -79,9 +79,15 @@ list, in order.
 - [ ] **Seam check.** The proof ran through a seam the change cannot itself
       edit — the real CLI, the shipped page in a real browser, the produced
       file's bytes — not only the unit seam beside the code.
-- [ ] **Verdict table.** PASS/FAIL per claim with the evidence artifact
-      (command + output excerpt, hash, or screenshot) attached. Prose
-      summaries are not verdicts.
+- [ ] **Verdict table.** PASS/FAIL/UNVERIFIED per claim with the evidence
+      artifact (command + output excerpt, hash, or screenshot) attached.
+      Prose summaries are not verdicts. The required shape:
+
+      | Claim | Status | Code | Evidence |
+      |---|---|---|---|
+      | a text-less Problems section's entries are credited | PASS | `sources/ccda/ledger.py:963` | `pytest tests/unit/test_ccda_ledger.py -k entries` — 65 passed |
+      | `--include growth-charts` renders the seventh chart | PASS | `pf_tebra/mapper.py:84` | run transcript: rendered=7, excluded=1; 8 accounted |
+      | the GUI reading panel clears on the next run | UNVERIFIED | `gui/web/app.js` | no browser lane on this machine |
 
 ## Standing rule
 
