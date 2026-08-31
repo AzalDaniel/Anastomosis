@@ -42,7 +42,7 @@ from anastomosis.sources.learned import register_learned_sources
 register_learned_sources()
 
 if TYPE_CHECKING:
-    from anastomosis.core.model import PatientRecord
+    from anastomosis.core.model import DocumentArtifact, PatientRecord
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
@@ -459,12 +459,12 @@ def _write_selection_report(out: Path, exclusions: list[dict[str, str]]) -> None
 
 
 def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
-    """Copy every attachment the source resolved into the run's output.
+    """Put every attachment the source resolved into the run's output.
 
-    A `DocumentArtifact` with a ``path`` names a real file in the export — a
-    scanned referral, a lab report, the pages a chart is incomplete without.
-    Nothing carried them out of the export, so they reached the operator as
-    nothing at all: not rendered, not delivered, not named anywhere.
+    A `DocumentArtifact` with a ``path`` names the file a chart is incomplete
+    without — a scanned referral, a lab report. Nothing carried them out of the
+    export, so they reached the operator as nothing at all: not rendered, not
+    delivered, not named anywhere.
 
     Each file keeps the name the export gave it (its storage id), which is what
     the record already points at, so a deliverer needs no extra index to find
@@ -479,62 +479,111 @@ def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path
     stops rather than reporting a success it cannot back up.
     """
     from anastomosis.core.output import secure_output_dir
-    from anastomosis.deliver._shared import (
-        DeliveredNameCollision,
-        claim_delivered_name,
-        copy_delivered_file,
-    )
 
-    # (what the record points at, what it is called here, which document, its
-    # digest) — bound once so the rest reads as files rather than as optionals.
-    wanted = [
-        (Path(doc.path), Path(doc.path).name, doc.id, doc.sha256)
-        for record in records
-        for doc in record.documents
-        if doc.path
-    ]
-    if not wanted:
+    named = [doc for record in records for doc in record.documents if doc.path]
+    if not named:
         return 0
 
     target = secure_output_dir(out / ATTACHMENTS_DIRNAME)
     root = export_dir.resolve()
     claims: dict[str, str] = {}
     failures: list[str] = []
-    for relative, name, doc_id, digest in wanted:
-        # The path is the source adapter's word, and a record can also arrive
-        # from a FHIR bundle someone else wrote. Reading it must stay inside the
-        # export the operator pointed at: a `../..` in a hand-made bundle would
-        # otherwise copy a file from anywhere the process can read into an
-        # output directory that gets delivered onward.
-        source = (root / relative).resolve()
-        if not source.is_relative_to(root):
-            raise PipelineError(
-                f"an attachment path points outside the export ({name!r}); refusing to read it",
-                exit_code=1,
-                kind="attachment_escape",
-            )
-        try:
-            claim_delivered_name(claims, name, doc_id, kind="attachment", content=digest)
-        except DeliveredNameCollision as exc:
-            raise PipelineError(str(exc), exit_code=1, kind="attachment_collision") from None
-        destination = target / name
-        if destination.is_file():
-            continue  # the same file claimed twice, or a resumed run
-        failure = copy_delivered_file(source, destination)
-        if failure:
+    for doc in named:
+        if failure := _carry_one(doc, root, target, claims):
             failures.append(failure)
 
-    missing = sum(1 for _, name, _, _ in wanted if not (target / name).is_file())
+    missing = sum(1 for doc in named if not (target / _delivered_name(doc)).is_file())
     if missing:
         kinds = ", ".join(sorted(set(failures))) or "the file was not where the export said"
         raise PipelineError(
-            f"{missing} of {len(wanted)} attachment(s) named by the records did not reach "
+            f"{missing} of {len(named)} attachment(s) named by the records did not reach "
             f"the output ({kinds}); refusing to deliver charts without the documents they "
             "reference",
             exit_code=1,
             kind="attachment_missing",
         )
-    return len({name for _, name, _, _ in wanted})
+    return len({_delivered_name(doc) for doc in named})
+
+
+def _delivered_name(doc: DocumentArtifact) -> str:
+    """What this artifact is called inside the output directory."""
+    return Path(str(doc.path)).name
+
+
+def _carry_one(
+    doc: DocumentArtifact, root: Path, target: Path, claims: dict[str, str]
+) -> str | None:
+    """Land one artifact in ``target``; a PHI-safe failure tag, or ``None``.
+
+    Two kinds arrive here and both leave as one file under one claimed name. A
+    source whose export holds the file names it and it is COPIED. A source whose
+    artifact came inside the record it was read from — a C-CDA Unstructured
+    Document's scan is inside the XML, not beside it — carries its own bytes on
+    the artifact and they are WRITTEN. Nothing downstream is told which: the
+    archive, the bundle and the deliverers all read one thing out of this
+    directory, a document on disk beside the charts, so an artifact that has no
+    file to copy is not a second delivery path to keep in step with this one.
+    """
+    from anastomosis.core.model import EXT_INLINE_CONTENT
+    from anastomosis.deliver._shared import DeliveredNameCollision, claim_delivered_name
+
+    name = _delivered_name(doc)
+    try:
+        claim_delivered_name(claims, name, doc.id, kind="attachment", content=doc.sha256)
+    except DeliveredNameCollision as exc:
+        raise PipelineError(str(exc), exit_code=1, kind="attachment_collision") from None
+    destination = target / name
+    if destination.is_file():
+        return None  # the same file claimed twice, or a resumed run
+    inline = doc.extensions.get(EXT_INLINE_CONTENT)
+    if inline is None:
+        return _copy_from_export(Path(str(doc.path)), name, root, destination)
+    return _write_inline(str(inline), destination)
+
+
+def _copy_from_export(relative: Path, name: str, root: Path, destination: Path) -> str | None:
+    """Copy the export's own file into the output; the failure tag, or ``None``.
+
+    The path is the source adapter's word, and a record can also arrive from a
+    FHIR bundle someone else wrote. Reading it must stay inside the export the
+    operator pointed at: a ``../..`` in a hand-made bundle would otherwise copy
+    a file from anywhere the process can read into an output directory that gets
+    delivered onward.
+    """
+    from anastomosis.deliver._shared import copy_delivered_file
+
+    source = (root / relative).resolve()
+    if not source.is_relative_to(root):
+        raise PipelineError(
+            f"an attachment path points outside the export ({name!r}); refusing to read it",
+            exit_code=1,
+            kind="attachment_escape",
+        )
+    return copy_delivered_file(source, destination)
+
+
+def _write_inline(content: str, destination: Path) -> str | None:
+    """Write an artifact the record carries its own bytes for.
+
+    Base64 that will not decode is the artifact arriving as nothing, so it is
+    reported as a failure the conservation check above turns into a refusal —
+    the same answer a file that would not copy gets, because it is the same
+    outcome for the chart.
+
+    PHI: the return is an exception TYPE name. The bytes are a patient's
+    document and are written, never logged.
+    """
+    import base64
+    import binascii
+
+    from anastomosis.core.atomic import atomic_write_bytes
+    from anastomosis.core.logutil import exc_tag
+
+    try:
+        atomic_write_bytes(destination, base64.b64decode(content, validate=True))
+    except (OSError, binascii.Error, ValueError) as exc:
+        return exc_tag(exc)
+    return None
 
 
 #: Where the whole-patient record summaries land inside the output directory,

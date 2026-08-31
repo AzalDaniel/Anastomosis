@@ -391,6 +391,12 @@ class _Evidence:
     linkable_roots: frozenset[str]
     narrative: Counter[tuple[str | None, str | None]]
     extension_keys: frozenset[str]
+    #: The source ids the record's DOCUMENT artifacts name. Kept apart from
+    #: ``source_ids`` because the body constructs are asked a narrower question
+    #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
+    #: out of the whole record would credit an unstructured body to the
+    #: document id every record's own provenance already carries.
+    document_source_ids: frozenset[str]
 
     def links(self, node: _Element) -> bool | None:
         """Whether some canonical object came from this construct.
@@ -412,6 +418,24 @@ class _Evidence:
         self.narrative[pair] -= 1
         return True
 
+    def carried_as_document(self, identifier: str | None) -> bool | None:
+        """Whether a document artifact in the record came from ``identifier``.
+
+        ``None`` has the same meaning it has in :meth:`links` — the question
+        could not be asked — and for the same reason: no id to ask it by.
+
+        A separate question from ``links`` because CDA gives ``NonXMLBody`` no
+        ``<id>`` element at all, so there is nothing inside the construct to
+        compare and every unstructured body would sit in ``unlinkable`` forever,
+        whatever the adapter learned to do with it. The DOCUMENT's own id is
+        what such a body is attributable by — an Unstructured Document IS its
+        artifact — and the evidence stays the record's word rather than a
+        table's: with no artifact carrying that id, the row reads unsupported.
+        """
+        if identifier is None:
+            return None
+        return identifier in self.document_source_ids
+
     def parked_under(self, name: str) -> bool:
         """Whether anything in ``extensions`` is namespaced to this construct.
 
@@ -431,6 +455,7 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
         linkable_roots=frozenset(_linkable_roots(root)),
         narrative=_narrative_pool(record),
         extension_keys=frozenset(record.patient.extensions),
+        document_source_ids=frozenset(_source_ids(record.documents)),
     )
 
 
@@ -451,9 +476,14 @@ def _record_source_ids(record: PatientRecord) -> set[str]:
     patient's own source identifier, which is why it may not be logged, named
     in a message, or written into a report — and why nothing here does.
     """
+    return _source_ids(_provenanced(record))
+
+
+def _source_ids(objects: Iterable[AnastBase]) -> set[str]:
+    """Every source id ``objects`` point back at. PHI: compared, never emitted."""
     return {
         obj.provenance.source_id
-        for obj in _provenanced(record)
+        for obj in objects
         if obj.provenance is not None and obj.provenance.source_id is not None
     }
 
@@ -630,6 +660,57 @@ def _participation_row(
     )
 
 
+# --- the body ----------------------------------------------------------------
+
+
+def _document_identity(root: _Element, evidence: _Evidence) -> str | None:
+    """The id root this document is identified BY, when it identifies only this.
+
+    Filtered through ``linkable_roots`` for the reason that set exists: a root
+    two constructs share cannot say which of them an object came from, and a
+    document whose own id is stamped on half its entries would credit its body
+    to any of them.
+    """
+    identifier = _find(root, "v3:id")
+    if identifier is None:
+        return None
+    value = identifier.get("root")
+    return value if value in evidence.linkable_roots else None
+
+
+def _body_row(
+    root: _Element, kind: str, name: str, paths: tuple[str, ...], evidence: _Evidence
+) -> LedgerRow:
+    """One body form's books, asked at the document's id rather than its own.
+
+    Everything else here is measured by :meth:`_Evidence.links`, which reads the
+    ``<id root>`` values INSIDE a construct. ``nonXMLBody`` has none to read —
+    CDA R2 gives ``NonXMLBody`` no ``id`` element — so that question is
+    unanswerable for it by construction, and asking it anyway would report the
+    ledger's own blind spot as the adapter's loss forever. The question that can
+    be answered is :meth:`_Evidence.carried_as_document`, and it is answered out
+    of the record exactly like every other row.
+    """
+    identity = _document_identity(root, evidence)
+    counts: Counter[Disposition] = Counter({Disposition.SOURCE_EMPTY: 0})
+    unlinkable = 0
+    for node in _nodes(root, paths):
+        carried = evidence.carried_as_document(identity)
+        unlinkable += carried is None
+        counts[_participation_disposition(node, name, carried, evidence)] += 1
+    return LedgerRow(
+        construct=_construct(kind, name),
+        instances=dict(counts),
+        unlinkable=unlinkable,
+    )
+
+
+def _body_rows(root: _Element, evidence: _Evidence) -> list[LedgerRow]:
+    return [
+        _body_row(root, _BODY_KIND, name, paths, evidence) for name, paths in BODY_PATHS.items()
+    ]
+
+
 def _nodes(root: _Element, paths: tuple[str, ...]) -> list[_Element]:
     return [node for path in paths for node in _findall(root, path)]
 
@@ -667,7 +748,7 @@ def _ledger(root: _Element, record: PatientRecord) -> DocumentLedger:
         rows=(
             *(_section_row(section, evidence) for section in _sections(root)),
             *_named_rows(root, _PARTICIPATION_KIND, PARTICIPATION_PATHS, evidence),
-            *_named_rows(root, _BODY_KIND, BODY_PATHS, evidence),
+            *_body_rows(root, evidence),
         ),
         constructs_offered=_offered(root),
         entries_offered=len(list(root.iter(_q("entry")))),
