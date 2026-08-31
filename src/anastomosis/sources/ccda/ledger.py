@@ -79,7 +79,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from lxml import etree
 
@@ -548,34 +548,127 @@ ID_LESS_CONSTRUCTS: Mapping[str, _Content] = {
 }
 
 
+# --- the places a record keeps evidence in -----------------------------------
+#
+# Every evidence question this module asks is the same shape: a construct
+# offers a HANDLE, and a PLACE in the record is asked whether it holds
+# something that handle can be shown to have produced. What separates the
+# questions is not the asking, it is whether asking COSTS anything.
+#
+# That distinction used to live inside two method bodies and was declared in
+# neither signature, which is what #329 was filed about. It is now the type of
+# the place. A ``_Facts`` has no method that mutates it and is frozen besides,
+# so an id can answer for any number of constructs and no future edit can
+# quietly make it answer once. A pool answers only by being spent, because its
+# members are obligations: two sections spelled identically are two
+# obligations, as are two identical informants, and a pool that answered yes
+# twice for one stored thing would credit a construct that was dropped.
+#
+# The two pools stay two types rather than one. A narrative is claimed by an
+# exact key; an object is claimed by a predicate the CALLER supplies, because
+# which facts count is a property of the asking rule and not of the object.
+# Forcing both through one interface would mean precomputing every object's
+# facts under a rule not yet known, and would leave a name that means two
+# things.
+
+_Key = TypeVar("_Key")
+
+
+@dataclass(frozen=True)
+class _Facts:
+    """A place that answers as often as it is asked, and is never spent.
+
+    Frozen, and holding a ``frozenset``, on purpose: there is no method here
+    that removes a member and no way to add one. "Asking this does not cost
+    anything" is therefore readable from the type, which is the whole point of
+    the exercise, rather than from remembering that nobody wrote a decrement.
+    """
+
+    held: frozenset[str]
+
+    def holds(self, value: str) -> bool:
+        return value in self.held
+
+    def any_of(self, values: Iterable[str]) -> bool:
+        return bool(self.held & frozenset(values))
+
+    def namespaced(self, prefix: str) -> bool:
+        """Whether anything here is ``prefix`` itself or a key under it."""
+        return any(key == prefix or key.startswith(f"{prefix}:") for key in self.held)
+
+
+class _KeyedPool(Generic[_Key]):
+    """A place whose members are claimed by an exact key, one claim each.
+
+    ``take`` is the only way in or out. There is deliberately no way to look
+    without taking: a caller that could ask without spending could write a
+    predicate that credits the same stored thing twice, which is the arithmetic
+    this ledger exists to refuse.
+    """
+
+    def __init__(self, counts: Counter[_Key]) -> None:
+        self._counts = counts
+
+    def take(self, key: _Key) -> bool:
+        if self._counts[key] < 1:
+            return False
+        self._counts[key] -= 1
+        return True
+
+
+class _MatchedPool:
+    """A place whose members are claimed by a predicate, one claim each.
+
+    Separate from :class:`_KeyedPool` because the question is not "is this key
+    present" but "does any object here record exactly what the asking rule says
+    this construct states" — and the rule, not the object, decides which facts
+    count. One object is one parse: an object that has already stood for a
+    construct cannot stand for a second, so N id-less constructs against M
+    matching objects credit ``min``.
+    """
+
+    def __init__(self, items: Iterable[AnastBase]) -> None:
+        self._items: list[AnastBase | None] = list(items)
+
+    def take(self, matches: Callable[[AnastBase], bool]) -> bool:
+        for index, item in enumerate(self._items):
+            if item is not None and matches(item):
+                self._items[index] = None
+                return True
+        return False
+
+
 # --- what the record can prove -----------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class _Evidence:
     """Everything the parsed record can PROVE about a construct.
 
-    Built once per document. ``narrative`` and ``objects`` are consumed as they
-    match: two sections spelled identically are two obligations, as are two
-    identical informants, and a pool that answered yes twice for one stored
-    thing would credit a construct that was dropped.
+    Built once per document. The five places below are the whole vocabulary,
+    and each one's type says whether asking it costs anything — see the note
+    above :class:`_Facts`.
     """
 
-    source_ids: frozenset[str]
-    linkable_roots: frozenset[str]
-    narrative: Counter[tuple[str | None, str | None]]
-    extension_keys: frozenset[str]
-    #: Every canonical object the record holds, spent as it answers. One object
-    #: is one parse: an object that has already stood for a construct cannot
-    #: stand for a second, so N id-less constructs against M matching objects
-    #: credit ``min`` and two identical informants against one object credit one.
-    objects: list[AnastBase | None]
+    #: Where an id is asked. A fact: one id answers for as many constructs as
+    #: carry it, because an id is true rather than owed.
+    source_ids: _Facts
+    #: Which roots are worth asking by at all. Also a fact, and asked of the
+    #: construct rather than of the record.
+    linkable_roots: _Facts
+    #: Where a stored narrative is claimed, one claim per stored pair.
+    narrative: _KeyedPool[tuple[str | None, str | None]]
+    #: Where a namespace is asked. A fact: one parked key answers for the
+    #: construct class, not for one construct.
+    extension_keys: _Facts
+    #: Where a canonical object is claimed, one claim per object.
+    objects: _MatchedPool
     #: The source ids the record's DOCUMENT artifacts name. Kept apart from
     #: ``source_ids`` because the body constructs are asked a narrower question
     #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
     #: out of the whole record would credit an unstructured body to the
     #: document id every record's own provenance already carries.
-    document_source_ids: frozenset[str]
+    document_source_ids: _Facts
 
     def links(self, node: _Element) -> bool | None:
         """Whether some canonical object came from this construct.
@@ -585,10 +678,10 @@ class _Evidence:
         because collapsing it into "no" would report the ledger's blind spot as
         the adapter's loss.
         """
-        roots = {root for root in _id_roots(node) if root in self.linkable_roots}
+        roots = {root for root in _id_roots(node) if self.linkable_roots.holds(root)}
         if not roots:
             return None
-        return bool(roots & self.source_ids)
+        return self.source_ids.any_of(roots)
 
     def states(self, name: str, node: _Element) -> bool | None:
         """Whether the record holds an object stating what this construct states.
@@ -604,22 +697,19 @@ class _Evidence:
         if rule is None or not rule.applies(node):
             return None
         facts = rule.stated(node)
-        return self._spend(rule, facts) if facts else None
-
-    def _spend(self, rule: _Content, facts: frozenset[_Fact]) -> bool | None:
-        """Take the first object stating exactly ``facts`` out of circulation."""
-        for index, obj in enumerate(self.objects):
-            if obj is not None and rule.recorded(obj) == facts:
-                self.objects[index] = None
-                return True
-        return None
+        if not facts:
+            return None
+        # A miss here is None, not False, and the asymmetry with
+        # :meth:`kept_narrative` below is deliberate. Content matching mirrors
+        # what the parser chose to record, so failing to find a match says the
+        # mirror did not line up — this ledger's own blind spot rather than a
+        # loss it can attribute to the adapter. A narrative miss IS a no,
+        # because the narrative pool is what the record actually kept.
+        return True if self.objects.take(lambda obj: rule.recorded(obj) == facts) else None
 
     def kept_narrative(self, title: str | None, text: str | None) -> bool:
-        pair = (title, text)
-        if self.narrative[pair] < 1:
-            return False
-        self.narrative[pair] -= 1
-        return True
+        """Whether the record kept this construct's own narrative, spending it."""
+        return self.narrative.take((title, text))
 
     def carried_as_document(self, identifier: str | None) -> bool | None:
         """Whether a document artifact in the record came from ``identifier``.
@@ -637,7 +727,7 @@ class _Evidence:
         """
         if identifier is None:
             return None
-        return identifier in self.document_source_ids
+        return self.document_source_ids.holds(identifier)
 
     def parked_under(self, name: str) -> bool:
         """Whether anything in ``extensions`` is namespaced to this construct.
@@ -648,19 +738,17 @@ class _Evidence:
         believed to do, so a future fix moves this number without touching this
         file.
         """
-        prefix = f"ccda:{name}"
-        return any(key == prefix or key.startswith(f"{prefix}:") for key in self.extension_keys)
+        return self.extension_keys.namespaced(f"ccda:{name}")
 
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
-    objects: list[AnastBase | None] = list(_provenanced(record))
     return _Evidence(
-        source_ids=frozenset(_record_source_ids(record)),
-        linkable_roots=frozenset(_linkable_roots(root)),
-        narrative=_narrative_pool(record),
-        extension_keys=frozenset(record.patient.extensions),
-        objects=objects,
-        document_source_ids=frozenset(_source_ids(record.documents)),
+        source_ids=_Facts(frozenset(_record_source_ids(record))),
+        linkable_roots=_Facts(frozenset(_linkable_roots(root))),
+        narrative=_KeyedPool(_narrative_pool(record)),
+        extension_keys=_Facts(frozenset(record.patient.extensions)),
+        objects=_MatchedPool(_provenanced(record)),
+        document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
 
 
@@ -790,7 +878,7 @@ def _narrative_kept(
     address rather than reported as dropped.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
-        kept = EXT_PRIOR_LOSS_NARRATIVE in evidence.extension_keys
+        kept = evidence.extension_keys.holds(EXT_PRIOR_LOSS_NARRATIVE)
         return kept, kept
     if pair == (None, None):
         return False, False
@@ -882,7 +970,7 @@ def _document_identity(root: _Element, evidence: _Evidence) -> str | None:
     if identifier is None:
         return None
     value = identifier.get("root")
-    return value if value in evidence.linkable_roots else None
+    return value if value is not None and evidence.linkable_roots.holds(value) else None
 
 
 def _body_row(
