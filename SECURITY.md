@@ -155,18 +155,35 @@ uploads while code-scanning *default setup* is enabled, so default setup
 must be disabled in Settings → Code security for this workflow's results to
 land.)
 
-Inline suppression takes two steps, and this policy previously described
-only the first. The suite ships `AlertSuppression.ql`, which computes each
-`# codeql[...]` comment into the uploaded SARIF — but code scanning ignores
-the SARIF's `suppressions[]` property, so on its own the comment changes
-nothing: the alert stays open and a pull request touching that line still
-fails its check. The workflow's final step, `advanced-security/dismiss-alerts`,
-reads the property back and dismisses the matching alerts through the API only
-after accepted code is pushed to `main`. It never runs for a pull request,
-feature-branch push, or scheduled scan: alert state is repository state, so code
-that has not been accepted cannot mutate it with `security-events: write`.
-That post-acceptance step is what makes every suppression below an auditable
-control rather than a convention.
+Inline suppression takes **three** things, and this policy has now twice
+described fewer. Each missing one was found by watching the control fail, not
+by reading about it, and the sequence is worth keeping because it is the same
+mistake the product itself must never make.
+
+1. **The suppression query has to run.** `security-extended` ships
+   `AlertSuppression.ql` but does not run it; the CodeQL CLI computes the
+   SARIF's `suppressions[]` property only when that query is requested as a
+   pack. That is the `packs:` line on the workflow's init step. Without it the
+   SARIF carries no suppressions at all.
+2. **Code scanning ignores the property even when it is there.** A correctly
+   formed comment, correctly placed, changes nothing on its own.
+3. **`advanced-security/dismiss-alerts` reads the property back** and dismisses
+   the matching alerts through the API — and only after accepted code is pushed
+   to `main`. It never runs for a pull request, feature-branch push, or
+   scheduled scan: alert state is repository state, so code that has not been
+   accepted cannot mutate it with `security-events: write`.
+
+The history, since a policy that quietly acquires a correct sentence teaches
+nobody: six suppressions sat inert in `src/` until a seventh, correctly formed
+and correctly placed, failed to clear its alert in #310. The dismissal step was
+added — and the alert still did not clear. On the merge of #310 that step ran,
+reported success, indexed nine alerts and dismissed none, because step 1 was
+missing and the SARIF it read was empty of suppressions. A green step that does
+nothing is worse than an absent one, and it survived exactly as long as it took
+to read its log instead of its status.
+
+All three together are what make every suppression below an auditable control
+rather than a convention.
 
 One consequence is worth stating here rather than leaving to be discovered.
 Because dismissal happens only after a merge, a pull request that *introduces*
@@ -179,17 +196,24 @@ arrive before merge. That is a deliberate trade, and the alternative is worse:
 letting unmerged code dismiss alerts would destroy the audit trail this policy
 exists to keep.
 
-This was not a theoretical gap. Six suppressions sat in `src/` doing nothing
-until a seventh, correctly formed and correctly placed, failed to clear its
-alert in #310 and made the mechanism visible.
 
 Anastomosis's product surface is writing patient records to disk under the
 operator's control, which the `py/clear-text-storage-sensitive-data` rule
 cannot distinguish from a defect. Rather than exclude any rule repo-wide,
-suppression is **inline and per-site**: each deliberately PHI-writing call
-site carries a `# codeql[rule-id]` suppression comment immediately beside a
-`PHI-BY-DESIGN` comment stating the guarantee that justifies it (a
-`secure_output_dir`-hardened directory, or field-name-not-value logging).
+suppression is **inline and per-site**: each site carries a
+`# codeql[rule-id]` comment immediately beside a rationale stating the
+guarantee that justifies it. There are exactly two rationales a site may
+claim, and they are not interchangeable:
+
+- `PHI-BY-DESIGN` — the site really does write a patient's record, where the
+  operator asked for it, under a guarantee that makes that safe (a
+  `secure_output_dir`-hardened directory, or field-name-not-value logging).
+  The rule is reading the product as a defect.
+- `PHI-FREE-BY-CONSTRUCTION` — nothing sensitive reaches the sink at all, and
+  the alert is a false positive the code cannot phrase its way out of. This
+  claim is the easier one to make and the easier one to be wrong about, so it
+  is only accepted alongside a test that fails if it ever stops being true.
+
 The audited suppression sites are exactly:
 
 - `src/anastomosis/deliver/_shared.py` (the per-patient FHIR bundle, written
@@ -206,13 +230,23 @@ The audited suppression sites are exactly:
 - `src/anastomosis/deliver/fhir_api/destination.py` (a log line carrying
   the *name* of the matched field, never a value) —
   `py/clear-text-logging-sensitive-data`
+- `docs/audits/learned-source/tools/probe_ccda_corpus.py` (the corpus probe
+  prints integer counts under keys that are string literals declared in the
+  file; all it takes from a chart is a yes/no and a length) —
+  `py/clear-text-logging-sensitive-data`, `PHI-FREE-BY-CONSTRUCTION`, proven
+  by `tests/unit/test_corpus_probe_emits_no_values.py`, which parses a chart
+  and requires that none of its strings appear in the printed output. The
+  suppression is a backstop rather than the fix: CodeQL never told us which
+  flow it objected to, so the probe was restructured until no flow existed.
 
-A policy test pins this list: every inline suppression in `src/` must sit
-beside a `PHI-BY-DESIGN` rationale and appear in the list above, so a new
-suppression cannot land without amending this policy. Every module not
-listed here remains fully covered by both rules; if the field-name
-convention drifts or a writer lands outside a hardened directory, CodeQL
-alerts again.
+A policy test pins this list: every inline suppression under `src/` and
+`docs/` must sit beside one of the two rationales and appear in the list
+above, so a new suppression cannot land without amending this policy. The
+audit tools under `docs/` are in scope precisely because they are run by
+hand against real exports — an unwatched corner is where a silenced alert
+would actually hide. Every module not listed here remains fully covered by
+both rules; if the field-name convention drifts or a writer lands outside a
+hardened directory, CodeQL alerts again.
 
 Storage-at-rest encryption remains a separate, opt-in operator concern
 (BitLocker / FileVault / dm-crypt); directory hardening resists siblings

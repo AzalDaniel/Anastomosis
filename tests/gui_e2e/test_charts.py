@@ -217,6 +217,49 @@ def test_a_skipped_double_check_is_never_painted_as_done(gui) -> None:
     assert "Finished" in current and "did not run" in current
 
 
+def test_qa_rail_explains_a_nonzero_not_carried_count(gui) -> None:
+    """The count qa_report.json always had now reads the same on the rail (#297).
+
+    ``not_carried`` rides the QA progress event's counts like every other QA
+    number — the bug was never the wiring, it was that the generic key-dump
+    rendered the bare key as "not carried 13", which said nothing about what
+    13 counted. The rail now says what the CLI says.
+    """
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+    page.click("#charts-run")
+
+    app.emit(stage_event(_FLOW, "qa", "start"))
+    app.emit(progress_event(_FLOW, "qa", **{"pass": 2, "warn": 0, "fail": 0, "not_carried": 13}))
+
+    note = page.locator("#charts-stage-qa .stage-counts").text_content() or ""
+    assert note == (
+        "pass 2 · warn 0 · fail 0 · 13 fact(s) carried by the record summary, not the visit charts"
+    )
+    # The activity strip reads the same event and must not disagree with the rail.
+    assert "13 fact(s) carried by the record summary, not the visit charts" in (
+        app.text("#log-strip-msg")
+    )
+
+
+def test_qa_rail_stays_short_when_nothing_was_left_out(gui) -> None:
+    """A run that abbreviates nothing gets the counts line it always had."""
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+    page.click("#charts-run")
+
+    app.emit(stage_event(_FLOW, "qa", "start"))
+    app.emit(progress_event(_FLOW, "qa", **{"pass": 2, "warn": 0, "fail": 0}))
+
+    note = page.locator("#charts-stage-qa .stage-counts").text_content() or ""
+    assert note == "pass 2 · warn 0 · fail 0"
+    assert "fact(s)" not in note
+
+
 def test_section_choices_survive_a_layout_round_trip(gui) -> None:
     """A section the physician turned off must not come back on its own.
 

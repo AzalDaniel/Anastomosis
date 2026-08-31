@@ -25,25 +25,15 @@ Design choices, grounded in the pack contracts read above:
   ``facility``, ``patient``…), so the engine renders it unchanged. Inferred
   design tokens are inlined as CSS custom properties; what differs from the
   built-in pack is the *look* (tokens), not the data contract.
-* **Losslessness**: every static-classified string is placed. Strings that map
-  to a known model field become patient-header labels; the rest are emitted
-  verbatim inside an ``UNPLACED STATIC TEXT`` HTML comment so nothing is
-  silently dropped — the operator positions them by hand.
-* **PHI**: only static-classified text — text recurring across a supermajority
-  of samples — reaches the emitted files. That is a FREQUENCY test, and it was
-  described here as though it were a proof: "per-patient values never recur and
-  never reach here" is not true, and #200 reproduced it. Three charts from three
-  different patients put the bar at two, so a diagnosis or an ethnicity that two
-  of them share is classified as template chrome and written out verbatim, into
-  ``template.html`` and ``DRAFT.md`` alike.
-
-  What is still true: a value appearing in exactly ONE sample cannot reach here,
-  and a single-sample run emits no sample-derived text at all. What the operator
-  is owed is the rest of it, which is why ``SAME_PATIENT_CAVEAT`` now says that
-  distinct patients are not on their own enough, and asks them to read the
-  labels rather than trust them — and why ``STATIC_LIST_NOTE`` repeats it in
-  one sentence directly above the strings themselves, in both emitted files. A
-  caveat at the top of a document does not survive the scroll down to the list.
+* **Sample-text quarantine**: every raw string inferred from samples is written
+  only to ``UNPLACED.txt``. The working pack files use fixed canonical labels,
+  numbered placeholders, counts, and role metadata only, so deleting that file
+  removes every raw sample-derived string the generator retained.
+* **PHI**: recurrence and fixed placement are useful inference signals, not
+  proof that a string belongs to the form. A shared fixed-cell value can still
+  look like a label, so raw sample text is quarantined even when an exact known
+  header token lets the generated template retain useful structure. A
+  single-sample run emits no sample-derived text at all.
 * **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
   (sorted keys, fixed float formatting, deterministic section ordering).
 """
@@ -101,8 +91,8 @@ SAME_PATIENT_CAVEAT = (
     "These samples MUST be from DIFFERENT patients/encounters. The static/"
     "per-patient text split assumes distinct charts: hand the learner copies "
     "of ONE patient's chart and that patient's values recur in every sample, "
-    "become indistinguishable from template text, and WILL be emitted as "
-    "labels here. If the samples were not distinct patients, discard this "
+    "become indistinguishable from template text, and are quarantined as raw "
+    "sample text. If the samples were not distinct patients, discard this "
     "draft.\n\n"
     "Distinct patients are NOT on their own enough. A string reaches the "
     "static list by appearing in EVERY sample and by owning a place on the "
@@ -110,7 +100,7 @@ SAME_PATIENT_CAVEAT = (
     "A value all of your patients happen to share, printed in a fixed cell — "
     "a referring provider, a clinic address, a phone number — sits in that "
     "cell on every chart with no competitor to give it away, and looks exactly "
-    "like a label the form printed. Read the static labels below and delete "
+    "like a label the form printed. Read the quarantined strings below and delete "
     "anything that belongs to a patient rather than to the form."
 )
 
@@ -122,32 +112,67 @@ SAME_PATIENT_CAVEAT = (
 # moment they are looking at the strings and deciding what to keep. A caveat
 # only works if it is still true where the reader is.
 STATIC_LIST_NOTE = (
-    "These strings are on every sample and own a spot nothing else uses. That "
-    "is a filter, not proof of who wrote them: a value all of your patients "
-    "share, in a fixed cell, passes it. Delete anything here that belongs to a "
-    "patient rather than to the form."
+    "These strings were retained from your samples. Inference is a filter, not "
+    "proof of who wrote them: a value all of your patients share in a fixed "
+    "cell can pass it. Delete anything here that belongs to a patient rather "
+    "than to the form."
 )
 
-# Static strings that, after normalization, signal a known patient-header model
-# field. Mapping a label here means the generated template renders the field's
-# VALUE next to it; everything else is unplaced (commented). Each entry is the
-# normalized label -> the header fragment that emits it. The right-hand side
-# uses only context variables generic_soap's build_context provides.
-_HEADER_LABEL_FIELDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
-    (re.compile(r"^(dob|date of birth)\b", re.IGNORECASE), "dob", "{{ dob }}"),
+# Exact sample tokens that can retain a header *slot*. The emitted label is a
+# fixed vocabulary item, never a copy of a sample string. Do not widen this to
+# a prefix regex: ``Provider: Dr X`` is a value, not a Provider label.
+_HEADER_LABEL_FIELDS: tuple[tuple[frozenset[str], str, str, str], ...] = (
     (
-        re.compile(r"^(provider|seen by|rendering provider)\b", re.IGNORECASE),
+        frozenset({"dob", "dob:", "date of birth", "date of birth:"}),
+        "Birth date",
+        "dob",
+        "{{ dob }}",
+    ),
+    (
+        frozenset(
+            {
+                "provider",
+                "provider:",
+                "seen by",
+                "seen by:",
+                "rendering provider",
+                "rendering provider:",
+            }
+        ),
+        "Clinician",
         "provider",
         "{{ provider.name if provider else '' }}",
     ),
-    (re.compile(r"^(patient|name)\b", re.IGNORECASE), "patient_name", "{{ patient_name }}"),
-    (re.compile(r"^(sex|gender)\b", re.IGNORECASE), "sex", "{{ patient.sex or '' }}"),
     (
-        re.compile(r"^(date of service|dos|visit date|encounter date)\b", re.IGNORECASE),
+        frozenset({"patient", "patient:", "name", "name:"}),
+        "Patient identifier",
+        "patient_name",
+        "{{ patient_name }}",
+    ),
+    (
+        frozenset({"sex", "sex:", "gender", "gender:"}),
+        "Recorded sex",
+        "sex",
+        "{{ patient.sex or '' }}",
+    ),
+    (
+        frozenset(
+            {
+                "date of service",
+                "date of service:",
+                "dos",
+                "dos:",
+                "visit date",
+                "visit date:",
+                "encounter date",
+                "encounter date:",
+            }
+        ),
+        "Service date",
         "dos",
         "{{ dos }}",
     ),
-    (re.compile(r"^(age)\b", re.IGNORECASE), "age", "{{ age or '' }}"),
+    (frozenset({"age", "age:"}), "Patient age", "age", "{{ age or '' }}"),
 )
 
 
@@ -293,33 +318,16 @@ def _section_candidates(analysis: PackAnalysis) -> list[SectionCandidate]:
     return [c for c in analysis.sections if c.count >= _MIN_SECTION_COUNT]
 
 
-def _section_key(text: str, used: set[str]) -> str:
-    """A stable snake_case manifest key for a heading, de-duplicated.
-
-    The manifest's ``sections`` is keyed by identifier (``vitals``,
-    ``addenda``); headings are human strings, so we slugify. Collisions get a
-    numeric suffix so two headings never silently overwrite one another.
-    """
-    base = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "section"
-    key = base
-    suffix = 2
-    while key in used:
-        key = f"{base}_{suffix}"
-        suffix += 1
-    used.add(key)
-    return key
-
-
 def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]], list[str]]:
-    """Split static text into placed header labels and unplaced strings.
+    """Identify exact known header tokens without reproducing their text.
 
     Returns ``(placed, unplaced)`` where ``placed`` is a list of
-    ``(label, slot, value_expr)`` for strings matching a known patient-header
-    field, and ``unplaced`` is every other static string (verbatim), to be
-    emitted in the UNPLACED comment block. Section headings are NOT in
-    ``static_text`` (infer subtracts them), so they never appear here.
-    Determinism: a label matches at most one slot (first pattern wins), each
-    slot is placed at most once, and unplaced text keeps input (sorted) order.
+    ``(canonical_label, slot, value_expr)`` for exact known patient-header
+    tokens. ``unplaced`` is retained for compatibility with the draft copy and
+    contains every other raw static string. All raw static strings, including
+    recognised tokens, are collected separately by :func:`_quarantined_text`.
+    Determinism: a token matches at most one slot (first entry wins), and each
+    slot is placed at most once.
     """
     placed: list[tuple[str, str, str]] = []
     unplaced: list[str] = []
@@ -332,9 +340,10 @@ def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]]
         return placed, unplaced
     for text in analysis.static_text:
         match = None
-        for pattern, slot, value_expr in _HEADER_LABEL_FIELDS:
-            if pattern.match(text) and slot not in used_slots:
-                match = (text, slot, value_expr)
+        token = " ".join(text.split()).casefold()
+        for exact_tokens, canonical_label, slot, value_expr in _HEADER_LABEL_FIELDS:
+            if token in exact_tokens and slot not in used_slots:
+                match = (canonical_label, slot, value_expr)
                 used_slots.add(slot)
                 break
         if match is not None:
@@ -342,6 +351,111 @@ def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]]
         else:
             unplaced.append(text)
     return placed, unplaced
+
+
+#: Section headings that are PUBLISHED CLINICAL VOCABULARY, not sample content.
+#:
+#: The quarantine below exists because a string that recurs across samples can
+#: be a form's label OR a value every sample happened to share — a provider's
+#: name on every page reads exactly like template furniture (#200). But a
+#: heading that matches the standard vocabulary is neither: "Subjective" and
+#: "Allergies" are SOAP and C-CDA section names, published by HL7 and printed
+#: on every chart in the country. They are schema, in the same sense a table
+#: name is schema, and the pf_tebra loader has always said so.
+#:
+#: Withholding them costs the learner the one thing it exists to learn — a pack
+#: whose sections read "Inferred section 1" cannot reproduce a layout — while
+#: protecting nothing: no patient is identified by the word "Assessment".
+#: Everything NOT in this set keeps the numbered placeholder and the
+#: quarantine, so an unrecognised recurring string is still treated as
+#: potential PHI. The set is deliberately small and closed: matching is exact
+#: (after the same normalisation inference already applies), so a heading like
+#: "Assessment by Dr Fixture" is not in it and stays quarantined.
+_PUBLISHED_SECTION_HEADINGS = frozenset(
+    {
+        # SOAP, the note structure every ambulatory chart uses.
+        "subjective",
+        "objective",
+        "assessment",
+        "plan",
+        "assessment and plan",
+        "chief complaint",
+        "history of present illness",
+        "review of systems",
+        "physical exam",
+        "physical examination",
+        # C-CDA section titles (the LOINC-coded sections in ccda_codes).
+        "allergies",
+        "allergies and adverse reactions",
+        "medications",
+        "problems",
+        "problem list",
+        "immunizations",
+        "results",
+        "vital signs",
+        "vitals",
+        "social history",
+        "family history",
+        "encounters",
+        "procedures",
+        "plan of treatment",
+        "goals",
+        "health concerns",
+        "insurance",
+        "payers",
+        "advance directives",
+        "functional status",
+        "medical equipment",
+        "past medical history",
+        "notes",
+        "addenda",
+    }
+)
+
+
+def _section_key(candidate: SectionCandidate, index: int) -> str:
+    """The pack.yaml key for one inferred section.
+
+    A published heading gets a readable key derived from its own words, so the
+    manifest reads as the chart does; anything else keeps the positional key,
+    which reveals nothing about the string it stands for.
+    """
+    known = published_heading(candidate.text)
+    if known is None:
+        return f"inferred_section_{index}"
+    return "_".join(word for word in re.split(r"\W+", known.casefold()) if word)
+
+
+def published_heading(text: str) -> str | None:
+    """The canonical spelling when ``text`` is published vocabulary, else None.
+
+    Case and surrounding punctuation vary by vendor ("SUBJECTIVE:", "Subjective"),
+    so the comparison folds both; the returned label is the sample's own
+    spelling, which is what the operator recognises on their chart.
+    """
+    folded = text.strip().strip(":").strip().casefold()
+    return text.strip().strip(":").strip() if folded in _PUBLISHED_SECTION_HEADINGS else None
+
+
+def _quarantined_text(analysis: PackAnalysis) -> list[str]:
+    """Every raw sample-derived string the generated pack retains.
+
+    Headings are not in ``static_text`` because inference separates the two
+    categories, but their text has the same provenance and must obey the same
+    boundary. The low-confidence gate remains fail-closed: one sample emits no
+    sample text, including into the quarantine file.
+    """
+    if analysis.low_confidence:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for text in (*analysis.static_text, *(candidate.text for candidate in analysis.sections)):
+        if published_heading(text) is not None:
+            continue  # schema, not sample content — it ships in the pack itself
+        if text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -408,21 +522,20 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
             "    default: false",
         ]
     )
-    used_keys = {"vitals", "addenda", "insurance", "social_history"}
-    for candidate in sections:
-        key = _section_key(candidate.text, used_keys)
+    for index, candidate in enumerate(sections, start=1):
         # Inferred headings are informational rows (the operator wires them into
         # the template by hand); default off so a draft never asserts a section
-        # the engine cannot yet populate.
+        # the engine cannot yet populate.  The raw heading remains only in the
+        # quarantine file; this stable placeholder preserves order and metadata.
+        known = published_heading(candidate.text)
+        key = _section_key(candidate, index)
         lines.append(f"  {key}:")
-        lines.append(f"    label: {_yaml_scalar(candidate.text.title())}")
+        lines.append(f"    label: {_yaml_scalar(known or f'Inferred section {index}')}")
         lines.append("    default: false")
-        # The heading text is inferred from samples and may contain YAML-active
-        # characters (colons, quotes), so it MUST be a quoted scalar — an
-        # unquoted "Foo: bar" heading would emit invalid YAML that fails to load.
+        named = f"{known!r} " if known else ""
         description = (
-            f"inferred heading '{candidate.text}'"
-            f" (seen in {candidate.count}/{analysis.sample_count} samples)"
+            f"Inferred heading section {index} {named}(role {candidate.role}; "
+            f"seen in {candidate.count}/{analysis.sample_count} samples)"
         )
         lines.append(f"    description: {_yaml_scalar(description)}")
 
@@ -465,7 +578,7 @@ def _render_template_html(analysis: PackAnalysis) -> str:
     draft with no changes; only the inlined CSS custom properties (the inferred
     tokens) and the patient-header label placement differ.
     """
-    placed, unplaced = _classify_static(analysis)
+    placed, _unplaced = _classify_static(analysis)
     body_size = _body_size_pt(analysis)
     heading_size = _heading_size_pt(analysis)
 
@@ -475,7 +588,7 @@ def _render_template_html(analysis: PackAnalysis) -> str:
         for label, slot, value in placed
     )
 
-    unplaced_block = _unplaced_comment(unplaced)
+    unplaced_block = _unplaced_comment(_quarantined_text(analysis))
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -652,10 +765,10 @@ def _unplaced_comment(unplaced: list[str]) -> str:
         return ""
     return (
         "<!-- UNPLACED STATIC TEXT — see " + UNPLACED_NAME + ".\n"
-        "     Strings that recurred across your samples but mapped to no known\n"
-        "     model field are listed there, not here: this file renders real\n"
+        "     Raw strings retained from your samples are listed there, not here:\n"
+        "     this file renders real\n"
         "     charts and travels with the pack, and a sample-derived string in\n"
-        "     it would travel too. Nothing is dropped — move what you keep from\n"
+        "     it would travel too. Review what you keep and move it from\n"
         f"     {UNPLACED_NAME} into this template where it belongs, and delete\n"
         "     that file when you are done with it.\n"
         "-->\n"
@@ -668,7 +781,7 @@ def _unplaced_comment(unplaced: list[str]) -> str:
 UNPLACED_NAME = "UNPLACED.txt"
 
 
-def _render_unplaced_file(unplaced: list[str]) -> str:
+def _render_unplaced_file(quarantined: list[str]) -> str:
     """The quarantine file: the strings, and why they need reading.
 
     Plain text on purpose. It is not Jinja, not YAML and not Markdown, so
@@ -676,12 +789,13 @@ def _render_unplaced_file(unplaced: list[str]) -> str:
     by accident — it exists to be read once by a person and then deleted.
     """
     note = textwrap.fill(STATIC_LIST_NOTE, width=76)
-    body = "\n".join(unplaced)
+    body = "\n".join(quarantined)
     return (
         "UNPLACED STATIC TEXT\n"
         "====================\n\n"
-        "These strings recurred across your samples but did not map to a known\n"
-        "model field, so the generator could not place them and did not guess.\n\n"
+        "These are raw strings retained from your samples, including static text\n"
+        "and inferred heading candidates. The generator does not reproduce them\n"
+        "in the working pack files.\n\n"
         f"{note}\n\n"
         "Move what belongs to the form into template.html, then delete this\n"
         "file. It is the only file in this pack carrying text taken from your\n"
@@ -746,7 +860,7 @@ def build_context(
 def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
     geom = analysis.page_geometry
     sections = _section_candidates(analysis)
-    _placed, unplaced = _classify_static(analysis)
+    quarantined = _quarantined_text(analysis)
 
     confidence = (
         "LOW — only a single sample was analyzed; the static/per-patient split "
@@ -760,13 +874,14 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
 
     section_lines = (
         "\n".join(
-            f"- `{c.text}` — {c.role}, seen in {c.count}/{analysis.sample_count} samples"
-            for c in sections
+            f"- Inferred section {index} — {c.role}, seen in "
+            f"{c.count}/{analysis.sample_count} samples"
+            for index, c in enumerate(sections, start=1)
         )
         or "- (none cleared the confidence gate)"
     )
     if analysis.low_confidence:
-        # _classify_static withholds everything on one sample, so an empty list
+        # _quarantined_text withholds everything on one sample, so an empty list
         # here does not mean everything was placed — it means nothing was
         # written at all. Saying "nothing is dropped" over that would be the
         # exact inversion of the truth, so this branch says what happened.
@@ -780,19 +895,16 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
         unplaced_lines = "- (withheld — see above)"
     else:
         unplaced_note = (
-            "Strings that recurred across your samples but mapped to no known "
-            f"model field are in `{UNPLACED_NAME}`. {STATIC_LIST_NOTE} They are "
-            "listed there rather than here, and no longer inside "
-            "`template.html`, because both this file and that one travel with "
-            "the pack: a string in either would be copied into every pack "
-            "derived from it. Nothing is dropped — move what belongs to the "
-            f"form into `template.html`, then delete `{UNPLACED_NAME}`, which "
-            "is the only file here holding text taken from your charts."
+            f"Every raw string retained from your samples is in `{UNPLACED_NAME}`, "
+            "including static strings and inferred headings. "
+            f"{STATIC_LIST_NOTE} The generator uses only fixed labels and numbered "
+            "placeholders elsewhere, so deleting that file removes all raw "
+            "sample-derived text from this pack."
         )
         unplaced_lines = (
-            f"- see `{UNPLACED_NAME}` ({len(unplaced)} string(s) to read and place)"
-            if unplaced
-            else "- (all static text mapped to known header fields)"
+            f"- see `{UNPLACED_NAME}` ({len(quarantined)} raw sample string(s) to review)"
+            if quarantined
+            else "- (no raw sample text was retained)"
         )
     unplaced_note = textwrap.fill(unplaced_note, width=76)
 
@@ -826,7 +938,7 @@ output as a starting point.
 
 {section_lines}
 
-## Unplaced static text
+## Sample-text quarantine
 
 {unplaced_note}
 
@@ -838,8 +950,8 @@ output as a starting point.
    `anast pipeline run … --pack {name} --pack-dir <this dir's parent>` —
    passing `--pack-dir` opts into trusting this draft's code) and compare
    the rendered PDF in `preview/` to an original sample.
-2. **Edit `template.html`.** Reposition the unplaced static text, wire any
-   inferred heading sections into real loops, and adjust the inlined design
+2. **Review `UNPLACED.txt`, then edit `template.html`.** Reposition text you
+   keep, wire any inferred heading sections into real loops, and adjust the inlined design
    tokens (CSS custom properties in `:root`).
 3. **Re-render** and repeat until the preview matches your sample.
 """
@@ -864,10 +976,9 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     """
     # Hardened like anything else that can hold PHI, because it can. This
     # module's own caveat says so: hand the tool three copies of ONE patient's
-    # chart and that patient's values recur in 100% of samples, are
-    # indistinguishable from template text, and are written into template.html
-    # and DRAFT.md as "static labels". This wrote 0755/0644 with no PHI README
-    # while both sibling wizards hardened to 0700.
+    # chart and that patient's values recur in 100% of samples and are
+    # indistinguishable from template text. Raw strings stay in the quarantine,
+    # but the generated directory still requires the same owner-only handling.
     pack_dir = secure_output_dir(out_dir / name)
     (pack_dir / "pack.yaml").write_text(
         _render_pack_yaml(analysis, name=name, display=display), encoding="utf-8"
@@ -879,7 +990,7 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     )
     # The quarantine, and only when there is something to quarantine: an empty
     # UNPLACED.txt in every pack would train operators to ignore the name.
-    _, unplaced = _classify_static(analysis)
-    if unplaced:
-        (pack_dir / UNPLACED_NAME).write_text(_render_unplaced_file(unplaced), encoding="utf-8")
+    quarantined = _quarantined_text(analysis)
+    if quarantined:
+        (pack_dir / UNPLACED_NAME).write_text(_render_unplaced_file(quarantined), encoding="utf-8")
     return pack_dir

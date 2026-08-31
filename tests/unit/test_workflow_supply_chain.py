@@ -31,6 +31,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 DEPENDABOT_YML = REPO_ROOT / ".github" / "dependabot.yml"
+CONSTRAINTS = REPO_ROOT / "packaging" / "constraints.txt"
 WINDOWS_YML = WORKFLOW_DIR / "windows-package.yml"
 RELEASE_YML = WORKFLOW_DIR / "release.yml"
 
@@ -243,4 +244,68 @@ def test_dependabot_groups_every_update_within_each_ecosystem() -> None:
         assert "*" in patterns, (
             f"dependabot.yml's `{ecosystem}` block must have a group matching `*` "
             "so every update in the ecosystem lands in one PR, not just some of them."
+        )
+
+
+def _ignore_conditions(ecosystem: str) -> list[dict[str, Any]]:
+    updates = _load(DEPENDABOT_YML).get("updates") or []
+    block = next(u for u in updates if u.get("package-ecosystem") == ecosystem)
+    return list(block.get("ignore") or [])
+
+
+def test_no_ignore_condition_silences_a_security_update() -> None:
+    """An `ignore` entry must name `update-types`, and every type must be a
+    `version-update:` one.
+
+    Ignore conditions apply to Dependabot SECURITY updates as well as version
+    updates, and this repository has no second advisory path — no pip-audit
+    lane, no OSV scan, nothing that reads a published CVE. So a bare
+    `- dependency-name: playwright`, written to keep routine churn out of the
+    weekly batch, also stops the PR that would have told us a browser
+    automation library shipped a fix for a known exploit, and stops it
+    silently. Naming only `version-update:` types is what keeps the two apart:
+    a security update is not a version-update type, so it still opens.
+
+    This is the guard for a mistake that is easy to make and invisible once
+    made — the config keeps working, and the thing that stopped happening
+    never announces itself."""
+    for ecosystem in ("github-actions", "pip"):
+        for condition in _ignore_conditions(ecosystem):
+            name = condition.get("dependency-name", "<unnamed>")
+            types = condition.get("update-types")
+            assert types, (
+                f"dependabot.yml's `{ecosystem}` ignore for {name!r} names no "
+                "`update-types`, so it silences that dependency's SECURITY "
+                "updates too. Name the `version-update:` types to stop routine "
+                "bumps only."
+            )
+            for kind in types:
+                assert str(kind).startswith("version-update:"), (
+                    f"dependabot.yml's `{ecosystem}` ignore for {name!r} lists "
+                    f"{kind!r}, which is not a `version-update:` type and can "
+                    "therefore reach a security update."
+                )
+
+
+def test_every_ignored_pip_dependency_is_actually_pinned() -> None:
+    """A pip `ignore` is only defensible for a dependency this repo PINS.
+
+    The two ignores exist because a bump needs work Dependabot cannot do:
+    playwright's pin governs the rendering goldens and the bundled Chromium
+    together, and pywebview's governs whether the frozen Windows exe can
+    import at all. Both facts live in `packaging/constraints.txt`, so an
+    ignored name that is not pinned there is an ignore that has drifted off
+    the reason it was written — routine churn suppressed for a package
+    nothing was protecting."""
+    pinned = {
+        line.split("==")[0].strip().lower()
+        for line in CONSTRAINTS.read_text().splitlines()
+        if "==" in line and not line.lstrip().startswith("#")
+    }
+    for condition in _ignore_conditions("pip"):
+        name = str(condition.get("dependency-name", "")).lower()
+        assert name in pinned, (
+            f"dependabot.yml ignores pip updates for {name!r}, but "
+            "packaging/constraints.txt does not pin it. An ignore with no pin "
+            "behind it suppresses updates for no stated reason."
         )

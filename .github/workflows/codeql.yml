@@ -12,14 +12,17 @@
 # ./.github/codeql/codeql-config.yml and the suppression policy is governed by
 # the "Code scanning & suppression policy (auditable)" section of SECURITY.md.
 #
-# Those inline suppressions need the dismissal step at the end of this job to
-# mean anything. The suite does run AlertSuppression.ql, and the suppression it
-# computes does travel in the uploaded SARIF — but code scanning ignores the
-# SARIF's `suppressions[]` property, so the alert stays open and a pull request
-# touching that line still fails. This repository believed otherwise for six
-# call sites until #310 proved it on a correctly-formed comment. The step below
-# reads the property back and dismisses the matching alerts through the API,
-# which is the only thing that turns the convention into a control.
+# An inline `# codeql[...]` suppression takes THREE things, and this file has
+# twice claimed it took fewer. One: the suppression query must actually run,
+# which is the `packs:` line on init below — the suite ships the query but does
+# not run it, and without it the SARIF carries no `suppressions[]` property at
+# all. Two: code scanning ignores that property even when present. Three: the
+# dismissal step reads it back and dismisses the matching alerts through the
+# API. Miss any one and every suppression comment in this repository is
+# decoration. Each was found by watching the control fail rather than by
+# reading about it: #310's correctly-formed comment did not clear its alert,
+# and after the dismissal step landed it still did not — the step reported
+# success while dismissing nothing.
 name: CodeQL
 
 on:
@@ -43,7 +46,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # init and analyze are two halves of one release: the CodeQL Action
       # rejects a run where they disagree, so they carry the same SHA/version
       # on purpose (test_codeql_policy.py pins that the two never drift).
@@ -51,6 +54,17 @@ jobs:
         with:
           languages: python
           config-file: ./.github/codeql/codeql-config.yml
+          # The dismissal step below is inert without this. `security-extended`
+          # ships AlertSuppression.ql but does not RUN it: the CodeQL CLI only
+          # computes the SARIF's `suppressions[]` property when the suppression
+          # query is asked for as a pack, and that property is the only thing
+          # the dismissal step can match an alert against. Merging #310 proved
+          # it the expensive way — the step ran green, indexed nine alerts and
+          # dismissed none, because the SARIF it read carried no suppressions.
+          # It sits on `init` rather than in the config file because that is
+          # the form the action's own documentation shows working, and this
+          # mechanism has already been wrong twice on plausible reasoning.
+          packs: codeql/python-queries:AlertSuppression.ql
       # `output` writes the SARIF to disk as well as uploading it; the dismissal
       # step reads that copy, and `id` is what lets it name the upload it
       # belongs to. One language, so the file is python.sarif.

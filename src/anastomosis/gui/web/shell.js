@@ -208,11 +208,21 @@
 
   // Envelope keys that are not counts: the discriminators plus the run's opaque
   // summary handle (noise in an operator's activity list).
+  // `not_carried`'s bare key name says nothing: it is QA's "N fact(s) carried
+  // by the record summary, not the visit charts" register, spelled out here in
+  // the CLI's own words (pipeline.py's settle_qa, #297). settle_qa puts the key
+  // on the counts dict only when it is nonzero, so this reads exactly the CLI's
+  // "only when there is something to say" rule — silent whenever a chart
+  // abbreviates nothing. Kept in step with app.js's copy: the activity strip
+  // and the Charts rail read the SAME event, and must say the same thing.
+  const COUNT_TEXT = {
+    not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
+  };
   const NON_COUNT_KEYS = ["type", "stage", "state", "flow", "summary_id", "notice", "outcome"];
   function countsText(event) {
     return Object.keys(event)
       .filter((k) => !NON_COUNT_KEYS.includes(k))
-      .map((k) => `${k.replace(/_/g, " ")} ${event[k]}`)
+      .map((k) => (COUNT_TEXT[k] ? COUNT_TEXT[k](event[k]) : `${k.replace(/_/g, " ")} ${event[k]}`))
       .join(" · ");
   }
 

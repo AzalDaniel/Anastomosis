@@ -39,6 +39,8 @@ from __future__ import annotations
 from .extract import (
     DocumentSample,
     DrawnRect,
+    NoExtractableTextError,
+    OcrRequiredError,
     Span,
     extract_document,
     extract_samples,
@@ -71,6 +73,8 @@ __all__ = [
     "DesignTokens",
     "DocumentSample",
     "DrawnRect",
+    "NoExtractableTextError",
+    "OcrRequiredError",
     "PackAnalysis",
     "PageBreakStats",
     "PageGeometry",
