@@ -108,7 +108,7 @@
   //: would be offering a choice that always fails at load time.
   const DELIMITERS = [
     { value: ",", label: "Comma" },
-    { value: "|", label: "Bar" },
+    { value: "|", label: "Vertical bar" },
     { value: ";", label: "Semicolon" },
     { value: " ", label: "Space" },
     { value: "-", label: "Hyphen" },
@@ -134,7 +134,11 @@
   //: vendor and pack ids, where these never occur; widening it there would
   //: change how every id in the app is printed, so the canonical FIELD names
   //: carry their own short list here.
-  const FIELD_SHOUTED = { mrn: "MRN", prn: "PRN", ssn: "SSN" };
+  const FIELD_SHOUTED = new Map([
+    ["mrn", "MRN"],
+    ["prn", "PRN"],
+    ["ssn", "SSN"],
+  ]);
 
   // ─── Reading the vocabularies back ────────────────────────────
 
@@ -158,7 +162,8 @@
         part
           .split("_")
           .map(
-            (word) => FIELD_SHOUTED[word] || Shell.displayName(word.replace(/(\d+)/g, " $1"))
+            (word) =>
+              FIELD_SHOUTED.get(word) || Shell.displayName(word.replace(/(\d+)/g, " $1"))
           )
           .join(" ")
       )
@@ -798,19 +803,26 @@
     CannotBuildMapping: anchorCannotBuild,
   };
 
+  //: Own keys only. An error code arriving as "constructor" would otherwise
+  //: find a function on Object.prototype and be called as an anchor.
+  function anchorFor(error) {
+    return Object.prototype.hasOwnProperty.call(ANCHORED, error) ? ANCHORED[error] : null;
+  }
+
   // ConfirmationRequired is the EXPECTED outcome of step 1. The three refusals
   // keep their loud semantics and now carry the proposal with them, so each one
   // points AT something instead of describing it.
   function route(res) {
+    const anchor = res ? anchorFor(res.error) : null;
     if (res && res.ok) {
       renderSaved(res);
     } else if (res && res.error === "ConfirmationRequired") {
       renderProposal(res);
-    } else if (res && ANCHORED[res.error]) {
+    } else if (anchor) {
       // A refusal reached before any proposal was painted still carries one.
       if (!proposal && (res.suggestions || []).length) renderProposal(res);
       clearAttention();
-      ANCHORED[res.error](res);
+      anchor(res);
       setStep(REVIEW_STEP);
     } else {
       Shell.showBanner(

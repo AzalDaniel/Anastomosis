@@ -892,7 +892,7 @@ svg { display: block; }
 .mapping-table { display: flex; flex-direction: column; border-radius: var(--radius-control); border: 1px solid rgba(244, 238, 228, 0.10); }
 .mapping-row {
   display: grid;
-  grid-template-columns: 1.3fr 1.5fr 1fr 0.6fr;
+  grid-template-columns: 1.1fr 1.4fr 1.5fr 0.55fr;
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-2) var(--space-3);
@@ -903,15 +903,18 @@ svg { display: block; }
 }
 .mapping-row:first-child { border-radius: var(--radius-control) var(--radius-control) 0 0; }
 .mapping-row:last-child { border-bottom: none; border-radius: 0 0 var(--radius-control) var(--radius-control); }
-.mapping-row span:first-child { font-family: var(--font-mono); color: var(--ink); }
-.mapping-row span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+/* The CELLS, not every span inside them: a chooser's own value slot is a span
+   and the first child of its trigger, so the undirected version handed the
+   plain-English label of every control in the table the mono face. */
+.mapping-row > span:first-child { font-family: var(--font-mono); color: var(--ink); }
+.mapping-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .mapping-head {
   color: var(--ink-muted);
   background: rgba(0, 0, 0, 0.34);
   font-size: var(--text-caption);
   font-weight: 600;
 }
-.mapping-head span:first-child { font-family: var(--font-body); color: var(--ink-muted); }
+.mapping-head > span:first-child { font-family: var(--font-body); color: var(--ink-muted); }
 /* A cell holding a control — and, under it, that control's own argument (a
    date pattern, a separator and which piece to take). */
 .mapping-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
@@ -940,7 +943,7 @@ svg { display: block; }
 .row-attention .mapping-evidence { color: var(--ink-secondary); }
 .row-note { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.55; }
 .structure .row-note { grid-column: 1 / -1; }
-.mapping-row span.row-note {
+.mapping-row > span.row-note {
   grid-column: 1 / -1;
   padding-top: var(--space-1);
   text-align: left;
