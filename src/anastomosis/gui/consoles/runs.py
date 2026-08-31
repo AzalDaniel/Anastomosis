@@ -162,6 +162,7 @@ class PipelineConsole(_RunConsole):
         pack: str = "generic_soap",
         source: str | None = None,
         sections: dict[str, bool] | None = None,
+        include: list[str] | None = None,
         qa: bool = True,
         archive: bool = False,
         bundle: bool = False,
@@ -180,6 +181,11 @@ class PipelineConsole(_RunConsole):
         <type-or-diagnosis>}`` plus an ``error`` event. The ``busy`` guard
         rejects a second concurrent run.
 
+        ``sections`` overrides the layout's section flags and ``include`` names
+        the source's render-selection rules this run does NOT apply — the two
+        halves of "what goes on the page", one per end of the pipeline, and the
+        same words the CLI's ``--section`` and ``--include`` carry.
+
         ``force`` re-renders documents that already exist; ``pack_dirs`` makes
         extra pack directories available and ``trust_new`` records (trusts)
         their current code hash on first use — the same backend levers the CLI
@@ -196,6 +202,7 @@ class PipelineConsole(_RunConsole):
                 pack=pack,
                 source=source,
                 sections=sections or {},
+                include=list(include or ()),
                 qa=qa,
                 archive=archive,
                 bundle=bundle,
@@ -215,6 +222,7 @@ class PipelineConsole(_RunConsole):
         pack: str = "generic_soap",
         source: str | None = None,
         sections: dict[str, bool] | None = None,
+        include: list[str] | None = None,
         qa: bool = True,
         archive: bool = False,
         bundle: bool = False,
@@ -243,6 +251,7 @@ class PipelineConsole(_RunConsole):
                 pack=pack,
                 source=source,
                 sections=sections or {},
+                include=list(include or ()),
                 qa=qa,
                 archive=archive,
                 bundle=bundle,
@@ -268,6 +277,10 @@ class PipelineConsole(_RunConsole):
         pack: str,
         source: str | None,
         sections: dict[str, bool],
+        # Required, like `sections` and for the reason the four below are: a
+        # dropped keyword would silently revert the choice to "every rule
+        # applied" and nothing would fail.
+        include: list[str],
         qa: bool,
         archive: bool,
         bundle: bool,
@@ -329,6 +342,7 @@ class PipelineConsole(_RunConsole):
                     force=force,
                     trust_new=trust_new,
                     sections=sections,
+                    include=tuple(include),
                     qa=qa,
                     deliveries=tuple(deliveries),
                     write_manifest=write_manifest,

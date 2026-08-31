@@ -70,7 +70,7 @@ def test_the_built_in_layouts_carry_their_own_names() -> None:
 
 def test_every_source_carries_a_name_no_recasing_could_produce() -> None:
     """`ccda` is the case that proves it: the front end had it hard-coded."""
-    by_name = {name: display for name, display, _desc in get_toolkit_info().sources}
+    by_name = {s.name: s.display for s in get_toolkit_info().sources}
 
     # Scoped to the adapters this repository ships. The registry is a global
     # that any test (or any third party) can add to, so asserting a property of
@@ -107,7 +107,7 @@ def test_a_registration_with_no_name_reads_as_its_id() -> None:
     registry["third-party"] = _Nameless()  # type: ignore[assignment]
     original, base._REGISTRY = base._REGISTRY, registry
     try:
-        by_name = {name: display for name, display, _desc in get_toolkit_info().sources}
+        by_name = {s.name: s.display for s in get_toolkit_info().sources}
     finally:
         base._REGISTRY = original
 

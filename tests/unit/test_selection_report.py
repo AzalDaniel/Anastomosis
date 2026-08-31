@@ -2,7 +2,9 @@
 
 `tests/fixtures/pf_tebra_v9/patient-encounters.tsv` holds 8 encounter rows. Six
 render; the other two are excluded by `_skip_reason` — an empty SOAP note and an
-adult growth chart. Both rules are sound. What was not was the reporting: the
+adult growth chart. Both rules are sound (for the practice that asked for them;
+`test_selection_options` covers switching one off). What was not was the
+reporting: the
 run said `6 rendered, 0 skipped, 0 failed`, and "skipped" in that line means
 "the file was already on disk", so on a first run it reads as "nothing was left
 out". A plain `pipeline run` wrote no artifact recording the exclusions at all —
@@ -126,7 +128,10 @@ def test_the_report_is_written_even_when_nothing_was_excluded(
         section=None,
         qa=False,
     )
-    assert _report(other) == {"version": 1, "excluded": []}
+    # The C-CDA adapter declares no selection rules at all, so BOTH lists are
+    # empty — and it takes the two of them together to say "nothing was left
+    # out" rather than "nothing was asked".
+    assert _report(other) == {"version": 2, "excluded": [], "rules": []}
 
 
 def test_the_report_carries_no_patient_values(rendered: None, tmp_path: Path) -> None:

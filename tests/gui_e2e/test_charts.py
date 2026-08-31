@@ -76,12 +76,14 @@ def test_run_button_dispatches_the_async_call(gui) -> None:
 
     args = app.last_args("run_pipeline_async")
     # Positional order per GuiController.run_pipeline: export, out, pack, source,
-    # sections, qa, archive, bundle, ccda, force, pack_dirs, trust_new, manifest.
+    # sections, include, qa, archive, bundle, ccda, force, pack_dirs, trust_new,
+    # manifest.
     assert args[0] == "/synthetic/export"
     assert args[1] == "/synthetic/out"
     assert args[3] is None, "an unset format picker must mean detect, not a name"
     assert isinstance(args[4], dict) and args[4], "the section matrix was not gathered"
-    assert args[5] is False, "the double-check toggle did not reach the run call"
+    assert args[5] == [], "no selection rule was unticked, so none is being included"
+    assert args[6] is False, "the double-check toggle did not reach the run call"
     assert page.locator("#charts-run").is_disabled()
     assert (page.locator("#charts-run").text_content() or "").strip() == "Rebuilding…"
 
@@ -258,6 +260,74 @@ def test_qa_rail_stays_short_when_nothing_was_left_out(gui) -> None:
     note = page.locator("#charts-stage-qa .stage-counts").text_content() or ""
     assert note == "pass 2 · warn 0 · fail 0"
     assert "fact(s)" not in note
+
+
+def test_the_selection_rules_follow_the_chosen_export_format(gui) -> None:
+    """Which visits get skipped is the FORMAT's rule, so the matrix is the
+    format's — and Detect has no format to ask, which is its own empty state
+    rather than an empty box reading as "nothing gets skipped"."""
+    app = gui()
+    page = app.page
+
+    matrix = page.locator("#charts-selection")
+    assert matrix.locator("input[data-section]").count() == 0
+    assert "Choose an export format" in (matrix.text_content() or "")
+
+    app.choose("#charts-source", "pf-tebra")
+    page.wait_for_timeout(80)
+    rules = page.eval_on_selector_all(
+        "#charts-selection input[data-section]", "boxes => boxes.map(b => b.dataset.section)"
+    )
+    assert sorted(rules) == ["empty-soap", "growth-charts"], rules
+    # Every rule on, because every rule is on by default — the tick is the rule
+    # doing what it has always done.
+    assert page.eval_on_selector_all(
+        "#charts-selection input[data-section]", "boxes => boxes.every(b => b.checked)"
+    )
+
+    # A format that keeps everything says so rather than showing an empty box.
+    app.choose("#charts-source", "ccda")
+    page.wait_for_timeout(80)
+    assert "keeps every visit" in (matrix.text_content() or "")
+
+
+def test_unticking_a_rule_asks_the_run_to_keep_those_visits(gui) -> None:
+    """The one thing this matrix is for: an unticked rule reaches the run as
+    the ``--include`` name that switches it off."""
+    app = gui()
+    page = app.page
+    page.fill("#charts-export-dir", "/synthetic/export")
+    page.fill("#charts-out-dir", "/synthetic/out")
+    app.choose("#charts-source", "pf-tebra")
+    page.wait_for_timeout(80)
+    page.click("#charts-selection label.toggle:has(input[data-section='growth-charts'])")
+    page.click("#charts-run")
+    page.wait_for_timeout(120)
+
+    args = app.last_args("run_pipeline_async")
+    assert args[3] == "pf-tebra"
+    assert args[5] == ["growth-charts"], args[5]
+
+
+def test_selection_choices_survive_a_format_round_trip(gui) -> None:
+    """The same promise the section matrix makes: a rule someone switched off
+    must not come back on because they looked at another format."""
+    app = gui()
+    page = app.page
+    app.choose("#charts-source", "pf-tebra")
+    page.wait_for_timeout(80)
+    page.click("#charts-selection label.toggle:has(input[data-section='growth-charts'])")
+
+    app.choose("#charts-source", "ccda")
+    page.wait_for_timeout(80)
+    app.choose("#charts-source", "pf-tebra")
+    page.wait_for_timeout(80)
+
+    state = page.eval_on_selector_all(
+        "#charts-selection input[data-section]",
+        "boxes => Object.fromEntries(boxes.map(b => [b.dataset.section, b.checked]))",
+    )
+    assert state == {"empty-soap": True, "growth-charts": False}, state
 
 
 def test_section_choices_survive_a_layout_round_trip(gui) -> None:

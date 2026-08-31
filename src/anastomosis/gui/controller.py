@@ -185,8 +185,13 @@ class GuiController:
                 "version": toolkit.version,
                 "extras": dict(toolkit.extras),
                 "sources": [
-                    {"name": name, "display": display, "description": desc}
-                    for name, display, desc in toolkit.sources
+                    {
+                        "name": source.name,
+                        "display": source.display,
+                        "description": source.description,
+                        "selection": source.selection,
+                    }
+                    for source in toolkit.sources
                 ],
                 "packs": [
                     {
