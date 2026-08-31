@@ -82,11 +82,41 @@ _SUFFIX_TYPES = {
     ".jsonl": "ndjson",
 }
 _ENCODINGS = ("utf-8-sig", "latin-1")
+_UNSUPPORTED_STRUCTURED_SUFFIXES = frozenset({".xml", ".html", ".htm", ".pdf", ".zip"})
+_BINARY_SIGNATURES = (b"%PDF-", b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 
 
-def _detect_encoding(path: Path) -> str:
-    """Pick the first encoding that decodes the file (best-effort, never crashes)."""
-    sample = path.read_bytes()[:65536]
+def _reject_non_tabular_source(path: Path) -> bytes:
+    """Fail closed for files that cannot be a flat learned-source export.
+
+    Suffixes are a useful first gate, but content decides extensionless input.
+    In particular, an XML C-CDA with an arbitrary suffix must never fall through
+    the CSV sniffer as a one-column "table". Diagnostics intentionally identify
+    only the file and format class, never its contents.
+    """
+    if path.suffix.lower() in _UNSUPPORTED_STRUCTURED_SUFFIXES:
+        raise MappingError(f"source example {path} is not a supported flat structured export")
+    try:
+        # ``Path.read_bytes()[:65536]`` still allocates the entire file before
+        # slicing. Source examples may be multi-gigabyte exports, so probe only
+        # the bounded prefix we need for signatures and markup detection.
+        with path.open("rb") as handle:
+            sample = handle.read(65536)
+    except OSError as exc:
+        raise MappingError(f"cannot read source example {path}: {type(exc).__name__}") from exc
+    stripped = sample.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    binary_signature = any(
+        stripped.startswith(signature.lower()) for signature in _BINARY_SIGNATURES
+    )
+    if b"\x00" in sample or binary_signature:
+        raise MappingError(f"source example {path} is binary, not a flat structured export")
+    if stripped.startswith((b"<?xml", b"<!doctype html", b"<html", b"<")):
+        raise MappingError(f"source example {path} is markup, not a flat structured export")
+    return sample
+
+
+def _detect_encoding(sample: bytes) -> str:
+    """Pick the first encoding that decodes a bounded prefix (best effort)."""
     for encoding in _ENCODINGS:
         try:
             sample.decode(encoding)
@@ -100,7 +130,8 @@ def detect_format(path: Path) -> SourceFormat:
     """Detect type/delimiter/encoding/columns/fingerprint for one example file."""
     if not path.is_file():
         raise MappingError(f"source example {path} is not a file")
-    encoding = _detect_encoding(path)
+    sample = _reject_non_tabular_source(path)
+    encoding = _detect_encoding(sample)
     suffix = path.suffix.lower()
     file_type = _SUFFIX_TYPES.get(suffix)
     delimiter: str | None = None

@@ -186,10 +186,20 @@ alert in #310 and made the mechanism visible.
 Anastomosis's product surface is writing patient records to disk under the
 operator's control, which the `py/clear-text-storage-sensitive-data` rule
 cannot distinguish from a defect. Rather than exclude any rule repo-wide,
-suppression is **inline and per-site**: each deliberately PHI-writing call
-site carries a `# codeql[rule-id]` suppression comment immediately beside a
-`PHI-BY-DESIGN` comment stating the guarantee that justifies it (a
-`secure_output_dir`-hardened directory, or field-name-not-value logging).
+suppression is **inline and per-site**: each site carries a
+`# codeql[rule-id]` comment immediately beside a rationale stating the
+guarantee that justifies it. There are exactly two rationales a site may
+claim, and they are not interchangeable:
+
+- `PHI-BY-DESIGN` — the site really does write a patient's record, where the
+  operator asked for it, under a guarantee that makes that safe (a
+  `secure_output_dir`-hardened directory, or field-name-not-value logging).
+  The rule is reading the product as a defect.
+- `PHI-FREE-BY-CONSTRUCTION` — nothing sensitive reaches the sink at all, and
+  the alert is a false positive the code cannot phrase its way out of. This
+  claim is the easier one to make and the easier one to be wrong about, so it
+  is only accepted alongside a test that fails if it ever stops being true.
+
 The audited suppression sites are exactly:
 
 - `src/anastomosis/deliver/_shared.py` (the per-patient FHIR bundle, written
@@ -206,13 +216,23 @@ The audited suppression sites are exactly:
 - `src/anastomosis/deliver/fhir_api/destination.py` (a log line carrying
   the *name* of the matched field, never a value) —
   `py/clear-text-logging-sensitive-data`
+- `docs/audits/learned-source/tools/probe_ccda_corpus.py` (the corpus probe
+  prints integer counts under keys that are string literals declared in the
+  file; all it takes from a chart is a yes/no and a length) —
+  `py/clear-text-logging-sensitive-data`, `PHI-FREE-BY-CONSTRUCTION`, proven
+  by `tests/unit/test_corpus_probe_emits_no_values.py`, which parses a chart
+  and requires that none of its strings appear in the printed output. The
+  suppression is a backstop rather than the fix: CodeQL never told us which
+  flow it objected to, so the probe was restructured until no flow existed.
 
-A policy test pins this list: every inline suppression in `src/` must sit
-beside a `PHI-BY-DESIGN` rationale and appear in the list above, so a new
-suppression cannot land without amending this policy. Every module not
-listed here remains fully covered by both rules; if the field-name
-convention drifts or a writer lands outside a hardened directory, CodeQL
-alerts again.
+A policy test pins this list: every inline suppression under `src/` and
+`docs/` must sit beside one of the two rationales and appear in the list
+above, so a new suppression cannot land without amending this policy. The
+audit tools under `docs/` are in scope precisely because they are run by
+hand against real exports — an unwatched corner is where a silenced alert
+would actually hide. Every module not listed here remains fully covered by
+both rules; if the field-name convention drifts or a writer lands outside a
+hardened directory, CodeQL alerts again.
 
 Storage-at-rest encryption remains a separate, opt-in operator concern
 (BitLocker / FileVault / dm-crypt); directory hardening resists siblings

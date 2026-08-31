@@ -13,12 +13,18 @@ record of how they came to be):
   query that honors inline ``# codeql[...]`` comments — no extra pack needed)
   and declares NO repo-wide exclusions — no ``query-filters`` and no
   ``paths`` / ``paths-ignore``. Coverage is full-tree; suppression is per-site.
-* Every ``# codeql[...]`` suppression in ``src/`` sits alone on its own line
-  (CodeQL only honors it there), carries a ``PHI-BY-DESIGN`` rationale within the
-  lines just above it, and lives in a file that SECURITY.md's "Code scanning &
-  suppression policy (auditable)" section names — with the set matching exactly
-  in both directions, so a new suppression cannot land without amending the
-  policy and a retired policy entry cannot outlive its suppression.
+* Every ``# codeql[...]`` suppression in the scanned tree sits alone on its own
+  line (CodeQL only honors it there), carries a ``PHI-BY-DESIGN`` or
+  ``PHI-FREE-BY-CONSTRUCTION`` rationale within the lines just above it, and
+  lives in a file that SECURITY.md's "Code scanning & suppression policy
+  (auditable)" section names — with the set matching exactly in both directions,
+  so a new suppression cannot land without amending the policy and a retired
+  policy entry cannot outlive its suppression.
+
+The scanned tree is ``src/`` plus the audit tools under ``docs/``. Those tools
+are run by hand against real charts, which is precisely why a suppression there
+needs the same audit trail as one in shipped code: an unwatched corner is where
+a silenced alert would actually hide.
 """
 
 from __future__ import annotations
@@ -33,14 +39,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CODEQL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "codeql.yml"
 CODEQL_CONFIG = REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
 SECURITY_MD = REPO_ROOT / "SECURITY.md"
-SRC_ROOT = REPO_ROOT / "src"
+#: Every tree whose suppressions the policy governs. ``docs/`` earns its place
+#: because the audit tools there read real exports; ``tests/`` does not, since a
+#: fixture carries no patient.
+SCAN_ROOTS = (REPO_ROOT / "src", REPO_ROOT / "docs")
 
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
 _POLICY_HEADER = "## Code scanning & suppression policy (auditable)"
 # Backtick-quoted repo-root-relative Python paths inside the policy section.
-_SRC_PATH_RE = re.compile(r"`(src/[^`]+\.py)`")
-# How many lines above a `# codeql[...]` line the PHI-BY-DESIGN rationale may sit.
-_RATIONALE_WINDOW = 8
+_POLICY_PATH_RE = re.compile(r"`((?:src|docs)/[^`]+\.py)`")
+# How many lines above a `# codeql[...]` line its rationale may sit.
+_RATIONALE_WINDOW = 10
+#: A suppression states one of two guarantees. PHI-BY-DESIGN: this site writes a
+#: patient's own record where the operator asked for it, so the rule is reading
+#: the product as a defect. PHI-FREE-BY-CONSTRUCTION: nothing sensitive reaches
+#: the sink at all, and the alert is a false positive the code cannot phrase away.
+_RATIONALES = ("PHI-BY-DESIGN", "PHI-FREE-BY-CONSTRUCTION")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -72,7 +86,7 @@ def _collect_uses(doc: dict[str, Any]) -> list[str]:
 
 
 def _security_md_policy_files() -> set[str]:
-    """The ``src/...py`` paths named in SECURITY.md's suppression-policy section."""
+    """The Python paths named in SECURITY.md's suppression-policy section."""
     lines = SECURITY_MD.read_text(encoding="utf-8").splitlines()
     start = next((i for i, line in enumerate(lines) if line.strip() == _POLICY_HEADER), None)
     assert start is not None, f"SECURITY.md is missing the {_POLICY_HEADER!r} section"
@@ -81,13 +95,13 @@ def _security_md_policy_files() -> set[str]:
         if line.startswith("## "):
             break
         body.append(line)
-    return set(_SRC_PATH_RE.findall("\n".join(body)))
+    return set(_POLICY_PATH_RE.findall("\n".join(body)))
 
 
 def _codeql_suppressions() -> list[tuple[Path, int, list[str]]]:
-    """Every ``# codeql[`` occurrence in ``src/`` as ``(path, line_index, lines)``."""
+    """Every ``# codeql[`` occurrence in the scanned tree as ``(path, line, lines)``."""
     hits: list[tuple[Path, int, list[str]]] = []
-    for path in sorted(SRC_ROOT.rglob("*.py")):
+    for path in sorted(q for root in SCAN_ROOTS for q in root.rglob("*.py")):
         lines = path.read_text(encoding="utf-8").splitlines()
         for idx, line in enumerate(lines):
             if "# codeql[" in line:
@@ -261,9 +275,9 @@ def test_config_declares_no_repo_wide_exclusions() -> None:
 
 def test_every_suppression_is_alone_and_justified() -> None:
     """Each ``# codeql[...]`` sits alone on its line (CodeQL only honors it there)
-    and has a ``PHI-BY-DESIGN`` rationale within the lines just above it."""
+    and states one of the two rationales within the lines just above it."""
     hits = _codeql_suppressions()
-    assert hits, "expected inline `# codeql[...]` suppressions in src/, found none"
+    assert hits, "expected inline `# codeql[...]` suppressions, found none"
     for path, idx, lines in hits:
         rel = path.relative_to(REPO_ROOT).as_posix()
         assert lines[idx].strip().startswith("# codeql["), (
@@ -276,8 +290,8 @@ def test_every_suppression_is_alone_and_justified() -> None:
             "a blank or comment line there silently un-suppresses the site."
         )
         window = lines[max(0, idx - _RATIONALE_WINDOW) : idx]
-        assert any("PHI-BY-DESIGN" in line for line in window), (
-            f"{rel}:{idx + 1} — no PHI-BY-DESIGN rationale within the "
+        assert any(tag in line for line in window for tag in _RATIONALES), (
+            f"{rel}:{idx + 1} — no {' or '.join(_RATIONALES)} rationale within the "
             f"{_RATIONALE_WINDOW} lines above the suppression."
         )
 

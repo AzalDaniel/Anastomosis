@@ -2,8 +2,8 @@
 
 A learned source targets the long tail of *flat, single-file* exports — one
 CSV/TSV/JSON/NDJSON file of rows. This module is the dumb IO half (the
-:mod:`pf_tebra.loader` analogue): read rows into header-keyed dicts, and nothing
-semantic. All mapping meaning lives in the interpreter.
+:mod:`pf_tebra.loader` analogue): read rows into mapping-authored header-keyed
+dicts, and nothing semantic. All mapping meaning lives in the interpreter.
 
 Two ideas live here because both the reader and the authoring/matcher layer
 need them, and putting them at the lowest level avoids an import cycle:
@@ -18,7 +18,8 @@ need them, and putting them at the lowest level avoids an import cycle:
 
 JSON/NDJSON records are flattened to dotted keys (``name.first``); a nested list
 or object that can't be a scalar cell is preserved as its JSON text, so nothing
-is lost before the interpreter's ``extensions`` catch-all even sees it.
+is lost before the interpreter's ``extensions`` catch-all even sees it. A
+flattened-path collision is malformed input, never a last-write-wins choice.
 
 PHI: row VALUES are patient data — this module never logs them. It logs/raises
 with file paths, column names, and counts only.
@@ -46,6 +47,23 @@ __all__ = [
 ]
 
 Row = dict[str, str | None]
+
+
+class _DuplicateJsonKey(ValueError):
+    """A JSON object repeated a key; deliberately carries no key or value."""
+
+
+def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object without accepting last-key-wins data loss."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            # JSON keys can themselves contain identifiers. Keep the exception
+            # content-free; callers report only its type (and NDJSON line).
+            raise _DuplicateJsonKey
+        result[key] = value
+    return result
+
 
 # Extensions for each format, used when globbing an export dir for candidates.
 _EXTENSIONS: dict[str, tuple[str, ...]] = {
@@ -93,12 +111,78 @@ def _flatten(value: Any, prefix: str, out: Row) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             _flatten(child, f"{prefix}.{key}" if prefix else str(key), out)
-    elif value is None:
-        out[prefix] = None
-    elif isinstance(value, (str, int, float, bool)):
-        out[prefix] = str(value)
     else:
-        out[prefix] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if prefix in out:
+            # A literal ``a.b`` and ``a: {b: ...}`` address the same flattened
+            # cell. Keep the diagnostic structural: JSON values may be PHI.
+            raise MappingError(f"flattened JSON path collision at {prefix!r}")
+        if value is None:
+            out[prefix] = None
+        elif isinstance(value, (str, int, float, bool)):
+            out[prefix] = str(value)
+        else:
+            out[prefix] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _validate_csv_header(header: list[str], path: Path) -> None:
+    """Reject CSV headers that ``DictReader`` would silently conflate."""
+    exact: dict[str, int] = {}
+    normalized: dict[str, int] = {}
+    for position, column in enumerate(header, start=1):
+        if not column.strip() or not normalize_column(column):
+            raise MappingError(f"CSV source {path} has a blank header at position {position}")
+        if column in exact:
+            raise MappingError(
+                f"CSV source {path} has duplicate headers at positions "
+                f"{exact[column]} and {position}"
+            )
+        exact[column] = position
+        normalized_column = normalize_column(column)
+        if normalized_column in normalized:
+            raise MappingError(
+                f"CSV source {path} has normalization-colliding headers at positions "
+                f"{normalized[normalized_column]} and {position}"
+            )
+        normalized[normalized_column] = position
+
+
+def _authored_aliases(actual_columns: list[str], fmt: SourceFormat, path: Path) -> dict[str, str]:
+    """Bind runtime columns to reviewed names, failing closed on ambiguity."""
+    authored: dict[str, str] = {}
+    for position, column in enumerate(fmt.columns, start=1):
+        normalized = normalize_column(column)
+        if not normalized:
+            raise MappingError(f"mapping format has a blank authored column at position {position}")
+        if normalized in authored:
+            raise MappingError(
+                "mapping format has normalization-colliding authored columns at "
+                f"position {position}"
+            )
+        authored[normalized] = column
+
+    actual: dict[str, str] = {}
+    for position, column in enumerate(actual_columns, start=1):
+        normalized = normalize_column(column)
+        if not normalized:
+            raise MappingError(f"source {path} has a blank column at position {position}")
+        if normalized in actual:
+            raise MappingError(
+                f"source {path} has normalization-colliding columns at position {position}"
+            )
+        actual[normalized] = column
+
+    if set(actual) != set(authored):
+        raise MappingError(
+            f"source {path} columns do not uniquely match the {len(authored)} authored columns "
+            f"({len(actual)} runtime columns)"
+        )
+    return {column: authored[normalized] for normalized, column in actual.items()}
+
+
+def _bound_rows(rows: list[Row], columns: list[str], fmt: SourceFormat, path: Path) -> list[Row]:
+    """Rewrite runtime keys to their authored mapping keys by normalized alias."""
+    aliases = _authored_aliases(columns, fmt, path)
+    return [{aliases[column]: value for column, value in row.items()} for row in rows]
 
 
 def _read_text(path: Path, encoding: str) -> str:
@@ -110,7 +194,9 @@ def _read_text(path: Path, encoding: str) -> str:
 
 def _json_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     try:
-        data = json.loads(_read_text(path, encoding))
+        data = json.loads(
+            _read_text(path, encoding), object_pairs_hook=_object_without_duplicate_keys
+        )
     except ValueError as exc:
         raise MappingError(f"JSON source {path} is not valid JSON: {type(exc).__name__}") from exc
     if isinstance(data, list):
@@ -138,7 +224,7 @@ def _ndjson_records(path: Path, encoding: str) -> list[dict[str, Any]]:
         if not line.strip():
             continue
         try:
-            obj = json.loads(line)
+            obj = json.loads(line, object_pairs_hook=_object_without_duplicate_keys)
         except ValueError as exc:
             raise MappingError(f"NDJSON source {path} line {lineno}: {type(exc).__name__}") from exc
         if not isinstance(obj, dict):
@@ -147,30 +233,68 @@ def _ndjson_records(path: Path, encoding: str) -> list[dict[str, Any]]:
     return records
 
 
+def _clean_csv_row(row: dict[str | None, object], header: list[str], path: Path, line: int) -> Row:
+    """One DictReader row as a plain str->str mapping, or a loud refusal.
+
+    ``DictReader`` files surplus cells under the ``None`` key and leaves a list
+    there, so a row wider than its header arrives looking like an ordinary row
+    with one odd entry. Reading that shape as data is how a shifted cell
+    becomes a patient's value under the wrong column name; both shapes refuse.
+    Counts only — never the cell.
+    """
+    if None in row:
+        overflow = row[None]
+        overflow_count = len(overflow) if isinstance(overflow, list) else 1
+        raise MappingError(
+            f"CSV source {path} row {line} has {overflow_count} cells "
+            f"beyond its {len(header)} headers"
+        )
+    clean: Row = {}
+    for column, value in row.items():
+        if column is None or isinstance(value, list):
+            raise MappingError(f"CSV source {path} row {line} has malformed cells")
+        clean[column] = value  # type: ignore[assignment]
+    return clean
+
+
+def _read_delimited(path: Path, fmt: SourceFormat) -> list[Row]:
+    """Every row of a CSV/TSV source, header-validated and shape-checked."""
+    try:
+        with path.open(encoding=fmt.encoding, newline="") as handle:
+            header = next(csv.reader(handle, delimiter=_delimiter(fmt)), None)
+            if header is None:
+                raise MappingError(f"source file {path} is empty (no header row)")
+            _validate_csv_header(header, path)
+            reader = csv.DictReader(handle, fieldnames=header, delimiter=_delimiter(fmt))
+            rows = [
+                _clean_csv_row(row, header, path, line) for line, row in enumerate(reader, start=2)
+            ]
+            return _bound_rows(rows, header, fmt, path)
+    except (OSError, UnicodeError, csv.Error) as exc:
+        raise MappingError(f"cannot read source file {path}: {type(exc).__name__}") from exc
+
+
 def read_rows(path: Path, fmt: SourceFormat) -> list[Row]:
-    """Read every row of ``path`` into header-keyed dicts (loud on malformed)."""
+    """Read every row into authored-header dicts (loud on malformed input)."""
     if fmt.type in ("csv", "tsv"):
-        try:
-            with path.open(encoding=fmt.encoding, newline="") as handle:
-                reader = csv.DictReader(handle, delimiter=_delimiter(fmt))
-                if reader.fieldnames is None:
-                    raise MappingError(f"source file {path} is empty (no header row)")
-                # Drop the restkey/None column DictReader uses for ragged rows;
-                # a ragged extra cell is preserved under its real header only.
-                return [{k: v for k, v in row.items() if k is not None} for row in reader]
-        except (OSError, UnicodeError, csv.Error) as exc:
-            raise MappingError(f"cannot read source file {path}: {type(exc).__name__}") from exc
+        return _read_delimited(path, fmt)
     records = (
         _json_records(path, fmt.encoding)
         if fmt.type == "json"
         else _ndjson_records(path, fmt.encoding)
     )
     rows: list[Row] = []
+    columns: list[str] = []
+    seen: set[str] = set()
     for record in records:
         flat: Row = {}
         _flatten(record, "", flat)
         rows.append(flat)
-    return rows
+        for column in flat:
+            if column not in seen:
+                seen.add(column)
+                columns.append(column)
+    return _bound_rows(rows, columns, fmt, path)
 
 
 def read_columns(path: Path, fmt: SourceFormat) -> list[str]:
@@ -184,11 +308,19 @@ def read_columns(path: Path, fmt: SourceFormat) -> list[str]:
             raise MappingError(f"cannot read source file {path}: {type(exc).__name__}") from exc
         if header is None:
             raise MappingError(f"source file {path} is empty (no header row)")
-        return [c for c in header if c]
+        _validate_csv_header(header, path)
+        return header
     # JSON/NDJSON: union of flattened keys across records, first-seen order.
     ordered: list[str] = []
     seen: set[str] = set()
-    for row in read_rows(path, fmt):
+    records = (
+        _json_records(path, fmt.encoding)
+        if fmt.type == "json"
+        else _ndjson_records(path, fmt.encoding)
+    )
+    for record in records:
+        row: Row = {}
+        _flatten(record, "", row)
         for key in row:
             if key not in seen:
                 seen.add(key)
@@ -214,7 +346,12 @@ def find_source_file(export_dir: Path, fmt: SourceFormat) -> Path:
         raise MappingError(f"no {fmt.type} file found in {export_dir} for this learned mapping")
     for candidate in candidates:
         try:
-            if header_fingerprint(read_columns(candidate, fmt)) == fmt.header_fingerprint:
+            columns = read_columns(candidate, fmt)
+            if header_fingerprint(columns) == fmt.header_fingerprint:
+                # A normalized fingerprint is only a coarse discovery key. A
+                # candidate is executable only when its runtime columns bind
+                # one-to-one to the reviewed authored names.
+                _authored_aliases(columns, fmt, candidate)
                 return candidate
         except MappingError:
             continue  # an unreadable candidate is simply not a match
