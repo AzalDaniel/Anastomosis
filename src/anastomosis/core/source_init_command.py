@@ -147,6 +147,8 @@ class SourceInitResult:
     detail_column: str | None = None
     detail_target: str | None = None
     detail_transform: str | None = None
+    #: ``"grouping"`` when the load refusal points at the keys or row grain.
+    detail_scope: str | None = None
     #: Every canonical target a review may aim a column at — the closed set the
     #: correction chooser is populated from, sent once with the proposal.
     targets: list[str] = field(default_factory=list)
@@ -253,6 +255,7 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
                 detail_column=report.bad_column,
                 detail_target=report.bad_target,
                 detail_transform=report.bad_transform,
+                detail_scope=report.bad_scope,
             )
         return replace(proposal, error="WouldDropColumns", dropped_columns=report.dropped_columns)
 

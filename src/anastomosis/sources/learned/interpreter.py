@@ -61,7 +61,7 @@ from anastomosis.core.model_paths import (
 from anastomosis.core.textutil import clean_cell, html_to_text, sanitize_soap_html
 from anastomosis.sources.learned.reader import Row, find_source_file, read_rows
 from anastomosis.sources.learned.spec import MappingError, MappingSpec
-from anastomosis.sources.learned.transforms import parse_transform
+from anastomosis.sources.learned.transforms import is_lossy, parse_transform
 
 __all__ = ["LearnedSourceAdapter"]
 
@@ -158,7 +158,16 @@ class LearnedSourceAdapter:
         self._patient_plan = [p for p in self._plan if p.scope == "patient"]
         self._encounter_plan = [p for p in self._plan if p.scope == "encounter"]
         self._translations = {t.source_path: t.table for t in spec.value_translations}
-        self._consumed = {m.source_path for m in spec.field_mappings} | {self._patient_key}
+        # A column read through a LOSSY verb is consumed only as a mapping,
+        # never as evidence: its raw value still rides extensions, because the
+        # mapped field cannot answer "what did the file say" — `const:` writes
+        # the same wording over every cell, `split` keeps one piece, case folds
+        # away. round_trip() holds these columns to the same verbatim-survival
+        # proof as unmapped ones, so this line and that proof stand or fall
+        # together.
+        self._consumed = {
+            m.source_path for m in spec.field_mappings if not is_lossy(m.transform)
+        } | {self._patient_key}
         if self._encounter_key is not None:
             self._consumed.add(self._encounter_key)
 
@@ -195,7 +204,9 @@ class LearnedSourceAdapter:
             if key is None:
                 raise MappingError(
                     f"learned mapping {self.name!r}: blank or missing patient key in "
-                    f"column {self._patient_key!r} (row {row_number})"
+                    f"column {self._patient_key!r} (row {row_number})",
+                    column=self._patient_key,
+                    scope="grouping",
                 )
             if key not in groups:
                 groups[key] = []
@@ -203,7 +214,9 @@ class LearnedSourceAdapter:
             elif self._spec.grouping.row_scope == "patient":
                 raise MappingError(
                     f"learned mapping {self.name!r}: row_scope='patient' found 2 rows "
-                    f"with the same patient key in column {self._patient_key!r}"
+                    f"with the same patient key in column {self._patient_key!r}",
+                    column=self._patient_key,
+                    scope="grouping",
                 )
             groups[key].append(row)
         return [(key, groups[key]) for key in order]
@@ -372,7 +385,9 @@ class LearnedSourceAdapter:
                 if encounter_id in seen:
                     raise MappingError(
                         f"learned mapping {self.name!r}: found 2 rows with the same "
-                        f"non-blank encounter key in column {self._encounter_key!r}"
+                        f"non-blank encounter key in column {self._encounter_key!r}",
+                        column=self._encounter_key,
+                        scope="grouping",
                     )
                 seen.add(encounter_id)
             encounter_id = encounter_id or f"{self.name}:{patient_id}:{index}"
@@ -401,7 +416,10 @@ class LearnedSourceAdapter:
                     raise MappingError(
                         f"learned mapping {self.name!r}: encounter-grained rows have "
                         f"conflicting non-empty values for patient field {plan.target_path!r} "
-                        f"from column {plan.source_path!r}"
+                        f"from column {plan.source_path!r}",
+                        column=plan.source_path,
+                        target=plan.target_path,
+                        scope="grouping",
                     )
         return values_by_target
 

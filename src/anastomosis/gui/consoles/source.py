@@ -78,6 +78,7 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
         out["detail_column"] = result.detail_column
         out["detail_target"] = result.detail_target
         out["detail_transform"] = result.detail_transform
+        out["detail_scope"] = result.detail_scope
     elif result.error == "CannotBuildMapping":
         out["detail"] = result.detail
     return out
@@ -222,8 +223,6 @@ class SourceConsole(WizardConsole):
         detail (dropped columns, the load-failure diagnosis). Never raises.
         """
 
-        parsed = _parse_review(review)
-
         def _run() -> dict[str, object]:
             from anastomosis.core.output import typed_path
             from anastomosis.core.source_init_command import (
@@ -231,6 +230,11 @@ class SourceConsole(WizardConsole):
                 run_source_init_command,
             )
 
+            # Parsed INSIDE the submitted step, not before it: a malformed
+            # review from a stale page must surface as this console's ordinary
+            # failure dict, and only the step runner has that catch. The sync
+            # twin already sits inside its own try for the same reason.
+            parsed = _parse_review(review)
             return _source_result_dict(
                 run_source_init_command(
                     SourceInitCommand(

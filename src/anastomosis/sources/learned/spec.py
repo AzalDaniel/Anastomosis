@@ -74,11 +74,17 @@ class MappingError(Exception):
         column: str | None = None,
         target: str | None = None,
         transform: str | None = None,
+        scope: str | None = None,
     ) -> None:
         super().__init__(message)
         self.column = column
         self.target = target
         self.transform = transform
+        #: Which kind of control the refusal points at: ``"grouping"`` when the
+        #: fault is the patient key, encounter key or row grain rather than any
+        #: one column's read. ``None`` means the column/target pointer is the
+        #: whole story.
+        self.scope = scope
 
 
 class SourceFormat(BaseModel):

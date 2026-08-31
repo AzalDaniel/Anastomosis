@@ -58,6 +58,7 @@ from anastomosis.sources.learned.spec import (
     MappingSpec,
     SourceFormat,
 )
+from anastomosis.sources.learned.transforms import is_lossy
 
 __all__ = [
     "CandidateScorer",
@@ -550,16 +551,6 @@ def build_mapping(
     still preserved in ``extensions`` by the interpreter, never dropped.
     """
     chosen = _chosen(analysis, decisions)
-    field_mappings = [
-        FieldMapping(
-            source_path=source,
-            target_path=target,
-            transform=transform,
-            confidence=_decided_confidence(analysis, source, target),
-            human_confirmed=True,
-        )
-        for source, (target, transform) in chosen.items()
-    ]
     reserved = {k for k in (analysis.patient_key, analysis.encounter_key) if k is not None}
     unmapped = [c for c in analysis.fmt.columns if c not in chosen and c not in reserved]
     if analysis.patient_key is None:
@@ -567,6 +558,22 @@ def build_mapping(
             "cannot build a mapping without a patient_key — confirm one in the wizard"
         )
     try:
+        # The per-FIELD validators fire in this comprehension — an unknown
+        # target, a verb with the wrong arity — so it stands inside the same
+        # door as the whole-spec model validators below. The first translation
+        # covered only the second half, and a review picking `const:` before
+        # typing its wording escaped as raw ValidationError, `input_value=`
+        # and all.
+        field_mappings = [
+            FieldMapping(
+                source_path=source,
+                target_path=target,
+                transform=transform,
+                confidence=_decided_confidence(analysis, source, target),
+                human_confirmed=True,
+            )
+            for source, (target, transform) in chosen.items()
+        ]
         return MappingSpec(
             mapping_id=mapping_id,
             created_at=now or datetime.now(UTC),
@@ -600,6 +607,18 @@ class RoundTripReport:
     bad_column: str | None = None
     bad_target: str | None = None
     bad_transform: str | None = None
+    #: ``"grouping"`` when the refusal points at the keys or row grain, not a
+    #: column's read — the page anchors the structural controls instead.
+    bad_scope: str | None = None
+
+
+def _faithfully_mapped(spec: MappingSpec) -> set[str]:
+    """The columns whose mapped field IS their value, exempt from the check.
+
+    A lossy read is deliberately absent: its raw value rides extensions and
+    must pass the same verbatim-survival proof as an unmapped column.
+    """
+    return {m.source_path for m in spec.field_mappings if not is_lossy(m.transform)}
 
 
 def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
@@ -626,6 +645,7 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
             bad_column=exc.column,
             bad_target=exc.target,
             bad_transform=exc.transform,
+            bad_scope=exc.scope,
         )
 
     prefix = f"learned:{spec.mapping_id}:"
@@ -636,7 +656,7 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
                 if key.startswith(prefix):
                     preserved.setdefault(key[len(prefix) :], set()).add(clean_cell(str(value)))
 
-    mapped = {m.source_path for m in spec.field_mappings}
+    mapped = _faithfully_mapped(spec)
     keys = {spec.grouping.patient_key, spec.grouping.encounter_key}
     rows = read_rows(example, spec.source_format)
     dropped: list[str] = []
@@ -700,6 +720,12 @@ def _mapping_markdown(spec: MappingSpec) -> str:
         "## Unmapped columns (preserved in `extensions`, never dropped)",
         "",
         *(f"- `{c}`" for c in spec.unmapped_source_fields),
+        *(
+            f"- `{m.source_path}` — read as `{m.transform}`, a wording that cannot "
+            "reproduce the cell, so the raw value is also preserved"
+            for m in spec.field_mappings
+            if is_lossy(m.transform)
+        ),
         "",
         "## Honest limits",
         "",

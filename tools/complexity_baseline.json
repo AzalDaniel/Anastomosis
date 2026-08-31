@@ -58,7 +58,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/sourcelearn.py::round_trip": {
-      "cc": 13,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/core/textutil.py::_SoapHtmlSanitizer._emit_start": {
