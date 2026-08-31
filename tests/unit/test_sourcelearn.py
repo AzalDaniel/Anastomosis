@@ -7,6 +7,7 @@ proves losslessness, and that saving is owner-only and refuses unreviewed specs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -17,6 +18,7 @@ import pytest
 
 from anastomosis.core.sourcelearn import (
     FuzzyNameScorer,
+    _atomic_write,
     _mask,
     analyze_source,
     build_mapping,
@@ -210,6 +212,80 @@ def test_save_mapping_is_owner_only_and_writes_artifacts(tmp_path: Path) -> None
     if os.name == "posix":
         assert stat.S_IMODE((mapping_dir / "mapping.json").stat().st_mode) == 0o600
         assert stat.S_IMODE(mapping_dir.stat().st_mode) == 0o700
+
+
+def test_the_trust_digest_describes_the_bytes_that_are_actually_there(
+    tmp_path: Path,
+) -> None:
+    """The recorded sha256 must match a re-hash of the file as it sits on disk.
+
+    It did not on Windows. `_atomic_write` opened the temp file in text mode
+    with the default newline handling, so every `\n` became `\r\n` on the way
+    out, while the digest was taken from the pre-write string. Discovery hashes
+    what it reads, so the two could never agree: every mapping saved on Windows
+    announced itself as edited since review, seconds after being written.
+
+    The cost was not the noise. That warning is the only thing standing between
+    a reviewed mapping — which decides how a source file's columns become
+    patient identity — and one edited afterwards by someone else. A warning
+    that fires on all of them is one an operator learns to dismiss, and it was
+    firing on all of them on the platform this product ships an installer for.
+
+    Asserting on bytes rather than on text is the point: `read_text` would
+    normalise the very thing that broke, and this test would have passed
+    throughout.
+    """
+    analysis = analyze_source(FIXTURE)
+    spec = build_mapping(
+        analysis, mapping_id="clinic", display="Clinic", now=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    mapping_dir = save_mapping(spec, tmp_path)
+    raw = (mapping_dir / "mapping.json").read_bytes()
+    recorded = json.loads((mapping_dir / "source_trust.json").read_text(encoding="utf-8"))
+    assert hashlib.sha256(raw).hexdigest() == recorded["mapping_sha256"], (
+        "source_trust.json records a digest of something other than the file "
+        "beside it, so discovery reports every fresh mapping as modified."
+    )
+    assert b"\r\n" not in raw, (
+        "mapping.json was written through newline translation; the bytes on "
+        "disk are no longer the bytes that were hashed."
+    )
+
+
+def test_one_edited_byte_still_breaks_the_trust_digest(tmp_path: Path) -> None:
+    """The other half, and the half that matters more.
+
+    A digest that matches the file is worthless if it would match any file.
+    Flip one byte of a saved mapping and the recorded hash must stop agreeing
+    with it — that is the whole reason the digest is written down.
+    """
+    analysis = analyze_source(FIXTURE)
+    spec = build_mapping(
+        analysis, mapping_id="clinic", display="Clinic", now=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    mapping_dir = save_mapping(spec, tmp_path)
+    path = mapping_dir / "mapping.json"
+    recorded = json.loads((mapping_dir / "source_trust.json").read_text(encoding="utf-8"))
+    tampered = path.read_bytes().replace(b'"clinic"', b'"clinlc"', 1)
+    assert tampered != path.read_bytes(), "the fixture no longer contains the byte being edited"
+    path.write_bytes(tampered)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() != recorded["mapping_sha256"]
+
+
+def test_atomic_write_puts_exactly_the_string_it_was_given_on_disk(tmp_path: Path) -> None:
+    """Directly, because every caller's guarantee rests on this one function.
+
+    Be honest about what this catches where. Newline translation is a no-op on
+    POSIX, so reverting the write to text mode still passes this test on Linux
+    and fails it on the `windows-latest` legs — those legs are what hold the
+    fix, and they run the whole suite. What it does catch on every platform is
+    any other way the written bytes could stop being the given string: a
+    changed encoding, a strip, a normalisation, a rewrite that re-serialises.
+    """
+    text = "alpha\nbeta\r\ngamma\n"
+    target = tmp_path / "sample.txt"
+    _atomic_write(target, text, 0o600)
+    assert target.read_bytes() == text.encode("utf-8")
 
 
 def test_save_refuses_unreviewed(tmp_path: Path) -> None:
