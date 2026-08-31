@@ -1047,6 +1047,23 @@
     return sections;
   }
 
+  //: A checkbox matrix that remembers what this person chose per key — per
+  //: layout for chart sections, per export format for selection rules. Without
+  //: it, switching away and back silently reinstated the defaults, and the
+  //: defaults were what the run was then built from. One implementation for
+  //: both matrices: two copies of this would drift on exactly that bug.
+  function makeRememberingMatrix(matrix) {
+    const chosen = Object.create(null);
+    let current = null;
+    return {
+      set(entries, emptyText, key) {
+        if (current !== null) chosen[current] = gatherSections(matrix);
+        current = key === undefined || key === null ? null : String(key);
+        renderSectionMatrix(matrix, entries, emptyText, current === null ? null : chosen[current]);
+      },
+    };
+  }
+
   function renderPatients(panel, body, patients) {
     if (!panel || !body) return;
     body.innerHTML = "";
@@ -1319,6 +1336,16 @@
     matrix.id = id("sections");
     host.appendChild(makeField(id("sections"), "Chart sections", "", matrix));
 
+    // Which visits become charts at all — the ingest-side twin of the section
+    // flags. Only on the rebuild flow: a migration takes the format's own
+    // selection, because `anast migrate` has no --include to mirror.
+    const selection = migrate ? null : document.createElement("div");
+    if (selection) {
+      selection.className = "section-matrix";
+      selection.id = id("selection");
+      host.appendChild(makeField(id("selection"), "Visits to skip", "", selection));
+    }
+
     host.appendChild(
       makeSwitchField(
         id("qa"),
@@ -1393,11 +1420,8 @@
 
     initSegmentToggles(host);
     const pick = (name) => el(id(name));
-    // What this person actually chose, per layout. Without it, switching layout
-    // and back silently reinstated the new layout's defaults — and those
-    // defaults were what the run was built from.
-    const chosenByLayout = Object.create(null);
-    let sectionsKey = null;
+    const sectionMatrix = makeRememberingMatrix(matrix);
+    const selectionMatrix = selection ? makeRememberingMatrix(selection) : null;
     if (typeof opts.onRun === "function") run.addEventListener("click", opts.onRun);
 
     return {
@@ -1405,16 +1429,12 @@
       id,
       el: pick,
       setSections(sections, emptyText, key) {
-        // Remember what was chosen for the layout being left, so coming back to
-        // it restores those choices rather than the layout's defaults.
-        if (sectionsKey !== null) chosenByLayout[sectionsKey] = gatherSections(matrix);
-        sectionsKey = key === undefined || key === null ? null : String(key);
-        renderSectionMatrix(
-          matrix,
-          sections,
-          emptyText,
-          sectionsKey === null ? null : chosenByLayout[sectionsKey]
-        );
+        sectionMatrix.set(sections, emptyText, key);
+      },
+      //: The selection rules of the chosen export format, keyed by that format
+      //: so switching away and back keeps what was chosen.
+      setSelection(rules, emptyText, key) {
+        if (selectionMatrix) selectionMatrix.set(rules, emptyText, key);
       },
       //: The DOM id this form gave a named field, so a caller can point at it
       //: (to open the disclosure hiding it) without re-deriving the prefix.
@@ -1428,6 +1448,9 @@
         run.textContent = opts.runLabel || "Rebuild charts";
       },
       values() {
+        // A ticked selection box is the rule doing its job; unticking it is the
+        // request to keep those visits, which is exactly what --include names.
+        const rules = gatherSections(selection);
         const packDir = pick("pack-dir") ? pick("pack-dir").value.trim() : "";
         const checked = (name) => !!(pick(name) && pick(name).checked);
         const value = (name) => (pick(name) ? pick(name).value : "");
@@ -1439,6 +1462,7 @@
           pack: migrate ? null : value("pack"),
           render: migrate ? value("render") || "neutral" : null,
           sections: gatherSections(matrix),
+          include: Object.keys(rules).filter((rule) => !rules[rule]),
           qa: checked("qa"),
           archive: checked("archive"),
           bundle: checked("bundle"),
@@ -1829,6 +1853,11 @@
     initSegmentToggles,
     displayName,
     nameOf,
+    // The chooser and the labelled field around it, so a view can build one of
+    // N where its OPTIONS come from the file in front of the operator (Teach's
+    // per-column corrections) rather than from markup written in advance.
+    makeChooser,
+    makeField,
     fillChooser,
     renderSectionMatrix,
     gatherSections,

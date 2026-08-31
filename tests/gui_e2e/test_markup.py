@@ -53,9 +53,44 @@ def test_chart_sections_is_a_named_group_not_a_run_of_switches(gui) -> None:
     assert field["role"] == "group"
     assert field["labelledBy"] == field["labelId"]
 
-    # And Chromium agrees the group is named.
-    snapshot = app.page.locator("#charts-form .section-matrix").aria_snapshot()
+    # And Chromium agrees the group is named. Addressed by id, not by class:
+    # Charts carries two matrices now (the layout's sections and the format's
+    # selection rules), and a locator that matched both would be asserting
+    # about whichever came first.
+    snapshot = app.page.locator("#charts-sections").aria_snapshot()
     assert snapshot.startswith('- group "Chart sections"'), snapshot
+
+
+def test_visits_to_skip_is_a_named_group_too(gui) -> None:
+    """The second matrix is the same control, so it earns the same name.
+
+    "Visits to skip" holds the source's own render-selection rules — the
+    ingest-side twin of the section flags — and a group of unexplained switches
+    is exactly what the fix above was about.
+    """
+    app = gui()
+
+    field = app.page.evaluate(
+        """() => {
+          const label = [...document.querySelectorAll('#charts-form label')]
+            .find((l) => l.textContent.trim() === 'Visits to skip');
+          if (!label) return null;
+          const group = label.parentElement.querySelector('.section-matrix');
+          return {
+            labelFor: label.getAttribute('for'),
+            role: group && group.getAttribute('role'),
+            labelledBy: group && group.getAttribute('aria-labelledby'),
+            labelId: label.id,
+          };
+        }"""
+    )
+
+    assert field is not None, "Charts has no visits-to-skip field"
+    assert field["labelFor"] is None
+    assert field["role"] == "group"
+    assert field["labelledBy"] == field["labelId"]
+    snapshot = app.page.locator("#charts-selection").aria_snapshot()
+    assert snapshot.startswith('- group "Visits to skip"'), snapshot
 
 
 def test_a_plain_field_still_uses_a_real_label(gui) -> None:

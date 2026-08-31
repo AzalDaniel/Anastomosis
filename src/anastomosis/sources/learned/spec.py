@@ -57,7 +57,34 @@ SPEC_FILENAME = "mapping.json"
 
 
 class MappingError(Exception):
-    """A learned mapping is missing, malformed, or invalid — names the file."""
+    """A learned mapping is missing, malformed, or invalid — names the file.
+
+    The three optional attributes are a pointer, not prose: a raise site that
+    knows which column, target or transform the refusal is about says so here,
+    and a frontend can route the operator to the exact control instead of
+    scraping an English sentence. Names only, never a value — the same
+    discipline the message itself already keeps. Every existing bare
+    ``raise MappingError("...")`` stays valid.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        column: str | None = None,
+        target: str | None = None,
+        transform: str | None = None,
+        scope: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.column = column
+        self.target = target
+        self.transform = transform
+        #: Which kind of control the refusal points at: ``"grouping"`` when the
+        #: fault is the patient key, encounter key or row grain rather than any
+        #: one column's read. ``None`` means the column/target pointer is the
+        #: whole story.
+        self.scope = scope
 
 
 class SourceFormat(BaseModel):
@@ -197,9 +224,14 @@ class MappingSpec(BaseModel):
         for mapping in self.field_mappings:
             require_column(mapping.source_path, "field_mappings.source_path")
             if mapping.target_path in seen_targets:
+                first = next(
+                    m.source_path
+                    for m in self.field_mappings
+                    if m.target_path == mapping.target_path
+                )
                 raise ValueError(
-                    f"two field_mappings target {mapping.target_path!r}; "
-                    "each canonical field may be mapped at most once"
+                    f"columns {first!r} and {mapping.source_path!r} both target "
+                    f"{mapping.target_path!r}; each canonical field may be mapped at most once"
                 )
             seen_targets.add(mapping.target_path)
 

@@ -11,13 +11,21 @@ An adapter declares what it can read and proves it can read a given folder
   skips); per-row tolerance decisions live inside each adapter where the
   format knowledge is.
 
+An adapter may also apply RENDER-SELECTION rules — reasons an encounter it
+read is kept out of the render and parked in ``extensions`` instead. Those are
+one practice's judgement, not a property of the format, so they are per-run
+options: the adapter declares them (:class:`SelectionRule`) and a run may
+switch any of them off (:func:`with_selection`). Both halves are optional and
+read defensively, the way ``quarantine`` is — an adapter that selects nothing
+declares nothing and every default run takes the path it always took.
+
 The registry is deliberately boring: explicit ``register`` calls at import
 time, no metaclass magic, defensive lookups with diagnoses.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -26,12 +34,15 @@ from anastomosis.core.model import PatientRecord
 
 __all__ = [
     "QuarantinedRows",
+    "SelectionRule",
     "SourceAdapter",
     "SourceDataError",
     "available_sources",
     "detect_source",
     "get_source",
     "register",
+    "selection_rules",
+    "with_selection",
 ]
 
 
@@ -79,6 +90,27 @@ class QuarantinedRows:
     rows: tuple[dict[str, str | None], ...]
 
 
+@dataclass(frozen=True)
+class SelectionRule:
+    """One render-selection rule an adapter applies unless a run turns it off.
+
+    ``name`` is the word an operator types (``anast pipeline run --include
+    growth-charts``) and the key a GUI toggle carries. ``reason`` is what the
+    rule stamps on an encounter it excludes — the string that already travels
+    in the adapter's ``:skipped_encounters`` extension and in the run's
+    selection report, so it is fixed by that contract rather than free text.
+    ``label`` is the sentence a picker or a report shows a person.
+
+    All three are schema, not data: they name a rule, never anything the rule
+    read. That is what lets the whole set be written into the selection report
+    beside the charts and printed in a picker.
+    """
+
+    name: str
+    reason: str
+    label: str
+
+
 @runtime_checkable
 class SourceAdapter(Protocol):
     """What every source adapter provides."""
@@ -100,6 +132,43 @@ class SourceAdapter(Protocol):
     def load(self, path: Path) -> Iterator[PatientRecord]:
         """Parse the export at ``path`` into canonical patient records."""
         ...
+
+
+def selection_rules(adapter: SourceAdapter) -> tuple[SelectionRule, ...]:
+    """The render-selection rules ``adapter`` applies, empty for one with none.
+
+    Read through ``getattr`` for the same reason ``quarantine`` is: the
+    capability is optional, and an adapter that keeps nothing out of the render
+    needs no attribute at all.
+    """
+    return tuple(getattr(adapter, "selection_rules", ()))
+
+
+def with_selection(adapter: SourceAdapter, include: Iterable[str]) -> SourceAdapter:
+    """The adapter this run loads through, given the rules it was told to drop.
+
+    ``include`` names the rules the operator switched OFF, so the encounters
+    they would have excluded are rendered instead. An empty ``include`` returns
+    the registered adapter itself — the default run is not merely equivalent to
+    the one before this seam existed, it is the same object taking the same
+    path.
+
+    Loud, and a programming error rather than an operator one: names are
+    validated against :func:`selection_rules` by the caller before they get
+    here, so an adapter that declares rules and cannot be configured with them
+    is a half-built adapter, not a bad flag.
+    """
+    dropped = frozenset(include)
+    if not dropped:
+        return adapter
+    including = getattr(adapter, "including", None)
+    if including is None:
+        raise TypeError(
+            f"source adapter {adapter.name!r} declares selection rules but cannot "
+            "be configured with them (no `including` method)"
+        )
+    configured: SourceAdapter = including(dropped)
+    return configured
 
 
 _REGISTRY: dict[str, SourceAdapter] = {}

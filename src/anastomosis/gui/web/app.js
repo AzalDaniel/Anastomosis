@@ -28,6 +28,10 @@
 
   // Per-layout section maps (name -> {section: {label, default}}), from info().
   let SECTIONS_BY_PACK = {};
+  // Per-format selection rules (name -> {rule: {label, reason}}), from info().
+  // A format that keeps nothing out of the charts has an empty map here, and
+  // "Detect" has no format to ask, which is its own empty state below.
+  let SELECTION_BY_SOURCE = {};
   let FORM = null;
 
   function hasApi() {
@@ -307,6 +311,7 @@
         v.pack,
         v.source,
         v.sections,
+        v.include,
         v.qa,
         v.archive,
         v.bundle,
@@ -341,6 +346,20 @@
     );
   }
 
+  function renderSelection(sourceName) {
+    if (!FORM) return;
+    // Detect cannot answer this: which visits a format leaves out is the
+    // format's own rule, and until one is named there is no rule to show.
+    // Saying so beats an empty box that reads as "there is nothing to skip".
+    FORM.setSelection(
+      sourceName ? SELECTION_BY_SOURCE[sourceName] || {} : {},
+      sourceName
+        ? "This format keeps every visit."
+        : "Choose an export format above to see which visits it would skip.",
+      sourceName || ""
+    );
+  }
+
   function populate(info) {
     if (!FORM) return;
     const pack = FORM.el("pack");
@@ -359,7 +378,10 @@
     }
     Shell.fillChooser(pack, entries);
     renderSections(pack ? pack.value : "");
-    Shell.fillChooser(FORM.el("source"), [
+    SELECTION_BY_SOURCE = {};
+    for (const src of info.sources || []) SELECTION_BY_SOURCE[src.name] = src.selection || {};
+    const source = FORM.el("source");
+    Shell.fillChooser(source, [
       { value: "", label: "Detect", note: "works for every built-in format" },
       ...(info.sources || []).map((src) => ({
         value: src.name,
@@ -367,6 +389,7 @@
         note: src.description || src.name,
       })),
     ]);
+    renderSelection(source ? source.value : "");
   }
 
   // --- the out-of-date filing-assistant notice ------------------------------
@@ -405,6 +428,8 @@
     renderRail();
     const pack = FORM.el("pack");
     if (pack) pack.addEventListener("change", () => renderSections(pack.value));
+    const source = FORM.el("source");
+    if (source) source.addEventListener("change", () => renderSelection(source.value));
     const dismiss = el("freshness-dismiss");
     if (dismiss) {
       dismiss.addEventListener("click", () => el("freshness-toast").classList.remove("show"));

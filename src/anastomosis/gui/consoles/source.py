@@ -13,6 +13,7 @@ not echoed back.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from anastomosis.gui.consoles.wizard import WizardConsole
@@ -50,10 +51,13 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
                     "target": s.target,
                     "transform": s.transform,
                     "confidence": s.confidence,
+                    "inferred_type": s.inferred_type,
+                    "sample_shape": s.sample_shape,
                 }
                 for s in result.suggestions
             ],
             "mapped": result.mapped,
+            "targets": list(result.targets),
         }
     )
     if result.ok:
@@ -69,7 +73,69 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
         out["dropped"] = list(result.dropped_columns)
     elif result.error == "MappingLoadFailed":
         out["detail"] = result.detail
+        # The structured pointer, so the page can open and mark the exact row
+        # instead of scraping the sentence. Names only, never a value.
+        out["detail_column"] = result.detail_column
+        out["detail_target"] = result.detail_target
+        out["detail_transform"] = result.detail_transform
+        out["detail_scope"] = result.detail_scope
+    elif result.error == "CannotBuildMapping":
+        out["detail"] = result.detail
     return out
+
+
+def _parse_decisions(raw: object) -> dict[str, tuple[str, str]]:
+    """``review.decisions``, admitted one proven pair at a time."""
+    if not isinstance(raw, dict):
+        raise TypeError("review.decisions must be an object of column -> [target, transform]")
+    decisions: dict[str, tuple[str, str]] = {}
+    for column, pair in raw.items():
+        if (
+            not isinstance(column, str)
+            or not isinstance(pair, (list, tuple))
+            or len(pair) != 2
+            or not all(isinstance(part, str) for part in pair)
+        ):
+            raise TypeError("review.decisions must map column -> [target, transform]")
+        decisions[column] = (pair[0], pair[1])
+    return decisions
+
+
+@dataclass(frozen=True)
+class _Review:
+    """The browser's review, already proven to be the shape the command takes."""
+
+    decisions: dict[str, tuple[str, str]]
+    patient_key: str
+    encounter_key: str | None
+    row_scope: str
+
+
+def _parse_review(review: dict[str, object] | None) -> _Review | None:
+    """The browser's review, parsed defensively, or ``None`` for no review.
+
+    Decisions submitted from the page are input, not truth: a malformed shape
+    here is a stale frontend rather than an operator mistake, and it must
+    surface as this console's ordinary failure dict, never a traceback. Only
+    string-keyed ``[target, transform]`` pairs are admitted; everything else
+    raises for the caller's catch-all to translate.
+    """
+    if review is None:
+        return None
+    decisions = _parse_decisions(review.get("decisions"))
+    patient_key = review.get("patient_key")
+    encounter_key = review.get("encounter_key")
+    row_scope = review.get("row_scope")
+    if not isinstance(patient_key, str) or not isinstance(row_scope, str):
+        raise TypeError("review must carry patient_key and row_scope")
+    if encounter_key is not None and not isinstance(encounter_key, str):
+        raise TypeError("review.encounter_key must be a column name or null")
+    return _Review(
+        decisions=decisions,
+        patient_key=patient_key,
+        encounter_key=encounter_key,
+        row_scope=row_scope,
+    )
 
 
 class SourceConsole(WizardConsole):
@@ -88,6 +154,7 @@ class SourceConsole(WizardConsole):
         display: str | None = None,
         confirmed: bool = False,
         out_dir: str | None = None,
+        review: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Learn a new structured-export format from one example (wizard backend).
 
@@ -119,6 +186,8 @@ class SourceConsole(WizardConsole):
                 run_source_init_command,
             )
 
+            parsed = _parse_review(review)
+
             result = run_source_init_command(
                 SourceInitCommand(
                     example=typed_path(example_path),
@@ -126,6 +195,10 @@ class SourceConsole(WizardConsole):
                     display=display,
                     out_dir=typed_path(out_dir) if out_dir is not None else None,
                     confirmed=confirmed,
+                    decisions=parsed.decisions if parsed else None,
+                    patient_key=parsed.patient_key if parsed else None,
+                    encounter_key=parsed.encounter_key if parsed else None,
+                    row_scope=parsed.row_scope if parsed else None,
                 )
             )
             return _source_result_dict(result)
@@ -139,6 +212,7 @@ class SourceConsole(WizardConsole):
         display: str | None = None,
         confirmed: bool = False,
         out_dir: str | None = None,
+        review: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Run :meth:`source_init` on a daemon thread (the GUI stays responsive).
 
@@ -156,6 +230,11 @@ class SourceConsole(WizardConsole):
                 run_source_init_command,
             )
 
+            # Parsed INSIDE the submitted step, not before it: a malformed
+            # review from a stale page must surface as this console's ordinary
+            # failure dict, and only the step runner has that catch. The sync
+            # twin already sits inside its own try for the same reason.
+            parsed = _parse_review(review)
             return _source_result_dict(
                 run_source_init_command(
                     SourceInitCommand(
@@ -164,6 +243,10 @@ class SourceConsole(WizardConsole):
                         display=display,
                         out_dir=typed_path(out_dir) if out_dir is not None else None,
                         confirmed=confirmed,
+                        decisions=parsed.decisions if parsed else None,
+                        patient_key=parsed.patient_key if parsed else None,
+                        encounter_key=parsed.encounter_key if parsed else None,
+                        row_scope=parsed.row_scope if parsed else None,
                     )
                 )
             )

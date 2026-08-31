@@ -59,7 +59,7 @@ from anastomosis.core.model import (
 from anastomosis.core.textutil import clean_numeric, format_phone, html_to_text, sanitize_soap_html
 from anastomosis.core.timeutil import age_at
 from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
-from anastomosis.sources.base import QuarantinedRows
+from anastomosis.sources.base import QuarantinedRows, SelectionRule
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
 from .loader import (
@@ -71,7 +71,7 @@ from .loader import (
     UnsupportedTablesError,
 )
 
-__all__ = ["map_export"]
+__all__ = ["DEFAULT_SELECTION", "SELECTION_RULES", "map_export"]
 
 SOURCE = "pf_tebra"
 
@@ -484,20 +484,74 @@ def _map_encounter(
 _GROWTH_CHART_AGE = 18  # growth-chart chief complaints are pediatric; skipped at age >= 18
 
 
-def _skip_reason(encounter: Encounter, birth_date: date | None) -> str | None:
+def _is_empty_soap(encounter: Encounter, birth_date: date | None) -> bool:
+    """All four SOAP sections strip to nothing — a note with no note in it."""
+    return not encounter.has_note_content
+
+
+def _is_adult_growth_chart(encounter: Encounter, birth_date: date | None) -> bool:
+    """A growth-chart chief complaint on a patient who was an adult at the visit."""
+    cc = (encounter.chief_complaint or "").lower()
+    if "growth chart" not in cc or not birth_date or not encounter.date_of_service:
+        return False
+    return age_at(birth_date, encounter.date_of_service) >= _GROWTH_CHART_AGE
+
+
+#: The render-selection rules this adapter applies, in the order it applies
+#: them — an encounter takes the reason of the FIRST rule that claims it, so
+#: the order is part of what the selection report says and is not free to move.
+#:
+#: They were constants: two shapes of encounter this adapter always kept out of
+#: the render, decided once for one practice. They are neither wrong nor
+#: universal — an archivist retaining everything wants the empty visit, and a
+#: paediatric practice that grew up with its patients wants the growth chart —
+#: so each is now a rule a run may switch off by name (``--include``), with
+#: every rule on by default, which is exactly what they were.
+#:
+#: ``reason`` is the string the extension and the selection report already
+#: carried, unchanged: an operator's older reports stay readable against a
+#: newer one.
+SELECTION_RULES: tuple[SelectionRule, ...] = (
+    SelectionRule(
+        name="empty-soap",
+        reason="empty_soap",
+        label="SOAP notes whose four sections are all empty",
+    ),
+    SelectionRule(
+        name="growth-charts",
+        reason="adult_growth_chart",
+        label="Growth-chart visits for patients who were adults at the visit",
+    ),
+)
+
+#: Every rule, applied — what this adapter did before any of them could be
+#: switched off, and what a run with no ``--include`` still does.
+DEFAULT_SELECTION: frozenset[str] = frozenset(rule.name for rule in SELECTION_RULES)
+
+#: What each rule actually asks of an encounter. Separate from the declaration
+#: above because the declaration is schema an operator reads and this is the
+#: adapter's own format knowledge. One signature for all of them — the
+#: encounter and the patient's birth date — so the dispatch needs no per-rule
+#: shape; a rule with no use for the date ignores it.
+_SELECTION_TESTS: dict[str, Callable[[Encounter, date | None], bool]] = {
+    "empty-soap": _is_empty_soap,
+    "growth-charts": _is_adult_growth_chart,
+}
+
+
+def _skip_reason(
+    encounter: Encounter, birth_date: date | None, active: frozenset[str]
+) -> str | None:
     """Why an encounter is excluded from rendering, or ``None`` if it renders.
 
-    Two selection rules decide exclusion:
-      - empty SOAP: all four sections strip to nothing  -> "empty_soap"
-      - adult growth chart: CC contains "growth chart" and patient is >=18 at
-        DOS                                             -> "adult_growth_chart"
+    ``active`` is the set of rule names this run applies (:data:`SELECTION_RULES`
+    minus whatever it was told to include). A rule that is not active does not
+    run at all, so an encounter it would have claimed reaches the render like
+    any other — not carried as an exclusion with a note saying it was allowed.
     """
-    if not encounter.has_note_content:  # empty SOAP (post-strip text)
-        return "empty_soap"
-    cc = (encounter.chief_complaint or "").lower()
-    if "growth chart" in cc and birth_date and encounter.date_of_service:  # adult growth chart
-        if age_at(birth_date, encounter.date_of_service) >= _GROWTH_CHART_AGE:
-            return "adult_growth_chart"
+    for rule in SELECTION_RULES:
+        if rule.name in active and _SELECTION_TESTS[rule.name](encounter, birth_date):
+            return rule.reason
     return None
 
 
@@ -1618,6 +1672,7 @@ def map_export(
     *,
     attachments: Attachments | None = None,
     on_quarantine: Callable[[list[QuarantinedRows]], None] | None = None,
+    selection: frozenset[str] = DEFAULT_SELECTION,
 ) -> Iterator[PatientRecord]:
     """Join the loaded tables into one PatientRecord per patient.
 
@@ -1625,6 +1680,11 @@ def map_export(
     over the same export directory — the files the ``patient-documents`` rows
     point at. Without it the rows still map, carrying their metadata and no
     file; the adapter always passes it.
+
+    ``selection`` is the set of :data:`SELECTION_RULES` this run applies. It
+    defaults to all of them — the behaviour every caller had before the rules
+    became per-run options — and a run that drops one renders the encounters
+    that rule was keeping out.
 
     ``on_quarantine`` receives the rows :func:`_unmapped_tables` held back —
     ALWAYS, empty list included, so a caller keeping state (the adapter) is
@@ -1713,10 +1773,11 @@ def map_export(
         seen_guids.add(guid)
         patient = _map_patient(demo_row, demo_groups)
 
-        # The render SELECTION (see _skip_reason) excludes empty-SOAP and
-        # adult-growth-chart encounters from `encounters`. Losslessness: rather
-        # than dropping them, the skipped ones are stashed in `extensions` so
-        # nothing vanishes.
+        # The render SELECTION (see _skip_reason) keeps the shapes of encounter
+        # this run's ACTIVE rules claim out of `encounters` — by default the
+        # empty-SOAP and adult-growth-chart ones, as always. Losslessness:
+        # rather than dropping them, the skipped ones are stashed in
+        # `extensions` so nothing vanishes.
         all_encounters = [
             _map_encounter(row, addenda_by_encounter, encounter_dx_by_encounter)
             for row in encounters_by_patient.get(guid, [])
@@ -1724,7 +1785,7 @@ def map_export(
         encounters: list[Encounter] = []
         skipped: list[dict[str, Any]] = []
         for encounter in all_encounters:
-            reason = _skip_reason(encounter, patient.birth_date)
+            reason = _skip_reason(encounter, patient.birth_date, selection)
             if reason is None:
                 encounters.append(encounter)
             else:

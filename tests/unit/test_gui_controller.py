@@ -766,6 +766,29 @@ def test_info_sections_shape_for_generic_soap() -> None:
     assert set(sections) >= {"vitals", "addenda", "insurance", "social_history"}
 
 
+# --- info() carries each format's selection rules --------------------------
+
+
+def test_info_selection_shape_for_pf_tebra() -> None:
+    """The ingest-side twin of the section matrix: a format that keeps some
+    visits out of the charts has to OFFER those rules, not wait to be told a
+    name that turns out to be wrong."""
+    controller = GuiController(_RecordingSink())
+    info = controller.info()
+    sources = {s["name"]: s for s in info["sources"]}  # type: ignore[index, union-attr]
+
+    selection = sources["pf-tebra"]["selection"]  # type: ignore[index]
+    assert isinstance(selection, dict)
+    assert set(selection) == {"empty-soap", "growth-charts"}
+    # Label for the toggle, reason for reading an older selection report against
+    # this one — the same two strings the report and `anast info` carry.
+    assert selection["growth-charts"]["reason"] == "adult_growth_chart"
+    assert selection["growth-charts"]["label"]
+    # A format that keeps every visit says so with an empty map, not a missing
+    # key: the front end distinguishes "no rules" from "no answer".
+    assert sources["ccda"]["selection"] == {}  # type: ignore[index]
+
+
 # --- destination_status ----------------------------------------------------
 
 
@@ -2255,6 +2278,35 @@ def test_every_pipeline_option_survives_the_async_entry(
     assert cmd.pack_dirs == (packs,)  # type: ignore[attr-defined]
     assert cmd.trust_new is True  # type: ignore[attr-defined]
     assert cmd.write_manifest is True  # type: ignore[attr-defined]
+
+
+def test_an_unticked_selection_rule_survives_the_async_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``include`` takes the same three-signature path the other options do,
+    and the same slip is available to it: a dropped keyword would silently
+    revert the run to "every rule applied" and nothing would fail. The locked
+    body requires the parameter (a drop is a type error); this holds that the
+    VALUE arrives, which no signature can promise."""
+    import anastomosis.core.commands as commands
+    from anastomosis.pipeline import PipelineError
+
+    captured: dict[str, object] = {}
+
+    def _fake(cmd: object, on_event: object = None) -> object:
+        captured["cmd"] = cmd
+        raise PipelineError("stop after capture")
+
+    monkeypatch.setattr(commands, "run_pipeline_command", _fake)
+    controller = GuiController(_RecordingSink())
+
+    started = controller.run_pipeline_async(
+        str(FIXTURE), str(tmp_path / "out"), include=["growth-charts"]
+    )
+    assert started.get("started") is True, started
+    assert controller.join_active_job(10.0) is True
+
+    assert captured["cmd"].include == ("growth-charts",)  # type: ignore[attr-defined]
 
 
 # --- per-flow event scoping (each page owns exactly one flow) ------------------

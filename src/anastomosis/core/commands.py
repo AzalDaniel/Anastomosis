@@ -40,6 +40,7 @@ __all__ = [
     "PackInfo",
     "PatientSummary",
     "PipelineCommand",
+    "SourceInfo",
     "ToolkitInfo",
     "deliver_outputs",
     "get_toolkit_info",
@@ -82,6 +83,11 @@ class PipelineCommand:
     # code hash. Required the first time and again after their code changes.
     trust_new: bool = False
     sections: Mapping[str, bool] = field(default_factory=dict)
+    # The source's render-selection rules this run does NOT apply, so the
+    # encounters they would keep out of the render are rendered instead. Empty
+    # is every rule applied — what the adapters did when the rules were
+    # constants — so an existing run is unchanged.
+    include: tuple[str, ...] = ()
     qa: bool = True
     deliveries: tuple[DeliveryCommand, ...] = ()
     # Opt-in: after a successful render (and QA), write the upload manifest
@@ -287,6 +293,7 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
                 section=section_args,
                 qa=cmd.qa,
                 trust_new=cmd.trust_new,
+                include=list(cmd.include),
                 on_event=on_event,
             )
             # Opt-in upload manifest: written after a successful render (and QA),
@@ -394,13 +401,34 @@ class PackInfo:
 
 
 @dataclass(frozen=True)
+class SourceInfo:
+    """One source adapter's state for the info surface.
+
+    The twin of :class:`PackInfo`, and it exists for the same reason: an
+    adapter carries something a name-and-description tuple has nowhere to put.
+    A pack declares which sections a run may switch; a source declares which of
+    its render-selection rules a run may switch off, and both surfaces need to
+    OFFER those choices rather than wait to be told a name that turns out to be
+    wrong.
+    """
+
+    name: str
+    #: What a person should read instead of ``name``, falling back to it.
+    display: str
+    description: str
+    #: ``{rule name: {"label": ..., "reason": ...}}`` — the rules this source
+    #: applies unless a run names one in ``--include`` / unticks it in the GUI.
+    #: Empty for a source that keeps nothing out of the render.
+    selection: dict[str, dict[str, object]]
+
+
+@dataclass(frozen=True)
 class ToolkitInfo:
     """PHI-free toolkit status: version, extras, sources, packs."""
 
     version: str
     extras: dict[str, bool]
-    #: (name, display, description) per registered source adapter.
-    sources: list[tuple[str, str, str]]
+    sources: list[SourceInfo]
     packs: list[PackInfo]
 
 
@@ -440,15 +468,25 @@ def get_toolkit_info() -> ToolkitInfo:
     import anastomosis.pipeline  # registers built-in source adapters at import
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.packtrust import default_pack_trust
-    from anastomosis.sources import available_sources
+    from anastomosis.sources import available_sources, selection_rules
 
     extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
     # `getattr`, though the protocol declares `display`: the registry is open,
     # and an adapter registered by code this repository never type-checked is
     # exactly the case a fallback exists for. It reads as its own id, which is
-    # what every adapter read as before.
+    # what every adapter read as before. `selection_rules` is read the same way
+    # for the same reason, and answers empty for a source that has none.
     sources = [
-        (a.name, getattr(a, "display", "") or a.name, a.description) for a in available_sources()
+        SourceInfo(
+            name=adapter.name,
+            display=getattr(adapter, "display", "") or adapter.name,
+            description=adapter.description,
+            selection={
+                rule.name: {"label": rule.label, "reason": rule.reason}
+                for rule in selection_rules(adapter)
+            },
+        )
+        for adapter in available_sources()
     ]
     packs: list[PackInfo] = []
     # The trust store is passed so a layout the operator taught (it lands in the

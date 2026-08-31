@@ -64,12 +64,20 @@ LEARNABLE_SUFFIXES = (".csv", ".tsv", ".json", ".ndjson", ".jsonl")
 
 @dataclass(frozen=True)
 class SourceSuggestion:
-    """One column's proposed mapping (PHI-safe: names + a confidence only)."""
+    """One column's proposed mapping (PHI-safe: names, counts and a mask only).
+
+    ``inferred_type`` and ``sample_shape`` are the column's own evidence — what
+    the profiler saw, letters-for-letters and digits-for-digits, never a value.
+    They are what lets a reviewer see that a 214-distinct text column is
+    visibly not a date, without a vocabulary lesson.
+    """
 
     source: str
     target: str | None
     transform: str
     confidence: float
+    inferred_type: str = ""
+    sample_shape: str = ""
 
 
 @dataclass(frozen=True)
@@ -88,6 +96,16 @@ class SourceInitCommand:
     display: str | None = None
     out_dir: Path | None = None
     confirmed: bool = False
+    #: The review's corrections, or None for the scorer's own proposal. A dict
+    #: maps source column -> (target_path, transform) and is COMPLETE, not
+    #: sparse: a column absent from it (and not a key) is unmapped-and-kept.
+    #: The three overrides below travel with it — always all three when a
+    #: review happened, so there is no "unset or cleared" ambiguity for the
+    #: optional encounter key.
+    decisions: dict[str, tuple[str, str]] | None = None
+    patient_key: str | None = None
+    encounter_key: str | None = None
+    row_scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +140,18 @@ class SourceInitResult:
     unmapped: int = 0
     dropped_columns: list[str] = field(default_factory=list)
     detail: str | None = None
+    #: The structured pointer off a load refusal: which column, aimed at which
+    #: target, read how. Populated for ``MappingLoadFailed`` when the raise
+    #: site knew; the frontend anchors the refusal to the exact row with these
+    #: instead of scraping the sentence in ``detail``.
+    detail_column: str | None = None
+    detail_target: str | None = None
+    detail_transform: str | None = None
+    #: ``"grouping"`` when the load refusal points at the keys or row grain.
+    detail_scope: str | None = None
+    #: Every canonical target a review may aim a column at — the closed set the
+    #: correction chooser is populated from, sent once with the proposal.
+    targets: list[str] = field(default_factory=list)
 
 
 def resolve_example(example: Path) -> tuple[Path | None, str]:
@@ -200,8 +230,14 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
     if not cmd.confirmed:
         return replace(proposal, error="ConfirmationRequired")
 
+    analysis = _reviewed(analysis, cmd)
     try:
-        spec = build_mapping(analysis, mapping_id=cmd.name, display=cmd.display or cmd.name)
+        spec = build_mapping(
+            analysis,
+            mapping_id=cmd.name,
+            display=cmd.display or cmd.name,
+            decisions=cmd.decisions,
+        )
     except MappingError as exc:
         # build over column/target NAMES — the message embeds no cell value.
         return replace(proposal, error="CannotBuildMapping", detail=str(exc))
@@ -212,7 +248,15 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
         # mistake, distinct from a column that would be silently dropped. Both
         # name columns/targets only (no cell value), so both are safe to surface.
         if report.error is not None:
-            return replace(proposal, error="MappingLoadFailed", detail=report.error)
+            return replace(
+                proposal,
+                error="MappingLoadFailed",
+                detail=report.error,
+                detail_column=report.bad_column,
+                detail_target=report.bad_target,
+                detail_transform=report.bad_transform,
+                detail_scope=report.bad_scope,
+            )
         return replace(proposal, error="WouldDropColumns", dropped_columns=report.dropped_columns)
 
     try:
@@ -283,6 +327,23 @@ def _make_selectable(spec: MappingSpec) -> None:
         logger.warning("saved mapping could not be registered in this session")
 
 
+def _reviewed(analysis: SourceAnalysis, cmd: SourceInitCommand) -> SourceAnalysis:
+    """The analysis with the review's grouping answers applied, when one exists.
+
+    The three answers are authoritative together — the frontend always sends
+    its current values — so ``None`` for the encounter key MEANS "each row is
+    its own visit", not "not touched". No review, no change.
+    """
+    if cmd.decisions is None:
+        return analysis
+    return replace(
+        analysis,
+        patient_key=cmd.patient_key,
+        encounter_key=cmd.encounter_key,
+        row_scope=cmd.row_scope or analysis.row_scope,
+    )
+
+
 def _proposal(analysis: SourceAnalysis) -> SourceInitResult:
     """The PHI-safe proposal every post-analyze outcome is built from.
 
@@ -291,6 +352,11 @@ def _proposal(analysis: SourceAnalysis) -> SourceInitResult:
     argument and was carrying two comprehensions' worth of branching in a
     function that is otherwise a sequence of refusals.
     """
+    from anastomosis.core.model_paths import canonical_target_paths
+
+    profiles = {
+        profile.name: (profile.inferred_type, profile.sample_shape) for profile in analysis.profiles
+    }
     return SourceInitResult(
         ok=False,
         error=None,
@@ -306,8 +372,11 @@ def _proposal(analysis: SourceAnalysis) -> SourceInitResult:
                 target=s.target_path,
                 transform=s.transform,
                 confidence=round(s.confidence, 2),
+                inferred_type=profiles.get(s.source_path, ("", ""))[0],
+                sample_shape=profiles.get(s.source_path, ("", ""))[1],
             )
             for s in analysis.suggestions
         ],
         mapped=sum(1 for s in analysis.suggestions if s.target_path is not None),
+        targets=sorted(canonical_target_paths()),
     )
