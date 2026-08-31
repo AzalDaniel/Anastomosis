@@ -58,7 +58,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/sourcelearn.py::build_mapping": {
-      "cc": 14,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/core/sourcelearn.py::round_trip": {

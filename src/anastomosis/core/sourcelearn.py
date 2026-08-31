@@ -40,6 +40,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.core.textutil import clean_cell
 from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
@@ -485,6 +487,38 @@ def analyze_source(path: Path, *, scorer: CandidateScorer | None = None) -> Sour
 # --- build / round-trip / save ------------------------------------------------
 
 
+def _chosen(
+    analysis: SourceAnalysis, decisions: dict[str, tuple[str, str]] | None
+) -> dict[str, tuple[str, str]]:
+    """The review's column decisions, or the scorer's own when nobody reviewed."""
+    if decisions is not None:
+        return dict(decisions)
+    return {
+        s.source_path: (s.target_path, s.transform)
+        for s in analysis.suggestions
+        if s.target_path is not None
+    }
+
+
+def _refused_review(exc: ValidationError, mapping_id: str) -> MappingError:
+    """A bad review, refused in this package's one error type.
+
+    The same door `load_spec` already guards, for the same reason: pydantic's
+    own rendering appends ``input_value=`` — the whole assembled dict — to
+    every line, and no message leaving this module may carry that. ``loc`` and
+    ``msg`` are the safe halves: field paths, and the validators' own
+    sentences, which name columns, targets and roles but never a value.
+    """
+    said = "; ".join(
+        f"{'.'.join(str(part) for part in err['loc']) or 'spec'}: {err['msg']}"
+        for err in exc.errors(include_input=False, include_url=False)
+    )
+    return MappingError(
+        f"review for mapping {mapping_id!r} is not a valid spec "
+        f"({exc.error_count()} error(s)): {said}"
+    )
+
+
 def build_mapping(
     analysis: SourceAnalysis,
     *,
@@ -500,13 +534,7 @@ def build_mapping(
     decision (and no suggestion) are recorded as ``unmapped_source_fields`` —
     still preserved in ``extensions`` by the interpreter, never dropped.
     """
-    chosen: dict[str, tuple[str, str]] = {}
-    if decisions is not None:
-        chosen = dict(decisions)
-    else:
-        for suggestion in analysis.suggestions:
-            if suggestion.target_path is not None:
-                chosen[suggestion.source_path] = (suggestion.target_path, suggestion.transform)
+    chosen = _chosen(analysis, decisions)
     field_mappings = [
         FieldMapping(
             source_path=source,
@@ -525,20 +553,23 @@ def build_mapping(
         raise MappingError(
             "cannot build a mapping without a patient_key — confirm one in the wizard"
         )
-    return MappingSpec(
-        mapping_id=mapping_id,
-        created_at=now or datetime.now(UTC),
-        human_reviewed=True,
-        display=display,
-        source_format=analysis.fmt,
-        grouping=Grouping(
-            patient_key=analysis.patient_key,
-            encounter_key=analysis.encounter_key,
-            row_scope=analysis.row_scope,  # type: ignore[arg-type]  # validated literal
-        ),
-        field_mappings=field_mappings,
-        unmapped_source_fields=unmapped,
-    )
+    try:
+        return MappingSpec(
+            mapping_id=mapping_id,
+            created_at=now or datetime.now(UTC),
+            human_reviewed=True,
+            display=display,
+            source_format=analysis.fmt,
+            grouping=Grouping(
+                patient_key=analysis.patient_key,
+                encounter_key=analysis.encounter_key,
+                row_scope=analysis.row_scope,  # type: ignore[arg-type]  # validated literal
+            ),
+            field_mappings=field_mappings,
+            unmapped_source_fields=unmapped,
+        )
+    except ValidationError as exc:
+        raise _refused_review(exc, mapping_id) from None
 
 
 @dataclass(frozen=True)
