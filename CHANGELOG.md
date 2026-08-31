@@ -15,6 +15,28 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **The guided session opens on the mark, not a pipe character.** `anast`
+  typed bare on a terminal drew a half-block and a word, which is what a
+  product looks like before anyone has decided what it looks like. It now
+  opens on the vessel mark itself, in dots, with the greeting beside it: the
+  logo's own geometry — the same recursive growth `tools/make_vessel.py`
+  writes `assets/icon/icon.svg` from — sampled cell by cell into
+  `core/vesselmark_data.py`, so what a physician sees in the terminal and what
+  they see on the taskbar are one object read at two resolutions, and a test
+  re-samples the geometry on every run so the two cannot drift. The gradient is
+  density and text weight climbing together, never a hue: §11 of the design
+  language holds that the terminal's background belongs to whoever is running
+  the tool, and it holds for the mark as much as for a sentence. The mark
+  assembles from the trunk outward in under a second, once, and any keystroke
+  ends it — nobody waits on an animation to answer the question underneath it.
+  It stands down entirely for three readers who are not watching: a stream that
+  is not a terminal (a pipe, a redirect, CI — which gets exactly the header it
+  has always been given, byte for byte), a window too narrow to hold the mark
+  and a legible column of text, and anyone who set `NO_COLOR`. A console that
+  cannot encode the round dots gets an ASCII ramp of the same shape, through
+  the fallback the status glyphs already use. `anast --help` and every named
+  command import none of it.
+
 - **A conservation ledger for C-CDA ingest, and a corpus to run it against.**
   2,103 real documents went through the adapter, every one parsed, and eleven
   canonical collections came back empty across all of them — no practitioner,

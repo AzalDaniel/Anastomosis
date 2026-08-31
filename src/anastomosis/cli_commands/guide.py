@@ -28,11 +28,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 
-from anastomosis.core.presentation import BRAND_PALETTE, terminal_glyphs
+from anastomosis.core.presentation import (
+    BRAND_PALETTE,
+    attached_to_a_terminal,
+    terminal_glyphs,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,6 +54,11 @@ DEFAULT_BROWSER_CONNECTION = "http://127.0.0.1:9222"
 
 #: The chart layout every rebuild uses unless the person names another one.
 DEFAULT_CHART_LAYOUT = "generic_soap"
+
+#: The one sentence under the product name. Said in one place because the
+#: header says it two ways — beside the mark, and on its own where there is no
+#: room for one — and two copies of a sentence are two sentences eventually.
+PURPOSE = "Turn an EHR export into complete, verified charts you can keep or move."
 
 
 @dataclass(frozen=True)
@@ -70,28 +79,6 @@ class Plan:
     notes: tuple[str, ...] = ()
 
 
-def _attached_to_a_terminal(stream: Any) -> bool:
-    """Whether ``stream`` is really a terminal — asked of the stream itself.
-
-    Never of anything that reports colour capability. ``FORCE_COLOR`` and
-    ``TTY_COMPATIBLE`` make Rich answer ``is_terminal`` True for a plain file
-    (``typer/rich_utils.py`` sets them up), and both are exported by ordinary
-    tooling — CI images, ``just``/``make`` wrappers, terminal multiplexers. With
-    one of them set, ``anast > log`` from a shell used to open the guided
-    session, write the menu into the log file, and then block on a question
-    nobody could see.
-
-    Whether output can carry colour and whether a person is reading it are
-    different questions with different answers; letting the first stand in for
-    the second is what made an unattended run hang.
-    """
-    try:
-        return bool(stream is not None and stream.isatty())
-    except (AttributeError, OSError, ValueError):
-        # A closed or exotic stream is neither a keyboard nor a screen.
-        return False
-
-
 def is_interactive_terminal(console: Console) -> bool:
     """True only when a person is at BOTH ends of this session.
 
@@ -101,14 +88,16 @@ def is_interactive_terminal(console: Console) -> bool:
     CI runner fails this test and is given the help page instead — which is why
     no script can ever hang waiting for a prompt that nobody will answer.
 
-    Both ends are asked directly (see :func:`_attached_to_a_terminal`). Dropping
+    Both ends are asked directly, of the streams themselves — see
+    :func:`~anastomosis.core.presentation.attached_to_a_terminal`, which the
+    greeting mark asks the same question of before it draws anything. Dropping
     the output end would not do: stdin stays a keyboard when only stdout is
     redirected, so ``anast > log`` would start the session and put its questions
     somewhere the person answering cannot read them.
     """
     import sys
 
-    return _attached_to_a_terminal(getattr(sys, "stdin", None)) and _attached_to_a_terminal(
+    return attached_to_a_terminal(getattr(sys, "stdin", None)) and attached_to_a_terminal(
         getattr(console, "file", None)
     )
 
@@ -178,21 +167,31 @@ def _dispatch(argv: Sequence[str]) -> int:
 
 
 def _print_header(console: Console) -> None:
-    """The one identity moment: the mark, the name, the version, the purpose."""
-    import anastomosis
+    """The one identity moment: the mark, the name, the version, the purpose.
 
+    On a terminal wide enough to hold it, the mark is the product's own vessel
+    logo in dots, and the words sit beside it. Everywhere else — a redirect, a
+    narrow window — the header is the line it has always been, because the one
+    thing this moment may never do is cost somebody the answer to "what is
+    this and what version am I running".
+
+    The mark's module is imported here rather than at the top of the file:
+    ``anast --help`` and every named command reach neither, and startup cost
+    is the reason this whole module is imported late in the first place.
+    """
+    import anastomosis
+    from anastomosis.core.vesselmark import show_greeting
+
+    name = Text("Anastomosis ", style=BRAND_PALETTE.ink)
+    name.append(anastomosis.__version__, style=BRAND_PALETTE.ink_muted)
+    console.print()
+    if show_greeting(console, (name, Text(PURPOSE, style=BRAND_PALETTE.ink_muted))):
+        return
     bar = terminal_glyphs(console.file).bar
     title = Text(f"{bar} ", style=BRAND_PALETTE.brand_bright)
-    title.append("Anastomosis ", style=BRAND_PALETTE.ink)
-    title.append(anastomosis.__version__, style=BRAND_PALETTE.ink_muted)
-    console.print()
+    title.append(name)
     console.print(title)
-    console.print(
-        Text(
-            "  Turn an EHR export into complete, verified charts you can keep or move.",
-            style=BRAND_PALETTE.ink_muted,
-        )
-    )
+    console.print(Text(f"  {PURPOSE}", style=BRAND_PALETTE.ink_muted))
 
 
 def _choose_plan(console: Console) -> Plan | None:

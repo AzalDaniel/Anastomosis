@@ -8,6 +8,16 @@ branching process writes ``assets/icon/icon.svg`` (full detail) and
 Same seed in, same bytes out, so the checked-in SVGs are reproducible and a
 parameter change is reviewable as a diff.
 
+The same geometry has one more rendition to serve: a character grid, for the
+terminal the guided session opens in. It is sampled from the full-detail SVG
+this file already emits — the mark's coverage of each character cell, quantised
+to a short density ramp — and written as
+``src/anastomosis/core/vesselmark_data.py``. Sampling here rather than at
+startup is the icon pipeline's own rule (the renditions are committed, because
+a rendition only changes when the mark does), and it keeps the terminal
+greeting free of geometry that could drift away from the logo:
+``tests/unit/test_vesselmark.py`` re-samples and fails on any difference.
+
 Run, then regenerate the raster renditions::
 
     python tools/make_vessel.py && python tools/make_icons.py
@@ -15,14 +25,17 @@ Run, then regenerate the raster renditions::
 
 from __future__ import annotations
 
+import itertools
 import math
 import random
+import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _FULL = _ROOT / "assets" / "icon" / "icon.svg"
 _SMALL = _ROOT / "assets" / "icon" / "icon-small.svg"
 _GLYPH = _ROOT / "assets" / "icon" / "icon-glyph.svg"
+_MATRIX = _ROOT / "src" / "anastomosis" / "core" / "vesselmark_data.py"
 
 SIZE = 1024.0
 SEED = 20260826
@@ -227,6 +240,151 @@ def build(max_depth: int, min_width: float, with_ground: bool, bold: float = 1.0
     )
 
 
+# --- the character-grid rendition -------------------------------------------
+#
+# A terminal cell is roughly twice as tall as it is wide, so 21 x 11 cells over
+# the square canvas keep the mark's proportions (each cell covers 48.8 x 93.1
+# units of the 1024 canvas). Four density levels, because the terminal surface
+# has exactly that much to spend on one: three text weights and one step in
+# glyph size. A finer ramp would encode a gradient no terminal can show.
+
+MATRIX_COLS = 21
+MATRIX_ROWS = 11
+MATRIX_LEVELS = 4
+#: Coverage is compressed before it is quantised. The capillary canopy covers
+#: about a third of a cell where the trunk covers all of one, and a linear ramp
+#: put the entire canopy on the bottom step — a flat silhouette with a bright
+#: stem, instead of a mark that thins toward the rim the way the logo does.
+MATRIX_GAMMA = 0.6
+#: Sub-cells per character cell, per axis. The coverage measure is their count.
+_SUPERSAMPLE = 12
+
+_PATH_RE = re.compile(r'<path d="([^"]+)" stroke="[^"]*" stroke-width="([0-9.]+)"')
+_ELLIPSE_RE = re.compile(r'<ellipse cx="([0-9.]+)" cy="([0-9.]+)" rx="([0-9.]+)" ry="([0-9.]+)"')
+_NUMBER_RE = re.compile(r"-?\d+\.?\d*")
+
+
+def _flatten(d: str) -> list[tuple[float, float]]:
+    """One path's ``d`` attribute as a polyline, quadratics subdivided."""
+    numbers = [float(value) for value in _NUMBER_RE.findall(d)]
+    if "Q" not in d:
+        x1, y1, x2, y2 = numbers
+        return [(x1, y1), (x2, y2)]
+    x1, y1, qx, qy, x2, y2 = numbers
+    steps = 20
+    points = []
+    for index in range(steps + 1):
+        t = index / steps
+        u = 1.0 - t
+        points.append(
+            (u * u * x1 + 2 * u * t * qx + t * t * x2, u * u * y1 + 2 * u * t * qy + t * t * y2)
+        )
+    return points
+
+
+def _stamp(ink: bytearray, width: int, height: int, x: float, y: float, radius: float) -> None:
+    """Ink every sub-cell whose centre falls under a disc of ``radius`` at (x, y).
+
+    A disc per sample point is how a round-capped stroke covers area; the
+    alternative — one sample per cell — measures the centre line and loses the
+    stroke width the mark's whole tonal range is built out of.
+    """
+    cell_w, cell_h = SIZE / width, SIZE / height
+    first_row = max(0, int((y - radius) / cell_h))
+    last_row = min(height - 1, int((y + radius) / cell_h))
+    first_col = max(0, int((x - radius) / cell_w))
+    last_col = min(width - 1, int((x + radius) / cell_w))
+    for row in range(first_row, last_row + 1):
+        dy = (row + 0.5) * cell_h - y
+        for col in range(first_col, last_col + 1):
+            dx = (col + 0.5) * cell_w - x
+            if dx * dx + dy * dy <= radius * radius:
+                ink[row * width + col] = 1
+
+
+def _ink(svg: str, width: int, height: int) -> bytearray:
+    """Rasterise every stroke and cap in ``svg`` into a coverage bitmap."""
+    ink = bytearray(width * height)
+    stride = min(SIZE / width, SIZE / height) / 2.0
+    for d, stroke in _PATH_RE.findall(svg):
+        radius = float(stroke) / 2.0
+        points = _flatten(d)
+        for (ax, ay), (bx, by) in itertools.pairwise(points):
+            steps = max(1, int(math.hypot(bx - ax, by - ay) / stride))
+            for index in range(steps + 1):
+                t = index / steps
+                _stamp(ink, width, height, ax + (bx - ax) * t, ay + (by - ay) * t, radius)
+    for cx, cy, rx, ry in _ELLIPSE_RE.findall(svg):
+        _stamp(ink, width, height, float(cx), float(cy), max(float(rx), float(ry)))
+    return ink
+
+
+def _cell_level(ink: bytearray, width: int, row: int, col: int) -> int:
+    """One cell's density level: what share of it the mark covers."""
+    covered = sum(
+        ink[y * width + x]
+        for y in range(row * _SUPERSAMPLE, (row + 1) * _SUPERSAMPLE)
+        for x in range(col * _SUPERSAMPLE, (col + 1) * _SUPERSAMPLE)
+    )
+    share = (covered / (_SUPERSAMPLE * _SUPERSAMPLE)) ** MATRIX_GAMMA
+    return min(MATRIX_LEVELS, math.ceil(share * MATRIX_LEVELS))
+
+
+def sample_matrix() -> tuple[str, ...]:
+    """The mark as rows of density digits, one digit per character cell.
+
+    Sampled from the full-detail rendition — the one the icon pipeline treats
+    as the master — so the terminal mark is the same object as the icon, read
+    at a coarser resolution. Rows the mark never reaches are trimmed, because
+    a greeting should not spend a line of somebody's terminal on blank canvas.
+    """
+    svg = build(max_depth=10, min_width=1.0, with_ground=False)
+    width, height = MATRIX_COLS * _SUPERSAMPLE, MATRIX_ROWS * _SUPERSAMPLE
+    ink = _ink(svg, width, height)
+    rows = [
+        "".join(str(_cell_level(ink, width, row, col)) for col in range(MATRIX_COLS))
+        for row in range(MATRIX_ROWS)
+    ]
+    while rows and set(rows[0]) == {"0"}:
+        rows.pop(0)
+    while rows and set(rows[-1]) == {"0"}:
+        rows.pop()
+    return tuple(rows)
+
+
+_MATRIX_TEMPLATE = '''"""The vessel mark, sampled onto a character grid. GENERATED — do not edit.
+
+One digit per character cell, 0 (nothing) to 4 (solid): the share of that cell
+the mark covers, quantised to the density ramp
+:mod:`anastomosis.core.vesselmark` draws with. The grid comes from the same
+geometry as ``assets/icon/icon.svg`` — see ``tools/make_vessel.py``, which
+writes this file — so the greeting a terminal shows and the icon on the
+taskbar cannot drift apart. Regenerate with::
+
+    python tools/make_vessel.py
+
+``tests/unit/test_vesselmark.py`` re-samples the geometry and fails if this
+file no longer matches it.
+"""
+
+from __future__ import annotations
+
+#: Density levels, row by row, top of the mark first.
+DENSITY: tuple[str, ...] = (
+{rows}
+)
+
+#: The top of the ramp — the level a cell the mark fills completely carries.
+LEVELS = {levels}
+'''
+
+
+def matrix_module_text() -> str:
+    """The text of the generated ``core/vesselmark_data.py``."""
+    rows = "\n".join(f'    "{row}",' for row in sample_matrix())
+    return _MATRIX_TEMPLATE.format(rows=rows, levels=MATRIX_LEVELS)
+
+
 def main() -> None:
     _FULL.write_text(build(max_depth=10, min_width=1.0, with_ground=True), encoding="utf-8")
     print(f"wrote {_FULL.relative_to(_ROOT)}")
@@ -238,6 +396,8 @@ def main() -> None:
         build(max_depth=3, min_width=14.0, with_ground=True, bold=2.1), encoding="utf-8"
     )
     print(f"wrote {_GLYPH.relative_to(_ROOT)}")
+    _MATRIX.write_text(matrix_module_text(), encoding="utf-8")
+    print(f"wrote {_MATRIX.relative_to(_ROOT)}")
 
 
 if __name__ == "__main__":
