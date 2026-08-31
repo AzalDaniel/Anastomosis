@@ -110,10 +110,15 @@ def test_a_pack_that_opens_a_socket_is_refused(tmp_path: Path) -> None:
 def test_a_pack_that_spawns_a_process_is_refused(tmp_path: Path) -> None:
     spawned = tmp_path / "spawned.txt"
 
+    # as_posix, because this path goes INTO a Python source string: a Windows
+    # tmp_path lands as C:\Users\..., `\U` is an escape, and the pack then
+    # fails to compile — so the test passed on a SyntaxError and never reached
+    # the import guard it exists to prove.
     pack, diagnosis = _load(
         tmp_path,
         "import subprocess\n"
-        f"subprocess.run(['/bin/sh', '-c', 'echo ran > {spawned}'], check=False)\n" + _BUILD,
+        f"subprocess.run(['/bin/sh', '-c', 'echo ran > {spawned.as_posix()}'], check=False)\n"
+        + _BUILD,
     )
 
     assert pack is None

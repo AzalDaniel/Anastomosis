@@ -14,7 +14,9 @@ drifted one, and an illegal move.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import stat
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -259,7 +261,11 @@ def test_manifest_write_is_deterministic_and_owner_only(tmp_path: Path) -> None:
     second = write_run_manifest(out, manifest).read_bytes()
     assert first == second  # no clock, no ordering churn
     assert read_run_manifest(out) == manifest
-    assert (out / RUN_MANIFEST_NAME).stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        # atomic_write_text documents `mode` as POSIX-only, and Windows has no
+        # bit to honour it with. The house idiom is to ask where the question
+        # means something rather than to assert a mode nothing sets.
+        assert stat.S_IMODE((out / RUN_MANIFEST_NAME).stat().st_mode) == 0o600
 
 
 def test_unreadable_manifest_raises_but_an_absent_one_is_simply_unbound(
