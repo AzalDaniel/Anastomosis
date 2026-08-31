@@ -14,13 +14,16 @@ Synthetic throughout (``feedface-`` ids, invented names, the 555 exchange).
 
 from __future__ import annotations
 
+import dataclasses
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
 from anastomosis.core.conservation import ConservationError
 from anastomosis.core.model import PatientRecord, Practitioner, Provenance
+from anastomosis.sources.ccda import ledger
 from anastomosis.sources.ccda.ledger import (
     ID_LESS_CONSTRUCTS,
     PARTICIPATION_PATHS,
@@ -659,3 +662,62 @@ def test_a_real_corpus_report_carries_only_structure() -> None:
     for value in ("Cora", "Specimen", "901-65-4329", "cough", "feedface"):
         assert value not in flat
     assert not re.search(r"[A-Za-z]{2,}\s+[A-Za-z]{2,}", flat)  # no free text anywhere
+
+
+# --- the places themselves ---------------------------------------------------
+#
+# These three tests are the reason #329 was worth doing. None of them can be
+# written against the shape this module had before: spending lived inside two
+# private methods on a six-field object that needed a parsed document and a
+# built record to construct at all, so "can this place be asked twice" was a
+# question you answered by reading, not by running.
+
+
+def test_a_fact_answers_as_often_as_it_is_asked() -> None:
+    """An id is true, not owed. Ten constructs carrying it all link."""
+    facts = ledger._Facts(frozenset({"2.16.840.1.113883.19"}))
+    assert [facts.holds("2.16.840.1.113883.19") for _ in range(10)] == [True] * 10
+    assert [facts.any_of({"2.16.840.1.113883.19"}) for _ in range(10)] == [True] * 10
+
+
+def test_a_fact_has_no_way_to_be_spent() -> None:
+    """The guarantee is the type's, not the caller's discipline.
+
+    Frozen dataclass over a ``frozenset``: there is no method that removes a
+    member, and rebinding the field is an error rather than a surprise. A
+    future edit cannot quietly turn an id into something that answers once.
+    """
+    facts = ledger._Facts(frozenset({"a"}))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        facts.held = frozenset()  # type: ignore[misc]
+    assert not hasattr(facts, "take")
+    assert not any(name for name in vars(type(facts)) if name in {"take", "spend", "pop", "remove"})
+
+
+def test_a_pool_yields_no_more_than_it_holds_however_it_is_asked() -> None:
+    """Conservation, provable on the place alone — no document, no record.
+
+    Both pools decrement before answering, so the count of yeses can never
+    exceed what went in. That is what stops two identical informants against
+    one object crediting two parses.
+    """
+    narrative = ledger._KeyedPool(Counter({("Allergies", "none known"): 2}))
+    draws = [narrative.take(("Allergies", "none known")) for _ in range(5)]
+    assert draws == [True, True, False, False, False]
+
+    one = Practitioner(family_name="Reyes")
+    objects = ledger._MatchedPool([one, Practitioner(family_name="Okafor")])
+    hits = [objects.take(lambda obj: obj is one) for _ in range(4)]
+    assert hits == [True, False, False, False]
+
+
+def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
+    """There is deliberately no way to look without taking.
+
+    A caller that could ask without spending could write a predicate crediting
+    one stored thing twice, which is the arithmetic this ledger exists to
+    refuse. ``take`` is the entire query surface of both pools.
+    """
+    for pool in (ledger._KeyedPool(Counter()), ledger._MatchedPool([])):
+        surface = {name for name in vars(type(pool)) if not name.startswith("_")}
+        assert surface == {"take"}, f"{type(pool).__name__} offers more than take"
