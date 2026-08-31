@@ -342,3 +342,181 @@ def test_a_document_the_ledger_cannot_account_for_refuses(tmp_path, monkeypatch)
     monkeypatch.setattr(module, "_sections", lambda root: [], raising=True)
     with pytest.raises(ConservationError):
         document_ledger(path)
+
+
+# --- it emits C-CDA R2.1, not the shape we happen to tolerate ----------------
+
+#: What each element the generator emits may contain, in the order CDA R2 fixes.
+#:
+#: An allowlist of what THIS generator produces, not a schema validator: every
+#: row is a content model taken from the CDA R2 base schema (``POCD_MT000040``
+#: and the v3 datatypes), trimmed to the children this corpus actually writes
+#: plus the siblings that surround them, and kept in the schema's own order.
+#: Two facts are checked against it — that an element is legal where it stands,
+#: and that its children stand in the legal order — because both are ways a
+#: generated document can stop being a document any exporter could have
+#: produced, and #327 was one of each: an ``intendedRecipient`` playing an
+#: ``assignedPerson`` (a name CDA gives that role no home for) and a
+#: ``custodian`` written before the ``dataEnterer`` it must follow.
+#:
+#: The corpus is evidence, and evidence about a document that could not exist is
+#: not evidence about this adapter. Reading the spec is how the first divergence
+#: was found; this table is so the next one is a failing test instead.
+#:
+#: Rows are keyed by element name, and by ``parent/name`` for the three names
+#: CDA reuses with different content — ``component``, ``participant`` and
+#: ``informationRecipient`` each mean two or three different things. Narrative
+#: (``<text>`` under a section) is StrucDoc rather than CDA and is not walked.
+#: Written as space-separated names because the ORDER is the content of each
+#: row: one name per line would bury it under a column of quotes.
+_CONTENT_MODEL: dict[str, tuple[str, ...]] = {
+    key: tuple(model.split())
+    for key, model in {
+        "ClinicalDocument": (
+            "realmCode typeId templateId id code title effectiveTime confidentialityCode"
+            " languageCode recordTarget author dataEnterer informant custodian"
+            " informationRecipient legalAuthenticator authenticator participant"
+            " documentationOf componentOf component"
+        ),
+        # --- the patient
+        "recordTarget": "patientRole",
+        "patientRole": "id addr telecom patient",
+        "patient": "name administrativeGenderCode birthTime languageCommunication",
+        "languageCommunication": "languageCode",
+        "addr": "streetAddressLine city state postalCode",
+        "name": "given family suffix",
+        # --- who wrote it, who took part, who holds it
+        "author": "time assignedAuthor",
+        "assignedAuthor": (
+            "id code addr telecom assignedPerson assignedAuthoringDevice representedOrganization"
+        ),
+        "assignedPerson": "name",
+        "assignedAuthoringDevice": "manufacturerModelName softwareName",
+        "representedOrganization": "id name telecom addr",
+        "dataEnterer": "assignedEntity",
+        "assignedEntity": "id code addr telecom assignedPerson representedOrganization",
+        "informant": "assignedEntity relatedEntity",
+        "relatedEntity": "code addr telecom effectiveTime relatedPerson",
+        "custodian": "assignedCustodian",
+        "assignedCustodian": "representedCustodianOrganization",
+        "representedCustodianOrganization": "id name telecom addr",
+        # An intendedRecipient plays an ``informationRecipient``. It has no
+        # ``assignedPerson`` at all, which is what this row exists to say.
+        "ClinicalDocument/informationRecipient": "intendedRecipient",
+        "intendedRecipient": "id addr telecom informationRecipient receivedOrganization",
+        "intendedRecipient/informationRecipient": "name",
+        "legalAuthenticator": "time signatureCode assignedEntity",
+        "authenticator": "time signatureCode assignedEntity",
+        "ClinicalDocument/participant": "associatedEntity",
+        "associatedEntity": "id code addr telecom associatedPerson scopingOrganization",
+        # --- what it documents, and the visit it belongs to
+        "documentationOf": "serviceEvent",
+        "serviceEvent": "id code statusCode effectiveTime performer",
+        "performer": "assignedEntity",
+        "componentOf": "encompassingEncounter",
+        "encompassingEncounter": "id code effectiveTime responsibleParty location",
+        "responsibleParty": "assignedEntity",
+        # --- the body
+        "ClinicalDocument/component": "structuredBody nonXMLBody",
+        "nonXMLBody": "text",
+        "structuredBody": "component",
+        "structuredBody/component": "section",
+        "section": "templateId id code title text entry",
+        "entry": "act encounter observation organizer substanceAdministration",
+        # --- the clinical statements
+        "act": (
+            "templateId id code text statusCode effectiveTime author participant entryRelationship"
+        ),
+        "entryRelationship": "observation",
+        "observation": (
+            "templateId id code text statusCode effectiveTime value participant entryRelationship"
+        ),
+        "observation/participant": "participantRole",
+        "participantRole": "id code addr telecom playingEntity",
+        "playingEntity": "code quantity name",
+        "substanceAdministration": (
+            "templateId id code text statusCode effectiveTime routeCode approachSiteCode"
+            " doseQuantity rateQuantity consumable"
+        ),
+        "consumable": "manufacturedProduct",
+        "manufacturedProduct": "templateId manufacturedMaterial manufacturerOrganization",
+        "manufacturedMaterial": "code name lotNumberText",
+        "organizer": "templateId id code statusCode effectiveTime component",
+        "organizer/component": "observation act organizer",
+        "encounter": (
+            "templateId id code text statusCode effectiveTime performer participant"
+            " entryRelationship"
+        ),
+        # --- datatypes. A coded value carries its own words FIRST and its
+        # translations last; an interval carries its bounds.
+        "code": "originalText qualifier translation",
+        "value": "originalText qualifier translation",
+        "administrativeGenderCode": "originalText qualifier translation",
+        "originalText": "reference",
+        "effectiveTime": "low high center width",
+    }.items()
+}
+
+#: StrucDoc, not CDA: a section's narrative has its own schema and its own
+#: rules, and this table does not pretend to hold them.
+_NOT_CDA = "section/text"
+
+
+def _model_key(parent_name: str, name: str) -> str:
+    """The content model row an element is judged against.
+
+    Element name alone, except for the names CDA reuses for different content —
+    a ``component`` under ``ClinicalDocument`` holds a body and one under an
+    ``organizer`` holds an observation, and judging them by one row would let
+    either shape stand anywhere.
+    """
+    qualified = f"{parent_name}/{name}"
+    return qualified if qualified in _CONTENT_MODEL else name
+
+
+def _check_conformance(element, parent_name: str, seen: set[str]) -> None:  # type: ignore[no-untyped-def]
+    from lxml import etree
+
+    name = etree.QName(element).localname
+    children = [etree.QName(child).localname for child in element if isinstance(child.tag, str)]
+    if not children:
+        return
+    key = _model_key(parent_name, name)
+    if key == _NOT_CDA or f"{parent_name}/{name}" == _NOT_CDA:
+        return
+    assert key in _CONTENT_MODEL, f"{parent_name}/{name}: no allowlisted content model"
+    seen.add(key)
+    model = _CONTENT_MODEL[key]
+    positions = []
+    for child in children:
+        assert child in model, f"<{child}> is not legal inside <{name}> ({key})"
+        positions.append(model.index(child))
+    assert positions == sorted(positions), (
+        f"<{name}> ({key}) writes {children} — "
+        f"CDA orders them {[c for c in model if c in children]}"
+    )
+    for child in element:
+        if isinstance(child.tag, str):
+            _check_conformance(child, name, seen)
+
+
+def test_every_element_it_emits_is_legal_where_it_stands(
+    corpus: list[tuple[str, bytes]],
+) -> None:
+    """The corpus has to be a corpus of documents that could exist.
+
+    Until #327 it wrote ``intendedRecipient/assignedPerson`` — a person under a
+    name C-CDA R2.1 gives that role no home for — and every ledger run's
+    informationRecipient count was a reading about a document no exporter could
+    have produced. The parser reads that shape on purpose and says so; a
+    generator that emits it is testing our tolerance instead of our conformance,
+    which is a different question answered by accident.
+    """
+    from lxml import etree
+
+    seen: set[str] = set()
+    for _, xml in corpus:
+        _check_conformance(etree.fromstring(xml), "", seen)
+    assert seen == set(_CONTENT_MODEL), (
+        f"content models the corpus never exercises: {sorted(set(_CONTENT_MODEL) - seen)}"
+    )

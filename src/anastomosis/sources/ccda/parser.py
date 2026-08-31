@@ -997,6 +997,22 @@ class _Role:
 
 _ASSIGNED_ENTITY = _Role("v3:assignedEntity", ("v3:assignedPerson",), "v3:representedOrganization")
 _RELATED_ENTITY = _Role("v3:relatedEntity", ("v3:relatedPerson",), None)
+#: ``informationRecipient`` is the conforming spelling and is tried first;
+#: ``assignedPerson`` is VENDOR TOLERANCE, kept deliberately. No C-CDA R2.1
+#: document may play a person under that name here — an ``intendedRecipient``
+#: plays an ``informationRecipient`` — but exporters that reuse their
+#: ``assignedEntity`` writer for this one participation do emit it, and the
+#: posture of this adapter is to read what exists and refuse only what it would
+#: lose. Reading it costs one path and loses nothing: ``_person_element``
+#: returns the element name the document actually used and it lands on the
+#: practitioner as ``ccda:entity``, so a record built from the non-standard form
+#: still says which form it was built from. Removing the path would turn a
+#: recipient this adapter can name into a document that parsed clean and carried
+#: nobody, which is the failure this whole module exists to close (#312).
+#: This is tolerance on the READ side only: the corpus generator emits the
+#: conforming shape (#327), so the ledger's numbers are evidence about documents
+#: that could exist, and the tolerant path is exercised by a fixture that says
+#: in its own name that it is vendor divergence.
 _INTENDED_RECIPIENT = _Role(
     "v3:intendedRecipient",
     ("v3:informationRecipient", "v3:assignedPerson"),

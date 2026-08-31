@@ -159,8 +159,17 @@ def _template(parent: etree._Element, template: tuple[str, str] | None) -> None:
         _el(parent, "templateId", root=template[0], extension=template[1])
 
 
-def _person_name(parent: etree._Element, doc: Doc) -> None:
-    name = _el(_el(parent, "assignedPerson"), "name")
+def _person_name(parent: etree._Element, doc: Doc, tag: str = "assignedPerson") -> None:
+    """The person a role plays, under the element name CDA gives THAT role.
+
+    CDA R2 spells the played person differently under every role — an
+    ``assignedEntity`` plays an ``assignedPerson``, an ``intendedRecipient``
+    plays an ``informationRecipient``, an ``associatedEntity`` plays an
+    ``associatedPerson`` — so the spelling is a parameter rather than a default
+    the caller inherits by accident. It was a default here once, and the corpus
+    emitted a recipient no C-CDA R2.1 document could contain (#327).
+    """
+    name = _el(_el(parent, tag), "name")
     _text_el(name, "given", doc.pick(GIVEN_NAMES))
     _text_el(name, "family", doc.pick(FAMILY_NAMES))
 
@@ -420,27 +429,53 @@ def _assigned_entity(
     id_tag: str,
     *,
     entity_tag: str = "assignedEntity",
+    person_tag: str = "assignedPerson",
     signature: bool = False,
 ) -> None:
+    """One role element: its id, and the person it plays.
+
+    ``entity_tag``/``person_tag`` travel together because CDA pairs them —
+    ``intendedRecipient`` plays ``informationRecipient``, not
+    ``assignedPerson`` — and a caller that overrode one and not the other is
+    exactly how this generator came to emit a document that cannot exist.
+    """
     if signature:
         _el(parent, "time", value="20230510150000-0500")
         _el(parent, "signatureCode", code="S")
     entity = _el(parent, entity_tag)
     _el(entity, "id", root=doc.id(id_tag))
-    _person_name(entity, doc)
+    _person_name(entity, doc, person_tag)
 
 
-def _participations(root: etree._Element, doc: Doc) -> None:
-    """The header participations beyond author and custodian.
+def _header_actors(root: etree._Element, doc: Doc) -> None:
+    """Everyone the header names after the author, in the order CDA fixes.
 
     Each names a person or an organization that took part in the care, and each
     is here because a document that HAS them is the case worth measuring — a
     corpus of documents with none would report a clean ledger by omission.
+
+    ``ClinicalDocument``'s content model is a SEQUENCE, so custodian is written
+    here rather than by the caller: it belongs between ``informant`` and
+    ``informationRecipient``, and a caller free to place it is a caller free to
+    place it wrongly — which is what happened while these were two functions.
+    The two flags stay independent, so a document can still be missing its
+    custodian while carrying every other participation, and vice versa.
     """
-    _assigned_entity(_el(root, "dataEnterer"), doc, "dtae")
-    related = _el(_el(root, "informant"), "relatedEntity", classCode="PRS")
-    _el(related, "code", code="SPS", displayName="spouse", codeSystem="2.16.840.1.113883.5.111")
-    _assigned_entity(_el(root, "informationRecipient"), doc, "irec", entity_tag="intendedRecipient")
+    if doc.has("header_participations"):
+        _assigned_entity(_el(root, "dataEnterer"), doc, "dtae")
+        related = _el(_el(root, "informant"), "relatedEntity", classCode="PRS")
+        _el(related, "code", code="SPS", displayName="spouse", codeSystem="2.16.840.1.113883.5.111")
+    if not doc.has("missing_custodian"):
+        _custodian(root, doc)
+    if not doc.has("header_participations"):
+        return
+    _assigned_entity(
+        _el(root, "informationRecipient"),
+        doc,
+        "irec",
+        entity_tag="intendedRecipient",
+        person_tag="informationRecipient",
+    )
     _assigned_entity(_el(root, "legalAuthenticator"), doc, "lgau", signature=True)
     _assigned_entity(_el(root, "authenticator"), doc, "autn", signature=True)
     entity = _el(_el(root, "participant", typeCode="IND"), "associatedEntity", classCode="ECON")
@@ -526,6 +561,10 @@ def _problem_entry(section: etree._Element, doc: Doc) -> None:
         ),
         "CD",
     )
+    # The v3 CD datatype's content is a sequence — originalText, qualifier,
+    # translation — so the source's own words come first and the ICD-10 reading
+    # of the SNOMED concept follows them.
+    _original_text(value, doc, "Essential hypertension")
     _el(
         value,
         "translation",
@@ -533,7 +572,6 @@ def _problem_entry(section: etree._Element, doc: Doc) -> None:
         displayName="Essential (primary) hypertension",
         codeSystem=OID_ICD10,
     )
-    _original_text(value, doc, "Essential hypertension")
 
 
 def _allergy_entry(section: etree._Element, doc: Doc) -> None:
@@ -572,7 +610,9 @@ def _medication_entry(section: etree._Element, doc: Doc) -> None:
     period = _typed(_el(admin, "effectiveTime"), "IVL_TS")
     _el(period, "low", value="20220118")
     _el(period, "high", nullFlavor="UNK")
-    _el(admin, "doseQuantity", value="1", unit="{tablet}")
+    # CDA R2 orders substanceAdministration's act-relationship-free content
+    # routeCode, approachSiteCode, doseQuantity — how it was given before how
+    # much — and this generator emitted the two the other way round.
     _el(
         admin,
         "routeCode",
@@ -580,6 +620,7 @@ def _medication_entry(section: etree._Element, doc: Doc) -> None:
         displayName="Oral",
         codeSystem="2.16.840.1.113883.3.26.1.1",
     )
+    _el(admin, "doseQuantity", value="1", unit="{tablet}")
     product = _el(_el(admin, "consumable"), "manufacturedProduct", classCode="MANU")
     _template(product, ("2.16.840.1.113883.10.20.22.4.23", "2014-06-09"))
     material = _el(product, "manufacturedMaterial")
@@ -1034,10 +1075,7 @@ def _render(doc: Doc) -> bytes:
     if doc.has("extra_authors"):
         _author(root, doc)
         _author(root, doc, device=True)
-    if not doc.has("missing_custodian"):
-        _custodian(root, doc)
-    if doc.has("header_participations"):
-        _participations(root, doc)
+    _header_actors(root, doc)
     if doc.has("service_event"):
         _service_event(root, doc)
     if doc.has("encompassing_encounter"):
