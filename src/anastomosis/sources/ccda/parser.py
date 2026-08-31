@@ -357,35 +357,93 @@ def _entries(section: _Element) -> list[_Element]:
     return _findall(section, "v3:entry")
 
 
+#: Key family for a text-less section's entries, preserved verbatim as
+#: ``ccda:entries:<loinc>`` (suffixed ``#2``, ``#3``, … for repeated section
+#: codes, in document order). Defined here rather than in ``ccda_codes``
+#: because only this half and the ledger read it — the export builder does not
+#: — and the mirror test's doctrine is that a constant one half reads belongs
+#: to that half.
+EXT_SECTION_ENTRIES = "ccda:entries"
+
+
+def entry_verbatim(entry: _Element) -> str:
+    """One ``<entry>``, exactly as the document spells it.
+
+    The shared vocabulary between what :func:`_capture_entries` stores and what
+    the ledger later asks the record for — the same function on both sides, so
+    the mirror cannot drift. lxml serialises a parsed element deterministically,
+    and both sides parse the same file, so the strings compare byte-for-byte.
+    ``with_tail=False`` because the whitespace after ``</entry>`` belongs to the
+    section, not the entry.
+    """
+    return etree.tostring(entry, encoding="unicode", with_tail=False)
+
+
+def _free_key(extensions: dict[str, Any], key: str) -> str:
+    """``key``, or its first free ``#2``, ``#3``, … variant, in document order.
+
+    Documents legitimately repeat a section code (Problems (Active) and Problems
+    (Resolved) are both 11450-4) and may carry several code-less sections — one
+    stored section must never silently replace another.
+    """
+    if key not in extensions:
+        return key
+    occurrence = 2
+    while f"{key}#{occurrence}" in extensions:
+        occurrence += 1
+    return f"{key}#{occurrence}"
+
+
 def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | None) -> None:
     """Preserve one section's title and narrative under ``ccda:section:<loinc>``.
 
     Runs for EVERY section, structurally parsed or not: a structural parser
     skips an entry whose shape it does not support, and the narrative is then
     the only copy of what that entry said. A section with neither a title nor
-    narrative text adds no key (sentinel discipline — absent stays absent).
-    Mutating the model's extensions dict in place persists it on the patient (it
-    is the validated dict object, not a fresh copy).
+    narrative text has no prose to keep — but if it carries entries, those are
+    then the only copy of what it said, and they are preserved verbatim instead
+    (see :func:`_capture_entries`); a section with neither adds no key
+    (sentinel discipline — absent stays absent). Mutating the model's
+    extensions dict in place persists it on the patient (it is the validated
+    dict object, not a fresh copy).
 
-    Documents legitimately repeat a section code (Problems (Active) and Problems
-    (Resolved) are both 11450-4) and may carry several code-less sections, so a
-    key already taken is suffixed ``#2``, ``#3``, … in DOCUMENT order rather than
-    overwritten — one narrative must never silently replace another. The first
-    occurrence keeps the bare key, so a document with one section per code reads
-    exactly as it always has.
+    The first occurrence of a repeated section code keeps the bare key, so a
+    document with one section per code reads exactly as it always has.
     """
     title = _text_content(_find(section, "v3:title"))
     text = _text_content(_find(section, "v3:text"))
+    extensions = record.patient.extensions
+    if text is None:
+        # No narrative for the entries to survive through — a stored title is a
+        # label, not a copy of what the entries said — so the entries themselves
+        # are preserved, whether or not a title exists to store beside them.
+        _capture_entries(extensions, section, loinc)
     if title is None and text is None:
         return
-    key = f"ccda:section:{loinc}" if loinc else "ccda:section:unknown"
-    extensions = record.patient.extensions
-    if key in extensions:
-        occurrence = 2
-        while f"{key}#{occurrence}" in extensions:
-            occurrence += 1
-        key = f"{key}#{occurrence}"
+    key = _free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
     extensions[key] = {"title": title, "text": text}
+
+
+def _capture_entries(extensions: dict[str, Any], section: _Element, loinc: str | None) -> None:
+    """Preserve a text-less section's entries verbatim, one list per section.
+
+    The shape issue #314 names: a section with ``<entry>`` children and no
+    ``<text>`` — titled or not — reaches neither book: the structural parser
+    takes what it can, and there is no narrative for the rest to fall back to. What the document
+    actually said is the entries, so the entries are what is kept: serialised
+    exactly, in document order, parsed or not. A parsed entry's copy is
+    redundant with its canonical object, and that redundancy is accepted on
+    purpose — deciding per entry whether the parser consumed it would make this
+    capture depend on the parser's reach, and the point of preservation is that
+    it must not.
+    """
+    entries = _entries(section)
+    if not entries:
+        return
+    key = _free_key(
+        extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
+    )
+    extensions[key] = [entry_verbatim(entry) for entry in entries]
 
 
 def _is_own_loss_narrative(section: _Element, loinc: str | None) -> bool:
