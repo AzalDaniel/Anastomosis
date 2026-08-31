@@ -26,8 +26,16 @@
 name: CodeQL
 
 on:
+  # `push` is main-only ON PURPOSE. Every branch here opens a pull request, and
+  # `pull_request` already covers it — listing `claude/**` here as well ran the
+  # whole matrix TWICE per commit, against the same SHA, for no extra signal.
+  # Measured on PR #331: run 33355245691 and run 33355224110, same commit, both
+  # green, 24 check runs where 12 say the same thing. The duplicates are not
+  # free: every check run is a webhook and a row that anything watching the PR
+  # then reads back, and this account's GitHub write quota is shared across all
+  # sessions and repositories.
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
   pull_request:
   schedule:
     # Weekly, at a quiet UTC hour (Monday 03:23 UTC).
