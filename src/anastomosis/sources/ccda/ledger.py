@@ -98,6 +98,7 @@ from anastomosis.core.model.base import AnastBase
 # that every section, and every actor, had been dropped.
 from .parser import (
     _PARSER,
+    EXT_SECTION_ENTRIES,
     _attr,
     _find,
     _findall,
@@ -105,6 +106,7 @@ from .parser import (
     _q,
     _section_code,
     _text_content,
+    entry_verbatim,
     parse_document,
 )
 
@@ -663,6 +665,10 @@ class _Evidence:
     extension_keys: _Facts
     #: Where a canonical object is claimed, one claim per object.
     objects: _MatchedPool
+    #: Where a text-less section's verbatim entries are claimed, one claim per
+    #: stored copy — the sixth place, added for #314, and an instance of an
+    #: existing type rather than a new kind of question.
+    entries: _KeyedPool[str]
     #: The source ids the record's DOCUMENT artifacts name. Kept apart from
     #: ``source_ids`` because the body constructs are asked a narrower question
     #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
@@ -711,6 +717,18 @@ class _Evidence:
         """Whether the record kept this construct's own narrative, spending it."""
         return self.narrative.take((title, text))
 
+    def entry_kept(self, entry: _Element) -> bool:
+        """Whether the record preserved this exact entry verbatim, spending it.
+
+        The handle is the entry's own serialisation, through the same function
+        the parser stored it with — so the question is byte-exact, and a miss
+        is a real no: either the record holds these bytes or it does not. Asked
+        only for entries of a section that kept no narrative, because that is
+        precisely when the parser parks them: no ``<text>``, titled or not —
+        the same test on the same pair, one on each side of the mirror.
+        """
+        return self.entries.take(entry_verbatim(entry))
+
     def carried_as_document(self, identifier: str | None) -> bool | None:
         """Whether a document artifact in the record came from ``identifier``.
 
@@ -748,8 +766,25 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
         narrative=_KeyedPool(_narrative_pool(record)),
         extension_keys=_Facts(frozenset(record.patient.extensions)),
         objects=_MatchedPool(_provenanced(record)),
+        entries=_KeyedPool(_entry_pool(record)),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
+
+
+def _entry_pool(record: PatientRecord) -> Counter[str]:
+    """Every verbatim entry the record stored, as a multiset of exact strings.
+
+    Read from what the parser actually wrote under ``ccda:entries:*`` — the
+    stored shape, never a reconstruction of the storing rule — and counted,
+    because two identical entries in two text-less sections are two stored
+    copies and must answer for exactly two constructs.
+    """
+    pool: Counter[str] = Counter()
+    prefix = f"{EXT_SECTION_ENTRIES}:"
+    for key, value in record.patient.extensions.items():
+        if key.startswith(prefix) and isinstance(value, list):
+            pool.update(item for item in value if isinstance(item, str))
+    return pool
 
 
 def _provenanced(record: PatientRecord) -> Iterator[AnastBase]:
@@ -847,14 +882,24 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _entry_dispositions(
-    entries: list[_Element], evidence: _Evidence, narrative_kept: bool
+    entries: list[_Element], evidence: _Evidence, narrative_kept: bool, parked: bool
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
     for entry in entries:
         linked = evidence.links(entry)
         unlinkable += linked is None
-        counts[_entry_disposition(entry, linked, narrative_kept)] += 1
+        # The sixth question, asked one entry at a time and only where the
+        # section-level answer could never reach: a text-less section has no
+        # narrative for its entries to be preserved BY, so each entry is asked
+        # whether the record holds its own bytes. Not asked for a parsed entry
+        # (its evidence is its object; spending a stored copy for it would
+        # starve an identical unparsed sibling) and not asked for an empty one
+        # (SOURCE_EMPTY is not a preservation).
+        kept = narrative_kept or (
+            parked and not linked and _has_element_child(entry) and evidence.entry_kept(entry)
+        )
+        counts[_entry_disposition(entry, linked, kept)] += 1
     return dict(counts), unlinkable
 
 
@@ -896,7 +941,10 @@ def _section_disposition(
         return Disposition.SOURCE_EMPTY
     if entry_counts.get(Disposition.STRUCTURALLY_PARSED):
         return Disposition.STRUCTURALLY_PARSED
-    if narrative_kept:
+    if narrative_kept or entry_counts.get(Disposition.NARRATIVE_PRESERVED):
+        # A section with no prose IS its entries: when those were preserved,
+        # something of the section survived, by the same "any" convention the
+        # parsed branch above already uses.
         return Disposition.NARRATIVE_PRESERVED
     return Disposition.UNSUPPORTED
 
@@ -908,7 +956,9 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
         _text_content(_find(section, "v3:text")),
     )
     kept, text_kept = _narrative_kept(section, evidence, pair)
-    entry_counts, unlinkable = _entry_dispositions(entries, evidence, text_kept)
+    entry_counts, unlinkable = _entry_dispositions(
+        entries, evidence, text_kept, parked=pair[1] is None
+    )
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),

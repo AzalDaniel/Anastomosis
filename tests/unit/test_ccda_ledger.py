@@ -487,10 +487,17 @@ def test_an_entry_with_no_statement_in_it_is_source_empty(tmp_path: Path) -> Non
 
 
 def test_a_stored_title_does_not_rescue_the_entries_underneath_it(tmp_path: Path) -> None:
-    """A section with entries and no ``<text>`` stores ``{"title": ..., "text":
-    None}``. The word "Payers" is not a recovery of the coverage that was in the
-    entries, and counting those entries as narrative-preserved on the strength
-    of a stored title is the flattering arithmetic this ledger refuses."""
+    """The Payers refusal, kept — and sharpened by #314.
+
+    A section with entries and no ``<text>`` stores ``{"title": ..., "text":
+    None}``, and the word "Payers" is not a recovery of the coverage that was
+    in the entries. Since #314 the parser ALSO stores the entries themselves,
+    and crediting them against their own bytes is not the flattering
+    arithmetic this test refuses — it is a real preservation. The refusal is
+    proved by deletion: with the stored copies gone and only the title left,
+    the entries fall straight back to unsupported, exactly as before. The
+    title, alone, still rescues nothing.
+    """
     body = """
     <component><section>
       <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/>
@@ -501,10 +508,20 @@ def test_a_stored_title_does_not_rescue_the_entries_underneath_it(tmp_path: Path
       </observation></entry>
     </section></component>
     """
-    ledger = document_ledger(_write(tmp_path, body=body))
-    assert _row(ledger, "section:48768-6").entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    ledger = document_ledger(path, record)
+    assert _row(ledger, "section:48768-6").entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1
+    }, "the entry's own stored bytes are the evidence"
+
+    del record.patient.extensions["ccda:entries:48768-6"]
+    stripped = document_ledger(path, record)
+    assert _row(stripped, "section:48768-6").entries == {  # type: ignore[attr-defined]
+        Disposition.UNSUPPORTED: 1
+    }, "the title alone rescues nothing"
     # The section itself did keep something — its title — and says so.
-    assert _sole(ledger, "section:48768-6") is Disposition.NARRATIVE_PRESERVED
+    assert _sole(stripped, "section:48768-6") is Disposition.NARRATIVE_PRESERVED
 
 
 def test_two_sections_sharing_a_code_are_two_obligations(tmp_path: Path) -> None:
@@ -593,7 +610,9 @@ def test_an_entry_that_reached_no_column_stops_the_ledger(
     path = _write(tmp_path, body=body)
     document_ledger(path)
 
-    monkeypatch.setattr(module, "_entry_dispositions", lambda *args: ({}, 0), raising=True)
+    monkeypatch.setattr(
+        module, "_entry_dispositions", lambda *args, **kwargs: ({}, 0), raising=True
+    )
     with pytest.raises(ConservationError, match="1 entry\\(s\\) went in"):
         document_ledger(path)
 
@@ -721,3 +740,120 @@ def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
     for pool in (ledger._KeyedPool(Counter()), ledger._MatchedPool([])):
         surface = {name for name in vars(type(pool)) if not name.startswith("_")}
         assert surface == {"take"}, f"{type(pool).__name__} offers more than take"
+
+
+# --- the sixth question: entries preserved verbatim (#314) --------------------
+
+_TEXTLESS_PROBLEMS = """
+<component><section>
+  <templateId root="2.16.840.1.113883.10.20.22.2.5.1"/>
+  <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <act classCode="ACT" moodCode="EVN">
+      <id root="feedface-prob-0000-0000-000000000031"/>
+      <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+    </act>
+  </entry>
+  <entry>
+    <act classCode="ACT" moodCode="EVN">
+      <id root="feedface-prob-0000-0000-000000000032"/>
+      <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+    </act>
+  </entry>
+</section></component>
+"""
+
+
+def test_a_textless_sections_entries_ARE_preserved_and_read_as_such(tmp_path: Path) -> None:
+    """The shape #314 names, proved on what the record actually holds.
+
+    A section with entries and no <text> has no narrative for its entries to
+    be preserved BY. The parser now keeps the entries themselves, verbatim,
+    and the ledger credits each entry against its own stored bytes — spending
+    them, so the credit is exactly as large as the preservation.
+    """
+    path = _write(tmp_path, body=_TEXTLESS_PROBLEMS)
+    record = parse_document(path)
+    parked = [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
+    assert parked == ["ccda:entries:11450-4"]
+    stored = record.patient.extensions["ccda:entries:11450-4"]
+    assert isinstance(stored, list) and len(stored) == 2
+    assert all(item.lstrip().startswith("<entry") for item in stored)
+
+    row = _row(document_ledger(path, record), "section:11450-4")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
+    assert _sole(document_ledger(path, record), "section:11450-4") is (
+        Disposition.NARRATIVE_PRESERVED
+    )
+
+
+def test_the_same_entries_unparked_read_unsupported(tmp_path: Path) -> None:
+    """Proved twice: take the stored copies away and the credit disappears.
+
+    The disposition follows the EVIDENCE, not the document's shape — a ledger
+    that credited these entries with the extensions key deleted would be
+    reporting a preservation nobody performed.
+    """
+    path = _write(tmp_path, body=_TEXTLESS_PROBLEMS)
+    record = parse_document(path)
+    del record.patient.extensions["ccda:entries:11450-4"]
+    row = _row(document_ledger(path, record), "section:11450-4")
+    assert row.entries == {Disposition.UNSUPPORTED: 2}  # type: ignore[attr-defined]
+    assert _sole(document_ledger(path, record), "section:11450-4") is Disposition.UNSUPPORTED
+
+
+def test_one_stored_copy_credits_one_entry_not_two(tmp_path: Path) -> None:
+    """Spending, at the entry grain: two identical entries, one stored copy.
+
+    The pool is a multiset of exact strings. Halving the stored list must
+    halve the credit — a pool that answered twice for one copy would credit an
+    entry that was dropped, which is the arithmetic this ledger refuses.
+    """
+    entry = """
+    <entry>
+      <observation classCode="OBS" moodCode="EVN">
+        <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
+      </observation>
+    </entry>
+    """
+    body = f"""
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      {entry}{entry}
+    </section></component>
+    """
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    stored = record.patient.extensions["ccda:entries:11450-4"]
+    assert len(stored) == 2, "two identical entries are two stored copies"
+    record.patient.extensions["ccda:entries:11450-4"] = stored[:1]
+    row = _row(document_ledger(path, record), "section:11450-4")
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_a_section_with_narrative_still_parks_no_entries(tmp_path: Path) -> None:
+    """The mirror's boundary, from the other side: <text> present, no parking.
+
+    A section whose narrative was kept preserves its entries through that
+    narrative, exactly as before this change — the entries pool exists only
+    where kept_narrative could never answer. One condition, one mirror, no
+    overlap between the two preservation paths.
+    """
+    body = """
+    <component><section>
+      <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Problems</title>
+      <text>Everything the entries say, in prose.</text>
+      <entry><act classCode="ACT" moodCode="EVN">
+        <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+      </act></entry>
+    </section></component>
+    """
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert not [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
+    row = _row(document_ledger(path, record), "section:11450-4")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]

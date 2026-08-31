@@ -15,6 +15,7 @@ The full 6,144-document reading is a documented command, not a CI job:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from tools.ccda_corpus import (
@@ -274,16 +275,49 @@ def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]
     assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
 
 
-def test_all_four_dispositions_actually_occur(scale_report: dict[str, object]) -> None:
-    """A corpus that never produces one of the four cannot tell whether the
-    ledger can produce it either."""
+def test_all_four_dispositions_actually_occur(
+    scale_report: dict[str, object], tmp_path: Path
+) -> None:
+    """Three dispositions occur in vivo; the fourth is proved by taking.
+
+    Until #314 the corpus carried its own loss: a text-less section's entries
+    reached neither book, and ``unsupported`` occurred naturally. Those entries
+    are now preserved verbatim, and with that the corpus holds NO shape the
+    parser fails to keep — which is the product working, not the test slipping.
+    Manufacturing a fake parser hole in the generator to tick this box would be
+    the opposite of what this suite protects.
+
+    ``unsupported`` still has to be provably reachable, so it is proved the way
+    loss actually arrives: an adapter that dropped something. Strip every
+    practitioner from one parsed record and the ledger must say so — if this
+    half fails, the ledger has learned to flatter a defective adapter.
+    """
     constructs = scale_report["constructs"]
     assert isinstance(constructs, list)
     seen: set[str] = set()
     for entry in constructs:
         seen |= {name for name, count in entry["instances"].items() if count}
         seen |= {name for name, count in entry["entries"].items() if count}
-    assert seen == {disposition.value for disposition in Disposition}
+    assert seen == {
+        Disposition.STRUCTURALLY_PARSED.value,
+        Disposition.NARRATIVE_PRESERVED.value,
+        Disposition.SOURCE_EMPTY.value,
+    }, "a natural unsupported here means a preservation path regressed"
+
+    name, xml = next(documents(1, seed=7))
+    path = tmp_path / name
+    path.write_bytes(xml)
+    record = parse_document(path)
+    assert record.practitioners, "the probe needs a document with participations"
+    record.practitioners = []
+    stripped = document_ledger(path, record)
+    dropped = {
+        disposition
+        for row in stripped.rows
+        for disposition, count in row.instances.items()
+        if count
+    }
+    assert Disposition.UNSUPPORTED in dropped
 
 
 def test_every_section_the_generator_knows_appears_in_the_reading(
