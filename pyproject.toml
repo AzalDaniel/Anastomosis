@@ -16,7 +16,7 @@
 # it carries PEP 639 license-files exactly the same way. Re-measure before
 # raising this bound; the release workflow asserts the emitted version too, so
 # a bad backend fails the build rather than the irreversible upload.
-requires = ["hatchling>=1.27,<1.30"]
+requires = ["hatchling>=1.32.0,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
@@ -58,15 +58,15 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-  "pydantic>=2.7",
-  "jinja2>=3.1",
-  "typer>=0.12",
-  "rich>=13.7",
-  "lxml>=5.2",
-  "pyyaml>=6.0",
+  "pydantic>=2.13.4",
+  "jinja2>=3.1.6",
+  "typer>=0.27.1",
+  "rich>=15.0.0",
+  "lxml>=6.1.2",
+  "pyyaml>=6.0.3",
   # Deterministic column-name similarity for learning a new source format from
   # an example (anast source init). ~1 MB, no transitive deps; lazy-imported.
-  "rapidfuzz>=3.9",
+  "rapidfuzz>=3.14.5",
   # Windows has no system tz database; zoneinfo needs the PyPI one there.
   "tzdata; sys_platform == 'win32'",
 ]
@@ -75,9 +75,9 @@ dependencies = [
 # Rendering + QA. PyMuPDF is AGPL-3.0 — license-aligned with this project.
 # The playwright floor stays open for library users; builds pin it exactly via
 # packaging/constraints.txt so goldens and bundled Chromium cannot drift.
-render = ["playwright>=1.46", "pymupdf>=1.24"]
+render = ["playwright>=1.46", "pymupdf>=1.28.2"]
 # FHIR canonical-model import/export (fhir.resources is pydantic-v2 based).
-fhir = ["fhir.resources>=8.1"]
+fhir = ["fhir.resources>=8.3.0"]
 # Browser-automation delivery (destination packs).
 deliver-browser = ["playwright>=1.46"]
 # Desktop GUI.
@@ -88,19 +88,19 @@ deliver-browser = ["playwright>=1.46"]
 gui = ["pywebview>=6.2,<7.0"]
 dev = [
   "anastomosis[render,fhir,deliver-browser]",
-  "pytest>=8.2",
-  "pytest-cov>=5.0",
-  "pytest-socket>=0.7",
-  "hypothesis>=6.0",
-  "ruff>=0.5",
-  "mypy>=1.10",
+  "pytest>=9.1.1",
+  "pytest-cov>=7.1.0",
+  "pytest-socket>=0.8.1",
+  "hypothesis>=6.165.10",
+  "ruff>=0.16.4",
+  "mypy>=2.3.1",
   # The complexity ratchet (tools/complexity_gate.py) reads radon's JSON;
   # xenon rides along for humans who want the threshold view directly.
-  "radon>=6.0,<7.0",
-  "xenon>=0.9,<1.0",
+  "radon>=6.0.1,<7.0",
+  "xenon>=0.9.3,<1.0",
   "types-PyYAML",
   "lxml-stubs",
-  "pre-commit>=3.7",
+  "pre-commit>=4.6.2",
 ]
 
 [project.scripts]
