@@ -288,6 +288,52 @@ def test_an_informant_who_gave_only_a_relationship_still_arrives_as_one(
     assert informant.provenance is not None and informant.provenance.source_id is None
 
 
+#: A shape no C-CDA R2.1 document may take: an ``intendedRecipient`` plays an
+#: ``informationRecipient``, never an ``assignedPerson``. Exporters that reuse
+#: one ``assignedEntity`` writer for every participation emit it anyway, and it
+#: is named here as vendor divergence so nobody mistakes it for the standard.
+_VENDOR_RECIPIENT = """
+  <informationRecipient><intendedRecipient>
+    <id root="feedface-irec-0000-0000-000000000090"/>
+    <assignedPerson><name><given>Nadia</given><family>Vendor</family></name></assignedPerson>
+  </intendedRecipient></informationRecipient>
+"""
+
+
+def test_a_recipient_spelled_the_vendor_way_is_read_and_says_which_way(
+    tmp_path: Path,
+) -> None:
+    """Stated tolerance, not accidental tolerance.
+
+    The conforming spelling is what the corpus generator emits and what
+    ``_HEADER`` above carries; this one is the divergence. Refusing it would
+    turn a recipient the adapter can plainly name into a document that parsed
+    clean and carried nobody, which is the #312 failure. Reading it silently
+    would be the other failure, so the element the document actually used lands
+    on the practitioner as ``ccda:entity``: the record says which spelling it
+    was built from, and a reader can tell a conforming source from a
+    non-conforming one after the fact.
+    """
+    parsed = parse_document(_write(tmp_path, header=_VENDOR_RECIPIENT))
+    recipient = _sole(parsed, "informationRecipient")
+    assert recipient.family_name == "Vendor"
+    assert recipient.extensions["ccda:entity"] == "assignedPerson"
+
+
+def test_a_conforming_recipient_is_read_as_the_element_the_standard_names(
+    record: PatientRecord,
+) -> None:
+    """And the conforming document is not merely tolerated by the same path.
+
+    ``_HEADER`` spells the recipient the way C-CDA R2.1 does, and the record has
+    to say so — otherwise the tolerance above could be doing all the work and a
+    regression in the standard path would pass unnoticed.
+    """
+    recipient = _sole(record, "informationRecipient")
+    assert recipient.family_name == "Placeholder"
+    assert recipient.extensions["ccda:entity"] == "informationRecipient"
+
+
 def test_an_emergency_contact_is_not_filed_as_a_clinician(record: PatientRecord) -> None:
     """The header participant is a person the chart names, not one who treated
     the patient, and the role it carried is what says so."""
