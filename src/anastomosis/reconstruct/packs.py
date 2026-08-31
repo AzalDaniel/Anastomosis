@@ -52,7 +52,7 @@ import importlib.util
 import sys
 import types
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -79,6 +79,7 @@ __all__ = [
     "PackManifest",
     "PackStatus",
     "SectionFlag",
+    "builtin_pack_names",
     "discover_packs",
     "user_packs_dir",
 ]
@@ -91,6 +92,14 @@ _BUILTIN_DIR = Path(__file__).resolve().parent.parent / "packs"
 ORIGIN_BUILTIN = "builtin"
 ORIGIN_PACK_DIR = "pack-dir"
 ORIGIN_USER = "user"
+
+
+def builtin_pack_names() -> frozenset[str]:
+    """The shipped layouts' names, read off the package directory without
+    loading anything — the set a Teach may not claim (see ``run_pack_init``)."""
+    if not _BUILTIN_DIR.is_dir():
+        return frozenset()
+    return frozenset(child.name for child in _BUILTIN_DIR.iterdir() if child.is_dir())
 
 
 def user_packs_dir() -> Path:
@@ -514,7 +523,23 @@ def discover_packs(
     results: dict[str, PackStatus] = {}
     for root, origin in _iter_candidate_dirs(pack_dirs or [], include_user=include_user):
         status = _discover_one(root, origin, allow_external, trust, trust_new)
-        results.setdefault(status.name, status)  # first definition wins
+        seen = results.get(status.name)
+        if seen is None:
+            results[status.name] = status  # first definition wins
+        elif origin == ORIGIN_BUILTIN and seen.pack is None and status.pack is not None:
+            # The claimed name refuses AND a shipped layout of the same name
+            # would have loaded. The refusal stands — silently running the
+            # built-in where the operator meant their own layout is exactly the
+            # fallback this walk forbids — but the diagnosis must say which
+            # directory is standing in front of what, or the operator reads
+            # "untrusted pack" with no idea their home has disabled a built-in.
+            results[status.name] = replace(
+                seen,
+                diagnosis=(
+                    f"{seen.diagnosis}; this layout is standing in front of the "
+                    f"built-in of the same name"
+                ),
+            )
     return results
 
 
@@ -555,7 +580,14 @@ def _discover_one(
             origin=origin,
             root=root,
         )
-    return _load_trusted_external(root, origin, trust, trust_new=trust_new)
+    # ``trust_new`` is --trust-pack's consent, and the flag's own help names
+    # what it is consent FOR: the --pack-dir directories the operator pointed
+    # this run at. A learned layout in the per-user dir is trusted by exactly
+    # one act — confirming a Teach — so an edited one must NOT be silently
+    # re-trusted because a vendor pack elsewhere needed the flag.
+    return _load_trusted_external(
+        root, origin, trust, trust_new=trust_new and origin == ORIGIN_PACK_DIR
+    )
 
 
 def _load_trusted_external(
@@ -577,13 +609,15 @@ def _load_trusted_external(
     if trust_new:
         trust.record(root, content_hash)
         return _load_pack_snapshot(snapshot, origin)
+    remedy = (
+        "re-run with --trust-pack to trust it"
+        if origin == ORIGIN_PACK_DIR
+        else "re-confirm the Teach to trust it at its current code"
+    )
     return PackStatus(
         name=root.name,
         pack=None,
-        diagnosis=(
-            "untrusted pack: its code is not trusted at its current hash; "
-            "re-run with --trust-pack to trust it"
-        ),
+        diagnosis=f"untrusted pack: its code is not trusted at its current hash; {remedy}",
         origin=origin,
         root=root,
     )

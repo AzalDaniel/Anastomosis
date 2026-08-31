@@ -400,3 +400,92 @@ def test_upload_verification_re_reads_a_trusted_learned_layout(tmp_path: Path) -
     context = user_packs_dir() / LEARNED / "context.py"
     context.write_text(context.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
     assert _verification_pack(LEARNED) is None
+
+
+# --- the review's three findings, pinned -------------------------------------
+
+
+def test_trust_pack_consent_does_not_reach_the_user_dir(tmp_path: Path) -> None:
+    """--trust-pack names the --pack-dir packs; an edited learned layout is
+    re-trusted by one act only, re-confirming a Teach.
+
+    The review's probe: an operator consenting to a VENDOR pack must not
+    silently re-trust — and execute — whatever bytes now sit in their user
+    dir under a taught layout's name."""
+    _teach(tmp_path)
+    context = user_packs_dir() / LEARNED / "context.py"
+    context.write_text(context.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+
+    statuses = discover_packs([], trust=default_pack_trust(), trust_new=True)
+    status = statuses[LEARNED]
+    assert status.pack is None, "an edited learned layout was re-trusted by --trust-pack"
+    assert "re-confirm the Teach" in status.diagnosis
+
+    # The flag still does its own job: a --pack-dir pack IS trusted on first use.
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    import shutil
+
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "packs" / "generic_soap",
+        vendor / "vendor_soap",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    manifest = vendor / "vendor_soap" / "pack.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("name: generic_soap", "name: vendor_soap"),
+        encoding="utf-8",
+    )
+    statuses = discover_packs(
+        [vendor], allow_external=True, trust=default_pack_trust(), trust_new=True
+    )
+    assert statuses["vendor_soap"].pack is not None
+
+
+def test_a_teach_may_not_claim_a_shipped_layouts_name(tmp_path: Path) -> None:
+    """Teaching "generic_soap" refuses at the door and writes nothing — the
+    alternative is the operator's own home standing in front of a shipped
+    layout, diagnosed only as "untrusted" every run thereafter."""
+    result = run_pack_init(
+        PackInitCommand(
+            samples=[str(_samples(tmp_path))], name="generic_soap", display=None, confirmed=True
+        )
+    )
+    assert result.error == "BuiltinPackName"
+    assert not (user_packs_dir() / "generic_soap").exists()
+
+
+def test_an_unavailable_shadow_names_what_it_stands_in_front_of(tmp_path: Path) -> None:
+    """A pre-existing user dir under a shipped layout's name keeps its refusal
+    — running the built-in instead would be the forbidden fallback — but the
+    diagnosis says which directory has displaced what."""
+    shadow = user_packs_dir() / "generic_soap"
+    shadow.mkdir(parents=True)
+    (shadow / "context.py").write_text("VALUES = {}\n", encoding="utf-8")
+    (shadow / "pack.yaml").write_text('name: generic_soap\ndisplay: "Shadow"\n', encoding="utf-8")
+
+    statuses = discover_packs([], trust=default_pack_trust())
+    status = statuses["generic_soap"]
+    assert status.pack is None, "an untrusted shadow ran, or the built-in silently won"
+    assert "standing in front of the built-in" in status.diagnosis
+
+
+def test_a_teach_that_cannot_record_trust_removes_what_it_wrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed trust record fails the Teach AND removes the written draft —
+    otherwise the failure leaves an untrusted stand-in claiming the name."""
+    import anastomosis.reconstruct.packtrust as packtrust
+
+    class _Refuses:
+        def record(self, root: Path, content_hash: str) -> None:
+            raise OSError("store not writable")
+
+    monkeypatch.setattr(packtrust, "default_pack_trust", lambda: _Refuses())
+    result = run_pack_init(
+        PackInitCommand(
+            samples=[str(_samples(tmp_path))], name=LEARNED, display=None, confirmed=True
+        )
+    )
+    assert result.error == "OSError"
+    assert not (user_packs_dir() / LEARNED).exists(), "the failed Teach left its draft behind"

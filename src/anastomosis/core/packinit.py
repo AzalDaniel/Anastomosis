@@ -48,6 +48,7 @@ message that could embed a sample path.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -147,6 +148,37 @@ class PackInitResult:
     content_hash: str | None = None
 
 
+def _refused_name(name: object) -> str | None:
+    """Why this name may not be taught, or ``None``.
+
+    Type-guarded up front so a malformed command returns a code rather than
+    raising — the module's "never raises into the caller" contract holds even
+    for a caller that ignores the type hints. A shipped layout's name is
+    refused at the same door: the hash gate would keep such a shadow honest —
+    an edited one refuses rather than falls back — but the failure it sets up
+    is a trap, the operator's own home quietly disabling ``generic_soap`` for
+    every run, diagnosed only as "untrusted".
+    """
+    if not isinstance(name, str) or not PACK_NAME_RE.match(name):
+        return "InvalidPackName"
+    from anastomosis.reconstruct.packs import builtin_pack_names
+
+    if name in builtin_pack_names():
+        return "BuiltinPackName"
+    return None
+
+
+def _discard_draft(pack_dir: Path | None) -> None:
+    """Remove what a failed Teach wrote, if it got as far as writing.
+
+    A draft whose trust could not be recorded is a draft no run will accept —
+    and left on disk it would claim its name in the user dir as an untrusted
+    stand-in for the next discovery walk.
+    """
+    if pack_dir is not None:
+        shutil.rmtree(pack_dir, ignore_errors=True)
+
+
 def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     """Run the analyze → confirm → emit flow; return structured, PHI-safe data.
 
@@ -170,11 +202,8 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
         content_hash=None,
     )
 
-    # Type-guard up front so a malformed command returns a code rather than
-    # raising — the module's "never raises into the caller" contract holds even
-    # for a caller that ignores the type hints.
-    if not isinstance(cmd.name, str) or not PACK_NAME_RE.match(cmd.name):
-        return replace(base, error="InvalidPackName")
+    if name_error := _refused_name(cmd.name):
+        return replace(base, error=name_error)
 
     pdfs = collect_sample_pdfs(cmd.samples) if isinstance(cmd.samples, list) else []
     if not pdfs:
@@ -209,6 +238,7 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     from anastomosis.reconstruct.packtrust import default_pack_trust, pack_content_hash
 
     out_dir = cmd.out_dir if cmd.out_dir is not None else user_packs_dir()
+    pack_dir: Path | None = None
     try:
         pack_dir = emit_draft_pack(
             analysis, name=cmd.name, display=cmd.display or cmd.name, out_dir=out_dir
@@ -221,6 +251,7 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
         content_hash = pack_content_hash(pack_dir)
         default_pack_trust().record(pack_dir, content_hash)
     except Exception as exc:  # emit/read/trust failure — type name only, no PHI
+        _discard_draft(pack_dir)
         return replace(proposal, error=exc_tag(exc))
 
     return replace(
