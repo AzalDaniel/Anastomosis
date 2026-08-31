@@ -33,3 +33,30 @@ def _block_external_network() -> Iterator[None]:
         yield
     finally:
         pytest_socket.enable_socket()
+
+
+@pytest.fixture(autouse=True)
+def _source_registry_is_not_shared_between_tests() -> Iterator[None]:
+    """Snapshot the source-adapter registry and put it back after each test.
+
+    The registry is process-global product state, and teaching a format now
+    registers into it — deliberately, so a taught source is selectable without
+    a restart. In a running application that accumulation is the feature. In a
+    test run it means one test's saved format changes what a later test is
+    allowed to save, and the failure surfaces far from its cause: two files
+    here passed alone and failed in the suite before this existed.
+
+    The built-ins are loaded BEFORE the snapshot on purpose. They arrive
+    lazily on first use and set a module flag; snapshotting an empty registry
+    and restoring it afterwards would delete them while the flag still claimed
+    they were loaded, leaving every later test with no adapters at all.
+    """
+    from anastomosis.sources import available_sources, base
+
+    available_sources()
+    saved = dict(base._REGISTRY)
+    try:
+        yield
+    finally:
+        base._REGISTRY.clear()
+        base._REGISTRY.update(saved)
