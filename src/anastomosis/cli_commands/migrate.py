@@ -241,6 +241,14 @@ def migrate_cmd(
             "--save-profile", help="Persist the resolved config under this name on success."
         ),
     ] = None,
+    rebind: Annotated[
+        bool,
+        typer.Option(
+            "--rebind",
+            help="Prepare this output folder again even though the source, destination "
+            "or layout it was prepared under has changed.",
+        ),
+    ] = False,
 ) -> None:
     """Migrate records from one EHR to another (PF->Tebra is one instance).
 
@@ -249,6 +257,11 @@ def migrate_cmd(
     which routes into that system are available. ``--render`` chooses how the
     pages look: ``neutral`` (a plain visit-note layout), ``ccda-standard``
     (HL7's standard C-CDA view), or the name of any chart layout.
+
+    It also writes ``<out>/run_manifest.json``, naming the exact source,
+    destination and layout the run was prepared under. Re-running into that
+    folder after any of them changed refuses and says which one moved;
+    ``--rebind`` is how you say the earlier artifacts no longer stand.
     """
     from anastomosis.core.migrate import MigrationCommand
 
@@ -273,6 +286,7 @@ def migrate_cmd(
             force=force,
             sections=sections,
             qa=qa_on,
+            rebind=rebind,
         ),
         save_profile,
     )

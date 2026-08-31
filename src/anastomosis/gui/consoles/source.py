@@ -58,6 +58,11 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
             ],
             "mapped": result.mapped,
             "targets": list(result.targets),
+            # The destination this format is being taught FOR, echoed back so the
+            # view can show what the mapping is bound to. ``None`` for an
+            # unbound teach — the default, and every mapping taught before the
+            # destination-first step existed.
+            "destination": result.destination,
         }
     )
     if result.ok:
@@ -155,6 +160,7 @@ class SourceConsole(WizardConsole):
         confirmed: bool = False,
         out_dir: str | None = None,
         review: dict[str, object] | None = None,
+        destination: str | None = None,
     ) -> dict[str, object]:
         """Learn a new structured-export format from one example (wizard backend).
 
@@ -168,6 +174,12 @@ class SourceConsole(WizardConsole):
         and only then saves it (owner-only), returning the mapping directory and
         ``MAPPING.md``; a mapping that would drop a column refuses with
         ``error: WouldDropColumns`` and the offending column names.
+
+        ``destination`` is the destination-before-teaching step (the CLI's
+        ``--to``): a registry name recorded in the saved mapping as a profile
+        hash, so a migration that later runs the mapping somewhere else refuses.
+        An unknown name refuses with ``error: UnknownDestination`` before the
+        example is analysed. ``None`` teaches unbound, as before.
 
         PHI rule: ``summary``/``suggestions`` carry column names, inferred type
         labels, counts, and digit/letter-masked shapes only — never a cell value;
@@ -199,6 +211,7 @@ class SourceConsole(WizardConsole):
                     patient_key=parsed.patient_key if parsed else None,
                     encounter_key=parsed.encounter_key if parsed else None,
                     row_scope=parsed.row_scope if parsed else None,
+                    destination=destination,
                 )
             )
             return _source_result_dict(result)
@@ -213,6 +226,7 @@ class SourceConsole(WizardConsole):
         confirmed: bool = False,
         out_dir: str | None = None,
         review: dict[str, object] | None = None,
+        destination: str | None = None,
     ) -> dict[str, object]:
         """Run :meth:`source_init` on a daemon thread (the GUI stays responsive).
 
@@ -247,6 +261,7 @@ class SourceConsole(WizardConsole):
                         patient_key=parsed.patient_key if parsed else None,
                         encounter_key=parsed.encounter_key if parsed else None,
                         row_scope=parsed.row_scope if parsed else None,
+                        destination=destination,
                     )
                 )
             )

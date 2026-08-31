@@ -10,7 +10,11 @@ of it. The honest output model this realizes:
   view, or a vendor Jinja skin).
 
 So every migration emits BOTH: a ``ccda`` payload directory and a ``charts``
-directory. The route the destination would take is resolved up front
+directory, plus a ``run_manifest.json`` naming the exact source/destination/
+layout profile hashes the run was prepared under
+(:mod:`anastomosis.core.runmanifest`) — a later step over the same folder
+recaptures those and refuses when any of them changed. The route the
+destination would take is resolved up front
 (:func:`anastomosis.deliver.router.plan_route`) and surfaced to the operator as
 a transit map — the same data the wizard draws.
 
@@ -46,6 +50,7 @@ if TYPE_CHECKING:
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
+    from anastomosis.core.profiles import RunBinding
     from anastomosis.deliver.ccda_export import CcdaExportResult
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import EventSink, PipelineResult, StageEvent
@@ -59,6 +64,7 @@ __all__ = [
     "MigrationCommand",
     "MigrationProfiles",
     "MigrationResult",
+    "resolve_pack",
     "run_migration",
     "user_migrations_path",
 ]
@@ -93,6 +99,12 @@ class MigrationCommand:
     force: bool = False
     sections: Mapping[str, bool] = field(default_factory=dict)
     qa: bool = True
+    #: Re-bind an output folder whose recorded profile hashes no longer match
+    #: this machine. Off by default, and deliberately separate from ``force``
+    #: (which overwrites RENDERS): overwriting a chart is a housekeeping choice,
+    #: while replacing the profiles a folder's artifacts were made under is a
+    #: statement that the earlier artifacts no longer stand.
+    rebind: bool = False
 
 
 @dataclass
@@ -235,11 +247,162 @@ def _write_manifest_with_event(
     emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
 
 
+def resolve_pack(render: str) -> str | None:
+    """The Jinja pack a render mode resolves to, or ``None`` for no pack at all.
+
+    One definition, because three callers need the same answer: the pack-mode
+    run, the layout profile that hashes it, and the run manifest that records
+    which layout the artifacts came from. ``ccda-standard`` renders through
+    HL7's own stylesheet and no Jinja pack — a truthful ``None``, not a gap.
+    """
+    if render == RENDER_CCDA_STANDARD:
+        return None
+    return _NEUTRAL_PACK if render == RENDER_NEUTRAL else render
+
+
+def _bind_run(cmd: MigrationCommand) -> RunBinding:
+    """Capture the three profiles this run is about to be prepared under.
+
+    Pack discovery mirrors ``run_pipeline``'s exactly — the same dirs, the same
+    ``allow_external``, the same trust store — so the layout this profiles is
+    the layout that will render. ``trust_new`` is deliberately NOT passed:
+    profiling reads what is on disk and records nothing, and trusting a pack is
+    an act that belongs to the run, not to the measurement of it.
+
+    An unknown source or destination becomes a clean exit-2
+    :class:`PipelineError`; both are operator input.
+    """
+    from anastomosis.core.profiles import ProfileError, capture_binding
+    from anastomosis.pipeline import PipelineError
+    from anastomosis.reconstruct.packtrust import default_pack_trust
+
+    dirs = list(cmd.pack_dirs)
+    try:
+        return capture_binding(
+            source=cmd.source,
+            destination=cmd.destination,
+            render_mode=cmd.render,
+            pack=resolve_pack(cmd.render),
+            pack_dirs=dirs,
+            allow_external=bool(dirs),
+            trust=default_pack_trust(),
+        )
+    except ProfileError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="bad_binding") from None
+
+
+def _refuse_destination_mismatch(binding: RunBinding) -> None:
+    """Refuse a mapping taught for one destination being run at another.
+
+    The destination is chosen BEFORE teaching (``anast source init --to``), and
+    that choice shapes which column becomes which canonical field. Running the
+    mapping somewhere else is a different migration made silently, so it stops
+    here — and the message names BOTH ends, because "wrong destination" without
+    saying which two is not actionable.
+
+    A mapping whose destination is right but whose destination profile CHANGED
+    (a version bump, a capability that appeared) is the second refusal: same
+    name, different system.
+    """
+    from anastomosis.pipeline import PipelineError
+
+    source = binding.source
+    taught = source.taught_for_destination
+    if taught is None:
+        return  # unbound mapping — taught with no destination in view
+    destination = binding.destination
+    if taught != destination.name:
+        raise PipelineError(
+            f"source {source.name!r} was taught for destination {taught!r} and this run "
+            f"targets {destination.name!r} — refusing rather than mapping columns for one "
+            f"system into another. Teach a mapping for {destination.name!r}, or migrate "
+            f"to {taught!r}.",
+            exit_code=2,
+            kind="destination_mismatch",
+        )
+    if source.taught_for_destination_hash != destination.profile_hash:
+        raise PipelineError(
+            f"destination {destination.name!r} has changed since source {source.name!r} was "
+            f"taught for it (taught under {str(source.taught_for_destination_hash)[:12]}, now "
+            f"{destination.profile_hash[:12]}, version {destination.version!r}) — re-teach the "
+            f"mapping against the destination as it stands.",
+            exit_code=2,
+            kind="destination_mismatch",
+        )
+
+
+def _refuse_stale_folder(cmd: MigrationCommand, binding: RunBinding) -> None:
+    """Refuse to re-run into a folder bound to profiles that have since changed.
+
+    The folder already holds charts, a C-CDA payload and an upload manifest made
+    under recorded hashes. Writing a second run's artifacts beside them under
+    DIFFERENT inputs leaves one tree that is two runs, with nothing on disk
+    saying which file came from which — the misattribution this whole binding
+    exists to prevent. ``--rebind`` is the explicit way to say the earlier
+    artifacts no longer stand.
+    """
+    from anastomosis.core.runmanifest import (
+        BindingError,
+        RunManifestError,
+        load_run_manifest,
+        verify_binding,
+    )
+    from anastomosis.pipeline import PipelineError
+
+    if cmd.rebind:
+        return
+    try:
+        manifest = load_run_manifest(cmd.out_dir)
+    except RunManifestError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="bad_binding") from None
+    if manifest is None:
+        return  # a fresh folder, or one prepared before run manifests existed
+    try:
+        verify_binding(manifest, binding)
+    except BindingError as exc:
+        raise PipelineError(
+            f"{exc} Pass --rebind to prepare this folder again under the current profiles.",
+            exit_code=2,
+            kind="binding_changed",
+        ) from None
+
+
+def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
+    """Record what this run was prepared under, beside its artifacts.
+
+    ``prepared`` is the only state a migration writes: it resolves a route and
+    writes artifacts, and executes no delivery — the invariant
+    :mod:`anastomosis.core.migration_status` states. Advancing past it needs a
+    receipt (:func:`anastomosis.core.runmanifest.advance_state`).
+    """
+    from anastomosis import __version__
+    from anastomosis.core.runmanifest import RunManifest, export_dir_id, write_run_manifest
+
+    write_run_manifest(
+        cmd.out_dir,
+        RunManifest(
+            pipeline_version=__version__,
+            source=cmd.source,
+            destination=cmd.destination,
+            render_mode=cmd.render,
+            export_dir=str(cmd.export_dir),
+            export_dir_id=export_dir_id(cmd.export_dir),
+            binding=binding,
+        ),
+    )
+
+
 def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> MigrationResult:
     """Run a migration: resolve the route, render the charts, emit the C-CDA payload.
 
     The structured C-CDA payload lands in ``<out>/ccda``, the human-readable
-    charts in ``<out>/charts``. Events and failures follow the module contract.
+    charts in ``<out>/charts``, and ``<out>/run_manifest.json`` names the exact
+    profile hashes the run was prepared under. Events and failures follow the
+    module contract.
+
+    Both binding refusals happen BEFORE anything is read or written: a mapping
+    taught for another destination, and an output folder already bound to
+    profiles that have since changed. Nothing renders on a stale binding.
     """
     from anastomosis.deliver.router import plan_route
     from anastomosis.destinations.registry import DestinationRegistry
@@ -254,9 +417,16 @@ def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> M
             str(exc.args[0] if exc.args else exc), exit_code=2, kind="bad_destination"
         ) from None
 
+    binding = _bind_run(cmd)
+    _refuse_destination_mismatch(binding)
+    _refuse_stale_folder(cmd, binding)
+
     if cmd.render == RENDER_CCDA_STANDARD:
-        return _run_ccda_standard(cmd, transit, on_event)
-    return _run_pack_mode(cmd, transit, on_event)
+        result = _run_ccda_standard(cmd, transit, on_event)
+    else:
+        result = _run_pack_mode(cmd, transit, on_event)
+    _write_run_manifest(cmd, binding)
+    return result
 
 
 def _run_pack_mode(
@@ -271,7 +441,11 @@ def _run_pack_mode(
     """
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand, run_pipeline_command
 
-    pack = _NEUTRAL_PACK if cmd.render == RENDER_NEUTRAL else cmd.render
+    pack = resolve_pack(cmd.render)
+    # ccda-standard is routed away before this function; every other mode
+    # resolves to a pack name. Asserted rather than defaulted: a silent
+    # fallback here would render through a layout nobody chose.
+    assert pack is not None
     out = cmd.out_dir
     result = run_pipeline_command(
         PipelineCommand(
