@@ -5,7 +5,7 @@ See :mod:`anastomosis.cli_commands` for the split/registration rationale.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 
@@ -14,6 +14,7 @@ from anastomosis.cli_commands._options import ExportDir, Force, OutDir, PackDirs
 
 if TYPE_CHECKING:
     from anastomosis.core.migrate import MigrationCommand
+    from anastomosis.pipeline import PipelineError
 
 
 def _resolve_migration_profile(
@@ -85,19 +86,40 @@ def _resolve_migration_profile(
     return resolved_source, resolved_destination, resolved_render, resolved_sections, resolved_qa
 
 
+def _exit_on_pipeline_error(exc: PipelineError, cmd: MigrationCommand) -> NoReturn:
+    """Print a :class:`PipelineError` the way the CLI prints one, then exit.
+
+    Two failure points in a migration reach the same two lines — the binding
+    checks before the map is drawn, and the run itself — and they must report
+    identically: the same per-kind line, the same exit code. One place, so a
+    refusal raised earlier in the flow does not read differently from the same
+    refusal raised later.
+    """
+    from anastomosis import cli as _cli
+
+    _cli._report_pipeline_error(exc, source=cmd.source, pack=cmd.render)
+    raise typer.Exit(code=exc.exit_code)
+
+
 def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     """Run a :class:`MigrationCommand`, presenting it as the CLI presents a pipeline.
 
     Shows the available routes FIRST (the route is the headline of a move),
     then runs :func:`run_migration` translating its events with the SAME printer
-    ``anast pipeline run`` uses, then the chart + C-CDA outcome lines. On
+    ``anast pipeline run`` uses, then the chart + C-CDA outcome lines. The run's
+    binding is captured and checked BEFORE the map is printed, so a refusal is
+    never preceded by a page of routes for a move that cannot start. On
     :class:`PipelineError` it reproduces ``_report_pipeline_error`` +
     ``typer.Exit``; on success, ``--save-profile`` persists the resolved config.
     Ends on the shared verdict: the prepared notice (route resolved, delivery not
     executed — exit 0) or the manual-import notice (no viable route — exit 1).
     """
     from anastomosis import cli as _cli
-    from anastomosis.core.migrate import default_migration_profiles, run_migration
+    from anastomosis.core.migrate import (
+        bind_migration,
+        default_migration_profiles,
+        run_migration,
+    )
     from anastomosis.core.migration_status import (
         classify_migration,
         manual_import_notice,
@@ -126,15 +148,22 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     except KeyError as exc:
         _cli.console.print(f"[red]{exc.args[0] if exc.args else exc}[/red]")
         raise typer.Exit(code=2) from None
+    # Every binding refusal BEFORE the map is drawn, for the same reason both
+    # names are resolved before either answer: a route table and an
+    # "Anastomosis would use" line, printed above a refusal, describe a move
+    # that was never going to start.
+    try:
+        binding = bind_migration(cmd)
+    except PipelineError as exc:
+        _exit_on_pipeline_error(exc, cmd)
     _cli.console.print(transit.render(_cli._glyphs()))
 
     charts_dir = cmd.out_dir / "charts"
     _print_event = _cli._make_event_printer(source=cmd.source, charts_dir=charts_dir)
     try:
-        result = run_migration(cmd, on_event=_print_event)
+        result = run_migration(cmd, on_event=_print_event, binding=binding)
     except PipelineError as exc:
-        _cli._report_pipeline_error(exc, source=cmd.source, pack=cmd.render)
-        raise typer.Exit(code=exc.exit_code) from None
+        _exit_on_pipeline_error(exc, cmd)
 
     # ccda-standard renders no pipeline reconstruct/QA events (it runs
     # document-generic QA — layout/pagination + integrity — per patient and

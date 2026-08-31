@@ -64,6 +64,7 @@ __all__ = [
     "MigrationCommand",
     "MigrationProfiles",
     "MigrationResult",
+    "bind_migration",
     "resolve_pack",
     "run_migration",
     "user_migrations_path",
@@ -367,6 +368,26 @@ def _refuse_stale_folder(cmd: MigrationCommand, binding: RunBinding) -> None:
         ) from None
 
 
+def bind_migration(cmd: MigrationCommand) -> RunBinding:
+    """Capture this run's binding and make every refusal that precedes work.
+
+    Everything a migration can refuse for BEFORE it reads or writes anything: an
+    unknown source, a mapping taught for a different destination, an output
+    folder already bound to profiles that have since changed. It is public
+    because a frontend needs it before it prints — ``anast migrate`` shows the
+    transit map as the headline of a move, and a page of confident route
+    reporting about a move that was never going to start is the exact failure
+    the source-name check ahead of it already fixed once.
+
+    :func:`run_migration` calls this itself when the caller has not; a caller
+    that has passes the returned binding back in so the capture happens once.
+    """
+    binding = _bind_run(cmd)
+    _refuse_destination_mismatch(binding)
+    _refuse_stale_folder(cmd, binding)
+    return binding
+
+
 def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
     """Record what this run was prepared under, beside its artifacts.
 
@@ -392,7 +413,12 @@ def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
     )
 
 
-def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> MigrationResult:
+def run_migration(
+    cmd: MigrationCommand,
+    on_event: EventSink | None = None,
+    *,
+    binding: RunBinding | None = None,
+) -> MigrationResult:
     """Run a migration: resolve the route, render the charts, emit the C-CDA payload.
 
     The structured C-CDA payload lands in ``<out>/ccda``, the human-readable
@@ -400,9 +426,12 @@ def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> M
     profile hashes the run was prepared under. Events and failures follow the
     module contract.
 
-    Both binding refusals happen BEFORE anything is read or written: a mapping
-    taught for another destination, and an output folder already bound to
-    profiles that have since changed. Nothing renders on a stale binding.
+    Every binding refusal happens BEFORE anything is read or written
+    (:func:`bind_migration`): a mapping taught for another destination, and an
+    output folder already bound to profiles that have since changed. Nothing
+    renders on a stale binding. ``binding`` lets a frontend that already made
+    those refusals — so it could make them before printing anything — hand back
+    what it captured instead of capturing twice.
     """
     from anastomosis.deliver.router import plan_route
     from anastomosis.destinations.registry import DestinationRegistry
@@ -417,15 +446,13 @@ def run_migration(cmd: MigrationCommand, on_event: EventSink | None = None) -> M
             str(exc.args[0] if exc.args else exc), exit_code=2, kind="bad_destination"
         ) from None
 
-    binding = _bind_run(cmd)
-    _refuse_destination_mismatch(binding)
-    _refuse_stale_folder(cmd, binding)
+    bound = binding if binding is not None else bind_migration(cmd)
 
     if cmd.render == RENDER_CCDA_STANDARD:
         result = _run_ccda_standard(cmd, transit, on_event)
     else:
         result = _run_pack_mode(cmd, transit, on_event)
-    _write_run_manifest(cmd, binding)
+    _write_run_manifest(cmd, bound)
     return result
 
 

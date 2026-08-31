@@ -451,6 +451,32 @@ def test_a_mapping_refuses_the_same_destination_once_it_has_changed(
     assert "has changed since" in str(caught.value)
 
 
+def test_the_cli_refuses_before_it_draws_the_transit_map(tmp_path: Path) -> None:
+    """No page of routes above a refusal for a move that cannot start."""
+    from typer.testing import CliRunner
+
+    from anastomosis.cli import app
+
+    _teach_clinic_csv(destination="tebra")
+    result = CliRunner().invoke(
+        app,
+        [
+            "migrate",
+            str(_csv_export_dir(tmp_path)),
+            "--from",
+            "clinic_csv",
+            "--to",
+            "epic",
+            "-o",
+            str(tmp_path / "out"),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "was taught for destination" in result.output
+    assert "Anastomosis would use" not in result.output
+    assert "Ways to file charts into" not in result.output
+
+
 def test_teaching_against_an_unknown_destination_refuses_before_analysis() -> None:
     result = run_source_init_command(
         SourceInitCommand(
