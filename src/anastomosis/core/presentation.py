@@ -9,12 +9,15 @@ UTF-8 stream and a plain-ASCII fallback everywhere else — the same decision in
 one place, rather than each call site guessing.
 
 It carries the text surfaces' half of the design language's color tokens for the
-same reason: one definition of "oxblood" and "porcelain", not one per frontend.
+same reason: one definition of "oxblood" and "porcelain", not one per frontend —
+and, for the same reason again, the one question every text frontend has to ask
+before it draws anything for a person: is anybody there.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 __all__ = [
     "ASCII_GLYPHS",
@@ -22,6 +25,7 @@ __all__ = [
     "UNICODE_GLYPHS",
     "Glyphs",
     "Palette",
+    "attached_to_a_terminal",
     "terminal_glyphs",
 ]
 
@@ -117,3 +121,27 @@ def terminal_glyphs(stream: object) -> Glyphs:
         return ASCII_GLYPHS
     normalized = encoding.lower().replace("-", "").replace("_", "")
     return UNICODE_GLYPHS if normalized in _UTF8_ALIASES else ASCII_GLYPHS
+
+
+def attached_to_a_terminal(stream: Any) -> bool:
+    """Whether ``stream`` is really a terminal — asked of the stream itself.
+
+    Never of anything that reports colour capability. ``FORCE_COLOR`` and
+    ``TTY_COMPATIBLE`` make Rich answer ``is_terminal`` True for a plain file
+    (``typer/rich_utils.py`` sets them up), and both are exported by ordinary
+    tooling — CI images, ``just``/``make`` wrappers, terminal multiplexers.
+    With one of them set, ``anast > log`` from a shell used to open the guided
+    session, write the menu into the log file, and then block on a question
+    nobody could see.
+
+    Whether output can carry colour and whether a person is reading it are
+    different questions with different answers; letting the first stand in for
+    the second is what made an unattended run hang. Two callers ask it now —
+    the guided session's gate and the greeting mark's — and one wrong copy of
+    this is one too many.
+    """
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        # A closed or exotic stream is neither a keyboard nor a screen.
+        return False

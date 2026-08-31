@@ -100,6 +100,23 @@ def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
     assert not leaked, f"anastomosis.cli eagerly imported: {sorted(leaked)}"
 
 
+def test_cli_does_not_eagerly_import_the_greeting_mark() -> None:
+    """The vessel mark is drawn only for a person at a terminal, so only the
+    guided session's header may reach it. ``anast --help`` and every named
+    command must not pay for the sampled grid, the density ramp, or Rich's
+    live display — the same cold-start rule as the adapters above, applied to
+    the one module whose entire audience is somebody looking at the screen.
+    """
+    loaded = _modules_after_import("anastomosis.cli")
+    forbidden = {
+        "anastomosis.core.vesselmark",
+        "anastomosis.core.vesselmark_data",
+        "rich.live",
+    }
+    leaked = forbidden & loaded
+    assert not leaked, f"anastomosis.cli eagerly imported: {sorted(leaked)}"
+
+
 def test_browser_attach_module_loads_without_playwright_extra() -> None:
     """The attach module is a thin shell — importing the module must not
     require the optional ``deliver-browser`` extra. The Playwright imports
