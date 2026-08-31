@@ -15,6 +15,7 @@ import typer
 
 from anastomosis.cli import destination_app
 from anastomosis.cli_commands._paths import in_file, out_dir
+from anastomosis.core.presentation import as_typed
 
 
 def _load_registry(registry: Path | None) -> object:
@@ -215,7 +216,7 @@ def _prompt_slot(
 
     label = "required" if required else "optional, blank to skip"
     for attempt in range(1, _VALIDATE_MAX_TRIES + 1):
-        raw: str = typer.prompt(f"  {slot} ({label}) — {guidance}", default="")
+        raw: str = as_typed(typer.prompt(f"  {slot} ({label}) — {guidance}", default=""))
         value = raw.strip()
         if not value:
             if not required:

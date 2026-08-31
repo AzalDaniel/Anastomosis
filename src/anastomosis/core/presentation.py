@@ -16,6 +16,7 @@ before it draws anything for a person: is anybody there.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -172,3 +173,28 @@ def attached_to_a_terminal(stream: Any) -> bool:
     except (AttributeError, OSError, ValueError):
         # A closed or exotic stream is neither a keyboard nor a screen.
         return False
+
+
+#: What a terminal injects, as opposed to what a person types. Sequence forms
+#: first, so an arrow key's ``ESC [ A`` is removed as one unit rather than
+#: leaving ``[A`` behind, then any other escape pair (Alt-chords arrive as
+#: ``ESC x``), then the loose C0 controls and DEL.
+_INJECTED = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"  # CSI: arrows, Home/End, function keys
+    r"|\x1bO[@-~]"  # SS3: the same keys in application mode
+    r"|\x1b."  # any other escape pair, and a trailing lone ESC
+    r"|[\x00-\x1f\x7f]"  # remaining control bytes
+)
+
+
+def as_typed(raw: str) -> str:
+    """``raw`` with everything the terminal injected removed.
+
+    A prompt read in canonical mode hands back whatever bytes arrived before
+    Enter, and an arrow key arrives as ``ESC [ A`` — invisible on screen once
+    the terminal has interpreted its own echo, but three real characters in the
+    answer, on their way into a filename or a format id. Pastes carry the same
+    risk with more variety. What a person can see is what this keeps: printable
+    text, with every escape sequence and control byte removed whole.
+    """
+    return _INJECTED.sub("", raw)

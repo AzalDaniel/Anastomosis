@@ -112,3 +112,50 @@ def test_glyphs_dataclass_is_frozen() -> None:
     g = Glyphs(ok="a", fail="b", arrow="c")
     with pytest.raises(AttributeError):
         g.ok = "z"  # type: ignore[misc]  # frozen dataclass
+
+
+def test_as_typed_keeps_what_a_person_can_see() -> None:
+    """The whole escape sequence goes, not just its first byte.
+
+    An arrow key is ESC [ A — removing the ESC alone would leave ``[A`` in a
+    filename, which is the same defect wearing fewer bytes. Sequences are
+    swept as units, whatever mode the terminal was in, and plain text in any
+    script passes through untouched.
+    """
+    from anastomosis.core.presentation import as_typed
+
+    cases = {
+        "abc\x1b[Adef": "abcdef",  # up-arrow, CSI mode
+        "up\x1b[A down\x1b[B": "up down",
+        "home\x1bOH end\x1bOF": "home end",  # the same keys in application mode
+        "fn\x1b[15~key": "fnkey",  # a function key's longer sequence
+        "alt\x1bx": "alt",  # an Alt chord arrives as ESC x
+        "trail\x1b": "trail",  # a lone ESC right before Enter
+        "del\x7fete": "delete",
+        "tab\there": "tabhere",
+        "plain café 病歷": "plain café 病歷",
+    }
+    for raw, expected in cases.items():
+        assert as_typed(raw) == expected, raw.encode()
+
+
+def test_as_typed_guards_every_prompt_the_product_asks() -> None:
+    """The seven guided prompts and the destination wizard all read through it.
+
+    The sweep only protects call sites that use it; this pins the two modules
+    that read free-typed answers to the one door, so an eighth prompt added
+    without the sweep shows up here as a missing anchor rather than as an
+    escape sequence in somebody's mapping id.
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "anastomosis"
+    guide = (src / "cli_commands" / "guide.py").read_text(encoding="utf-8")
+    destination = (src / "cli_commands" / "destination.py").read_text(encoding="utf-8")
+    assert "as_typed(answer)" in guide, "the guided reader must sweep what it reads"
+    assert guide.count("console.input(") == 1, (
+        "every guided prompt funnels through the one swept reader"
+    )
+    assert "as_typed(typer.prompt" in destination, (
+        "the destination wizard reads free text and must sweep it too"
+    )
