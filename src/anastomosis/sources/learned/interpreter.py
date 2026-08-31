@@ -171,6 +171,18 @@ class LearnedSourceAdapter:
         if self._encounter_key is not None:
             self._consumed.add(self._encounter_key)
 
+    @property
+    def spec(self) -> MappingSpec:
+        """The mapping this adapter executes — read-only, for profiling it.
+
+        :func:`anastomosis.core.profiles.capture_source_profile` needs the
+        mapping's id, spec version and destination binding to address the
+        adapter by content rather than by name. The spec is a frozen-by-
+        convention pydantic model the adapter never mutates, so handing it out
+        is a read, not a seam.
+        """
+        return self._spec
+
     # --- SourceAdapter protocol ------------------------------------------------
 
     def detect(self, path: Path) -> bool:

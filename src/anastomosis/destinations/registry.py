@@ -38,6 +38,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "UNVERSIONED",
     "BrowserKind",
     "Capability",
     "CcdaImportKind",
@@ -49,6 +50,12 @@ __all__ = [
 
 # The packaged registry ships alongside this module.
 _PACKAGED_REGISTRY = "registry.yaml"
+
+#: The version a destination entry declares when it declares none. An explicit
+#: value rather than a missing key: "this product has no version we can read"
+#: is a fact, and a run that binds to it should say so out loud rather than
+#: record an absence somebody later reads as an oversight.
+UNVERSIONED = "unversioned"
 
 
 class DocWriteKind(StrEnum):
@@ -136,12 +143,25 @@ class Capability(BaseModel):
 
 
 class DestinationEntry(BaseModel):
-    """One destination's full capability declaration."""
+    """One destination's full capability declaration, at one declared version.
+
+    ``version`` names the destination PRODUCT version these capabilities were
+    declared for. It defaults to :data:`UNVERSIONED` — an explicit string, not a
+    missing field — because most vendors ship a continuously-updated hosted
+    product with no version an operator can read off a screen, and pretending
+    otherwise would be a claim about the world with no evidence behind it. An
+    entry for a product that DOES carry a version (a self-hosted release line, a
+    dated API surface) states it, and a run bound to that version refuses when
+    it changes underneath (:mod:`anastomosis.core.profiles`).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     display: str
+    #: The destination product version these capabilities describe. See the
+    #: class docstring for why "unversioned" is a value rather than an absence.
+    version: str = UNVERSIONED
     doc_write_api: Capability
     ccda_import: Capability
     browser: Capability

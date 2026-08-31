@@ -31,6 +31,7 @@ terminology, kept SEPARATE from the structural ``field_mappings`` by design.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -43,6 +44,7 @@ from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.sources.learned.transforms import TransformError, parse_transform
 
 __all__ = [
+    "DestinationBinding",
     "FieldMapping",
     "Grouping",
     "MappingError",
@@ -50,6 +52,8 @@ __all__ = [
     "SourceFormat",
     "ValueTranslation",
     "load_spec",
+    "mapping_content_hash",
+    "mapping_json_text",
 ]
 
 MAPPING_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -172,12 +176,42 @@ class ValueTranslation(BaseModel):
     table: dict[str, str]
 
 
+class DestinationBinding(BaseModel):
+    """The destination this mapping was taught FOR, pinned by profile hash.
+
+    A mapping decides which source column becomes which canonical field, and
+    that decision is made with a target system in mind — the operator picks the
+    destination first (``anast source init --to``), then teaches. Running that
+    mapping at a different destination is not a smaller version of the same
+    move; it is a different one, made silently. So the choice is recorded here
+    and the migration refuses when it disagrees.
+
+    ``profile_hash`` is
+    :attr:`anastomosis.core.profiles.DestinationProfile.profile_hash` at the
+    moment of teaching, so the refusal fires for a destination that CHANGED
+    (a version bump, a capability that appeared or vanished) as well as for one
+    that was swapped outright. Names, versions and hex only — no PHI.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str
+    version: str
+    profile_hash: str
+
+
 class MappingSpec(BaseModel):
     """A complete, validated learned-source mapping."""
 
     model_config = ConfigDict(extra="forbid")
 
     mapping_id: str
+    # Additive since 1: `destination_binding` is optional and defaults to None,
+    # so every mapping written before it loads unchanged. The other direction
+    # is the rough edge — a mapping taught with `--to` on this build, read by an
+    # older one, fails validation as an invalid spec rather than as a version
+    # it does not know. A bump would have forced dual handling for a field that
+    # takes nothing away.
     spec_version: Literal[1] = 1
     created_at: datetime
     #: Hard gate enforced by discovery, not here: an unreviewed mapping is never
@@ -192,6 +226,10 @@ class MappingSpec(BaseModel):
     #: Columns the operator reviewed and chose not to map (still preserved in
     #: ``extensions`` — this list is for transparency/round-trip accounting).
     unmapped_source_fields: list[str] = Field(default_factory=list)
+    #: The destination chosen BEFORE teaching, when one was. ``None`` for a
+    #: mapping taught without a destination in view (the pre-existing flow, and
+    #: still the default): unbound, so it runs anywhere and refuses nothing.
+    destination_binding: DestinationBinding | None = None
 
     @field_validator("mapping_id")
     @classmethod
@@ -264,3 +302,21 @@ def load_spec(path: Path) -> MappingSpec:
         # dumping a value-bearing payload (defensive: specs carry no PHI, but the
         # habit holds everywhere).
         raise MappingError(f"mapping {path} is invalid: {exc.error_count()} error(s)") from exc
+
+
+def mapping_json_text(spec: MappingSpec) -> str:
+    """The exact ``mapping.json`` text a saved mapping holds.
+
+    One definition, because two things hash it: ``save_mapping`` writes these
+    bytes and records their digest in ``source_trust.json``, and
+    :func:`anastomosis.core.profiles.capture_source_profile` recomputes the
+    digest when no file is on disk. When those two disagree about indentation
+    or the trailing newline, every freshly-taught mapping reads as edited —
+    the failure mode ``_atomic_write``'s docstring already records once.
+    """
+    return json.dumps(spec.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+
+
+def mapping_content_hash(spec: MappingSpec) -> str:
+    """SHA-256 hex over :func:`mapping_json_text` — a mapping's content address."""
+    return hashlib.sha256(mapping_json_text(spec).encode("utf-8")).hexdigest()

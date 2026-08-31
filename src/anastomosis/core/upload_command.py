@@ -10,6 +10,13 @@ copy read before a concurrent ``render``/``migrate`` could rewrite the manifest
 each frontend keeps only its own pre-flight (loopback gate, operator
 confirmation, pack readiness, skiplist source) and its own presentation.
 
+Before any of that, the run BINDING is checked: an output tree carries a
+``run_manifest.json`` naming the source, destination and layout profile hashes
+its charts were prepared under, and an upload whose machine no longer matches
+them refuses loudly (:func:`check_run_binding`) instead of filing charts against
+expectations that have changed. A clean landing then records the run's new state
+— ``delivered``, and ``verified`` when the ladder ran (:func:`record_upload_state`).
+
 PHI rule: this layer moves counts/ids/state-names through the ledger and report;
 it prints/logs nothing patient-derived, and the ledger + report stay inside the
 0700 output dir. The operator's browser is NEVER closed — only our own ledger
@@ -34,9 +41,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from anastomosis.core.logutil import exc_tag
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from anastomosis.core.runmanifest import RunManifest
     from anastomosis.reconstruct.packs import LoadedPack
 
 logger = logging.getLogger(__name__)
@@ -47,7 +57,10 @@ __all__ = [
     "UploadCommand",
     "UploadCommandResult",
     "VerificationUnavailableError",
+    "check_run_binding",
+    "record_upload_state",
     "resolve_manifest_root",
+    "resolve_run_manifest_root",
     "run_upload_command",
 ]
 
@@ -177,6 +190,102 @@ class UploadCommandResult:
         return f"{total} item(s) in non-clean terminal states: {detail}"
 
 
+def resolve_run_manifest_root(out_dir: Path) -> Path:
+    """Where the RUN manifest lives for an upload pointed at ``out_dir``.
+
+    ``anast upload`` accepts either a migrate output dir or the ``charts``
+    folder inside it — :func:`resolve_manifest_root` says so about the upload
+    manifest, and an operator who learned that habit will point this at
+    ``charts`` too. The run manifest sits one level up, so without this the
+    binding check would find nothing there, log "not bound", and file every
+    chart unchecked: the whole feature bypassed by naming a subfolder.
+    """
+    from anastomosis.core.runmanifest import run_manifest_path
+
+    if run_manifest_path(out_dir).is_file():
+        return out_dir
+    parent = out_dir.parent
+    if out_dir.name == "charts" and run_manifest_path(parent).is_file():
+        return parent
+    return out_dir
+
+
+def check_run_binding(out_dir: Path) -> RunManifest | None:
+    """Refuse to upload from a folder whose bound profiles have since changed.
+
+    The charts in this folder were rendered by a particular layout, from a
+    particular source mapping, for a particular destination — and the L0-L6
+    ladder verifies them against exactly those. If any of the three moved since
+    the run was prepared, filing these charts is filing them under expectations
+    that no longer describe them, so it stops here
+    (:class:`~anastomosis.core.runmanifest.BindingError`) naming which profile
+    moved.
+
+    Returns the manifest when the folder is bound and current, and ``None`` when
+    it holds no run manifest at all. That second case is an output tree rendered
+    before run manifests existed, or by a command that writes none; it uploads
+    exactly as it did before, with one PHI-free log line saying that nothing was
+    checked. A manifest that is PRESENT but unreadable is a fault and raises —
+    "never bound" and "bound, and we cannot tell to what" are different answers.
+    """
+    from anastomosis.core.runmanifest import load_run_manifest, recapture_binding, verify_binding
+
+    manifest = load_run_manifest(resolve_run_manifest_root(out_dir))
+    if manifest is None:
+        logger.warning(
+            "no run manifest in the upload folder: this tree is not bound to a set of "
+            "profiles, so nothing checks that the source, destination and layout are the "
+            "ones its charts were prepared under"
+        )
+        return None
+    verify_binding(manifest, recapture_binding(manifest))
+    return manifest
+
+
+def record_upload_state(out_dir: Path, result: UploadCommandResult, *, verified: bool) -> None:
+    """Record what the upload did, as run state, when the folder is bound.
+
+    A clean upload IS the receipt the ``prepared`` state was waiting for: every
+    item reached a safe terminal end and the run report on disk says so. So the
+    run advances to ``delivered``, and — when the L0-L6 ladder ran rather than
+    being skipped with ``--no-verify`` — on to ``verified``. A non-clean run
+    advances nothing: a partial landing is not a delivery, and a state past
+    ``prepared`` is a claim.
+
+    Best-effort by design, and only in this direction: the charts are filed
+    either way, and a bookkeeping failure must not turn a successful upload into
+    a reported failure. The refusals that MATTER already fired before the browser
+    was touched (:func:`check_run_binding`). Unbound folders record nothing.
+    """
+    from anastomosis.core.runmanifest import (
+        BindingError,
+        RunManifestError,
+        RunState,
+        RunStateError,
+        advance_state,
+        load_run_manifest,
+    )
+
+    if not result.is_clean:
+        return
+    receipt = result.report_path.name
+    root = resolve_run_manifest_root(out_dir)
+    try:
+        # Separate steps, because a folder already at `delivered` — a second
+        # upload, or a `--no-verify` run followed by a full one — makes the
+        # first call raise, and one shared `try` swallowed that and stranded
+        # the run one state short of the truth forever.
+        manifest = load_run_manifest(root)
+        if manifest is not None and manifest.state is RunState.PREPARED:
+            advance_state(root, RunState.DELIVERED, receipt=receipt)
+        if verified:
+            advance_state(root, RunState.VERIFIED, receipt=receipt)
+    except (BindingError, RunManifestError, RunStateError) as exc:
+        # Type name only: the message can name an operator-chosen path, and the
+        # charts are already filed. Loud in the log, never fatal here.
+        logger.warning("could not record the run state after a clean upload (%s)", exc_tag(exc))
+
+
 def resolve_manifest_root(out_dir: Path) -> Path:
     """Where the upload manifest lives: ``out_dir`` itself, else ``out_dir/charts``.
 
@@ -246,17 +355,23 @@ def run_upload_command(
        rather than racing it into the one ledger (a patient-safety fence against
        double-filing);
     2. read the manifest INSIDE the lock (lock-then-read — closes the TOCTOU);
-    3. ``attach()`` the destination (the single Playwright seam) and wrap it;
-    4. ``begin_run`` -> ``recover`` (resume any prior killed run) -> drive ->
+    3. check the run binding (:func:`check_run_binding`) — an output tree whose
+       source, destination or layout profile changed since it was prepared
+       refuses HERE, before the browser is touched;
+    4. ``attach()`` the destination (the single Playwright seam) and wrap it;
+    5. ``begin_run`` -> ``recover`` (resume any prior killed run) -> drive ->
        ``finish_run`` (only on a clean finish; an abort stamps its own) ->
-       ``write_run_report``.
+       ``write_run_report``;
+    6. record the run state (:func:`record_upload_state`) — a clean landing is
+       the receipt that moves a bound run past ``prepared``.
 
     ``attach`` is invoked only after the lock is held, the manifest reads
-    cleanly, AND the bundle passes
+    cleanly, the binding checks out, AND the bundle passes
     :func:`~anastomosis.deliver.browser.gates.assert_deliverable` — so a locked
-    dir, a missing/malformed manifest, or a bundle whose gates did not pass
-    never touches the browser. ``stop`` is the cooperative cancel flag the engine checks at item
-    boundaries (the GUI's ``upload_stop``); the CLI passes ``None``.
+    dir, a missing or malformed manifest, a drifted binding, or a bundle whose
+    gates did not pass never touches the browser. ``stop`` is the cooperative
+    cancel flag the engine checks at item boundaries (the GUI's
+    ``upload_stop``); the CLI passes ``None``.
 
     When ``cmd.verify`` is set the engine is wired with a
     :class:`~anastomosis.deliver.verify.LayeredVerifier` (lazily imported so the
@@ -309,12 +424,16 @@ def run_upload_command(
         # verifies against the rest of it, and a v1 file announces its degraded
         # coverage from inside this read.
         manifest = load_upload_manifest(manifest_root)
-        # The gate, before the browser is touched: a bundle whose recorded gates
-        # did not pass, whose reviewed route found no way in, or whose charts no
-        # longer hash to what was reviewed is refused here rather than filed
-        # item by item and reconciled afterwards. A manifest too old to carry
-        # gates warns instead — see `deliver.browser.gates`.
+        # Two questions under the SAME lock, both before the browser is
+        # touched, because they are different questions. Is this bundle fit to
+        # deliver — did its recorded gates pass, did its reviewed route find a
+        # way in, do its charts still hash to what was reviewed? And is it
+        # still bound to the source, destination and layout it was prepared
+        # under? A manifest too old to carry gates warns instead (see
+        # `deliver.browser.gates`); a drifted binding refuses naming which
+        # profile moved. Either way, nothing is filed and reconciled after.
         assert_deliverable(manifest)
+        check_run_binding(cmd.out_dir)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol
         # Register each resource with the ExitStack the INSTANT we own it, so a
@@ -387,6 +506,11 @@ def run_upload_command(
         counts = dict(tracking.counts())
         # The ExitStack now releases (LIFO): our ledger handle, the destination's
         # owned Playwright resources, then the output locks — exactly once each.
-    return UploadCommandResult(
+    outcome = UploadCommandResult(
         counts=counts, aborted_reason=result.aborted_reason, report_path=report_path
     )
+    # Outside the lock: the artifacts are written and the browser is released, and
+    # this only rewrites the run manifest's state fields (the bound hashes are
+    # untouched). A clean, verified landing is what moves a run past `prepared`.
+    record_upload_state(cmd.out_dir, outcome, verified=cmd.verify)
+    return outcome
