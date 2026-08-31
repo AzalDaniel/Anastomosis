@@ -322,11 +322,22 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 console.print(f"[yellow]QA skipped[/yellow]: {event.detail.split(': ', 1)[-1]}")
                 return
             fail = event.counts["fail"]
+            # not_carried rides the counts dict only when it is nonzero (see
+            # settle_qa's "only when there is something to say" rule) — a run
+            # that abbreviates nothing gets the line it always had (#297).
+            not_carried = event.counts.get("not_carried", 0)
             console.print(
                 f"QA: [green]{event.counts['pass']} pass[/green], "
                 f"{event.counts['warn']} warn, "
                 f"{'[red]' if fail else ''}{fail} fail"
-                f"{'[/red]' if fail else ''} {arrow} qa_report.json"
+                f"{'[/red]' if fail else ''}"
+                + (
+                    f" — [yellow]{not_carried} fact(s) carried by the record "
+                    "summary, not the visit charts[/yellow]"
+                    if not_carried
+                    else ""
+                )
+                + f" {arrow} qa_report.json"
             )
         elif event.stage == STAGE_MANIFEST:
             # Additive line — emitted only when an upload manifest was requested.

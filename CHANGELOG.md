@@ -35,6 +35,16 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The rail read "0 warn, 0 fail" over a chart that abbreviated thirteen
+  facts.** `settle_qa` had carried `not_carried` on the QA stage event since
+  #271's never-green-with-nothing-said rule, but neither frontend said what it
+  meant: the CLI's QA line stopped at pass/warn/fail, and the GUI's rail turned
+  the bare key into "not carried 13", which told an operator nothing about
+  what 13 counted. Both now read the count in the words `qa_report.json`
+  already had — "13 fact(s) carried by the record summary, not the visit
+  charts" — printed only when the count is nonzero, silent on every run that
+  abbreviates nothing. (#297)
+
 - **A migrated C-CDA chart says who wrote it again.** The adapter had no
   extraction for participations at all: across 6,144 generated documents twelve
   construct classes had a parsed column of exactly zero — `author` (17,390
