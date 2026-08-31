@@ -685,10 +685,19 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
         lines.append(f"    label: {_yaml_scalar(known or f'Inferred section {index}')}")
         lines.append("    default: false")
         named = f"{known!r} " if known else ""
+        # The evidence clause is said only when OCR was actually part of this
+        # harvest. On a native-text run there is one kind of evidence and
+        # naming it changes a line every existing pack carries — `--no-ocr` is
+        # documented as the behaviour every caller had before OCR existed, and
+        # a description that differs by a clause is not that.
+        evidence_clause = (
+            f"; evidence: {_PROVENANCE_LABELS.get(candidate.provenance, candidate.provenance)}"
+            if analysis.evidence.ocr_attempted
+            else ""
+        )
         description = (
             f"Inferred heading section {index} {named}(role {candidate.role}; "
-            f"seen in {candidate.count}/{analysis.sample_count} samples; "
-            f"evidence: {_PROVENANCE_LABELS.get(candidate.provenance, candidate.provenance)})"
+            f"seen in {candidate.count}/{analysis.sample_count} samples{evidence_clause})"
         )
         lines.append(f"    description: {_yaml_scalar(description)}")
 
@@ -1073,13 +1082,16 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
         f"(recurring in >= {_MIN_SECTION_COUNT} samples)."
     )
 
+    # Same rule as the manifest description: the evidence clause appears only
+    # on a harvest that actually asked an engine.
+    def _section_line(index: int, c: SectionCandidate) -> str:
+        line = f"- Inferred section {index} — {c.role}, seen in {c.count}/{analysis.sample_count} samples"
+        if not analysis.evidence.ocr_attempted:
+            return line
+        return f"{line}, evidence: {_PROVENANCE_LABELS.get(c.provenance, c.provenance)}"
+
     section_lines = (
-        "\n".join(
-            f"- Inferred section {index} — {c.role}, seen in "
-            f"{c.count}/{analysis.sample_count} samples, evidence: "
-            f"{_PROVENANCE_LABELS.get(c.provenance, c.provenance)}"
-            for index, c in enumerate(sections, start=1)
-        )
+        "\n".join(_section_line(index, c) for index, c in enumerate(sections, start=1))
         or "- (none cleared the confidence gate)"
     )
     if analysis.low_confidence:

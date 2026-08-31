@@ -13,6 +13,7 @@ place. Nothing is checked in and nothing is patient-derived.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -697,3 +698,88 @@ def test_a_batch_keeps_the_region_refusals_own_type(tmp_path: Path) -> None:
         extract_samples([path], ocr=_WORKER)
 
     assert path.name not in str(excinfo.value)
+
+
+@_NEEDS_ENGINE
+def test_a_truncated_reading_of_a_value_is_a_disagreement_not_a_duplicate(
+    tmp_path: Path,
+) -> None:
+    """The safety figure has to count the cases that matter.
+
+    Substring containment called a recognition a duplicate whenever it happened
+    to sit inside the native span — which is every truncated read of a clinical
+    value: ``100`` over a page whose text layer says ``1000``, ``8.6`` over
+    ``98.6``, ``12`` over ``128``. Those are the two streams genuinely
+    disagreeing about a number, and the disagreement count is what DRAFT.md and
+    OCR_EVIDENCE.md print to an operator as the measure of how much needs a
+    human eye. Here the pixels carry ``100`` and the invisible layer over them
+    claims ``1000``: both readings survive, and the page is held.
+    """
+    scan = _pixmap_of(lambda page: page.insert_text((60, 90), "100", fontsize=13, fontname="hebo"))
+
+    def build(doc: pymupdf.Document) -> None:
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        page.insert_image(pymupdf.Rect(0, 0, PAGE_W, PAGE_H), pixmap=scan)
+        page.insert_text((60, 90), "1000", fontsize=13, fontname="hebo", render_mode=3)
+
+    sample = extract_document(_write(tmp_path / "truncated.pdf", build), 0, ocr=_WORKER)
+
+    evidence = sample.evidence
+    assert evidence.duplicate_count == 0
+    assert evidence.disagreement_count == 1
+    assert {conflict.kind for conflict in evidence.conflicts} == {CONFLICT_DISAGREEMENT}
+    assert {"100", "1000"} <= {span.text for span in sample.spans}
+    assert evidence.review_required is True
+
+
+@_NEEDS_ENGINE
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a POSIX shell script")
+def test_a_faulting_engine_reaches_the_operator_as_an_engine_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The whole path, from a broken installation to the words on the terminal.
+
+    An engine that exits non-zero used to arrive as ``analysis failed
+    (ValueError)`` with nothing after it — an operator reading that goes and
+    looks at their samples, which are fine. Driven here through the shipped
+    ``anast pack init`` so the seam being proved is the one a person uses.
+    """
+    from typer.testing import CliRunner
+
+    from anastomosis.cli import app
+
+    assert _WORKER is not None
+    broken = tmp_path / "broken-engine"
+    broken.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f'  --version|--list-langs) exec "{_WORKER.exe}" "$@" ;;\n'
+        "esac\n"
+        "exit 3\n",
+        encoding="utf-8",
+    )
+    broken.chmod(0o755)
+    monkeypatch.setenv("ANAST_OCR_TESSERACT", str(broken))
+    samples = _raster_samples(tmp_path / "samples")
+    output = tmp_path / "packs"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pack",
+            "init",
+            "--from-samples",
+            str(samples),
+            "--name",
+            "faulted",
+            "--out-dir",
+            str(output),
+            "--yes",
+        ],
+    )
+    capsys.readouterr()
+
+    assert result.exit_code == 1
+    assert "analysis failed (OcrEngineError)" in result.output
+    assert "Your samples are not implicated" in result.output
+    assert not (output / "faulted").exists()

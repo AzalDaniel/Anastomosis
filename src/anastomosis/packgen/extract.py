@@ -46,6 +46,7 @@ from .ocr import (
     NATIVE_OR_SYNTHETIC,
     NATIVE_TEXT,
     OCR_OBSERVATION,
+    OcrEngineError,
     OcrToken,
     TesseractWorker,
 )
@@ -427,12 +428,17 @@ def extract_samples(
     for index, path in enumerate(pdf_paths):
         try:
             samples.append(extract_document(path, index, ocr=ocr))
-        except (NoExtractableTextError, OcrRegionError, OcrRequiredError):
+        except (NoExtractableTextError, OcrEngineError, OcrRegionError, OcrRequiredError):
             # These failures already carry a PHI-safe, opaque sample index (and
             # a page index). Keep their specific type so run_pack_init can
             # surface exc_tag — the generic wrapper below names the PATH, which
             # is right for an unreadable file and wrong for a refusal that has
-            # already said everything an operator needs.
+            # already said everything an operator needs. OcrEngineError is in
+            # this list because the four cases it is raised for — a pixel cap
+            # breached, a non-zero exit, a missing output stream, TSV and hOCR
+            # disagreeing — are facts about the ENGINE, and rewrapping them as
+            # "sample unreadable" told an operator their file was bad when
+            # their installation was.
             raise
         except Exception as exc:
             raise ValueError(f"sample #{index} unreadable ({path}): {exc}") from exc

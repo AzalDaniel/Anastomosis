@@ -450,22 +450,32 @@ class TesseractWorker:
             stem = Path(tmp) / "page"
             image_path = stem.with_suffix(".png")
             image_path.write_bytes(png_bytes)
-            completed = self._run(
-                [
-                    str(self.exe),
-                    str(image_path),
-                    str(stem),
-                    "-l",
-                    self.config.language,
-                    "--psm",
-                    self.config.page_segmentation,
-                    "--dpi",
-                    str(round(page_image.dpi_x)),
-                    "tsv",
-                    "hocr",
-                ],
-                timeout=self.config.timeout_seconds,
-            )
+            try:
+                completed = self._run(
+                    [
+                        str(self.exe),
+                        str(image_path),
+                        str(stem),
+                        "-l",
+                        self.config.language,
+                        "--psm",
+                        self.config.page_segmentation,
+                        "--dpi",
+                        str(round(page_image.dpi_x)),
+                        "tsv",
+                        "hocr",
+                    ],
+                    timeout=self.config.timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                # The deadline is one of the four engine faults this class
+                # promises to raise as its own, and it was the one that did
+                # not: TimeoutExpired escaped, was rewrapped a layer up as
+                # "sample unreadable", and told an operator their document was
+                # bad when their engine had hung.
+                raise OcrEngineError(
+                    f"OCR engine exceeded the {self.config.timeout_seconds}s page deadline"
+                ) from None
             if completed.returncode != 0:
                 raise OcrEngineError(f"OCR engine exited {completed.returncode}")
             tsv_path, hocr_path = stem.with_suffix(".tsv"), stem.with_suffix(".hocr")

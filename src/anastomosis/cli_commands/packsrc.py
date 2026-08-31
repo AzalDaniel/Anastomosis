@@ -177,26 +177,58 @@ def _render_preview(pack_dir: Path) -> Path | None:
     return result.documents[0].path
 
 
+def _engine_fault_advice(*, ocr_allowed: bool) -> tuple[str, ...]:
+    """An engine IS here and it misbehaved — say so, and clear the samples.
+
+    A page too large for the cap, a non-zero exit, a missing output stream,
+    its two streams disagreeing about how many words they read: every one of
+    those is a fact about the installation. Saying nothing left the operator
+    reading "analysis failed" beside a file that is perfectly fine.
+    """
+    del ocr_allowed  # the fault is the engine's either way
+    return (
+        "  The offline OCR engine on this machine did not complete a page — it exceeded "
+        "its deadline, exited non-zero, or returned output this build could not read. "
+        "Your samples are not implicated. Re-run with --no-ocr to learn from native text "
+        "only, or check the engine installation.",
+    )
+
+
+def _ocr_required_advice(*, ocr_allowed: bool) -> tuple[str, ...]:
+    """The sample is a scan and nothing on this machine can read it.
+
+    The install hint is a file to place, not a download, so it is printed
+    rather than linked — and if the operator asked for --no-ocr, the refusal
+    names their own flag before it names the missing engine.
+    """
+    from anastomosis.packgen.ocr import INSTALL_HINT
+
+    declined = "" if ocr_allowed else " You passed --no-ocr, so it was not recognized."
+    return (f"  A sample page is a scan with no readable text.{declined}", f"  {INSTALL_HINT}")
+
+
+#: Exception TYPE name -> the next step an operator can act on. Anything not
+#: listed here gets the bare "analysis failed" line and no invented advice.
+_ANALYSIS_ADVICE = {
+    "OcrEngineError": _engine_fault_advice,
+    "OcrRequiredError": _ocr_required_advice,
+}
+
+
 def _report_analysis_failure(error: str | None, *, ocr_allowed: bool) -> None:
     """Say why the harvest stopped, in a way the operator can act on.
 
     The error is an exception TYPE name — never a message that could carry a
-    sample path. ``OcrRequiredError`` is the one that has a next step attached:
-    the sample is a scan and nothing on this machine can read it, so the
-    install hint (a file to place, not a download) is printed with it.
+    sample path.
     """
     from anastomosis import cli as _cli
 
     _cli.console.print(f"[red]analysis failed[/red] ({error})")
-    if error != "OcrRequiredError":
+    advice = _ANALYSIS_ADVICE.get(error or "")
+    if advice is None:
         return
-    from anastomosis.packgen.ocr import INSTALL_HINT
-
-    _cli.console.print(
-        "  A sample page is a scan with no readable text."
-        + ("" if ocr_allowed else " You passed --no-ocr, so it was not recognized.")
-    )
-    _cli.console.print(f"  {INSTALL_HINT}")
+    for line in advice(ocr_allowed=ocr_allowed):
+        _cli.console.print(line)
 
 
 def _note_ocr_evidence(pack_dir: Path) -> None:

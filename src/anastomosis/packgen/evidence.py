@@ -234,9 +234,19 @@ class LayoutEvidence:
     ocr_texts: frozenset[str] = field(default_factory=frozenset)
 
     @property
+    def ocr_attempted(self) -> bool:
+        """Whether any page in this batch was actually put to an engine.
+
+        The emitter asks this before it says a word about evidence: on a batch
+        that never called OCR there is one kind of provenance, and naming it
+        would change a line in every pack produced before OCR existed.
+        """
+        return any(page.ocr_attempted for page in self.pages)
+
+    @property
     def review_required(self) -> bool:
         """Whether a human must review this pack before it is trusted."""
-        return bool(self.ocr_texts) or any(page.ocr_attempted for page in self.pages)
+        return bool(self.ocr_texts) or self.ocr_attempted
 
     @property
     def class_counts(self) -> dict[str, int]:
@@ -494,9 +504,18 @@ def _adjudicate(
         if overlap is None:
             accepted.append(token)
             continue
-        duplicate = (
-            normalized_text(token.text).casefold() in normalized_text(overlap.text).casefold()
-        )
+        # Word sets, not substring containment. `in` called a recognition a
+        # duplicate whenever it happened to be a substring of the native span,
+        # which is every truncated read of a clinical value: '100' over a page
+        # saying 'Glucose 1000 mg/dL', '8.6' over '98.6', '12' over '128' were
+        # all recorded as "the native object is better evidence for the same
+        # pixels" when the two streams genuinely disagree — and the
+        # disagreement count is printed to an operator as a safety figure. A
+        # recognition is the same reading only when every word in it is a word
+        # the native span has.
+        recognized = set(normalized_text(token.text).casefold().split())
+        native = set(normalized_text(overlap.text).casefold().split())
+        duplicate = bool(recognized) and recognized <= native
         kind = CONFLICT_DUPLICATE if duplicate else CONFLICT_DISAGREEMENT
         conflicts.append(
             EvidenceConflict(

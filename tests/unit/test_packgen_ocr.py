@@ -12,6 +12,7 @@ No sample PDF is checked in and nothing is patient-derived.
 from __future__ import annotations
 
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -416,3 +417,82 @@ def test_the_provenance_vocabulary_is_closed() -> None:
         ocr.NATIVE_OR_SYNTHETIC,
         ocr.OCR_OBSERVATION,
     }
+
+
+# --- the engine that misbehaves ---------------------------------------------
+
+
+def _stand_in_engine(tmp_path: Path, name: str, body: str) -> Path:
+    """A real executable that answers ``--version`` and then misbehaves.
+
+    Built as a script rather than a mock because the handler under test wraps
+    an actual :mod:`subprocess` outcome: a patched ``_run`` would prove the
+    ``except`` clause reads correctly and nothing about whether the real call
+    ever lands in it.
+    """
+    assert _WORKER is not None
+    script = tmp_path / name
+    script.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        f'  --version|--list-langs) exec "{_WORKER.exe}" "$@" ;;\n'
+        "esac\n" + body,
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+@_NEEDS_ENGINE
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a POSIX shell script")
+def test_a_page_that_outruns_the_deadline_is_an_engine_fault(tmp_path: Path) -> None:
+    """The timeout is one of this class's own faults and must be raised as one.
+
+    ``TimeoutExpired`` used to escape untranslated, be rewrapped a layer up as
+    "sample #N unreadable (<path>)", and tell an operator their document was
+    bad when their engine had hung — with the sample's path in the message of
+    an exception that is only ever supposed to carry an index.
+    """
+    slow = _stand_in_engine(tmp_path, "slow-engine", "sleep 30\n")
+    worker = TesseractWorker(slow, OcrConfig(timeout_seconds=1))
+    png, page_image = _rendered_page(
+        lambda page: page.insert_text((60, 90), "DEADLINE", fontsize=12, fontname="hebo")
+    )
+
+    with pytest.raises(OcrEngineError, match=r"exceeded the 1s page deadline") as excinfo:
+        worker.recognize(png, page_image)
+
+    assert "/" not in str(excinfo.value) and "\\" not in str(excinfo.value)
+
+
+@_NEEDS_ENGINE
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a POSIX shell script")
+def test_an_engine_fault_keeps_its_own_type_through_a_batch(tmp_path: Path) -> None:
+    """A batch must not relabel an installation fault as an unreadable sample.
+
+    ``extract_samples`` re-raises the refusals that already carry a PHI-safe
+    index and wraps everything else with the sample's PATH. An engine that
+    exits non-zero belongs in the first group: the samples are innocent, and
+    the operator needs to hear that before they go looking at their files.
+    """
+    from anastomosis.packgen.extract import extract_samples
+
+    broken = _stand_in_engine(tmp_path, "broken-engine", "exit 3\n")
+    worker = TesseractWorker(broken, OcrConfig())
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    page.insert_text((60, 90), "SCAN ME", fontsize=13, fontname="hebo")
+    scan = page.get_pixmap(dpi=150)
+    doc.close()
+    rastered = pymupdf.open()
+    only = rastered.new_page(width=PAGE_W, height=PAGE_H)
+    only.insert_image(pymupdf.Rect(0, 0, PAGE_W, PAGE_H), pixmap=scan)
+    sample = tmp_path / "scan.pdf"
+    rastered.save(sample)
+    rastered.close()
+
+    with pytest.raises(OcrEngineError) as excinfo:
+        extract_samples([sample], ocr=worker)
+
+    assert sample.name not in str(excinfo.value)
