@@ -8,19 +8,25 @@ toolkit down.
 """
 
 from .base import (
+    SelectionRule,
     SourceAdapter,
     SourceDataError,
     available_sources,
     detect_source,
     get_source,
     register,
+    selection_rules,
+    with_selection,
 )
 
 __all__ = [
+    "SelectionRule",
     "SourceAdapter",
     "SourceDataError",
     "available_sources",
     "detect_source",
     "get_source",
     "register",
+    "selection_rules",
+    "with_selection",
 ]

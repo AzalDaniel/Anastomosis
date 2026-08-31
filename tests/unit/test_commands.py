@@ -46,7 +46,7 @@ class _FakeChromium:
 def test_get_toolkit_info_reports_sources_packs_and_extras() -> None:
     info = get_toolkit_info()
     assert isinstance(info.version, str) and info.version
-    by_name = {name: display for name, display, _desc in info.sources}
+    by_name = {s.name: s.display for s in info.sources}
     assert "pf-tebra" in by_name
     pack_names = {p.name for p in info.packs}
     assert {"generic_soap", "practice_fusion_soap"} <= pack_names

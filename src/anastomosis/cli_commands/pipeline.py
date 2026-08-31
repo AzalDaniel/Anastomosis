@@ -43,6 +43,14 @@ def pipeline_run(
             help="Override a section flag, e.g. --section insurance=on --section addenda=off.",
         ),
     ] = None,
+    include: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--include",
+            help="Render encounters a selection rule would leave out, e.g. "
+            "--include growth-charts. `anast info` lists each source's rules.",
+        ),
+    ] = None,
     qa: QaFlag = True,
     archive: Annotated[
         Path | None,
@@ -81,6 +89,7 @@ def pipeline_run(
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand
 
     sections = _cli._sections_or_exit(section, source=source, pack=pack)
+    includes = _cli._includes_or_exit(include, source=source, pack=pack)
     deliveries: list[DeliveryCommand] = []
     if archive is not None:
         deliveries.append(DeliveryCommand("archive", archive))
@@ -98,6 +107,7 @@ def pipeline_run(
             force=force,
             trust_new=trust_pack,
             sections=sections,
+            include=includes,
             qa=qa,
             deliveries=tuple(deliveries),
             write_manifest=upload_manifest,

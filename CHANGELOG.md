@@ -168,6 +168,29 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **Which visits become charts is a run's choice, not the product's opinion.**
+  The PF/Tebra adapter kept two shapes of encounter out of the render — a SOAP
+  note whose four sections are all empty, and a growth-chart visit for a
+  patient who was an adult at the time — and parked them losslessly in
+  `extensions`. Both rules are sound for the practice that asked for them and
+  neither is universal: an archivist retaining everything wants the empty
+  visit, and a paediatric practice whose patients grew up wants the growth
+  chart. Each rule is now a per-run option in the shape the section flags
+  already have — `anast pipeline run --include growth-charts`, a tick in the
+  GUI's new "Visits to skip" matrix, `PipelineCommand.include` between them —
+  with every rule on by default, so an existing run is unchanged: the six
+  charts, the render index, the render settings, the canonical records and the
+  stage events are byte-for-byte what they were. A rule name the source does
+  not have is refused before the export is opened, listing the ones it has, and
+  `anast info` prints each format's rules beside the word that switches one
+  off. The accounting follows the option rather than describing the old run:
+  an included growth chart is rendered, graded, and its measurements are on a
+  page, where under the rule they were a fact QA could only report as attached
+  to a visit the record did not contain. `selection_report.json` is version 2:
+  it still names every excluded encounter and the rule that excluded it, and it
+  now also names every rule the source has and whether this run applied it —
+  without that, an empty `excluded` meant either "the rules found nothing" or
+  "no rule was running", which are opposite answers. (#288)
 - **A selector under a name the loader does not know is now refused, loudly.**
   It used to be dropped on the floor: the loader read a closed list of slot
   names, so a typo'd or stale key was read by nobody and reported to nobody

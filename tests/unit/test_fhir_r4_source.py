@@ -1327,7 +1327,7 @@ def test_no_patient_is_a_loud_failure(tmp_path: Path) -> None:
 def test_adapter_registered_in_toolkit_info() -> None:
     from anastomosis.core.commands import get_toolkit_info
 
-    sources = {name for name, _display, _desc in get_toolkit_info().sources}
+    sources = {s.name for s in get_toolkit_info().sources}
     assert "fhir-r4" in sources
 
 
