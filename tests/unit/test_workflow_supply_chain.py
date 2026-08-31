@@ -309,3 +309,35 @@ def test_every_ignored_pip_dependency_is_actually_pinned() -> None:
             "packaging/constraints.txt does not pin it. An ignore with no pin "
             "behind it suppresses updates for no stated reason."
         )
+
+
+def test_no_workflow_runs_twice_for_one_commit() -> None:
+    """A workflow with a `pull_request` trigger may only push-trigger on main.
+
+    Both `ci.yml` and `codeql.yml` listed `claude/**` under `push` while also
+    triggering on `pull_request`. Every branch here opens a pull request, so
+    each commit fired the whole matrix twice against the same SHA — measured on
+    PR #331 as run 33355245691 and run 33355224110, both green, 24 check runs
+    where 12 carried all the signal.
+
+    The duplicates are not free and not only slow. Each check run is a webhook
+    and a row that anything watching the pull request then reads back, and this
+    account's GitHub API quota is per-user and shared across every session and
+    every repository — so a workflow that says everything twice spends someone
+    else's budget to do it.
+
+    Stated as a rule rather than a pin on two filenames, so a third workflow
+    added later cannot reintroduce it quietly.
+    """
+    for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+        triggers = _load(path).get(True) or _load(path).get("on") or {}
+        if not isinstance(triggers, dict) or "pull_request" not in triggers:
+            continue
+        push = triggers.get("push") or {}
+        branches = list(push.get("branches") or []) if isinstance(push, dict) else []
+        extra = [b for b in branches if b != "main"]
+        assert not extra, (
+            f"{path.name} triggers on `pull_request` AND pushes to {extra}; every "
+            "branch here opens a pull request, so each commit would run this "
+            "workflow twice against the same SHA. Push-trigger on main only."
+        )

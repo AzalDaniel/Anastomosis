@@ -524,9 +524,10 @@ def test_two_sections_sharing_a_code_are_two_obligations(tmp_path: Path) -> None
     assert _row(ledger, "section:11450-4").instances == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
 
 
-def test_an_unstructured_document_is_a_body_nobody_read(tmp_path: Path) -> None:
-    """The shape that parses perfectly and yields a chart with nothing on it:
-    a scanned referral whose whole clinical content is one embedded artifact."""
+def test_an_unstructured_document_arrives_with_its_chart(tmp_path: Path) -> None:
+    """The shape that used to parse perfectly and yield a chart with nothing on
+    it: a scanned referral whose whole clinical content is one embedded
+    artifact. It leaves with that artifact, and the row says so."""
     path = tmp_path / "scan.xml"
     path.write_text(
         _DOCUMENT.replace(
@@ -537,9 +538,12 @@ def test_an_unstructured_document_is_a_body_nobody_read(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     ledger = document_ledger(path)
-    assert _sole(ledger, "body:nonXMLBody") is Disposition.UNSUPPORTED
+    assert _sole(ledger, "body:nonXMLBody") is Disposition.STRUCTURALLY_PARSED
     record = parse_document(path)
-    assert not record.documents and not record.encounters and not record.conditions
+    # Still no coded content — there was none in the source — which is exactly
+    # why the one artifact has to arrive.
+    assert len(record.documents) == 1
+    assert not record.encounters and not record.conditions
 
 
 # --- the books, and what happens when they do not balance ---------------------

@@ -57,6 +57,7 @@ from anastomosis.core.ccda_codes import (
 )
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
+    EXT_INLINE_CONTENT,
     AllergyCategory,
     AllergyIntolerance,
     Condition,
@@ -134,6 +135,18 @@ _SEX_CODE = {"f": "F", "female": "F", "m": "M", "male": "M"}
 # here is narrated, whatever its namespace.
 _NATIVE_EXT_KEYS = frozenset({"ccda:route", "ccda:dose", "ccda:allergen_code", "ccda:negationInd"})
 
+# The one extension whose value is not narrated because it is DELIVERED: an
+# artifact that came inline with its record (a C-CDA Unstructured Document's
+# scan lives inside the XML, not beside it) rides here as base64 until the run
+# writes it into the attachments directory, named by ``documents[].path`` and
+# witnessed by ``documents[].sha256``. Every other attachment this toolkit
+# handles is already a file whose BYTES no CDA carries — only its name, type and
+# digest narrate — so narrating these would not preserve one thing more; it
+# would inline tens of megabytes of base64 into the document and, since a
+# re-ingest recovers the narrative and the next export re-narrates it, grow it
+# without bound generation over generation. Declared in DECLARED_LOSSES.
+_DELIVERED_NOT_NARRATED = frozenset({EXT_INLINE_CONTENT})
+
 # The canonical display the parser stamps on the one social-history observation
 # it structurally recovers (the smoking-status concept, LOINC 72166-2). PF and
 # the C-CDA parser both produce this exact display with ``code is None``; it is
@@ -175,6 +188,14 @@ DECLARED_LOSSES: dict[str, str] = {
         "(_carried_forward). Every OTHER ccda:* key (a captured section "
         "narrative, the source document's id/effectiveTime/title) is narrated "
         "like any vendor extension, because this exporter re-emits none of them"
+    ),
+    "documents[]:inline artifact bytes": (
+        "an artifact carried inline with its record (the anast:inline_content "
+        "extension) is DELIVERED, not narrated: the run writes the bytes into "
+        "the attachments directory beside the charts, and documents[].path, "
+        ".mime_type and .sha256 narrate as usual so the file stays findable and "
+        "checkable. Every other attachment behaves this way already — no CDA "
+        "this toolkit writes has ever carried an attachment's bytes"
     ),
     "*:narrative-only recovery": (
         "every other populated field with no structured CDA slot (native fields "
@@ -1163,7 +1184,7 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
     not re-emitted must ride the loss narrative."""
     lines: list[str] = []
     for key in sorted(extensions):
-        if key in _NATIVE_EXT_KEYS:
+        if key in _NATIVE_EXT_KEYS or key in _DELIVERED_NOT_NARRATED:
             continue
         if (
             path == "patient"

@@ -591,12 +591,24 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
 
 
 def _atomic_write(path: Path, text: str, mode: int) -> None:
-    """Write ``text`` to ``path`` atomically and owner-only (temp + os.replace)."""
+    """Write ``text`` to ``path`` atomically and owner-only (temp + os.replace).
+
+    Encoded here and written as BYTES, which is not a style preference. This
+    helper writes ``mapping.json``, and the trust record beside it stores a
+    sha256 of the string that was passed in — so the bytes that land on disk
+    have to be that string and nothing else. Text mode with the default
+    ``newline`` translates every ``\n`` to ``\r\n`` on Windows, which meant
+    the digest described a file that had never existed: verification hashes
+    what it reads, and on Windows that never matched. Every freshly saved
+    mapping reported itself as edited since review, so the one warning that
+    exists to catch a real post-review edit fired on all of them and told an
+    operator nothing.
+    """
     tmp = path.with_name(f".{path.name}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
