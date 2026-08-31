@@ -15,6 +15,42 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **What rendered is what was reviewed, and it can be named.** A folder of
+  charts could not say what produced it. `render_settings.json` recorded the
+  layout's NAME, so a run into a folder whose layout had been edited since
+  reported `0 rendered, 6 skipped`, exit 0, and left the operator holding pages
+  built from bytes that no longer existed anywhere; the content-hash trust gate
+  did not close it either, because assets sit outside the hash and re-trusting
+  an edited pack is what `--trust-pack` is for. A run now publishes
+  `render_provenance.json` beside the charts: the layout's name, origin, the
+  same content hash the trust gate checked, a sha256 for every file under the
+  pack root, and — from a recording Jinja loader — the templates the render
+  ACTUALLY read. Re-running into a folder whose charts came from different
+  layout bytes is refused, naming the files that moved; a template edited
+  mid-batch, which would leave one folder holding charts from two layouts, is a
+  loud failure rather than a record nobody could write honestly. Settings and
+  provenance stay two files on purpose: one is what a person chose, the other is
+  what the machine used, and folding hundreds of digests into a whole-value
+  equality check would refuse a re-run into every directory that already exists.
+  (#350)
+
+- **The reviewed route and the run's gates ride in the manifest, and an
+  executor refuses without them.** `anast migrate` resolves a destination route,
+  renders, verifies, and stops; delivery happens later, often on another
+  machine, from the upload manifest — which carried neither the route that was
+  chosen nor any record that the run's gates had passed. A bundle rendered with
+  `--no-qa` read exactly like a verified one. Manifest schema v3 records both
+  (`route`, `gates`), and `deliver/browser/gates.py`'s `assert_deliverable`
+  refuses a bundle whose recorded gates did not pass, whose reviewed route found
+  no viable way in, or whose charts no longer hash to what the manifest
+  recorded — before the destination is attached, so no session is ever opened
+  against a live EHR for a bundle that was never going to be filed. A manifest
+  too old to carry gates is warned about rather than refused: operators have
+  rendered trees on disk, and stranding them would be the worse failure. Each
+  schema field group is now gated on the version that introduced it rather than
+  on the current version, which had been correct only while 2 was newest.
+  (#350)
+
 - **The page that is a picture.** All 53 sample PDFs this product has been
   shown — 802 pages — carried zero natively extractable words, and 52 of the
   53 were raster documents. The layout learner refused every one of them, so
@@ -36,7 +72,9 @@ issue and fixed in its own pull request.
   text is right. Where the two describe the same pixels the overlap is held —
   a duplicate is dropped from the layout candidates and COUNTED, a
   disagreement keeps both and marks the page for review — and nothing picks a
-  winner. Conflict records carry page, region, both boxes and the score, and no
+  winner. Same-reading is decided on WORDS, not on substrings: `100` read over
+  a text layer saying `1000` is the two streams disagreeing about a number, and
+  the count an operator reads as a safety figure has to say so. Conflict records carry page, region, both boxes and the score, and no
   text at all, because a disagreement is by construction about a value.
 
   The emitted draft says all of it where a person will actually read it: a
@@ -55,6 +93,12 @@ issue and fixed in its own pull request.
   text objects, and run against the real binary, with semantic fidelity and
   visual geometry reported and gated SEPARATELY so neither can waive the other.
   Regenerate deliberately with `tools/regen_ocr_goldens.py`.
+
+  Every fault the worker can meet is raised as its own — a pixel cap breached,
+  a non-zero exit, a missing output stream, the two streams disagreeing about
+  how many words they read, and the page deadline — and each passes through a
+  batch keeping its type, so `analysis failed (OcrEngineError)` arrives with
+  "your samples are not implicated" rather than as an unreadable file.
 
   With no engine on the machine the fail-closed half stands exactly as it was —
   a raster page with no text raises and no partial pack is written — and the
@@ -132,6 +176,35 @@ issue and fixed in its own pull request.
   PHI-free, 6,144 shapes spanning the six C-CDA document types against every
   combination of ten structural traps, generated at test time and never
   committed. This measures; it does not fix. (#309)
+
+### Changed
+
+- **Third-party pack code no longer runs with the desktop user's authority.**
+  An external or taught pack's `context.py` could read any file the operator
+  could read, write one anywhere, open a socket, and spawn a process — at
+  import, before a chart was rendered, because nobody had ever chosen otherwise.
+  `reconstruct/packexec.py` makes it a decision: every non-built-in pack now
+  executes against a restricted globals mapping — no `open`, `eval`, `exec`,
+  `compile`, `input` or `print`, and an import allowlist covering the canonical
+  model, the pack helpers, and pure-computation stdlib, so `os`, `subprocess`,
+  `socket`, `pathlib` and the rest are refused BY NAME at import and surface as
+  the pack's diagnosis. Built-ins are exempt: they ship in this wheel and
+  already hold the application's authority. **This is not a sandbox and the
+  module says so** — a restricted globals mapping in CPython is escapable by
+  anyone who sets out to escape it, and the controls that carry weight against
+  hostile pack code remain the consent flag and the content-hash trust gate.
+  What it buys is that the accidental and the casual stop working and say why.
+  An external pack that needs an asset embeds it as a `data:` URI in its
+  manifest tokens — inside the bytes the trust hash covers — rather than reading
+  a file beside it that nothing pins. (#350)
+
+- **`anast upload` refuses an unverified bundle.** A behaviour change, stated
+  plainly: charts rendered with `--no-qa` (or on a machine without the render
+  extra the QA checks read PDFs with) now record `qa: not_run` in their manifest
+  and are refused at delivery, naming both remedies. Filing a chart into the
+  wrong patient is worse than not filing it, and an unverified bundle is exactly
+  the case the L0–L6 ladder exists for. Already-rendered trees from before this
+  release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
 

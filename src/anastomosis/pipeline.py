@@ -27,6 +27,7 @@ field values or rendered filenames — only counts of them.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from anastomosis.core.model import DocumentArtifact, PatientRecord
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
+    from anastomosis.reconstruct.provenance import RenderProvenance
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
 __all__ = [
@@ -153,6 +155,12 @@ class PipelineResult:
     #: that keeps no ledger; PHI-free by that function's contract, so a
     #: frontend may print it verbatim.
     source_reading: tuple[str, ...] = ()
+    #: The layout this run rendered through, named by its bytes (see
+    #: :mod:`anastomosis.reconstruct.provenance`). Carried on the result rather
+    #: than only written to disk because the upload manifest records the same
+    #: content hash as its layout gate, and two readers measuring it separately
+    #: is how they come to disagree.
+    provenance: RenderProvenance | None = None
 
 
 EventSink = Callable[[StageEvent], None]
@@ -388,6 +396,11 @@ QUARANTINE_FILENAME = "quarantine.json"
 #: What the charts in an output directory were rendered from: which layout, and
 #: which sections were switched on. Kept so a later run into the same directory
 #: can tell whether the charts already there answer the question being asked.
+#:
+#: This file is the run's INTENT. What the machine actually used — the layout's
+#: identity and a digest per pack file — lands beside it in
+#: :data:`~anastomosis.reconstruct.provenance.RENDER_PROVENANCE_NAME`, which
+#: argues in its own module docstring why the two are not one file.
 RENDER_SETTINGS_NAME = "render_settings.json"
 
 
@@ -427,8 +440,6 @@ def _guard_render_settings(out: Path, settings: dict[str, object], *, force: boo
     surprise. ``--force`` is the existing way to say "render them all again",
     and it is what the message names.
     """
-    import json
-
     if force:
         return
     record = out / RENDER_SETTINGS_NAME
@@ -450,6 +461,82 @@ def _guard_render_settings(out: Path, settings: dict[str, object], *, force: boo
         exit_code=2,
         kind="settings_changed",
     )
+
+
+def _guard_render_provenance(out: Path, provenance: RenderProvenance, *, force: bool) -> None:
+    """Refuse a run whose layout is not the layout that made these charts.
+
+    The sibling of :func:`_guard_render_settings`, and it exists because that
+    guard cannot see this: settings compare the layout's NAME, so a folder built
+    from ``generic_soap`` before someone edited its template re-runs clean,
+    reports every chart skipped, and leaves the operator holding pages produced
+    by bytes that no longer exist anywhere. The trust gate does not catch it
+    either — an asset is outside the content hash, and re-trusting an edited
+    pack is what ``--trust-pack`` is FOR.
+
+    Absent or unreadable record: nothing to compare, so nothing to refuse. A
+    folder filled by an older build has no provenance in it, and refusing every
+    one of those would be a guard that only ever punished upgrading.
+    """
+    from anastomosis.reconstruct.provenance import RENDER_PROVENANCE_NAME, provenance_difference
+
+    if force:
+        return
+    record = out / RENDER_PROVENANCE_NAME
+    if not record.is_file():
+        return
+    try:
+        previous = json.loads(record.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return  # unreadable: treat as absent rather than block a run over it
+    if not isinstance(previous, dict):
+        return
+    changed = provenance_difference(previous, provenance.as_json())
+    if not changed:
+        return
+    raise PipelineError(
+        f"The charts already in this folder were rendered from different layout bytes "
+        f"({changed}). They cannot be re-run into as though nothing moved: review the "
+        f"layout, then re-run with --force to rebuild every chart from what it holds "
+        f"now, or choose an empty folder.",
+        exit_code=2,
+        kind="layout_changed",
+    )
+
+
+def _settle_render_provenance(
+    out: Path, provenance: RenderProvenance, templates: dict[str, str]
+) -> None:
+    """Publish what the charts were produced from, and refuse a mid-run swap.
+
+    ``templates`` is what the engine's recording loader actually handed the
+    compiler. A digest there that disagrees with the one measured before the
+    render means the layout was edited WHILE the batch ran, so the folder holds
+    charts from two different layouts and no single record could honestly name
+    them. That is a loud failure, taken before the record is written — a file
+    saying "these charts came from X" must not exist beside charts that did not.
+
+    What it does NOT do is mark the folder. A run that fails here leaves charts
+    from two layouts and no record of either, so a LATER run into that folder
+    reads like a folder an older build filled and is not refused. The remedy is
+    the one the message names — ``--force`` into an empty folder — and it is
+    named rather than enforced: a poison marker would be a fourth sidecar whose
+    absence means nothing, which is the shape of guarantee this file exists to
+    stop making.
+    """
+    from anastomosis.reconstruct.provenance import RENDER_PROVENANCE_NAME, swapped_templates
+
+    settled = provenance.with_templates(templates)
+    swapped = swapped_templates(settled)
+    if swapped:
+        raise PipelineError(
+            f"The layout changed while this batch was rendering ({', '.join(swapped)}), so "
+            f"these charts did not all come from one layout. Nothing here can say which "
+            f"chart came from which; re-run with --force into an empty folder.",
+            exit_code=1,
+            kind="layout_changed",
+        )
+    _write_json(out / RENDER_PROVENANCE_NAME, settled.as_json())
 
 
 def _as_list(value: object) -> list[object]:
@@ -608,8 +695,6 @@ def settle_source_ledger(adapter: SourceAdapter, out: Path) -> tuple[str, ...]:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     """One sidecar, written atomically and deterministically."""
-    import json
-
     from anastomosis.core.atomic import atomic_write_text
 
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
@@ -829,6 +914,7 @@ def run_pipeline(
     from anastomosis.reconstruct.chromium import ChromiumRenderer, RendererUnavailable
     from anastomosis.reconstruct.engine import ReconstructionEngine
     from anastomosis.reconstruct.packtrust import default_pack_trust
+    from anastomosis.reconstruct.provenance import pack_provenance
 
     emit = on_event or (lambda _event: None)
 
@@ -898,6 +984,12 @@ def run_pipeline(
     # as a silently-unchanged output at the end.
     settings = _render_settings(pack, engine.section_flags, switched_off)
     _guard_render_settings(out, settings, force=force)
+    # And the same question about the layout's BYTES rather than its name:
+    # measured here, before the render, because a folder whose charts came from
+    # different bytes has to refuse before it is filled with a second layout's
+    # pages. `status.pack` is not None — the unavailable case raised above.
+    provenance = pack_provenance(status.pack, status.origin)
+    _guard_render_provenance(out, provenance, force=force)
 
     records = load_records(adapter, export_dir)
     emit(
@@ -951,6 +1043,12 @@ def run_pipeline(
     carried = _carry_attachments(records, export_dir, out)
     exclusions = _selection_exclusions(records)
     _write_selection_report(out, exclusions, rules_report)
+    # Provenance settles BEFORE the settings record, from the SAME measurement
+    # the guard compared plus what the renderer actually read — so the record
+    # and the refusal can never disagree about which layout this run held, and
+    # a mid-render layout swap refuses before EITHER record claims this folder
+    # is coherent.
+    _settle_render_provenance(out, provenance, engine.templates_read)
     _write_json(out / RENDER_SETTINGS_NAME, settings)
     emit(
         StageEvent(
@@ -976,6 +1074,7 @@ def run_pipeline(
         page_size=manifest.page.size,
         source_name=adapter.name,
         source_reading=source_reading,
+        provenance=provenance,
     )
 
 

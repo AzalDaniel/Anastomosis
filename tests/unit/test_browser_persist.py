@@ -24,6 +24,7 @@ import pytest
 from anastomosis.core.model import Encounter, Patient, PatientRecord
 from anastomosis.deliver.browser.manifest import build_manifest
 from anastomosis.deliver.browser.persist import (
+    LADDER_VERSION,
     MANIFEST_NAME,
     MANIFEST_VERSION,
     ManifestError,
@@ -138,9 +139,16 @@ def test_manifest_shape_and_version(tmp_path: Path) -> None:
     write_upload_manifest(docs, records, out_dir)
     data = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
 
-    assert data["version"] == MANIFEST_VERSION == 2
+    # The version describes the FILE: this caller recorded no gates, so what
+    # landed carries no v3 field and says version 2 rather than claiming a
+    # record it does not hold.
+    assert data["version"] == LADDER_VERSION == 2
     # The run-level pack name: absent here (no pack was passed), never omitted.
     assert data["pack"] is None
+    # The reviewed context, likewise present-and-null rather than missing: this
+    # caller recorded no route and no gates, and the file says so.
+    assert data["route"] is None
+    assert data["gates"] is None
     # items sorted by item_key; each carries the documented keys.
     keys = data["items"][0].keys()
     assert set(keys) == {
@@ -196,7 +204,7 @@ def test_v2_round_trip_carries_pack_expected_pages_and_dos(tmp_path: Path) -> No
 
     manifest = load_upload_manifest(out_dir)
 
-    assert manifest.version == MANIFEST_VERSION
+    assert manifest.version == LADDER_VERSION
     assert manifest.degraded is False
     assert manifest.pack == "generic_soap"
     [item] = manifest.items
@@ -230,7 +238,7 @@ def test_the_item_carries_its_own_date_of_service(tmp_path: Path) -> None:
     assert manifest.encounters[ENC_A].date_of_service == DOS
     # Still a v2 file: the value was already in it, nothing new was written.
     written = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
-    assert written["version"] == MANIFEST_VERSION
+    assert written["version"] == LADDER_VERSION
 
 
 def test_a_v1_item_has_no_date_of_service_to_carry(tmp_path: Path) -> None:

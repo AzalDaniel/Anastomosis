@@ -366,9 +366,11 @@ def run_upload_command(
        the receipt that moves a bound run past ``prepared``.
 
     ``attach`` is invoked only after the lock is held, the manifest reads
-    cleanly and the binding checks out, so a locked dir, a missing/malformed
-    manifest or a drifted binding never touches the browser. ``stop`` is the
-    cooperative cancel flag the engine checks at item boundaries (the GUI's
+    cleanly, the binding checks out, AND the bundle passes
+    :func:`~anastomosis.deliver.browser.gates.assert_deliverable` — so a locked
+    dir, a missing or malformed manifest, a drifted binding, or a bundle whose
+    gates did not pass never touches the browser. ``stop`` is the cooperative
+    cancel flag the engine checks at item boundaries (the GUI's
     ``upload_stop``); the CLI passes ``None``.
 
     When ``cmd.verify`` is set the engine is wired with a
@@ -385,6 +387,7 @@ def run_upload_command(
     from anastomosis.core.locking import output_lock
     from anastomosis.core.output import secure_output_dir
     from anastomosis.deliver.browser.engine import UploadEngine
+    from anastomosis.deliver.browser.gates import assert_deliverable
     from anastomosis.deliver.browser.manager import ManagedDestination
     from anastomosis.deliver.browser.persist import load_upload_manifest
     from anastomosis.deliver.browser.reports import write_run_report
@@ -421,11 +424,15 @@ def run_upload_command(
         # verifies against the rest of it, and a v1 file announces its degraded
         # coverage from inside this read.
         manifest = load_upload_manifest(manifest_root)
-        # And under the SAME lock, before the browser is touched: are the source,
-        # destination and layout this tree was prepared under still the ones this
-        # machine holds? A drifted binding refuses here (BindingError), naming
-        # which profile moved, rather than filing charts against expectations
-        # that have changed underneath them.
+        # Two questions under the SAME lock, both before the browser is
+        # touched, because they are different questions. Is this bundle fit to
+        # deliver — did its recorded gates pass, did its reviewed route find a
+        # way in, do its charts still hash to what was reviewed? And is it
+        # still bound to the source, destination and layout it was prepared
+        # under? A manifest too old to carry gates warns instead (see
+        # `deliver.browser.gates`); a drifted binding refuses naming which
+        # profile moved. Either way, nothing is filed and reconciled after.
+        assert_deliverable(manifest)
         check_run_binding(cmd.out_dir)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol

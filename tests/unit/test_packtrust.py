@@ -2,14 +2,16 @@
 
 The security property under test: an external pack's ``context.py`` is NEVER
 ``exec_module``'d unless the pack is trusted at its current content hash. The
-"not executed" assertions use a pack whose ``context.py`` writes a sentinel at
-import time — if the sentinel never appears, the code never ran.
+"not executed" assertions use a pack whose ``context.py`` sets a flag on its own
+module at import time — if the flag never appears, the code never ran.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -19,14 +21,20 @@ from anastomosis.reconstruct import discover_packs
 from anastomosis.reconstruct.packs import _load_pack_snapshot
 from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash, read_pack_snapshot
 
-# A minimal-but-valid external pack whose context.py writes a sentinel next to
-# itself at IMPORT time, so its execution is observable.
-_CONTEXT_PY = (
-    "from pathlib import Path\n"
-    '(Path(__file__).parent / "_executed").write_text("ran", encoding="utf-8")\n'
-    "def build_context(encounter, record, cfg):\n"
-    "    return {}\n"
-)
+# A minimal-but-valid external pack whose context.py sets a flag on its own
+# module at IMPORT time, so its execution is observable from outside.
+#
+# The sentinel used to be a file the module wrote next to itself. Restricted
+# pack execution (``reconstruct.packexec``) no longer hands non-built-in pack
+# code a filesystem, so that write is now refused BEFORE it could prove
+# anything about the trust gate — which is a different property than the one
+# these tests are about. A module-level assignment needs no capability at all,
+# and the loader registers each loaded pack module in ``sys.modules`` under a
+# per-pack ``anastomosis._pack_context_*`` name, which is where ``_executed``
+# looks for it.
+_CONTEXT_PY = "EXECUTED = True\ndef build_context(encounter, record, cfg):\n    return {}\n"
+
+_CONTEXT_MODULE_PREFIX = "anastomosis._pack_context_"
 _PACK_YAML = 'name: {name}\nversion: "0.1"\ndescription: trust test pack\n'
 _TEMPLATE = "<html><body>{{ anything }}</body></html>\n"
 
@@ -40,8 +48,28 @@ def _make_pack(parent: Path, name: str = "trust_probe") -> Path:
     return pack
 
 
-def _executed(pack: Path) -> bool:
-    return (pack / "_executed").is_file()
+def _pack_context_modules() -> list[str]:
+    return [name for name in list(sys.modules) if name.startswith(_CONTEXT_MODULE_PREFIX)]
+
+
+def _executed() -> bool:
+    """Whether any pack ``context.py`` body has run since the last reset."""
+    return any(getattr(sys.modules[name], "EXECUTED", False) for name in _pack_context_modules())
+
+
+def _reset_executed() -> None:
+    """Forget every loaded pack module, so the next load is observed on its own."""
+    for name in _pack_context_modules():
+        del sys.modules[name]
+
+
+@pytest.fixture(autouse=True)
+def _clean_pack_modules() -> Iterator[None]:
+    """A loaded pack module outlives its test; leaking one would make the NEXT
+    test's "was it executed?" answer belong to the previous test."""
+    _reset_executed()
+    yield
+    _reset_executed()
 
 
 # A pack whose build_context returns a marker baked into context.py's source, so
@@ -201,7 +229,7 @@ def test_untrusted_external_pack_is_refused_and_not_executed(tmp_path: Path) -> 
     status = statuses["trust_probe"]
     assert status.pack is None
     assert "untrusted" in (status.diagnosis or "")
-    assert not _executed(pack), "untrusted context.py must NOT be exec'd"
+    assert not _executed(), "untrusted context.py must NOT be exec'd"
 
 
 def test_trust_new_records_then_loads_and_changes_re_refuse(tmp_path: Path) -> None:
@@ -213,20 +241,20 @@ def test_trust_new_records_then_loads_and_changes_re_refuse(tmp_path: Path) -> N
         [pack.parent], allow_external=True, trust=PackTrust(store_path), trust_new=True
     )
     assert statuses["trust_probe"].pack is not None
-    assert _executed(pack)
+    assert _executed()
 
     # A later run WITHOUT trust_new still loads — the hash is trusted now.
-    (pack / "_executed").unlink()
+    _reset_executed()
     statuses = discover_packs([pack.parent], allow_external=True, trust=PackTrust(store_path))
     assert statuses["trust_probe"].pack is not None
-    assert _executed(pack)
+    assert _executed()
 
     # Mutating context.py un-trusts it: refused again, not executed.
-    (pack / "_executed").unlink()
+    _reset_executed()
     (pack / "context.py").write_text(_CONTEXT_PY + "# changed\n", encoding="utf-8")
     statuses = discover_packs([pack.parent], allow_external=True, trust=PackTrust(store_path))
     assert statuses["trust_probe"].pack is None
-    assert not _executed(pack), "changed (un-trusted) context.py must NOT be exec'd"
+    assert not _executed(), "changed (un-trusted) context.py must NOT be exec'd"
 
 
 def test_trust_none_preserves_consent_only_behavior(tmp_path: Path) -> None:
@@ -235,7 +263,7 @@ def test_trust_none_preserves_consent_only_behavior(tmp_path: Path) -> None:
     pack = _make_pack(tmp_path / "ext")
     statuses = discover_packs([pack.parent], allow_external=True)  # trust=None
     assert statuses["trust_probe"].pack is not None
-    assert _executed(pack)
+    assert _executed()
 
 
 def test_builtin_packs_load_without_trust(tmp_path: Path) -> None:
@@ -280,8 +308,8 @@ def test_cli_refuses_untrusted_pack_dir_then_trusts(
     refused = runner.invoke(app, base)
     assert refused.exit_code == 2, refused.output
     assert "unavailable" in refused.output
-    assert not _executed(pack), "untrusted pack must not run via the CLI either"
+    assert not _executed(), "untrusted pack must not run via the CLI either"
 
     trusted = runner.invoke(app, [*base, "--trust-pack"])
     assert trusted.exit_code == 0, trusted.output
-    assert _executed(pack)
+    assert _executed()

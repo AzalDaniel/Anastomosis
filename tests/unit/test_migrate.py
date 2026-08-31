@@ -674,3 +674,43 @@ def test_migrate_of_a_ledgerless_source_reads_as_nothing(
     assert result.source_reading == ()
     assert not (out / "charts" / "loss_ledger.json").exists()
     assert not (out / "loss_ledger.json").exists()
+
+
+# --- the reviewed route and gates -------------------------------------------
+
+
+@pytest.mark.parametrize("render", [RENDER_NEUTRAL, RENDER_CCDA_STANDARD])
+def test_both_render_modes_record_the_route_and_the_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, render: str
+) -> None:
+    """A migration resolves the route before it renders and stops before it
+    delivers, so the route and the run's gates are only knowable HERE. Both
+    modes must record them, or whether an executor refuses a bundle would
+    depend on which representation the operator picked.
+    """
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    _patch_chromium(monkeypatch)
+    from anastomosis.deliver.browser.gates import GATE_NOT_RUN
+    from anastomosis.deliver.browser.persist import load_upload_manifest
+
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(
+            export_dir=FIXTURE,
+            out_dir=out,
+            source="pf-tebra",
+            destination="tebra",
+            render=render,
+            # QA off: the shared fake renderer places text the strict checks
+            # fail on, and this test pins the RECORD, not the verdict. It is
+            # also the more interesting record — an unverified bundle is the
+            # one an executor has to refuse.
+            qa=False,
+        )
+    )
+
+    manifest = load_upload_manifest(out / "charts")
+    assert manifest.route is not None
+    assert manifest.route.destination == "tebra"
+    assert manifest.gates is not None
+    assert manifest.gates.qa == GATE_NOT_RUN
