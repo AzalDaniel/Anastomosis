@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
+    from anastomosis.deliver.browser.gates import RoutePlan, RunGates
     from anastomosis.deliver.ccda_export import CcdaExportResult
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import EventSink, PipelineResult, StageEvent
@@ -214,6 +215,8 @@ def _write_manifest_with_event(
     emit: Callable[[StageEvent], None],
     *,
     pack: str | None,
+    route: RoutePlan | None = None,
+    gates: RunGates | None = None,
 ) -> None:
     """Persist the upload manifest next to the charts and emit MANIFEST.
 
@@ -227,11 +230,17 @@ def _write_manifest_with_event(
     ``anast upload`` can run L3 against the header fields it declares. It is
     ``None`` in ccda-standard mode, where the HL7 stylesheet renders the view and
     no pack declares anything for L3 to check.
+
+    ``route`` and ``gates`` are the bundle's reviewed context — the destination
+    route this migration resolved, and what the run checked before writing the
+    manifest. The pack-mode path reaches the same fields through
+    ``core.commands._write_pipeline_manifest``; both modes must record them or
+    an executor's refusal would depend on which representation was chosen.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(docs, records, charts_dir, pack=pack)
+    write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
     emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
 
 
@@ -270,6 +279,7 @@ def _run_pack_mode(
     output validation, QA, event emission) rather than re-implementing it.
     """
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand, run_pipeline_command
+    from anastomosis.deliver.browser.gates import route_plan_of
 
     pack = _NEUTRAL_PACK if cmd.render == RENDER_NEUTRAL else cmd.render
     out = cmd.out_dir
@@ -288,6 +298,10 @@ def _run_pack_mode(
             # A migration intends to deliver, so the upload manifest is written
             # by default (it lands in <out>/charts alongside the chart PDFs).
             write_manifest=True,
+            # The route resolved before any of this ran. Recording it here is
+            # what makes it part of what was reviewed rather than a line that
+            # scrolled past on the terminal.
+            route=route_plan_of(transit),
         ),
         on_event=on_event,
     )
@@ -390,6 +404,7 @@ def _run_ccda_standard(
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
+    from anastomosis.deliver.browser.gates import RunGates, route_plan_of
     from anastomosis.deliver.ccda_export import deliver_ccda
     from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.ccda_standard import (
@@ -452,7 +467,22 @@ def _run_ccda_standard(
                 )
                 for record in records
             ]
-            _write_manifest_with_event(manifest_docs, records, charts, emit, pack=None)
+            _write_manifest_with_event(
+                manifest_docs,
+                records,
+                charts,
+                emit,
+                pack=None,
+                route=route_plan_of(transit),
+                # No Jinja layout produced these pages — HL7's own stylesheet
+                # did — so there is no layout hash to record, and saying so is
+                # the honest answer rather than a gap. QA ran unless the
+                # operator switched it off; a FAIL raised above, so reaching
+                # here with it on means it passed.
+                gates=RunGates.from_run(
+                    qa_ok=True if (cmd.qa and view.documents) else None, layout_hash=None
+                ),
+            )
 
             ccda_result = deliver_ccda(records, ccda)
     except OutputLockedError as exc:

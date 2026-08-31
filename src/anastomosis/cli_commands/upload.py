@@ -35,6 +35,52 @@ from anastomosis.deliver.fhir_api.attach import DEFAULT_TOKEN_ENV
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+
+
+def _drive_or_exit(cmd: UploadCommand, attach: Callable[[], object]) -> UploadCommandResult:
+    """Drive the shared upload command, turning every failure into a clean exit 2.
+
+    Extracted from ``upload_cmd`` so the command reads as its five numbered
+    steps rather than as a wall of ``except`` clauses, and so a new refusal
+    (the delivery gate) is one clause here instead of another branch in a
+    function the complexity ratchet already holds at its ceiling.
+
+    Four failures get their message printed VERBATIM because each one is
+    PHI-free by its own module's contract and each names its own remedy: the
+    missing verification dependency, a locked output directory, a bundle the
+    delivery gate refused, and a malformed manifest. Anything else is reported
+    by exception TYPE only — no message, no traceback — because nothing has
+    promised what an arbitrary failure's text contains. A ``BaseException``
+    (a process kill) is deliberately not caught: the run resumes next time.
+    """
+    from rich.markup import escape as _escape
+
+    from anastomosis import cli as _cli
+    from anastomosis.core.locking import OutputLockedError
+    from anastomosis.core.upload_command import (
+        VerificationUnavailableError,
+        run_upload_command,
+    )
+    from anastomosis.deliver.browser.gates import DeliveryRefused
+    from anastomosis.deliver.browser.persist import ManifestError
+
+    try:
+        return run_upload_command(cmd, attach)
+    except (
+        VerificationUnavailableError,
+        OutputLockedError,
+        DeliveryRefused,
+        ManifestError,
+    ) as exc:
+        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+    except Exception as exc:
+        _cli.console.print(
+            f"[red]could not attach or drive the upload ({type(exc).__name__})[/red]"
+        )
+        raise typer.Exit(code=2) from None
+
 
 @app.command("upload")
 def upload_cmd(
@@ -169,12 +215,7 @@ def upload_cmd(
     from rich.markup import escape as _escape
 
     from anastomosis import cli as _cli
-    from anastomosis.core.upload_command import (
-        UploadCommand,
-        VerificationUnavailableError,
-        resolve_manifest_root,
-        run_upload_command,
-    )
+    from anastomosis.core.upload_command import UploadCommand, resolve_manifest_root
     from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
     from anastomosis.deliver.browser.manifest import load_skiplist
     from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
@@ -301,29 +342,14 @@ def upload_cmd(
     #    drive failure is a clean exit 2 named by exception TYPE only (no PHI, no
     #    traceback); a process-kill BaseException sails through to resume on the
     #    next run.
-    from anastomosis.core.locking import OutputLockedError
     from anastomosis.deliver.browser.reports import summary_line
 
-    cmd = UploadCommand(
-        out_dir=out_dir, skiplist=skiplist_set, max_attempts=max_attempts, verify=verify
+    result = _drive_or_exit(
+        UploadCommand(
+            out_dir=out_dir, skiplist=skiplist_set, max_attempts=max_attempts, verify=verify
+        ),
+        attach,
     )
-    try:
-        result = run_upload_command(cmd, attach)
-    except VerificationUnavailableError as exc:
-        # Fail closed: verification was requested but its dependency is missing.
-        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-        raise typer.Exit(code=2) from None
-    except OutputLockedError as exc:
-        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-        raise typer.Exit(code=2) from None
-    except ManifestError as exc:
-        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-        raise typer.Exit(code=2) from None
-    except Exception as exc:
-        _cli.console.print(
-            f"[red]could not attach or drive the upload ({type(exc).__name__})[/red]"
-        )
-        raise typer.Exit(code=2) from None
     _cli.console.print(summary_line(result.counts))
     _cli.console.print(f"run report {_cli._glyphs().arrow} {result.report_path}")
     # The verdict (0 on a clean landing, 1 on abort/any non-clean terminal) is

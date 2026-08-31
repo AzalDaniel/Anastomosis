@@ -24,6 +24,12 @@ TYPE), and is NEVER committed. ``file_path`` is stored as a basename so the
 manifest is relocatable and never embeds an absolute path; it is re-absolutized
 against ``out_dir`` on read.
 
+From v3 the file also carries the run's REVIEWED context: the destination route
+plan it was prepared for and the gate outcomes it passed
+(:mod:`anastomosis.deliver.browser.gates`). Those are what
+:func:`~anastomosis.deliver.browser.gates.assert_deliverable` refuses on, so the
+bundle an executor moves is the bundle somebody checked.
+
 See ``docs/UPLOAD_MANIFEST.md`` for what each schema version carries and why a
 v1 file still loads.
 """
@@ -44,6 +50,7 @@ from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.output import secure_output_dir
 from anastomosis.destinations.base import UploadItem
 
+from .gates import RoutePlan, RunGates
 from .manifest import build_manifest
 
 if TYPE_CHECKING:
@@ -51,6 +58,8 @@ if TYPE_CHECKING:
     from anastomosis.reconstruct.engine import RenderedDoc
 
 __all__ = [
+    "GATE_VERSION",
+    "LADDER_VERSION",
     "MANIFEST_NAME",
     "MANIFEST_VERSION",
     "SUPPORTED_MANIFEST_VERSIONS",
@@ -64,13 +73,21 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 MANIFEST_NAME = "upload_manifest.json"
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 
-# Versions :func:`load_upload_manifest` accepts. v1 predates the ladder fields
-# and loads degraded; anything else is a defect and raises. The reader tells the
-# two apart with ``version < MANIFEST_VERSION``, which holds only while 1 is the
-# single older version — a future v3 must gate each field on its own version.
-SUPPORTED_MANIFEST_VERSIONS: frozenset[int] = frozenset({1, MANIFEST_VERSION})
+#: The version that introduced the L0-L6 ladder fields (``pack``,
+#: ``expected_pages``, ``date_of_service``).
+LADDER_VERSION = 2
+#: The version that introduced the reviewed route plan and the run's gate
+#: outcomes (:mod:`anastomosis.deliver.browser.gates`).
+GATE_VERSION = 3
+
+# Versions :func:`load_upload_manifest` accepts; anything else is a defect and
+# raises. Each field group is gated on the version that introduced it, not on
+# ``MANIFEST_VERSION`` — the reader used to do the latter, which was correct
+# only while 2 was the newest and would have silently dropped v2's ladder
+# fields out of a v2 file the moment 3 existed.
+SUPPORTED_MANIFEST_VERSIONS: frozenset[int] = frozenset({1, LADDER_VERSION, GATE_VERSION})
 
 
 class ManifestError(Exception):
@@ -93,6 +110,12 @@ class UploadManifest:
     reader has already logged it. Each map is keyed the way
     :class:`~anastomosis.deliver.verify.LayeredVerifier` looks it up:
     ``expected_pages`` by ``item_key``, ``encounters`` by ``encounter_id``.
+
+    :attr:`route` and :attr:`gates` are the v3 additions and are ``None`` for
+    anything older — and for a v3 file whose writer had nothing to record. They
+    are what :func:`~anastomosis.deliver.browser.gates.assert_deliverable`
+    decides on; ``None`` there means "this bundle never recorded its gates",
+    which is a warning rather than a refusal (see that module).
     """
 
     version: int
@@ -101,6 +124,8 @@ class UploadManifest:
     pack: str | None
     expected_pages: dict[str, int]
     encounters: dict[str, Encounter]
+    route: RoutePlan | None = None
+    gates: RunGates | None = None
 
     @property
     def degraded(self) -> bool:
@@ -109,7 +134,7 @@ class UploadManifest:
         True means an upload over these items verifies LESS than a current one:
         L3 has no pack and no dates of service, and L1 has no exact page count.
         """
-        return self.version < MANIFEST_VERSION
+        return self.version < LADDER_VERSION
 
 
 def _item_to_json(
@@ -207,6 +232,8 @@ def write_upload_manifest(
     out_dir: Path,
     *,
     pack: str | None = None,
+    route: RoutePlan | None = None,
+    gates: RunGates | None = None,
 ) -> Path:
     """Write ``<out_dir>/upload_manifest.json`` for a later ``anast upload``.
 
@@ -221,6 +248,13 @@ def write_upload_manifest(
     Jinja pack rendered these charts (the ccda-standard whole-patient view), and
     the upload side reports L3 as skipped for that reason rather than checking
     against a pack that never ran.
+
+    ``route`` is the destination route plan this bundle was PREPARED for and
+    ``gates`` is what the run checked before writing it — the reviewed context
+    an executor refuses on hours later
+    (:func:`~anastomosis.deliver.browser.gates.assert_deliverable`). A caller
+    that has neither writes ``null`` for both, which is honest: the bundle
+    records that nothing was checked rather than implying something was.
 
     Deterministic: items are sorted by ``item_key``, patients keyed by
     ``patient_id``, and the JSON is written with ``sort_keys=True`` — two writes
@@ -266,6 +300,8 @@ def write_upload_manifest(
     payload = {
         "version": MANIFEST_VERSION,
         "pack": pack,
+        "route": None if route is None else route.as_json(),
+        "gates": None if gates is None else gates.as_json(),
         "items": items_json,
         "patients": patients_json,
     }
@@ -316,7 +352,7 @@ def _item_from_json(
     pages: int | None = None
     dos: date | None = None
     try:
-        if version >= MANIFEST_VERSION:
+        if version >= LADDER_VERSION:
             raw_pages = entry["expected_pages"]
             raw_dos = entry["date_of_service"]
             pages = None if raw_pages is None else int(raw_pages)
@@ -341,6 +377,32 @@ def _item_from_json(
     return item, pages, dos
 
 
+def _reviewed_context(
+    data: dict[str, Any], path: Path, *, version: int
+) -> tuple[RoutePlan | None, RunGates | None]:
+    """The v3 route plan and gate outcomes, or ``(None, None)`` for an older file.
+
+    Both keys are REQUIRED in a v3 file and both may be ``null``: absent means
+    the file does not match the version it declares, which is a defect, while
+    ``null`` is the writer saying it had nothing to record. A malformed value
+    raises rather than degrading — a half-read gate record is exactly the thing
+    that must not quietly become "no gate record", because that is the case an
+    executor is allowed to proceed past.
+    """
+    if version < GATE_VERSION:
+        return None, None
+    raw_route = _require(data, "route", path)
+    raw_gates = _require(data, "gates", path)
+    try:
+        route = None if raw_route is None else RoutePlan.from_json(raw_route)
+        gates = None if raw_gates is None else RunGates.from_json(raw_gates)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ManifestError(
+            f"upload manifest {path} route/gates entry is malformed ({type(exc).__name__})"
+        ) from exc
+    return route, gates
+
+
 def load_upload_manifest(out_dir: Path) -> UploadManifest:
     """Read the manifest back in full, as an :class:`UploadManifest`.
 
@@ -352,6 +414,10 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
     A v1 file (no pack, no expected pages, no dates of service) is accepted —
     refusing it would strand every already-rendered tree — and logs ONE warning
     naming the degraded coverage. The line carries a version and a count only.
+    A pre-v3 file likewise carries no route plan and no gate outcomes; what an
+    executor does about that is
+    :func:`~anastomosis.deliver.browser.gates.assert_deliverable`'s decision,
+    not this reader's.
 
     The DOS-only :class:`Encounter` objects returned in ``encounters`` are built
     for L3, which reads ``date_of_service`` and nothing else: they deliberately
@@ -381,9 +447,10 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
     raw_patients = _require(data, "patients", path)
     if not isinstance(raw_items, list) or not isinstance(raw_patients, dict):
         raise ManifestError(f"upload manifest {path} has a malformed items/patients shape")
-    pack = _require(data, "pack", path) if version >= MANIFEST_VERSION else None
+    pack = _require(data, "pack", path) if version >= LADDER_VERSION else None
     if pack is not None and not isinstance(pack, str):
         raise ManifestError(f"upload manifest {path} pack must be a string or null")
+    route, gates = _reviewed_context(data, path, version=version)
 
     items: list[UploadItem] = []
     expected_pages: dict[str, int] = {}
@@ -395,7 +462,7 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
         items.append(item)
         if pages is not None:
             expected_pages[item.item_key] = pages
-        if version >= MANIFEST_VERSION:
+        if version >= LADDER_VERSION:
             # Recorded for every v2 item, DOS or not: "this encounter has no date
             # of service" is itself the answer L3 needs, and it fails the ``dos``
             # field loudly instead of looking like a missing record.
@@ -420,6 +487,8 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
         pack=pack,
         expected_pages=expected_pages,
         encounters=encounters,
+        route=route,
+        gates=gates,
     )
     if manifest.degraded:
         # PHI-safe: versions and a count. Never silent — an operator uploading an

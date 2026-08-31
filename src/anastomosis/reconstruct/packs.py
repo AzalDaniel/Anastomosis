@@ -44,6 +44,14 @@ maps the pack root to its current content hash. Without a store, or with a
 hash that no longer matches, the pack is returned unavailable with a diagnosis
 and nothing is exec'd. The consent is granted where it is meaningful: writing
 the pack (the confirmed Teach) records the hash of the bytes it just wrote.
+
+What that admitted code is then HANDED is a separate decision, made in
+:mod:`anastomosis.reconstruct.packexec`: every non-built-in ``context.py`` runs
+against a restricted globals mapping (no ``open``, an import allowlist covering
+the pack API and pure-computation stdlib). Built-ins are exempt — they ship in
+this wheel and already hold the application's authority. Read that module for
+the reasoning and, in particular, for the guarantee it deliberately does not
+make.
 """
 
 from __future__ import annotations
@@ -68,6 +76,7 @@ from pydantic import (
 )
 
 from anastomosis.core.model import CHARTABLE_KINDS
+from anastomosis.reconstruct.packexec import restrict_module
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
 __all__ = [
@@ -294,7 +303,16 @@ class PackStatus:
         return self.pack is not None
 
 
-def _load_context_builder(path: Path) -> ContextBuilder:
+def _load_context_builder(path: Path, *, restricted: bool) -> ContextBuilder:
+    """Import ``context.py`` off disk and return its ``build_context``.
+
+    ``restricted`` installs the pack-code globals
+    (:func:`anastomosis.reconstruct.packexec.restrict_module`) into the module
+    namespace BEFORE the body runs, which is the only moment that can still
+    decide what the body is handed. It is set for every origin but the
+    built-ins — see that module for the decision and, just as importantly, for
+    what it does not claim.
+    """
     # Unique module name: two packs both shipping context.py must not collide
     # in sys.modules.
     module_name = f"anastomosis._pack_context_{uuid4().hex}"
@@ -302,6 +320,8 @@ def _load_context_builder(path: Path) -> ContextBuilder:
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
+    if restricted:
+        restrict_module(module.__dict__)
     sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
@@ -314,22 +334,33 @@ def _load_context_builder(path: Path) -> ContextBuilder:
     return cast(ContextBuilder, builder)
 
 
-def _load_context_builder_from_source(source: bytes, path: Path) -> ContextBuilder:
+def _load_context_builder_from_source(
+    source: bytes, path: Path, *, restricted: bool
+) -> ContextBuilder:
     """Compile and exec pinned ``context.py`` bytes into a fresh module.
 
     ``source`` is the exact snapshot bytes the trust hash covered, so the code
     that runs is provably the code that was hashed — no writer can swap the file
     between the check and ``exec`` (the TOCTOU the snapshot closes). ``__file__``
-    is set to the real on-disk ``path`` so ``build_context``'s pack-relative asset
-    resolution (``Path(__file__).parent / …``) keeps working; only the CODE is
-    pinned, not those auxiliary assets. Mirrors :func:`_load_context_builder`: a
+    is set to the real on-disk ``path``, which is what a traceback and the
+    ``compile`` filename report; note that restricted pack code cannot open it
+    (:mod:`anastomosis.reconstruct.packexec` withholds ``open`` and ``pathlib``),
+    so the pack-relative asset reads a built-in layout may do have no restricted
+    equivalent — an external layout embeds its assets in ``pack.yaml`` instead,
+    where the trust hash covers them. Only the CODE is pinned here, not any file
+    beside it. Mirrors :func:`_load_context_builder`: a
     unique ``sys.modules`` name (two packs' ``context.py`` must not collide),
-    popped on failure.
+    popped on failure. ``restricted`` is
+    :func:`anastomosis.reconstruct.packexec.restrict_module` — installed before
+    the body runs, so the pinned bytes and the restricted globals arrive
+    together.
     """
     module_name = f"anastomosis._pack_context_{uuid4().hex}"
     code = compile(source, str(path), "exec")
     module = types.ModuleType(module_name)
     module.__file__ = str(path)
+    if restricted:
+        restrict_module(module.__dict__)
     sys.modules[module_name] = module
     try:
         exec(code, module.__dict__)  # noqa: S102 — pinned, hash-gated pack code
@@ -404,7 +435,11 @@ def _load_pack_dir(root: Path, origin: str) -> PackStatus:
         context_path = root / "context.py"
         if not context_path.is_file():
             raise FileNotFoundError("context.py not found")
-        return manifest, template_path, _load_context_builder(context_path)
+        return (
+            manifest,
+            template_path,
+            _load_context_builder(context_path, restricted=origin != ORIGIN_BUILTIN),
+        )
 
     return _finish_load(name_cell, origin, root, build)
 
@@ -437,7 +472,12 @@ def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
         context_bytes = snapshot.files.get("context.py")
         if context_bytes is None:
             raise FileNotFoundError("context.py not found")
-        builder = _load_context_builder_from_source(context_bytes, root / "context.py")
+        # Every caller of this path is a non-built-in origin, so pack code is
+        # always restricted here; the flag is passed rather than assumed so the
+        # two loaders read the same way.
+        builder = _load_context_builder_from_source(
+            context_bytes, root / "context.py", restricted=origin != ORIGIN_BUILTIN
+        )
         return manifest, root / "template.html", builder
 
     return _finish_load(name_cell, origin, root, build)

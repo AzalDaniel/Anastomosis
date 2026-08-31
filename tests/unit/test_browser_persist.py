@@ -138,9 +138,13 @@ def test_manifest_shape_and_version(tmp_path: Path) -> None:
     write_upload_manifest(docs, records, out_dir)
     data = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
 
-    assert data["version"] == MANIFEST_VERSION == 2
+    assert data["version"] == MANIFEST_VERSION == 3
     # The run-level pack name: absent here (no pack was passed), never omitted.
     assert data["pack"] is None
+    # The reviewed context, likewise present-and-null rather than missing: this
+    # caller recorded no route and no gates, and the file says so.
+    assert data["route"] is None
+    assert data["gates"] is None
     # items sorted by item_key; each carries the documented keys.
     keys = data["items"][0].keys()
     assert set(keys) == {

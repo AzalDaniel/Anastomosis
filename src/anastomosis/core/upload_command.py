@@ -251,9 +251,11 @@ def run_upload_command(
        ``finish_run`` (only on a clean finish; an abort stamps its own) ->
        ``write_run_report``.
 
-    ``attach`` is invoked only after the lock is held and the manifest reads
-    cleanly, so a locked dir or a missing/malformed manifest never touches the
-    browser. ``stop`` is the cooperative cancel flag the engine checks at item
+    ``attach`` is invoked only after the lock is held, the manifest reads
+    cleanly, AND the bundle passes
+    :func:`~anastomosis.deliver.browser.gates.assert_deliverable` — so a locked
+    dir, a missing/malformed manifest, or a bundle whose gates did not pass
+    never touches the browser. ``stop`` is the cooperative cancel flag the engine checks at item
     boundaries (the GUI's ``upload_stop``); the CLI passes ``None``.
 
     When ``cmd.verify`` is set the engine is wired with a
@@ -270,6 +272,7 @@ def run_upload_command(
     from anastomosis.core.locking import output_lock
     from anastomosis.core.output import secure_output_dir
     from anastomosis.deliver.browser.engine import UploadEngine
+    from anastomosis.deliver.browser.gates import assert_deliverable
     from anastomosis.deliver.browser.manager import ManagedDestination
     from anastomosis.deliver.browser.persist import load_upload_manifest
     from anastomosis.deliver.browser.reports import write_run_report
@@ -306,6 +309,12 @@ def run_upload_command(
         # verifies against the rest of it, and a v1 file announces its degraded
         # coverage from inside this read.
         manifest = load_upload_manifest(manifest_root)
+        # The gate, before the browser is touched: a bundle whose recorded gates
+        # did not pass, whose reviewed route found no way in, or whose charts no
+        # longer hash to what was reviewed is refused here rather than filed
+        # item by item and reconciled afterwards. A manifest too old to carry
+        # gates warns instead — see `deliver.browser.gates`.
+        assert_deliverable(manifest)
         destination = attach()
         assert isinstance(destination, Destination)  # the seam must honor the protocol
         # Register each resource with the ExitStack the INSTANT we own it, so a
