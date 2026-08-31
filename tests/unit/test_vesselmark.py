@@ -831,3 +831,39 @@ def test_an_unwatched_greeting_still_stops(monkeypatch: pytest.MonkeyPatch) -> N
     assert vesselmark._IDLE_FRAMES * vesselmark.FRAME_SECONDS <= 10.0, (
         "an unattended greeting may not hold the prompt for more than ten seconds"
     )
+
+
+def test_a_legacy_windows_console_is_never_sent_the_sync_sequences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one terminal that would print them instead of obeying them.
+
+    DECSET 2026 is free on every terminal that parses it and free on every
+    terminal that does not — an unknown DEC private parameter is skipped. The
+    exception is a Windows console still in legacy mode, which has no VT parser
+    at all: rich detects it, renders through `legacy_windows_render`, and
+    colours by calling the console API, but the plain text still arrives at
+    `console.file.write`. Anything the wrapper prepends there is not a mode
+    change, it is nineteen characters of literal escape at the head of every
+    frame, twenty times a second.
+
+    Verified by driving the real `_play` twice, because a guard on a flag
+    nothing sets is a guard that has never run.
+    """
+    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: True)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    modern = _console()
+    vesselmark._play(modern, GREETING, unicode_dots=True)
+    assert "\x1b[?2026h" in _said(modern), (
+        "a terminal that can synchronise should still be asked to"
+    )
+
+    legacy = _console()
+    monkeypatch.setattr(legacy, "legacy_windows", True)
+    vesselmark._play(legacy, GREETING, unicode_dots=True)
+    said = _said(legacy)
+    assert "\x1b[?2026h" not in said and "\x1b[?2026l" not in said, (
+        "a legacy Windows console would print these, not obey them"
+    )
+    assert said.strip(), "the mark must still be drawn there, just unsynchronised"

@@ -518,7 +518,16 @@ def _play(console: Console, lines: Sequence[Text], *, unicode_dots: bool) -> Non
     # rich types `console.file` as IO[str]; the wrapper forwards everything it
     # does not implement, and only `write` is on rich's hot path. The cast says
     # that out loud rather than widening the wrapper into a fake file object.
-    console.file = cast("IO[str]", _Synchronised(original))
+    #
+    # NOT on a legacy Windows console. There, rich renders through
+    # `legacy_windows_render` and a `LegacyWindowsTerm`, which colours by
+    # calling the console API and passes the plain text down to
+    # `console.file.write` — us. That console has no VT parser, so the two DEC
+    # private sequences the wrapper adds are not ignored, they are PRINTED:
+    # `<-[?2026h` at the head of every frame, twenty times a second. The
+    # synchronisation is a nicety; the garbage would not be.
+    if not console.legacy_windows:
+        console.file = cast("IO[str]", _Synchronised(original))
     try:
         with _single_keystrokes(), Live(console=console, auto_refresh=False) as live:
             for frame in range(_IDLE_FRAMES):
