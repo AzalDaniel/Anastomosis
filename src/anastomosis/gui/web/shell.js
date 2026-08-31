@@ -1791,6 +1791,11 @@
     initSegmentToggles,
     displayName,
     nameOf,
+    // The chooser and the labelled field around it, so a view can build one of
+    // N where its OPTIONS come from the file in front of the operator (Teach's
+    // per-column corrections) rather than from markup written in advance.
+    makeChooser,
+    makeField,
     fillChooser,
     renderSectionMatrix,
     gatherSections,

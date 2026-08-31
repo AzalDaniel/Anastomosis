@@ -884,19 +884,25 @@ svg { display: block; }
   background: var(--field);
 }
 
-/* The proposed match-up table (Teach → export format). */
-.mapping-table { display: flex; flex-direction: column; border-radius: var(--radius-control); overflow: hidden; border: 1px solid rgba(244, 238, 228, 0.10); }
+/* The proposed match-up table (Teach → export format) — and the surface the
+   operator corrects it on, which is why every cell but the column name holds a
+   control. The frame used to clip its children (`overflow: hidden`) to round
+   the first and last rows; a chooser's popup floats OUT of its row, so the
+   corners move onto the rows themselves and the frame stops clipping. */
+.mapping-table { display: flex; flex-direction: column; border-radius: var(--radius-control); border: 1px solid rgba(244, 238, 228, 0.10); }
 .mapping-row {
   display: grid;
   grid-template-columns: 1.3fr 1.5fr 1fr 0.6fr;
   gap: var(--space-3);
+  align-items: center;
   padding: var(--space-2) var(--space-3);
   font-size: var(--text-label);
   color: var(--ink-secondary);
   background: var(--field);
   border-bottom: 1px solid rgba(244, 238, 228, 0.06);
 }
-.mapping-row:last-child { border-bottom: none; }
+.mapping-row:first-child { border-radius: var(--radius-control) var(--radius-control) 0 0; }
+.mapping-row:last-child { border-bottom: none; border-radius: 0 0 var(--radius-control) var(--radius-control); }
 .mapping-row span:first-child { font-family: var(--font-mono); color: var(--ink); }
 .mapping-row span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .mapping-head {
@@ -906,6 +912,40 @@ svg { display: block; }
   font-weight: 600;
 }
 .mapping-head span:first-child { font-family: var(--font-body); color: var(--ink-muted); }
+/* A cell holding a control — and, under it, that control's own argument (a
+   date pattern, a separator and which piece to take). */
+.mapping-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+/* What the column itself looks like: the profiler's type and its letter/digit
+   mask. This is the line that makes a wrong guess visible — a text column full
+   of distinct ids is visibly not a date, and seeing that needs no vocabulary. */
+.mapping-evidence { font-size: var(--text-caption); color: var(--ink-muted); }
+
+/* The three grouping answers, above the table whose meaning they set. */
+.structure {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(244, 238, 228, 0.10);
+}
+/* A grouping chooser's caption is a consequence, not an id, so it is read as
+   prose. Everywhere else the caption IS the id and stays mono (§10.11). */
+.chooser--prose .chooser-note { font-family: var(--font-body); color: var(--ink-secondary); }
+/* What a refusal points at: the loudest step of the tint ladder (§5b), never
+   worn by more than the one row or the one control group at fault. The plain
+   sentence beside it is the primary carrier; the tint only reinforces it, and
+   --ink-muted is not allowed inside a tinted row. */
+.row-attention { background: var(--tint-attention); }
+.row-attention .mapping-evidence { color: var(--ink-secondary); }
+.row-note { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.55; }
+.structure .row-note { grid-column: 1 / -1; }
+.mapping-row span.row-note {
+  grid-column: 1 / -1;
+  padding-top: var(--space-1);
+  text-align: left;
+  font-family: var(--font-body);
+}
 
 
 /* ─── 12. Notices: banner, offline, toast, safety ────────────── */
