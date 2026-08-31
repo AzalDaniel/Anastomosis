@@ -452,8 +452,20 @@
             <h3>Proposed match-up</h3>
             <div class="panel-note">No patient data is shown below.</div>
             <div class="prose" id="format-grouping"></div>
+            <!-- The three grouping answers and every row below them are
+                 controls, not a printout: the proposal IS the edit surface,
+                 and saving revalidates whatever it says. Both are filled in
+                 from the file the operator picked, so they are built in JS. -->
+            <div class="structure" id="format-structure" role="group"
+                 aria-label="How your file is grouped"></div>
             <div class="mapping-table" id="format-mapping" role="table"
                  aria-label="What each column in your file becomes"></div>
+            <details class="advanced" id="format-changes" hidden>
+              <summary>What you changed</summary>
+              <div class="advanced-body">
+                <div class="prose" id="format-changes-list"></div>
+              </div>
+            </details>
             <details class="advanced">
               <summary>Column detail</summary>
               <div class="advanced-body">

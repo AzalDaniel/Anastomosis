@@ -126,6 +126,21 @@ _PARAMETRIC: dict[str, tuple[int, Callable[..., _Transform]]] = {
 }
 
 
+#: Verbs whose OUTPUT does not determine their INPUT. ``const`` discards the
+#: cell outright, ``split`` keeps one piece of it, ``upper``/``lower`` fold
+#: case away. A column read through one of these must ALSO keep its raw value
+#: in ``extensions`` — the mapped field alone cannot answer "what did the file
+#: say", and a mapping that quietly narrows the answer is a loss wearing a
+#: read. The interpreter and the round-trip proof both consult this set, so a
+#: verb added here without preservation fails the proof rather than shipping.
+LOSSY_TRANSFORMS = frozenset({"const", "split", "upper", "lower"})
+
+
+def is_lossy(spec: str) -> bool:
+    """Whether ``spec``'s verb cannot reproduce the cell it was given."""
+    return spec.split(":", 1)[0] in LOSSY_TRANSFORMS
+
+
 def parse_transform(spec: str) -> _Transform:
     """Resolve a transform spec string to a bound transform, or raise.
 

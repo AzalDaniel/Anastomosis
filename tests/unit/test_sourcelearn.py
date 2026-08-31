@@ -349,3 +349,29 @@ def test_round_trip_refuses_duplicate_patient_grain_before_value_loss(tmp_path: 
     assert "PID" in report.error
     assert "red" not in report.error
     assert "blue" not in report.error
+
+
+def test_an_impossible_review_refuses_as_a_mapping_error_not_a_crash() -> None:
+    """The one error type this package promises, kept at the assembly door too.
+
+    `load_spec` already translates pydantic's ValidationError into MappingError
+    so a broken file on disk refuses in the package's own vocabulary. The same
+    constructor runs inside `build_mapping`, and there the translation was
+    missing: a review that aims two columns at one canonical field crashed out
+    as raw ValidationError, sailing past every `except MappingError` between
+    here and the wizard — which then blanked the proposal it existed to show.
+    Unreachable while nothing called `decisions`; one click away the moment a
+    review UI does.
+    """
+    analysis = analyze_source(FIXTURE)
+    doubled = {
+        "DOB": ("patient.birth_date", "parse_date"),
+        "VisitDate": ("patient.birth_date", "parse_date"),
+    }
+    with pytest.raises(MappingError) as caught:
+        build_mapping(analysis, mapping_id="clinic", display="Clinic", decisions=doubled)
+    said = str(caught.value)
+    assert "patient.birth_date" in said, "the colliding target is named"
+    assert "birth" not in said.replace("patient.birth_date", ""), (
+        "nothing beyond names: no echoed input values"
+    )

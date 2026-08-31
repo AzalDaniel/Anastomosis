@@ -57,12 +57,8 @@
       "cc": 11,
       "rank": "C"
     },
-    "src/anastomosis/core/sourcelearn.py::build_mapping": {
-      "cc": 14,
-      "rank": "C"
-    },
     "src/anastomosis/core/sourcelearn.py::round_trip": {
-      "cc": 13,
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/core/textutil.py::_SoapHtmlSanitizer._emit_start": {

@@ -40,6 +40,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.core.textutil import clean_cell
 from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
@@ -56,6 +58,7 @@ from anastomosis.sources.learned.spec import (
     MappingSpec,
     SourceFormat,
 )
+from anastomosis.sources.learned.transforms import is_lossy
 
 __all__ = [
     "CandidateScorer",
@@ -485,6 +488,53 @@ def analyze_source(path: Path, *, scorer: CandidateScorer | None = None) -> Sour
 # --- build / round-trip / save ------------------------------------------------
 
 
+def _chosen(
+    analysis: SourceAnalysis, decisions: dict[str, tuple[str, str]] | None
+) -> dict[str, tuple[str, str]]:
+    """The review's column decisions, or the scorer's own when nobody reviewed."""
+    if decisions is not None:
+        return dict(decisions)
+    return {
+        s.source_path: (s.target_path, s.transform)
+        for s in analysis.suggestions
+        if s.target_path is not None
+    }
+
+
+def _decided_confidence(analysis: SourceAnalysis, source: str, target: str) -> float:
+    """The confidence a saved mapping records for one column's decision.
+
+    The scorer's number describes the scorer's own pick. A reviewer who chose
+    a DIFFERENT target for the column made that number meaningless for what is
+    actually saved — writing it into MAPPING.md would show a low "confidence"
+    beside a field a person deliberately chose. A confirmed override is 1.0;
+    an accepted suggestion keeps the score that proposed it.
+    """
+    suggested = next((s for s in analysis.suggestions if s.source_path == source), None)
+    if suggested is None or suggested.target_path != target:
+        return 1.0
+    return suggested.confidence
+
+
+def _refused_review(exc: ValidationError, mapping_id: str) -> MappingError:
+    """A bad review, refused in this package's one error type.
+
+    The same door `load_spec` already guards, for the same reason: pydantic's
+    own rendering appends ``input_value=`` — the whole assembled dict — to
+    every line, and no message leaving this module may carry that. ``loc`` and
+    ``msg`` are the safe halves: field paths, and the validators' own
+    sentences, which name columns, targets and roles but never a value.
+    """
+    said = "; ".join(
+        f"{'.'.join(str(part) for part in err['loc']) or 'spec'}: {err['msg']}"
+        for err in exc.errors(include_input=False, include_url=False)
+    )
+    return MappingError(
+        f"review for mapping {mapping_id!r} is not a valid spec "
+        f"({exc.error_count()} error(s)): {said}"
+    )
+
+
 def build_mapping(
     analysis: SourceAnalysis,
     *,
@@ -500,55 +550,75 @@ def build_mapping(
     decision (and no suggestion) are recorded as ``unmapped_source_fields`` —
     still preserved in ``extensions`` by the interpreter, never dropped.
     """
-    chosen: dict[str, tuple[str, str]] = {}
-    if decisions is not None:
-        chosen = dict(decisions)
-    else:
-        for suggestion in analysis.suggestions:
-            if suggestion.target_path is not None:
-                chosen[suggestion.source_path] = (suggestion.target_path, suggestion.transform)
-    field_mappings = [
-        FieldMapping(
-            source_path=source,
-            target_path=target,
-            transform=transform,
-            confidence=next(
-                (s.confidence for s in analysis.suggestions if s.source_path == source), 1.0
-            ),
-            human_confirmed=True,
-        )
-        for source, (target, transform) in chosen.items()
-    ]
+    chosen = _chosen(analysis, decisions)
     reserved = {k for k in (analysis.patient_key, analysis.encounter_key) if k is not None}
     unmapped = [c for c in analysis.fmt.columns if c not in chosen and c not in reserved]
     if analysis.patient_key is None:
         raise MappingError(
             "cannot build a mapping without a patient_key — confirm one in the wizard"
         )
-    return MappingSpec(
-        mapping_id=mapping_id,
-        created_at=now or datetime.now(UTC),
-        human_reviewed=True,
-        display=display,
-        source_format=analysis.fmt,
-        grouping=Grouping(
-            patient_key=analysis.patient_key,
-            encounter_key=analysis.encounter_key,
-            row_scope=analysis.row_scope,  # type: ignore[arg-type]  # validated literal
-        ),
-        field_mappings=field_mappings,
-        unmapped_source_fields=unmapped,
-    )
+    try:
+        # The per-FIELD validators fire in this comprehension — an unknown
+        # target, a verb with the wrong arity — so it stands inside the same
+        # door as the whole-spec model validators below. The first translation
+        # covered only the second half, and a review picking `const:` before
+        # typing its wording escaped as raw ValidationError, `input_value=`
+        # and all.
+        field_mappings = [
+            FieldMapping(
+                source_path=source,
+                target_path=target,
+                transform=transform,
+                confidence=_decided_confidence(analysis, source, target),
+                human_confirmed=True,
+            )
+            for source, (target, transform) in chosen.items()
+        ]
+        return MappingSpec(
+            mapping_id=mapping_id,
+            created_at=now or datetime.now(UTC),
+            human_reviewed=True,
+            display=display,
+            source_format=analysis.fmt,
+            grouping=Grouping(
+                patient_key=analysis.patient_key,
+                encounter_key=analysis.encounter_key,
+                row_scope=analysis.row_scope,  # type: ignore[arg-type]  # validated literal
+            ),
+            field_mappings=field_mappings,
+            unmapped_source_fields=unmapped,
+        )
+    except ValidationError as exc:
+        raise _refused_review(exc, mapping_id) from None
 
 
 @dataclass(frozen=True)
 class RoundTripReport:
-    """The proof a mapping loses nothing: records built, columns all accounted for."""
+    """The proof a mapping loses nothing: records built, columns all accounted for.
+
+    ``bad_column``/``bad_target``/``bad_transform`` carry the structured pointer
+    off a load refusal, when the raise site knew it — names only, never a value.
+    """
 
     ok: bool
     record_count: int
     dropped_columns: list[str]
     error: str | None
+    bad_column: str | None = None
+    bad_target: str | None = None
+    bad_transform: str | None = None
+    #: ``"grouping"`` when the refusal points at the keys or row grain, not a
+    #: column's read — the page anchors the structural controls instead.
+    bad_scope: str | None = None
+
+
+def _faithfully_mapped(spec: MappingSpec) -> set[str]:
+    """The columns whose mapped field IS their value, exempt from the check.
+
+    A lossy read is deliberately absent: its raw value rides extensions and
+    must pass the same verbatim-survival proof as an unmapped column.
+    """
+    return {m.source_path for m in spec.field_mappings if not is_lossy(m.transform)}
 
 
 def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
@@ -567,7 +637,16 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
     try:
         records = list(adapter.load(example))
     except MappingError as exc:
-        return RoundTripReport(False, 0, [], str(exc))
+        return RoundTripReport(
+            False,
+            0,
+            [],
+            str(exc),
+            bad_column=exc.column,
+            bad_target=exc.target,
+            bad_transform=exc.transform,
+            bad_scope=exc.scope,
+        )
 
     prefix = f"learned:{spec.mapping_id}:"
     preserved: dict[str, set[str | None]] = {}
@@ -577,7 +656,7 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
                 if key.startswith(prefix):
                     preserved.setdefault(key[len(prefix) :], set()).add(clean_cell(str(value)))
 
-    mapped = {m.source_path for m in spec.field_mappings}
+    mapped = _faithfully_mapped(spec)
     keys = {spec.grouping.patient_key, spec.grouping.encounter_key}
     rows = read_rows(example, spec.source_format)
     dropped: list[str] = []
@@ -641,6 +720,12 @@ def _mapping_markdown(spec: MappingSpec) -> str:
         "## Unmapped columns (preserved in `extensions`, never dropped)",
         "",
         *(f"- `{c}`" for c in spec.unmapped_source_fields),
+        *(
+            f"- `{m.source_path}` — read as `{m.transform}`, a wording that cannot "
+            "reproduce the cell, so the raw value is also preserved"
+            for m in spec.field_mappings
+            if is_lossy(m.transform)
+        ),
         "",
         "## Honest limits",
         "",
