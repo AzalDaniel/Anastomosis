@@ -119,15 +119,22 @@ _M = TypeVar("_M", bound=BaseModel)
 class _FieldPlan:
     """A pre-resolved field mapping: source column, target, scope, bound transform."""
 
-    __slots__ = ("scope", "source_path", "target_path", "transform")
+    __slots__ = ("scope", "source_path", "target_path", "transform", "transform_spec")
 
     def __init__(
-        self, source_path: str, target_path: str, transform: Callable[[str | None], Any]
+        self,
+        source_path: str,
+        target_path: str,
+        transform: Callable[[str | None], Any],
+        transform_spec: str,
     ) -> None:
         self.source_path = source_path
         self.target_path = target_path
         self.scope = target_scope(target_path)
         self.transform = transform
+        # The spec STRING the callable was bound from, kept so a refusal can
+        # name what it was trying to do — the callable alone cannot say.
+        self.transform_spec = transform_spec
 
 
 class LearnedSourceAdapter:
@@ -145,7 +152,7 @@ class LearnedSourceAdapter:
         self._encounter_key = spec.grouping.encounter_key
         # Pre-resolve every transform once (the spec already validated them).
         self._plan: list[_FieldPlan] = [
-            _FieldPlan(m.source_path, m.target_path, parse_transform(m.transform))
+            _FieldPlan(m.source_path, m.target_path, parse_transform(m.transform), m.transform)
             for m in spec.field_mappings
         ]
         self._patient_plan = [p for p in self._plan if p.scope == "patient"]
@@ -217,7 +224,10 @@ class LearnedSourceAdapter:
             # None`` drops the original (value-bearing) exception from the chain.
             raise MappingError(
                 f"learned mapping {self.name!r}: a value in column {plan.source_path!r} "
-                f"could not be transformed for {plan.target_path!r}"
+                f"could not be read as {plan.transform_spec!r} for {plan.target_path!r}",
+                column=plan.source_path,
+                target=plan.target_path,
+                transform=plan.transform_spec,
             ) from None
 
     def _row_extensions(self, rows: list[Row]) -> dict[str, object]:

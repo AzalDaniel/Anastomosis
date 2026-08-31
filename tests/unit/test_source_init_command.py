@@ -202,3 +202,139 @@ def test_a_saved_format_is_selectable_without_a_restart(tmp_path: Path) -> None:
         "the saved mapping is not the adapter this session would run"
     )
     assert adapter.name == "selectable_now"
+
+
+# --- the correction arc (#335): observe -> correct -> save -> load -> conserve
+
+
+def test_the_whole_correction_arc_conserves_what_it_loads(tmp_path: Path) -> None:
+    """The acceptance walk from the issue, at the layer both frontends share.
+
+    A wrong review first: the visit id aimed at a date field, refused with the
+    structured pointer naming the column, the target AND the transform — and no
+    partial directory. Then the corrected review: saved, reloaded from disk the
+    way a restarted app would, and the loaded records measured for identity,
+    encounter and column conservation. Every assertion is against the loaded
+    artifact, not against the code that promised to produce it.
+    """
+    example = tmp_path / "visits.csv"
+    example.write_text(
+        "MRN,VisitId,VisitDate,Complaint,Clinic\n"
+        "p1,V-001,01/05/2024,cough,north\n"
+        "p1,V-002,02/06/2024,fever,north\n"
+        "p2,V-003,03/07/2024,rash,south\n",
+        encoding="utf-8",
+    )
+
+    def command(decisions: dict[str, tuple[str, str]]) -> SourceInitCommand:
+        return SourceInitCommand(
+            example=example,
+            name="clinic_visits_corrected",
+            out_dir=tmp_path,
+            confirmed=True,
+            decisions=decisions,
+            patient_key="MRN",
+            encounter_key="VisitId",
+            row_scope="encounter",
+        )
+
+    wrong = run_source_init_command(
+        command({"VisitId": ("encounter.date_of_service", "parse_date")})
+    )
+    assert wrong.ok is False
+    assert wrong.error == "MappingLoadFailed"
+    assert wrong.detail_column == "VisitId"
+    assert wrong.detail_target == "encounter.date_of_service"
+    assert wrong.detail_transform == "parse_date"
+    assert "V-001" not in repr(wrong), "the cell value never leaks"
+    assert not (tmp_path / "clinic_visits_corrected").exists(), "no partial directory"
+
+    corrected = run_source_init_command(
+        command(
+            {
+                "VisitDate": ("encounter.date_of_service", "parse_date"),
+                "Complaint": ("encounter.chief_complaint", "strip"),
+            }
+        )
+    )
+    assert corrected.ok is True, (corrected.error, corrected.detail)
+
+    # The restart: nothing reused from the in-process run — the spec is read
+    # back off disk and driven through a fresh adapter.
+    from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
+    from anastomosis.sources.learned.spec import load_spec
+
+    spec = load_spec(tmp_path / "clinic_visits_corrected" / "mapping.json")
+    records = list(LearnedSourceAdapter(spec).load(example))
+
+    patients = {
+        record.patient.provenance.source_id
+        for record in records
+        if record.patient.provenance is not None
+    }
+    assert len(records) == 2, "identity conservation: two distinct MRNs, two records"
+    assert patients == {"p1", "p2"}
+
+    encounters = [encounter for record in records for encounter in record.encounters]
+    assert len(encounters) == 3, "encounter conservation: three rows, three visits"
+    assert sorted(e.date_of_service.isoformat() for e in encounters) == [
+        "2024-01-05",
+        "2024-02-06",
+        "2024-03-07",
+    ], "the corrected transform read the DATE column, not the visit id"
+
+    kept_values = {
+        value
+        for record in records
+        for obj in (record.patient, *record.encounters)
+        for key, value in obj.extensions.items()
+        if key.endswith(":Clinic")
+    }
+    assert kept_values == {"north", "south"}, (
+        "column conservation: the undecided column's values survive as extra data"
+    )
+
+
+def test_an_unreviewed_command_still_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """No review, no change: the four new fields default to today's behaviour.
+
+    The correction path must be a pure addition — an operator who never touches
+    it teaches formats exactly as yesterday, decided by the same scorer.
+    """
+    result = run_source_init_command(
+        SourceInitCommand(example=FIXTURE, name="clinic_plain", out_dir=tmp_path, confirmed=True)
+    )
+    assert result.ok is True
+    assert (tmp_path / "clinic_plain" / "mapping.json").is_file()
+
+
+def test_an_override_does_not_inherit_the_scorers_stale_confidence(tmp_path: Path) -> None:
+    """A number that described a different decision does not follow the column.
+
+    The scorer's confidence describes the scorer's own pick. When a reviewer
+    aims the column somewhere else, writing that stale score beside the field a
+    person deliberately chose would be a false audit trail — a confirmed
+    override records 1.0.
+    """
+    import json
+
+    example = tmp_path / "visits.csv"
+    example.write_text(
+        "MRN,VisitDate,Notes\np1,01/05/2024,ok\np2,02/06/2024,fine\n", encoding="utf-8"
+    )
+    result = run_source_init_command(
+        SourceInitCommand(
+            example=example,
+            name="overridden",
+            out_dir=tmp_path,
+            confirmed=True,
+            decisions={"Notes": ("encounter.chief_complaint", "strip")},
+            patient_key="MRN",
+            encounter_key=None,
+            row_scope="encounter",
+        )
+    )
+    assert result.ok is True, (result.error, result.detail)
+    saved = json.loads((tmp_path / "overridden" / "mapping.json").read_text(encoding="utf-8"))
+    by_source = {m["source_path"]: m for m in saved["field_mappings"]}
+    assert by_source["Notes"]["confidence"] == 1.0

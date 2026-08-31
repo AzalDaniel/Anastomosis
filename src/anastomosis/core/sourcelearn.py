@@ -500,6 +500,21 @@ def _chosen(
     }
 
 
+def _decided_confidence(analysis: SourceAnalysis, source: str, target: str) -> float:
+    """The confidence a saved mapping records for one column's decision.
+
+    The scorer's number describes the scorer's own pick. A reviewer who chose
+    a DIFFERENT target for the column made that number meaningless for what is
+    actually saved — writing it into MAPPING.md would show a low "confidence"
+    beside a field a person deliberately chose. A confirmed override is 1.0;
+    an accepted suggestion keeps the score that proposed it.
+    """
+    suggested = next((s for s in analysis.suggestions if s.source_path == source), None)
+    if suggested is None or suggested.target_path != target:
+        return 1.0
+    return suggested.confidence
+
+
 def _refused_review(exc: ValidationError, mapping_id: str) -> MappingError:
     """A bad review, refused in this package's one error type.
 
@@ -540,9 +555,7 @@ def build_mapping(
             source_path=source,
             target_path=target,
             transform=transform,
-            confidence=next(
-                (s.confidence for s in analysis.suggestions if s.source_path == source), 1.0
-            ),
+            confidence=_decided_confidence(analysis, source, target),
             human_confirmed=True,
         )
         for source, (target, transform) in chosen.items()
@@ -574,12 +587,19 @@ def build_mapping(
 
 @dataclass(frozen=True)
 class RoundTripReport:
-    """The proof a mapping loses nothing: records built, columns all accounted for."""
+    """The proof a mapping loses nothing: records built, columns all accounted for.
+
+    ``bad_column``/``bad_target``/``bad_transform`` carry the structured pointer
+    off a load refusal, when the raise site knew it — names only, never a value.
+    """
 
     ok: bool
     record_count: int
     dropped_columns: list[str]
     error: str | None
+    bad_column: str | None = None
+    bad_target: str | None = None
+    bad_transform: str | None = None
 
 
 def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
@@ -598,7 +618,15 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
     try:
         records = list(adapter.load(example))
     except MappingError as exc:
-        return RoundTripReport(False, 0, [], str(exc))
+        return RoundTripReport(
+            False,
+            0,
+            [],
+            str(exc),
+            bad_column=exc.column,
+            bad_target=exc.target,
+            bad_transform=exc.transform,
+        )
 
     prefix = f"learned:{spec.mapping_id}:"
     preserved: dict[str, set[str | None]] = {}
