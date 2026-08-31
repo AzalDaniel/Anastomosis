@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import ast
 import io
+import os
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -799,3 +801,80 @@ def test_every_command_speaks_the_same_register_as_the_guide() -> None:
                 )
                 offenders.append(f"{word!r} in `{where} --help`: {line[:90]}")
     assert not offenders, "every command reads the way the GUI reads:\n  " + "\n  ".join(offenders)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-only")
+def test_an_arrow_key_never_reaches_the_answer_on_a_real_pty() -> None:
+    """Issue #330, proved with real keys on a real terminal, both ways.
+
+    A prompt read in canonical mode hands back an arrow key as ``ESC [ A`` —
+    three characters in the answer, on their way into a mapping id. `_read`
+    closes it twice over: readline, where the platform has it, turns those
+    keys into line editing; `as_typed` sweeps whatever still arrives as bytes.
+
+    Both halves are driven here. With readline, Home is a COMMAND — the cursor
+    moves and later typing lands at the front, so the assertion is on what
+    matters (no escape bytes, both typed fragments present), not on an order
+    the editor is entitled to change. With readline blocked — the Windows
+    shape, where the console host would have edited the line long before
+    Python saw it — the sweep alone must deliver exactly what was typed.
+    """
+    import pty
+    import select
+    import time
+
+    child = (
+        "import sys\n"
+        "if '--no-readline' in sys.argv:\n"
+        "    sys.modules['readline'] = None\n"
+        "from rich.console import Console\n"
+        "from anastomosis.cli_commands.guide import _read\n"
+        "answer = _read(Console(), 'Name')\n"
+        "sys.stdout.write(f'\\nGOT<{answer!r}>\\n')\n"
+    )
+
+    def drive(*args: str) -> str:
+        pid, fd = pty.fork()
+        if pid == 0:  # pragma: no cover - child process
+            os.execvpe(
+                sys.executable,
+                [sys.executable, "-c", child, *args],
+                dict(
+                    os.environ,
+                    PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"),
+                    TERM="xterm-256color",
+                ),
+            )
+        time.sleep(1.0)
+        os.write(fd, b"chart")
+        os.write(fd, b"\x1b[A\x1b[A")  # up, up — muscle memory for history
+        os.write(fd, b"\x1bOH")  # Home, in application mode
+        os.write(fd, b"-2026\n")
+        out = bytearray()
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            ready, _, _ = select.select([fd], [], [], 0.2)
+            if ready:
+                try:
+                    chunk = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                out += chunk
+                if b"GOT<" in out and out.rstrip().endswith(b">"):
+                    break
+        os.close(fd)
+        os.waitpid(pid, 0)
+        text = out.decode("utf-8", "replace")
+        start = text.rfind("GOT<'")
+        end = text.find("'>", start)
+        assert start != -1 and end != -1, "the child never answered"
+        return text[start + 5 : end]
+
+    edited = drive()
+    assert "\\x1b" not in edited and "[A" not in edited, edited
+    assert "chart" in edited and "-2026" in edited, edited
+
+    swept = drive("--no-readline")
+    assert swept == "chart-2026", swept

@@ -34,6 +34,7 @@ from rich.text import Text
 
 from anastomosis.core.presentation import (
     BRAND_PALETTE,
+    as_typed,
     attached_to_a_terminal,
     terminal_glyphs,
 )
@@ -525,9 +526,21 @@ def _read(console: Console, label: str, *, default: str = "") -> str:
     path or a default containing brackets is shown literally rather than being
     eaten as a style tag.
     """
+    # readline, where the platform has it, turns an arrow key into line
+    # editing instead of bytes — rich's own docs name a previously-loaded
+    # readline as how `input()` gains editing and history. Loaded here, at the
+    # last moment before the first prompt, so `anast --help` never pays for it.
+    # Windows has no readline and needs none: its console host edits the line
+    # itself. Belt and braces either way: whatever reaches the answer is still
+    # swept by `as_typed`, because a paste can carry the same escapes an arrow
+    # key does, on every platform, with readline or without.
+    try:
+        import readline  # noqa: F401  (loading it IS the effect)
+    except ImportError:
+        pass
     suffix = f" ({default})" if default else ""
     answer = console.input(Text(f"{label}{suffix}: ", style=BRAND_PALETTE.brand_bright))
-    return answer.strip() or default
+    return as_typed(answer).strip() or default
 
 
 def _retry(console: Console, reason: str) -> None:
