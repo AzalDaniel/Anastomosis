@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 DEPENDABOT_YML = REPO_ROOT / ".github" / "dependabot.yml"
 CONSTRAINTS = REPO_ROOT / "packaging" / "constraints.txt"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 WINDOWS_YML = WORKFLOW_DIR / "windows-package.yml"
 RELEASE_YML = WORKFLOW_DIR / "release.yml"
 
@@ -288,19 +289,32 @@ def test_no_ignore_condition_silences_a_security_update() -> None:
 
 
 def test_every_ignored_pip_dependency_is_actually_pinned() -> None:
-    """A pip `ignore` is only defensible for a dependency this repo PINS.
+    """A pip `ignore` is only defensible for a version this repo PINS itself.
 
-    The two ignores exist because a bump needs work Dependabot cannot do:
+    Each ignore exists because a bump needs work Dependabot cannot do:
     playwright's pin governs the rendering goldens and the bundled Chromium
-    together, and pywebview's governs whether the frozen Windows exe can
-    import at all. Both facts live in `packaging/constraints.txt`, so an
-    ignored name that is not pinned there is an ignore that has drifted off
-    the reason it was written — routine churn suppressed for a package
-    nothing was protecting."""
+    together, pywebview's governs whether the frozen Windows exe can import at
+    all, and hatchling decides the core-metadata version the published wheel
+    carries. An ignored name with no pin behind it is an ignore that has
+    drifted off the reason it was written — routine churn suppressed for a
+    package nothing was protecting.
+
+    Both places count, and the first version of this test only knew about one.
+    It read `packaging/constraints.txt` alone, so adding the hatchling ignore
+    failed it — correctly, in the sense that the rule was violated, and wrongly,
+    in the sense that hatchling IS pinned, just in `[build-system] requires`
+    where a build backend belongs. A guard that is right about the principle
+    and wrong about where to look is still wrong."""
+    import tomllib
+
     pinned = {
         line.split("==")[0].strip().lower()
         for line in CONSTRAINTS.read_text().splitlines()
         if "==" in line and not line.lstrip().startswith("#")
+    }
+    pinned |= {
+        entry.split(">")[0].split("<")[0].split("=")[0].split("[")[0].strip().lower()
+        for entry in tomllib.loads(PYPROJECT.read_text())["build-system"]["requires"]
     }
     for condition in _ignore_conditions("pip"):
         name = str(condition.get("dependency-name", "")).lower()
@@ -341,3 +355,55 @@ def test_no_workflow_runs_twice_for_one_commit() -> None:
             "branch here opens a pull request, so each commit would run this "
             "workflow twice against the same SHA. Push-trigger on main only."
         )
+
+
+def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
+    """`[build-system] requires` may not admit a hatchling that emits metadata 2.5.
+
+    This is the one failure in this repository that CI structurally cannot see.
+    That line decides which backend builds the wheel; the core-metadata version
+    a hatchling release emits oscillates; and the twine bundled in the pinned
+    publish action rejects 2.5 outright. So a bad backend does not fail a test,
+    it fails the UPLOAD — after a tag exists and a version number has been
+    spent. It already did, on 0.7.0.
+
+    Measured by reading DEFAULT_METADATA_VERSION out of each release, most
+    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`:
+
+        1.27.0 -> 2.4    1.29.0 -> 2.4    1.31.0 -> 2.4
+        1.30.0 -> 2.5    1.32.0 -> 2.5    1.33.0 -> 2.5
+
+    Asserted against the FILE rather than against an installed hatchling, and
+    that is deliberate: PEP 517 builds the backend in an isolated environment,
+    so hatchling is not importable at test time on any machine or in CI. A test
+    that asked the environment would skip everywhere and prove nothing — the
+    exact vacuous guard this suite exists to prevent. The bound is the artifact
+    a person controls, so the bound is what is checked.
+    """
+    import tomllib
+
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    requires = tomllib.loads(PYPROJECT.read_text())["build-system"]["requires"]
+    backend = next(r for r in (Requirement(entry) for entry in requires) if r.name == "hatchling")
+    for bad in ("1.30.0", "1.32.0", "1.33.0"):
+        assert not backend.specifier.contains(Version(bad)), (
+            f"[build-system] requires admits hatchling {bad}, which emits "
+            "core-metadata 2.5 and fails the publish upload"
+        )
+    # The floor is load-bearing too, and in the other direction. Below 1.27,
+    # hatchling parses `license-files` only in its legacy table form and
+    # SILENTLY ignores the list form this project uses — producing a wheel with
+    # no dist-info/licenses/ at all, which is a licence-compliance failure that
+    # looks like a successful build. Asserting the bound merely contains a good
+    # release does not catch a floor that has been dropped; asserting it
+    # excludes a bad one does.
+    assert not backend.specifier.contains(Version("1.25.0")), (
+        "[build-system] requires admits a hatchling below the PEP 639 floor, "
+        "which ships a wheel carrying none of the third-party licence texts it "
+        "redistributes"
+    )
+    assert backend.specifier.contains(Version("1.29.0")), (
+        "the bound has excluded a release measured good in both directions"
+    )
