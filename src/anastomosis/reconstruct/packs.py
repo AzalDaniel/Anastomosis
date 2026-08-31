@@ -343,7 +343,7 @@ def _load_context_builder_from_source(
     that runs is provably the code that was hashed — no writer can swap the file
     between the check and ``exec`` (the TOCTOU the snapshot closes). ``__file__``
     is set to the real on-disk ``path``, which is what a traceback and the
-    ``compile`` filename report; note that restricted pack code cannot open it
+    ``compile`` filename report; restricted pack code has no easy way to open it
     (:mod:`anastomosis.reconstruct.packexec` withholds ``open`` and ``pathlib``),
     so the pack-relative asset reads a built-in layout may do have no restricted
     equivalent — an external layout embeds its assets in ``pack.yaml`` instead,

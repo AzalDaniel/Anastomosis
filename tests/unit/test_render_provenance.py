@@ -353,3 +353,65 @@ def test_the_difference_stops_naming_files_and_starts_counting() -> None:
     difference = provenance_difference(previous, current)
 
     assert difference.endswith("and 4 more")
+
+
+def test_a_crlf_template_agrees_with_its_own_bytes(tmp_path: Path) -> None:
+    """The digest the loader records is the digest of the file on disk.
+
+    Jinja opens templates in text mode, so universal newline translation turns
+    a CRLF file into LF before the loader sees the string. Digesting the
+    re-encoded string therefore disagreed with the binary digest of the same
+    file — for every CRLF template, which is every template a Teach writes on
+    Windows and every shipped template in a checkout with `core.autocrlf`. The
+    run rendered all its charts and then refused, saying the layout had changed
+    mid-batch, about a file nobody had touched.
+    """
+    import hashlib
+
+    import jinja2
+
+    from anastomosis.reconstruct.provenance import RecordingLoader
+
+    crlf = tmp_path / "template.html"
+    crlf.write_bytes(b"<html>\r\n<body>{{ patient }}</body>\r\n</html>\r\n")
+    loader = RecordingLoader(tmp_path)
+    jinja2.Environment(loader=loader, autoescape=True).get_template("template.html")
+
+    assert loader.templates_read["template.html"] == hashlib.sha256(crlf.read_bytes()).hexdigest()
+    assert (
+        swapped_templates(
+            RenderProvenance(
+                pack="p",
+                origin="pack-dir",
+                content_hash="x",
+                files=dict(loader.templates_read),
+                templates=dict(loader.templates_read),
+            )
+        )
+        == []
+    )
+
+
+def test_an_asset_behind_a_symlinked_directory_is_still_measured(tmp_path: Path) -> None:
+    """`rglob` does not follow a symlinked directory: it calls the link a file,
+    and the is-file guard then drops it, so a pack whose `assets` is a link had
+    its whole subtree missing from the record — and editing the logo through it
+    changed nothing here. That is the exact claim this record exists to make.
+    """
+    import os
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "pack.yaml").write_text("name: p\n", encoding="utf-8")
+    (pack / "context.py").write_text("", encoding="utf-8")
+    (pack / "template.html").write_text("<html></html>", encoding="utf-8")
+    real = tmp_path / "elsewhere"
+    real.mkdir()
+    (real / "mark.svg").write_text("<svg/>", encoding="utf-8")
+    os.symlink(real, pack / "assets")
+
+    before = pack_file_digests(pack)
+    assert "assets/mark.svg" in before
+
+    (real / "mark.svg").write_text("<svg>EDITED</svg>", encoding="utf-8")
+    assert pack_file_digests(pack) != before

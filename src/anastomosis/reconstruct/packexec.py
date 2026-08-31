@@ -87,11 +87,17 @@ class PackCapabilityRefused(ImportError):
 #:
 #: The anastomosis entries are the pack API itself: the canonical model a
 #: builder reads, the code/date/text helpers it formats with, the shared
-#: context helpers, and the shipped packs — a taught layout's generated
-#: ``context.py`` delegates to ``anastomosis.packs.generic_soap.context``, so
-#: refusing that would refuse every layout the Teach writes. The stdlib entries
-#: are pure computation: no filesystem, no network, no process, no interpreter
-#: introspection. Anything absent is refused by name.
+#: context helpers, and the ONE shipped context a taught layout's generated
+#: ``context.py`` delegates to — refusing that would refuse every layout the
+#: Teach writes. It is that one module and not the ``anastomosis.packs``
+#: package root, which was the first spelling: a submodule match let a pack
+#: write ``from anastomosis.packs.practice_fusion_soap.context import Path``
+#: and get ``pathlib.Path`` — arbitrary read and write — straight back, while
+#: the table below still truthfully said ``pathlib`` was not on it. A
+#: capability reachable in one import is not withheld, whatever the table
+#: says. The stdlib entries are pure computation: no filesystem, no network,
+#: no process, no interpreter introspection. Anything absent is refused by
+#: name.
 PACK_ALLOWED_MODULES: frozenset[str] = frozenset(
     {
         # the pack API
@@ -99,7 +105,7 @@ PACK_ALLOWED_MODULES: frozenset[str] = frozenset(
         "anastomosis.core.model",
         "anastomosis.core.textutil",
         "anastomosis.core.timeutil",
-        "anastomosis.packs",
+        "anastomosis.packs.generic_soap.context",
         "anastomosis.reconstruct.packctx",
         # pure-computation stdlib
         "__future__",

@@ -337,9 +337,14 @@ def _run_ccda_standard_qa(
     records: list[PatientRecord],
     charts: Path,
     emit: Callable[[StageEvent], None],
-) -> None:
+) -> bool | None:
     """Verify each whole-patient standard-C-CDA-view PDF — the ccda-standard
     counterpart of the pipeline's QA stage.
+
+    Returns ``True`` when the report was written and OK, and ``None`` when the
+    stage downgraded to a no-op — the same shape ``run_pipeline`` gives its
+    caller, so the run manifest's QA gate can record what QA DID rather than
+    what the operator asked for. A FAIL does not return: it raises.
 
     Mirrors ``pipeline._run_qa_stage``: write ``qa_report.json`` next to the PDFs,
     emit a ``STAGE_QA`` counts event, and raise :class:`PipelineError` (exit 1,
@@ -361,12 +366,13 @@ def _run_ccda_standard_qa(
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
-        return
+        return None
 
     report = whole_patient_report(
         (ccda_standard_doc_path(charts, record), record) for record in records
     )
-    settle_qa(report, charts, emit)
+    settle_qa(report, charts, emit)  # raises on a FAIL, so reaching here IS the pass
+    return True
 
 
 def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
@@ -449,8 +455,9 @@ def _run_ccda_standard(
             # ccda-standard counterpart to the pipeline's QA stage. A QA FAIL
             # aborts HERE (exit 1), before the manifest and the ccda payload are
             # written, exactly as run_pipeline's QA stage precedes delivery.
+            qa_ok: bool | None = None
             if cmd.qa and view.documents:
-                _run_ccda_standard_qa(records, charts, emit)
+                qa_ok = _run_ccda_standard_qa(records, charts, emit)
 
             # Write the upload manifest by default (a migration intends to
             # deliver). The whole-patient view has no RenderedDoc list, so the
@@ -476,12 +483,12 @@ def _run_ccda_standard(
                 route=route_plan_of(transit),
                 # No Jinja layout produced these pages — HL7's own stylesheet
                 # did — so there is no layout hash to record, and saying so is
-                # the honest answer rather than a gap. QA ran unless the
-                # operator switched it off; a FAIL raised above, so reaching
-                # here with it on means it passed.
-                gates=RunGates.from_run(
-                    qa_ok=True if (cmd.qa and view.documents) else None, layout_hash=None
-                ),
+                # the honest answer rather than a gap. The QA verdict comes
+                # from what QA DID, never from the flag that asked for it: the
+                # stage downgrades to a no-op when PyMuPDF is absent, and
+                # reading the flag recorded `pass` for whole-patient views
+                # nothing had graded — on the one machine least able to notice.
+                gates=RunGates.from_run(qa_ok=qa_ok, layout_hash=None),
             )
 
             ccda_result = deliver_ccda(records, ccda)

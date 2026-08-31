@@ -27,7 +27,12 @@ from pathlib import Path
 import pytest
 
 from anastomosis.reconstruct import discover_packs
-from anastomosis.reconstruct.packexec import PACK_ALLOWED_BUILTINS, PACK_ALLOWED_MODULES
+from anastomosis.reconstruct.packexec import (
+    PACK_ALLOWED_BUILTINS,
+    PACK_ALLOWED_MODULES,
+    PackCapabilityRefused,
+    restrict_module,
+)
 from anastomosis.reconstruct.packs import ORIGIN_PACK_DIR
 from anastomosis.reconstruct.packtrust import PackTrust
 
@@ -249,3 +254,39 @@ def test_the_allowlist_admits_no_process_level_module(denied: str) -> None:
     ``PACK_ALLOWED_MODULES`` must be a decision someone argues for, not a line
     that slips in beside a legitimate helper."""
     assert denied not in PACK_ALLOWED_MODULES
+
+
+def test_the_packs_package_root_does_not_hand_back_pathlib() -> None:
+    """The allowlist entry was the package root, and a submodule match let a
+    pack write one import and get `pathlib.Path` — arbitrary read and write —
+    straight back, while the table below still truthfully said `pathlib` was
+    not on it. A capability reachable in one import is not withheld, whatever
+    the table says; the entry is the single context module the Teach delegates
+    to.
+    """
+    import types
+
+    module = types.ModuleType("hostile")
+    restrict_module(module.__dict__)
+    with pytest.raises(PackCapabilityRefused):
+        exec(  # noqa: S102 — the whole point is what this refuses
+            compile(
+                "from anastomosis.packs.practice_fusion_soap.context import Path",
+                "hostile/context.py",
+                "exec",
+            ),
+            module.__dict__,
+        )
+
+    # The one entry that stays reachable is the one a taught layout needs.
+    allowed = types.ModuleType("taught")
+    restrict_module(allowed.__dict__)
+    exec(  # noqa: S102
+        compile(
+            "from anastomosis.packs.generic_soap.context import build_context",
+            "taught/context.py",
+            "exec",
+        ),
+        allowed.__dict__,
+    )
+    assert callable(allowed.__dict__["build_context"])

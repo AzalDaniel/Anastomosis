@@ -43,6 +43,7 @@ root is operator-chosen configuration; nothing patient-derived reaches here.
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,15 +118,49 @@ def pack_file_digests(root: Path) -> dict[str, str]:
     chart looks like as the template is, and they are exactly what the trust
     hash cannot see. Sorted, so the record is deterministic; ``__pycache__``
     left out because loading the pack creates it.
+
+    Symlinked directories are FOLLOWED. ``rglob`` does not follow them — it
+    classifies a symlink-to-directory as a file and then the ``is_file`` guard
+    drops it — so a pack whose ``assets`` is a link had its whole subtree
+    absent from this record, and editing a logo through it changed nothing
+    here. That is the exact claim this function exists to make. A template
+    reached through such a link loads anyway, so it would also have been
+    recorded as read while absent from the tree, which reads as a mid-batch
+    swap. Following costs a cycle risk on a looping link, which ``os.walk``
+    does not guard; the walk below therefore tracks the real directories it
+    has entered.
     """
     digests: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if any(part in _SKIPPED_DIRS for part in path.relative_to(root).parts):
+    seen: set[tuple[int, int]] = set()
+    for parent, dirnames, filenames in os.walk(root, followlinks=True):
+        here = Path(parent)
+        key = _dir_identity(here)
+        if key is not None:
+            if key in seen:
+                dirnames[:] = []
+                continue
+            seen.add(key)
+        dirnames[:] = sorted(name for name in dirnames if name not in _SKIPPED_DIRS)
+        if any(part in _SKIPPED_DIRS for part in here.relative_to(root).parts):
             continue
-        if not path.is_file():
-            continue
-        digests[path.relative_to(root).as_posix()] = _digest(path)
-    return digests
+        for name in filenames:
+            path = here / name
+            if path.is_file():
+                digests[path.relative_to(root).as_posix()] = _digest(path)
+    return dict(sorted(digests.items()))
+
+
+def _dir_identity(path: Path) -> tuple[int, int] | None:
+    """``(device, inode)`` for a directory, or ``None`` when it cannot be read.
+
+    The cycle guard for the followed walk: a link pointing at an ancestor
+    would otherwise recurse until the path length gave out.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
 
 
 @dataclass(frozen=True)
@@ -211,11 +246,18 @@ class RecordingLoader(FileSystemLoader):
     provenance record can say what the render actually READ rather than only
     what was lying next to it.
 
-    The digest is taken over the source re-encoded in the loader's own encoding.
-    That is an exact round-trip of the bytes on disk — the loader decoded them
-    with the same encoding a moment earlier, and a file that did not decode
-    never got here — so it is directly comparable to
-    :func:`pack_file_digests`'s digest of the same file.
+    The digest is taken over the file's BYTES, re-read from the path Jinja
+    resolved. Re-encoding the decoded source is not the same thing and was the
+    first shape of this: Jinja opens templates in text mode, so universal
+    newline translation turns a CRLF file into LF before we ever see it, and
+    the re-encoded digest then disagreed with :func:`pack_file_digests`'s
+    binary one for every CRLF template — which is every template a Teach
+    writes on Windows, and every shipped template in a checkout with
+    ``core.autocrlf``. The run would render all its charts and then refuse
+    with "the layout changed while this batch was rendering" about a file
+    nobody touched. This repo has met that translation twice before
+    (``tools/phi_scan.py`` normalizes for it; ``sourcelearn`` was fixed for
+    it), which is two reasons not to meet it a third time.
     """
 
     def __init__(self, root: Path) -> None:
@@ -227,7 +269,7 @@ class RecordingLoader(FileSystemLoader):
         self, environment: Environment, template: str
     ) -> tuple[str, str, Callable[[], bool]]:
         source, filename, uptodate = super().get_source(environment, template)
-        self.templates_read[template] = hashlib.sha256(source.encode(self.encoding)).hexdigest()
+        self.templates_read[template] = _digest(Path(filename))
         return source, filename, uptodate
 
 

@@ -393,6 +393,20 @@ def _reviewed_context(
         return None, None
     raw_route = _require(data, "route", path)
     raw_gates = _require(data, "gates", path)
+    # A manifest that DECLARES this version and then carries nulls is not an
+    # old tree — both writers always record both — so it is a defect, and
+    # reading it as "no gate record" would hand an executor the one branch it
+    # is allowed to proceed past. The same rule the ladder fields already
+    # follow: a null where the declared version promises a value is a fault.
+    if raw_route is None or raw_gates is None:
+        missing = " and ".join(
+            name for name, raw in (("route", raw_route), ("gates", raw_gates)) if raw is None
+        )
+        raise ManifestError(
+            f"{path.name} declares version {version} and carries no {missing}: a manifest at "
+            "this version records both, so this one was written incompletely or edited. "
+            "Re-render rather than delivering past a gate record that is not there."
+        )
     try:
         route = None if raw_route is None else RoutePlan.from_json(raw_route)
         gates = None if raw_gates is None else RunGates.from_json(raw_gates)

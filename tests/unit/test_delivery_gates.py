@@ -34,9 +34,11 @@ from anastomosis.deliver.browser.gates import (
     route_plan_of,
 )
 from anastomosis.deliver.browser.persist import (
+    GATE_VERSION,
     LADDER_VERSION,
     MANIFEST_NAME,
     MANIFEST_VERSION,
+    ManifestError,
     load_upload_manifest,
     write_upload_manifest,
 )
@@ -236,17 +238,49 @@ def test_a_chart_that_vanished_refuses(tmp_path: Path) -> None:
         assert_deliverable(manifest)
 
 
-def test_a_bundle_with_no_gate_record_warns_but_is_not_refused(
+def test_a_genuinely_older_bundle_warns_but_is_not_refused(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Operators have rendered trees on disk. Stranding them would be a worse
-    failure than the one being fixed — but it is never silent."""
-    manifest = load_upload_manifest(_bundle(tmp_path, gates=None))
+    failure than the one being fixed — but it is never silent.
 
+    A GENUINELY older manifest: one that declares a version before gates
+    existed. This test used to build a version-3 file with its gates stripped
+    and call that the old case, which is the one shape an editor can produce
+    on purpose — so it stood in for the grandfather clause while actually
+    exercising the bypass. The two are separate tests now.
+    """
+    out = _bundle(tmp_path)
+    path = out / MANIFEST_NAME
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["version"] = GATE_VERSION - 1
+    for key in ("route", "gates"):
+        payload.pop(key, None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    manifest = load_upload_manifest(out)
     with caplog.at_level(logging.WARNING):
         assert_deliverable(manifest)
 
     assert "records no gate outcomes" in caplog.text
+
+
+def test_a_current_manifest_with_its_gates_nulled_is_a_defect(tmp_path: Path) -> None:
+    """The bypass the grandfather clause was accidentally covering.
+
+    Both writers always record route and gates, so a file that DECLARES this
+    version and carries nulls is not an old tree — it was written incompletely
+    or edited. Reading it as "no gate record" would hand an executor the one
+    branch it is allowed to walk past, which is the whole gate, undone by one
+    token."""
+    out = _bundle(tmp_path)
+    path = out / MANIFEST_NAME
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["gates"] = None
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="carries no gates"):
+        load_upload_manifest(out)
 
 
 def test_a_refusal_names_no_path_and_no_patient(tmp_path: Path) -> None:
