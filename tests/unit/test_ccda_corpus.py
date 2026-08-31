@@ -260,13 +260,18 @@ def test_the_generating_system_and_the_informant_still_reach_the_record(
     assert informants == {"spouse"}
 
 
-def test_an_unstructured_body_still_reaches_nothing(scale_report: dict[str, object]) -> None:
+def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]) -> None:
     """A scanned referral's whole clinical content is one embedded artifact, and
-    this adapter has no slot for it. Named and counted, not folded into the
-    success column."""
+    it arrives as one — attached, not folded into an empty chart.
+
+    Measured at corpus scale rather than on one document because the shape that
+    hid here was a whole document TYPE reporting success: every unstructured
+    document in the corpus offers this construct, so a carry that worked on the
+    fixture and not on the type would show up as a partial column, not a pass.
+    """
     totals = _row(scale_report, "body:nonXMLBody")
-    assert totals[Disposition.UNSUPPORTED.value] > 0
-    assert totals.get(Disposition.STRUCTURALLY_PARSED.value, 0) == 0
+    assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
+    assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
 
 
 def test_all_four_dispositions_actually_occur(scale_report: dict[str, object]) -> None:

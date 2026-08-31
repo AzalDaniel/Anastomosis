@@ -43,6 +43,9 @@ is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import mimetypes
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -78,12 +81,15 @@ from anastomosis.core.ccda_codes import (
     V3,
     XSI,
 )
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.model import (
+    EXT_INLINE_CONTENT,
     AllergyCategory,
     AllergyIntolerance,
     Condition,
     ContactKind,
     ContactPoint,
+    DocumentArtifact,
     Encounter,
     Facility,
     Identifier,
@@ -102,8 +108,15 @@ from anastomosis.core.model import (
 from anastomosis.core.model.patient import Address
 from anastomosis.core.textutil import format_phone
 from anastomosis.core.timeutil import parse_date, parse_dt
+from anastomosis.sources.base import SourceDataError
 
-__all__ = ["SOURCE", "parse_document"]
+__all__ = [
+    "MAX_ARTIFACT_BYTES",
+    "SOURCE",
+    "UnstructuredBodyMissingError",
+    "UnstructuredBodyTooLargeError",
+    "parse_document",
+]
 
 SOURCE = "ccda"
 
@@ -1644,6 +1657,269 @@ def _participations(
     record.encounters += _encompassing_encounters(root, patient_id, actors)
 
 
+# --- the unstructured body ---------------------------------------------------
+
+#: The largest artifact this adapter carries out of one document, decoded.
+#:
+#: An Unstructured Document's body is a whole scanned chart, and a base64 one is
+#: resident twice on the way in — as the source's characters and as the bytes it
+#: decodes to. So the ceiling is DECLARED here rather than discovered at
+#: whatever size this machine happens to die at, which is a limit nobody can
+#: read, reproduce, or raise. 32 MiB admits the scans real exports carry (a few
+#: hundred colour pages) and refuses the pathological one loudly, because the
+#: alternative — carrying the first 32 MiB of a clinical document — is a chart
+#: that looks complete and is not.
+MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+
+#: What a body that declares no ``@mediaType`` is recorded as: "some bytes, no
+#: idea what kind" — the same answer ``pf_tebra`` gives a row that states no
+#: type. Never a guess at the real one: an artifact announced as a PDF it may
+#: not be is worse than one that admits the document said nothing.
+UNDECLARED_MEDIA_TYPE = "application/octet-stream"
+
+#: Where the ``<nonXMLBody>``'s own declarations ride, so an attribute this
+#: adapter has no field for is preserved rather than read and discarded.
+EXT_NON_XML_BODY = "ccda:nonXMLBody"
+
+#: What happened to this chart, in words, for whoever reads the record — the
+#: export's loss narrative, the preserved-fields section, a physician opening
+#: the bundle. Constant text: it describes the SHAPE of an Unstructured
+#: Document, and nothing in it comes off the document it describes.
+UNSTRUCTURED_BODY_NOTE = (
+    "This document's entire clinical content is one embedded artifact — a scan, "
+    "a fax, or another non-XML file — carried as an attachment beside the chart "
+    "and named by this document's path. The source held no coded clinical data: "
+    "no problems, medications, allergies, immunizations, results or notes were "
+    "available to migrate as data, so the attachment is the chart."
+)
+
+_EMBEDDED = "embedded artifact"
+_REFERENCED = "referenced artifact"
+
+
+class UnstructuredBodyMissingError(SourceDataError):
+    """An Unstructured Document's whole content is a file the export lacks.
+
+    Nothing else is on that chart, so carrying the document anyway would hand
+    the operator a patient with a name and no record — the silent total loss
+    this adapter exists to make impossible. The run refuses instead.
+    """
+
+
+class UnstructuredBodyTooLargeError(SourceDataError):
+    """An artifact over :data:`MAX_ARTIFACT_BYTES`.
+
+    Refused whole rather than truncated: half a scanned discharge summary is
+    not a smaller version of that summary, it is a document whose second half
+    silently does not exist.
+    """
+
+
+def _within_ceiling(size: int, what: str) -> None:
+    """Refuse an artifact this adapter will not carry, in bytes and limits only."""
+    if size > MAX_ARTIFACT_BYTES:
+        raise UnstructuredBodyTooLargeError(
+            f"a C-CDA Unstructured Document's {what} is {size} bytes, over this "
+            f"adapter's declared {MAX_ARTIFACT_BYTES}-byte ceiling; refusing to carry it "
+            "rather than truncating a clinical document to fit. Nothing else is on that "
+            "chart, so the run stops instead of delivering the patient without it."
+        )
+
+
+def _resolved_reference(reference: str, document: Path) -> Path:
+    """The file a ``nonXMLBody`` reference names, beside the document itself.
+
+    The value is a third party's word about the filesystem, so it is resolved
+    and then checked back against the directory it was resolved in: a ``../`` in
+    someone else's document must not make this adapter read a file the operator
+    never pointed at.
+
+    A value that is not a relative filename at all — an absolute path, a URL, a
+    ``#`` fragment — resolves to nothing beside the document and is refused by
+    the same check, which is the right answer for all three: this parser reads
+    the export the operator pointed at and fetches nothing.
+
+    PHI: the refusal names no filename. A C-CDA export names its files after the
+    patient, so the reference value is a patient-derived string and the message
+    says the SHAPE of what is missing instead.
+    """
+    directory = document.parent.resolve()
+    resolved = (directory / reference).resolve()
+    if not resolved.is_relative_to(directory) or not resolved.is_file():
+        raise UnstructuredBodyMissingError(
+            "a C-CDA Unstructured Document's entire content is a referenced file that is "
+            "not beside it in the export, so this patient's chart did not resolve to "
+            "anything. The run refuses rather than migrating a patient with correct "
+            "demographics and nothing on their chart. The file is not named here because "
+            "a C-CDA export names its files after the patient: look for the document whose "
+            "<nonXMLBody><text><reference> points at a file the export does not hold."
+        )
+    return resolved
+
+
+def _embedded_bytes(text: _Element) -> bytes:
+    """The artifact a ``nonXMLBody`` carries inside itself.
+
+    ``representation="B64"`` is what a scan arrives as; anything else means the
+    element's own characters ARE the content (CDA's default for ED), which is
+    how a plain-text body comes across. Base64 that does not decode raises —
+    the adapter names the document by position and refuses the run — because
+    the alternative is a patient whose chart quietly became zero bytes.
+
+    The ceiling is checked against the encoded length BEFORE decoding: four
+    base64 characters are three bytes, so the estimate is exact to within the
+    padding, and a body that cannot be carried must not be materialized to find
+    that out.
+    """
+    # Joined verbatim rather than through `_text_content`: that helper
+    # collapses whitespace, which is right for narrative and destroys a
+    # plain-text body's own line breaks.
+    raw = "".join(t if isinstance(t, str) else t.decode() for t in text.itertext())
+    if (text.get("representation") or "").upper() != "B64":
+        plain = raw.encode("utf-8")
+        _within_ceiling(len(plain), _EMBEDDED)
+        return plain
+    packed = "".join(raw.split())
+    _within_ceiling(len(packed) // 4 * 3, _EMBEDDED)
+    content = base64.b64decode(packed, validate=True)
+    _within_ceiling(len(content), _EMBEDDED)
+    return content
+
+
+def _delivered_suffix(media_type: str | None) -> str:
+    """A file extension for an embedded artifact's delivered name.
+
+    Naming a file, not typing it: ``mime_type`` keeps whatever the document
+    declared, verbatim, and this is only what the bytes are called on disk. A
+    media type nothing maps to gets no suffix rather than a plausible one.
+    """
+    if not media_type:
+        return ""
+    return mimetypes.guess_extension(media_type.split(";")[0].strip()) or ""
+
+
+def _non_xml_body_extensions(body: _Element, text: _Element) -> dict[str, Any]:
+    """What the ``<nonXMLBody>`` declared that no ``DocumentArtifact`` field holds.
+
+    ``@mediaType`` is the one attribute consumed into a field (``mime_type``)
+    and so is not repeated here; a body that declared none is recorded as
+    having declared none, because "the document said octet-stream" and "the
+    document said nothing" are different facts about a chart.
+    """
+    declared: dict[str, Any] = {
+        "note": UNSTRUCTURED_BODY_NOTE,
+        "representation": text.get("representation"),
+        "reference": _val_attr(text, "v3:reference", "value"),
+        "languageCode": _val_attr(body, "v3:languageCode", "code"),
+        "confidentialityCode": _val_attr(body, "v3:confidentialityCode", "code"),
+        "classCode": body.get("classCode"),
+    }
+    kept = {key: value for key, value in declared.items() if value is not None}
+    if text.get("mediaType") is None:
+        kept["mediaType_declared"] = False
+    return kept
+
+
+def _artifact_content(
+    text: _Element, document: Path, extensions: dict[str, Any], media_type: str | None, index: int
+) -> tuple[str, str]:
+    """``(delivered path, sha256)`` for the body, filling ``extensions`` as needed.
+
+    A referenced body already exists as a file in the export, and keeps the name
+    the export gave it — exactly like a ``pf_tebra`` attachment, so the pipeline
+    copies it with no new machinery. An EMBEDDED body has no file anywhere, so
+    its bytes travel on the artifact (:data:`EXT_INLINE_CONTENT`) and delivery
+    writes them under a name derived from the artifact's own id, which is
+    deterministic and carries nothing off the patient.
+    """
+    if (reference := _val_attr(text, "v3:reference", "value")) is not None:
+        digest, size = hash_and_size(_resolved_reference(reference, document))
+        _within_ceiling(size, _REFERENCED)
+        return reference, digest
+    content = _embedded_bytes(text)
+    extensions[EXT_INLINE_CONTENT] = base64.b64encode(content).decode("ascii")
+    return f"{_artifact_name(document, index)}{_delivered_suffix(media_type)}", _digest(content)
+
+
+def _digest(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _artifact_name(document: Path, index: int) -> str:
+    """The artifact's id, and so the stem of an embedded one's delivered filename.
+
+    Derived the way every other id this parser mints is (:func:`_participant_id`,
+    :func:`_facility_id`): a uuid5 over the source file, the construct and the
+    position, so two runs over the same export deliver the same name and the
+    name itself carries nothing readable off the patient. The position is in it
+    for the same reason it is in a participant's: a document stating the
+    construct twice is two artifacts, and one id would deliver the second over
+    the first.
+    """
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{document.name}:nonXMLBody:{index}"))
+
+
+def _unstructured_documents(
+    root: _Element, document: Path, patient_id: str, doc_meta: dict[str, Any]
+) -> list[DocumentArtifact]:
+    """The chart of an Unstructured Document, as the artifact it is.
+
+    A C-CDA Unstructured Document carries its whole clinical content as an
+    embedded or referenced file under ``<nonXMLBody>`` instead of coded
+    sections. The section walk cannot see it, so such a document parsed cleanly
+    and produced a patient with an empty chart, and nothing in the run said so:
+    1,024 of them in a 6,144-document ledger run, every one reported a success.
+
+    Carried rather than refused. Refusing loses the patient outright; carrying
+    preserves exactly what the source had. A record holding demographics plus
+    one attached artifact is not a degraded chart — for a practice whose records
+    were scanned, it is a faithful one.
+
+    Returns a list, so the caller needs no branch and a document that states the
+    construct more than once (CDA allows one body, an export is not obliged to
+    obey) carries every one rather than the first.
+    """
+    return [
+        artifact
+        for index, body in enumerate(_findall(root, "v3:component/v3:nonXMLBody"))
+        if (artifact := _artifact(body, index, document, patient_id, doc_meta)) is not None
+    ]
+
+
+def _artifact(
+    body: _Element, index: int, document: Path, patient_id: str, doc_meta: dict[str, Any]
+) -> DocumentArtifact | None:
+    """One ``<nonXMLBody>`` as a :class:`DocumentArtifact`, or ``None``.
+
+    ``None`` for a body stating no ``<text>`` at all, which is the honest answer
+    for a construct that offered nothing — and the answer the ledger reads back
+    as ``source_empty`` rather than as a loss.
+    """
+    text = _find(body, "v3:text")
+    if text is None:
+        return None
+    media_type = text.get("mediaType")
+    # Namespaced, so what the body declared stays attributable to the construct
+    # it came off rather than becoming loose keys on an artifact.
+    extensions: dict[str, Any] = {EXT_NON_XML_BODY: _non_xml_body_extensions(body, text)}
+    path, digest = _artifact_content(text, document, extensions, media_type, index)
+    return DocumentArtifact(
+        id=_artifact_name(document, index),
+        patient_id=patient_id,
+        path=path,
+        sha256=digest,
+        # As DECLARED. A type this adapter normalized, corrected or guessed would
+        # be this tool telling a receiving system what a scan is, which is a
+        # claim only the document holding it can make.
+        mime_type=media_type or UNDECLARED_MEDIA_TYPE,
+        title=doc_meta.get("ccda:title"),
+        extensions=extensions,
+        # The document's own id: an unstructured body carries no <id> of its own
+        # (CDA gives NonXMLBody none), and the document IS the artifact.
+        provenance=_prov(document.name, doc_meta.get("ccda:documentId")),
+    )
+
+
 # --- top-level assembly ------------------------------------------------------
 
 
@@ -1789,6 +2065,10 @@ def parse_document(path: Path) -> PatientRecord:
     )
     actors = _Actors(source_file=source_file)
     _participations(root, pid, actors, record)
+    # Before the section walk, and unconditionally: an Unstructured Document has
+    # no sections to walk, which is exactly why one used to leave here with a
+    # patient and an empty chart.
+    record.documents += _unstructured_documents(root, path, pid, doc_meta)
 
     for section in _sections(root):
         loinc = _section_code(section)

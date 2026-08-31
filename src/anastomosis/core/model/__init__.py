@@ -25,7 +25,7 @@ from .clinical import (
     ScreeningEvent,
 )
 from .coverage import Coverage
-from .document import DocumentArtifact
+from .document import EXT_INLINE_CONTENT, DocumentArtifact
 from .encounter import Addendum, Encounter, NoteSection, SectionKind
 from .patient import (
     Address,
@@ -40,6 +40,7 @@ from .patient import (
 
 __all__ = [
     "CHARTABLE_KINDS",
+    "EXT_INLINE_CONTENT",
     "Addendum",
     "Address",
     "AdvanceDirective",

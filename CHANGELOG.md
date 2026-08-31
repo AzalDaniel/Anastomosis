@@ -44,6 +44,24 @@ issue and fixed in its own pull request.
   already had — "13 fact(s) carried by the record summary, not the visit
   charts" — printed only when the count is nonzero, silent on every run that
   abbreviates nothing. (#297)
+- **A scanned chart is still a chart.** A C-CDA Unstructured Document carries
+  its whole clinical content as one embedded or referenced artifact under
+  `<nonXMLBody>` — a scanned referral, a faxed discharge summary — instead of
+  coded sections. The parser read the header, found no `structuredBody`, and
+  returned a patient with nothing on their chart: no error, no skip, a run that
+  reported success. In the 6,144-document ledger run that was 1,024 documents,
+  every one of them a total loss reported as a clean parse. The adapter now
+  carries the artifact rather than refusing it — refusing loses the patient
+  entirely, while a record holding demographics plus the scan is what the source
+  actually had — recording the `@mediaType` exactly as declared, resolving a
+  reference against the document's own directory, and failing closed on the two
+  shapes it cannot carry: a referenced file the export does not hold, and an
+  artifact over a declared 32 MiB ceiling (never a truncated clinical document).
+  Delivery writes it beside the rendered charts in the same hardened
+  attachments directory as every other source attachment, under the same
+  claimed names, so nothing downstream has to know which artifacts arrived as
+  files and which arrived inside their record. `body:nonXMLBody` moves from
+  1,024 unsupported to 1,024 parsed; every other ledger row is unchanged. (#313)
 
 - **A migrated C-CDA chart says who wrote it again.** The adapter had no
   extraction for participations at all: across 6,144 generated documents twelve
