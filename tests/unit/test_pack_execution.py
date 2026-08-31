@@ -269,7 +269,7 @@ def test_the_packs_package_root_does_not_hand_back_pathlib() -> None:
     module = types.ModuleType("hostile")
     restrict_module(module.__dict__)
     with pytest.raises(PackCapabilityRefused):
-        exec(  # noqa: S102 — the whole point is what this refuses
+        exec(
             compile(
                 "from anastomosis.packs.practice_fusion_soap.context import Path",
                 "hostile/context.py",
@@ -281,7 +281,7 @@ def test_the_packs_package_root_does_not_hand_back_pathlib() -> None:
     # The one entry that stays reachable is the one a taught layout needs.
     allowed = types.ModuleType("taught")
     restrict_module(allowed.__dict__)
-    exec(  # noqa: S102
+    exec(
         compile(
             "from anastomosis.packs.generic_soap.context import build_context",
             "taught/context.py",

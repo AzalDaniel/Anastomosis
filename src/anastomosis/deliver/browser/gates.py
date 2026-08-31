@@ -46,6 +46,13 @@ from typing import TYPE_CHECKING, Any
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag
 
+#: The upload-manifest version that introduced the reviewed route plan and the
+#: run's gate outcomes. It lives HERE, with the records it names, because the
+#: delivery decision needs it and `persist` already imports this module — the
+#: other direction would close a cycle. `persist` re-exports it, so every
+#: existing import site is unchanged.
+GATE_VERSION = 3
+
 if TYPE_CHECKING:
     from anastomosis.deliver.router import TransitMap
     from anastomosis.destinations.base import UploadItem
@@ -57,6 +64,7 @@ __all__ = [
     "GATE_FAIL",
     "GATE_NOT_RUN",
     "GATE_PASS",
+    "GATE_VERSION",
     "DeliveryRefused",
     "RoutePlan",
     "RunGates",
@@ -233,9 +241,22 @@ def assert_deliverable(manifest: UploadManifest) -> None:
     delivered does not pay for a walk over its charts first.
     """
     gates = manifest.gates
+    if gates is None and manifest.version >= GATE_VERSION:
+        # NOT the grandfather clause. A manifest that declares the version at
+        # which gates exist and carries none was written incompletely or
+        # edited: every writer at this version records them, so reading this
+        # as "an old tree" would hand delivery the one branch it is allowed to
+        # walk past — the whole gate, undone by one token.
+        raise DeliveryRefused(
+            "refusing to deliver this bundle: its upload manifest declares version "
+            f"{manifest.version} and records no gate outcomes, so nothing says whether these "
+            "charts were verified, whether the render seam balanced, or which layout produced "
+            "them. Re-render rather than delivering past a record that is not there."
+        )
     if gates is None:
-        # The grandfather clause. Loud, and never silent — see the module
-        # docstring for why this is a warning and not a refusal.
+        # The grandfather clause, and only for a manifest old enough to predate
+        # the record. Loud, and never silent — see the module docstring for why
+        # this one is a warning.
         logger.warning(
             "this bundle's upload manifest (v%d) records no gate outcomes: delivery cannot "
             "tell whether these charts were verified, whether the render seam balanced, or "

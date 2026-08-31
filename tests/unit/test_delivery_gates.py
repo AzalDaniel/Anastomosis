@@ -38,7 +38,6 @@ from anastomosis.deliver.browser.persist import (
     LADDER_VERSION,
     MANIFEST_NAME,
     MANIFEST_VERSION,
-    ManifestError,
     load_upload_manifest,
     write_upload_manifest,
 )
@@ -273,14 +272,19 @@ def test_a_current_manifest_with_its_gates_nulled_is_a_defect(tmp_path: Path) ->
     or edited. Reading it as "no gate record" would hand an executor the one
     branch it is allowed to walk past, which is the whole gate, undone by one
     token."""
-    out = _bundle(tmp_path)
+    out = _bundle(tmp_path)  # a real gated write, so the file really is v3
     path = out / MANIFEST_NAME
     payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["version"] == GATE_VERSION
     payload["gates"] = None
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    with pytest.raises(ManifestError, match="carries no gates"):
-        load_upload_manifest(out)
+    # It still LOADS — a null is a legal shape at the read — but it may not buy
+    # delivery, because a file that declares this version was written by a
+    # writer that had gates to record.
+    manifest = load_upload_manifest(out)
+    with pytest.raises(DeliveryRefused, match="records no gate outcomes"):
+        assert_deliverable(manifest)
 
 
 def test_a_refusal_names_no_path_and_no_patient(tmp_path: Path) -> None:

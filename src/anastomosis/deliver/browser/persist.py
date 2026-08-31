@@ -50,7 +50,7 @@ from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.output import secure_output_dir
 from anastomosis.destinations.base import UploadItem
 
-from .gates import RoutePlan, RunGates
+from .gates import GATE_VERSION, RoutePlan, RunGates
 from .manifest import build_manifest
 
 if TYPE_CHECKING:
@@ -79,8 +79,9 @@ MANIFEST_VERSION = 3
 #: ``expected_pages``, ``date_of_service``).
 LADDER_VERSION = 2
 #: The version that introduced the reviewed route plan and the run's gate
-#: outcomes (:mod:`anastomosis.deliver.browser.gates`).
-GATE_VERSION = 3
+#: outcomes is defined by :mod:`anastomosis.deliver.browser.gates` — the
+#: delivery decision needs it too, and that module cannot import this one back
+#: — and re-exported here, where every caller already looks for it.
 
 # Versions :func:`load_upload_manifest` accepts; anything else is a defect and
 # raises. Each field group is gated on the version that introduced it, not on
@@ -297,8 +298,16 @@ def write_upload_manifest(
             )
         patients_json[patient_id] = patient.model_dump(mode="json")
 
+    # The version describes the FILE, not the build that wrote it. A writer
+    # given no gate record produces a manifest that carries none, which is
+    # exactly a version-2 file — and stamping it 3 anyway was the ambiguity
+    # underneath the whole grandfather clause: a reader could not tell "written
+    # before gates existed" from "written now and edited since", so the branch
+    # meant for old trees was reachable by deleting one value from a current
+    # one. Version by content, and the two cases separate cleanly.
+    version = MANIFEST_VERSION if gates is not None else LADDER_VERSION
     payload = {
-        "version": MANIFEST_VERSION,
+        "version": version,
         "pack": pack,
         "route": None if route is None else route.as_json(),
         "gates": None if gates is None else gates.as_json(),
@@ -321,7 +330,7 @@ def write_upload_manifest(
     # L1 an upload over this manifest can actually run.
     logger.info(
         "wrote upload manifest v%d: %d item(s), %d with an expected page count",
-        MANIFEST_VERSION,
+        version,
         len(items_json),
         len(page_counts),
     )
@@ -393,20 +402,13 @@ def _reviewed_context(
         return None, None
     raw_route = _require(data, "route", path)
     raw_gates = _require(data, "gates", path)
-    # A manifest that DECLARES this version and then carries nulls is not an
-    # old tree — both writers always record both — so it is a defect, and
-    # reading it as "no gate record" would hand an executor the one branch it
-    # is allowed to proceed past. The same rule the ladder fields already
-    # follow: a null where the declared version promises a value is a fault.
-    if raw_route is None or raw_gates is None:
-        missing = " and ".join(
-            name for name, raw in (("route", raw_route), ("gates", raw_gates)) if raw is None
-        )
-        raise ManifestError(
-            f"{path.name} declares version {version} and carries no {missing}: a manifest at "
-            "this version records both, so this one was written incompletely or edited. "
-            "Re-render rather than delivering past a gate record that is not there."
-        )
+    # Both keys must be PRESENT at this version (``_require`` above), and both
+    # may legitimately be null: a render that chose no destination has no route
+    # to record, and saying so is the honest answer. What a null gate record
+    # may not do is buy delivery — that decision belongs to
+    # :func:`~anastomosis.deliver.browser.gates.assert_deliverable`, which
+    # refuses it at this version rather than warning, and warns only for a
+    # manifest old enough to predate the record entirely.
     try:
         route = None if raw_route is None else RoutePlan.from_json(raw_route)
         gates = None if raw_gates is None else RunGates.from_json(raw_gates)
