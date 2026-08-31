@@ -1,5 +1,11 @@
 """Safety gates for image-only samples passed to pack generation.
 
+The refusal these cover is the fail-closed half, and it is now conditional on
+there being no engine to ask: ``extract_document`` with no OCR worker behaves
+exactly as it always did. What OCR turns those pages into is covered by
+``test_packgen_ocr_evidence.py``; what stays true here is that nothing is
+learned from pixels nobody read, and that a failed run writes no pack.
+
 The PDFs here are synthetic and contain no patient-derived text or imagery.
 """
 
@@ -42,6 +48,7 @@ def _write_pdf(path: Path, page_kinds: list[str]) -> None:
 
 
 def test_all_image_document_requires_ocr(tmp_path: Path) -> None:
+    """No worker, no reading: the harvester refuses and names what to install."""
     path = tmp_path / "image-only.pdf"
     _write_pdf(path, ["image"])
 
@@ -49,6 +56,7 @@ def test_all_image_document_requires_ocr(tmp_path: Path) -> None:
         extract_document(path, index=7)
 
     assert path.name not in str(excinfo.value)
+    assert "Nothing is downloaded" in str(excinfo.value)
 
 
 def test_mixed_document_rejects_every_image_only_page(tmp_path: Path) -> None:
@@ -85,7 +93,43 @@ def test_extract_samples_preserves_ocr_exception_type(tmp_path: Path) -> None:
         extract_samples([path])
 
 
-def test_pack_init_refuses_ocr_sample_without_writing_a_pack(tmp_path: Path) -> None:
+def test_pack_init_refuses_a_textless_sample_without_writing_a_pack(
+    tmp_path: Path,
+) -> None:
+    """A flat raster carrying no text at all cannot become a pack either way.
+
+    With an offline engine installed the page IS observed — and the observation
+    is empty, because there is nothing on it. With no engine the page is
+    refused unread. Both roads end in a refusal and an empty output directory;
+    only the exception type says which happened, and the frontend surfaces that
+    type rather than a message.
+    """
+    samples = tmp_path / "samples"
+    samples.mkdir()
+    _write_pdf(samples / "image-only.pdf", ["image"])
+    output = tmp_path / "packs"
+
+    result = run_pack_init(
+        PackInitCommand(samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True)
+    )
+
+    assert result.ok is False
+    assert result.error in {"OcrRequiredError", "NoExtractableTextError"}
+    assert result.pack_dir is None
+    assert result.draft_md is None
+    assert not (output / "synthetic").exists()
+
+
+def test_pack_init_without_an_engine_names_the_ocr_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the binary made genuinely unfindable, the refusal is the OCR one.
+
+    PATH is pointed at a directory that does not exist and the operator
+    override is cleared, so discovery really fails rather than being faked.
+    """
+    monkeypatch.setenv("PATH", str(tmp_path / "no-binaries-here"))
+    monkeypatch.delenv("ANAST_OCR_TESSERACT", raising=False)
     samples = tmp_path / "samples"
     samples.mkdir()
     _write_pdf(samples / "image-only.pdf", ["image"])
@@ -97,6 +141,4 @@ def test_pack_init_refuses_ocr_sample_without_writing_a_pack(tmp_path: Path) -> 
 
     assert result.ok is False
     assert result.error == "OcrRequiredError"
-    assert result.pack_dir is None
-    assert result.draft_md is None
     assert not (output / "synthetic").exists()

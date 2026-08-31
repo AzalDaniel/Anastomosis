@@ -177,6 +177,79 @@ def _render_preview(pack_dir: Path) -> Path | None:
     return result.documents[0].path
 
 
+def _engine_fault_advice(*, ocr_allowed: bool) -> tuple[str, ...]:
+    """An engine IS here and it misbehaved — say so, and clear the samples.
+
+    A page too large for the cap, a non-zero exit, a missing output stream,
+    its two streams disagreeing about how many words they read: every one of
+    those is a fact about the installation. Saying nothing left the operator
+    reading "analysis failed" beside a file that is perfectly fine.
+    """
+    del ocr_allowed  # the fault is the engine's either way
+    return (
+        "  The offline OCR engine on this machine did not complete a page — it exceeded "
+        "its deadline, exited non-zero, or returned output this build could not read. "
+        "Your samples are not implicated. Re-run with --no-ocr to learn from native text "
+        "only, or check the engine installation.",
+    )
+
+
+def _ocr_required_advice(*, ocr_allowed: bool) -> tuple[str, ...]:
+    """The sample is a scan and nothing on this machine can read it.
+
+    The install hint is a file to place, not a download, so it is printed
+    rather than linked — and if the operator asked for --no-ocr, the refusal
+    names their own flag before it names the missing engine.
+    """
+    from anastomosis.packgen.ocr import INSTALL_HINT
+
+    declined = "" if ocr_allowed else " You passed --no-ocr, so it was not recognized."
+    return (f"  A sample page is a scan with no readable text.{declined}", f"  {INSTALL_HINT}")
+
+
+#: Exception TYPE name -> the next step an operator can act on. Anything not
+#: listed here gets the bare "analysis failed" line and no invented advice.
+_ANALYSIS_ADVICE = {
+    "OcrEngineError": _engine_fault_advice,
+    "OcrRequiredError": _ocr_required_advice,
+}
+
+
+def _report_analysis_failure(error: str | None, *, ocr_allowed: bool) -> None:
+    """Say why the harvest stopped, in a way the operator can act on.
+
+    The error is an exception TYPE name — never a message that could carry a
+    sample path.
+    """
+    from anastomosis import cli as _cli
+
+    _cli.console.print(f"[red]analysis failed[/red] ({error})")
+    advice = _ANALYSIS_ADVICE.get(error or "")
+    if advice is None:
+        return
+    for line in advice(ocr_allowed=ocr_allowed):
+        _cli.console.print(line)
+
+
+def _note_ocr_evidence(pack_dir: Path) -> None:
+    """Point at OCR_EVIDENCE.md when the draft has one, and say what it means.
+
+    The file exists only when a page was recognized, so its presence IS the
+    disclosure — and the operator hears it on the terminal they are already
+    looking at, not only in a file they may never open.
+    """
+    from anastomosis import cli as _cli
+    from anastomosis.packgen.emit import OCR_EVIDENCE_NAME
+
+    evidence = pack_dir / OCR_EVIDENCE_NAME
+    if not evidence.exists():
+        return
+    _cli.console.print(
+        "[yellow]some of this layout was recognized from page images[/yellow] — read "
+        f"{evidence} before trusting any of its text."
+    )
+
+
 def _print_pack_next_steps(
     name: str, pack_dir: Path, out_dir: Path | None, preview_path: Path | None
 ) -> None:
@@ -241,6 +314,16 @@ def pack_init(
         bool,
         typer.Option("--yes", "-y", help="Skip the interactive same-patient confirmation."),
     ] = False,
+    ocr: Annotated[
+        bool,
+        typer.Option(
+            "--ocr/--no-ocr",
+            help=(
+                "Read sample pages that are scans with the offline OCR engine, "
+                "as LAYOUT evidence only. Nothing is downloaded."
+            ),
+        ),
+    ] = True,
 ) -> None:
     """Learn a draft chart layout from sample notes an EHR printed.
 
@@ -253,6 +336,14 @@ def pack_init(
     What you get is a draft and a starting point: compare a chart it produces
     against an original, edit the layout, and try again. It is not claimed to
     match.
+
+    Pages that are scans have no text to read. If an offline OCR engine is
+    installed, those pages are RECOGNIZED instead — as layout evidence, never
+    as clinical text: the draft marks every recognized string and writes an
+    OCR_EVIDENCE.md saying what recognized text may and may not be used for.
+    Nothing is downloaded, ever. Pass --no-ocr to learn only from text that was
+    genuinely read; with no engine installed, a scanned sample is refused
+    either way and the message says what to install.
 
     The draft is saved under ~/.anastomosis/packs unless --out-dir says
     otherwise, and confirming this step also records its code hash — so the
@@ -273,7 +364,12 @@ def pack_init(
     # confirm.
     analysis_result = run_pack_init(
         PackInitCommand(
-            samples=samples, name=name, display=display, out_dir=out_dir, confirmed=False
+            samples=samples,
+            name=name,
+            display=display,
+            out_dir=out_dir,
+            confirmed=False,
+            allow_ocr=ocr,
         )
     )
     if analysis_result.error == "InvalidPackName":
@@ -289,7 +385,7 @@ def pack_init(
         raise typer.Exit(code=2)
     if analysis_result.error != "ConfirmationRequired":
         # An analysis failure (unreadable/encrypted sample) — type name only.
-        _cli.console.print(f"[red]analysis failed[/red] ({analysis_result.error})")
+        _report_analysis_failure(analysis_result.error, ocr_allowed=ocr)
         raise typer.Exit(code=1) from None
 
     # PHI: log the COUNT only, never the sample paths (they may be named after
@@ -320,7 +416,12 @@ def pack_init(
     # Emit step (confirmed=True): the shared core writes the draft pack.
     emit_result = run_pack_init(
         PackInitCommand(
-            samples=samples, name=name, display=display, out_dir=out_dir, confirmed=True
+            samples=samples,
+            name=name,
+            display=display,
+            out_dir=out_dir,
+            confirmed=True,
+            allow_ocr=ocr,
         )
     )
     if not emit_result.ok:
@@ -329,6 +430,7 @@ def pack_init(
     pack_dir = emit_result.pack_dir
     assert pack_dir is not None  # ok=True guarantees a pack_dir
     _cli.console.print(f"\n[green]wrote draft pack[/green] {_cli._glyphs().arrow} {pack_dir}")
+    _note_ocr_evidence(pack_dir)
 
     preview_path: Path | None = None
     if render_preview:

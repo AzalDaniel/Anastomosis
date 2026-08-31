@@ -1,0 +1,294 @@
+{
+  "cases": {
+    "attachment": {
+      "fixture_digest": "c976505c66d7c014",
+      "measured": {
+        "median_center_offset_pt": 1.4,
+        "median_iou": 0.559,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 15,
+      "note": "a framed scanned attachment",
+      "refusal": null,
+      "tags": [
+        "attachment"
+      ],
+      "words": [
+        "ATTACHMENT",
+        "Outside",
+        "imaging",
+        "report,",
+        "one",
+        "page",
+        "SCANNED",
+        "DOCUMENT",
+        "Radiology",
+        "of",
+        "Example",
+        "County",
+        "Telephone",
+        "555",
+        "0142"
+      ]
+    },
+    "empty": {
+      "fixture_digest": "e3b0c44298fc1c14",
+      "measured": {
+        "median_center_offset_pt": null,
+        "median_iou": null,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 0,
+      "note": "a rasterized blank page",
+      "refusal": "NoExtractableTextError",
+      "tags": [
+        "empty"
+      ],
+      "words": []
+    },
+    "font_fallback": {
+      "fixture_digest": "170fc78c66b94d12",
+      "measured": {
+        "median_center_offset_pt": 0.255,
+        "median_iou": 0.543,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 9,
+      "note": "serif, monospaced and italic faces on one page",
+      "refusal": null,
+      "tags": [
+        "font-fallback"
+      ],
+      "words": [
+        "SERIF",
+        "HEADING",
+        "Monospaced",
+        "body",
+        "text",
+        "sample",
+        "Italic",
+        "annotation",
+        "line"
+      ]
+    },
+    "long": {
+      "fixture_digest": "22e42ecbd88de57e",
+      "measured": {
+        "median_center_offset_pt": 0.618,
+        "median_iou": 0.537,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 63,
+      "note": "a wrapped paragraph",
+      "refusal": null,
+      "tags": [
+        "long"
+      ],
+      "words": [
+        "SUBJECTIVE",
+        "Patient",
+        "reports",
+        "steady",
+        "improvement",
+        "since",
+        "the",
+        "last",
+        "visit",
+        "and",
+        "denies",
+        "chest",
+        "pain,",
+        "shortness",
+        "of",
+        "breath,",
+        "or",
+        "swelling",
+        "of",
+        "the",
+        "ankles.",
+        "Home",
+        "readings",
+        "have",
+        "been",
+        "consistent",
+        "and",
+        "the",
+        "medication",
+        "schedule",
+        "has",
+        "been",
+        "followed",
+        "without",
+        "missed",
+        "doses.",
+        "Diet",
+        "and",
+        "activity",
+        "were",
+        "reviewed",
+        "in",
+        "detail",
+        "and",
+        "the",
+        "patient",
+        "agreed",
+        "to",
+        "continue",
+        "the",
+        "current",
+        "plan",
+        "through",
+        "the",
+        "next",
+        "quarter",
+        "with",
+        "a",
+        "follow",
+        "up",
+        "appointment",
+        "already",
+        "scheduled."
+      ]
+    },
+    "multiline": {
+      "fixture_digest": "22ec9df1e9dc28a5",
+      "measured": {
+        "median_center_offset_pt": 0.532,
+        "median_iou": 0.534,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 25,
+      "note": "a heading over four lines",
+      "refusal": null,
+      "tags": [
+        "multiline"
+      ],
+      "words": [
+        "ASSESSMENT",
+        "AND",
+        "PLAN",
+        "Hypertension,",
+        "stable",
+        "on",
+        "current",
+        "therapy.",
+        "Continue",
+        "lisinopril",
+        "ten",
+        "milligrams",
+        "daily.",
+        "Recheck",
+        "blood",
+        "pressure",
+        "in",
+        "three",
+        "months.",
+        "Discussed",
+        "sodium",
+        "restriction",
+        "and",
+        "daily",
+        "walking."
+      ]
+    },
+    "pagination": {
+      "fixture_digest": "d9352aae6f70a44f",
+      "measured": {
+        "median_center_offset_pt": 0.502,
+        "median_iou": 0.546,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 29,
+      "note": "two pages with a repeated header and page-number footer",
+      "refusal": null,
+      "tags": [
+        "pagination"
+      ],
+      "words": [
+        "Synthia",
+        "Example",
+        "HISTORY",
+        "OF",
+        "PRESENT",
+        "ILLNESS",
+        "Continued",
+        "on",
+        "the",
+        "following",
+        "page.",
+        "Page",
+        "1",
+        "of",
+        "2",
+        "Synthia",
+        "Example",
+        "HISTORY",
+        "OF",
+        "PRESENT",
+        "ILLNESS",
+        "Symptoms",
+        "resolved",
+        "without",
+        "treatment.",
+        "Page",
+        "2",
+        "of",
+        "2"
+      ]
+    },
+    "short": {
+      "fixture_digest": "27a9fdc2927f1476",
+      "measured": {
+        "median_center_offset_pt": 0.341,
+        "median_iou": 0.54,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 2,
+      "note": "one short heading",
+      "refusal": null,
+      "tags": [
+        "short"
+      ],
+      "words": [
+        "PROGRESS",
+        "NOTE"
+      ]
+    },
+    "table": {
+      "fixture_digest": "7e55277826a14511",
+      "measured": {
+        "median_center_offset_pt": 0.64,
+        "median_iou": 0.553,
+        "semantic_ratio": 1.0
+      },
+      "native_word_count": 13,
+      "note": "a ruled three-column table",
+      "refusal": null,
+      "tags": [
+        "table"
+      ],
+      "words": [
+        "VITALS",
+        "Measure",
+        "Value",
+        "Units",
+        "Systolic",
+        "128",
+        "mmHg",
+        "Diastolic",
+        "82",
+        "mmHg",
+        "Pulse",
+        "68",
+        "bpm"
+      ]
+    }
+  },
+  "config_sha256": "af0b32984bbbf8890f7bbfe590212465c0dc52cdb1c3fced6ae7d04763cc7b58",
+  "engine_version": "tesseract 5.3.4",
+  "thresholds": {
+    "semantic_min_ratio": 0.95,
+    "visual_max_median_center_offset_pt": 2.5,
+    "visual_min_median_iou": 0.45
+  }
+}

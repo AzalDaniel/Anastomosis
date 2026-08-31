@@ -246,6 +246,16 @@ src/anastomosis/
 │                     a frequency count cannot tell a label the form printed from a
 │                     value two patients share. A filter, not a proof — the draft
 │                     ships a caveat saying to read the labels before trusting them.
+│                     `ocr.py`/`evidence.py` handle the page that IS a picture: an
+│                     offline Tesseract CLI worker (TSV + hOCR, explicit environment,
+│                     no network ever, finite pixel/time caps) turns raster pages into
+│                     LAYOUT EVIDENCE. Native and OCR provenance stay separate on every
+│                     span; where the two describe the same pixels the overlap is HELD
+│                     as a duplicate or a disagreement and never resolved silently.
+│                     Recognized text is geometry, not clinical truth — the draft says
+│                     so in its manifest, DRAFT.md, quarantine marks and OCR_EVIDENCE.md.
+│                     With no engine installed the old refusal stands and names what to
+│                     install; nothing is ever downloaded.
 ├── qa/               every rendered document is verified. CheckResult{pass|warn|fail}
 │                     over data_integrity, layout_pagination, note_body, vitals_loinc,
 │                     unattributed_vitals and date_staleness, with BOUNDARY-ANCHORED

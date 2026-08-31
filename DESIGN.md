@@ -107,6 +107,22 @@ that matters most, so the model makes it structurally impossible.
   Every inference can be traced to specific spans in specific samples; a
   black-box model cannot be audited that way, and auditability wins in this
   domain. An optional, local-only VLM assist is deferred.
+- **OCR as layout evidence, never as clinical truth.** All 53 sample PDFs
+  the product has been shown — 802 pages — carried zero natively extractable
+  words, so a native-text-only learner could not learn the one real sample
+  set there is. `packgen/ocr.py` adds a pinned, offline Tesseract CLI worker
+  (TSV + hOCR, an environment built from nothing, no network ever, finite
+  pixel and time caps, one page per process) and `packgen/evidence.py`
+  classifies each page as native-only, mixed, image-only, ambiguous or empty.
+  The two evidence streams never merge: a span carries its provenance, a
+  recognized one carries the engine's score, and where the two describe the
+  same pixels the overlap is recorded as a duplicate or a disagreement and
+  HELD — nothing here picks a winner. Recognized geometry may suggest lines,
+  columns, bands and page breaks; recognized text may not fill a clinical
+  field, and a high-risk value needs an independent structured source or a
+  person. Absence of the engine is a refusal that names what to install, not
+  a crash and not a silent skip. Rationale and the alternatives weighed:
+  `docs/audits/learned-source/OCR_DECISION.md`.
 - **Plain versions presented as alphas, not PEP 440 pre-releases.** Releases
   ship as `0.x.0` with the Development Status :: 3 - Alpha classifier and
   "alpha" in prose, because a literal PEP 440 pre-release (`0.4.0a1`) would

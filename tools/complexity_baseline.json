@@ -295,10 +295,6 @@
       "avg": 7.5,
       "rank": "B"
     },
-    "src/anastomosis/cli_commands/packsrc.py": {
-      "avg": 6.8333,
-      "rank": "B"
-    },
     "src/anastomosis/cli_commands/upload.py": {
       "avg": 12.5,
       "rank": "C"

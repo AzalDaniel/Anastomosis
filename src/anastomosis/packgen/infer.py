@@ -36,15 +36,17 @@ wizard restates it.
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import median
 
+from .evidence import LayoutEvidence, combined_provenance, merge_evidence, normalized_text
 from .extract import DocumentSample, Span
+from .ocr import NATIVE_TEXT
 
 __all__ = [
+    "OCR_EVIDENCE_CAVEAT",
     "ColorUsage",
     "ColumnGrid",
     "ColumnStart",
@@ -79,6 +81,19 @@ _COLUMN_TOLERANCE = 1.0  # x0 column-start cluster width
 # `infer_static_text`).
 _STATIC_FRACTION = 0.6
 
+#: The sentence every OCR-touched artifact carries, verbatim, in every place a
+#: person might read only one of them. It is the decision record's rule stated
+#: as a claim about THIS pack: recognized text is geometry, and a high-risk
+#: field needs an independent structured source or a person.
+OCR_EVIDENCE_CAVEAT = (
+    "OCR EVIDENCE: some of this layout was recognized from page images, not read "
+    "from the document. Recognized text is layout evidence only — it may suggest "
+    "lines, columns, bands and page breaks, and it may NOT be treated as clinical "
+    "truth. Any high-risk field (identity, dates, author, medications, allergies, "
+    "results, status) needs an independent structured source or human review "
+    "against the original image before it is trusted."
+)
+
 _HEADING_ROLES = ("h1", "h2", "h3")
 _MAX_COLUMNS = 6
 
@@ -87,9 +102,11 @@ def _normalize(text: str) -> str:
     """Collapse whitespace and strip — the canonical form text is compared in.
 
     Matches the golden tooling's normalization so a heading recurs identically
-    regardless of intra-span whitespace.
+    regardless of intra-span whitespace. One definition, shared with the
+    native/OCR duplicate test in :mod:`anastomosis.packgen.evidence`, so a
+    string recurs identically whichever stream produced it.
     """
-    return re.sub(r"\s+", " ", text).strip()
+    return normalized_text(text)
 
 
 # --------------------------------------------------------------------------- #
@@ -229,13 +246,22 @@ def infer_type_scale(samples: Sequence[DocumentSample]) -> TypeScale:
 
 @dataclass(frozen=True)
 class SectionCandidate:
-    """A recurring heading-level string — a likely pack section heading."""
+    """A recurring heading-level string — a likely pack section heading.
+
+    ``provenance`` is where the spans behind it came from: real text objects,
+    a text layer floating over a scan, this run's OCR, or
+    :data:`~anastomosis.packgen.evidence.MIXED_EVIDENCE` when more than one
+    stream contributed. A heading recognized from pixels is a layout
+    hypothesis, and the emitted pack has to be able to say so per section
+    rather than about itself as a whole.
+    """
 
     text: str  # normalized
     role: str  # the type-scale role the span carried ("h1"/"h2"/"h3")
     count: int  # how many distinct samples contain it
     median_y_fraction: float  # vertical position (0 top, 1 bottom of page)
     all_pages_first: bool  # always on page 0?
+    provenance: str = NATIVE_TEXT
 
 
 def _static_threshold(n_samples: int) -> int:
@@ -276,6 +302,7 @@ def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCan
     y_fractions: dict[str, list[float]] = {}
     pages: dict[str, list[int]] = {}
     roles: dict[str, str] = {}
+    provenances: dict[str, list[str]] = {}
     for sample in samples:
         for span in sample.spans:
             role = style_role.get((span.font, span.size, span.bold))
@@ -289,6 +316,7 @@ def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCan
             y_fractions.setdefault(text, []).append(round(span.bbox[1] / height, 3))
             pages.setdefault(text, []).append(span.page_index)
             roles.setdefault(text, role or "")
+            provenances.setdefault(text, []).append(span.provenance)
 
     candidates: list[SectionCandidate] = []
     for text, sample_set in seen_samples.items():
@@ -301,6 +329,7 @@ def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCan
                 count=len(sample_set),
                 median_y_fraction=round(median(y_fractions[text]), 3),
                 all_pages_first=all(p == 0 for p in pages[text]),
+                provenance=combined_provenance(provenances[text]),
             )
         )
     # Top of page first, then most-recurring, then alphabetical — deterministic.
@@ -639,6 +668,10 @@ class PackAnalysis:
     design_tokens: DesignTokens
     dropped_curves: int = 0
     low_confidence: bool = False  # set when only one sample was analyzed
+    # The provenance ledger: which pages were pixels, what was recognized, and
+    # every place the two streams described the same spot. The default is an
+    # all-native batch — no engine asked, nothing to review.
+    evidence: LayoutEvidence = field(default_factory=LayoutEvidence)
 
     def summary_lines(self) -> list[str]:
         """One-screen digest: counts, roles, geometry, and the STATIC text.
@@ -698,6 +731,38 @@ class PackAnalysis:
             f"pages per sample: {dict(self.page_breaks.page_count_distribution)};"
             f" content bottom <= {self.page_breaks.max_content_y_fraction:.2f}"
         )
+        lines.extend(self.evidence_lines())
+        return lines
+
+    def evidence_lines(self) -> list[str]:
+        """The provenance block: page classes, OCR counts, held conflicts.
+
+        Empty when no page was recognized — an all-native batch has nothing to
+        disclose. Otherwise it opens with the sentence that governs everything
+        the recognized half of this pack is allowed to be used for, because a
+        summary a person reads is where that has to appear, not only in a file
+        they may not open.
+
+        Counts and integers only: a conflict is a disagreement about a VALUE,
+        so its text is never quoted here or anywhere else.
+        """
+        evidence = self.evidence
+        if not evidence.review_required:
+            return []
+        classes = ", ".join(f"{name} {count}" for name, count in evidence.class_counts.items())
+        lines = [
+            OCR_EVIDENCE_CAVEAT,
+            f"page provenance: {classes}",
+            f"OCR observations: {evidence.ocr_token_count} token(s),"
+            f" {evidence.ocr_accepted_count} used as layout evidence,"
+            f" {evidence.below_confidence_count} below the confidence threshold",
+            f"native/OCR overlaps held for review: {evidence.duplicate_count} duplicate(s),"
+            f" {evidence.disagreement_count} disagreement(s) — neither was resolved",
+        ]
+        if evidence.ocr_manifest:
+            lines.append(
+                "OCR engine: " + ", ".join(f"{key}={value}" for key, value in evidence.ocr_manifest)
+            )
         return lines
 
 
@@ -714,4 +779,5 @@ def analyze(samples: Sequence[DocumentSample]) -> PackAnalysis:
         design_tokens=infer_design_tokens(samples),
         dropped_curves=sum(sample.dropped_curves for sample in samples),
         low_confidence=len(samples) <= 1,
+        evidence=merge_evidence([sample.evidence for sample in samples]),
     )

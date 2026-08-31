@@ -33,6 +33,14 @@ putting the consent where the operator actually gave it. If the hash cannot be
 recorded the whole step FAILS: a draft nothing can select is exactly the
 false completion this flow exists to avoid reporting as success.
 
+When a sample page is a raster with no text objects, the analyze step asks the
+offline OCR worker (:mod:`anastomosis.packgen.ocr`) — the 53-sample, 802-page
+set this product was shown had zero natively extractable words, so refusing
+every such page refuses the only real sample set there is. What comes back is
+layout evidence carrying its own provenance, never clinical text, and the
+summary and the emitted pack both say so. With no engine installed the old
+refusal stands and names what to install.
+
 PHI rule (non-negotiable): nothing patient-derived is returned. ``summary``
 carries only static template text (recurring across distinct samples — labels /
 headings by construction) and counts; ``sample_count`` is a count, never a
@@ -109,6 +117,14 @@ class PackInitCommand:
     looks regardless of the process's working directory. ``confirmed`` is the
     same-patient guard: ``False`` runs analyze-only and refuses to emit,
     ``True`` writes the draft.
+
+    ``allow_ocr`` (default ``True``) lets the analyze step recognize sample
+    pages that are pixels, using the offline engine if one is installed. It is
+    a switch and not a promise: with no engine on the machine an image-only
+    sample still refuses (``OcrRequiredError``), and nothing is ever
+    downloaded. Setting it ``False`` is the strict native-text-only run — the
+    behaviour every caller had before offline OCR existed — for an operator who
+    wants a pack built from read text or from nothing.
     """
 
     samples: list[str]
@@ -116,6 +132,7 @@ class PackInitCommand:
     display: str | None = None
     out_dir: Path | None = None
     confirmed: bool = False
+    allow_ocr: bool = True
 
 
 @dataclass(frozen=True)
@@ -213,9 +230,16 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     # module cleanly — mirrors the CLI's in-function import.
     from anastomosis.packgen import analyze, extract_samples
     from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT, emit_draft_pack
+    from anastomosis.packgen.ocr import discover_worker
+
+    # The offline OCR worker, or None when this machine has no engine. None is
+    # not a failure here: a batch of native-text samples never asks for one,
+    # and a batch that DOES ask gets OcrRequiredError naming what to install.
+    # Nothing is downloaded either way.
+    worker = discover_worker() if cmd.allow_ocr else None
 
     try:
-        analysis = analyze(extract_samples(pdfs))
+        analysis = analyze(extract_samples(pdfs, ocr=worker))
     except Exception as exc:  # unreadable/encrypted sample — type only, no path/PHI
         return replace(base, error=exc_tag(exc), sample_count=len(pdfs))
 
