@@ -36,7 +36,13 @@ from rich.text import Text
 
 import anastomosis
 from anastomosis.core import vesselmark
-from anastomosis.core.presentation import ASCII_GLYPHS, UNICODE_GLYPHS, terminal_glyphs
+from anastomosis.core.presentation import (
+    ASCII_GLYPHS,
+    BRAND_PALETTE,
+    UNICODE_GLYPHS,
+    terminal_colour_depth,
+    terminal_glyphs,
+)
 from anastomosis.core.vesselmark_data import DENSITY, LEVELS
 
 if TYPE_CHECKING:
@@ -134,12 +140,16 @@ def test_the_ramp_climbs_in_both_channels_at_once() -> None:
     same way, so the mark still reads on a terminal that renders neither.
     """
     assert vesselmark._WEIGHTS == ("", "dim", "default", "default", "bold")
+    assert vesselmark._WEIGHTS[2] == vesselmark._WEIGHTS[3]
     for ramp in (vesselmark.UNICODE_DOTS, vesselmark.ASCII_DOTS):
         assert len(ramp) == LEVELS + 1
         assert ramp[0] == " "
-        # Levels 1 and 2 differ by weight alone; 3 and 4 step the glyph too.
-        assert ramp[1] == ramp[2]
-        assert len({ramp[2], ramp[3], ramp[4]}) == 3
+        # Five distinct glyphs, which is strictly stronger than what this
+        # asserted when levels 1 and 2 shared one. The two channels now
+        # stagger — the glyph moves at every step, the weight at 1, 2 and 4 —
+        # and that is what "climbs in both channels" was protecting: never a
+        # step where both stand still, never a step where they disagree.
+        assert len(set(ramp)) == LEVELS + 1
 
 
 def test_no_colour_enters_the_mark() -> None:
@@ -453,3 +463,334 @@ def test_the_greeting_renders_on_a_strict_cp1252_console() -> None:
     assert "Traceback" not in combined
     assert "Anastomosis" in finished.stdout
     assert vesselmark.ASCII_DOTS[LEVELS] in finished.stdout
+
+
+# --- the amended §11: one ramp, and only this one ----------------------------
+
+#: Nine real terminal grounds: five dark, four light. A decorative object has to
+#: clear 3 : 1 (WCAG 1.4.11) on whichever one a stranger is running.
+_GROUNDS = (
+    "#000000",
+    "#1e1e1e",
+    "#002b36",
+    "#282c34",
+    "#171310",
+    "#ffffff",
+    "#fdf6e3",
+    "#f0eade",
+    "#f5f5f5",
+)
+
+
+def _relative_luminance(hex_colour: str) -> float:
+    """WCAG 2.x relative luminance. Eight lines, and no new dependency."""
+
+    def channel(value: int) -> float:
+        unit = value / 255.0
+        return unit / 12.92 if unit <= 0.04045 else ((unit + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (int(hex_colour[index : index + 2], 16) for index in (1, 3, 5))
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def _contrast(first: str, second: str) -> float:
+    high, low = sorted((_relative_luminance(first), _relative_luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def _resolved(stop: str) -> str:
+    """A `#rrggbb` for either spelling of a stop, index or hex."""
+    from rich.color import Color
+
+    triplet = Color.parse(stop).get_truecolor()
+    return f"#{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"
+
+
+def test_every_mark_stop_clears_three_to_one_on_both_grounds() -> None:
+    """The test that replaces a deleted certainty, rather than deleting it.
+
+    §11 used to say the CLI names no absolute colour at all, and that rule was
+    load-bearing: a hue chosen against one background is invisible on another,
+    and the background belongs to whoever is running this. The amendment does
+    not drop the rule, it discharges it — the mark may carry ONE ramp, and only
+    while every stop in it is measurably legible on a dark ground and a light
+    one at once.
+
+    So this is the whole of the licence. The window matters as much as the nine
+    grounds: an edit that happened to pass on these nine while drifting outside
+    0.175-0.242 has left the reason the ramp is safe, and would fail on the
+    tenth terminal nobody thought to list.
+
+    For scale, the values this replaces: the mark's own oxblood `#701a14`
+    measures 1.13 : 1 on `#171310` and 1.23 : 1 on One Dark, and even
+    `--brand-bright` reaches only 2.53 : 1 on porcelain and 2.90 : 1 on One
+    Dark. None of them could ever have shipped here.
+    """
+    for name, ramp in (("truecolor", vesselmark.MARK_STOPS), ("256", vesselmark.MARK_STOPS_256)):
+        for stop in ramp:
+            resolved = _resolved(stop)
+            luminance = _relative_luminance(resolved)
+            assert 0.175 <= luminance <= 0.242, (
+                f"{name} stop {stop} has luminance {luminance:.4f}, outside the "
+                "0.175-0.242 window where 3 : 1 holds on a dark AND a light ground"
+            )
+            for ground in _GROUNDS:
+                ratio = _contrast(resolved, ground)
+                assert ratio >= 3.0, (
+                    f"{name} stop {stop} measures {ratio:.2f} : 1 on {ground}; "
+                    "a decorative object needs 3 : 1 (WCAG 1.4.11)"
+                )
+
+
+def test_the_mark_does_not_borrow_the_refusal_colour() -> None:
+    """Identity may not wear the colour that means "this failed".
+
+    Red is this product's refusal. The ramp lives in the same hue family by
+    necessity — it is the brand's hue — so "not red" has to be measured rather
+    than asserted, in a space where distance means what the eye means by it.
+    """
+
+    def oklab(hex_colour: str) -> tuple[float, float, float]:
+        def linear(value: int) -> float:
+            unit = value / 255.0
+            return unit / 12.92 if unit <= 0.04045 else ((unit + 0.055) / 1.055) ** 2.4
+
+        red, green, blue = (linear(int(hex_colour[i : i + 2], 16)) for i in (1, 3, 5))
+        long_ = (0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue) ** (1 / 3)
+        medium = (0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue) ** (1 / 3)
+        short = (0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue) ** (1 / 3)
+        return (
+            0.2104542553 * long_ + 0.7936177850 * medium - 0.0040720468 * short,
+            1.9779984951 * long_ - 2.4285922050 * medium + 0.4505937099 * short,
+            0.0259040371 * long_ + 0.7827717662 * medium - 0.8086757660 * short,
+        )
+
+    def distance(first: str, second: str) -> float:
+        a, b = oklab(first), oklab(second)
+        return sum((x - y) ** 2 for x, y in zip(a, b, strict=True)) ** 0.5
+
+    refusals = ("#ff645f", "#cd0000", "#ff0000")  # --stop, ANSI red, pure red
+    for stop in vesselmark.MARK_STOPS:
+        for refusal in refusals:
+            assert distance(stop, refusal) >= 0.06, (
+                f"{stop} sits {distance(stop, refusal):.3f} from the refusal colour "
+                f"{refusal} in OKLab; identity would read as an error"
+            )
+        _lightness, a, b = oklab(stop)
+        assert (a * a + b * b) ** 0.5 < 0.19, (
+            f"{stop} is more saturated than `--stop` itself, which is the one "
+            "thing a decorative ramp may never out-shout"
+        )
+    palette_values = {value for value in vars(BRAND_PALETTE).values() if isinstance(value, str)}
+    assert not (set(vesselmark.MARK_STOPS) & palette_values)
+
+
+def test_the_sixteen_colour_floor_takes_no_colour_at_all() -> None:
+    """At sixteen colours every stop quantises onto ANSI 9 — `bright_red`.
+
+    That is the refusal colour, so the honest thing at that rung is to take no
+    colour at all and let weight carry the ramp, which is what shipped before
+    any of this. Measured on rich: `TERM=alacritty` and `TERM=xterm-ghostty`
+    both report `standard`, so this is the COMMON case on modern terminals, not
+    an exotic one.
+    """
+    cases = (
+        ({"TERM": "xterm"}, "none"),
+        ({"TERM": "dumb"}, "none"),
+        ({"TERM": "alacritty"}, "none"),
+        ({"NO_COLOR": "1", "TERM": "xterm-256color"}, "none"),
+        ({"TERM": "xterm-256color"}, "256"),
+        ({"COLORTERM": "truecolor", "TERM": "xterm-256color"}, "truecolor"),
+    )
+    for environ, expected in cases:
+        console = Console(file=_TerminalFile("utf-8"), _environ=environ, force_terminal=True)
+        assert terminal_colour_depth(console) == expected, f"{environ} should give {expected!r}"
+    # And a stream nobody is watching gets nothing, whatever it claims.
+    assert terminal_colour_depth(Console(file=io.StringIO(), force_terminal=True)) == "none"
+
+
+def test_the_mark_is_unchanged_with_the_colour_stripped() -> None:
+    """§11's promise, mechanised: strip the colour and the mark is what it was.
+
+    The single most important test here. Colour is the second channel, never
+    the only one — so every frame's CHARACTERS must be identical whether or not
+    a palette was passed. If this ever fails, someone has started encoding form
+    in hue, and the sixteen-colour rung and the `NO_COLOR` rung have quietly
+    become a different mark.
+    """
+    for frame in (0, 5, vesselmark.FRAMES, vesselmark.FRAMES + 40, vesselmark.FRAMES + 137):
+        levels, stops = vesselmark.pulse_frame(frame, seed=2.4)
+        plain = vesselmark.render(levels, unicode_dots=True)
+        coloured = vesselmark.render(
+            levels, unicode_dots=True, stops=stops, palette=vesselmark.MARK_STOPS
+        )
+        assert [line.plain for line in plain] == [line.plain for line in coloured]
+
+
+# --- the perfusion -----------------------------------------------------------
+
+
+def test_the_pulse_settles_on_the_still_mark() -> None:
+    """Amplitude zero reproduces the settled logo exactly, in both channels.
+
+    This is what the exit stands on: whichever frame a keystroke lands in, what
+    is written last is the mark itself, not a frame that happened to be close.
+    """
+    levels, stops = vesselmark.pulse_frame(0)
+    assert levels == vesselmark.mark_levels()
+    assert stops == vesselmark.home_stops()
+
+
+def test_no_cell_ever_outgrows_its_settled_level() -> None:
+    """The mark breathes inward. It never swells past the logo's own silhouette."""
+    home = vesselmark.mark_levels()
+    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 120):
+        levels, _stops = vesselmark.pulse_frame(frame, seed=1.1)
+        pairs = zip(levels, home, strict=True)
+        for row, home_row in pairs:
+            for level, settled in zip(row, home_row, strict=True):
+                assert level <= settled
+
+
+def test_the_pulse_never_blinks() -> None:
+    """Nothing dims or brightens all at once — that is a strobe, not a pulse.
+
+    The cheapest way to catch a regression that multiplies the whole grid by
+    something: watch the mean inked level and require it to stay in a band.
+    """
+    home = vesselmark.mark_levels()
+    inked = sum(1 for row in home for level in row if level)
+    means = []
+    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 160):
+        levels, _stops = vesselmark.pulse_frame(frame, seed=0.7)
+        means.append(sum(level for row in levels for level in row) / inked)
+    assert 2.2 <= min(means) and max(means) <= 2.95, f"{min(means):.3f}..{max(means):.3f}"
+
+
+def test_the_pulse_actually_moves_and_never_repeats() -> None:
+    """It lives, and it does not loop.
+
+    Two failures caught at once. A frozen animation is obvious in person and
+    invisible in a diff, so churn is asserted. And "continuously looped" would
+    be a lie if the field had a period — the three temporal ratios are
+    incommensurable precisely so it has none, so no two frames in a long run
+    may draw the same grid.
+    """
+    home = vesselmark.mark_levels()
+    inked = sum(1 for row in home for level in row if level)
+    grids, churn = [], []
+    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 200):
+        levels, stops = vesselmark.pulse_frame(frame, seed=1.9)
+        grids.append((levels, stops))
+        if len(grids) > 1:
+            previous = grids[-2]
+            changed = sum(
+                1
+                for r in range(vesselmark.MARK_HEIGHT)
+                for c in range(vesselmark.MARK_WIDTH)
+                if home[r][c]
+                and (levels[r][c], stops[r][c]) != (previous[0][r][c], previous[1][r][c])
+            )
+            churn.append(changed / inked)
+    assert sum(churn) / len(churn) >= 0.08, "the mark is barely moving"
+    assert len(set(grids)) == len(grids), "a frame repeated: the field has a period"
+
+
+def test_the_two_arms_are_visibly_out_of_step() -> None:
+    """The cut vessels must not pulse together, and "not identical" is too weak.
+
+    The mark is mirror-symmetric about column 10 and radial distance is
+    therefore the same on each arm, so without a term that breaks it both arms
+    beat in lockstep and the whole thing reads as machinery. Its absence is
+    invisible in a still frame, which makes it an easy accidental deletion.
+
+    An earlier version of this test asserted only that mirrored cells differ at
+    all, and it PASSED with the lateral term removed — `_phase_offset` leaves
+    some residual asymmetry, so "not exactly equal" is satisfied by a field
+    that still visibly beats together. That is a guard which cannot fail, so it
+    is asserted on magnitude instead. Measured over inked mirrored pairs at
+    four instants: 0.3234 with both terms, 0.0974 with the lateral term gone,
+    and exactly 0.0 with neither. The threshold sits between the first two.
+    """
+    home = vesselmark.mark_levels()
+    deltas = [
+        abs(
+            vesselmark.wave(col, row, when)
+            - vesselmark.wave(vesselmark.MARK_WIDTH - 1 - col, row, when)
+        )
+        for when in (0.7, 1.3, 2.1, 3.4)
+        for row in range(vesselmark.MARK_HEIGHT)
+        for col in range(vesselmark.MARK_WIDTH // 2)
+        if home[row][col] and home[row][vesselmark.MARK_WIDTH - 1 - col]
+    ]
+    mean = sum(deltas) / len(deltas)
+    assert mean >= 0.20, (
+        f"mirrored cells differ by only {mean:.4f} on average; the arms are "
+        "beating together, which reads as machinery rather than tissue"
+    )
+
+
+def test_the_hub_is_where_the_geometry_puts_it() -> None:
+    """Recomputed from `make_vessel`'s own constants, not copied from a note.
+
+    The wave radiates from the anastomosis — where the two cut vessels meet the
+    trunk — and if the logo's geometry ever moves, the hub has to move with it
+    or the mark starts pulsing from somewhere that means nothing.
+    """
+    from tools.make_vessel import MATRIX_COLS, MATRIX_ROWS, SIZE
+
+    trimmed = MATRIX_ROWS - vesselmark.MARK_HEIGHT
+    hub_col = (0.500 * SIZE) / (SIZE / MATRIX_COLS) - 0.5
+    hub_row = (0.615 * SIZE) / (SIZE / MATRIX_ROWS) - 0.5 - trimmed
+    assert abs(hub_col - vesselmark.HUB_COL) < 1e-6
+    assert abs(hub_row - vesselmark.HUB_ROW) < 1e-6
+
+
+def test_two_runs_do_not_open_alike() -> None:
+    """A fresh `anast` starts somewhere else in a field that never repeats."""
+    first = vesselmark.pulse_frame(vesselmark.FRAMES + 30, seed=0.0)
+    second = vesselmark.pulse_frame(vesselmark.FRAMES + 30, seed=2.2)
+    assert first != second
+    assert 0.0 <= vesselmark._seed() < 6.284
+
+
+def test_every_ramp_glyph_is_narrow() -> None:
+    """No glyph in either ramp may render double-width.
+
+    This is the regression guard for a bug that shipped: `·` U+00B7, `•`
+    U+2022 and `●` U+25CF are all East Asian Width Ambiguous, so a terminal
+    configured for CJK drew them two columns wide and sheared the 21-column
+    grid into nonsense. Every braille codepoint is Narrow, and so is ASCII.
+    """
+    import unicodedata
+
+    for ramp in (vesselmark.UNICODE_DOTS, vesselmark.ASCII_DOTS):
+        for glyph in ramp:
+            assert unicodedata.east_asian_width(glyph) in {"N", "Na"}, (
+                f"{glyph!r} (U+{ord(glyph):04X}) can render double-width"
+            )
+
+
+def test_an_unwatched_greeting_still_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nobody who types `anast` and looks away waits forever for the menu.
+
+    The cost of running continuously, bounded. It was measured rather than
+    assumed: at a 1200-frame cap the real pty run never reached the menu inside
+    sixty seconds — the mark was perfusing correctly and the question
+    underneath it was waiting for it to finish.
+    """
+    drawn: list[int] = []
+    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: False)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    real = vesselmark.pulse_frame
+
+    def _record(frame: int, seed: float = 0.0) -> object:
+        drawn.append(frame)
+        return real(frame, seed)
+
+    monkeypatch.setattr(vesselmark, "pulse_frame", _record)
+    vesselmark._play(_console(), GREETING, unicode_dots=True)
+    assert max(drawn) < vesselmark._IDLE_FRAMES
+    assert vesselmark._IDLE_FRAMES * vesselmark.FRAME_SECONDS <= 10.0, (
+        "an unattended greeting may not hold the prompt for more than ten seconds"
+    )

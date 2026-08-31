@@ -26,6 +26,7 @@ __all__ = [
     "Glyphs",
     "Palette",
     "attached_to_a_terminal",
+    "terminal_colour_depth",
     "terminal_glyphs",
 ]
 
@@ -121,6 +122,32 @@ def terminal_glyphs(stream: object) -> Glyphs:
         return ASCII_GLYPHS
     normalized = encoding.lower().replace("-", "").replace("_", "")
     return UNICODE_GLYPHS if normalized in _UTF8_ALIASES else ASCII_GLYPHS
+
+
+def terminal_colour_depth(console: Any) -> str:
+    """How much colour this console can actually deliver: truecolor, 256, none.
+
+    Asked of three things, because they are three different questions and rich
+    answers them separately. Whether a person is there is ``isatty`` on the
+    stream, never ``is_terminal`` — ``FORCE_COLOR`` and ``TTY_COMPATIBLE`` make
+    that one lie, for the reasons :func:`attached_to_a_terminal` sets out.
+    Whether they asked for plain output is ``console.no_color``, because
+    ``NO_COLOR=1`` leaves ``color_system`` still reporting ``"256"`` and
+    branching on depth alone would walk straight past it. Only then does depth
+    mean anything.
+
+    ``"standard"`` and ``"windows"`` come back as ``"none"``. Sixteen colours
+    cannot hold the mark's ramp: every stop quantises onto ANSI 9, which is
+    ``bright_red`` — this product's refusal colour — and identity does not
+    borrow the colour that means "this failed". That rung draws what it draws
+    today, in weight alone.
+    """
+    if not attached_to_a_terminal(getattr(console, "file", None)):
+        return "none"
+    if getattr(console, "no_color", False):
+        return "none"
+    system = getattr(console, "color_system", None)
+    return system if system in ("truecolor", "256") else "none"
 
 
 def attached_to_a_terminal(stream: Any) -> bool:

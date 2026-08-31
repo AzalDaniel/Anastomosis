@@ -33,7 +33,7 @@ import math
 import os
 import sys
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Any, cast
 
 from rich.text import Text
 
@@ -41,6 +41,7 @@ from anastomosis.core.presentation import (
     BRAND_PALETTE,
     UNICODE_GLYPHS,
     attached_to_a_terminal,
+    terminal_colour_depth,
     terminal_glyphs,
 )
 from anastomosis.core.vesselmark_data import DENSITY, LEVELS
@@ -53,13 +54,18 @@ if TYPE_CHECKING:
 __all__ = [
     "FRAMES",
     "MARK_HEIGHT",
+    "MARK_STOPS",
+    "MARK_STOPS_256",
     "MARK_WIDTH",
     "beside",
     "can_draw",
     "frame_levels",
+    "home_stops",
     "mark_levels",
+    "pulse_frame",
     "render",
     "show_greeting",
+    "wave",
 ]
 
 MARK_WIDTH = len(DENSITY[0])
@@ -75,8 +81,9 @@ MIN_TEXT_COLUMNS = 24
 
 #: The entrance, in frames and seconds per frame. Under a second in total: an
 #: identity moment that outlasts the eye's patience is a delay, not a greeting.
+#: What follows the entrance is not bounded the same way — see :func:`_play`.
 FRAMES = 14
-FRAME_SECONDS = 0.07
+FRAME_SECONDS = 0.05
 
 #: How much of the entrance is spent arriving rather than filling. Every cell
 #: begins somewhere in the first 70 % of the run and takes the remaining 30 %
@@ -96,13 +103,54 @@ _WEIGHTS = (
     BRAND_PALETTE.brand_bright,
 )
 
-#: Level -> glyph, on a stream that can carry them. Levels 1 and 2 share a
-#: glyph and differ by weight; 3 and 4 step the glyph up as well, so density
-#: and weight never disagree about which cell is heavier.
-UNICODE_DOTS = (" ", "·", "·", "•", "●")
+#: Level -> glyph: braille cells carrying 0, 2, 4, 6 and 8 dots. An area ramp,
+#: horizontally symmetric, and every step a 33 % change rather than the 2x jump
+#: the old level 3 -> 4 made — which is most of why the canopy stopped reading
+#: as speckle. Braille also fixes a live bug: `·` U+00B7, `•` U+2022 and `●`
+#: U+25CF are all East Asian Width Ambiguous and render DOUBLE WIDTH on any
+#: terminal configured for CJK, shearing this 21-column grid. Every codepoint
+#: in U+2800-U+28FF is Narrow.
+#: Level 0 is a real space, NOT U+2800 BRAILLE PATTERN BLANK. The blank looks
+#: identical and is not whitespace, so `beside`'s `rstrip` stops trimming and
+#: every empty row ships 21 printing characters into somebody's scrollback.
+UNICODE_DOTS = (" ", *(chr(0x2800 | bits) for bits in (0x12, 0x36, 0x3F, 0xFF)))
 #: The same ramp for a console that cannot encode those — a legacy Windows
-#: code page, a stream with no declared encoding. Pure ASCII, same shape.
-ASCII_DOTS = (" ", ".", ".", "o", "O")
+#: code page, a stream with no declared encoding. Pure ASCII, same shape, and
+#: five distinct glyphs now that the braille ramp has five.
+ASCII_DOTS = (" ", ".", ":", "o", "O")
+
+#: The mark's ramp, and the ONLY absolute colour this program emits — §11 of
+#: docs/design/DESIGN_LANGUAGE.md is amended for exactly this and nothing else.
+#: Brand hue (OKLCh H=30, the icon's own measured 29.7) re-derived at terminal
+#: luminance: every stop sits inside the 0.175-0.242 window where 3 : 1 holds on
+#: a dark AND a light ground. The icon's own oxblood does not — `#701a14`
+#: measures 1.23 : 1 on One Dark `#282c34`, which is why the palette could not
+#: simply be reused. The gradient travels in chroma rather than lightness
+#: because that window is only 0.067 wide, and because "more pigment" reads the
+#: same direction on both grounds where "brighter" inverts.
+MARK_STOPS: tuple[str, ...] = (
+    "#7e7370",
+    "#947069",
+    "#a86a60",
+    "#bc6658",
+    "#cf5e4e",
+    "#e35544",
+)
+#: The same ramp at 256 colours, as explicit indices rather than a downgrade:
+#: rich memoises a Style's ANSI string on first render and reuses it at any
+#: depth, so a hex asked for once can leak truecolor bytes to a 256-colour
+#: console. An index is immune — it renders as 38;5;N everywhere. Only 27 of
+#: the 240 non-ANSI entries clear 3 : 1 on all nine grounds, which collapses
+#: six stops into three pairs; that mirrors the weight ramp, where
+#: `_WEIGHTS[2] == _WEIGHTS[3]` already.
+MARK_STOPS_256: tuple[str, ...] = (
+    "color(243)",
+    "color(243)",
+    "color(131)",
+    "color(131)",
+    "color(167)",
+    "color(167)",
+)
 
 if not len(UNICODE_DOTS) == len(ASCII_DOTS) == len(_WEIGHTS) == LEVELS + 1:
     # The grid is generated and the ramp is written by hand; a regeneration
@@ -175,14 +223,167 @@ def frame_levels(frame: int) -> tuple[tuple[int, ...], ...]:
     return tuple(grid)
 
 
-def render(levels: Sequence[Sequence[int]], *, unicode_dots: bool) -> list[Text]:
-    """One :class:`~rich.text.Text` per row of the grid."""
+#: A rectangle of per-cell integers — levels or stops, same shape either way.
+_Grid = tuple[tuple[int, ...], ...]
+
+
+# --- the perfusion field -----------------------------------------------------
+
+#: The anastomosis hub — where the two cut vessels meet the trunk, which is the
+#: thing this product is named for. Derived, not chosen: ``make_vessel.build``
+#: puts it at (0.500, 0.615) of a 1024 canvas, cells are 1024/21 x 1024/11, and
+#: ``sample_matrix`` trims one all-zero row off the top.
+HUB_COL, HUB_ROW = 10.0, 5.265
+
+#: Base pulse, in hertz, and the three temporal ratios riding it. The ratios
+#: are INCOMMENSURABLE on purpose: 0.618 and 1.481 share no small-integer
+#: relation with 1.0, so the superposition has no period and the mark never
+#: repeats itself. That is the whole reason this can loop without looking like
+#: a loop.
+_F0 = 0.85
+_RATIO = (1.000, 0.618, 1.481)
+#: Spatial wavelengths, in the doubled-row world units distance is measured in.
+#: Nyquist-bounded: rows sample every 2 units, so 6.1 gets 3.05 samples per
+#: cycle vertically. Below about 5 it aliases into speckle; above R_MAX no
+#: crest fits inside the mark at all.
+_LAM = (9.0, 6.1, 13.7)
+_AMP = (0.60, 0.28, 0.16)
+#: The glyph gain floor. At the trough a cell keeps 55 % of its settled level,
+#: which is what stops the outline flickering: levels 1 and 2 hold while 3 and
+#: 4 breathe, so the capillary rim carries the silhouette steady.
+_G0 = 0.55
+#: Frames the amplitude takes to come up after the entrance, and the ceiling on
+#: an unwatched greeting.
+#:
+#: The ceiling is a real cost of running continuously and it was measured, not
+#: guessed: the pty test drives ``anast`` for real, and at a 1200-frame cap the
+#: run never reached the menu inside sixty seconds. Nothing was broken — the
+#: mark was perfusing exactly as designed, and the question underneath it was
+#: waiting for the animation to finish. A greeting that holds the prompt is not
+#: alive, it is in the way.
+#:
+#: So: any keystroke ends it instantly, and failing that eight seconds does.
+#: Nobody ever sees it repeat, because the field has no period — eight seconds
+#: is simply the longest this may make somebody wait who typed ``anast`` and
+#: then looked away. Genuinely endless motion needs the mark to live UNDER the
+#: prompt rather than before it, which needs the self-echoing reader in #330;
+#: until that lands, this is where continuous honestly stops.
+_RAMP_IN = 6
+_IDLE_FRAMES = 160
+
+
+def _phase_offset(col: int, row: int) -> float:
+    """A smooth, lattice-free phase shift per cell.
+
+    Two incommensurable plane waves rather than a hash of the coordinates:
+    white noise looks like television static, and a smooth field looks like
+    tissue. It also breaks the ring coherence that a pure radial term would
+    otherwise give, which is what separates a pulse from a sonar ping.
+    """
+    u, v = float(col), 2.0 * row
+    return 0.45 * (0.9 * math.sin(0.70 * u + 1.30 * v) + 0.6 * math.sin(-1.10 * u + 0.53 * v))
+
+
+def wave(col: int, row: int, seconds: float, seed: float = 0.0) -> float:
+    """The field at one cell at one instant, in ``[0, 1]``.
+
+    The minus sign on time is what makes crests travel OUTWARD from the hub:
+    holding phase constant requires distance to grow as time does. The
+    smoothstep at the end turns a sine — which spends equal time in crest and
+    trough, and reads as machinery — into fast attack and slow decay.
+
+    ``seed`` shifts where in the endless field a run begins. Two people typing
+    ``anast`` at the same moment see different marks, and nobody sees the same
+    opening twice; the silhouette is identical every time because that is the
+    logo, and the light moving through it never is.
+    """
+    distance = math.hypot(col - HUB_COL, 2.0 * (row - HUB_ROW))
+    phase = _phase_offset(col, row)
+    # The mark is mirror-symmetric about column 10 and distance therefore reads
+    # identically on both cut vessels. Without this term both arms pulse in
+    # lockstep, which is visibly mechanical. It has no seam at the hub.
+    lateral = 0.15 * (col - HUB_COL)
+    raw = 0.0
+    for amp, lam, ratio in zip(_AMP, _LAM, _RATIO, strict=True):
+        angle = math.tau * distance / lam - math.tau * _F0 * ratio * seconds
+        raw += amp * math.sin(angle + phase * ratio + lateral + seed * ratio)
+    unit = 0.5 + 0.5 * raw / 1.04
+    return unit * unit * (3.0 - 2.0 * unit)
+
+
+def _amplitude(frame: int) -> float:
+    """How much of the field reaches the mark at ``frame``.
+
+    Zero through the entrance — the wave's phase runs the whole time so it is
+    continuous when it arrives, it simply has no reach yet — then smoothstepped
+    up over ``_RAMP_IN`` frames and held. There is no settle STAGE any more:
+    settling is an exit, taken when somebody presses a key.
+    """
+    if frame < FRAMES:
+        return 0.0
+    ramp = min(1.0, (frame - FRAMES + 1) / _RAMP_IN)
+    return ramp * ramp * (3.0 - 2.0 * ramp)
+
+
+def pulse_frame(frame: int, seed: float = 0.0) -> tuple[_Grid, _Grid]:
+    """One frame of the perfusion, as ``(levels, stops)``.
+
+    Two channels from one scalar, so the mark is complete with colour stripped:
+    the glyph carries form and the stop carries light. At the settle target
+    ``w = 0.5`` the gain is 0.775, and ``ceil(n * 0.775) == n`` for every n in
+    1..4, while the stop delta is zero — so amplitude zero reproduces the
+    settled mark EXACTLY in both channels, which is what the exit relies on.
+    """
+    seconds = frame * FRAME_SECONDS
+    amplitude = _amplitude(frame)
+    levels, stops = [], []
+    for row, home_row in enumerate(mark_levels()):
+        level_row, stop_row = [], []
+        for col, home in enumerate(home_row):
+            if home == 0:
+                level_row.append(0)
+                stop_row.append(0)
+                continue
+            unit = 0.5 + amplitude * (wave(col, row, seconds, seed) - 0.5)
+            gain = _G0 + (1.0 - _G0) * unit
+            level_row.append(max(1, min(home, math.ceil(home * gain))))
+            delta = -1 if unit < 0.25 else (1 if unit > 0.75 else 0)
+            stop_row.append(max(0, min(len(MARK_STOPS) - 1, home + delta)))
+        levels.append(tuple(level_row))
+        stops.append(tuple(stop_row))
+    return tuple(levels), tuple(stops)
+
+
+def home_stops() -> _Grid:
+    """Every cell on the stop its density gives it — the settled colouring."""
+    return mark_levels()
+
+
+def render(
+    levels: Sequence[Sequence[int]],
+    *,
+    unicode_dots: bool,
+    stops: Sequence[Sequence[int]] | None = None,
+    palette: Sequence[str] | None = None,
+) -> list[Text]:
+    """One :class:`~rich.text.Text` per row of the grid.
+
+    With no ``stops`` and no ``palette`` this is what it has always been: glyph
+    size and text weight, and not one absolute value. That is not a legacy path
+    — it is what a sixteen-colour terminal, a ``NO_COLOR`` session and a
+    redirected stream all still get, and the two channels are ordered the same
+    way so the mark reads identically without either.
+    """
     dots = UNICODE_DOTS if unicode_dots else ASCII_DOTS
     rows = []
-    for row in levels:
+    for index, row in enumerate(levels):
         line = Text()
-        for level in row:
-            line.append(dots[level], style=_WEIGHTS[level] or None)
+        for column, level in enumerate(row):
+            if level and stops is not None and palette is not None:
+                style: str | None = palette[stops[index][column]]
+            else:
+                style = _WEIGHTS[level] or None
+            line.append(dots[level], style=style)
         rows.append(line)
     return rows
 
@@ -275,28 +476,108 @@ def _wrapped(console: Console, lines: Sequence[Text]) -> list[Text]:
 
 
 def _play(console: Console, lines: Sequence[Text], *, unicode_dots: bool) -> None:
-    """Run the entrance once and leave the settled mark on screen.
+    """Run the greeting and leave the settled mark on screen.
 
-    Bounded twice over: ``FRAMES`` frames is all there are, and the first
-    keystroke ends it early. Whichever way it stops, the last thing written is
-    the settled mark, so what an operator ends up looking at never depends on
-    how long they were willing to watch.
+    It does not play once and stop. The entrance arrives up the trunk, the
+    perfusion takes over, and then it keeps going — the field's three temporal
+    ratios are incommensurable, so nothing in it ever repeats and there is no
+    loop to be caught looping. A per-run seed starts each invocation somewhere
+    else in that field.
+
+    Bounded twice, and neither bound is the animation running out of material.
+    The first keystroke ends it, and is swallowed so it cannot answer the menu
+    question printed a moment later. Failing that, ``_IDLE_FRAMES`` settles a
+    terminal nobody came back to rather than spending 2.5 % of a core until the
+    session ends. Whichever way it stops, the last thing written is the settled
+    mark, so what an operator ends up looking at never depends on how long they
+    were willing to watch.
+
+    It must never run while a prompt is open. Verified in rich: ``Live`` hides
+    the cursor, redirects stdout and stderr but NOT stdin, ``Console.input``
+    has no coordination with it, and ``LiveRender.position_cursor`` erases each
+    line before redrawing — so a question asked underneath this gives a blind
+    cursor and characters wiped twenty times a second. Animate, settle, THEN
+    ask.
     """
     import time
 
     from rich.console import Group
     from rich.live import Live
 
-    def block(levels: Sequence[Sequence[int]]) -> Group:
-        return Group(*beside(render(levels, unicode_dots=unicode_dots), lines))
+    # Orthogonal to the glyph set on purpose: a CP-1252 Windows Terminal draws
+    # the ASCII ramp in 256 colours, and a UTF-8 xterm with NO_COLOR draws
+    # braille in none. Encoding and colour depth are different questions.
+    palette = _palette(console)
+    seed = _seed()
 
-    with _single_keystrokes(), Live(console=console, auto_refresh=False) as live:
-        for frame in range(FRAMES - 1):
-            live.update(block(frame_levels(frame)), refresh=True)
-            time.sleep(FRAME_SECONDS)
-            if _key_pressed():
-                break
-        live.update(block(mark_levels()), refresh=True)
+    def block(levels: Sequence[Sequence[int]], stops: Sequence[Sequence[int]]) -> Group:
+        drawn = render(levels, unicode_dots=unicode_dots, stops=stops, palette=palette)
+        return Group(*beside(drawn, lines))
+
+    original = console.file
+    # rich types `console.file` as IO[str]; the wrapper forwards everything it
+    # does not implement, and only `write` is on rich's hot path. The cast says
+    # that out loud rather than widening the wrapper into a fake file object.
+    console.file = cast("IO[str]", _Synchronised(original))
+    try:
+        with _single_keystrokes(), Live(console=console, auto_refresh=False) as live:
+            for frame in range(_IDLE_FRAMES):
+                live.update(block(*_grid(frame, seed)), refresh=True)
+                time.sleep(FRAME_SECONDS)
+                if _key_pressed():
+                    break
+            live.update(block(mark_levels(), home_stops()), refresh=True)
+    finally:
+        console.file = original
+
+
+def _grid(frame: int, seed: float) -> tuple[_Grid, _Grid]:
+    """The entrance while it lasts, the perfusion after it."""
+    if frame < FRAMES - 1:
+        return frame_levels(frame), home_stops()
+    return pulse_frame(frame, seed)
+
+
+def _seed() -> float:
+    """Where in the endless field this run begins."""
+    import secrets
+
+    return secrets.randbelow(10_000) / 10_000 * math.tau
+
+
+def _palette(console: Console) -> tuple[str, ...] | None:
+    """The stops this console can carry, or ``None`` for weight alone."""
+    depth = terminal_colour_depth(console)
+    if depth == "truecolor":
+        return MARK_STOPS
+    if depth == "256":
+        return MARK_STOPS_256
+    return None
+
+
+class _Synchronised:
+    """DECSET 2026 around each write: the terminal presents a frame atomically.
+
+    The flicker in a ten-line erase-and-redraw at twenty frames a second is
+    most of what separates "alive" from "broken", and rich has no support for
+    the mode. Terminals that do not implement it ignore an unknown DEC private
+    parameter, so this costs 19 bytes a frame and nothing else.
+
+    Both halves go out in one call on purpose: tmux freezes a pane for up to a
+    second when a begin is never matched by an end, and an exception between
+    two separate writes would do exactly that.
+    """
+
+    def __init__(self, file: Any) -> None:
+        self._file = file
+
+    def write(self, text: str) -> int:
+        if not text:
+            return 0
+        return int(self._file.write(f"\x1b[?2026h{text}\x1b[?2026l"))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._file, name)
 
 
 @contextmanager
