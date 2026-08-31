@@ -176,6 +176,32 @@ def _render_preview(pack_dir: Path) -> Path | None:
     return result.documents[0].path
 
 
+def _print_pack_next_steps(
+    name: str, pack_dir: Path, out_dir: Path | None, preview_path: Path | None
+) -> None:
+    """The three-step block a written draft ends with (review, edit, re-render).
+
+    The re-render line names ``--pack-dir`` only when the operator chose a
+    destination: a draft in the per-user directory is discovered by name from
+    any working directory, so quoting a path there would teach a habit the tool
+    no longer needs.
+    """
+    from anastomosis import cli as _cli
+
+    _cli.console.print("\n[bold]Next steps[/bold] (see DRAFT.md):")
+    if preview_path is not None:
+        _cli.console.print(f"  1. Review {preview_path} against an original sample.")
+    else:
+        _cli.console.print(
+            "  1. Render a preview (--render-preview) and compare to an original sample."
+        )
+    _cli.console.print(
+        f"  2. Edit {pack_dir / 'template.html'} (reposition unplaced static text, tokens)."
+    )
+    where = "" if out_dir is None else f" --pack-dir {out_dir}"
+    _cli.console.print(f"  3. Re-render:  anast pipeline run <export> -o out --pack {name}{where}")
+
+
 @pack_app.command("init")
 def pack_init(
     samples: Annotated[
@@ -192,13 +218,13 @@ def pack_init(
         ),
     ],
     out_dir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--out-dir",
-            help="Directory to write the pack into (default: ./packs).",
+            help="Where to save (default: ~/.anastomosis/packs).",
             parser=out_dir,
         ),
-    ] = Path("packs"),
+    ] = None,
     render_preview: Annotated[
         bool,
         typer.Option(
@@ -226,6 +252,11 @@ def pack_init(
     What you get is a draft and a starting point: compare a chart it produces
     against an original, edit the layout, and try again. It is not claimed to
     match.
+
+    The draft is saved under ~/.anastomosis/packs unless --out-dir says
+    otherwise, and confirming this step also records its code hash — so the
+    layout is offered by name on the next run, and any later edit to its
+    context.py un-trusts it until it is confirmed again.
     """
     from anastomosis import cli as _cli
     from anastomosis.core.packinit import (
@@ -304,19 +335,7 @@ def pack_init(
         if preview_path is not None:
             _cli.console.print(f"[green]preview[/green] {_cli._glyphs().arrow} {preview_path}")
 
-    _cli.console.print("\n[bold]Next steps[/bold] (see DRAFT.md):")
-    if preview_path is not None:
-        _cli.console.print(f"  1. Review {preview_path} against an original sample.")
-    else:
-        _cli.console.print(
-            "  1. Render a preview (--render-preview) and compare to an original sample."
-        )
-    _cli.console.print(
-        f"  2. Edit {pack_dir / 'template.html'} (reposition unplaced static text, tokens)."
-    )
-    _cli.console.print(
-        f"  3. Re-render:  anast pipeline run <export> -o out --pack {name} --pack-dir {out_dir}"
-    )
+    _print_pack_next_steps(name, pack_dir, out_dir, preview_path)
 
 
 @source_app.command("init")

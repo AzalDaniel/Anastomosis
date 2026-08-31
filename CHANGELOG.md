@@ -57,6 +57,28 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The layout you taught it is now the layout you can run.** Teaching a
+  document layout wrote a valid draft, said so, and left the operator on a
+  screen that could not offer it: the draft went to a relative `packs/`
+  resolved against whatever directory the app was launched from, and discovery
+  never looked there — nor, had it looked, would it have executed a
+  `context.py` it could not vouch for. So Teach reported success and the next
+  run rendered somebody's charts through a different layout. Drafts now land in
+  `~/.anastomosis/packs`, the per-user home the trust store, learned source
+  mappings and migration profiles already share, and discovery reads it on
+  every pass — from any working directory, in any later process. The trust
+  review is kept rather than waived: a learned layout's code runs only against
+  a recorded content hash, and confirming the Teach is what records the hash of
+  the bytes it just wrote, so consent is taken where the operator actually gave
+  it and any later edit to `context.py` un-trusts the pack until it is
+  confirmed again. If the hash cannot be recorded the Teach FAILS, because a
+  draft nothing can select is the same false completion by another route. The
+  Charts and Migrate choosers are re-asked the moment a layout is written
+  instead of holding the list they were handed at boot, and both name the exact
+  directory a run will bind to. A layout that is missing, edited, or untrusted
+  refuses the run loudly (exit 2, `bad_pack`) and never falls back to the
+  built-in one.
+
 - **The rail read "0 warn, 0 fail" over a chart that abbreviated thirteen
   facts.** `settle_qa` had carried `not_carried` on the QA stage event since
   #271's never-green-with-nothing-said rule, but neither frontend said what it

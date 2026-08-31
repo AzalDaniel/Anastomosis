@@ -85,7 +85,10 @@
   let VERSION = "";
 
   // info() answers once for the whole app: the version for About, and the
-  // source/layout lists every run form needs.
+  // source/layout lists every run form needs — and again whenever the app
+  // itself adds to those lists, which is what `reloadInfo` is for. Teaching a
+  // layout used to leave the run forms holding the list from boot, so the app
+  // reported a written layout that its own choosers did not offer.
   let INFO = null;
   const INFO_CBS = [];
   function onInfo(cb) {
@@ -1807,6 +1810,7 @@
     requireFields,
     onReady,
     onInfo,
+    reloadInfo: loadInfo,
     icon,
     paintIcons,
     registerView,

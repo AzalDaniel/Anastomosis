@@ -100,7 +100,11 @@ def _check_jinja_packs() -> AssetCheck:
     try:
         from anastomosis.reconstruct import discover_packs
 
-        packs = discover_packs()
+        # Bundled-asset health, so the shipped directory is the only one asked.
+        # An operator's own taught layout may legitimately shadow a built-in
+        # name, and that is not this check's business — nor may it turn a
+        # healthy install into a reported missing asset.
+        packs = discover_packs(include_user=False)
         missing = []
         for name in ("generic_soap", "practice_fusion_soap"):
             status = packs.get(name)

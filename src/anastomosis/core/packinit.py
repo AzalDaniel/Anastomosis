@@ -18,8 +18,20 @@ The two-step shape the frontends share:
   the same-patient caveat (``error="ConfirmationRequired"``) so the operator
   sees exactly what they are confirming, and writes NOTHING.
 * ``confirmed=True`` (the CLI's interactive ``typer.confirm``, the GUI's
-  required checkbox) emits the draft pack and returns its directory plus the
-  ``DRAFT.md`` text.
+  required checkbox) emits the draft pack, records its content hash in the
+  per-user pack-trust store, and returns its directory, hash and ``DRAFT.md``.
+
+Where the draft lands, and why it is trusted at birth: unless the caller names
+an ``out_dir``, the pack is written under
+:func:`anastomosis.reconstruct.user_packs_dir` — a stable per-user location, not
+a CWD-relative ``packs/`` that the next process would look for somewhere else.
+Discovery hash-gates that directory, so writing the pack is not enough to make
+it runnable; the SAME confirmed step records the hash of the bytes it just
+wrote. That keeps the trust review explicit (a hash is still required, and any
+later edit to ``context.py`` un-trusts the pack until re-confirmed) while
+putting the consent where the operator actually gave it. If the hash cannot be
+recorded the whole step FAILS: a draft nothing can select is exactly the
+false completion this flow exists to avoid reporting as success.
 
 PHI rule (non-negotiable): nothing patient-derived is returned. ``summary``
 carries only static template text (recurring across distinct samples — labels /
@@ -40,6 +52,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from anastomosis.core.logutil import exc_tag
+from anastomosis.reconstruct import user_packs_dir
 
 __all__ = [
     "LOW_SAMPLE_FLOOR",
@@ -89,15 +102,18 @@ class PackInitCommand:
     ``samples`` is a list of dir-or-glob-or-file arguments (resolved by
     :func:`collect_sample_pdfs`). ``name`` is the lowercase manifest identifier
     (validated against :data:`PACK_NAME_RE`); ``display`` is the human label
-    (defaults to ``name``). ``out_dir`` is where the pack directory is written.
-    ``confirmed`` is the same-patient guard: ``False`` runs analyze-only and
-    refuses to emit, ``True`` writes the draft.
+    (defaults to ``name``). ``out_dir`` is where the pack directory is written;
+    ``None`` (the default) means the per-user pack directory
+    (:func:`anastomosis.reconstruct.user_packs_dir`), which is where discovery
+    looks regardless of the process's working directory. ``confirmed`` is the
+    same-patient guard: ``False`` runs analyze-only and refuses to emit,
+    ``True`` writes the draft.
     """
 
     samples: list[str]
     name: str
     display: str | None = None
-    out_dir: Path = Path("packs")
+    out_dir: Path | None = None
     confirmed: bool = False
 
 
@@ -111,7 +127,12 @@ class PackInitResult:
     failure — never a message that could embed a sample path. ``summary`` /
     ``caveat`` carry only static template text and the same-patient caveat (both
     PHI-safe). ``sample_count`` / ``low_confidence`` come from the analysis.
-    ``pack_dir`` / ``draft_md`` are populated only on success.
+
+    ``pack_name`` / ``pack_dir`` / ``draft_md`` / ``content_hash`` are populated
+    only on success. ``pack_name`` is the identity a run form offers and a run
+    binds to — the manifest ``name``, which is also the directory name — and
+    ``content_hash`` is the digest recorded in the pack-trust store, so a
+    frontend can name the exact thing it confirmed.
     """
 
     ok: bool
@@ -122,6 +143,8 @@ class PackInitResult:
     low_confidence: bool
     pack_dir: Path | None
     draft_md: str | None
+    pack_name: str | None = None
+    content_hash: str | None = None
 
 
 def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
@@ -143,6 +166,8 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
         low_confidence=False,
         pack_dir=None,
         draft_md=None,
+        pack_name=None,
+        content_hash=None,
     )
 
     # Type-guard up front so a malformed command returns a code rather than
@@ -181,12 +206,28 @@ def run_pack_init(cmd: PackInitCommand) -> PackInitResult:
     if not cmd.confirmed:
         return replace(proposal, error="ConfirmationRequired")
 
+    from anastomosis.reconstruct.packtrust import default_pack_trust, pack_content_hash
+
+    out_dir = cmd.out_dir if cmd.out_dir is not None else user_packs_dir()
     try:
         pack_dir = emit_draft_pack(
-            analysis, name=cmd.name, display=cmd.display or cmd.name, out_dir=cmd.out_dir
+            analysis, name=cmd.name, display=cmd.display or cmd.name, out_dir=out_dir
         )
         draft_md = (pack_dir / "DRAFT.md").read_text(encoding="utf-8")
-    except Exception as exc:  # emit/read failure — type name only, no PHI
+        # The confirmed step is the consent. Recording the hash here is what
+        # makes the pack selectable; it is inside the try because a draft whose
+        # hash could not be recorded is a draft no run will accept, and saying
+        # "written" about it would be the false completion again.
+        content_hash = pack_content_hash(pack_dir)
+        default_pack_trust().record(pack_dir, content_hash)
+    except Exception as exc:  # emit/read/trust failure — type name only, no PHI
         return replace(proposal, error=exc_tag(exc))
 
-    return replace(proposal, ok=True, pack_dir=pack_dir, draft_md=draft_md)
+    return replace(
+        proposal,
+        ok=True,
+        pack_name=cmd.name,
+        pack_dir=pack_dir,
+        draft_md=draft_md,
+        content_hash=content_hash,
+    )

@@ -713,17 +713,23 @@ def run_pipeline(
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
 
     dirs = list(pack_dirs or [])
-    # Enforce hash-pinned trust only for external packs (--pack-dir); builtins
-    # need no store. trust=None when there are no external dirs keeps the
-    # consent-only path unchanged.
+    # The trust store is always consulted now, not only when --pack-dir is in
+    # play: a learned layout lives in the per-user pack directory and is
+    # hash-gated there too, so a run that names one has to be able to prove the
+    # code it is about to execute is the code that was confirmed. Built-ins need
+    # no store and never consult it.
     statuses = discover_packs(
         dirs,
         allow_external=bool(dirs),
-        trust=default_pack_trust() if dirs else None,
+        trust=default_pack_trust(),
         trust_new=trust_new,
     )
     status = statuses.get(pack)
     if status is None or status.pack is None:
+        # No fallback, ever. A layout that is missing, changed since it was
+        # confirmed, or untrusted refuses the run — rendering the operator's
+        # charts through some OTHER layout would be the same false completion in
+        # a costlier place.
         diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
         raise PipelineError(f"Pack {pack!r} unavailable: {diagnosis}", exit_code=2, kind="bad_pack")
 

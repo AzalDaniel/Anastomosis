@@ -194,6 +194,11 @@ class GuiController:
                         "display": pack.display,
                         "available": pack.available,
                         "origin": pack.origin,
+                        # The exact directory a run naming this layout will bind
+                        # to. Three origins can answer to one name, and after a
+                        # Teach the operator is entitled to see which one they
+                        # are about to select.
+                        "root": pack.root,
                         "sections": pack.sections,
                     }
                     for pack in toolkit.packs

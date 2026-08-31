@@ -379,6 +379,10 @@ class PackInfo:
     """One pack's discovery state for the info surface."""
 
     name: str
+    #: The pack's resolved root, so a frontend names the exact directory a run
+    #: will bind to rather than a name that three directories could answer to.
+    #: ``None`` only if discovery could not resolve one.
+    root: str | None
     #: What a person reads. Falls back to ``name`` for a pack that declares
     #: none, so a third-party pack written before ``display`` existed still
     #: shows something — the front end's derivation then tidies the id.
@@ -435,6 +439,7 @@ def get_toolkit_info() -> ToolkitInfo:
     import anastomosis
     import anastomosis.pipeline  # registers built-in source adapters at import
     from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.packtrust import default_pack_trust
     from anastomosis.sources import available_sources
 
     extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
@@ -446,7 +451,12 @@ def get_toolkit_info() -> ToolkitInfo:
         (a.name, getattr(a, "display", "") or a.name, a.description) for a in available_sources()
     ]
     packs: list[PackInfo] = []
-    for status in discover_packs().values():
+    # The trust store is passed so a layout the operator taught (it lands in the
+    # per-user pack directory) is discovered here at its confirmed hash and can
+    # be SELECTED on the run forms this feeds. Without it every learned layout
+    # reported unavailable and only the built-ins were ever offered — a run form
+    # that cannot name the layout the app just said it wrote.
+    for status in discover_packs(trust=default_pack_trust()).values():
         pack = status.pack
         sections: dict[str, dict[str, object]] = {}
         if pack is not None:
@@ -457,6 +467,7 @@ def get_toolkit_info() -> ToolkitInfo:
         packs.append(
             PackInfo(
                 name=status.name,
+                root=str(status.root) if status.root is not None else None,
                 display=(pack.manifest.display if pack is not None else "") or status.name,
                 available=status.available,
                 origin=status.origin,

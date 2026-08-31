@@ -9,8 +9,15 @@ A template pack is a directory:
       partials/…     — optional includes, assets
 
 Discovery order (first definition of a name wins, so a user can shadow a
-built-in): explicit ``--pack-dir`` directories → ``anastomosis.packs``
-built-ins shipped under ``anastomosis/packs/``.
+built-in): explicit ``--pack-dir`` directories → the per-user pack directory
+(:func:`user_packs_dir`) → ``anastomosis.packs`` built-ins shipped under
+``anastomosis/packs/``.
+
+The per-user directory is where a layout taught from samples (``anast pack
+init`` / the GUI's Teach view) lands, so a learned layout is discoverable from
+any working directory and in any later process — the same per-user-home
+convention as :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path`
+and :func:`anastomosis.sources.learned.user_sources_dir`.
 
 Loading is **defensive** — the brain-like modularity invariant. A pack
 with a broken manifest, missing template, or crashing ``context.py`` is
@@ -27,6 +34,16 @@ gates external code on a trust-on-first-use basis: an external pack whose
 code changed since it was trusted is returned unavailable and is NOT
 exec'd. Enforcement is opt-in — ``trust=None`` preserves the consent-only
 behavior for bare programmatic callers.
+
+Per-user packs sit deliberately between the two. They need no
+``allow_external`` — the operator put them in their own home directory, and
+requiring a second flag for one's own learned layout is what made a taught
+layout unselectable. They are NOT implicitly trusted either: their
+``context.py`` is executable Python, so it runs only when a ``trust`` store
+maps the pack root to its current content hash. Without a store, or with a
+hash that no longer matches, the pack is returned unavailable with a diagnosis
+and nothing is exec'd. The consent is granted where it is meaningful: writing
+the pack (the confirmed Teach) records the hash of the bytes it just wrote.
 """
 
 from __future__ import annotations
@@ -54,15 +71,43 @@ from anastomosis.core.model import CHARTABLE_KINDS
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
 __all__ = [
+    "ORIGIN_BUILTIN",
+    "ORIGIN_PACK_DIR",
+    "ORIGIN_USER",
     "LoadedPack",
     "PackCoverage",
     "PackManifest",
     "PackStatus",
     "SectionFlag",
     "discover_packs",
+    "user_packs_dir",
 ]
 
 _BUILTIN_DIR = Path(__file__).resolve().parent.parent / "packs"
+
+#: Where a pack came from, as reported on :class:`PackStatus` and the info
+#: surface. Named because three call sites now branch on the values and a
+#: mistyped literal would silently downgrade a pack's trust handling.
+ORIGIN_BUILTIN = "builtin"
+ORIGIN_PACK_DIR = "pack-dir"
+ORIGIN_USER = "user"
+
+
+def user_packs_dir() -> Path:
+    """The per-user directory learned template packs live in.
+
+    A plain ``~/.anastomosis/packs`` (NOT ``platformdirs`` — no new dependency),
+    matching :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path`,
+    :func:`anastomosis.core.migrate.user_migrations_path` and
+    :func:`anastomosis.sources.learned.user_sources_dir` so all Anastomosis user
+    state lives under one root. Each pack is ``<here>/<pack_name>/pack.yaml``.
+
+    Stable across working directories and processes, which is the whole point:
+    a layout taught in one session has to be selectable in the next one,
+    wherever the app happens to be launched from.
+    """
+    return Path.home() / ".anastomosis" / "packs"
+
 
 ContextBuilder = Callable[..., dict[str, Any]]
 
@@ -229,7 +274,11 @@ class PackStatus:
     name: str
     pack: LoadedPack | None
     diagnosis: str | None = None
-    origin: str = "builtin"  # "pack-dir" | "builtin"
+    origin: str = ORIGIN_BUILTIN  # ORIGIN_PACK_DIR | ORIGIN_USER | ORIGIN_BUILTIN
+    #: The directory this status is about, whether or not it loaded. An
+    #: unavailable pack needs it most: "untrusted" is only actionable once the
+    #: operator knows which directory has to be reviewed.
+    root: Path | None = None
 
     @property
     def available(self) -> bool:
@@ -305,7 +354,11 @@ def _finish_load(
         # Diagnosis carries the exception type and pack-relative detail only —
         # safe to log, enough to start the re-discovery wizard.
         return PackStatus(
-            name=name_cell[0], pack=None, diagnosis=f"{type(exc).__name__}: {exc}", origin=origin
+            name=name_cell[0],
+            pack=None,
+            diagnosis=f"{type(exc).__name__}: {exc}",
+            origin=origin,
+            root=root,
         )
     except Exception as exc:  # context.py crashed at import: arbitrary errors
         return PackStatus(
@@ -313,6 +366,7 @@ def _finish_load(
             pack=None,
             diagnosis=f"context.py failed at import ({type(exc).__name__})",
             origin=origin,
+            root=root,
         )
     return PackStatus(
         name=name_cell[0],
@@ -320,6 +374,7 @@ def _finish_load(
             manifest=manifest, root=root, template_path=template_path, build_context=builder
         ),
         origin=origin,
+        root=root,
     )
 
 
@@ -379,23 +434,40 @@ def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
     return _finish_load(name_cell, origin, root, build)
 
 
-def _iter_candidate_dirs(pack_dirs: list[Path]) -> list[tuple[Path, str]]:
+def _packs_under(parent: Path, origin: str) -> list[tuple[Path, str]]:
+    """The pack candidates a parent directory offers, as ``(root, origin)``.
+
+    A directory may BE a pack (it holds ``pack.yaml``) or CONTAIN packs. A
+    directory that is neither — absent, a file, empty — contributes nothing;
+    discovery stays defensive about what it is pointed at.
+    """
+    if not parent.is_dir():
+        return []
+    if (parent / "pack.yaml").is_file():
+        return [(parent, origin)]
+    return [
+        (child, origin)
+        for child in sorted(parent.iterdir())
+        if child.is_dir() and (child / "pack.yaml").is_file()
+    ]
+
+
+def _iter_candidate_dirs(
+    pack_dirs: list[Path], *, include_user: bool = True
+) -> list[tuple[Path, str]]:
+    """Every candidate pack root, in precedence order (first name wins).
+
+    Explicit ``--pack-dir`` directories, then the per-user directory a taught
+    layout is written to, then the shipped built-ins.
+    """
     candidates: list[tuple[Path, str]] = []
     for parent in pack_dirs:
-        if not parent.is_dir():
-            continue
-        # A --pack-dir may BE a pack or CONTAIN packs.
-        if (parent / "pack.yaml").is_file():
-            candidates.append((parent, "pack-dir"))
-        else:
-            candidates.extend(
-                (child, "pack-dir")
-                for child in sorted(parent.iterdir())
-                if child.is_dir() and (child / "pack.yaml").is_file()
-            )
+        candidates.extend(_packs_under(parent, ORIGIN_PACK_DIR))
+    if include_user:
+        candidates.extend(_packs_under(user_packs_dir(), ORIGIN_USER))
     if _BUILTIN_DIR.is_dir():
         candidates.extend(
-            (child, "builtin")
+            (child, ORIGIN_BUILTIN)
             for child in sorted(_BUILTIN_DIR.iterdir())
             if child.is_dir() and (child / "pack.yaml").is_file()
         )
@@ -408,6 +480,7 @@ def discover_packs(
     allow_external: bool = False,
     trust: PackTrust | None = None,
     trust_new: bool = False,
+    include_user: bool = True,
 ) -> dict[str, PackStatus]:
     """Discover every reachable pack, loading each defensively.
 
@@ -423,30 +496,72 @@ def discover_packs(
     * else if ``trust_new`` → record the hash, then load (trust-on-first-use);
     * else → returned unavailable with an untrusted diagnosis, never exec'd.
 
-    Built-ins are never hash-checked (implicitly trusted). The ``allow_external``
-    refusal takes precedence — trust only matters once external packs are allowed.
+    Built-ins are never hash-checked (implicitly trusted). For ``--pack-dir``
+    packs the ``allow_external`` refusal takes precedence — trust only matters
+    once external packs are allowed.
+
+    Per-user packs (:func:`user_packs_dir`) are discovered unconditionally —
+    ``allow_external`` does not gate a layout the operator taught into their own
+    home — but their ``context.py`` is executed only under the same hash gate:
+    with no ``trust`` store they are returned unavailable, never exec'd.
+
+    ``include_user=False`` leaves that directory out of the walk entirely. It
+    exists for the one caller whose question is about the SHIPPED files (the
+    install self-check): a user pack shadowing a built-in name is a legitimate
+    thing for an operator to do, and it must not be able to make a healthy
+    install report a missing asset.
     """
     results: dict[str, PackStatus] = {}
-    for root, origin in _iter_candidate_dirs(pack_dirs or []):
-        if origin != "builtin" and not allow_external:
-            status = PackStatus(
-                name=root.name,
-                pack=None,
-                diagnosis="external pack not loaded (pass allow_external/--allow-external-packs)",
-                origin=origin,
-            )
-        elif origin != "builtin" and trust is not None:
-            status = _load_trusted_external(root, origin, trust, trust_new=trust_new)
-        else:
-            status = _load_pack_dir(root, origin)
+    for root, origin in _iter_candidate_dirs(pack_dirs or [], include_user=include_user):
+        status = _discover_one(root, origin, allow_external, trust, trust_new)
         results.setdefault(status.name, status)  # first definition wins
     return results
+
+
+def _discover_one(
+    root: Path, origin: str, allow_external: bool, trust: PackTrust | None, trust_new: bool
+) -> PackStatus:
+    """Apply the consent + hash gates for one candidate, then load it.
+
+    The three origins differ only here: a built-in loads outright, a
+    ``--pack-dir`` pack needs the caller's ``allow_external`` consent first, and
+    a per-user pack needs no such flag. Both non-built-in origins then need a
+    trust store that maps the root to its current content hash before any of its
+    code runs.
+    """
+    if origin == ORIGIN_BUILTIN:
+        return _load_pack_dir(root, origin)
+    if origin == ORIGIN_PACK_DIR and not allow_external:
+        return PackStatus(
+            name=root.name,
+            pack=None,
+            diagnosis="external pack not loaded (pass allow_external/--allow-external-packs)",
+            origin=origin,
+            root=root,
+        )
+    if trust is None:
+        # Consent-only callers get the historic --pack-dir behavior; a per-user
+        # pack has no consent-only path at all, because nothing but the hash
+        # says the code is the code the operator confirmed.
+        if origin == ORIGIN_PACK_DIR:
+            return _load_pack_dir(root, origin)
+        return PackStatus(
+            name=root.name,
+            pack=None,
+            diagnosis=(
+                "learned pack not loaded: this caller checks no trust store, so its code "
+                "cannot be shown to be the code that was confirmed"
+            ),
+            origin=origin,
+            root=root,
+        )
+    return _load_trusted_external(root, origin, trust, trust_new=trust_new)
 
 
 def _load_trusted_external(
     root: Path, origin: str, trust: PackTrust, *, trust_new: bool
 ) -> PackStatus:
-    """Gate one external candidate on its content hash, then load it if allowed.
+    """Gate one code-bearing candidate on its content hash, then load it if allowed.
 
     The pack is read ONCE into a :class:`PackSnapshot`; the hash is computed from
     the snapshot bytes and, when trusted, those SAME bytes are parsed/executed by
@@ -466,8 +581,9 @@ def _load_trusted_external(
         name=root.name,
         pack=None,
         diagnosis=(
-            "untrusted external pack: its code is not trusted at its current hash; "
+            "untrusted pack: its code is not trusted at its current hash; "
             "re-run with --trust-pack to trust it"
         ),
         origin=origin,
+        root=root,
     )
