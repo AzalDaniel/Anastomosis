@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
     from anastomosis.core.profiles import RunBinding
+    from anastomosis.deliver.browser.gates import RoutePlan, RunGates
     from anastomosis.deliver.ccda_export import CcdaExportResult
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import EventSink, PipelineResult, StageEvent
@@ -227,6 +228,8 @@ def _write_manifest_with_event(
     emit: Callable[[StageEvent], None],
     *,
     pack: str | None,
+    route: RoutePlan | None = None,
+    gates: RunGates | None = None,
 ) -> None:
     """Persist the upload manifest next to the charts and emit MANIFEST.
 
@@ -240,11 +243,17 @@ def _write_manifest_with_event(
     ``anast upload`` can run L3 against the header fields it declares. It is
     ``None`` in ccda-standard mode, where the HL7 stylesheet renders the view and
     no pack declares anything for L3 to check.
+
+    ``route`` and ``gates`` are the bundle's reviewed context — the destination
+    route this migration resolved, and what the run checked before writing the
+    manifest. The pack-mode path reaches the same fields through
+    ``core.commands._write_pipeline_manifest``; both modes must record them or
+    an executor's refusal would depend on which representation was chosen.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(docs, records, charts_dir, pack=pack)
+    write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
     emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
 
 
@@ -466,6 +475,7 @@ def _run_pack_mode(
     output validation, QA, event emission) rather than re-implementing it.
     """
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand, run_pipeline_command
+    from anastomosis.deliver.browser.gates import route_plan_of
 
     pack = resolve_pack(cmd.render)
     # ccda-standard is routed away before this function; every other mode
@@ -488,6 +498,10 @@ def _run_pack_mode(
             # A migration intends to deliver, so the upload manifest is written
             # by default (it lands in <out>/charts alongside the chart PDFs).
             write_manifest=True,
+            # The route resolved before any of this ran. Recording it here is
+            # what makes it part of what was reviewed rather than a line that
+            # scrolled past on the terminal.
+            route=route_plan_of(transit),
         ),
         on_event=on_event,
     )
@@ -523,9 +537,14 @@ def _run_ccda_standard_qa(
     records: list[PatientRecord],
     charts: Path,
     emit: Callable[[StageEvent], None],
-) -> None:
+) -> bool | None:
     """Verify each whole-patient standard-C-CDA-view PDF — the ccda-standard
     counterpart of the pipeline's QA stage.
+
+    Returns ``True`` when the report was written and OK, and ``None`` when the
+    stage downgraded to a no-op — the same shape ``run_pipeline`` gives its
+    caller, so the run manifest's QA gate can record what QA DID rather than
+    what the operator asked for. A FAIL does not return: it raises.
 
     Mirrors ``pipeline._run_qa_stage``: write ``qa_report.json`` next to the PDFs,
     emit a ``STAGE_QA`` counts event, and raise :class:`PipelineError` (exit 1,
@@ -547,12 +566,13 @@ def _run_ccda_standard_qa(
         if exc.name != "pymupdf":  # only the optional dependency may downgrade QA
             raise
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
-        return
+        return None
 
     report = whole_patient_report(
         (ccda_standard_doc_path(charts, record), record) for record in records
     )
-    settle_qa(report, charts, emit)
+    settle_qa(report, charts, emit)  # raises on a FAIL, so reaching here IS the pass
+    return True
 
 
 def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
@@ -590,6 +610,7 @@ def _run_ccda_standard(
 
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
+    from anastomosis.deliver.browser.gates import RunGates, route_plan_of
     from anastomosis.deliver.ccda_export import deliver_ccda
     from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.ccda_standard import (
@@ -634,8 +655,9 @@ def _run_ccda_standard(
             # ccda-standard counterpart to the pipeline's QA stage. A QA FAIL
             # aborts HERE (exit 1), before the manifest and the ccda payload are
             # written, exactly as run_pipeline's QA stage precedes delivery.
+            qa_ok: bool | None = None
             if cmd.qa and view.documents:
-                _run_ccda_standard_qa(records, charts, emit)
+                qa_ok = _run_ccda_standard_qa(records, charts, emit)
 
             # Write the upload manifest by default (a migration intends to
             # deliver). The whole-patient view has no RenderedDoc list, so the
@@ -652,7 +674,22 @@ def _run_ccda_standard(
                 )
                 for record in records
             ]
-            _write_manifest_with_event(manifest_docs, records, charts, emit, pack=None)
+            _write_manifest_with_event(
+                manifest_docs,
+                records,
+                charts,
+                emit,
+                pack=None,
+                route=route_plan_of(transit),
+                # No Jinja layout produced these pages — HL7's own stylesheet
+                # did — so there is no layout hash to record, and saying so is
+                # the honest answer rather than a gap. The QA verdict comes
+                # from what QA DID, never from the flag that asked for it: the
+                # stage downgrades to a no-op when PyMuPDF is absent, and
+                # reading the flag recorded `pass` for whole-patient views
+                # nothing had graded — on the one machine least able to notice.
+                gates=RunGates.from_run(qa_ok=qa_ok, layout_hash=None),
+            )
 
             ccda_result = deliver_ccda(records, ccda)
     except OutputLockedError as exc:

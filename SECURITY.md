@@ -64,7 +64,9 @@ The tool hardens what it creates; keeping it safe afterwards is yours:
   BAA exists.
 - Review third-party pack code before running it against real data. Packs
   are executable code; built-in packs are reviewed here, anything else is
-  yours to vet.
+  yours to vet. The restricted execution environment described below
+  raises the cost of the obvious abuses; it does not replace reading the
+  pack.
 
 ## Posture and controls
 
@@ -118,10 +120,40 @@ contract — regressions in any of them are security findings:
   and survives FHIR/C-CDA round-trip. Mapping tables explicitly declare
   consumed columns so additions are loud, not silent.
 - **Pack trust model.** Built-in template packs are implicitly trusted;
-  third-party packs from `--pack-dir` or entry points execute code and
-  therefore require explicit opt-in (`allow_external=True`). Pack
-  signing and hash-pinning are tracked in the M6 security backlog
-  (`docs/PLAN.md`).
+  third-party packs from `--pack-dir` execute code and therefore require
+  explicit opt-in (`allow_external=True` / `--allow-external-packs`). On
+  top of that, a content-hash trust store
+  (`reconstruct/packtrust.py`) pins WHICH bytes may run: a pack is
+  executed only at a hash the operator has trusted, from the same
+  single-read snapshot the hash was taken over, so an edited pack is
+  refused rather than silently re-run. A layout taught from samples is
+  trusted by the act of confirming the Teach, and editing it un-trusts
+  it. Pack signing remains on the M6 backlog (`docs/PLAN.md`).
+- **Restricted pack execution.** Non-built-in pack code
+  (`reconstruct/packexec.py`) runs against a restricted globals mapping:
+  no `open`/`eval`/`exec`, and an import allowlist covering the pack API
+  and pure-computation stdlib, so `os`, `subprocess`, `socket`,
+  `pathlib` and the rest are refused by name at import. **This is not a
+  sandbox and is not claimed as one.** A restricted globals mapping in
+  CPython is escapable by anyone who sets out to escape it; what it
+  removes is the accidental and the casual, and what it turns a silent
+  capability into is a loud refusal. The controls that carry weight
+  against hostile pack code remain the consent flag and the hash gate
+  above — plus the advice below, which still stands.
+- **Render provenance.** A render run publishes `render_provenance.json`
+  beside the charts: the layout's name, origin, trust hash, and a
+  sha256 per pack file, plus the templates the render actually read
+  (`reconstruct/provenance.py`). Re-running into a folder whose charts
+  came from different layout bytes is refused, and the upload manifest
+  carries the same hash as its layout gate.
+- **Delivery gate.** From upload-manifest schema v3 the bundle records
+  the destination route plan it was prepared for and the gate outcomes
+  it passed (QA, conservation, layout). `deliver/browser/gates.py`
+  refuses to deliver a bundle whose recorded gates did not pass, whose
+  reviewed route found no viable way in, or whose charts no longer hash
+  to what the manifest recorded — before the destination is attached. A
+  pre-v3 manifest carries no gate record and is warned about, loudly,
+  rather than refused.
 - **Strict gates.** Every commit passes `ruff check` (incl. bandit-S
   and naive-datetime rules), `ruff format --check`, `mypy --strict`,
   `pytest`, and the full-tree PHI scan via `tools/check.sh`. The gate

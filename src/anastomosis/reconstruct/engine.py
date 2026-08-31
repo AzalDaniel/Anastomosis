@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 
 from anastomosis.core.atomic import atomic_replace
 from anastomosis.core.conservation import Conservation
@@ -37,6 +37,7 @@ from anastomosis.core.textutil import safe_name
 
 from .chromium import RendererUnavailable
 from .packs import LoadedPack
+from .provenance import RecordingLoader
 
 __all__ = [
     "DuplicateEncounterId",
@@ -148,9 +149,23 @@ class ReconstructionEngine:
         self.render_day_stamps: int = pack.manifest.render_day_stamps
         self.carries: frozenset[str] = frozenset(pack.manifest.coverage.carries)
         self.omits: dict[str, str] = dict(pack.manifest.coverage.omits)
-        self._env = Environment(
-            loader=FileSystemLoader(pack.root), autoescape=True, keep_trailing_newline=True
-        )
+        # A RECORDING loader, not a plain FileSystemLoader: the render
+        # provenance record has to be able to say which template bytes actually
+        # reached the compiler — template.html and every partial an `include`
+        # or `extends` pulled in — and the loader is the only place that knows.
+        self._loader = RecordingLoader(pack.root)
+        self._env = Environment(loader=self._loader, autoescape=True, keep_trailing_newline=True)
+
+    @property
+    def templates_read(self) -> dict[str, str]:
+        """``{pack-relative template name: sha256}`` for what this engine read.
+
+        Empty until something is rendered. Jinja compiles a template once per
+        environment, and this engine holds one environment per run, so the
+        mapping is the run's whole template surface rather than a per-document
+        one.
+        """
+        return dict(self._loader.templates_read)
 
     # --- renderer lifecycle ---
 

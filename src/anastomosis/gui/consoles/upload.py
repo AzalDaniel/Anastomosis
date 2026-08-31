@@ -374,6 +374,7 @@ class UploadConsole:
             # monkeypatch is honored.
             from anastomosis.core.locking import OutputLockedError
             from anastomosis.core.upload_command import UploadCommand, run_upload_command
+            from anastomosis.deliver.browser.gates import DeliveryRefused
             from anastomosis.gui import controller as _controller_module
 
             try:
@@ -400,6 +401,14 @@ class UploadConsole:
                     self._emit(error_event(self._FLOW, "upload", result.nonclean_summary()))
                 else:
                     self._emit(stage_event(self._FLOW, "upload", "done"))
+            except DeliveryRefused as exc:
+                # The bundle read fine and describes something nobody should
+                # file: gates that did not pass, a route with no viable way in,
+                # or charts that no longer match what was reviewed. The message
+                # is PHI-free by that module's contract and names the remedy, so
+                # it is surfaced whole — the CLI prints the same sentence, and
+                # an operator switching frontends must not get less of it.
+                self._emit(error_event(self._FLOW, "upload", str(exc)))
             except OutputLockedError:
                 # A CLI or GUI run already holds this output dir — refuse cleanly.
                 self._emit(error_event(self._FLOW, "upload", "OutputLocked"))

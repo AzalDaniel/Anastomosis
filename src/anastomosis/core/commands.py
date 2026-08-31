@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from anastomosis.deliver.browser.gates import RoutePlan
     from anastomosis.pipeline import EventSink, PipelineResult
 
 __all__ = [
@@ -95,6 +96,11 @@ class PipelineCommand:
     # browser engine without re-running the pipeline. Off by default, so an
     # existing manifest-off run is byte-identical (the event/line is additive).
     write_manifest: bool = False
+    # The destination route plan this run is preparing for, when it has one — a
+    # migration resolves the transit map before rendering. It rides into the
+    # upload manifest so the route that was reviewed is the route an executor
+    # can be held to. None for a plain render, which names no destination.
+    route: RoutePlan | None = None
 
 
 @dataclass(frozen=True)
@@ -300,7 +306,9 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
             # before deliveries, so `anast upload` can drive the browser engine
             # later. Additive — the event fires ONLY when requested.
             if cmd.write_manifest:
-                _write_pipeline_manifest(result, cmd.charts_dir, cmd.pack, on_event)
+                _write_pipeline_manifest(
+                    result, cmd.charts_dir, cmd.pack, on_event, route=cmd.route
+                )
             deliveries = deliver_outputs(result, cmd.charts_dir, cmd.deliveries)
             return CommandResult(pipeline=result, deliveries=deliveries)
     except OutputLockedError as exc:
@@ -308,7 +316,12 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
 
 
 def _write_pipeline_manifest(
-    result: PipelineResult, charts_dir: Path, pack: str, on_event: EventSink | None
+    result: PipelineResult,
+    charts_dir: Path,
+    pack: str,
+    on_event: EventSink | None,
+    *,
+    route: RoutePlan | None = None,
 ) -> None:
     """Write the upload manifest and emit the PHI-safe ``manifest`` stage event.
 
@@ -320,11 +333,33 @@ def _write_pipeline_manifest(
     rendering, so a manifest written here always names a real pack — and is what
     lets the later ``anast upload`` run L3 against the header fields that pack
     declares.
+
+    ``route`` and the gates derived here are the bundle's REVIEWED context: what
+    this run was preparing for, and what it checked first. An executor refuses
+    on them (:func:`~anastomosis.deliver.browser.gates.assert_deliverable`), so
+    they are written at the one moment both are actually known — after QA, from
+    the run's own result, rather than re-derived by whoever opens the folder
+    next.
     """
+    from anastomosis.deliver.browser.gates import RunGates
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(result.render_result.documents, result.records, charts_dir, pack=pack)
+    gates = RunGates.from_run(
+        # None when QA did not run at all: the operator passed --no-qa, or the
+        # optional dependency the checks read PDFs with is not installed. Either
+        # way this bundle is unverified, and it has to say so.
+        qa_ok=None if result.qa_report is None else result.qa_report.ok,
+        layout_hash=None if result.provenance is None else result.provenance.content_hash,
+    )
+    write_upload_manifest(
+        result.render_result.documents,
+        result.records,
+        charts_dir,
+        pack=pack,
+        route=route,
+        gates=gates,
+    )
     if on_event is not None:
         on_event(StageEvent(STAGE_MANIFEST, counts={"items": len(result.render_result.documents)}))
 

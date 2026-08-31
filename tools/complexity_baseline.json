@@ -14,7 +14,7 @@
       "rank": "C"
     },
     "src/anastomosis/cli_commands/upload.py::upload_cmd": {
-      "cc": 26,
+      "cc": 22,
       "rank": "D"
     },
     "src/anastomosis/core/commands.py::run_pipeline_command": {
@@ -300,8 +300,8 @@
       "rank": "B"
     },
     "src/anastomosis/cli_commands/upload.py": {
-      "avg": 26.0,
-      "rank": "D"
+      "avg": 12.5,
+      "rank": "C"
     },
     "src/anastomosis/core/fhir/export.py": {
       "avg": 5.9259,
