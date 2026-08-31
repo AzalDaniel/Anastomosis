@@ -198,9 +198,10 @@ def test_the_named_actors_now_reach_the_record_at_scale(
 
     Every one of these was offered by the corpus and reached nothing; each now
     becomes a canonical object the ledger can trace back to the ``<id root>``
-    the construct carried, with nothing left in the unsupported column. The
-    two constructs still missing from this list are the subject of the next
-    test — they are absent by name rather than by omission.
+    the construct carried, with nothing left in the unsupported column. The two
+    constructs missing from this list are the subject of the next test — CDA
+    gives them no id, so they are credited on other evidence and are absent here
+    by name rather than by omission.
     """
     totals = _row(scale_report, construct)
     assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
@@ -210,31 +211,38 @@ def test_the_named_actors_now_reach_the_record_at_scale(
 @pytest.mark.parametrize(
     "construct", ["participation:assignedAuthoringDevice", "participation:informant"]
 )
-def test_an_actor_cda_gives_no_id_cannot_be_credited(
+def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
     scale_report: dict[str, object], construct: str
 ) -> None:
-    """Both of these ARE extracted, and the ledger still credits neither.
+    """Both of these ARE extracted, and the ledger now says so.
 
-    CDA R2 gives ``Device`` and ``RelatedEntity`` no ``<id>`` at all, and this
-    instrument credits a parse only on an id root the construct itself carries,
-    so every instance lands in ``unlinkable`` — the blind spot reported rather
-    than resolved in the flattering direction. Widening the evidence rule to
-    close these two would let the instrument certify parses it cannot see.
+    CDA R2 gives ``Device`` and ``RelatedEntity`` no ``<id>`` at all, so for as
+    long as an id root was the only evidence admitted these two were reported
+    lost in every document that offered one — a permanent under-reading of the
+    adapter by the standard's shape rather than by anything the adapter did.
+    They are credited here on the second evidence form: the record states what
+    the document stated. Content that is absent, ambiguous or spelled
+    differently is still not evidence, which
+    ``test_an_actor_that_states_nothing_still_cannot_be_credited`` and
+    ``test_two_identical_actors_and_one_object_credit_one_parse`` hold in
+    ``tests/unit/test_ccda_ledger.py`` — this corpus offers no such document,
+    and a claim no test holds is one the next refactor drops.
     """
     totals = _row(scale_report, construct)
-    assert totals[Disposition.UNSUPPORTED.value] > 0
-    assert totals.get(Disposition.STRUCTURALLY_PARSED.value, 0) == 0
+    assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
+    assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
 
 
 def test_the_generating_system_and_the_informant_still_reach_the_record(
     corpus: list[tuple[str, bytes]], tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """What the ledger cannot see, the record still carries.
+    """What the ledger credits, the record has to actually carry.
 
     The authoring device arrives as its own practitioner rather than as a
-    clinician, and an informant who gave only a relationship keeps it — proved
-    against the record, because the reading above cannot prove it and a fact no
-    test holds is a fact the next refactor drops.
+    clinician, and an informant who gave only a relationship keeps it. Asserted
+    on the record directly rather than through the reading above: the reading is
+    now content evidence for both of these, and an instrument that agreed with
+    itself about the objects it is grading would prove nothing about them.
     """
     directory = tmp_path_factory.mktemp("actors")
     entities: set[str] = set()
