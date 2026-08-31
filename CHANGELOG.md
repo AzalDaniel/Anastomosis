@@ -57,6 +57,28 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
+  document's information recipient was emitted as
+  `intendedRecipient/assignedPerson`, but an `intendedRecipient` plays an
+  `informationRecipient`; the custodian sat before `dataEnterer` rather than
+  in the sequence position `ClinicalDocument` fixes for it; a coded value put
+  its `translation` ahead of the source's own `originalText`; and a
+  medication's `doseQuantity` came before its `routeCode`. None of the four
+  was caught by a check — the first was found by reading the specification
+  while implementing participation extraction (#327), and the other three by
+  the sweep that issue asked for. A corpus that emits a shape no conforming
+  vendor produces is testing our tolerance rather than our conformance, so a
+  new assertion now walks a generated document and refuses any element
+  standing where R2.1 does not allow it: the next divergence is a failing
+  test rather than a second spec-reading accident. The parser keeps reading
+  the non-standard recipient — stated in a comment as vendor tolerance, with
+  a fixture whose own name says it is divergence, because exporters that
+  reuse their `assignedEntity` writer really do emit it and this adapter's
+  posture is to read what exists. Measured, not assumed: the ledger's
+  6,144-document reading is byte-identical either way (65 lines, 3,408 bytes,
+  `823a60b6…`), because the ledger counts the outer participation and the
+  parser credits both spellings — the shapes changed, the accounting did not.
+
 - **The layout you taught it is now the layout you can run.** Teaching a
   document layout wrote a valid draft, said so, and left the operator on a
   screen that could not offer it: the draft went to a relative `packs/`
