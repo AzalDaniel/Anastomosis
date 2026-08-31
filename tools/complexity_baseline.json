@@ -50,7 +50,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/source_init_command.py::run_source_init_command": {
-      "cc": 15,
+      "cc": 13,
       "rank": "C"
     },
     "src/anastomosis/core/sourcelearn.py::_infer_grouping": {
@@ -317,10 +317,6 @@
     },
     "src/anastomosis/core/fhir/ingest.py": {
       "avg": 5.8636,
-      "rank": "B"
-    },
-    "src/anastomosis/core/source_init_command.py": {
-      "avg": 5.2,
       "rank": "B"
     },
     "src/anastomosis/deliver/archive/archive.py": {

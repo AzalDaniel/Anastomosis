@@ -35,11 +35,19 @@ is a sourcelearn diagnosis over column/target NAMES, never a cell value.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.packinit import PACK_NAME_RE
+
+if TYPE_CHECKING:  # the real types, without paying the import at runtime
+    from anastomosis.core.sourcelearn import SourceAnalysis
+    from anastomosis.sources.learned.spec import MappingSpec
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "LEARNABLE_SUFFIXES",
@@ -151,6 +159,19 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
     if not isinstance(cmd.name, str) or not PACK_NAME_RE.match(cmd.name):
         return SourceInitResult(ok=False, error="InvalidSourceName")
 
+    # Asked BEFORE anything is analysed or written, and that ordering is the
+    # fix. Registration already refuses to let a learned mapping shadow a
+    # built-in — correctly, since `get_source("ccda")` must always be the C-CDA
+    # adapter — but it refused at the END, in a log line, after save had
+    # reported success and written the whole directory. An operator saw "saved",
+    # got a folder full of their reviewed work, and could never select it: not
+    # then, not after a restart, because the skip is permanent by design. The
+    # collision is knowable from the name alone, so it is answered from the name
+    # alone, before the operator spends any more of their attention on it.
+    reserved = _reserved(cmd.name)
+    if reserved is not None:
+        return SourceInitResult(ok=False, error=reserved)
+
     resolved, resolve_error = resolve_example(cmd.example)
     if resolved is None:
         return SourceInitResult(ok=False, error=resolve_error)
@@ -172,26 +193,7 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
 
     # The PHI-safe proposal, carried on every post-analyze outcome via
     # dataclasses.replace (which preserves the per-field types mypy checks).
-    proposal = SourceInitResult(
-        ok=False,
-        error=None,
-        fmt_type=analysis.fmt.type,
-        columns=len(analysis.fmt.columns),
-        patient_key=analysis.patient_key,
-        encounter_key=analysis.encounter_key,
-        row_scope=analysis.row_scope,
-        summary=list(analysis.summary_lines()),
-        suggestions=[
-            SourceSuggestion(
-                source=s.source_path,
-                target=s.target_path,
-                transform=s.transform,
-                confidence=round(s.confidence, 2),
-            )
-            for s in analysis.suggestions
-        ],
-        mapped=sum(1 for s in analysis.suggestions if s.target_path is not None),
-    )
+    proposal = _proposal(analysis)
 
     # The review checkpoint: an unconfirmed request refuses and writes nothing,
     # but still returns the proposal so the operator sees what they confirm.
@@ -222,6 +224,14 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
         # the CLI's "(OSError)"-style detail without echoing the path.
         return replace(proposal, error="SaveFailed", detail=exc_tag(exc))
 
+    # Available NOW, not after a restart. `pipeline` registers learned sources
+    # once at import, so a format taught mid-session was written, valid, and
+    # invisible: Charts and Migrate populate their choosers from the registry,
+    # and nothing had told the registry to look again. `_reserved` above
+    # guarantees the id is free, so there is no stale adapter to displace and
+    # no ambiguity about which mapping answers to the name.
+    _make_selectable(spec)
+
     return replace(
         proposal,
         ok=True,
@@ -229,4 +239,75 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
         mapping_md=mapping_md,
         record_count=report.record_count,
         unmapped=len(spec.unmapped_source_fields),
+    )
+
+
+def _reserved(name: str) -> str | None:
+    """Why ``name`` may not be taken, or ``None`` if it is free.
+
+    Two refusals rather than one, because they are different situations for the
+    person reading them. A built-in id can never be used — `ccda` belongs to the
+    C-CDA adapter and always will. An id already learned is the operator's own
+    earlier work, and refusing protects it: silently replacing a reviewed
+    mapping would discard a decision somebody made about how a source file's
+    columns become patient identity.
+
+    Read from the live registry rather than a hardcoded list, so a source added
+    later is reserved without anybody remembering to come back here.
+    """
+    from anastomosis.sources import available_sources
+    from anastomosis.sources.learned import LearnedSourceAdapter
+
+    for adapter in available_sources():
+        if adapter.name == name:
+            return (
+                "SourceIdInUse" if isinstance(adapter, LearnedSourceAdapter) else "SourceIdReserved"
+            )
+    return None
+
+
+def _make_selectable(spec: MappingSpec) -> None:
+    """Register the just-saved mapping so this session can use it.
+
+    Best effort on purpose: the mapping is on disk and valid either way, and a
+    registry that refused would make a saved format unusable rather than merely
+    unregistered. A failure here costs a restart, which is exactly where this
+    stood before.
+    """
+    from anastomosis.sources import register
+    from anastomosis.sources.learned import LearnedSourceAdapter
+
+    try:
+        register(LearnedSourceAdapter(spec))
+    except Exception:  # pragma: no cover - defensive; the disk copy still stands
+        logger.warning("saved mapping could not be registered in this session")
+
+
+def _proposal(analysis: SourceAnalysis) -> SourceInitResult:
+    """The PHI-safe proposal every post-analyze outcome is built from.
+
+    Column names, target paths and counts — never a cell value. Lifted out of
+    :func:`run_source_init_command` because it is pure construction from one
+    argument and was carrying two comprehensions' worth of branching in a
+    function that is otherwise a sequence of refusals.
+    """
+    return SourceInitResult(
+        ok=False,
+        error=None,
+        fmt_type=analysis.fmt.type,
+        columns=len(analysis.fmt.columns),
+        patient_key=analysis.patient_key,
+        encounter_key=analysis.encounter_key,
+        row_scope=analysis.row_scope,
+        summary=list(analysis.summary_lines()),
+        suggestions=[
+            SourceSuggestion(
+                source=s.source_path,
+                target=s.target_path,
+                transform=s.transform,
+                confidence=round(s.confidence, 2),
+            )
+            for s in analysis.suggestions
+        ],
+        mapped=sum(1 for s in analysis.suggestions if s.target_path is not None),
     )
