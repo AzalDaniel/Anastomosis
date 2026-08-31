@@ -30,22 +30,36 @@ profile carries that one.
 | --- | --- | --- |
 | `SourceProfile` | `name`, `kind` (`builtin`/`learned`), `mapping_id`, `mapping_sha256`, `spec_version`, `taught_for_destination`, `taught_for_destination_hash` | the learned mapping's `source_trust.json` digest (`spec.mapping_content_hash`) |
 | `DestinationProfile` | `name`, `display`, `version`, and each capability's `slot`/`kind`/`detail` | — (registry data) |
-| `LayoutProfile` | `render_mode`, `pack`, `origin`, `content_hash` | `packtrust.pack_content_hash` |
+| `LayoutProfile` | `render_mode`, `pack`, `origin`, `content_hash` (`root` recorded, not hashed) | `packtrust.pack_content_hash` |
 
 A built-in source has no content hash: its behavior is the installed package's,
 which the manifest pins separately as `pipeline_version`.
 
-Two deliberate exclusions:
+Four deliberate exclusions:
 
 * **Capability evidence is not hashed.** The quarterly re-verification ritual
   bumps a `verified` date without changing what a destination can receive; a
   binding that broke every time somebody re-read a vendor doc page is a binding
   people learn to ignore. A changed `kind` or `detail` *is* a changed routing
   fact and does break it.
-* **The export's contents are not hashed.** `export_dir_id` is a digest of the
-  resolved input PATH. It answers "was this run pointed at the same folder?",
-  not "does that folder still hold the same records" — which is the conservation
-  ledger's question, and would put patient-derived bytes in reach of a manifest.
+* **The export's contents are not hashed, and neither is its path written
+  down.** `export_dir_id` is a digest of the resolved input PATH and the path
+  itself never lands. The digest answers "was this run pointed at the same
+  folder?", not "does that folder still hold the same records" — which is the
+  conservation ledger's question, and would put patient-derived bytes in reach
+  of a manifest. The path is withheld for the same reason: a practice that
+  drops one folder per patient names those folders after patients.
+* **The layout's `root` is recorded but not hashed.** A later step — an upload,
+  a delivery — never received the `--pack-dir` list the migration was given, so
+  it cannot rediscover an external pack; the recorded root is where it asks
+  whether those bytes still hash the same. A pack moved to another path with
+  its bytes intact is not drift, and a machine-specific path inside the digest
+  would make every binding unportable.
+* **What the layout hash itself omits.** `pack_content_hash` covers
+  `context.py`, `template.html` and `pack.yaml`. Auxiliary assets beside them
+  are unpinned there and therefore unpinned here — an edited logo or stylesheet
+  moves no binding. (`render_provenance.json`, where a run writes one, is the
+  record that does cover the whole tree.)
 
 ## Destination versions
 
@@ -72,9 +86,16 @@ refusing.
 | `state_history` | run | The ordered states this run has been in. |
 | `receipt` | run | A PHI-free pointer to the evidence behind the current state (an upload run-report name). `null` while `prepared`, whose evidence is the artifacts themselves. |
 | `run.source` / `run.destination` / `run.render_mode` | run | The identities a later step re-profiles. |
-| `run.export_dir` / `run.export_dir_id` | run | The operator-chosen input path and its path-derived id. Never contents. |
+| `run.export_dir_id` | run | A digest of the operator-chosen input path. Never the path, never contents. |
 | `profiles.source` / `.destination` / `.layout` | run | Each profile's full payload plus its own `profile_hash`. |
 | `profiles.binding_hash` | run | The digest over the three profile hashes. |
+
+Every recorded hash is read back on load and compared against what the
+manifest's own contents produce; a file that does not agree with itself is
+refused rather than believed. That is an integrity check against a hand edit
+and a half-written file — **not** a security boundary: nothing here is signed,
+and anyone who can edit the file can recompute these too. The controls that
+carry weight are the trust store and the profiles themselves.
 
 **No timestamps.** Two runs over the same inputs on the same pinned environment
 write byte-identical manifests, which is what makes "did anything change?" a

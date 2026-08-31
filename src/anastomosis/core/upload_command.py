@@ -60,6 +60,7 @@ __all__ = [
     "check_run_binding",
     "record_upload_state",
     "resolve_manifest_root",
+    "resolve_run_manifest_root",
     "run_upload_command",
 ]
 
@@ -189,6 +190,26 @@ class UploadCommandResult:
         return f"{total} item(s) in non-clean terminal states: {detail}"
 
 
+def resolve_run_manifest_root(out_dir: Path) -> Path:
+    """Where the RUN manifest lives for an upload pointed at ``out_dir``.
+
+    ``anast upload`` accepts either a migrate output dir or the ``charts``
+    folder inside it — :func:`resolve_manifest_root` says so about the upload
+    manifest, and an operator who learned that habit will point this at
+    ``charts`` too. The run manifest sits one level up, so without this the
+    binding check would find nothing there, log "not bound", and file every
+    chart unchecked: the whole feature bypassed by naming a subfolder.
+    """
+    from anastomosis.core.runmanifest import run_manifest_path
+
+    if run_manifest_path(out_dir).is_file():
+        return out_dir
+    parent = out_dir.parent
+    if out_dir.name == "charts" and run_manifest_path(parent).is_file():
+        return parent
+    return out_dir
+
+
 def check_run_binding(out_dir: Path) -> RunManifest | None:
     """Refuse to upload from a folder whose bound profiles have since changed.
 
@@ -209,7 +230,7 @@ def check_run_binding(out_dir: Path) -> RunManifest | None:
     """
     from anastomosis.core.runmanifest import load_run_manifest, recapture_binding, verify_binding
 
-    manifest = load_run_manifest(out_dir)
+    manifest = load_run_manifest(resolve_run_manifest_root(out_dir))
     if manifest is None:
         logger.warning(
             "no run manifest in the upload folder: this tree is not bound to a set of "
@@ -242,15 +263,23 @@ def record_upload_state(out_dir: Path, result: UploadCommandResult, *, verified:
         RunState,
         RunStateError,
         advance_state,
+        load_run_manifest,
     )
 
     if not result.is_clean:
         return
     receipt = result.report_path.name
+    root = resolve_run_manifest_root(out_dir)
     try:
-        advance_state(out_dir, RunState.DELIVERED, receipt=receipt)
+        # Separate steps, because a folder already at `delivered` — a second
+        # upload, or a `--no-verify` run followed by a full one — makes the
+        # first call raise, and one shared `try` swallowed that and stranded
+        # the run one state short of the truth forever.
+        manifest = load_run_manifest(root)
+        if manifest is not None and manifest.state is RunState.PREPARED:
+            advance_state(root, RunState.DELIVERED, receipt=receipt)
         if verified:
-            advance_state(out_dir, RunState.VERIFIED, receipt=receipt)
+            advance_state(root, RunState.VERIFIED, receipt=receipt)
     except (BindingError, RunManifestError, RunStateError) as exc:
         # Type name only: the message can name an operator-chosen path, and the
         # charts are already filed. Loud in the log, never fatal here.

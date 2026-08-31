@@ -172,7 +172,12 @@ class RunManifest:
     source: str
     destination: str
     render_mode: str
-    export_dir: str
+    #: The export the run read, as a digest of its RESOLVED PATH — never the
+    #: path itself. A practice that drops one folder per patient names those
+    #: folders after patients, so the path is a value the chart could have
+    #: given us: it is compared like any other identifier and never written
+    #: down. The digest answers "was this the same export?" without saying
+    #: which.
     export_dir_id: str
     binding: RunBinding
     state: RunState = RunState.PREPARED
@@ -200,7 +205,6 @@ class RunManifest:
                 "source": self.source,
                 "destination": self.destination,
                 "render_mode": self.render_mode,
-                "export_dir": self.export_dir,
                 "export_dir_id": self.export_dir_id,
             },
             "profiles": self.binding.to_json(),
@@ -218,14 +222,15 @@ class RunManifest:
                 )
             run = data["run"]
             history = tuple(RunState(state) for state in data["state_history"])
+            binding = RunBinding.from_json(data["profiles"])
+            _assert_recorded_hashes(binding, data["profiles"])
             return cls(
                 pipeline_version=str(data["pipeline_version"]),
                 source=str(run["source"]),
                 destination=str(run["destination"]),
                 render_mode=str(run["render_mode"]),
-                export_dir=str(run["export_dir"]),
                 export_dir_id=str(run["export_dir_id"]),
-                binding=RunBinding.from_json(data["profiles"]),
+                binding=binding,
                 state=RunState(data["state"]),
                 state_history=history,
                 receipt=None if data.get("receipt") is None else str(data["receipt"]),
@@ -237,6 +242,42 @@ class RunManifest:
             # TYPE name only: a malformed manifest is a structural fault, and its
             # contents are not ours to echo.
             raise RunManifestError(f"run manifest is malformed: {type(exc).__name__}") from None
+
+
+def _assert_recorded_hashes(binding: RunBinding, payload: Mapping[str, Any]) -> None:
+    """The digests the file carries must be the digests its own numbers produce.
+
+    Every hash in a manifest is recomputed from the payload beside it, so on
+    its own the recorded ``profile_hash``/``binding_hash`` lines would be
+    decoration: an editor who changed a content hash and left them alone would
+    be believed. Reading them back turns them into what they are written as —
+    a check that the file is internally whole, catching the hand edit and the
+    half-written file alike.
+
+    It is an integrity check against accident and casual tampering, NOT a
+    security boundary: anyone who can edit the file can also recompute these,
+    and nothing here is signed. The controls that carry weight are the trust
+    store and the profiles themselves.
+    """
+    recorded = {
+        "source": payload.get("source", {}).get("profile_hash"),
+        "destination": payload.get("destination", {}).get("profile_hash"),
+        "layout": payload.get("layout", {}).get("profile_hash"),
+    }
+    computed = {
+        "source": binding.source.profile_hash,
+        "destination": binding.destination.profile_hash,
+        "layout": binding.layout.profile_hash,
+    }
+    wrong = sorted(name for name, value in recorded.items() if value not in (None, computed[name]))
+    if payload.get("binding_hash") not in (None, binding.binding_hash):
+        wrong.append("binding")
+    if wrong:
+        raise RunManifestError(
+            "this run manifest does not agree with itself: the recorded "
+            f"{', '.join(wrong)} hash(es) are not what its own contents produce. "
+            "It was edited or written incompletely; re-prepare the run."
+        )
 
 
 def run_manifest_path(out_dir: Path) -> Path:
@@ -310,7 +351,7 @@ def recapture_binding(manifest: RunManifest, *, pack_dirs: Sequence[Path] = ()) 
     is what makes the comparison meaningful: the same three things are profiled,
     and only their hashes can differ.
     """
-    from anastomosis.core.profiles import capture_binding
+    from anastomosis.core.profiles import capture_binding, reprofile_layout
 
     return capture_binding(
         source=manifest.source,
@@ -318,6 +359,7 @@ def recapture_binding(manifest: RunManifest, *, pack_dirs: Sequence[Path] = ()) 
         render_mode=manifest.binding.layout.render_mode,
         pack=manifest.binding.layout.pack,
         pack_dirs=pack_dirs,
+        layout=reprofile_layout(manifest.binding.layout),
     )
 
 

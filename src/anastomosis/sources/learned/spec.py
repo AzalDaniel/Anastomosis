@@ -206,6 +206,12 @@ class MappingSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mapping_id: str
+    # Additive since 1: `destination_binding` is optional and defaults to None,
+    # so every mapping written before it loads unchanged. The other direction
+    # is the rough edge — a mapping taught with `--to` on this build, read by an
+    # older one, fails validation as an invalid spec rather than as a version
+    # it does not know. A bump would have forced dual handling for a field that
+    # takes nothing away.
     spec_version: Literal[1] = 1
     created_at: datetime
     #: Hard gate enforced by discovery, not here: an unreviewed mapping is never

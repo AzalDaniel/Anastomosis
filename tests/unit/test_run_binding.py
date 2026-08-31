@@ -244,7 +244,6 @@ def _manifest_for(tmp_path: Path, binding: _RunBinding) -> RunManifest:
         source="pf-tebra",
         destination="tebra",
         render_mode="neutral",
-        export_dir=str(tmp_path / "export"),
         export_dir_id=export_dir_id(tmp_path / "export"),
         binding=binding,
     )
@@ -641,3 +640,166 @@ def test_resolve_pack_is_the_one_render_mode_to_pack_answer() -> None:
     assert resolve_pack("neutral") == "generic_soap"
     assert resolve_pack("ccda-standard") is None
     assert resolve_pack("practice_fusion_soap") == "practice_fusion_soap"
+
+
+# --- what the adversarial review found -----------------------------------------
+
+
+def test_an_external_pack_survives_the_step_that_never_saw_pack_dir(
+    tmp_path: Path, fake_chromium: None
+) -> None:
+    """The review's blocker: a `--pack-dir` migration could never be uploaded.
+
+    `migrate` profiles the layout with the operator's `--pack-dir` list; the
+    upload that follows has no such list, so re-running discovery there found
+    nothing, recorded no hash, and refused — telling the operator to restore
+    inputs that were never touched. The manifest records where the render read
+    from, and the later step asks its question there.
+    """
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    from anastomosis.core.upload_command import check_run_binding
+
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "packs" / "generic_soap",
+        vendor / "vendor_soap",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    manifest_yaml = vendor / "vendor_soap" / "pack.yaml"
+    manifest_yaml.write_text(
+        manifest_yaml.read_text(encoding="utf-8").replace(
+            "name: generic_soap", "name: vendor_soap"
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(
+            export_dir=PF_FIXTURE,
+            out_dir=out,
+            source="pf-tebra",
+            destination="tebra",
+            render="vendor_soap",
+            pack_dirs=(vendor,),
+            trust_new=True,
+        )
+    )
+    bound = read_run_manifest(out)
+    assert bound.binding.layout.content_hash is not None
+    assert bound.binding.layout.root == str(vendor / "vendor_soap")
+
+    # The upload knows nothing about --pack-dir, and must still be able to ask.
+    assert check_run_binding(out) is not None
+
+    # And it is still a real check: editing those bytes refuses.
+    template = vendor / "vendor_soap" / "template.html"
+    template.write_text(template.read_text(encoding="utf-8") + "<!-- edited -->", encoding="utf-8")
+    with pytest.raises(BindingError) as caught:
+        check_run_binding(out)
+    assert [drift.profile for drift in caught.value.drifted] == ["layout"]
+
+
+def test_a_pack_that_moved_but_did_not_change_is_not_drift(tmp_path: Path) -> None:
+    """`root` is recorded and deliberately not hashed: same bytes, new place."""
+    from anastomosis.core.profiles import reprofile_layout
+    from anastomosis.reconstruct.packtrust import pack_content_hash
+
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "packs" / "generic_soap",
+        first / "generic_soap",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    shutil.copytree(first, second)
+    here = LayoutProfile(
+        render_mode="generic_soap",
+        pack="generic_soap",
+        origin="pack-dir",
+        content_hash=pack_content_hash(first / "generic_soap"),
+        root=str(first / "generic_soap"),
+    )
+    there = LayoutProfile(**{**here.__dict__, "root": str(second / "generic_soap")})
+    assert here.profile_hash == there.profile_hash
+    assert reprofile_layout(there).content_hash == here.content_hash
+
+
+def test_the_upload_folder_below_a_bound_run_is_still_checked(
+    tmp_path: Path, fake_chromium: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`anast upload -o <out>/charts` is a documented habit for the upload
+    manifest, and it used to walk straight past the binding check: no run
+    manifest in that folder, one PHI-free "not bound" line, every chart filed
+    unchecked. The run manifest is one level up and is found there."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    from anastomosis.core.upload_command import check_run_binding
+
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(export_dir=PF_FIXTURE, out_dir=out, source="pf-tebra", destination="tebra")
+    )
+    assert check_run_binding(out / "charts") is not None
+
+    _bump_destination_version(monkeypatch, "tebra", "2027.1")
+    with pytest.raises(BindingError):
+        check_run_binding(out / "charts")
+
+
+def test_a_hand_edited_manifest_does_not_agree_with_itself(
+    tmp_path: Path, fake_chromium: None
+) -> None:
+    """The recorded hashes are read back, so the file's own numbers have to
+    match its own contents. Without that they were decoration: an editor who
+    changed a content hash and left them alone would have been believed."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(export_dir=PF_FIXTURE, out_dir=out, source="pf-tebra", destination="tebra")
+    )
+    path = out / RUN_MANIFEST_NAME
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["profiles"]["layout"]["content_hash"] = "0" * 64
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RunManifestError, match="does not agree with itself"):
+        read_run_manifest(out)
+
+
+def test_the_manifest_never_writes_the_export_path(tmp_path: Path, fake_chromium: None) -> None:
+    """A practice that drops one folder per patient names those folders after
+    patients. The digest answers "the same export?" without saying which."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    export = tmp_path / "MRN-00998877_Cora_Q_Specimen_1978-03-04"
+    shutil.copytree(PF_FIXTURE, export)
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(export_dir=export, out_dir=out, source="pf-tebra", destination="tebra")
+    )
+    text = (out / RUN_MANIFEST_NAME).read_text(encoding="utf-8")
+    for stated in ("MRN-00998877", "Cora", "Specimen", "1978-03-04"):
+        assert stated not in text, f"the manifest wrote {stated!r}"
+    assert read_run_manifest(out).export_dir_id == export_dir_id(export)
+
+
+def test_a_second_upload_still_reaches_verified(tmp_path: Path, fake_chromium: None) -> None:
+    """A folder already at `delivered` — a `--no-verify` upload followed by a
+    full one — used to make the first transition raise inside a shared `try`,
+    swallowing it and stranding the run one state short of the truth forever."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    from anastomosis.core.upload_command import record_upload_state
+
+    out = tmp_path / "out"
+    run_migration(
+        MigrationCommand(export_dir=PF_FIXTURE, out_dir=out, source="pf-tebra", destination="tebra")
+    )
+    report = out / "upload_report.json"
+    report.write_text("{}", encoding="utf-8")
+
+    class _Clean:
+        is_clean = True
+        report_path = report
+
+    record_upload_state(out, _Clean(), verified=False)  # type: ignore[arg-type]
+    assert read_run_manifest(out).state is RunState.DELIVERED
+    record_upload_state(out, _Clean(), verified=True)  # type: ignore[arg-type]
+    assert read_run_manifest(out).state is RunState.VERIFIED

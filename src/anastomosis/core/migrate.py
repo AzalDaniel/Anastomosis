@@ -406,7 +406,6 @@ def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
             source=cmd.source,
             destination=cmd.destination,
             render_mode=cmd.render,
-            export_dir=str(cmd.export_dir),
             export_dir_id=export_dir_id(cmd.export_dir),
             binding=binding,
         ),

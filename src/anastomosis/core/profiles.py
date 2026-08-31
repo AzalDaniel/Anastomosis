@@ -251,13 +251,27 @@ class LayoutProfile:
     verbatim: the same digest over the same ``context.py`` + ``template.html`` +
     ``pack.yaml`` bytes the trust store gates execution on. A pack that could not
     be discovered records ``None``, which is a value the binding compares like
-    any other — a pack that appears or disappears between runs is drift.
+    any other — a pack that appears or disappears between runs is drift. What
+    that digest does NOT cover is what ``packtrust`` does not cover: auxiliary
+    assets beside those three files are unpinned there and unpinned here.
+
+    ``root`` is recorded and deliberately NOT hashed. A later step does not
+    carry the ``--pack-dir`` list the migration was given, so re-running
+    discovery there would fail to find an external pack, record no hash, and
+    report drift for a pack nobody touched — a refusal people learn to ignore,
+    which is worse than no refusal. Recording where the render actually read
+    from lets the later step ask the honest question (do those bytes still hash
+    the same?) at the right place. It stays out of the hash for the same reason
+    the destination's ``evidence`` does: a pack moved to another absolute path
+    is not a pack whose content changed, and a machine-specific path inside the
+    digest would make every binding unportable.
     """
 
     render_mode: str
     pack: str | None = None
     origin: str | None = None
     content_hash: str | None = None
+    root: str | None = None
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -272,7 +286,7 @@ class LayoutProfile:
         return _digest("layout", self.payload())
 
     def to_json(self) -> dict[str, Any]:
-        return {**self.payload(), "profile_hash": self.profile_hash}
+        return {**self.payload(), "root": self.root, "profile_hash": self.profile_hash}
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> LayoutProfile:
@@ -281,6 +295,7 @@ class LayoutProfile:
             pack=_opt_str(data.get("pack")),
             origin=_opt_str(data.get("origin")),
             content_hash=_opt_str(data.get("content_hash")),
+            root=_opt_str(data.get("root")),
         )
 
 
@@ -453,6 +468,48 @@ def capture_layout_profile(
         pack=pack,
         origin=status.origin,
         content_hash=pack_content_hash(status.root),
+        root=str(status.root),
+    )
+
+
+def reprofile_layout(profile: LayoutProfile) -> LayoutProfile:
+    """Re-read the content of the layout a manifest already named.
+
+    The manifest supplies the identity AND the place; this asks only whether
+    those same bytes still hash the same. Discovery is not re-run, because the
+    step asking is typically an upload or a delivery, which never received the
+    ``--pack-dir`` list the migration was given: rediscovering would report a
+    vanished pack for one that is exactly where it was, and send the operator
+    to restore inputs nobody changed.
+
+    A manifest written before ``root`` was recorded, or one naming no pack at
+    all, has nothing to re-read here and falls back to discovery — the old
+    behaviour, for the old shape.
+    """
+    from pathlib import Path
+
+    from anastomosis.reconstruct.packtrust import pack_content_hash
+
+    if profile.pack is None or profile.root is None:
+        return capture_layout_profile(profile.render_mode, profile.pack)
+    root = Path(profile.root)
+    if not root.is_dir():
+        # Gone since the render. Recorded as no hash, which the binding reads
+        # as drift — correctly: a layout that is not there cannot be the layout
+        # these charts were made from.
+        logger.warning("the layout this run names is no longer at the place it rendered from")
+        return LayoutProfile(
+            render_mode=profile.render_mode,
+            pack=profile.pack,
+            origin=profile.origin,
+            root=profile.root,
+        )
+    return LayoutProfile(
+        render_mode=profile.render_mode,
+        pack=profile.pack,
+        origin=profile.origin,
+        content_hash=pack_content_hash(root),
+        root=profile.root,
     )
 
 
@@ -467,12 +524,22 @@ def capture_binding(
     trust: PackTrust | None = None,
     registry: DestinationRegistry | None = None,
     sources_dir: Path | None = None,
+    layout: LayoutProfile | None = None,
 ) -> RunBinding:
-    """Capture all three profiles for one run — the binding a manifest names."""
+    """Capture all three profiles for one run — the binding a manifest names.
+
+    ``layout`` is passed by a caller that already knows WHERE the layout is —
+    :func:`~anastomosis.core.runmanifest.recapture_binding` re-reads it at the
+    root the manifest recorded, because discovery from a ``--pack-dir`` list a
+    later step never received would report a vanished pack for one that never
+    moved.
+    """
     return RunBinding(
         source=capture_source_profile(source, sources_dir=sources_dir),
         destination=capture_destination_profile(destination, registry),
-        layout=capture_layout_profile(
+        layout=layout
+        if layout is not None
+        else capture_layout_profile(
             render_mode, pack, pack_dirs=pack_dirs, allow_external=allow_external, trust=trust
         ),
     )
