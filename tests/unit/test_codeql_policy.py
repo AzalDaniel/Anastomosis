@@ -226,6 +226,17 @@ def test_the_suppression_mechanism_is_actually_wired_up() -> None:
     output = analyze[0].get("with", {}).get("output")
     assert output, "the analyze step needs `output:` so the SARIF exists on disk to be read"
 
+    init = [s for s in steps if "codeql-action/init" in s.get("uses", "")]
+    assert len(init) == 1, "expected exactly one codeql-action/init step"
+    packs = str(init[0].get("with", {}).get("packs", ""))
+    assert "AlertSuppression.ql" in packs, (
+        "init does not ask for the alert-suppression query, so the CodeQL CLI never "
+        "computes the SARIF's `suppressions[]` property and the dismissal step below "
+        "has nothing to match: every `# codeql[...]` comment in this repository would "
+        "be decoration again. Merging #310 proved this — the step ran green, indexed "
+        "nine alerts and dismissed none."
+    )
+
     dismiss = [s for s in steps if "dismiss-alerts" in s.get("uses", "")]
     assert len(dismiss) == 1, (
         f"expected exactly one dismissal step, found {len(dismiss)}: every "
