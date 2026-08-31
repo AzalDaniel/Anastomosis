@@ -907,7 +907,9 @@ svg { display: block; }
    and the first child of its trigger, so the undirected version handed the
    plain-English label of every control in the table the mono face. */
 .mapping-row > span:first-child { font-family: var(--font-mono); color: var(--ink); }
-.mapping-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+/* Named, not positional: a marked row appends its note AFTER the confidence,
+   and `:last-child` then pointed at the note and left the number adrift. */
+.mapping-row > .mapping-score { text-align: right; font-variant-numeric: tabular-nums; }
 .mapping-head {
   color: var(--ink-muted);
   background: rgba(0, 0, 0, 0.34);
@@ -943,7 +945,7 @@ svg { display: block; }
 .row-attention .mapping-evidence { color: var(--ink-secondary); }
 .row-note { font-size: var(--text-label); color: var(--ink-secondary); line-height: 1.55; }
 .structure .row-note { grid-column: 1 / -1; }
-.mapping-row > span.row-note {
+.mapping-row > .row-note {
   grid-column: 1 / -1;
   padding-top: var(--space-1);
   text-align: left;

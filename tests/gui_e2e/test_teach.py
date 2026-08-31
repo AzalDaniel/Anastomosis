@@ -38,6 +38,14 @@ _LOAD_DETAIL = (
     "could not be built (parse_date)"
 )
 
+#: And its sentence for a spec a review made invalid — a pydantic validator's,
+#: field paths and quoted ids. Same rule: a pointer, never the message.
+_BUILD_DETAIL = (
+    "review for mapping 'acme_csv' is not a valid spec (1 error(s)): spec: Value error, "
+    "columns 'VisitId' and 'VisitDate' both target 'encounter.date_of_service'; each "
+    "canonical field may be mapped at most once"
+)
+
 
 def _row(column: str) -> str:
     """One row of the match-up, addressed as the page's own anchoring does."""
@@ -331,6 +339,108 @@ def test_a_load_refusal_marks_the_row_it_is_about_and_says_why(gui) -> None:
     assert "learned mapping" not in (page.locator("body").text_content() or "")
 
 
+def test_a_wording_on_a_column_nothing_reads_does_not_block_the_save(gui) -> None:
+    """The empty-wording guard is about a transform that reaches the loader.
+
+    `const:` with no wording cannot be parsed, so Save stops for it. But a
+    column kept as extra data sends no transform at all — the review omits the
+    column entirely — so there is nothing to parse, nothing at risk, and no
+    reason to stop somebody over a value nothing was ever going to read.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+    # Complaint stays "Keep as extra data (not mapped)"; only the way-of-reading
+    # is touched, which for an unmapped column never crosses the bridge.
+    app.choose_label(
+        f'{_row("Complaint")} [data-pick="transform"]', "Always write the same wording"
+    )
+    page.click("label.toggle:has(#format-confirm)")
+    page.click("#format-save")
+    page.wait_for_timeout(150)
+
+    saved = app.last_args("source_init_async")
+    assert saved[3] is True
+    assert saved[5] is None, "a change the review cannot carry is not a change"
+    assert app.text("#banner") == ""
+
+    # The same blank wording on a column that IS being sent still stops it.
+    app.choose(f'{_row("Complaint")} [data-pick="target"]', "encounter.chief_complaint")
+    page.click("label.toggle:has(#format-confirm)")
+    page.click("#format-save")
+    page.wait_for_timeout(150)
+
+    assert app.text("#banner") == "Fill in the wording to use."
+    assert len(app.calls("source_init_async")) == 2, "a const with no wording reached the wire"
+
+
+def test_a_grouping_refusal_opens_the_grouping_controls_not_a_row(gui) -> None:
+    """A key that does not identify what it claims to is not a column's fault.
+
+    Five of the six load-refusal sites are about the keys or the row grain, and
+    they used to arrive with no pointer at all — so the page blamed a transform
+    that was never wrong and told the operator to look at the example again,
+    which re-runs the scorer and discards every correction they had just made.
+    The wire flags these `grouping` now, and they open the controls that are
+    actually at fault.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+
+    _stash(
+        app,
+        _refusal(
+            error="MappingLoadFailed",
+            detail=_LOAD_DETAIL,
+            detail_column="MRN",
+            detail_target=None,
+            detail_transform=None,
+            detail_scope="grouping",
+        ),
+    )
+    app.emit(stage_event(SourceConsole._FLOW, "source", "done"))
+
+    assert page.locator(".mapping-row.row-attention").count() == 0, "a column took the blame"
+    assert "row-attention" in (page.locator("#format-structure").get_attribute("class") or "")
+    assert app.text("#format-structure .row-note") == (
+        "The rows could not be grouped into patients. MRN is what identifies a patient "
+        "here, and on at least one row it is blank, or it repeats in a way this grouping "
+        "does not allow. Change which column identifies a patient, or what one row of "
+        "the file is."
+    )
+    assert "the marked controls say why" in app.text("#banner")
+    # The advice #335 exists to remove: taking it costs every correction.
+    assert "look at the example again" not in (page.locator("body").text_content() or "")
+    assert _LOAD_DETAIL not in (page.locator("body").text_content() or "")
+
+
+def test_a_build_refusal_is_composed_here_too(gui) -> None:
+    """The rule the load refusal keeps, kept by the build refusal as well.
+
+    The controller's sentence for an invalid spec is a validator's: it names
+    pydantic field paths and quotes its own ids. It was being printed into the
+    banner verbatim. The collision it is about is visible in the answers on
+    screen, so the page finds it there and says it in its own words.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+    # Aim a second column at the field VisitId is already going to.
+    app.choose(f'{_row("VisitDate")} [data-pick="target"]', "encounter.date_of_service")
+
+    _stash(app, _refusal(error="CannotBuildMapping", detail=_BUILD_DETAIL))
+    app.emit(stage_event(SourceConsole._FLOW, "source", "done"))
+
+    marked = [
+        n.get_attribute("data-source") for n in page.locator(".mapping-row.row-attention").all()
+    ]
+    assert marked == ["VisitId", "VisitDate"]
+    assert app.text("#banner") == (
+        "Two columns cannot go to the same field. VisitId and VisitDate are both going "
+        "to Date Of Service. Send one of them somewhere else, or keep it as extra data."
+    )
+    assert _BUILD_DETAIL not in (page.locator("body").text_content() or "")
+    assert "not a valid spec" not in (page.locator("body").text_content() or "")
+
+
 def test_any_correction_revokes_the_confirmation(gui) -> None:
     """Consent is per-analysis AND per-edit.
 
@@ -351,6 +461,127 @@ def test_any_correction_revokes_the_confirmation(gui) -> None:
     assert app.text("#format-changes-list") == (
         "Rows are read as one patient per row now, not one visit per row."
     )
+
+
+def _arm(page) -> None:
+    """Tick the confirmation, and prove the gate really is open before an edit."""
+    page.click("label.toggle:has(#format-confirm)")
+    assert page.locator("#format-confirm").is_checked()
+    assert not page.locator("#format-save").is_disabled()
+
+
+def _revoked(page, what: str) -> None:
+    assert not page.locator("#format-confirm").is_checked(), f"{what} left the box ticked"
+    assert page.locator("#format-save").is_disabled(), f"{what} left Save armed"
+
+
+def test_every_editable_control_revokes_the_confirmation(gui) -> None:
+    """One control pinned is one control that stays right; six were unpinned.
+
+    Every control on this panel can change what Save sends, including the two
+    nested choosers a parametric transform reveals and the one free-text field —
+    so every one of them is driven here, arming the gate before each and finding
+    it shut after. The order runs the row controls before the grouping ones,
+    because changing a key rebuilds the table underneath.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+    complaint = _row("Complaint")
+
+    _arm(page)
+    app.choose(f'{complaint} [data-pick="target"]', "encounter.chief_complaint")
+    _revoked(page, "the destination chooser")
+
+    _arm(page)
+    app.choose_label(f'{complaint} [data-pick="transform"]', "Read as a date in one set pattern")
+    _revoked(page, "the way-of-reading chooser")
+
+    _arm(page)
+    app.choose_label(f'{complaint} [data-pick="pattern"]', "22/07/2024")
+    _revoked(page, "the date-pattern chooser")
+
+    _arm(page)
+    app.choose_label(
+        f'{complaint} [data-pick="transform"]', "Take one piece of a value that has separators"
+    )
+    _revoked(page, "the way-of-reading chooser")
+
+    _arm(page)
+    app.choose_label(f'{complaint} [data-pick="delimiter"]', "Vertical bar")
+    _revoked(page, "the separator chooser")
+
+    _arm(page)
+    app.choose_label(f'{complaint} [data-pick="position"]', "Last piece")
+    _revoked(page, "the which-piece chooser")
+
+    _arm(page)
+    app.choose_label(f'{complaint} [data-pick="transform"]', "Always write the same wording")
+    _revoked(page, "the way-of-reading chooser")
+
+    _arm(page)
+    page.fill(f'{complaint} [data-pick="literal"]', "Routine visit")
+    page.wait_for_timeout(80)
+    _revoked(page, "the wording field")
+
+    _arm(page)
+    app.choose("#format-row-scope", "patient")
+    _revoked(page, "the row-grain chooser")
+
+    _arm(page)
+    app.choose("#format-visit-key", "VisitId")
+    _revoked(page, "the visit-column chooser")
+
+    _arm(page)
+    app.choose("#format-patient-key", "VisitDate")
+    _revoked(page, "the patient-column chooser")
+
+
+def test_renaming_the_format_revokes_the_confirmation_and_keeps_the_work(gui) -> None:
+    """The name is what the mapping will be CALLED, not what is in the file.
+
+    So a rename revokes consent — it is an edit, and the tick must be re-earned
+    — but the corrections are about the file's columns and still stand.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+    app.choose(f'{_row("Complaint")} [data-pick="target"]', "encounter.chief_complaint")
+    _arm(page)
+
+    page.fill("#format-name", "other_csv")
+    page.wait_for_timeout(80)
+
+    _revoked(page, "renaming the format")
+    assert not page.locator("#format-proposal").is_hidden(), "the proposal is still about this file"
+    assert app.chosen(f'{_row("Complaint")} [data-pick="target"]') == "encounter.chief_complaint"
+
+
+def test_repointing_at_another_file_takes_the_proposal_with_it(gui) -> None:
+    """A review of file A must never ride a confirmed save of file B.
+
+    Revoking consent alone would not do it: the box can simply be ticked again,
+    and the panel would still be showing file A's columns, file A's evidence and
+    file A's corrections over a Save that now names file B. So the proposal goes
+    with the file it describes, and the only way forward is to look again.
+    """
+    app = _open(gui, "format")
+    page = _look(app)
+    app.choose(f'{_row("Complaint")} [data-pick="target"]', "encounter.chief_complaint")
+    _arm(page)
+
+    page.fill("#format-example", "/synthetic/OTHER-hospital.csv")
+    page.wait_for_timeout(80)
+
+    assert page.locator("#format-proposal").is_hidden(), "file A's match-up outlived file A"
+    assert page.locator("#format-mapping .mapping-row").count() == 0
+    assert "Step 1 of 2" in app.text("#format-step")
+    # Nothing left to confirm, so nothing can be saved without looking again.
+    # The button is unreachable by pointer now, so the event is dispatched at it
+    # directly: what is under test is the handler's own refusal, not the CSS.
+    assert not page.locator("#format-confirm").is_checked()
+    assert page.locator("#format-save").is_disabled()
+    page.locator("#format-save").dispatch_event("click")
+    page.wait_for_timeout(150)
+    assert len(app.calls("source_init_async")) == 1, "a save escaped a discarded proposal"
 
 
 def test_teach_says_what_it_already_knows(gui) -> None:

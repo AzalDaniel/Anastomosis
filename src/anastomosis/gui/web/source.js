@@ -283,7 +283,10 @@
   //: not a key is unmapped-and-kept — which is the same thing the interpreter
   //: does with it, so the omission is the answer rather than a gap.
   function reviewOf(grouping, decisions) {
-    const chosen = {};
+    // No prototype: a column called `toString` or `constructor` would otherwise
+    // find an inherited function standing in for its decision, and every
+    // comparison below would answer about Object.prototype.
+    const chosen = Object.create(null);
     for (const column of columns) {
       if (roleOf(column, grouping)) continue;
       const pick = decisions.get(column);
@@ -389,6 +392,9 @@
     el("format-save").disabled = true;
     clearAttention();
     Shell.hideBanner();
+    // Reachable from the step-1 fields, which a person may type in before any
+    // proposal exists. Revoking consent needs no proposal; repainting does.
+    if (!proposal) return;
     paintScores();
     renderChanges();
   }
@@ -505,9 +511,14 @@
     const head = document.createElement("div");
     head.className = "mapping-row mapping-head";
     head.setAttribute("role", "row");
-    for (const label of ["Column in your file", "Goes to", "How it is read", "Confidence"]) {
+    const headings = ["Column in your file", "Goes to", "How it is read", "Confidence"];
+    for (const label of headings) {
       const heading = document.createElement("span");
       heading.setAttribute("role", "columnheader");
+      // The last column is right-aligned by its own class rather than by being
+      // last: a marked row appends a note after it, and `:last-child` then
+      // pointed at the note instead.
+      if (label === "Confidence") heading.className = "mapping-score";
       heading.textContent = label;
       head.appendChild(heading);
     }
@@ -631,7 +642,7 @@
       paintArgument(args, column);
     }
 
-    rows.set(column, { node: row, score: cell(row), suggestion: suggestion });
+    rows.set(column, { node: row, score: cell(row, "mapping-score"), suggestion: suggestion });
     return row;
   }
 
@@ -706,6 +717,37 @@
     setStep(REVIEW_STEP);
   }
 
+  //: A proposal is an answer about ONE file. Point the wizard at a different
+  //: one and every column name, every piece of evidence and every correction on
+  //: screen is about a file that is no longer being taught — so the panel goes,
+  //: rather than staying up with a live Save button over somebody else's
+  //: columns. Revoking consent alone would not do: the box can be ticked again.
+  function discardProposal() {
+    if (!proposal) return;
+    proposal = null;
+    columns = [];
+    targetChoices = [];
+    picks = new Map();
+    proposedPicks = new Map();
+    group = null;
+    proposedGroup = null;
+    visitTrigger = null;
+    rows.clear();
+    el("format-mapping").textContent = "";
+    const host = el("format-structure");
+    host.textContent = "";
+    host.classList.remove("row-attention");
+    el("format-changes-list").textContent = "";
+    const changes = el("format-changes");
+    changes.hidden = true;
+    changes.open = false;
+    el("format-proposal").hidden = true;
+    el("format-confirm").checked = false;
+    el("format-save").disabled = true;
+    Shell.hideBanner();
+    setStep("Step 1 of 2 — look at the example.");
+  }
+
   function renderSaved(res) {
     el("format-result-path").textContent = `The format was saved to ${res.mapping_dir}`;
     el("format-result-md").textContent = res.mapping_md || "";
@@ -723,9 +765,16 @@
     for (const note of panel.querySelectorAll(".row-note")) note.remove();
   }
 
+  //: The one note builder, for the row anchoring and the grouping anchoring
+  //: alike. A note that lands inside a table row is a CELL: ARIA gives a row
+  //: no way to carry a loose div, and several assistive technologies drop what
+  //: is not a cell — which would silently hide the one sentence saying what to
+  //: do. The confidence column keeps its alignment through its own class, not
+  //: through being last, so a note may follow it without disturbing it.
   function noteOn(host, text) {
     const note = document.createElement("div");
     note.className = "row-note";
+    if (host.classList.contains("mapping-row")) note.setAttribute("role", "cell");
     note.textContent = text;
     host.appendChild(note);
   }
@@ -734,11 +783,21 @@
     const found = rows.get(column);
     if (!found) return false;
     found.node.classList.add("row-attention");
-    if (text) {
-      const note = cell(found.node, "row-note");
-      note.textContent = text;
-    }
+    if (text) noteOn(found.node, text);
     return true;
+  }
+
+  //: The grouping controls, opened on and marked. Three refusals arrive here:
+  //: a row grain that collapses a column, and the load refusals the wire flags
+  //: with detail_scope="grouping" — a patient key that does not identify a
+  //: patient on every row, a visit key two rows share, or demographics that
+  //: disagree across rows this grouping treats as one patient.
+  function anchorGrouping(text, banner) {
+    const host = el("format-structure");
+    host.classList.add("row-attention");
+    noteOn(host, text);
+    host.scrollIntoView({ block: "center" });
+    Shell.showBanner(banner);
   }
 
   //: The whole point of the structured pointer: the refusal stops being a
@@ -757,43 +816,139 @@
     return said.join(" ");
   }
 
+  //: What a grouping refusal says, from the pointer alone. Which of the two key
+  //: controls is at fault is read off the answers ON SCREEN rather than out of
+  //: the controller's sentence, so the wording cannot drift from the control it
+  //: sends the operator to.
+  function groupingFailureSentence(res) {
+    const column = res.detail_column;
+    if (column && column === group.patient) {
+      return (
+        `The rows could not be grouped into patients. ${column} is what identifies a ` +
+        "patient here, and on at least one row it is blank, or it repeats in a way " +
+        "this grouping does not allow. Change which column identifies a patient, or " +
+        "what one row of the file is."
+      );
+    }
+    if (column && column === group.encounter) {
+      return (
+        `The rows could not be grouped into visits. ${column} is what identifies a ` +
+        "visit here, and two rows carry the same one. Change which column identifies " +
+        "a visit, or treat each row as its own visit."
+      );
+    }
+    if (column && res.detail_target) {
+      return (
+        `Rows this grouping treats as one patient disagree. ${column} goes to ` +
+        `${targetLabel(res.detail_target)}, and those rows do not all carry the same ` +
+        "value for it. Change which column identifies a patient, or what one row of " +
+        "the file is."
+      );
+    }
+    return (
+      "The rows could not be grouped the way this says. Change which column " +
+      "identifies a patient, which identifies a visit, or what one row of the file is."
+    );
+  }
+
   function anchorLoadFailure(res) {
+    if (res.detail_scope === "grouping") {
+      anchorGrouping(
+        groupingFailureSentence(res),
+        "This file cannot be read with the grouping below yet — the marked controls say why."
+      );
+      return;
+    }
     const marked = res.detail_column ? markRow(res.detail_column, loadFailureSentence(res)) : false;
-    if (marked) rows.get(res.detail_column).node.scrollIntoView({ block: "center" });
+    if (marked) {
+      rows.get(res.detail_column).node.scrollIntoView({ block: "center" });
+      Shell.showBanner(
+        "This file cannot be read with the match-up below yet — the marked row says " +
+          "which column, and why."
+      );
+      return;
+    }
+    // Never "look at the example again": looking again re-runs the scorer and
+    // rebuilds the table from its answer, so the advice would cost the operator
+    // every correction they had just made. The corrections stay; the answer to
+    // change is on this screen.
     Shell.showBanner(
-      marked
-        ? "This file cannot be read with the match-up below yet — the marked row says which column, and why."
-        : "This file cannot be read with the proposed match-up yet. Change how one of the columns is read, then look at the example again."
+      "This file cannot be read with the match-up below yet. Change how one of the " +
+        "columns is read, or how the rows are grouped."
     );
   }
 
   //: Not a per-column fault at all: a column loses values because the row grain
   //: collapsed it, so the refusal points at the grouping controls.
   function anchorDroppedColumns(res) {
-    const host = el("format-structure");
-    host.classList.add("row-attention");
-    noteOn(
-      host,
+    anchorGrouping(
       "Grouped this way, those columns lose what is in them. Change which column " +
-        "identifies a visit, or what one row of the file is."
-    );
-    host.scrollIntoView({ block: "center" });
-    Shell.showBanner(
+        "identifies a visit, or what one row of the file is.",
       `Cannot save yet — these columns would be lost: ${(res.dropped || []).join(", ")}. ` +
         "Every column must have a home before the format is saved."
     );
   }
 
-  //: Two columns aimed at one field is the collision this makes reachable, and
-  //: the detail names both — so both rows are marked, and the operator is
-  //: looking at the pair rather than hunting for it.
+  //: Two columns aimed at one field, which the correction surface makes one
+  //: click away. Found from the answers ON SCREEN rather than from the
+  //: controller's sentence: a collision the page can see is a collision the
+  //: spec will refuse, so pointing at it is never the wrong advice.
+  //: One column's current answer, in the sentence form the change summary uses.
+  function settingOf(column) {
+    const pick = picks.get(column);
+    return describeDecision(
+      roleOf(column, group),
+      pick && pick.target ? [pick.target, pick.transform] : null
+    );
+  }
+
+  function collidingTargets() {
+    const byTarget = new Map();
+    for (const [column, pick] of picks) {
+      if (roleOf(column, group) || !pick.target) continue;
+      const sharing = byTarget.get(pick.target) || [];
+      sharing.push(column);
+      byTarget.set(pick.target, sharing);
+    }
+    for (const [target, sharing] of byTarget) {
+      if (sharing.length > 1) return { target: target, columns: sharing };
+    }
+    return null;
+  }
+
+  //: Composed here, exactly as the load refusal is. The controller's sentence
+  //: is a pointer — it names pydantic field paths and quotes its own ids, and a
+  //: physician is owed neither.
   function anchorCannotBuild(res) {
-    const detail = String(res.detail || "");
-    const named = columns.filter((column) => detail.includes(column));
-    for (const column of named) markRow(column, "");
-    Shell.showBanner(
-      `This match-up cannot be built yet: ${detail}` +
-        (named.length ? " The marked rows are the ones it names." : "")
+    const collision = collidingTargets();
+    if (collision) {
+      for (const column of collision.columns) markRow(column, "");
+      Shell.showBanner(
+        `Two columns cannot go to the same field. ${collision.columns.join(" and ")} are ` +
+          `both going to ${targetLabel(collision.target)}. Send one of them somewhere ` +
+          "else, or keep it as extra data."
+      );
+      return;
+    }
+    // Otherwise fall back to the columns the controller's sentence NAMES — the
+    // names are used as a pointer to rows, never printed.
+    const named = columns.filter((column) => String(res.detail || "").includes(column));
+    if (named.length) {
+      for (const column of named) markRow(column, "");
+      rows.get(named[0]).node.scrollIntoView({ block: "center" });
+      Shell.showBanner(
+        named.length === 1
+          ? `${named[0]} cannot be saved the way it is set. It is ${settingOf(named[0])}. ` +
+            "Change where it goes, or how it is read."
+          : `${named.join(" and ")} cannot be saved the way they are set together. ` +
+            "Change where one of them goes, or how it is read."
+      );
+      return;
+    }
+    anchorGrouping(
+      "This match-up cannot be built from these answers. Check which column identifies " +
+        "a patient and which identifies a visit, then try again.",
+      "This match-up cannot be built yet — the marked controls are where to start."
     );
   }
 
@@ -923,7 +1078,14 @@
   //: round trip.
   function literalsFilled() {
     const blank = Array.from(document.querySelectorAll('#format-mapping [data-pick="literal"]')).find(
-      (input) => !input.value.trim()
+      (input) => {
+        // A wording on a column that is kept as extra data never reaches the
+        // wire — the review omits the column entirely — so blocking Save on it
+        // stops the operator over a value nothing was going to read.
+        const row = input.closest(".mapping-row");
+        const pick = row ? picks.get(row.dataset.source) : null;
+        return !!pick && !!pick.target && !input.value.trim();
+      }
     );
     return blank ? Shell.requireFields([["", "the wording to use", blank.id]]) : true;
   }
@@ -956,6 +1118,13 @@
   function init() {
     el("format-analyze").addEventListener("click", onAnalyze);
     el("format-save").addEventListener("click", onSave);
+    // Which FILE is being taught is an edit like any other, and a harder one:
+    // the proposal below is about the old file, so it goes rather than merely
+    // losing its tick. The NAME is only what the mapping will be called — the
+    // columns and every correction over them still stand — so it revokes
+    // consent and keeps the work.
+    el("format-example").addEventListener("input", discardProposal);
+    el("format-name").addEventListener("input", onEdit);
     el("format-confirm").addEventListener("change", () => {
       el("format-save").disabled = !el("format-confirm").checked;
     });
