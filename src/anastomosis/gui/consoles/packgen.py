@@ -10,7 +10,6 @@ keeps the controller's contract: JSON-safe dict, never raise, PHI-safe events
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from anastomosis.gui.consoles.wizard import WizardConsole
@@ -49,7 +48,14 @@ class PackgenConsole(WizardConsole):
         PHI-safe :meth:`PackAnalysis.summary_lines` digest, and — only with
         ``confirmed_distinct_patients`` checked (the CLI's interactive
         same-patient guard, ported as a required checkbox) — emit the draft and
-        return its path plus the ``DRAFT.md`` text for display.
+        return its name, path, trusted content hash and ``DRAFT.md`` text for
+        display.
+
+        ``out_dir`` defaults to ``None``, which the shared core reads as the
+        per-user pack directory. That is not a cosmetic default: a relative
+        ``packs/`` was resolved against whatever directory the app happened to
+        be launched from, so the wizard reported a written layout that the
+        Charts and Migrate choosers then could not offer.
 
         Without the confirmation this REFUSES (``ok: False``, ``error:
         ConfirmationRequired``) and writes nothing — the same guard the CLI
@@ -70,7 +76,7 @@ class PackgenConsole(WizardConsole):
                     samples=[samples_dir],
                     name=name,
                     display=display,
-                    out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
+                    out_dir=typed_path(out_dir) if out_dir is not None else None,
                     confirmed=confirmed_distinct_patients,
                 )
             )
@@ -109,7 +115,13 @@ class PackgenConsole(WizardConsole):
         if result.ok:
             return {
                 "ok": True,
+                # The identity the Charts and Migrate choosers will offer, and
+                # the exact directory + hash a later run binds to. The wizard
+                # names the layout it wrote rather than only its path, because
+                # the name is what the operator has to pick on the next screen.
+                "pack": result.pack_name,
                 "pack_dir": str(result.pack_dir),
+                "content_hash": result.content_hash,
                 "draft_md": result.draft_md,
                 "summary": result.summary,
                 "sample_count": result.sample_count,
@@ -151,7 +163,7 @@ class PackgenConsole(WizardConsole):
                         samples=[samples_dir],
                         name=name,
                         display=display,
-                        out_dir=typed_path(out_dir) if out_dir is not None else Path("packs"),
+                        out_dir=typed_path(out_dir) if out_dir is not None else None,
                         confirmed=confirmed_distinct_patients,
                     )
                 ),

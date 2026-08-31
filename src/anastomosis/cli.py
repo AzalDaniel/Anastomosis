@@ -40,7 +40,7 @@ from anastomosis.core.presentation import Glyphs, terminal_glyphs
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from anastomosis.core.commands import DeliveryOutcome, PipelineCommand
+    from anastomosis.core.commands import DeliveryOutcome, PipelineCommand, SourceInfo
     from anastomosis.pipeline import StageEvent
 
 
@@ -167,6 +167,20 @@ CAPABILITY_NAMES = {
 }
 
 
+def _print_source(source: SourceInfo) -> None:
+    """One export format, and the visits it would keep out of the charts.
+
+    A source that applies selection rules names them here with the word that
+    switches one off, because ``--include`` accepts those names and nothing
+    else — a flag whose vocabulary is written down nowhere is a flag nobody can
+    type. Rule names and labels only; no export has been read at this point.
+    """
+    ident = f" [dim]({source.name})[/dim]" if source.display != source.name else ""
+    console.print(f"  export format [cyan]{source.display}[/cyan]{ident}: {source.description}")
+    for rule, detail in sorted(source.selection.items()):
+        console.print(f"    [dim]--include {rule}[/dim]: {detail.get('label', rule)}")
+
+
 @app.command()
 def info() -> None:
     """Show what this copy of Anastomosis can do on this computer."""
@@ -192,9 +206,8 @@ def info() -> None:
     # `--pack`, or quote to support, is the dim caption. It used to be the only
     # thing here, because there was nowhere for a registration to declare a
     # readable name (#164).
-    for name, display, description in toolkit.sources:
-        ident = f" [dim]({name})[/dim]" if display != name else ""
-        console.print(f"  export format [cyan]{display}[/cyan]{ident}: {description}")
+    for source in toolkit.sources:
+        _print_source(source)
     for pack in toolkit.packs:
         origin = "built in" if pack.origin == "builtin" else pack.origin
         ident = f" [dim]({pack.name})[/dim]" if pack.display != pack.name else ""
@@ -475,6 +488,21 @@ def _sections_or_exit(
         raise typer.Exit(code=exc.exit_code) from None
 
 
+def _includes_or_exit(
+    include: list[str] | None, *, source: str | None, pack: str
+) -> tuple[str, ...]:
+    """Parse ``--include`` rule names, converting a blank one to a clean exit 2
+    rather than a traceback. Rule-NAME validation happens later, against the
+    resolved source's own rules — the same two-step the section flags take."""
+    from anastomosis.pipeline import PipelineError, parse_selection_includes
+
+    try:
+        return tuple(sorted(parse_selection_includes(include)))
+    except PipelineError as exc:
+        _report_pipeline_error(exc, source=source, pack=pack)
+        raise typer.Exit(code=exc.exit_code) from None
+
+
 def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> None:
     """Render a :class:`PipelineError` as the exact lines the CLI used to print.
 
@@ -482,9 +510,9 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
     reproduces the original line per kind byte-for-byte, so the existing CLI
     tests ("Could not identify", "unavailable", per-encounter failure lines)
     keep passing unchanged. The newer operator-input kinds (``bad_output``,
-    ``bad_section``, ``bad_source``, ``bad_destination``) print their PHI-safe
-    message; ``qa_failed`` prints nothing extra (its summary already rode the
-    QA event).
+    ``bad_section``, ``bad_selection``, ``bad_source``, ``bad_destination``)
+    print their PHI-safe message; ``qa_failed`` prints nothing extra (its
+    summary already rode the QA event).
     """
     from rich.markup import escape as _escape
 
@@ -514,11 +542,11 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
         # exiting; no extra error line is emitted here — matching the original.
         return
     else:
-        # bad_source / bad_output / bad_section / generic: print the PHI-safe
-        # message. Exit code 2 (operator input), per the CLI's exit-code
-        # contract — except conservation_failed, which lands here too and
-        # carries exit 1: a seam that lost work is the run's failure, not the
-        # operator's input.
+        # bad_source / bad_output / bad_section / bad_selection / generic:
+        # print the PHI-safe message. Exit code 2 (operator input), per the
+        # CLI's exit-code contract — except conservation_failed, which lands
+        # here too and carries exit 1: a seam that lost work is the run's
+        # failure, not the operator's input.
         console.print(f"[red]{_escape(message)}[/red]")
 
 

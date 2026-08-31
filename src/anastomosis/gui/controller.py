@@ -185,8 +185,13 @@ class GuiController:
                 "version": toolkit.version,
                 "extras": dict(toolkit.extras),
                 "sources": [
-                    {"name": name, "display": display, "description": desc}
-                    for name, display, desc in toolkit.sources
+                    {
+                        "name": source.name,
+                        "display": source.display,
+                        "description": source.description,
+                        "selection": source.selection,
+                    }
+                    for source in toolkit.sources
                 ],
                 "packs": [
                     {
@@ -194,6 +199,11 @@ class GuiController:
                         "display": pack.display,
                         "available": pack.available,
                         "origin": pack.origin,
+                        # The exact directory a run naming this layout will bind
+                        # to. Three origins can answer to one name, and after a
+                        # Teach the operator is entitled to see which one they
+                        # are about to select.
+                        "root": pack.root,
                         "sections": pack.sections,
                     }
                     for pack in toolkit.packs

@@ -5,7 +5,14 @@ collision handling, idempotent skip) arrives with the archive vertical
 slice.
 """
 
-from .packs import LoadedPack, PackManifest, PackStatus, SectionFlag, discover_packs
+from .packs import (
+    LoadedPack,
+    PackManifest,
+    PackStatus,
+    SectionFlag,
+    discover_packs,
+    user_packs_dir,
+)
 from .packtrust import PackTrust, default_pack_trust, pack_content_hash, user_pack_trust_path
 
 __all__ = [
@@ -18,4 +25,5 @@ __all__ = [
     "discover_packs",
     "pack_content_hash",
     "user_pack_trust_path",
+    "user_packs_dir",
 ]

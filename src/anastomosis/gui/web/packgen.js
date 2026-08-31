@@ -48,7 +48,15 @@
     el("layout-result-path").textContent = `The draft layout was written to ${res.pack_dir}`;
     el("layout-result-md").textContent = res.draft_md || "";
     el("layout-result").hidden = false;
-    setStep("Done. Review the draft against an original sample before using it.");
+    setStep(
+      res.pack
+        ? `Done. "${res.pack}" is now offered on Charts and Migrate — review the draft against an original sample before using it.`
+        : "Done. Review the draft against an original sample before using it."
+    );
+    // The layout exists NOW, so the lists that offer layouts are asked again
+    // NOW. Without this the choosers keep the list they were populated with at
+    // boot, and the layout this view just wrote is unselectable until restart.
+    Shell.reloadInfo();
   }
 
   // ConfirmationRequired is the EXPECTED outcome of step 1 (it carries the

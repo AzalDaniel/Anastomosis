@@ -6,7 +6,7 @@
       "rank": "C"
     },
     "src/anastomosis/cli_commands/packsrc.py::pack_init": {
-      "cc": 14,
+      "cc": 13,
       "rank": "C"
     },
     "src/anastomosis/cli_commands/packsrc.py::source_init": {
@@ -178,7 +178,7 @@
       "rank": "C"
     },
     "src/anastomosis/pipeline.py::run_pipeline": {
-      "cc": 15,
+      "cc": 14,
       "rank": "C"
     },
     "src/anastomosis/qa/checks.py::DataIntegrityCheck": {
@@ -202,10 +202,6 @@
       "rank": "C"
     },
     "src/anastomosis/qa/checks.py::_note_bodies": {
-      "cc": 11,
-      "rank": "C"
-    },
-    "src/anastomosis/reconstruct/packs.py::_iter_candidate_dirs": {
       "cc": 11,
       "rank": "C"
     },
@@ -300,7 +296,7 @@
       "rank": "B"
     },
     "src/anastomosis/cli_commands/packsrc.py": {
-      "avg": 9.75,
+      "avg": 8.2,
       "rank": "B"
     },
     "src/anastomosis/cli_commands/upload.py": {
@@ -344,7 +340,7 @@
       "rank": "B"
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "avg": 5.5455,
+      "avg": 5.4035,
       "rank": "B"
     }
   },

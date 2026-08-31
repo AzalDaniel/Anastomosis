@@ -19,6 +19,7 @@ never leaks into the separate ``tests/integration`` lane (live HAPI, gated by
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 import pytest_socket
@@ -60,3 +61,25 @@ def _source_registry_is_not_shared_between_tests() -> Iterator[None]:
     finally:
         base._REGISTRY.clear()
         base._REGISTRY.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _user_home_is_not_the_developers(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point ``~/.anastomosis`` at a per-test temporary home.
+
+    Everything the toolkit remembers between runs — trusted pack hashes, learned
+    layouts, learned source mappings, migration profiles — hangs off
+    ``Path.home()``. Discovery reads that directory on every ``discover_packs``
+    call, so without this a developer's own taught layout would join the packs a
+    test asserts about, and a test that teaches one would write into their real
+    home and leave it there.
+
+    Same reasoning as the registry fixture above: real product state, isolated
+    per test rather than shared across the run.
+    """
+    home = tmp_path_factory.mktemp("anastomosis-home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Path.home() on Windows
+    assert Path.home() == home

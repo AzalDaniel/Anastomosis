@@ -40,6 +40,7 @@ __all__ = [
     "PackInfo",
     "PatientSummary",
     "PipelineCommand",
+    "SourceInfo",
     "ToolkitInfo",
     "deliver_outputs",
     "get_toolkit_info",
@@ -82,6 +83,11 @@ class PipelineCommand:
     # code hash. Required the first time and again after their code changes.
     trust_new: bool = False
     sections: Mapping[str, bool] = field(default_factory=dict)
+    # The source's render-selection rules this run does NOT apply, so the
+    # encounters they would keep out of the render are rendered instead. Empty
+    # is every rule applied — what the adapters did when the rules were
+    # constants — so an existing run is unchanged.
+    include: tuple[str, ...] = ()
     qa: bool = True
     deliveries: tuple[DeliveryCommand, ...] = ()
     # Opt-in: after a successful render (and QA), write the upload manifest
@@ -287,6 +293,7 @@ def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None
                 section=section_args,
                 qa=cmd.qa,
                 trust_new=cmd.trust_new,
+                include=list(cmd.include),
                 on_event=on_event,
             )
             # Opt-in upload manifest: written after a successful render (and QA),
@@ -379,6 +386,10 @@ class PackInfo:
     """One pack's discovery state for the info surface."""
 
     name: str
+    #: The pack's resolved root, so a frontend names the exact directory a run
+    #: will bind to rather than a name that three directories could answer to.
+    #: ``None`` only if discovery could not resolve one.
+    root: str | None
     #: What a person reads. Falls back to ``name`` for a pack that declares
     #: none, so a third-party pack written before ``display`` existed still
     #: shows something — the front end's derivation then tidies the id.
@@ -390,13 +401,34 @@ class PackInfo:
 
 
 @dataclass(frozen=True)
+class SourceInfo:
+    """One source adapter's state for the info surface.
+
+    The twin of :class:`PackInfo`, and it exists for the same reason: an
+    adapter carries something a name-and-description tuple has nowhere to put.
+    A pack declares which sections a run may switch; a source declares which of
+    its render-selection rules a run may switch off, and both surfaces need to
+    OFFER those choices rather than wait to be told a name that turns out to be
+    wrong.
+    """
+
+    name: str
+    #: What a person should read instead of ``name``, falling back to it.
+    display: str
+    description: str
+    #: ``{rule name: {"label": ..., "reason": ...}}`` — the rules this source
+    #: applies unless a run names one in ``--include`` / unticks it in the GUI.
+    #: Empty for a source that keeps nothing out of the render.
+    selection: dict[str, dict[str, object]]
+
+
+@dataclass(frozen=True)
 class ToolkitInfo:
     """PHI-free toolkit status: version, extras, sources, packs."""
 
     version: str
     extras: dict[str, bool]
-    #: (name, display, description) per registered source adapter.
-    sources: list[tuple[str, str, str]]
+    sources: list[SourceInfo]
     packs: list[PackInfo]
 
 
@@ -426,27 +458,45 @@ def _extra_available(modules: tuple[str, ...]) -> bool:
     )
 
 
-def get_toolkit_info() -> ToolkitInfo:
-    """Probe installed extras, registered sources, and discovered packs.
+def _source_infos() -> list[SourceInfo]:
+    """Every registered adapter, as the pickers and ``anast info`` read it.
 
-    Pure data, no PHI (versions, names, booleans). The single source of truth
-    behind ``anast info`` and :meth:`GuiController.info`.
+    ``getattr``, though the protocol declares ``display``: the registry is
+    open, and an adapter registered by code this repository never type-checked
+    is exactly the case a fallback exists for. It reads as its own id, which is
+    what every adapter read as before. ``selection_rules`` is read the same way
+    for the same reason, and answers empty for a source that has none.
     """
-    import anastomosis
-    import anastomosis.pipeline  # registers built-in source adapters at import
-    from anastomosis.reconstruct import discover_packs
-    from anastomosis.sources import available_sources
+    from anastomosis.sources import available_sources, selection_rules
 
-    extras = {extra: _extra_available(modules) for extra, modules in _EXTRAS}
-    # `getattr`, though the protocol declares `display`: the registry is open,
-    # and an adapter registered by code this repository never type-checked is
-    # exactly the case a fallback exists for. It reads as its own id, which is
-    # what every adapter read as before.
-    sources = [
-        (a.name, getattr(a, "display", "") or a.name, a.description) for a in available_sources()
+    return [
+        SourceInfo(
+            name=adapter.name,
+            display=getattr(adapter, "display", "") or adapter.name,
+            description=adapter.description,
+            selection={
+                rule.name: {"label": rule.label, "reason": rule.reason}
+                for rule in selection_rules(adapter)
+            },
+        )
+        for adapter in available_sources()
     ]
+
+
+def _pack_infos() -> list[PackInfo]:
+    """Every layout a run form may offer, with why an unavailable one is not.
+
+    The trust store is passed so a layout the operator taught (it lands in the
+    per-user pack directory) is discovered here at its confirmed hash and can
+    be SELECTED on the run forms this feeds. Without it every learned layout
+    reported unavailable and only the built-ins were ever offered — a run form
+    that cannot name the layout the app just said it wrote.
+    """
+    from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.packtrust import default_pack_trust
+
     packs: list[PackInfo] = []
-    for status in discover_packs().values():
+    for status in discover_packs(trust=default_pack_trust()).values():
         pack = status.pack
         sections: dict[str, dict[str, object]] = {}
         if pack is not None:
@@ -457,6 +507,7 @@ def get_toolkit_info() -> ToolkitInfo:
         packs.append(
             PackInfo(
                 name=status.name,
+                root=str(status.root) if status.root is not None else None,
                 display=(pack.manifest.display if pack is not None else "") or status.name,
                 available=status.available,
                 origin=status.origin,
@@ -464,4 +515,21 @@ def get_toolkit_info() -> ToolkitInfo:
                 sections=sections,
             )
         )
-    return ToolkitInfo(version=anastomosis.__version__, extras=extras, sources=sources, packs=packs)
+    return packs
+
+
+def get_toolkit_info() -> ToolkitInfo:
+    """Probe installed extras, registered sources, and discovered packs.
+
+    Pure data, no PHI (versions, names, booleans). The single source of truth
+    behind ``anast info`` and :meth:`GuiController.info`.
+    """
+    import anastomosis
+    import anastomosis.pipeline  # registers built-in source adapters at import
+
+    return ToolkitInfo(
+        version=anastomosis.__version__,
+        extras={extra: _extra_available(modules) for extra, modules in _EXTRAS},
+        sources=_source_infos(),
+        packs=_pack_infos(),
+    )

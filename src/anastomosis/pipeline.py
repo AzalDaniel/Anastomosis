@@ -34,7 +34,14 @@ from typing import TYPE_CHECKING
 
 from anastomosis.core.conservation import ConservationError
 from anastomosis.core.logutil import exc_tag
-from anastomosis.sources import SourceDataError, available_sources, detect_source, get_source
+from anastomosis.sources import (
+    SourceDataError,
+    available_sources,
+    detect_source,
+    get_source,
+    selection_rules,
+    with_selection,
+)
 from anastomosis.sources.learned import register_learned_sources
 
 # Register any formats the operator has taught from an example (the user-dir
@@ -61,6 +68,7 @@ __all__ = [
     "StageEvent",
     "load_records",
     "parse_section_overrides",
+    "parse_selection_includes",
     "run_pipeline",
     "settle_source_ledger",
 ]
@@ -123,8 +131,9 @@ class PipelineError(Exception):
         # A stable, PHI-free discriminator the CLI switches on to choose its
         # output line (replaces brittle message-prose matching). One of:
         # no_source, bad_source, bad_input, empty_export, bad_pack,
-        # bad_section, bad_output, bad_destination, output_locked,
-        # render_failed, conservation_failed, qa_failed, generic.
+        # bad_section, bad_selection, bad_output, bad_destination,
+        # output_locked, render_failed, conservation_failed, qa_failed,
+        # generic.
         self.kind = kind
         self.failed = failed
 
@@ -185,6 +194,76 @@ def parse_section_overrides(section: list[str] | None) -> dict[str, bool]:
                 kind="bad_section",
             )
     return overrides
+
+
+def parse_selection_includes(include: list[str] | None) -> frozenset[str]:
+    """Turn ``["growth-charts"]`` into the set of selection rules to switch OFF.
+
+    The counterpart of :func:`parse_section_overrides` on the ingest side, and
+    shared with both frontends for the same reason: a rule an operator switched
+    off in the GUI and one they switched off on the command line have to mean
+    the same run. Strict in the same way — a blank ``--include`` raises
+    :class:`PipelineError` (exit 2) rather than being read as "include
+    nothing", which is the one thing an operator who typed the flag did not
+    mean. Rule-NAME validation happens later, against the resolved adapter's
+    own :func:`~anastomosis.sources.base.selection_rules`.
+    """
+    names: set[str] = set()
+    for item in include or []:
+        name = item.strip()
+        if not name:
+            raise PipelineError(
+                "--include needs the name of a selection rule (e.g. --include growth-charts).",
+                exit_code=2,
+                kind="bad_selection",
+            )
+        names.add(name)
+    return frozenset(names)
+
+
+def _switched_off(adapter: SourceAdapter, include: list[str] | None) -> frozenset[str]:
+    """The selection rules this run drops, checked against the adapter's own set.
+
+    The ingest-side twin of the unknown-``--section`` check: a typo'd rule name
+    used to be impossible to type at all (the rules were constants), and the
+    one thing worse than not being able to switch a rule off is thinking you
+    did. The message names the source and lists the rules it actually has.
+    """
+    wanted = parse_selection_includes(include)
+    known = {rule.name for rule in selection_rules(adapter)}
+    unknown = sorted(wanted - known)
+    if unknown:
+        offered = ", ".join(sorted(known)) or "(none)"
+        raise PipelineError(
+            f"Unknown --include {', '.join(unknown)} for source {adapter.name!r}. "
+            f"Known: {offered}.",
+            exit_code=2,
+            kind="bad_selection",
+        )
+    return wanted
+
+
+def _selection_rules_report(
+    adapter: SourceAdapter, include: frozenset[str]
+) -> list[dict[str, object]]:
+    """Every render-selection rule this source has, and whether this run ran it.
+
+    Rule names and rule reasons only — schema, never anything a rule read — in
+    the adapter's own order, which is the order it applies them in. Without
+    this a report saying nothing was excluded cannot be told apart from a
+    report of a run whose rules were all switched off, and the two are
+    opposite answers to "did this run leave anything out?".
+    """
+    return [
+        {
+            "adapter": adapter.name,
+            "rule": rule.name,
+            "reason": rule.reason,
+            "label": rule.label,
+            "applied": rule.name not in include,
+        }
+        for rule in selection_rules(adapter)
+    ]
 
 
 def resolve_source(export_dir: Path, source: str | None) -> SourceAdapter:
@@ -312,9 +391,24 @@ QUARANTINE_FILENAME = "quarantine.json"
 RENDER_SETTINGS_NAME = "render_settings.json"
 
 
-def _render_settings(pack: str, flags: dict[str, bool]) -> dict[str, object]:
-    """The run's rendering intent, in a form two runs can be compared by."""
-    return {"version": 1, "pack": pack, "sections": dict(sorted(flags.items()))}
+def _render_settings(
+    pack: str, flags: dict[str, bool], include: frozenset[str]
+) -> dict[str, object]:
+    """The run's rendering intent, in a form two runs can be compared by.
+
+    ``included`` rides only when this run actually switched a selection rule
+    off. A run that did not writes exactly the record every run wrote before
+    the rules were options at all, so re-running into a folder an older build
+    filled is not refused over a key that was never in it.
+    """
+    settings: dict[str, object] = {
+        "version": 1,
+        "pack": pack,
+        "sections": dict(sorted(flags.items())),
+    }
+    if include:
+        settings["included"] = sorted(include)
+    return settings
 
 
 def _guard_render_settings(out: Path, settings: dict[str, object], *, force: bool) -> None:
@@ -358,9 +452,24 @@ def _guard_render_settings(out: Path, settings: dict[str, object], *, force: boo
     )
 
 
+def _as_list(value: object) -> list[object]:
+    """A settings value read back off disk, as a list — anything else is none."""
+    return value if isinstance(value, list) else []
+
+
+def _included_difference(previous: dict[str, object], current: dict[str, object]) -> list[str]:
+    """The selection rules this run switches off that the last one did not, and
+    the other way round. Rule names only."""
+    was = {str(name) for name in _as_list(previous.get("included"))}
+    now = {str(name) for name in _as_list(current.get("included"))}
+    return [f"selection rule {name} now included" for name in sorted(now - was)] + [
+        f"selection rule {name} applied again" for name in sorted(was - now)
+    ]
+
+
 def _settings_difference(previous: dict[str, object], current: dict[str, object]) -> str:
     """A short, PHI-free description of what the operator changed."""
-    parts: list[str] = []
+    parts: list[str] = _included_difference(previous, current)
     if previous.get("pack") != current.get("pack"):
         parts.append(f"layout {previous.get('pack')!r} -> {current.get('pack')!r}")
     was = previous.get("sections")
@@ -384,6 +493,14 @@ SELECTION_EXCLUDED_SUFFIX = ":skipped_encounters"
 #: The reconciliation artifact. An operator counting 8 encounter rows into a
 #: run and 6 charts out of it needs somewhere to read the other two.
 SELECTION_REPORT_NAME = "selection_report.json"
+
+#: Report schema. Version 2 added ``rules``: every selection rule the source
+#: has and whether this run applied it. Version 1 could say what was left out
+#: but not what was ASKED, so two runs made under different options could not
+#: be read against each other — an empty ``excluded`` meant either "the rules
+#: found nothing" or "there were no rules running", and those are opposite
+#: answers.
+SELECTION_REPORT_VERSION = 2
 
 
 def _selection_exclusions(records: list[PatientRecord]) -> list[dict[str, str]]:
@@ -498,14 +615,22 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
 
 
-def _write_selection_report(out: Path, exclusions: list[dict[str, str]]) -> None:
+def _write_selection_report(
+    out: Path, exclusions: list[dict[str, str]], rules: list[dict[str, object]]
+) -> None:
     """Write the run's selection report, whatever it has to say.
 
     Written on every run, including the empty one. "Nothing was left out" is
     the answer an operator reconciling counts most often needs, and an absent
-    file cannot distinguish it from a run that never looked.
+    file cannot distinguish it from a run that never looked. ``rules`` is there
+    for the same reason one step up: an empty ``excluded`` with no statement of
+    what was asked cannot distinguish a rule that found nothing from a rule
+    that was switched off.
     """
-    _write_json(out / SELECTION_REPORT_NAME, {"version": 1, "excluded": exclusions})
+    _write_json(
+        out / SELECTION_REPORT_NAME,
+        {"version": SELECTION_REPORT_VERSION, "excluded": exclusions, "rules": rules},
+    )
 
 
 def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
@@ -684,6 +809,7 @@ def run_pipeline(
     section: list[str] | None,
     qa: bool,
     trust_new: bool = False,
+    include: list[str] | None = None,
     on_event: EventSink | None = None,
 ) -> PipelineResult:
     """The full pipeline (ingest -> reconstruct -> optional QA), frontend-free.
@@ -692,6 +818,11 @@ def run_pipeline(
     completes, returns rich state so a caller can layer archive/bundle/ccda
     delivery without re-loading records or re-rendering charts, and raises
     :class:`PipelineError` on any loud failure.
+
+    ``section`` overrides the layout's section flags; ``include`` names the
+    source's render-selection rules this run does NOT apply, so the encounters
+    they would have kept out of the render are rendered. Both default to
+    nothing, which is what every run did before either was a choice.
     """
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.reconstruct import discover_packs
@@ -711,19 +842,31 @@ def run_pipeline(
 
     adapter = resolve_source(export_dir, source)
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
+    # The run's selection choices, settled against the resolved source before
+    # anything is read: a rule name this source does not have is an operator
+    # error, and it costs nothing to say so before the export is opened.
+    switched_off = _switched_off(adapter, include)
+    rules_report = _selection_rules_report(adapter, switched_off)
+    adapter = with_selection(adapter, switched_off)
 
     dirs = list(pack_dirs or [])
-    # Enforce hash-pinned trust only for external packs (--pack-dir); builtins
-    # need no store. trust=None when there are no external dirs keeps the
-    # consent-only path unchanged.
+    # The trust store is always consulted now, not only when --pack-dir is in
+    # play: a learned layout lives in the per-user pack directory and is
+    # hash-gated there too, so a run that names one has to be able to prove the
+    # code it is about to execute is the code that was confirmed. Built-ins need
+    # no store and never consult it.
     statuses = discover_packs(
         dirs,
         allow_external=bool(dirs),
-        trust=default_pack_trust() if dirs else None,
+        trust=default_pack_trust(),
         trust_new=trust_new,
     )
     status = statuses.get(pack)
     if status is None or status.pack is None:
+        # No fallback, ever. A layout that is missing, changed since it was
+        # confirmed, or untrusted refuses the run — rendering the operator's
+        # charts through some OTHER layout would be the same false completion in
+        # a costlier place.
         diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
         raise PipelineError(f"Pack {pack!r} unavailable: {diagnosis}", exit_code=2, kind="bad_pack")
 
@@ -753,7 +896,7 @@ def run_pipeline(
     # Before any ingest work: if this folder already holds charts, do they answer
     # the question being asked? A mismatch is refused here rather than discovered
     # as a silently-unchanged output at the end.
-    settings = _render_settings(pack, engine.section_flags)
+    settings = _render_settings(pack, engine.section_flags, switched_off)
     _guard_render_settings(out, settings, force=force)
 
     records = load_records(adapter, export_dir)
@@ -807,7 +950,7 @@ def run_pipeline(
     # patient's own files may be written beside their charts.
     carried = _carry_attachments(records, export_dir, out)
     exclusions = _selection_exclusions(records)
-    _write_selection_report(out, exclusions)
+    _write_selection_report(out, exclusions, rules_report)
     _write_json(out / RENDER_SETTINGS_NAME, settings)
     emit(
         StageEvent(

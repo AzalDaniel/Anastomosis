@@ -52,8 +52,8 @@ def _row(column: str) -> str:
     return f'.mapping-row[data-source="{column}"]'
 
 
-def _open(gui, mode: str = "layout"):
-    app = gui()
+def _open(gui, mode: str = "layout", **opened):
+    app = gui(**opened)
     app.show("teach")
     if mode != "layout":
         app.page.click(f'.mode-tab[data-mode="{mode}"]')
@@ -166,6 +166,35 @@ def test_layout_mode_revokes_the_confirmation_on_a_fresh_look(gui) -> None:
 
     assert not page.locator("#layout-confirm").is_checked()
     assert page.locator("#layout-write").is_disabled()
+
+
+def test_writing_a_layout_re_asks_for_the_layout_list(gui) -> None:
+    """A written layout is offered NOW, not after a restart.
+
+    The run forms populate from one ``info()`` answered at boot, so a layout
+    taught during the session was absent from both choosers until the app was
+    started again — the app reported writing something its own screens could not
+    then select. Writing one asks again.
+    """
+    written = {
+        "ok": True,
+        "pack": "acme_soap",
+        "pack_dir": "/synthetic/home/.anastomosis/packs/acme_soap",
+        "content_hash": "0" * 64,
+        "draft_md": "# Draft",
+        "summary": ["4 samples analyzed"],
+        "sample_count": 4,
+        "low_confidence": False,
+    }
+    app = _open(gui, "layout", canned={"last_pack_result": written})
+    boot_calls = len(app.calls("info"))
+
+    app.emit(stage_event(PackgenConsole._FLOW, "packgen", "done"))
+
+    assert not app.page.locator("#layout-result").is_hidden()
+    assert len(app.calls("info")) > boot_calls, "the layout lists were never re-asked"
+    # And the operator is told where it is now selectable, by the name they pick.
+    assert "acme_soap" in app.text("#layout-step")
 
 
 def test_format_mode_shows_the_match_up_before_saving(gui) -> None:

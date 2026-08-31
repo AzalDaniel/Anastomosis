@@ -195,9 +195,14 @@ def _verification_pack(name: str | None) -> LoadedPack | None:
 
     The manifest records WHICH pack rendered its charts; the pack itself is not
     copied into the output tree, so it is re-discovered here by that name.
-    Built-ins only — an external ``--pack-dir`` pack executes its own
-    ``context.py``, and an upload run holds no operator consent for that, so
-    discovery stays at its default (``allow_external=False``).
+    Built-ins and the operator's own learned layouts — an external
+    ``--pack-dir`` pack executes its own ``context.py`` and an upload run holds
+    no operator consent for that, so discovery stays at its default
+    (``allow_external=False``). A learned layout is different in exactly the way
+    that matters: consent for its code was recorded as a content hash when the
+    operator confirmed it, so the trust store is passed and the pack loads only
+    while it still matches. An edited one is refused here like anywhere else and
+    L3 skips with the reason logged.
 
     Never a silent downgrade: a manifest naming no pack (a v1 file, or the
     ccda-standard whole-patient view, which renders through no Jinja pack) and a
@@ -212,8 +217,9 @@ def _verification_pack(name: str | None) -> LoadedPack | None:
         )
         return None
     from anastomosis.reconstruct.packs import discover_packs
+    from anastomosis.reconstruct.packtrust import default_pack_trust
 
-    status = discover_packs().get(name)
+    status = discover_packs(trust=default_pack_trust()).get(name)
     if status is None or status.pack is None:
         logger.warning(
             "template pack %r from the upload manifest is not available here (%s): "
