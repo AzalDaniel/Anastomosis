@@ -22,6 +22,8 @@ import pytest
 from anastomosis.core.conservation import ConservationError
 from anastomosis.core.model import PatientRecord, Practitioner, Provenance
 from anastomosis.sources.ccda.ledger import (
+    ID_LESS_CONSTRUCTS,
+    PARTICIPATION_PATHS,
     Disposition,
     aggregate,
     assert_emittable,
@@ -261,6 +263,172 @@ def test_an_id_two_constructs_share_credits_neither(tmp_path: Path) -> None:
     assert _sole(ledger, "participation:author") is Disposition.UNSUPPORTED
     assert _row(ledger, "participation:author").unlinkable == 1  # type: ignore[attr-defined]
     assert _row(ledger, "participation:custodian").unlinkable == 1  # type: ignore[attr-defined]
+
+
+# --- evidence for the constructs CDA leaves without an id ---------------------
+
+#: An author that is a system rather than a person. CDA R2's ``Device`` has no
+#: ``<id>``, so the only thing this construct can be recognised by is what it
+#: says it is.
+_DEVICE_AUTHOR = """
+    <author>
+      <time value="20230510150000-0500"/>
+      <assignedAuthor>
+        <id root="feedface-auth-0000-0000-000000000021"/>
+        <assignedAuthoringDevice>
+          <manufacturerModelName>Synthetic EHR</manufacturerModelName>
+          <softwareName>Synthetic EHR Export</softwareName>
+        </assignedAuthoringDevice>
+      </assignedAuthor>
+    </author>
+"""
+
+#: A spouse who supplied the history. ``relatedEntity`` has no ``<id>`` either.
+_INFORMANT = """
+    <informant><relatedEntity classCode="PRS">
+      <code code="SPS" displayName="spouse" codeSystem="2.16.840.1.113883.5.111"/>
+      <relatedPerson><name><given>Boris</given><family>Sample</family></name></relatedPerson>
+    </relatedEntity></informant>
+"""
+
+
+@pytest.mark.parametrize(
+    ("construct", "header"),
+    [
+        ("participation:assignedAuthoringDevice", _DEVICE_AUTHOR),
+        ("participation:informant", _INFORMANT),
+    ],
+)
+def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
+    tmp_path: Path, construct: str, header: str
+) -> None:
+    """The half of the blind spot that was schema, not adapter.
+
+    Neither of these can ever carry an ``<id root>``, so for as long as an id
+    was the only evidence admitted, both were reported lost in every document
+    that had one — a permanent under-reading of the parser rather than a finding
+    about it. The record states what the document stated, and that is the
+    evidence. Then the same document is measured against a record with its
+    actors removed and the verdict goes back: still the RECORD being graded, not
+    a table of what the parser is believed to do.
+    """
+    path = _write(tmp_path, header=header)
+    record = parse_document(path)
+    ledger = document_ledger(path, record)
+    assert _sole(ledger, construct) is Disposition.STRUCTURALLY_PARSED
+    assert _row(ledger, construct).unlinkable == 0  # type: ignore[attr-defined]
+
+    record.practitioners = []
+    stripped = document_ledger(path, record)
+    assert _sole(stripped, construct) is Disposition.UNSUPPORTED
+    assert _row(stripped, construct).unlinkable == 1  # type: ignore[attr-defined]
+
+
+def test_an_actor_that_states_nothing_still_cannot_be_credited(tmp_path: Path) -> None:
+    """The other half, and the reason the first half is not a loophole.
+
+    An informant with no name, no number and no relationship states nothing for
+    a record to state back, so nothing about it can be proved and it stays in
+    the blind spot — even though the record here does hold an actor that states
+    just as little. Matching two empty statements would make absence of evidence
+    into evidence, which is the one direction this instrument may not fail in.
+    """
+    path = _write(tmp_path, header='<informant><relatedEntity classCode="PRS"/></informant>')
+    record = parse_document(path)
+    record.practitioners.append(
+        Practitioner(provenance=Provenance(source_system="ccda", source_id=None))
+    )
+    ledger = document_ledger(path, record)
+    assert _sole(ledger, "participation:informant") is Disposition.UNSUPPORTED
+    assert _row(ledger, "participation:informant").unlinkable == 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("recorded", ["synthetic ehr export", " Synthetic EHR Export "])
+def test_an_actor_the_record_spells_differently_is_not_credited(
+    tmp_path: Path, recorded: str
+) -> None:
+    """Content evidence is worth having only while it is exact.
+
+    A comparison that folded case or trimmed padding would credit a device the
+    record does not actually carry — and every loosening of it moves the reading
+    in the flattering direction, where an instrument built to detect loss can
+    afford to be wrong least.
+    """
+    path = _write(tmp_path, header=_DEVICE_AUTHOR)
+    record = parse_document(path)
+    record.practitioners[0].extensions["ccda:softwareName"] = recorded
+    ledger = document_ledger(path, record)
+    assert _sole(ledger, "participation:assignedAuthoringDevice") is Disposition.UNSUPPORTED
+    assert _row(ledger, "participation:assignedAuthoringDevice").unlinkable == 1  # type: ignore[attr-defined]
+
+
+def test_two_identical_actors_and_one_object_credit_one_parse(tmp_path: Path) -> None:
+    """Two obligations and one object is one parse and one loss.
+
+    The document names the same spouse twice, and the record kept one of them.
+    Crediting both from the single object would report a document that lost half
+    its informants as one that lost none — the arithmetic that makes a loss
+    detector agree with whatever it is shown.
+    """
+    path = _write(tmp_path, header=_INFORMANT * 2)
+    record = parse_document(path)
+    assert len(record.practitioners) == 2
+    del record.practitioners[1]
+    row = _row(document_ledger(path, record), "participation:informant")
+    assert row.counted(Disposition.STRUCTURALLY_PARSED) == 1  # type: ignore[attr-defined]
+    assert row.counted(Disposition.UNSUPPORTED) == 1  # type: ignore[attr-defined]
+    assert row.unlinkable == 1  # type: ignore[attr-defined]
+
+
+def test_a_shared_id_root_is_still_refused_where_content_would_match(tmp_path: Path) -> None:
+    """Content evidence answers only where an id was never possible.
+
+    An ``informant`` playing an ``assignedEntity`` DOES carry an id, and this
+    one shares its root with the author — the ordinary C-CDA ambiguity the
+    ledger refuses. Both actors are in the record and both would match by
+    content, so admitting a class CDA does give an id would quietly convert the
+    ambiguity refusal into a credit and no other test would notice.
+    """
+    shared = "feedface-shar-0000-0000-000000000001"
+    name = "<name><given>Robin</given><family>Sample</family></name>"
+    person = f"<assignedPerson>{name}</assignedPerson>"
+    header = f"""
+    <author><assignedAuthor><id root="{shared}"/>{person}</assignedAuthor></author>
+    <informant><assignedEntity><id root="{shared}"/>{person}</assignedEntity></informant>
+    """
+    path = _write(tmp_path, header=header)
+    ledger = document_ledger(path)
+    for construct in ("participation:author", "participation:informant"):
+        assert _sole(ledger, construct) is Disposition.UNSUPPORTED
+        assert _row(ledger, construct).unlinkable == 1  # type: ignore[attr-defined]
+
+
+def test_only_the_classes_cda_leaves_without_an_id_are_admitted() -> None:
+    """The scope is a list, so widening it is an edit somebody has to make.
+
+    "This construct had no id in this document" is a fact about one document;
+    "this construct can never have an id" is a fact about CDA, and only the
+    second may relax the evidence rule. Inferring the difference at runtime
+    would let a document decide how it is graded.
+    """
+    assert set(ID_LESS_CONSTRUCTS) == {"assignedAuthoringDevice", "informant"}
+    assert set(ID_LESS_CONSTRUCTS) <= set(PARTICIPATION_PATHS)
+
+
+def test_a_content_credited_reading_still_names_nobody(tmp_path: Path) -> None:
+    """The comparison happens in memory and none of it may travel.
+
+    A device's software name is the vendor's, but a spouse's name and number are
+    the patient's household, and they are now read on every document with an
+    informant in it. The report is the thing that leaves, so it is the thing
+    that is checked.
+    """
+    path = _write(tmp_path, header=_DEVICE_AUTHOR + _INFORMANT)
+    report = aggregate([document_ledger(path)]).as_report()
+    assert_emittable(report)
+    flat = repr(report)
+    for value in ("Synthetic", "Export", "Boris", "Sample", "spouse", "SPS"):
+        assert value not in flat
 
 
 # --- what the parser's own traversal cannot see -------------------------------

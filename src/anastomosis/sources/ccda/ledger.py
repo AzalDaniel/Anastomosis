@@ -33,12 +33,28 @@ only when some canonical object's ``provenance.source_id`` names an ``<id
 root>`` that construct carries. Not because its section code is in a dispatch
 table, and not because the matching collection is non-empty — either would let
 this instrument certify a fix that never ran. The cost is a known, one-sided
-bias: a construct carrying no id, or one whose id root is shared with another
-construct in the same document (a root shared by two constructs cannot say
-which of them an object came from), can never be credited, and is counted in
-``unlinkable`` so the reading stays honest about its own blind spot. The bias
-runs toward reporting loss that is not there, which is the direction a loss
-detector should err.
+bias: a construct whose id root is shared with another construct in the same
+document (a root shared by two constructs cannot say which of them an object
+came from) can never be credited, and is counted in ``unlinkable`` so the
+reading stays honest about its own blind spot. The bias runs toward reporting
+loss that is not there, which is the direction a loss detector should err.
+
+**A second form of evidence, only where the first is impossible.** Some
+constructs cannot carry an id at all: CDA R2 gives ``Device`` and
+``RelatedEntity`` no ``<id>``, so an authoring device and an informant who is a
+relative were reported as lost in every document that had one, permanently and
+by schema rather than by anything the adapter did. For those classes — declared
+by name in :data:`ID_LESS_CONSTRUCTS`, never inferred — a parse is credited when
+the record holds an object STATING what the XML states for that construct: the
+same by-content argument :func:`_narrative_pool` makes, because reconstructing
+the parser's mapping rules here would make the instrument a mirror, and a mirror
+that drifts reports the drift as loss. The bias is the same one: content is
+matched exactly, a construct that states nothing is not matched at all, and N
+constructs against M matching objects credit ``min`` by multiset intersection —
+each object answers for one construct and then is spent, so two identical
+informants and one object credit one parse and leave the other in
+``unlinkable``. The id rule is untouched everywhere else, shared-root refusal
+included.
 
 The books balance or the ledger refuses: every construct the document offers
 ends in exactly one disposition, and so does every ``<entry>``, checked through
@@ -47,10 +63,11 @@ render, upload and delivery seams are held to, for the same reason.
 
 PHI: counts, element names, LOINC codes and template OIDs. Nothing else. Ids
 are compared and never emitted, narrative text is compared and never emitted,
-and a code or template root the vocabulary does not recognise is reported as
-``nonstandard`` rather than passed through — a document's ``@code`` is under
-its author's control, and a name is not a name because we assumed it was a
-code. :func:`assert_emittable` enforces that at the boundary rather than
+the name, telephone number and relationship an id-less construct states are
+compared and never emitted, and a code or template root the vocabulary does not
+recognise is reported as ``nonstandard`` rather than passed through — a
+document's ``@code`` is under its author's control, and a name is not a name
+because we assumed it was a code. :func:`assert_emittable` enforces that at the boundary rather than
 trusting it, exactly as ``tools/ccda_shape_report.py`` does with the report it
 sends home.
 """
@@ -68,18 +85,20 @@ from lxml import etree
 
 from anastomosis.core.ccda_codes import EXT_PRIOR_LOSS_NARRATIVE
 from anastomosis.core.conservation import Conservation
+from anastomosis.core.model import Practitioner
 from anastomosis.core.model.base import AnastBase
 
-# The parser's own helpers, imported rather than re-spelled. Three of them
-# encode knowledge this ledger must not hold a second copy of: `_PARSER` is the
+# The parser's own helpers, imported rather than re-spelled. Four of them encode
+# knowledge this ledger must not hold a second copy of: `_PARSER` is the
 # hardened XML posture every third-party document is read under, `_section_code`
 # and `_is_own_loss_narrative` are the parser's own answers about a section, and
-# `_text_content` is the exact whitespace normalization whose output the parser
-# STORED — a ledger that collapsed whitespace even slightly differently would
-# compare its own spelling of the narrative against the parser's and conclude
-# that every section had been dropped.
+# `_text_content` and `_attr` are the exact normalizations whose output the
+# parser STORED — a ledger that collapsed whitespace even slightly differently
+# would compare its own spelling of a value against the parser's and conclude
+# that every section, and every actor, had been dropped.
 from .parser import (
     _PARSER,
+    _attr,
     _find,
     _findall,
     _is_own_loss_narrative,
@@ -97,6 +116,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ABSENT",
     "BODY_PATHS",
+    "ID_LESS_CONSTRUCTS",
     "NONSTANDARD",
     "PARTICIPATION_PATHS",
     "REPORT_WORDS",
@@ -249,9 +269,9 @@ class LedgerRow:
     templates: tuple[str, ...] = ()
     instances: Mapping[Disposition, int] = field(default_factory=dict)
     entries: Mapping[Disposition, int] = field(default_factory=dict)
-    #: Instances no ``provenance.source_id`` could ever have matched, because
-    #: they carry no id, or share a root with another construct. The ledger's
-    #: own blind spot, counted rather than described.
+    #: Instances no evidence could reach: they share an id root with another
+    #: construct, or they carry no id and state nothing the record states back.
+    #: The ledger's own blind spot, counted rather than described.
     unlinkable: int = 0
 
     @property
@@ -375,6 +395,159 @@ def _row_report(row: LedgerRow, present_in: Mapping[str, int]) -> dict[str, Any]
     }
 
 
+# --- what a construct CDA gives no id can still state -------------------------
+
+#: One stated fact: the label this ledger reads it under, and the value.
+_Fact = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class _Content:
+    """How one id-less construct class states itself, on both sides of the seam.
+
+    ``stated`` reads the XML and ``recorded`` reads a canonical object; a parse
+    is credited when the two produce the SAME facts. Both halves are spelled
+    here rather than derived from the parser, for the reason ``_narrative_pool``
+    gives: reconstructing the parser's mapping rules would make this instrument
+    a mirror, and a mirror that drifts reports the drift as loss. Where a
+    spelling IS shared with the parser it is shared knowingly — if the two ever
+    disagree the facts differ, differing means uncredited, and uncredited is the
+    direction this ledger is allowed to be wrong in.
+
+    ``applies`` is asked of the construct node, because id-lessness is a
+    property of the role CDA played, not of the participation's name: an
+    ``informant`` playing an ``assignedEntity`` carries an id and keeps the id
+    rule, shared-root refusal included.
+    """
+
+    applies: Callable[[_Element], bool]
+    stated: Callable[[_Element], frozenset[_Fact]]
+    recorded: Callable[[AnastBase], frozenset[_Fact]]
+
+
+def _facts(*pairs: tuple[str, str | None]) -> frozenset[_Fact]:
+    """The pairs something was actually stated for. Nothing stated is no fact,
+    which is how a construct that states nothing ends up unmatchable."""
+    return frozenset((label, value) for label, value in pairs if value is not None)
+
+
+def _stated_text(value: object) -> str | None:
+    """A value the record states, or ``None`` when it is not text at all.
+
+    ``extensions`` is typed ``Any``; a dict or a list arriving where a name was
+    expected must read as "stated nothing" rather than compare by repr.
+    """
+    return value if isinstance(value, str) else None
+
+
+def _stated_texts(value: object) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+#: The fields an authoring device is made of. CDA R2's ``Device`` has exactly
+#: these two names on it and no free text besides.
+_DEVICE_FIELDS = ("softwareName", "manufacturerModelName")
+
+
+def _device_stated(node: _Element) -> frozenset[_Fact]:
+    return _facts(*((name, _text_content(_find(node, f"v3:{name}"))) for name in _DEVICE_FIELDS))
+
+
+def _device_recorded(obj: AnastBase) -> frozenset[_Fact]:
+    return _facts(
+        *((name, _stated_text(obj.extensions.get(f"ccda:{name}"))) for name in _DEVICE_FIELDS)
+    )
+
+
+def _name_facts(name: _Element) -> list[tuple[str, str | None]]:
+    """One ``<name>`` broken into the parts the document actually split it into.
+
+    The un-split fallback is the parser's own and is here for the same reason
+    the parser has it: a name written as element text still says who this is.
+    Every ``<given>`` is stated, not the first one — a document that spelled two
+    given names stated two, and a record holding one of them is not holding what
+    the document said.
+    """
+    given = [("given", _text_content(node)) for node in _findall(name, "v3:given")]
+    family = _text_content(_find(name, "v3:family"))
+    residue = [(part, _text_content(_find(name, f"v3:{part}"))) for part in ("prefix", "suffix")]
+    if family is None and not any(value is not None for _, value in given):
+        return [("name", _text_content(name)), *residue]
+    return [*given, ("family", family), *residue]
+
+
+def _person_stated(node: _Element) -> frozenset[_Fact]:
+    """What a participation states about the person who took part.
+
+    Read over the whole participation subtree rather than at a fixed path: CDA
+    spells the role and the person element differently under every
+    participation, and a second copy of that table would be one more thing to
+    drift. An address is deliberately not read — normalizing one is the
+    parser's business and re-spelling it here is precisely the mirror this
+    avoids — so two actors alike but for their address state the same facts and
+    compete for one object, which can only lower the credited count.
+    """
+    facts: list[tuple[str, str | None]] = []
+    for name in node.iter(_q("name")):
+        facts += _name_facts(name)
+    facts += [("telecom", _attr(tel, "value")) for tel in node.iter(_q("telecom"))]
+    # displayName before code: the document's own spelling of what its code
+    # means is the one the record keeps, so it is the one compared.
+    facts += [
+        ("code", _attr(code, "displayName") or _attr(code, "code"))
+        for code in node.iter(_q("code"))
+    ]
+    return _facts(*facts)
+
+
+def _person_recorded(obj: AnastBase) -> frozenset[_Fact]:
+    """What a canonical actor states about itself, in the same vocabulary.
+
+    Only a :class:`~anastomosis.core.model.Practitioner` can answer: the record
+    carries every actor as one, whatever role the document named them in.
+    """
+    if not isinstance(obj, Practitioner):
+        return frozenset()
+    stated: list[tuple[str, str | None]] = [
+        ("given", obj.given_name),
+        ("family", obj.family_name),
+        ("name", obj.display_name),
+        *(
+            (part, _stated_text(obj.extensions.get(f"ccda:{part}")))
+            for part in ("prefix", "suffix", "code")
+        ),
+        *(("telecom", value) for value in _stated_texts(obj.extensions.get("ccda:telecom"))),
+    ]
+    return _facts(*stated)
+
+
+def _plays(role: str) -> Callable[[_Element], bool]:
+    """A construct that plays ``role`` — the CDA element that carries no id."""
+    return lambda node: _find(node, f"v3:{role}") is not None
+
+
+def _always(node: _Element) -> bool:
+    """A construct whose CDA class has no id in any of its forms."""
+    return True
+
+
+#: The construct classes CDA itself leaves without an ``<id>``, listed by name
+#: rather than inferred, because "this one had no id in this document" is a
+#: property of one document and "this one can never have an id" is a property of
+#: the standard — and only the second may widen the evidence rule.
+#:
+#: * ``assignedAuthoringDevice`` — CDA R2's ``Device`` class has ``classCode``,
+#:   ``determinerCode``, ``code``, ``manufacturerModelName`` and
+#:   ``softwareName``. There is no ``id`` on it to link by, in any document.
+#: * ``informant`` — an informant plays either an ``assignedEntity``, which
+#:   carries ``id``, or a ``RelatedEntity``, which CDA R2 gives no ``id`` at
+#:   all. Only the second is admitted here; the first keeps the id rule.
+ID_LESS_CONSTRUCTS: Mapping[str, _Content] = {
+    "assignedAuthoringDevice": _Content(_always, _device_stated, _device_recorded),
+    "informant": _Content(_plays("relatedEntity"), _person_stated, _person_recorded),
+}
+
+
 # --- what the record can prove -----------------------------------------------
 
 
@@ -382,15 +555,21 @@ def _row_report(row: LedgerRow, present_in: Mapping[str, int]) -> dict[str, Any]
 class _Evidence:
     """Everything the parsed record can PROVE about a construct.
 
-    Built once per document. ``narrative`` is consumed as it matches: two
-    sections spelled identically are two obligations, and a pool that answered
-    yes twice for one stored narrative would credit a section that was dropped.
+    Built once per document. ``narrative`` and ``objects`` are consumed as they
+    match: two sections spelled identically are two obligations, as are two
+    identical informants, and a pool that answered yes twice for one stored
+    thing would credit a construct that was dropped.
     """
 
     source_ids: frozenset[str]
     linkable_roots: frozenset[str]
     narrative: Counter[tuple[str | None, str | None]]
     extension_keys: frozenset[str]
+    #: Every canonical object the record holds, spent as it answers. One object
+    #: is one parse: an object that has already stood for a construct cannot
+    #: stand for a second, so N id-less constructs against M matching objects
+    #: credit ``min`` and two identical informants against one object credit one.
+    objects: list[AnastBase | None]
 
     def links(self, node: _Element) -> bool | None:
         """Whether some canonical object came from this construct.
@@ -404,6 +583,30 @@ class _Evidence:
         if not roots:
             return None
         return bool(roots & self.source_ids)
+
+    def states(self, name: str, node: _Element) -> bool | None:
+        """Whether the record holds an object stating what this construct states.
+
+        The second form of evidence, asked only after the first came back
+        ``None``, and only of the classes :data:`ID_LESS_CONSTRUCTS` names.
+        ``None`` again means the question could not be answered rather than
+        answered no — a construct that states nothing at all is one of those,
+        because absence of evidence is not evidence — so the construct stays
+        counted in the ledger's blind spot exactly as it was before.
+        """
+        rule = ID_LESS_CONSTRUCTS.get(name)
+        if rule is None or not rule.applies(node):
+            return None
+        facts = rule.stated(node)
+        return self._spend(rule, facts) if facts else None
+
+    def _spend(self, rule: _Content, facts: frozenset[_Fact]) -> bool | None:
+        """Take the first object stating exactly ``facts`` out of circulation."""
+        for index, obj in enumerate(self.objects):
+            if obj is not None and rule.recorded(obj) == facts:
+                self.objects[index] = None
+                return True
+        return None
 
     def kept_narrative(self, title: str | None, text: str | None) -> bool:
         pair = (title, text)
@@ -426,11 +629,13 @@ class _Evidence:
 
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
+    objects: list[AnastBase | None] = list(_provenanced(record))
     return _Evidence(
         source_ids=frozenset(_record_source_ids(record)),
         linkable_roots=frozenset(_linkable_roots(root)),
         narrative=_narrative_pool(record),
         extension_keys=frozenset(record.patient.extensions),
+        objects=objects,
     )
 
 
@@ -621,6 +826,8 @@ def _participation_row(
     unlinkable = 0
     for node in _nodes(root, paths):
         linked = evidence.links(node)
+        if linked is None:
+            linked = evidence.states(name, node)
         unlinkable += linked is None
         counts[_participation_disposition(node, name, linked, evidence)] += 1
     return LedgerRow(
