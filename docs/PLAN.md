@@ -46,7 +46,10 @@ builds against:
   (Session, Selectors, UploadDriver, PatientResolver, BannerCheck,
   ExistingDocsScanner) + a `capabilities:` declaration + `config_schema.json`
   for the fields the operator must supply.
-- Discovery order: `--pack-dir` → built-ins.
+- Discovery order: `--pack-dir` → `~/.anastomosis/packs` (where a layout
+  taught from samples lands) → built-ins. Both non-built-in tiers execute
+  `context.py` only against a recorded content hash; confirming the Teach
+  records the hash of the pack it writes, and any later edit un-trusts it.
 
 ### The delivery router
 
@@ -230,8 +233,9 @@ Next:
   skipped and L1 back to its page floor, announced by one loud, PHI-free warning
   per read. Two residues remain: a run rendered through an external
   `--pack-dir` pack records a name the upload side cannot re-discover (discovery
-  there is built-ins only — an upload run holds no consent to execute external
-  pack code), so L3 skips with a logged reason; and a chart whose page count the
+  there is built-ins plus the operator's own hash-trusted learned layouts — an
+  upload run holds no consent to execute external pack code), so L3 skips with
+  a logged reason; and a chart whose page count the
   render run could not measure (no PyMuPDF, or a PDF that will not parse) is
   written with a null count and logged as a count, leaving L1 at its floor for
   that item.
