@@ -585,28 +585,65 @@ def test_the_mark_does_not_borrow_the_refusal_colour() -> None:
     assert not (set(vesselmark.MARK_STOPS) & palette_values)
 
 
-def test_the_sixteen_colour_floor_takes_no_colour_at_all() -> None:
-    """At sixteen colours every stop quantises onto ANSI 9 — `bright_red`.
+class _Capable:
+    """A console with exactly the three attributes the gate reads."""
 
-    That is the refusal colour, so the honest thing at that rung is to take no
-    colour at all and let weight carry the ramp, which is what shipped before
-    any of this. Measured on rich: `TERM=alacritty` and `TERM=xterm-ghostty`
-    both report `standard`, so this is the COMMON case on modern terminals, not
-    an exotic one.
+    def __init__(self, system: str | None, *, tty: bool = True, no_color: bool = False) -> None:
+        self.color_system = system
+        self.no_color = no_color
+        self.file = _TerminalFile("utf-8") if tty else io.StringIO()
+
+
+def test_the_sixteen_colour_floor_takes_no_colour_at_all() -> None:
+    """Sixteen colours, `NO_COLOR`, and nobody watching all get no colour.
+
+    At sixteen every stop quantises onto ANSI 9, which is `bright_red` — the
+    refusal colour, which identity may not borrow — so the honest answer at
+    that rung is the weight ramp that shipped before any of this.
+
+    Driven by the three attributes the gate actually reads rather than by
+    environment variables, because how rich INFERS them is rich's business and
+    differs by platform: on Windows `TERM` decides nothing, which is what an
+    earlier version of this test got wrong and the windows-latest leg caught.
+    What must hold everywhere is the mapping, and that is what this pins.
     """
-    cases = (
+    assert terminal_colour_depth(_Capable("truecolor")) == "truecolor"
+    assert terminal_colour_depth(_Capable("256")) == "256"
+    for sixteen_or_fewer in ("standard", "windows", None):
+        assert terminal_colour_depth(_Capable(sixteen_or_fewer)) == "none", (
+            f"{sixteen_or_fewer!r} cannot hold the ramp without landing on bright_red"
+        )
+    # `NO_COLOR` leaves color_system reporting "256", so branching on depth
+    # alone would walk straight past somebody who asked for plain output.
+    assert terminal_colour_depth(_Capable("256", no_color=True)) == "none"
+    assert terminal_colour_depth(_Capable("truecolor", no_color=True)) == "none"
+    # And nobody watching gets nothing, whatever the console claims it can do.
+    assert terminal_colour_depth(_Capable("truecolor", tty=False)) == "none"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="rich reads TERM only on POSIX")
+def test_rich_reports_the_depth_this_gate_was_built_against() -> None:
+    """The real-world half: what rich actually says about real terminals.
+
+    Worth pinning because the answers are surprising and the design leans on
+    them. Rich's `_TERM_COLORS` has three entries and matches only the last
+    hyphen-delimited segment, so `TERM=alacritty` and `TERM=xterm-ghostty` both
+    come back `standard` — meaning **the 256 rung is the common case on modern
+    terminals, and truecolor is the exception**. That is why the 256 rung gets
+    three validated palette indices rather than a downgrade, and why no
+    `TERM_PROGRAM` allowlist is used to guess a terminal upward: guessing wrong
+    emits truecolor bytes that a sixteen-colour terminal renders as garbage.
+    """
+    for environ, expected in (
+        ({"TERM": "xterm-256color"}, "256"),
+        ({"COLORTERM": "truecolor", "TERM": "xterm-256color"}, "truecolor"),
         ({"TERM": "xterm"}, "none"),
         ({"TERM": "dumb"}, "none"),
         ({"TERM": "alacritty"}, "none"),
         ({"NO_COLOR": "1", "TERM": "xterm-256color"}, "none"),
-        ({"TERM": "xterm-256color"}, "256"),
-        ({"COLORTERM": "truecolor", "TERM": "xterm-256color"}, "truecolor"),
-    )
-    for environ, expected in cases:
+    ):
         console = Console(file=_TerminalFile("utf-8"), _environ=environ, force_terminal=True)
         assert terminal_colour_depth(console) == expected, f"{environ} should give {expected!r}"
-    # And a stream nobody is watching gets nothing, whatever it claims.
-    assert terminal_colour_depth(Console(file=io.StringIO(), force_terminal=True)) == "none"
 
 
 def test_the_mark_is_unchanged_with_the_colour_stripped() -> None:
