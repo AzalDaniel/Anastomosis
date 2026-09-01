@@ -926,22 +926,30 @@ def _clinical_statements(node: _Element) -> list[_Element]:
 def _statement_kind(statement: _Element) -> str:
     """What KIND of statement this is, in the document's own vocabulary.
 
-    The template OIDs it declares, sorted and joined — a Problem Concern Act
-    and the Problem Observation inside it are two kinds, which is exactly the
-    distinction :meth:`_Evidence.links` needs and the one an element name is
-    too coarse to make (a reaction and an allergy are both ``observation``).
-    A statement declaring no template falls back to its element name, which is
-    all the document offered.
+    Its element name and the template roots it declares, sorted — a Problem
+    Concern Act and the Problem Observation inside it are two kinds, which is
+    exactly the distinction :meth:`_Evidence.links` needs and the one an
+    element name alone is too coarse to make (a reaction and an allergy are
+    both ``observation``). A statement declaring no template is identified by
+    its element name, which is all the document offered.
 
-    PHI: template OIDs and element names are standard vocabulary, and no id,
+    The roots go in RAW, not through :func:`_vocabulary`, and the element name
+    is carried even when templates exist. Both are the same guard against the
+    same mistake: this string is an identity, and every kind it wrongly merges
+    becomes an obligation somebody else's success calibrated, which is the
+    false-alarm direction. Sanitising collapsed every non-OID root to one label,
+    so two unrelated vendor templates read as one kind; dropping the element
+    name let an ``<act>`` and an ``<observation>`` sharing a template do the
+    same.
+
+    PHI: compared, never emitted — like ``source_ids`` beside it. Template
+    roots and element names are structural vocabulary either way, and no id,
     value, or narrative reaches this string.
     """
     templates = sorted(
-        _vocabulary(child.get("root"), _OID_RE)
-        for child in statement
-        if child.tag == _q("templateId")
+        root for child in statement if child.tag == _q("templateId") and (root := child.get("root"))
     )
-    return " ".join(templates) if templates else str(etree.QName(statement).localname)
+    return " ".join([str(etree.QName(statement).localname), *templates])
 
 
 def _linked_kinds(root: _Element, record: PatientRecord) -> set[str]:

@@ -1247,3 +1247,34 @@ def test_a_parked_entry_is_stored_as_the_document_spells_it(tmp_path: Path) -> N
     assert '<reference value="#prob-1"/>' in stored[0]
     row = _row(document_ledger(path, record), "section:48768-6")
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_two_statement_kinds_are_never_merged_into_one() -> None:
+    """A merged kind is somebody else's success calibrating YOUR obligation.
+
+    ``_statement_kind`` is the identity ``links`` calibrates against, so every
+    pair it wrongly merges makes a statement an obligation on the strength of
+    an unrelated one that linked — the false-alarm direction. Two ways it did:
+    the template roots went through the vocabulary check, which collapses every
+    non-OID root to one label, so two unrelated vendor templates read as one
+    kind; and the element name was dropped whenever a template existed, so an
+    ``<act>`` and an ``<observation>`` sharing a template did the same.
+    """
+    from lxml import etree
+
+    from anastomosis.sources.ccda.ledger import _statement_kind
+    from anastomosis.sources.ccda.parser import _PARSER
+
+    def statement(template: str, tag: str = "observation") -> object:
+        return etree.fromstring(
+            f'<{tag} xmlns="urn:hl7-org:v3"><templateId root="{template}"/></{tag}>'.encode(),
+            _PARSER,
+        )
+
+    assert _statement_kind(statement("urn:vendor:alpha")) != _statement_kind(  # type: ignore[arg-type]
+        statement("urn:vendor:beta")  # type: ignore[arg-type]
+    )
+    shared = "2.16.840.1.113883.10.20.22.4.2"
+    assert _statement_kind(statement(shared)) != _statement_kind(  # type: ignore[arg-type]
+        statement(shared, tag="act")  # type: ignore[arg-type]
+    )
