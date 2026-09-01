@@ -1278,3 +1278,230 @@ def test_two_statement_kinds_are_never_merged_into_one() -> None:
     assert _statement_kind(statement(shared)) != _statement_kind(  # type: ignore[arg-type]
         statement(shared, tag="act")  # type: ignore[arg-type]
     )
+
+
+# --- what the adversarial review found in the fixes above ---------------------
+
+
+@pytest.mark.parametrize(
+    "narrative",
+    [
+        "",
+        "<text/>",
+        "<text>   </text>",
+        "<text nullFlavor='NI'/>",
+        '<text><renderMultiMedia referencedObject="i1"/></text>',
+    ],
+)
+def test_a_section_that_renders_no_text_still_parks_its_entries(
+    tmp_path: Path, narrative: str
+) -> None:
+    """RENDERS no text, not HAS no ``<text>`` element.
+
+    The capture used to ask whether the section's narrative was empty AFTER
+    rendering; rewriting it to ask whether the element exists quietly stopped
+    preserving four real shapes — an empty element, one holding only
+    whitespace, a nullFlavor, and a multimedia-only cell. In each the entries
+    are still the only thing the document said, and their bytes stopped
+    reaching the record at all, so the export's declared-loss section could not
+    name them either.
+    """
+    body = f"""
+  <component><section>
+    <code code="18776-5" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Plan of Treatment</title>
+    {narrative}
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <id root="feedface-genr-0000-0000-000000000901"/>
+      <code code="75326-9"/><value displayName="A stated fact"/>
+    </observation></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+
+    assert [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
+    row = _row(document_ledger(path, record), "section:18776-5")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_an_entry_pointing_at_narrative_the_record_kept_is_preserved(
+    tmp_path: Path,
+) -> None:
+    """A ``<reference>`` is the document's own answer, and it is checkable.
+
+    C-CDA's mechanism for "this is my human-readable form" is a reference into
+    the section narrative, and it is the one entry-to-narrative link a machine
+    can follow. Asking each entry for its OWN bytes and nothing else was too
+    strict by exactly this much: a conforming vendor entry that cites a
+    narrative cell the record kept was reported as not credited as data.
+
+    The second entry is the control. It states a fact of its own and cites
+    nothing, so the same stored narrative says nothing about it and it stays
+    uncredited — which is the section-prose credit this whole change removes.
+    """
+    body = """
+  <component><section>
+    <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Procedures</title>
+    <text><paragraph ID="proc-1">Medication reconciliation (procedure) 430193006</paragraph></text>
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText><reference value="#proc-1"/></originalText></code>
+    </procedure></entry>
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000902"/>
+      <code code="999999999" displayName="Cited by nothing"/>
+    </procedure></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    row = _row(document_ledger(path, record), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_an_entry_citing_narrative_the_record_lost_is_not_preserved(tmp_path: Path) -> None:
+    """The reference has to land in text the record actually kept.
+
+    Same document, with the section's narrative removed from the record after
+    parsing. The citation is still in the entry; what it points at is gone, so
+    it proves nothing.
+    """
+    body = """
+  <component><section>
+    <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Procedures</title>
+    <text><paragraph ID="proc-1">Medication reconciliation (procedure) 430193006</paragraph></text>
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText><reference value="#proc-1"/></originalText></code>
+    </procedure></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    for key in [k for k in record.patient.extensions if k.startswith("ccda:section:47519-4")]:
+        del record.patient.extensions[key]
+
+    row = _row(document_ledger(path, record), "section:47519-4")
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_statement_behind_a_shared_root_is_a_blind_spot_not_a_pass(tmp_path: Path) -> None:
+    """The same loss, hidden by an id root something else in the document reuses.
+
+    An obligation is only checkable when the statement carries a root unique to
+    it, and one organisation OID stamped on a header author and on an entry is
+    ordinary C-CDA. Dropping such a statement from the obligation set let its
+    sibling's success answer for it — and the row read structurally_parsed with
+    unlinkable=0, a clean bill of health, which is the one thing this ledger's
+    stated bias forbids. It is counted as impossible to check instead.
+    """
+    shared = "feedface-shared-0000-0000-000000000901"
+    header = f"""
+  <author><time value="20200101"/><assignedAuthor><id root="{shared}"/>
+  </assignedAuthor></author>
+"""
+    body = f"""
+  <component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Results</title>
+    <text>Prose that cites nothing.</text>
+    <entry><organizer classCode="BATTERY" moodCode="EVN">
+      <component><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.2"/>
+        <id root="feedface-rslt-0000-0000-000000000901"/>
+        <code code="2345-7" displayName="A"/><value value="1" unit="u"/>
+      </observation></component>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.2"/>
+        <id root="{shared}"/>
+        <code code="2160-0" displayName="B"/><value value="2" unit="u"/>
+      </observation></component>
+    </organizer></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body, header=header)
+    record = parse_document(path)
+    partial = record.model_copy(deep=True)
+    partial.observations = [
+        observation
+        for observation in record.observations
+        if (observation.provenance.source_id or "").endswith("0901")
+    ]
+
+    row = _row(document_ledger(path, partial), "section:30954-2")
+    assert Disposition.STRUCTURALLY_PARSED not in row.entries  # type: ignore[attr-defined]
+    assert row.unlinkable == 1  # type: ignore[attr-defined]
+
+
+def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
+    tmp_path: Path,
+) -> None:
+    """A statement's obligation is its OWN id, not its descendants'.
+
+    ``_own_id_roots`` reads an act's ``<id>`` CHILDREN. Read the descendants
+    instead and any carried id under the act answers for the act itself, which
+    is the any-of habit reappearing one level down.
+
+    Both entries are concern acts of the same template, so the kind is
+    calibrated. The second entry's condition is re-provenanced onto its nested
+    REACTION observation — the shape of an adapter that recorded that entry by
+    an inner statement — leaving the concern act's own id carried by nothing.
+    The two entries' inner statements are different templates on purpose, so
+    calibrating one does not make an obligation of the other.
+
+    The first entry stays parsed. The second must not, and must not become so
+    on the strength of an id sitting inside it.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text>Prose that cites nothing.</text>
+    <entry><act classCode="ACT" moodCode="EVN">
+      <templateId root="2.16.840.1.113883.10.20.22.4.3"/>
+      <id root="feedface-conc-0000-0000-000000000901"/>
+      <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/><statusCode code="active"/>
+      <entryRelationship typeCode="SUBJ"><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.4"/>
+        <id root="feedface-prob-0000-0000-000000000901"/>
+        <code code="55607006" displayName="Problem"/>
+        <value code="38341003" displayName="First finding" xsi:type="CD"/>
+      </observation></entryRelationship>
+    </act></entry>
+    <entry><act classCode="ACT" moodCode="EVN">
+      <templateId root="2.16.840.1.113883.10.20.22.4.3"/>
+      <id root="feedface-conc-0000-0000-000000000902"/>
+      <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/><statusCode code="active"/>
+      <entryRelationship typeCode="SUBJ"><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.9"/>
+        <id root="feedface-rxn-0000-0000-0000000000902"/>
+        <code code="55607006" displayName="Problem"/>
+        <value code="26442006" displayName="Second finding" xsi:type="CD"/>
+      </observation></entryRelationship>
+    </act></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert len(record.conditions) == 2, "the probe needs both concern acts parsed"
+
+    moved = record.model_copy(deep=True)
+    second = next(
+        condition
+        for condition in moved.conditions
+        if (condition.provenance.source_id or "").endswith("0902")
+    )
+    second.provenance.source_id = "feedface-rxn-0000-0000-0000000000902"
+
+    row = _row(document_ledger(path, moved), "section:11450-4")
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.STRUCTURALLY_PARSED: 1,
+        Disposition.UNSUPPORTED: 1,
+    }

@@ -448,7 +448,12 @@ def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
     """
     captured: dict[_Element, list[str]] = {}
     for section in _sections(root):
-        if _find(section, "v3:text") is None and (entries := _entries(section)):
+        # RENDERS no text, not HAS no <text> element. An empty <text/>, one
+        # holding only whitespace, a nullFlavor, or a <renderMultiMedia> with
+        # no words beside it are all sections whose entries are the only thing
+        # the document said — and testing for the element instead of its
+        # content quietly stopped preserving four real narrative shapes.
+        if _text_content(_find(section, "v3:text")) is None and (entries := _entries(section)):
             captured[section] = [entry_verbatim(entry) for entry in entries]
     return captured
 

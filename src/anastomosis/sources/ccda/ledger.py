@@ -681,6 +681,11 @@ class _Evidence:
     #: stored copy — the sixth place, added for #314, and an instance of an
     #: existing type rather than a new kind of question.
     entries: _KeyedPool[str]
+    #: What each narrative anchor in this document says, by its ``ID``. A fact:
+    #: reading one costs nothing and answers for as many entries as point at
+    #: it, because a narrative cell is true rather than owed. PHI: compared,
+    #: never emitted.
+    narrative_anchors: Mapping[str, str]
     #: The source ids the record's DOCUMENT artifacts name. Kept apart from
     #: ``source_ids`` because the body constructs are asked a narrower question
     #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
@@ -709,23 +714,43 @@ class _Evidence:
         calibration, read from this document's own successes.
 
         With no calibrated statement to ask about, the old any-of answer stands
-        unchanged — so this can only ever turn a yes into a no, never a no into
-        a yes, and a construct whose every statement was dropped still reads as
-        the loss it always did.
+        unchanged — so this can only ever turn a yes into a no or into a blind
+        spot, never a no into a yes, and a construct whose every statement was
+        dropped still reads as the loss it always did.
         """
         roots = {root for root in _id_roots(node) if self.linkable_roots.holds(root)}
         if not roots:
             return None
-        obligations = [
-            statement
-            for statement in _clinical_statements(node)
-            if self._own_linkable(statement) and self.linked_kinds.holds(_statement_kind(statement))
-        ]
+        obligations, uncheckable = self._obligations(node)
+        if uncheckable:
+            return None
         if not obligations:
             return self.source_ids.any_of(roots)
         return all(
             self.source_ids.any_of(self._own_linkable(statement)) for statement in obligations
         )
+
+    def _obligations(self, node: _Element) -> tuple[list[_Element], bool]:
+        """``(the statements that must link, whether one could not be asked)``.
+
+        A statement of a kind this document links, carrying ids that are all
+        shared with something else, is one this reading cannot follow — and
+        dropping it from the obligation set would let its sibling's success
+        answer for it, which is the whole habit being broken here. It is a
+        blind spot instead: the caller reports the construct as impossible to
+        check rather than as parsed, so a lost statement behind a shared root
+        can still be counted as loss and never as a clean bill of health.
+        """
+        obligations: list[_Element] = []
+        uncheckable = False
+        for statement in _clinical_statements(node):
+            if not self.linked_kinds.holds(_statement_kind(statement)):
+                continue
+            if self._own_linkable(statement):
+                obligations.append(statement)
+            elif _own_id_roots(statement):
+                uncheckable = True
+        return obligations, uncheckable
 
     def _own_linkable(self, statement: _Element) -> set[str]:
         """A statement's OWN linkable id roots — its ``<id>`` children, not its
@@ -765,12 +790,40 @@ class _Evidence:
 
         The handle is the entry's own serialisation, through the same function
         the parser stored it with — so the question is byte-exact, and a miss
-        is a real no: either the record holds these bytes or it does not. Asked
-        only for entries of a section that kept no narrative, because that is
-        precisely when the parser parks them: no ``<text>``, titled or not —
-        the same test on the same pair, one on each side of the mirror.
+        is a real no: either the record holds these bytes or it does not.
+
+        Asked of every unlinked entry now, not only of one whose section kept
+        no narrative. The parser still parks only where a section RENDERS no
+        text, so the answer is no wherever it did not park — and asking anyway
+        is the point: this side reads what the record HOLDS rather than
+        reconstructing the rule by which it was written.
         """
         return self.entries.take(entry_verbatim(entry))
+
+    def narrated_by(self, entry: _Element, narrative: str | None) -> bool:
+        """Whether the entry POINTS AT narrative the record kept, spending nothing.
+
+        C-CDA's own mechanism for saying "this is my human-readable form" is a
+        ``<reference value="#id"/>`` into the section's narrative, and it is the
+        one entry-to-narrative link a machine can check. So an entry that names
+        one is asked the question its document already answered: do the cells
+        it points at still read inside the text this record stored?
+
+        All of them, not any: an entry citing two cells and finding one is an
+        entry half of whose account is missing. An entry naming no reference
+        gets nothing here — the section's prose is not evidence about it, which
+        is the whole point of asking per entry — and neither does one whose
+        anchor the document never defined.
+        """
+        if narrative is None:
+            return False
+        anchors = {
+            value[1:]
+            for reference in entry.iter(_q("reference"))
+            if (value := reference.get("value") or "").startswith("#")
+        }
+        stated = [text for anchor in anchors if (text := self.narrative_anchors.get(anchor))]
+        return bool(stated) and all(text in narrative for text in stated)
 
     def carried_as_document(self, identifier: str | None) -> bool | None:
         """Whether a document artifact in the record came from ``identifier``.
@@ -811,15 +864,18 @@ class _Evidence:
 
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
+    source_ids = _record_source_ids(record)
+    linkable = _linkable_roots(root)
     return _Evidence(
-        source_ids=_Facts(frozenset(_record_source_ids(record))),
-        linkable_roots=_Facts(frozenset(_linkable_roots(root))),
-        linked_kinds=_Facts(frozenset(_linked_kinds(root, record))),
+        source_ids=_Facts(frozenset(source_ids)),
+        linkable_roots=_Facts(frozenset(linkable)),
+        linked_kinds=_Facts(frozenset(_linked_kinds(root, linkable, source_ids))),
         narrative=_KeyedPool(_narrative_pool(record)),
         extension_keys=_Facts(frozenset(record.patient.extensions)),
         parked_items=_KeyedPool(_parked_pool(record)),
         objects=_MatchedPool(_provenanced(record)),
         entries=_KeyedPool(_entry_pool(record)),
+        narrative_anchors=_narrative_anchors(root),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
 
@@ -827,9 +883,10 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
 def _parked_pool(record: PatientRecord) -> Counter[str]:
     """How many facts the record parked under each ``ccda:`` namespace.
 
-    Keyed by the namespace's first segment, so ``ccda:serviceEvent`` and any
-    ``ccda:serviceEvent:...`` suffix the parser adds for a repeat both answer
-    for ``serviceEvent`` without this side having to mirror the suffix rule.
+    Keyed by the namespace's first segment, so a key the parser deepens
+    (``ccda:serviceEvent:...``) or numbers for a repeated construct
+    (``ccda:serviceEvent#2`` — ``#``, which is what ``_free_key`` writes)
+    answers for ``serviceEvent`` without this side mirroring either rule.
 
     PHI: the values are COUNTED and never read. A list is as many facts as it
     has members, a mapping or a scalar is one when it holds anything, and
@@ -841,8 +898,28 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
         namespace, _, remainder = key.partition(":")
         if namespace != "ccda" or not remainder:
             continue
-        pool[remainder.partition(":")[0]] += len(value) if isinstance(value, list) else bool(value)
+        name = remainder.partition(":")[0].partition("#")[0]
+        pool[name] += len(value) if isinstance(value, list) else bool(value)
     return pool
+
+
+def _narrative_anchors(root: _Element) -> dict[str, str]:
+    """Every narrative anchor in the document, by ``ID``, as the words it shows.
+
+    Built once per document because an anchor answers for as many entries as
+    cite it. Read from the whole tree rather than from each section's ``<text>``
+    alone: a reference may legitimately name a cell in another section, and a
+    mirror of the parser's own reach would report its blind spot as loss.
+
+    PHI: these strings are COMPARED against the narrative the record already
+    stored and never emitted, exactly as the narrative pool beside them is.
+    """
+    anchors: dict[str, str] = {}
+    for node in root.iter():
+        if not callable(node.tag) and (identifier := node.get("ID")):
+            if (text := _text_content(node)) is not None:
+                anchors[identifier] = text
+    return anchors
 
 
 def _entry_pool(record: PatientRecord) -> Counter[str]:
@@ -952,7 +1029,7 @@ def _statement_kind(statement: _Element) -> str:
     return " ".join([str(etree.QName(statement).localname), *templates])
 
 
-def _linked_kinds(root: _Element, record: PatientRecord) -> set[str]:
+def _linked_kinds(root: _Element, linkable: set[str], source_ids: set[str]) -> set[str]:
     """The statement kinds this document is SHOWN to link, from its own record.
 
     Calibration rather than a table: a mapping that starts recording problem
@@ -960,8 +1037,6 @@ def _linked_kinds(root: _Element, record: PatientRecord) -> set[str]:
     here to edit. Read from the whole document so one section's success can
     speak for the same kind in another.
     """
-    linkable = _linkable_roots(root)
-    source_ids = _record_source_ids(record)
     return {
         _statement_kind(statement)
         for statement in _clinical_statements(root)
@@ -1031,24 +1106,30 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _entry_dispositions(
-    entries: list[_Element], evidence: _Evidence
+    entries: list[_Element], evidence: _Evidence, narrative: str | None
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
     for entry in entries:
         linked = evidence.links(entry)
         unlinkable += linked is None
-        # The sixth question, asked one entry at a time — and the ONLY thing an
-        # unparsed entry may be preserved by. The section's own narrative used
-        # to answer here, one boolean shared by every entry beneath it, and a
-        # section's <text> is not a copy of its entries: generic section prose
-        # counted an entry whose every stated fact was absent from the record
-        # and from that prose as preserved. So each entry is asked whether the
-        # record holds ITS bytes. Not asked for a parsed entry (its evidence is
-        # its object; spending a stored copy for it would starve an identical
-        # unparsed sibling) and not asked for an empty one (SOURCE_EMPTY is not
-        # a preservation).
-        kept = not linked and _has_element_child(entry) and evidence.entry_kept(entry)
+        # Asked one entry at a time, and only of an unparsed one: a parsed
+        # entry's evidence is its object, and spending a stored copy for it
+        # would starve an identical unparsed sibling; an empty one is
+        # SOURCE_EMPTY, which is not a preservation.
+        #
+        # Two things can answer, and both are about THIS entry. The section's
+        # own narrative used to answer instead — one boolean shared by every
+        # entry beneath it — and a section's <text> is under no obligation to
+        # state what its entries state, so generic prose counted an entry whose
+        # every fact was absent from the record as preserved. What the entry
+        # itself can show is either a verbatim copy of its bytes in the record,
+        # or the document's own <reference> into narrative the record kept.
+        kept = (
+            not linked
+            and _has_element_child(entry)
+            and (evidence.entry_kept(entry) or evidence.narrated_by(entry, narrative))
+        )
         counts[_entry_disposition(entry, linked, kept)] += 1
     return dict(counts), unlinkable
 
@@ -1102,7 +1183,10 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
         _text_content(_find(section, "v3:text")),
     )
     kept = _narrative_kept(section, evidence, pair)
-    entry_counts, unlinkable = _entry_dispositions(entries, evidence)
+    # The text the record demonstrably holds for this section — `kept_narrative`
+    # has just claimed this exact pair — so an entry citing a cell inside it is
+    # citing something that survived. Nothing when the narrative did not.
+    entry_counts, unlinkable = _entry_dispositions(entries, evidence, pair[1] if kept else None)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),
