@@ -413,37 +413,60 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     title = _text_content(_find(section, "v3:title"))
     text = _text_content(_find(section, "v3:text"))
     extensions = record.patient.extensions
-    if text is None:
-        # No narrative for the entries to survive through — a stored title is a
-        # label, not a copy of what the entries said — so the entries themselves
-        # are preserved, whether or not a title exists to store beside them.
-        _capture_entries(extensions, section, loinc)
     if title is None and text is None:
         return
     key = _free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
     extensions[key] = {"title": title, "text": text}
 
 
-def _capture_entries(extensions: dict[str, Any], section: _Element, loinc: str | None) -> None:
-    """Preserve a text-less section's entries verbatim, one list per section.
+def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
+    """Every section's entries, exactly as the document spells them.
 
-    The shape issue #314 names: a section with ``<entry>`` children and no
-    ``<text>`` — titled or not — reaches neither book: the structural parser
-    takes what it can, and there is no narrative for the rest to fall back to. What the document
-    actually said is the entries, so the entries are what is kept: serialised
-    exactly, in document order, parsed or not. A parsed entry's copy is
-    redundant with its canonical object, and that redundancy is accepted on
-    purpose — deciding per entry whether the parser consumed it would make this
-    capture depend on the parser's reach, and the point of preservation is that
-    it must not.
+    Taken in one pass over the untouched tree, before anything in this module
+    rewrites it, and keyed by the section element so the section walk can
+    collect its own without re-serialising a tree that has since changed.
+
+    The shape issue #314 named: a section with ``<entry>`` children and no
+    ``<text>`` reaches neither book, because the structural parser takes what
+    it can and there is no narrative for the rest to fall back to. So what the
+    document said is kept instead, in document order, parsed or not.
+
+    A parsed entry's copy is redundant with its canonical object, and that
+    redundancy is accepted on purpose — deciding per entry whether the parser
+    consumed it would make this capture depend on the parser's reach, and the
+    point of preservation is that it must not.
+
+    Still only the text-less sections, and that is now a stated limit rather
+    than an assumption: a section WITH text is the same shape wearing a better
+    coat, since a C-CDA narrative is under no obligation to state what its
+    entries state. Extending the capture there is a change to what every export
+    carries — the builder narrates each parked key into the 51899-3 section, so
+    capturing every section's entries makes the loss narrative grow by a
+    generation each round trip — and it belongs to that decision, not to this
+    one. Until it is made, the ledger says what is true today: such an entry is
+    credited by nothing and reads unsupported.
     """
-    entries = _entries(section)
+    captured: dict[_Element, list[str]] = {}
+    for section in _sections(root):
+        if _find(section, "v3:text") is None and (entries := _entries(section)):
+            captured[section] = [entry_verbatim(entry) for entry in entries]
+    return captured
+
+
+def _store_entries(
+    extensions: dict[str, Any],
+    captured: dict[_Element, list[str]],
+    section: _Element,
+    loinc: str | None,
+) -> None:
+    """Park one section's captured entries under ``ccda:entries:<loinc>``."""
+    entries = captured.get(section)
     if not entries:
         return
     key = _free_key(
         extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
     )
-    extensions[key] = [entry_verbatim(entry) for entry in entries]
+    extensions[key] = entries
 
 
 def _is_own_loss_narrative(section: _Element, loinc: str | None) -> bool:
@@ -2121,6 +2144,14 @@ def parse_document(path: Path) -> PatientRecord:
     if etree.QName(root).localname != "ClinicalDocument" or root.tag != _q("ClinicalDocument"):
         raise ValueError(f"{path.name}: not a C-CDA ClinicalDocument (root <{root.tag}>)")
 
+    # Verbatim FIRST, hydration second. `_inline_narrative_references` fills a
+    # <reference> element's own text in place, so an entry serialised after it
+    # runs carries narrative this document does not spell at that position —
+    # which made the "verbatim" copy a copy of the parser's tree rather than of
+    # the file, and broke the byte-exact question the ledger asks of it. The
+    # copy is taken from the document as parsed, and nothing else touches it.
+    entries_by_section = _capture_entries(root)
+
     _inline_narrative_references(root)
 
     source_file = path.name
@@ -2168,8 +2199,8 @@ def parse_document(path: Path) -> PatientRecord:
             record.encounters += _encounters(section, pid, actors)
         elif loinc == LOINC_NOTES:
             record.encounters += _note_encounters(section, pid, actors)
-        # Losslessness: the narrative is captured for every section, not only the
-        # unparsed ones. The structural parsers above `continue` past an entry
+        # Losslessness: the narrative and the entries are captured for every
+        # section, not only the unparsed ones. The structural parsers above `continue` past an entry
         # whose shape they do not support, so a known section can yield nothing
         # while its <text> still holds the clinical statement; the duplication
         # for a fully-parsed section is the cheap side of that trade. Our own
@@ -2179,6 +2210,7 @@ def parse_document(path: Path) -> PatientRecord:
             _capture_loss_narrative(record, section)
         else:
             _capture_narrative(record, section, loinc)
+            _store_entries(record.patient.extensions, entries_by_section, section, loinc)
 
     record.practitioners = actors.practitioners
     record.facilities = list(actors.facilities.values())

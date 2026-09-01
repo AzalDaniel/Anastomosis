@@ -835,19 +835,30 @@ def test_one_stored_copy_credits_one_entry_not_two(tmp_path: Path) -> None:
     }
 
 
-def test_a_section_with_narrative_still_parks_no_entries(tmp_path: Path) -> None:
-    """The mirror's boundary, from the other side: <text> present, no parking.
+def test_a_sections_prose_does_not_answer_for_an_entry_it_never_states(
+    tmp_path: Path,
+) -> None:
+    """The section keeps its narrative; the entry under it is still uncredited.
 
-    A section whose narrative was kept preserves its entries through that
-    narrative, exactly as before this change — the entries pool exists only
-    where kept_narrative could never answer. One condition, one mirror, no
-    overlap between the two preservation paths.
+    This test used to assert the opposite, and the assumption underneath it was
+    that a section's ``<text>`` is a copy of what its entries say. C-CDA makes
+    no such promise, and the corpus this repo generates disproves it in its own
+    documents: a Plan of Treatment whose prose reads "Continue lisinopril and
+    recheck blood pressure in three months" carries an entry stating the coded
+    value "No current problems", and the old rule counted that entry preserved
+    by that sentence. Nothing preserved it.
+
+    So the section's narrative answers for the SECTION — the row below still
+    reads narrative_preserved — and the entry is asked at its own address. With
+    no verbatim copy of it in the record, the honest answer is that it was not
+    credited as data, which is the ledger's epistemic position and not a claim
+    that a chart was destroyed.
     """
     body = """
     <component><section>
       <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
       <title>Problems</title>
-      <text>Everything the entries say, in prose.</text>
+      <text>Prose about the section that states nothing the entry states.</text>
       <entry><act classCode="ACT" moodCode="EVN">
         <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
       </act></entry>
@@ -857,7 +868,8 @@ def test_a_section_with_narrative_still_parks_no_entries(tmp_path: Path) -> None
     record = parse_document(path)
     assert not [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
     row = _row(document_ledger(path, record), "section:11450-4")
-    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+    assert row.instances == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
 
 # --- the reading a physician gets ---------------------------------------------
@@ -1023,3 +1035,215 @@ def test_three_bodies_in_one_document_are_not_three_documents(tmp_path: Path) ->
     body_line = next(line for line in lines if "non-XML body" in line)
     assert body_line.startswith("The whole chart travelled as a scanned or non-XML body 3 times:")
     assert "3 documents" not in " ".join(lines)
+
+
+# --- what a positive disposition has to be backed by --------------------------
+#
+# Three ways this ledger awarded credit it had not earned, each found by an
+# adversarial probe that mutated a parsed record and re-graded it. The shape of
+# every test below is the same: prove the intact case is still CREDITED, then
+# take away exactly the evidence the credit was supposed to rest on and prove
+# the verdict changes. A guard that only ever says no is not a guard.
+
+
+_SERVICE_EVENT_HEADER = """
+  <documentationOf><serviceEvent classCode="PCPR">
+    <id root="feedface-serv-0000-0000-000000000901"/>
+    <code code="PCPR" displayName="Synthetic care period"/>
+    <effectiveTime><low value="20200101"/><high value="20201231"/></effectiveTime>
+  </serviceEvent></documentationOf>
+"""
+
+
+def test_an_empty_parked_payload_is_not_a_preserved_participation(tmp_path: Path) -> None:
+    """A namespace key is the cheapest thing in a record to be right about.
+
+    ``parked_under`` asked whether ``ccda:serviceEvent`` existed, so an adapter
+    that wrote the key and stored nothing under it scored exactly what one that
+    stored the event's facts scored. A regression that cleared the payload was
+    reported as preservation. The payload is what is read now.
+
+    No performer on this event on purpose: a nested practitioner would give
+    ``links`` an id of its own to credit the whole wrapper by, and the question
+    here is what the PARKED evidence proves by itself.
+    """
+    path = _write(tmp_path, header=_SERVICE_EVENT_HEADER)
+    record = parse_document(path)
+    construct = "participation:serviceEvent"
+
+    assert record.patient.extensions["ccda:serviceEvent"], "the probe needs a stored payload"
+    assert _sole(document_ledger(path, record), construct) is Disposition.NARRATIVE_PRESERVED
+
+    emptied = record.model_copy(deep=True)
+    emptied.patient.extensions["ccda:serviceEvent"] = []
+    assert _sole(document_ledger(path, emptied), construct) is Disposition.UNSUPPORTED
+
+    removed = record.model_copy(deep=True)
+    del removed.patient.extensions["ccda:serviceEvent"]
+    assert _sole(document_ledger(path, removed), construct) is Disposition.UNSUPPORTED
+
+
+def test_one_parked_item_answers_for_one_offered_construct(tmp_path: Path) -> None:
+    """Two events against one stored item is one preserved and one lost.
+
+    The claim is spent, like every other pool in this file. A place that could
+    be asked without spending would credit the same stored fact twice, which is
+    the arithmetic this ledger exists to refuse.
+    """
+    path = _write(tmp_path, header=_SERVICE_EVENT_HEADER * 2)
+    record = parse_document(path)
+    row = _row(document_ledger(path, record), "participation:serviceEvent")
+
+    assert row.offered == 2  # type: ignore[attr-defined]
+    record.patient.extensions["ccda:serviceEvent"] = record.patient.extensions["ccda:serviceEvent"][
+        :1
+    ]
+    starved = _row(document_ledger(path, record), "participation:serviceEvent")
+    assert starved.instances[Disposition.NARRATIVE_PRESERVED] == 1  # type: ignore[attr-defined]
+    assert starved.instances[Disposition.UNSUPPORTED] == 1  # type: ignore[attr-defined]
+
+
+_TWO_MEASUREMENTS = """
+  <component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Results</title>
+    <text>Prose about the panel, which is not a copy of either measurement.</text>
+    <entry><organizer classCode="BATTERY" moodCode="EVN">
+      <templateId root="2.16.840.1.113883.10.20.22.4.1"/>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.2"/>
+        <id root="feedface-rslt-0000-0000-000000000901"/>
+        <code code="2345-7" displayName="Synthetic measurement A"/>
+        <value value="1" unit="u"/>
+      </observation></component>
+      <component><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.2"/>
+        <id root="feedface-rslt-0000-0000-000000000902"/>
+        <code code="2160-0" displayName="Synthetic measurement B"/>
+        <value value="2" unit="u"/>
+      </observation></component>
+    </organizer></entry>
+  </section></component>
+"""
+
+
+def test_a_sibling_lost_inside_one_entry_is_not_a_parsed_entry(tmp_path: Path) -> None:
+    """One surviving id used to answer for every statement beside it.
+
+    An ``<organizer>`` of two results kept its ``structurally_parsed`` verdict
+    when one of the two was dropped, because ``links`` asked whether ANY id
+    under the entry reached the record. Organizer entries routinely carry
+    several results or vital signs, so a regression could drop any subset and
+    the ledger would still certify the wrapper.
+    """
+    path = _write(tmp_path, body=_TWO_MEASUREMENTS)
+    record = parse_document(path)
+    construct = "section:30954-2"
+    assert len(record.observations) == 2, "the probe needs both measurements parsed"
+
+    intact = _row(document_ledger(path, record), construct)
+    assert intact.entries == {Disposition.STRUCTURALLY_PARSED: 1}  # type: ignore[attr-defined]
+
+    # Either sibling, not just the convenient one: whichever of the two goes,
+    # the entry stops being a parsed entry.
+    for keep in (slice(0, 1), slice(1, 2)):
+        partial = record.model_copy(deep=True)
+        partial.observations = record.observations[keep]
+        row = _row(document_ledger(path, partial), construct)
+        assert row.entries == {Disposition.UNSUPPORTED: 1}, f"{keep} still read as parsed"  # type: ignore[attr-defined]
+
+    total = record.model_copy(deep=True)
+    total.observations = []
+    row = _row(document_ledger(path, total), construct)
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_sibling_lost_under_a_parked_entry_is_preserved_not_parsed(tmp_path: Path) -> None:
+    """The same loss where the entry's own bytes ARE kept: still not parsed.
+
+    A text-less section parks its entries verbatim, so a partially-lost entry
+    there has real evidence behind it and reads narrative_preserved rather than
+    unsupported. What it must not read is structurally_parsed — that is the
+    claim a dropped measurement disproves, whatever else survived.
+    """
+    body = _TWO_MEASUREMENTS.replace(
+        "<text>Prose about the panel, which is not a copy of either measurement.</text>", ""
+    )
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    partial = record.model_copy(deep=True)
+    partial.observations = record.observations[:1]
+
+    row = _row(document_ledger(path, partial), "section:30954-2")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_statement_the_mapping_folds_in_is_not_required_to_link(tmp_path: Path) -> None:
+    """The other half of the same rule, and the reason it is calibrated.
+
+    A Problem Concern Act is what this adapter records a condition by; the
+    Problem Observation nested inside it never carries its own provenance and
+    never will, because one entry becomes one Condition. Requiring every
+    statement to link would report every conforming problem entry as half lost,
+    which is the same lie told backwards. Only kinds this document has been
+    SEEN to link are required, so the fold-in is not an obligation.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text>Prose.</text>
+    <entry><act classCode="ACT" moodCode="EVN">
+      <templateId root="2.16.840.1.113883.10.20.22.4.3"/>
+      <id root="feedface-conc-0000-0000-000000000901"/>
+      <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+      <statusCode code="active"/>
+      <entryRelationship typeCode="SUBJ"><observation classCode="OBS" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.4"/>
+        <id root="feedface-prob-0000-0000-000000000901"/>
+        <code code="55607006" displayName="Problem"/>
+        <value code="38341003" displayName="Synthetic finding" xsi:type="CD"/>
+      </observation></entryRelationship>
+    </act></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert record.conditions, "the probe needs the concern act to have been parsed"
+    row = _row(document_ledger(path, record), "section:11450-4")
+    assert row.entries == {Disposition.STRUCTURALLY_PARSED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_parked_entry_is_stored_as_the_document_spells_it(tmp_path: Path) -> None:
+    """The verbatim copy is of the FILE, not of the tree the parser worked on.
+
+    ``_inline_narrative_references`` fills each ``<reference>`` element's own
+    text in place so the structural parsers can read a coded entry's referenced
+    name. It ran before the capture, so the stored "verbatim" entry carried
+    narrative the document does not spell at that position — and the ledger,
+    re-reading the file, computed different bytes and reported a preserved
+    entry as lost. The capture happens first now.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><paragraph ID="prob-1">Referenced narrative name.</paragraph></text>
+  </section></component>
+  <component><section>
+    <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Payers</title>
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <id root="feedface-genr-0000-0000-000000000901"/>
+      <code code="75326-9"><originalText><reference value="#prob-1"/></originalText></code>
+    </observation></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+
+    stored = record.patient.extensions["ccda:entries:48768-6"]
+    assert "Referenced narrative name" not in stored[0], "the capture read the hydrated tree"
+    assert '<reference value="#prob-1"/>' in stored[0]
+    row = _row(document_ledger(path, record), "section:48768-6")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]

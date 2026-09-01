@@ -659,11 +659,22 @@ class _Evidence:
     #: Which roots are worth asking by at all. Also a fact, and asked of the
     #: construct rather than of the record.
     linkable_roots: _Facts
+    #: Which KINDS of clinical statement this document has been seen to link,
+    #: as template OIDs (or an element name where a statement declares none).
+    #: A fact, and the calibration :meth:`links` needs — see it for why.
+    linked_kinds: _Facts
     #: Where a stored narrative is claimed, one claim per stored pair.
     narrative: _KeyedPool[tuple[str | None, str | None]]
-    #: Where a namespace is asked. A fact: one parked key answers for the
-    #: construct class, not for one construct.
+    #: Where a namespace is asked. A fact, because two questions are asked of
+    #: it that cost nothing: whether the prior-loss narrative is held, and
+    #: whether a key exists at all.
     extension_keys: _Facts
+    #: Where a parked PAYLOAD is claimed, one claim per stored item. Counted
+    #: and spent rather than asked as a fact, because a key is not a payload:
+    #: `ccda:serviceEvent` holding `[]` is the adapter having written the
+    #: namespace and kept nothing, and two offered events against one stored
+    #: item are one preserved and one lost.
+    parked_items: _KeyedPool[str]
     #: Where a canonical object is claimed, one claim per object.
     objects: _MatchedPool
     #: Where a text-less section's verbatim entries are claimed, one claim per
@@ -678,17 +689,48 @@ class _Evidence:
     document_source_ids: _Facts
 
     def links(self, node: _Element) -> bool | None:
-        """Whether some canonical object came from this construct.
+        """Whether every clinical statement in this construct reached the record.
 
         ``None`` is not "no": it means the construct carries no id this ledger
         could have linked by, so the question was never asked. Kept distinct
         because collapsing it into "no" would report the ledger's blind spot as
         the adapter's loss.
+
+        The question used to be "did ANY id under here reach the record", and
+        one id is a poor answer for a wrapper holding several statements: an
+        ``<organizer>`` of two results kept its verdict when one of the two was
+        dropped, because the survivor's id still matched. So the statements are
+        asked one at a time and the answer is ALL of them — but only of the
+        statements this document has shown the adapter linking, which is the
+        difference between a missing sibling and a shape the mapping folds in
+        on purpose. A Problem Concern Act is linked and its nested Problem
+        Observation never is; requiring the observation would report every
+        conforming problem as half lost. :attr:`linked_kinds` is that
+        calibration, read from this document's own successes.
+
+        With no calibrated statement to ask about, the old any-of answer stands
+        unchanged — so this can only ever turn a yes into a no, never a no into
+        a yes, and a construct whose every statement was dropped still reads as
+        the loss it always did.
         """
         roots = {root for root in _id_roots(node) if self.linkable_roots.holds(root)}
         if not roots:
             return None
-        return self.source_ids.any_of(roots)
+        obligations = [
+            statement
+            for statement in _clinical_statements(node)
+            if self._own_linkable(statement) and self.linked_kinds.holds(_statement_kind(statement))
+        ]
+        if not obligations:
+            return self.source_ids.any_of(roots)
+        return all(
+            self.source_ids.any_of(self._own_linkable(statement)) for statement in obligations
+        )
+
+    def _own_linkable(self, statement: _Element) -> set[str]:
+        """A statement's OWN linkable id roots — its ``<id>`` children, not its
+        descendants', so a nested performer's id cannot answer for the act."""
+        return {root for root in _own_id_roots(statement) if self.linkable_roots.holds(root)}
 
     def states(self, name: str, node: _Element) -> bool | None:
         """Whether the record holds an object stating what this construct states.
@@ -749,27 +791,58 @@ class _Evidence:
         return self.document_source_ids.holds(identifier)
 
     def parked_under(self, name: str) -> bool:
-        """Whether anything in ``extensions`` is namespaced to this construct.
+        """Whether a payload parked under this construct answers for it, spending it.
 
         The adapter parks what it cannot map under a ``ccda:`` key, so this is
-        how a construct that is preserved WITHOUT a typed object is recognised —
-        and it reads the record rather than a table of what the parser is
-        believed to do, so a future fix moves this number without touching this
-        file.
+        how a construct preserved WITHOUT a typed object is recognised — and it
+        reads the record rather than a table of what the parser is believed to
+        do, so a future fix moves this number without touching this file.
+
+        What is read is the PAYLOAD, not the key. The key was the whole test
+        once, and a key is the cheapest thing in the record to be right about:
+        an adapter that wrote ``ccda:serviceEvent`` and then stored an empty
+        list under it scored the same as one that stored the event's facts, so
+        a regression that cleared the payload was reported as preservation. One
+        stored item answers for one offered construct and is then spent, so a
+        document offering two events with one item stored reads as one
+        preserved and one lost rather than as two preserved.
         """
-        return self.extension_keys.namespaced(f"ccda:{name}")
+        return self.parked_items.take(name)
 
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
     return _Evidence(
         source_ids=_Facts(frozenset(_record_source_ids(record))),
         linkable_roots=_Facts(frozenset(_linkable_roots(root))),
+        linked_kinds=_Facts(frozenset(_linked_kinds(root, record))),
         narrative=_KeyedPool(_narrative_pool(record)),
         extension_keys=_Facts(frozenset(record.patient.extensions)),
+        parked_items=_KeyedPool(_parked_pool(record)),
         objects=_MatchedPool(_provenanced(record)),
         entries=_KeyedPool(_entry_pool(record)),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
+
+
+def _parked_pool(record: PatientRecord) -> Counter[str]:
+    """How many facts the record parked under each ``ccda:`` namespace.
+
+    Keyed by the namespace's first segment, so ``ccda:serviceEvent`` and any
+    ``ccda:serviceEvent:...`` suffix the parser adds for a repeat both answer
+    for ``serviceEvent`` without this side having to mirror the suffix rule.
+
+    PHI: the values are COUNTED and never read. A list is as many facts as it
+    has members, a mapping or a scalar is one when it holds anything, and
+    anything empty is none — which is the whole point, since an empty payload
+    is a namespace with nothing in it.
+    """
+    pool: Counter[str] = Counter()
+    for key, value in record.patient.extensions.items():
+        namespace, _, remainder = key.partition(":")
+        if namespace != "ccda" or not remainder:
+            continue
+        pool[remainder.partition(":")[0]] += len(value) if isinstance(value, list) else bool(value)
+    return pool
 
 
 def _entry_pool(record: PatientRecord) -> Counter[str]:
@@ -819,6 +892,73 @@ def _source_ids(objects: Iterable[AnastBase]) -> set[str]:
 
 def _id_roots(node: _Element) -> set[str]:
     return {root for id_node in node.iter(_q("id")) if (root := id_node.get("root"))}
+
+
+def _own_id_roots(node: _Element) -> set[str]:
+    """The roots of ``node``'s own ``<id>`` CHILDREN, ignoring its descendants'."""
+    return {root for child in node if child.tag == _q("id") and (root := child.get("root"))}
+
+
+#: The CDA acts a clinical statement can be. Everything the R2.1 entry content
+#: models allow in an ``<entry>`` or nested under one; the ledger asks each of
+#: them separately rather than asking their enclosing wrapper once.
+_STATEMENT_TAGS = frozenset(
+    _q(tag)
+    for tag in (
+        "act",
+        "encounter",
+        "observation",
+        "observationMedia",
+        "organizer",
+        "procedure",
+        "regionOfInterest",
+        "substanceAdministration",
+        "supply",
+    )
+)
+
+
+def _clinical_statements(node: _Element) -> list[_Element]:
+    """Every clinical statement at or under ``node``, at any depth."""
+    return [element for element in node.iter() if element.tag in _STATEMENT_TAGS]
+
+
+def _statement_kind(statement: _Element) -> str:
+    """What KIND of statement this is, in the document's own vocabulary.
+
+    The template OIDs it declares, sorted and joined — a Problem Concern Act
+    and the Problem Observation inside it are two kinds, which is exactly the
+    distinction :meth:`_Evidence.links` needs and the one an element name is
+    too coarse to make (a reaction and an allergy are both ``observation``).
+    A statement declaring no template falls back to its element name, which is
+    all the document offered.
+
+    PHI: template OIDs and element names are standard vocabulary, and no id,
+    value, or narrative reaches this string.
+    """
+    templates = sorted(
+        _vocabulary(child.get("root"), _OID_RE)
+        for child in statement
+        if child.tag == _q("templateId")
+    )
+    return " ".join(templates) if templates else str(etree.QName(statement).localname)
+
+
+def _linked_kinds(root: _Element, record: PatientRecord) -> set[str]:
+    """The statement kinds this document is SHOWN to link, from its own record.
+
+    Calibration rather than a table: a mapping that starts recording problem
+    observations by their own id moves this set on the next run, with nothing
+    here to edit. Read from the whole document so one section's success can
+    speak for the same kind in another.
+    """
+    linkable = _linkable_roots(root)
+    source_ids = _record_source_ids(record)
+    return {
+        _statement_kind(statement)
+        for statement in _clinical_statements(root)
+        if _own_id_roots(statement) & linkable & source_ids
+    }
 
 
 def _linkable_roots(root: _Element) -> set[str]:
@@ -883,40 +1023,39 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _entry_dispositions(
-    entries: list[_Element], evidence: _Evidence, narrative_kept: bool, parked: bool
+    entries: list[_Element], evidence: _Evidence
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
     for entry in entries:
         linked = evidence.links(entry)
         unlinkable += linked is None
-        # The sixth question, asked one entry at a time and only where the
-        # section-level answer could never reach: a text-less section has no
-        # narrative for its entries to be preserved BY, so each entry is asked
-        # whether the record holds its own bytes. Not asked for a parsed entry
-        # (its evidence is its object; spending a stored copy for it would
-        # starve an identical unparsed sibling) and not asked for an empty one
-        # (SOURCE_EMPTY is not a preservation).
-        kept = narrative_kept or (
-            parked and not linked and _has_element_child(entry) and evidence.entry_kept(entry)
-        )
+        # The sixth question, asked one entry at a time — and the ONLY thing an
+        # unparsed entry may be preserved by. The section's own narrative used
+        # to answer here, one boolean shared by every entry beneath it, and a
+        # section's <text> is not a copy of its entries: generic section prose
+        # counted an entry whose every stated fact was absent from the record
+        # and from that prose as preserved. So each entry is asked whether the
+        # record holds ITS bytes. Not asked for a parsed entry (its evidence is
+        # its object; spending a stored copy for it would starve an identical
+        # unparsed sibling) and not asked for an empty one (SOURCE_EMPTY is not
+        # a preservation).
+        kept = not linked and _has_element_child(entry) and evidence.entry_kept(entry)
         counts[_entry_disposition(entry, linked, kept)] += 1
     return dict(counts), unlinkable
 
 
 def _narrative_kept(
     section: _Element, evidence: _Evidence, pair: tuple[str | None, str | None]
-) -> tuple[bool, bool]:
-    """``(anything of this section was kept, its TEXT was kept)``.
+) -> bool:
+    """Whether anything of this section's OWN narrative reached the record.
 
-    Two answers rather than one, because they answer for different things. A
-    section whose ``<title>`` reached the record kept something of itself. Its
-    ENTRIES did not: a section with entries and no ``<text>`` — an ordinary
-    export shape, and one this corpus generates on purpose — stores
-    ``{"title": ..., "text": None}``, and the word "Payers" is not a recovery
-    of the coverage that was in the entries. Counting those entries as
-    narrative-preserved on the strength of a stored title is precisely the
-    flattering arithmetic this ledger exists to refuse.
+    One answer, and it answers for the section rather than for anything under
+    it. It used to return a second — "and its ``<text>`` survived" — which the
+    entries were then graded against, on the assumption that a section's prose
+    states what its entries state. C-CDA makes no such promise, so the entries
+    are asked at their own address now (:func:`_entry_dispositions`) and this
+    is the section's own line again.
 
     Our own exported loss ledger is the one section stored somewhere else —
     entry by entry under ``ccda:prior_loss_narrative``, so a re-export cannot
@@ -924,12 +1063,10 @@ def _narrative_kept(
     address rather than reported as dropped.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
-        kept = evidence.extension_keys.holds(EXT_PRIOR_LOSS_NARRATIVE)
-        return kept, kept
+        return evidence.extension_keys.holds(EXT_PRIOR_LOSS_NARRATIVE)
     if pair == (None, None):
-        return False, False
-    kept = evidence.kept_narrative(*pair)
-    return kept, kept and pair[1] is not None
+        return False
+    return evidence.kept_narrative(*pair)
 
 
 def _section_disposition(
@@ -956,10 +1093,8 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
         _text_content(_find(section, "v3:title")),
         _text_content(_find(section, "v3:text")),
     )
-    kept, text_kept = _narrative_kept(section, evidence, pair)
-    entry_counts, unlinkable = _entry_dispositions(
-        entries, evidence, text_kept, parked=pair[1] is None
-    )
+    kept = _narrative_kept(section, evidence, pair)
+    entry_counts, unlinkable = _entry_dispositions(entries, evidence)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),
