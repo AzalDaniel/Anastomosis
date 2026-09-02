@@ -427,7 +427,10 @@ _CONTENT_MODEL: dict[str, tuple[str, ...]] = {
         "structuredBody": "component",
         "structuredBody/component": "section",
         "section": "templateId id code title text entry",
-        "entry": "act encounter observation organizer substanceAdministration",
+        "entry": "act encounter observation observationMedia organizer substanceAdministration",
+        # The image a narrative <renderMultiMedia> names is a clinical
+        # statement, which is why it sits in an <entry> and not in the prose.
+        "observationMedia": "id value",
         # --- the clinical statements
         "act": (
             "templateId id code text statusCode effectiveTime author participant entryRelationship"
@@ -437,6 +440,9 @@ _CONTENT_MODEL: dict[str, tuple[str, ...]] = {
             "templateId id code text statusCode effectiveTime value participant entryRelationship"
         ),
         "observation/participant": "participantRole",
+        # A statement's own <text> is an ED, and the only thing in one here is
+        # the pointer into the narrative.
+        "observation/text": "reference",
         "participantRole": "id code addr telecom playingEntity",
         "playingEntity": "code quantity name",
         "substanceAdministration": (
@@ -462,9 +468,37 @@ _CONTENT_MODEL: dict[str, tuple[str, ...]] = {
     }.items()
 }
 
-#: StrucDoc, not CDA: a section's narrative has its own schema and its own
-#: rules, and this table does not pretend to hold them.
-_NOT_CDA = "section/text"
+#: StrucDoc, not CDA: a section's narrative has its own schema, and the table
+#: above cannot hold it, because most StrucDoc content models are unordered
+#: CHOICES. Judging a choice by position asserts something the schema does not
+#: say, and a legal rearrangement would then read as a defect — so the
+#: narrative gets its own two tables, and the walk changes vocabulary when it
+#: crosses into one.
+_NARRATIVE_ROOT = "section/text"
+
+#: What may appear inside each narrative element, in any order. Rows only for
+#: the elements the corpus actually gives children to, on the same discipline
+#: the CDA table keeps: a row nothing exercises is a claim nothing checks.
+_NARRATIVE_CHOICE: dict[str, tuple[str, ...]] = {
+    key: tuple(model.split())
+    for key, model in {
+        "text": "content linkHtml sub sup br footnote renderMultiMedia paragraph list table",
+        "paragraph": "caption content linkHtml sub sup br footnote renderMultiMedia",
+        "content": "caption content linkHtml sub sup br footnote renderMultiMedia",
+        "td": "content linkHtml sub sup br footnote renderMultiMedia paragraph list",
+    }.items()
+}
+
+#: And the ones that ARE sequences, judged by position like the CDA rows.
+_NARRATIVE_SEQUENCE: dict[str, tuple[str, ...]] = {
+    key: tuple(model.split())
+    for key, model in {
+        "table": "caption col colgroup thead tfoot tbody",
+        "list": "caption item",
+        "tbody": "tr",
+        "tr": "th td",
+    }.items()
+}
 
 
 def _model_key(parent_name: str, name: str) -> str:
@@ -479,30 +513,53 @@ def _model_key(parent_name: str, name: str) -> str:
     return qualified if qualified in _CONTENT_MODEL else name
 
 
-def _check_conformance(element, parent_name: str, seen: set[str]) -> None:  # type: ignore[no-untyped-def]
+def _check_conformance(  # type: ignore[no-untyped-def]
+    element, parent_name: str, seen: set[str], *, narrative: bool = False
+) -> None:
     from lxml import etree
 
     name = etree.QName(element).localname
+    narrative = narrative or f"{parent_name}/{name}" == _NARRATIVE_ROOT
     children = [etree.QName(child).localname for child in element if isinstance(child.tag, str)]
-    if not children:
-        return
-    key = _model_key(parent_name, name)
-    if key == _NOT_CDA or f"{parent_name}/{name}" == _NOT_CDA:
-        return
-    assert key in _CONTENT_MODEL, f"{parent_name}/{name}: no allowlisted content model"
-    seen.add(key)
-    model = _CONTENT_MODEL[key]
+    if children:
+        _check_model(name, children, parent_name, seen, narrative=narrative)
+    for child in element:
+        if isinstance(child.tag, str):
+            _check_conformance(child, name, seen, narrative=narrative)
+
+
+def _check_model(
+    name: str, children: list[str], parent_name: str, seen: set[str], *, narrative: bool
+) -> None:
+    """One element's children against the row that governs them.
+
+    Order is asserted only where the schema states a sequence. A StrucDoc
+    choice says which names may appear and nothing about their order, so
+    holding the corpus to one would be this test inventing a rule and then
+    reporting a legal rearrangement as a defect.
+    """
+    if narrative:
+        seen.add(f"text/{name}")
+        if name in _NARRATIVE_CHOICE:
+            for child in children:
+                assert child in _NARRATIVE_CHOICE[name], (
+                    f"<{child}> is not legal inside narrative <{name}>"
+                )
+            return
+        key, model, where = name, _NARRATIVE_SEQUENCE.get(name), "StrucDoc"
+    else:
+        key = _model_key(parent_name, name)
+        model, where = _CONTENT_MODEL.get(key), "CDA"
+        seen.add(key)
+    assert model is not None, f"{parent_name}/{name}: no allowlisted {where} content model"
     positions = []
     for child in children:
         assert child in model, f"<{child}> is not legal inside <{name}> ({key})"
         positions.append(model.index(child))
     assert positions == sorted(positions), (
         f"<{name}> ({key}) writes {children} — "
-        f"CDA orders them {[c for c in model if c in children]}"
+        f"{where} orders them {[c for c in model if c in children]}"
     )
-    for child in element:
-        if isinstance(child.tag, str):
-            _check_conformance(child, name, seen)
 
 
 def test_every_element_it_emits_is_legal_where_it_stands(
@@ -522,8 +579,56 @@ def test_every_element_it_emits_is_legal_where_it_stands(
     seen: set[str] = set()
     for _, xml in corpus:
         _check_conformance(etree.fromstring(xml), "", seen)
-    assert seen == set(_CONTENT_MODEL), (
-        f"content models the corpus never exercises: {sorted(set(_CONTENT_MODEL) - seen)}"
+    expected = set(_CONTENT_MODEL) | {
+        f"text/{name}" for name in (*_NARRATIVE_CHOICE, *_NARRATIVE_SEQUENCE)
+    }
+    assert seen == expected, f"content models the corpus never exercises: {sorted(expected - seen)}"
+
+
+#: The two names `_cited_dangling` writes on purpose. Anything else that
+#: fails to resolve — a `feedface-mm-…` above all, since a
+#: `renderMultiMedia` naming no `observationMedia` is the shape that got
+#: past every other check — is a defect.
+_DELIBERATELY_DANGLING = re.compile(r"^feedface-(narr|elsewhere)-")
+
+
+def test_every_name_a_document_points_at_is_a_name_it_declares(
+    corpus: list[tuple[str, bytes]],
+) -> None:
+    """Except the one arrangement whose whole point is a name that is not.
+
+    ``renderMultiMedia/@referencedObject`` is an ``xs:IDREFS`` and a
+    ``<reference value="#x"/>`` resolves against the same ID space, so a value
+    naming nothing is invalid — not a shape a tolerant reader forgives, a
+    document no exporter could have written. The content-model test above
+    cannot see it, because an ID that resolves and one that does not are the
+    same element in the same place.
+
+    The exception is deliberate and bounded: ``_cited_dangling`` writes an
+    unresolvable citation on purpose, so the ledger's refusal to credit one has
+    something to measure. That is the ONE name allowed to dangle, and every
+    dangling name is checked to be it.
+    """
+    from lxml import etree
+
+    dangling_documents = 0
+    for name, xml in corpus:
+        root = etree.fromstring(xml)
+        declared = {value for node in root.iter() if (value := node.get("ID"))}
+        pointed = {
+            value.removeprefix("#")
+            for node in root.iter()
+            for value in (node.get("referencedObject"), node.get("value"))
+            if value and (node.get("referencedObject") or value.startswith("#"))
+        }
+        missing = sorted(pointed - declared)
+        dangling_documents += bool(missing)
+        assert all(_DELIBERATELY_DANGLING.match(one) for one in missing), (
+            f"{name}: points at {missing}, which the document never declares"
+        )
+    assert dangling_documents, (
+        "no document dangles a citation, so the ledger's refusal to credit one "
+        "is measured by nothing and the exception above forgives nothing real"
     )
 
 

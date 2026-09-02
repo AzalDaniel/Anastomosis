@@ -113,18 +113,43 @@ issue and fixed in its own pull request.
   read by nobody: forcing every citation to fail, and forcing every one to
   succeed, both left the reading byte-identical.
 
-  It now writes the arrangements a real document has — a row named above an
-  unnamed cell, a name at more than one level over the same words, a name on
-  the arrangement itself (which must not be credited), a cell that renders
-  nothing, and a citation that resolves to nothing — and the entries doing the
-  citing are the ones with no structured home of their own. Nine mutations of
-  the containment and claim rules were invisible to this corpus before; all
-  nine move it now.
+  It now writes the arrangements a real document has — a row named above two
+  named cells, a name at more than one level over the same words, a name on
+  the arrangement itself (which must not be credited), a cell that renders an
+  image instead of words, and a citation that resolves to nothing — and the
+  entries doing the citing are the ones with no structured home of their own.
+  Thirteen mutations of the containment and claim rules were invisible to this
+  corpus before; eleven move it now, including the two the arithmetic rests
+  on: all-or-nothing against take-any, and refusing a citation that names a
+  cell the section does not define against crediting it for the half that
+  resolved. The row is the reason those two became visible — it is the one
+  arrangement where a single name leads to more than one claim, and until it
+  had two named cells under it every name in 6,144 documents stood over
+  exactly one word.
+
+  Two guards are still invisible from here and said so rather than implied
+  otherwise: that a cell wrapping another keeps no claim of its own, and that
+  the settlement gains anything from its widest-first end. The first needs a
+  wrapper with words outside the cell it wraps; the second, on every shape
+  this corpus writes, is never the better of the two ends.
 
   The reading moves accordingly, and toward credit: entries that really do
-  name a cell the record kept are counted as keeping it, so `58cbcf57…`
-  becomes `733b5eae…` (65 lines, 3,427 bytes). Nothing about the ledger
-  changed here; the instrument was pointed at documents it could not see.
+  name a cell the record kept are counted as keeping it. It moves the other
+  way too, and honestly — a `<renderMultiMedia>` must name an
+  `<observationMedia>` the document declares, `referencedObject` being an
+  IDREFS, and that image is a coded entry this adapter has nowhere to put. So
+  1,514 entries a real chart carrying a scanned tracing would offer are now
+  offered, and counted lost. `58cbcf57…` becomes `71392fc9…` (71 lines, 3,702
+  bytes). Nothing about the ledger changed here; the instrument was pointed at
+  documents it could not see, and stopped writing one it could not have
+  produced.
+
+  The corpus's own legality test could not see that either: it stopped at the
+  section's `<text>` because narrative is StrucDoc rather than CDA. It reads
+  the narrative now, against StrucDoc's own models — membership only where the
+  schema states a choice, position where it states a sequence — and a second
+  test asks the question no content model can, that every name a document
+  points at is one it declares. Both fail on the shape that got past them.
 
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
