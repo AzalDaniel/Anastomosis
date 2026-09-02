@@ -337,9 +337,22 @@ issue and fixed in its own pull request.
   `narrative_preserved` — this time on a byte-exact copy of each entry in the
   record rather than on prose that may state nothing about it. `unsupported`
   no longer occurs anywhere in that corpus, which is the honest reading of an
-  adapter that now keeps every entry it is offered; the ledger's ability to
-  report loss is proved by the stripped-record probe that was written for
-  exactly this day. (#365)
+  adapter that now keeps every entry it is offered.
+
+  That is a claim worth doubting, so it was driven rather than argued: strip
+  the parked copies back out of the record and the column comes straight
+  back — 8 entries a document turn `unsupported` on 80 of 96 documents. The
+  credit rests on the copy, and the day the parser stops keeping one the
+  ledger says so. What the corpus can no longer see is the OTHER route to the
+  same verdict. An entry is asked for its own bytes first, and on a document
+  the parser walks it now always has them, so the narrative-citation rule —
+  which cell of the table an entry names, and which name over a word is a
+  claim rather than an address — is never reached: deleting that whole
+  subsystem leaves the 6,144-document reading byte-identical. It survives for
+  the sections the walk does not reach, and is held there by its own unit
+  tests rather than by the corpus. A finer instrument superseded by a blunter
+  one that happens to be right more often is still a loss of resolution, and
+  it is recorded here rather than discovered later. (#365)
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as

@@ -28,6 +28,7 @@ from tools.ccda_corpus import (
     write_corpus,
 )
 
+from anastomosis.core.ccda_codes import EXT_SECTION_ENTRIES
 from anastomosis.core.conservation import ConservationError
 from anastomosis.sources import get_source
 from anastomosis.sources.ccda.ledger import Disposition, aggregate, document_ledger
@@ -324,6 +325,46 @@ def test_all_four_dispositions_are_reachable(
         if count
     }
     assert Disposition.UNSUPPORTED in dropped
+
+
+def test_the_empty_loss_column_is_held_up_by_the_copies_under_it(
+    corpus: list[tuple[str, bytes]], tmp_path: Path
+) -> None:
+    """An instrument that cannot report loss is not an instrument.
+
+    The reading above has an empty ``unsupported`` column, and there are two
+    ways that can happen: nothing was lost, or nothing could be seen to be.
+    Telling them apart takes the copies away — strip the parked entries back
+    out of each record and the column has to come straight back, because the
+    credit was resting on them and on nothing else.
+
+    It is the same doubt the stripped-practitioner probe answers for
+    participations, asked of the construct this release actually changed. If
+    some later refactor credits an entry for merely existing, the reading will
+    not move and this will.
+    """
+    depended = 0
+    for name, xml in corpus[:32]:
+        path = tmp_path / name
+        path.write_bytes(xml)
+        record = parse_document(path)
+        parked = [key for key in record.patient.extensions if key.startswith(EXT_SECTION_ENTRIES)]
+        if not parked:
+            continue
+        for key in parked:
+            del record.patient.extensions[key]
+        lost = {
+            disposition
+            for row in document_ledger(path, record).rows
+            for disposition, count in row.entries.items()
+            if count
+        }
+        assert Disposition.UNSUPPORTED in lost, (
+            f"{name}: every parked copy removed and no entry reads unsupported, "
+            "so the credit was not resting on them"
+        )
+        depended += 1
+    assert depended, "no document in the sample parks an entry, so this proves nothing"
 
 
 def test_every_section_the_generator_knows_appears_in_the_reading(
