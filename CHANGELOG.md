@@ -36,7 +36,20 @@ issue and fixed in its own pull request.
   is recorded by and its nested Problem Observation never carries provenance of
   its own; requiring that one would report every conforming problem as half
   lost, which is the same lie told backwards. And an unparsed entry is credited
-  only by a verbatim copy of itself, never by prose about the section.
+  only by a verbatim copy of itself, or by the narrative cells it NAMES, never
+  by prose about the section.
+
+  That second route is C-CDA's own: an entry says which cell of the table is
+  its human-readable form, in `<reference value="#id"/>`, and a cell whose
+  words the record kept is a real preservation of that entry. It is held to
+  the same arithmetic as everything else here. The cells are the named things
+  strictly inside this section's `<text>` — the `<text>` itself is the whole
+  prose, and a `<table>` or a `<caption>` is the arrangement, not a statement
+  in it. A cell wrapped in another named cell counts once, as the innermost
+  name over those words. Each cell answers one entry and is spent, so three
+  entries citing one row are one preservation and two losses. And an entry
+  whose citations do not ALL resolve is credited by none of them, because a
+  citation naming nothing is a claim the document cannot back.
 
   The third of those was hiding real loss rather than only mis-labelling it,
   and the corpus this repo generates says so in its own documents: a Plan of
