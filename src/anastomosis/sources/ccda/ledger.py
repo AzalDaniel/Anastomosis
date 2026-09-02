@@ -103,6 +103,7 @@ from .parser import (
     _find,
     _findall,
     _is_own_loss_narrative,
+    _narrative_entries,
     _q,
     _section_code,
     _text_content,
@@ -685,6 +686,11 @@ class _Evidence:
     #: it that cost nothing: whether the prior-loss narrative is held, and
     #: whether a key exists at all.
     extension_keys: _Facts
+    #: The entries the record stored from OUR OWN exported loss ledgers, one
+    #: claim each. Counted, not merely present: the parser concatenates every
+    #: stamped ledger it walks into one key, so the key's existence says a
+    #: ledger arrived and says nothing about WHICH.
+    own_loss_entries: _KeyedPool[str]
     #: Where a parked PAYLOAD is claimed, one claim per stored item. Counted
     #: and spent rather than asked as a fact, because a key is not a payload:
     #: `ccda:serviceEvent` holding `[]` is the adapter having written the
@@ -848,6 +854,16 @@ class _Evidence:
         """
         return self.parked_items.take(name)
 
+    def own_loss_kept(self, entries: list[str]) -> bool:
+        """Whether THIS stamped ledger's own entries are among the stored ones.
+
+        All of them, and spent. A stamped 51899-3 section the parser never
+        reached — buried where its walk does not go — used to be reported
+        preserved because a DIFFERENT section had stored the key, which is a
+        clean bill of health for a section nothing of which is in the record.
+        """
+        return bool(entries) and self.own_loss_entries.take_all(entries)
+
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
     source_ids = _record_source_ids(record)
@@ -858,11 +874,30 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
         linked_kinds=_Facts(frozenset(_linked_kinds(root, linkable, source_ids))),
         narrative=_KeyedPool(_narrative_pool(record)),
         extension_keys=_Facts(frozenset(record.patient.extensions)),
+        own_loss_entries=_KeyedPool(_own_loss_pool(record)),
         parked_items=_KeyedPool(_parked_pool(record)),
         objects=_MatchedPool(_provenanced(record)),
         entries=_KeyedPool(_entry_pool(record)),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
+
+
+def _own_loss_pool(record: PatientRecord) -> Counter[str]:
+    """The entries the record kept from this exporter's own loss ledgers.
+
+    ``ccda:prior_loss_narrative`` is ONE key however many stamped 51899-3
+    sections the parser walked — it concatenates their entries so a re-export
+    carries a single deduplicated appendix — so the key answers for the
+    construct class and not for any one construct. Counted here for the same
+    reason every other place in this module is counted: two ledgers offered
+    and one stored is one preserved and one lost, and asking whether the key
+    exists reads it as two.
+    """
+    stored = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if not isinstance(stored, dict):
+        return Counter()
+    entries = stored.get("entries")
+    return Counter(entries) if isinstance(entries, list) else Counter()
 
 
 def _parked_pool(record: PatientRecord) -> Counter[str]:
@@ -1422,7 +1457,7 @@ def _narrative_kept(
     address rather than reported as dropped.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
-        return evidence.extension_keys.holds(EXT_PRIOR_LOSS_NARRATIVE)
+        return evidence.own_loss_kept(_narrative_entries(_find(section, "v3:text")))
     if pair == (None, None):
         return False
     return evidence.kept_narrative(*pair)

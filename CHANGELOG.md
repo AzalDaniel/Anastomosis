@@ -104,6 +104,23 @@ issue and fixed in its own pull request.
   capturing every section's entries makes the loss narrative grow by a
   generation on each round trip — and it belongs to that decision.
 
+- **One loss ledger answers for one section.** A 51899-3 section this
+  exporter wrote is read back as prior losses rather than parked, and the
+  ledger asked whether the record held the `ccda:prior_loss_narrative` key at
+  all. The parser concatenates every stamped ledger it walks into that one
+  key — so a re-export carries a single deduplicated appendix instead of
+  nesting each generation inside the next — which means the key's existence
+  answers for the construct class and not for any one construct. A second
+  stamped section, buried where the walk does not reach it, read as preserved
+  on the strength of the first one's key while nothing of it was in the
+  record. A clean bill of health for a section that is entirely absent.
+
+  It claims its own entries now, all of them, out of a counted pool of what
+  was actually stored. Two ledgers a document legitimately carries are still
+  both credited, including when two exports dropped the same field and the
+  same line arrives twice; a ledger whose lines are only partly there is
+  credited by none of them.
+
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
   layout's NAME, so a run into a folder whose layout had been edited since

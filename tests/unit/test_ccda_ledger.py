@@ -1895,6 +1895,94 @@ def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
     )
 
 
+def _stamped_ledger(title_suffix: str, *paragraphs: str) -> str:
+    """One 51899-3 section stamped as this exporter's own loss ledger."""
+    body = "".join(f"<paragraph>{p}</paragraph>" for p in paragraphs)
+    return f"""
+  <component><section>
+    <templateId root="{LOSS_NARRATIVE_TEMPLATE_ROOT}"/>
+    <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>{LOSS_NARRATIVE_TITLE}{title_suffix}</title>
+    <text>{body}</text>
+  </section></component>
+"""
+
+
+def test_a_loss_ledger_the_parser_never_reached_is_not_credited(tmp_path: Path) -> None:
+    """One key, however many stamped ledgers a document carries.
+
+    The parser concatenates every stamped 51899-3 it walks into a single
+    ``ccda:prior_loss_narrative`` — so a re-export carries one deduplicated
+    appendix rather than nesting each generation inside the next. Asking
+    whether that key EXISTS therefore answers for the construct class and not
+    for any one construct: a second stamped section, buried under a nested
+    ``<structuredBody>`` where the walk does not go, read as preserved on the
+    strength of the first one's key while nothing of it was in the record.
+    """
+    # The buried ledger SHARES one entry with the readable one and adds a
+    # second of its own. Sharing is what makes the claim have to be all of
+    # them: spending any single entry it names would let the first paragraph —
+    # which really is in the record, because the other section put it there —
+    # answer for the paragraph that is not.
+    buried = f"""
+  <component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Results</title>
+    <text>Ordinary results prose.</text>
+    <component><structuredBody>{
+        _stamped_ledger(" (buried)", "coverage: 1 dropped", "buried: 1 dropped")
+    }
+    </structuredBody></component>
+  </section></component>
+"""
+    path = _write(tmp_path, body=buried + _stamped_ledger("", "coverage: 1 dropped"))
+    record = parse_document(path)
+    assert "buried" not in repr(record.patient.extensions), (
+        "the parser reached the buried section after all, so this is not the case at issue"
+    )
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"]
+    assert len(rows) == 2
+
+    assert rows[0].instances == {Disposition.UNSUPPORTED: 1}, (
+        "a ledger the parser never reached was reported preserved"
+    )
+    assert rows[1].instances == {Disposition.NARRATIVE_PRESERVED: 1}, (
+        "the ledger the parser did read lost its own credit to the buried one"
+    )
+
+
+@pytest.mark.parametrize("second_entry", ["allergy severity: 2 dropped", "coverage: 1 dropped"])
+def test_two_loss_ledgers_the_parser_does_read_are_both_credited(
+    tmp_path: Path, second_entry: str
+) -> None:
+    """The counterweight: a rule that credits one and loses the rest is wrong too.
+
+    A document merged from two exports legitimately carries two stamped
+    ledgers, and the parser concatenates both. Spending one claim per offered
+    section would report the second as lost — the false alarm that mirrors the
+    false clean bill above.
+
+    Run twice, and the second run is the one that matters: two exports that
+    dropped the SAME field carry the same line, and the store holds it twice.
+    Counting distinct lines instead of lines would make one of those two
+    answer for both and report a ledger that arrived intact as lost.
+    """
+    body = _stamped_ledger(" (first)", "coverage: 1 dropped") + _stamped_ledger(
+        " (second)", second_entry
+    )
+    path = _write(tmp_path, body=body)
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:51899-3"
+    ]
+    assert len(rows) == 2
+    assert [row.instances for row in rows] == [
+        {Disposition.NARRATIVE_PRESERVED: 1},
+        {Disposition.NARRATIVE_PRESERVED: 1},
+    ]
+
+
 def test_a_stamped_loss_ledger_does_not_claim_a_foreign_sections_copy(
     tmp_path: Path,
 ) -> None:
