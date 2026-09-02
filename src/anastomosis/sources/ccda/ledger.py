@@ -1003,6 +1003,19 @@ class _Anchors:
             Counter({cell for cells in covers.values() for cell in cells})
         )
 
+    def demand(self, cited: list[str]) -> int:
+        """How many cells this citation asks for; zero if it names one we lack.
+
+        A count over the ADDRESS map, never over the claims: it says how much
+        an entry is asking for, not whether the asking will succeed, and the
+        claims stay reachable only through :meth:`take`. It exists so a
+        section can settle its entries in an order it chooses rather than the
+        one the document happened to list them in.
+        """
+        if any(name not in self._covers for name in cited):
+            return 0
+        return len({cell for name in cited for cell in self._covers[name]})
+
     def take(self, cited: list[str]) -> bool:
         """Claim the cells ``cited`` addresses, all of them or none.
 
@@ -1035,23 +1048,26 @@ def _section_anchors(section: _Element) -> dict[str, frozenset[str]]:
 
 
 def _cited_anchors(entry: _Element) -> list[str]:
-    """The narrative cells this entry names, in ``<reference value="#id"/>``.
+    """The narrative cell names this entry writes, in document order.
 
-    Each distinct cell once, in document order. An entry routinely names the
-    same cell twice — a procedure's ``<originalText>`` and its ``<text>`` both
-    point at the row that describes it — and that is one citation of one cell,
-    not a claim on two copies of it.
+    Repeats are left in. An entry routinely names one cell twice — a
+    procedure's ``<originalText>`` and its ``<text>`` both point at the row
+    that describes it — and that is one citation of one cell; the collapsing
+    happens where the claim is made, in :meth:`_Anchors.take`, which resolves
+    every address to the cells behind it and asks for the set. Doing it twice
+    would put the invariant in two places and pin it in neither.
 
-    ``strip`` because :func:`~.parser._inline_narrative_references` strips
-    before it resolves, and two sides of one mirror that disagree about
-    whitespace report the disagreement as loss.
+    Only a ``#``-prefixed value is a citation, because that is the only kind
+    :func:`~.parser._inline_narrative_references` resolves — anything else
+    reaches the record carrying nothing. ``strip`` because that function
+    strips before it resolves, and two sides of one mirror that disagree
+    about whitespace report the disagreement as loss.
     """
-    cited = [
+    return [
         value[1:]
         for reference in entry.iter(_q("reference"))
         if (value := (reference.get("value") or "").strip()).startswith("#")
     ]
-    return list(dict.fromkeys(cited))
 
 
 def _narrated_by(entry: _Element, anchors: _Anchors | None) -> bool:
@@ -1292,39 +1308,93 @@ def _parks_its_entries(section: _Element) -> bool:
     return any(candidate is section for candidate in walked)
 
 
+def _entry_evidence(
+    entries: list[_Element], evidence: _Evidence, code: str | None
+) -> list[tuple[bool | None, bool]]:
+    """Per entry, in document order: its link verdict, and whether a stored
+    verbatim copy already answers for it.
+
+    One pass over both, because both questions SPEND: asking either of them
+    twice would take twice. The narrative is deliberately not asked here — it
+    is settled across the whole section afterwards, in
+    :func:`_narrative_credits`.
+    """
+    verdicts = []
+    for entry in entries:
+        linked = evidence.links(entry)
+        copied = (
+            not linked
+            and _has_element_child(entry)
+            and code is not None
+            and evidence.entry_kept(code, entry)
+        )
+        verdicts.append((linked, copied))
+    return verdicts
+
+
+def _entries_asking_narrative(
+    entries: list[_Element], verdicts: list[tuple[bool | None, bool]]
+) -> list[_Element]:
+    """The entries with nothing else to show, in document order.
+
+    A parsed entry's evidence is its object, and spending a narrative cell for
+    it would starve an unparsed sibling that has nothing else. An entry with a
+    stored copy of its bytes is already answered for. An empty one is
+    SOURCE_EMPTY, which is not a preservation.
+    """
+    return [
+        entry
+        for entry, (linked, copied) in zip(entries, verdicts, strict=True)
+        if not linked and not copied and _has_element_child(entry)
+    ]
+
+
+def _narrative_credits(asking: list[_Element], anchors: _Anchors | None) -> set[_Element]:
+    """Which of these entries the section's cells can honour, settled together.
+
+    SMALLEST CLAIM FIRST, and document order only to break a tie. Served in
+    the order the document lists them, an entry citing a whole row takes every
+    cell under it and starves the entries that cite those cells by name — so
+    the same three entries over the same two words read two preserved or one,
+    decided by which the section happened to list first. A reading that turns
+    on that is the defect this module refuses everywhere else it counts.
+
+    An entry naming one cell is making the narrower and fully specific claim,
+    and honouring it first cannot invent loss the other order avoids: whatever
+    a wrapper citation could have taken, the cells it covers are still there
+    to be taken by the entries that named them.
+    """
+    if anchors is None:
+        return set()
+    claims = sorted(
+        ((entry, _cited_anchors(entry)) for entry in asking),
+        key=lambda claim: anchors.demand(claim[1]),
+    )
+    return {entry for entry, cited in claims if anchors.take(cited)}
+
+
 def _entry_dispositions(
     entries: list[_Element],
     evidence: _Evidence,
     code: str | None,
     anchors: _Anchors | None,
 ) -> tuple[dict[Disposition, int], int]:
-    counts: Counter[Disposition] = Counter()
-    unlinkable = 0
-    for entry in entries:
-        linked = evidence.links(entry)
-        unlinkable += linked is None
-        # Asked one entry at a time, and only of an unparsed one: a parsed
-        # entry's evidence is its object, and spending a stored copy for it
-        # would starve an identical unparsed sibling; an empty one is
-        # SOURCE_EMPTY, which is not a preservation.
-        #
-        # Two things can answer, and both are about THIS entry. The section's
-        # own narrative used to answer instead — one boolean shared by every
-        # entry beneath it — and a section's <text> is under no obligation to
-        # state what its entries state, so generic prose counted an entry whose
-        # every fact was absent from the record as preserved. What the entry
-        # itself can show is either a verbatim copy of its bytes in the record,
-        # or the document's own <reference> into narrative the record kept.
-        kept = (
-            not linked
-            and _has_element_child(entry)
-            and (
-                (code is not None and evidence.entry_kept(code, entry))
-                or _narrated_by(entry, anchors)
-            )
-        )
-        counts[_entry_disposition(entry, linked, kept)] += 1
-    return dict(counts), unlinkable
+    """Every entry's verdict, and how many the ledger could not reach at all.
+
+    What an entry can show is either a verbatim copy of its bytes in the
+    record, or the document's own ``<reference>`` into narrative the record
+    kept. The section's prose used to answer instead — one boolean shared by
+    every entry beneath it — and a ``<text>`` is under no obligation to state
+    what its entries state, so generic prose counted an entry whose every fact
+    was absent from the record as preserved.
+    """
+    verdicts = _entry_evidence(entries, evidence, code)
+    narrated = _narrative_credits(_entries_asking_narrative(entries, verdicts), anchors)
+    counts = Counter(
+        _entry_disposition(entry, linked, copied or entry in narrated)
+        for entry, (linked, copied) in zip(entries, verdicts, strict=True)
+    )
+    return dict(counts), sum(linked is None for linked, _ in verdicts)
 
 
 def _narrative_kept(

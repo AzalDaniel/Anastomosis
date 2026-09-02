@@ -745,9 +745,23 @@ def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
     and it obeys the same law: a yes costs, and a no costs nothing precisely
     because it credited nothing.
     """
-    for pool in (ledger._KeyedPool(Counter()), ledger._MatchedPool([])):
+    places = (ledger._KeyedPool(Counter()), ledger._MatchedPool([]), ledger._Anchors({}))
+    for pool in places:
         surface = {name for name in vars(type(pool)) if not name.startswith("_")}
-        assert surface <= {"take", "take_all"}, f"{type(pool).__name__} offers more than taking"
+        assert surface <= {"take", "take_all", "demand"}, (
+            f"{type(pool).__name__} offers more than taking"
+        )
+
+    # ``demand`` is the one reader, and it reads the ADDRESS map: it says how
+    # much an entry is asking for so a section can serve the narrowest claims
+    # first, and it can never report what is still unspent.
+    addressed = ledger._Anchors({"row": frozenset({"cell"}), "cell": frozenset({"cell"})})
+    assert addressed.demand(["row"]) == addressed.demand(["cell"]) == 1
+    assert addressed.demand(["row", "cell"]) == 1, "two addresses over one cell asked for two"
+    assert addressed.demand(["gone"]) == 0
+    assert addressed.take(["row"]) is True
+    assert addressed.demand(["row"]) == 1, "demand fell when the claim was spent"
+    assert addressed.take(["cell"]) is False, "one cell answered two addresses"
 
     stocked = ledger._KeyedPool(Counter({"a": 1, "b": 1}))
     assert stocked.take_all(["a", "b"]) is True
@@ -2059,6 +2073,12 @@ _NESTED_CELLS = [
     '<table><tbody><tr><td ID="a1"><list>'
     '<item ID="a3">Appendectomy</item></list></td></tr></tbody></table>',
     '<content ID="a1"><paragraph><content ID="a3">Appendectomy</content></paragraph></content>',
+    # THREE levels. At two, the nearest enclosing cell and the outermost one
+    # are the same element and the ancestor walk never runs past its first
+    # step, so a rule keeping the wrong end of the chain — or stopping after
+    # one step — reads identically. The canonical C-CDA table is three.
+    '<table><tbody><tr ID="a1"><td ID="a2">'
+    '<content ID="a3">Appendectomy</content></td></tr></tbody></table>',
 ]
 
 
@@ -2141,31 +2161,57 @@ def test_an_entry_claiming_two_cells_spends_both_or_neither(tmp_path: Path) -> N
     """All of them and not any, and the difference is visible in the totals.
 
     An entry citing two cells that finds one is an entry half of whose account
-    is missing, and it must not keep the half it found — that half is a claim
-    the next entry to name it would have been owed. Spending greedily and
-    answering yes moves a preservation from one entry to another and inverts
-    the reading: the greedy rule reads two preserved and one lost where the
-    document supports one preserved and two lost.
+    is missing, and it must not keep the half it found: that half is a claim
+    the next entry to name it would have been owed. Three cells, three entries
+    — one naming a cell that is already taken alongside a free one, and one
+    naming that free cell alongside another. Spending greedily lets the first
+    take what the second needed, and reads three preserved where the document
+    supports two.
     """
-    body = _procedures(
-        '<text><content ID="x1">Colonoscopy</content>'
-        '<content ID="x2">Appendectomy</content></text>',
-        """
+    two_cells = """
     <entry><procedure classCode="PROC" moodCode="EVN">
-      <id root="feedface-proc-0000-0000-000000000901"/>
-      <code code="43019301"><originalText>
-        <reference value="#x1"/><reference value="#x2"/></originalText></code>
+      <id root="feedface-proc-0000-0000-00000000090{n}"/>
+      <code code="4301930{n}"><originalText>
+        <reference value="#{first}"/><reference value="#{second}"/>
+      </originalText></code>
     </procedure></entry>
 """
-        + _cites(2, "#x1", "B")
-        + _cites(3, "#x2", "C"),
+    body = _procedures(
+        '<text><content ID="x1">Colonoscopy</content>'
+        '<content ID="x2">Appendectomy</content>'
+        '<content ID="x3">Cholecystectomy</content></text>',
+        _cites(1, "#x1", "A")
+        + two_cells.format(n=2, first="x1", second="x2")
+        + two_cells.format(n=3, first="x2", second="x3"),
     )
     path = _write(tmp_path, body=body)
     row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 2,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_every_level_of_a_nested_arrangement_is_an_address(tmp_path: Path) -> None:
+    """Row, cell, content: three names over one word, and one claim.
+
+    Two levels cannot tell a rule that keeps the NEAREST enclosing cell from
+    one that keeps the OUTERMOST, nor one that walks the whole chain from one
+    that stops after a step — at two levels those are the same answer. Both
+    mistakes are live at three, and both mint a second credit for one word.
+    """
+    narrative = (
+        '<table><tbody><tr ID="a1"><td ID="a2">'
+        '<content ID="a3">Appendectomy</content></td></tr></tbody></table>'
+    )
+    body = _procedures(f"<text>{narrative}</text>", _cites(1, "#a2", "A") + _cites(3, "#a3", "C"))
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
-        Disposition.UNSUPPORTED: 2,
+        Disposition.UNSUPPORTED: 1,
     }
 
 
@@ -2189,6 +2235,119 @@ def test_two_cells_inside_one_named_cell_are_still_two_statements(
     row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("row_first", [True, False])
+def test_the_reading_does_not_turn_on_which_entry_is_listed_first(
+    tmp_path: Path, row_first: bool
+) -> None:
+    """One document's content has one reading.
+
+    Served in the order the section lists them, an entry citing a whole row
+    takes every cell under it and starves the entries that cite those cells by
+    name — so these same three entries over these same two words read two
+    preserved or one, decided by nothing but which came first. The narrowest
+    claims are settled first now, and the answer is the same either way round.
+    """
+    row = _cites(1, "#row1", "A")
+    cells = _cites(2, "#cell-a", "B") + _cites(3, "#cell-b", "C")
+    body = _procedures(
+        '<text><table><tbody><tr ID="row1">'
+        '<td ID="cell-a">Colonoscopy</td>'
+        '<td ID="cell-b">Appendectomy</td></tr></tbody></table></text>',
+        (row + cells) if row_first else (cells + row),
+    )
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    ledger_row = _row(document_ledger(path, record), "section:47519-4")
+
+    assert record.patient.extensions["ccda:section:47519-4"]["text"], (
+        "the record does not hold the narrative, so this is not the case at issue"
+    )
+    assert ledger_row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 2,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_a_parsed_entry_does_not_take_the_cell_its_sibling_needs(
+    tmp_path: Path,
+) -> None:
+    """A parsed entry's evidence is its object, so it asks the cells for nothing.
+
+    Both entries here name the same cell, and only one of them was taken apart
+    into the record. If the parsed one is allowed to claim the cell as well it
+    takes the only one there is, and the sibling that has nothing else to show
+    reads as lost — a preservation moved from the entry that needed it to the
+    entry that did not.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><list><item ID="p1">Essential hypertension</item></list></text>
+    <entry>
+      <act classCode="ACT" moodCode="EVN">
+        <templateId root="2.16.840.1.113883.10.20.22.4.3"/>
+        <id root="feedface-prob-0000-0000-000000000001"/>
+        <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+        <statusCode code="active"/>
+        <effectiveTime><low value="20210215"/></effectiveTime>
+        <text><reference value="#p1"/></text>
+        <entryRelationship typeCode="SUBJ">
+          <observation classCode="OBS" moodCode="EVN">
+            <templateId root="2.16.840.1.113883.10.20.22.4.4"/>
+            <id root="feedface-prob-0000-0000-000000000011"/>
+            <code code="55607006" codeSystem="2.16.840.1.113883.6.96"/>
+            <statusCode code="completed"/>
+            <effectiveTime><low value="20210215"/></effectiveTime>
+            <value xsi:type="CD" code="38341003"
+                   codeSystem="2.16.840.1.113883.6.96"/>
+          </observation>
+        </entryRelationship>
+      </act>
+    </entry>
+    <entry>
+      <act classCode="ACT" moodCode="EVN">
+        <id root="feedface-prob-0000-0000-000000000099"/>
+        <code code="CONC" codeSystem="2.16.840.1.113883.5.6"/>
+        <text><reference value="#p1"/></text>
+      </act>
+    </entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert len(record.conditions) == 1, "the first entry was meant to parse"
+    row = _row(document_ledger(path, record), "section:11450-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.STRUCTURALLY_PARSED: 1,
+        Disposition.NARRATIVE_PRESERVED: 1,
+    }
+
+
+def test_a_reference_without_a_hash_names_no_cell(tmp_path: Path) -> None:
+    """``value="proc-1"`` is not a citation, and the parser agrees.
+
+    ``_inline_narrative_references`` resolves only a ``#``-prefixed value, so
+    a reference without one reaches the record carrying nothing. Crediting the
+    entry for it would credit it to narrative the record never took.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Medication reconciliation</paragraph></text>',
+        """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText>
+        <reference value="proc-1"/></originalText></code>
+    </procedure></entry>
+""",
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
 
 def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:

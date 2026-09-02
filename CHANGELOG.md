@@ -45,11 +45,26 @@ issue and fixed in its own pull request.
   the same arithmetic as everything else here. The cells are the named things
   strictly inside this section's `<text>` — the `<text>` itself is the whole
   prose, and a `<table>` or a `<caption>` is the arrangement, not a statement
-  in it. A cell wrapped in another named cell counts once, as the innermost
-  name over those words. Each cell answers one entry and is spent, so three
-  entries citing one row are one preservation and two losses. And an entry
-  whose citations do not ALL resolve is credited by none of them, because a
-  citation naming nothing is a claim the document cannot back.
+  in it.
+
+  A word can be addressed by more than one name. A table writes the row's
+  name on the row and the cell's name on the cell inside it, and an entry may
+  reach the word by either; C-CDA's ordinary spelling has one entry use both
+  at once. So the names are addresses and the innermost cells are the claims:
+  every name over a word leads to the one claim on it, and one entry naming
+  it twice over is one preservation, not two. Each claim answers one entry
+  and is spent, so three entries citing one row are one preservation and two
+  losses. An entry whose citations do not ALL resolve is credited by none of
+  them, because a citation naming nothing is a claim the document cannot
+  back, and it keeps no half it did find — that half belongs to whichever
+  entry named it on its own.
+
+  A section settles its entries narrowest claim first, and only then in
+  document order. Otherwise an entry citing a whole row takes every cell
+  under it and starves the entries that named those cells, and the same three
+  entries over the same two words read two preserved or one depending on
+  which the section happened to list first. A reading nobody can reproduce
+  from the content alone is not a reading.
 
   The third of those was hiding real loss rather than only mis-labelling it,
   and the corpus this repo generates says so in its own documents: a Plan of
