@@ -249,12 +249,18 @@ def _write_manifest_with_event(
     manifest. The pack-mode path reaches the same fields through
     ``core.commands._write_pipeline_manifest``; both modes must record them or
     an executor's refusal would depend on which representation was chosen.
+
+    The count comes from what the writer WROTE, for the reason the pack path's
+    does: a manifest can hold items nobody handed this function — a patient
+    whose whole chart is an attachment has no rendered document at all — and a
+    rail reporting the input while the file holds something else is how #374
+    read as a clean run.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
-    emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
+    written = write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
+    emit(StageEvent(STAGE_MANIFEST, counts={"items": written.items}))
 
 
 def resolve_pack(render: str) -> str | None:

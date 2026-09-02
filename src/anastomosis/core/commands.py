@@ -340,6 +340,11 @@ def _write_pipeline_manifest(
     they are written at the one moment both are actually known — after QA, from
     the run's own result, rather than re-derived by whoever opens the folder
     next.
+
+    The event's counts come from what the WRITER wrote, not from the documents
+    handed to it: counting the rendered charts announced ``0 item(s)`` over a
+    manifest holding two source documents, which is the same silence #374 was
+    filed about, one line further along.
     """
     from anastomosis.deliver.browser.gates import RunGates
     from anastomosis.deliver.browser.persist import write_upload_manifest
@@ -352,7 +357,7 @@ def _write_pipeline_manifest(
         qa_ok=None if result.qa_report is None else result.qa_report.ok,
         layout_hash=None if result.provenance is None else result.provenance.content_hash,
     )
-    write_upload_manifest(
+    written = write_upload_manifest(
         result.render_result.documents,
         result.records,
         charts_dir,
@@ -361,7 +366,7 @@ def _write_pipeline_manifest(
         gates=gates,
     )
     if on_event is not None:
-        on_event(StageEvent(STAGE_MANIFEST, counts={"items": len(result.render_result.documents)}))
+        on_event(StageEvent(STAGE_MANIFEST, counts={"items": written.items}))
 
 
 # --- toolkit info (shared by `anast info` and the GUI dashboard header) ---------

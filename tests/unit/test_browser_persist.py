@@ -75,8 +75,11 @@ def test_round_trip_items_match_build_manifest(tmp_path: Path) -> None:
     docs, records = _fixture(tmp_path)
     out_dir = tmp_path / "out"
 
-    path = write_upload_manifest(docs, records, out_dir)
-    assert path == out_dir / MANIFEST_NAME
+    written = write_upload_manifest(docs, records, out_dir)
+    assert written.path == out_dir / MANIFEST_NAME
+    # What the writer says it wrote is what the rail reports, so it has to be
+    # the truth about the file: two charts, no source documents, none missing.
+    assert (written.items, written.charts, written.documents, written.not_carried) == (2, 2, 0, 0)
 
     items, _patients = read_upload_manifest(out_dir)
 
@@ -128,8 +131,8 @@ def test_two_writes_are_byte_identical(tmp_path: Path) -> None:
     docs, records = _fixture(tmp_path)
     out_dir = tmp_path / "out"
 
-    first = write_upload_manifest(docs, records, out_dir).read_bytes()
-    second = write_upload_manifest(docs, records, out_dir).read_bytes()
+    first = write_upload_manifest(docs, records, out_dir).path.read_bytes()
+    second = write_upload_manifest(docs, records, out_dir).path.read_bytes()
     assert first == second
 
 
@@ -393,7 +396,7 @@ def test_v1_manifest_reads_back_the_same_items_a_v1_reader_saw(tmp_path: Path) -
 def test_written_under_hardened_dir(tmp_path: Path) -> None:
     docs, records = _fixture(tmp_path)
     out_dir = tmp_path / "out"
-    path = write_upload_manifest(docs, records, out_dir)
+    path = write_upload_manifest(docs, records, out_dir).path
 
     assert path.parent == out_dir
     if os.name == "posix":
