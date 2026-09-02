@@ -21,6 +21,10 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.core.ccda_codes import (
+    LOSS_NARRATIVE_TEMPLATE_ROOT,
+    LOSS_NARRATIVE_TITLE,
+)
 from anastomosis.core.conservation import ConservationError
 from anastomosis.core.model import PatientRecord, Practitioner, Provenance
 from anastomosis.sources.ccda import ledger
@@ -1858,6 +1862,46 @@ def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
     )
 
 
+def test_a_stamped_loss_ledger_does_not_claim_a_foreign_sections_copy(
+    tmp_path: Path,
+) -> None:
+    """51899-3 is a public LOINC, and this repo's exporter writes one too.
+
+    The parser reads its OWN loss ledger back as prior losses rather than
+    parking its entries, so a stamped section has no copy of its own. Meeting
+    a foreign 51899-3 in the same bucket, it took the copy that one earned —
+    the shared-code theft above from a third direction, and the direction the
+    round that added this guard did not pin.
+    """
+    stamped = f"""
+  <component><section>
+    <templateId root="{LOSS_NARRATIVE_TEMPLATE_ROOT}"/>
+    <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>{LOSS_NARRATIVE_TITLE}</title>{_SHARED_CODE_ENTRY}
+  </section></component>
+"""
+    foreign = f"""
+  <component><section>
+    <code code="51899-3" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Vendor Extensions</title>{_SHARED_CODE_ENTRY}
+  </section></component>
+"""
+    path = _write(tmp_path, body=stamped + foreign)
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:51899-3"
+    ]
+    assert len(rows) == 2
+
+    assert rows[0].entries == {Disposition.UNSUPPORTED: 1}, (
+        "the exporter's own loss ledger took a copy it never parked"
+    )
+    assert rows[1].entries == {Disposition.NARRATIVE_PRESERVED: 1}, (
+        "the foreign section lost its own copy"
+    )
+
+
 def test_a_code_less_section_still_claims_its_own_parked_entries(tmp_path: Path) -> None:
     """The ``unknown`` bucket both sides have to agree on.
 
@@ -2002,6 +2046,63 @@ def test_a_cell_wrapped_in_another_named_cell_is_one_statement(tmp_path: Path) -
         Disposition.NARRATIVE_PRESERVED: 1,
         Disposition.UNSUPPORTED: 2,
     }
+
+
+#: One outer name and one inner name over the SAME word, with a growing number
+#: of unnamed elements between them. The first is the shape the nesting rule
+#: was written against; the rest are what a real document looks like, and the
+#: table one is the shape that made ``<tr>`` citable in the first place.
+_NESTED_CELLS = [
+    '<content ID="a1"><content ID="a3">Appendectomy</content></content>',
+    '<table><tbody><tr ID="a1"><td>'
+    '<content ID="a3">Appendectomy</content></td></tr></tbody></table>',
+    '<table><tbody><tr><td ID="a1"><list>'
+    '<item ID="a3">Appendectomy</item></list></td></tr></tbody></table>',
+    '<content ID="a1"><paragraph><content ID="a3">Appendectomy</content></paragraph></content>',
+]
+
+
+@pytest.mark.parametrize("narrative", _NESTED_CELLS)
+def test_a_cell_is_wrapped_at_any_depth_not_only_by_its_parent(
+    tmp_path: Path, narrative: str
+) -> None:
+    """Depth is not a way to buy a second preservation of one word.
+
+    The rule above was written with ``other in node``, which asks lxml whether
+    ``other`` is a direct CHILD. A table puts a ``<td>`` between the row and
+    the cell — and making a row citable is what the round before this one did —
+    so the canonical arrangement minted two preservations against one word.
+    A false clean bill, which this ledger's bias forbids above all.
+    """
+    body = _procedures(
+        f"<text>{narrative}</text>",
+        _cites(1, "#a1", "A") + _cites(3, "#a3", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:
+    """The counterweight: the rule must not collapse cells that are separate.
+
+    A rule keeping only what nothing else contains would be satisfied by
+    keeping nothing, and by keeping one. Two cells side by side over two
+    different words are two preservations, and stay two.
+    """
+    body = _procedures(
+        '<text><content ID="a1">Colonoscopy</content>'
+        '<content ID="a3">Appendectomy</content></text>',
+        _cites(1, "#a1", "A") + _cites(3, "#a3", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
 
 
 def test_a_comment_in_the_narrative_is_not_a_cell(tmp_path: Path) -> None:

@@ -935,10 +935,17 @@ def _innermost_names(named: list[_Element]) -> Iterator[str]:
     single word the record holds, which is the "one cell is one statement"
     arithmetic defeated by nesting rather than by counting. The innermost name
     is the one over those words, so it is the one that answers for them.
+
+    Wrapped at ANY depth. ``other in node`` asks lxml whether ``other`` is a
+    direct CHILD, and a table puts a ``<td>`` between the row and the cell —
+    the shape that made a row citable in the first place — so that question
+    let ``<tr ID>``/``<td>``/``<content ID>`` mint two preservations against
+    one word. Asked from the descendant's side, where the walk is upward and
+    unbounded, it is one.
     """
     for node in named:
         identifier = node.get("ID")
-        if identifier and not any(other in node for other in named):
+        if identifier and not any(node in other.iterancestors() for other in named):
             yield identifier
 
 
