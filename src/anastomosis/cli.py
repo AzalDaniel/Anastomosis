@@ -429,8 +429,16 @@ def _print_delivery(outcome: DeliveryOutcome) -> None:
             f"Bundles: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
         )
     elif outcome.kind == "ccda":
+        # The documents ride beside the patient count because their ABSENCE is
+        # what #373 looked like from here: a green "2 patients" over a directory
+        # holding neither of the scans those two charts were made of. A count of
+        # zero prints nothing — most exports carry no attachments, and a
+        # standing "0 documents" would teach an operator to stop reading it.
+        docs = counts.get("documents", 0)
+        attached = f", {_plural(docs, 'document', 'documents')}" if docs else ""
         console.print(
-            f"C-CDA: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
+            f"C-CDA: [green]{counts['patients']} patients[/green]{attached} "
+            f"{arrow} {outcome.out_dir}"
         )
     _print_shortfall(outcome)
 

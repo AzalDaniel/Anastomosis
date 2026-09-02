@@ -21,9 +21,11 @@ ledger stops growing around the loop, and the determinism rules.
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -32,6 +34,8 @@ from uuid import NAMESPACE_URL, uuid5
 from lxml import etree
 
 from anastomosis.core.ccda_codes import (
+    ARTIFACT_INTEGRITY_ALGORITHM,
+    ARTIFACT_TEMPLATE_ROOT,
     EXT_PRIOR_LOSS_NARRATIVE,
     LOINC_ALLERGIES,
     LOINC_ENCOUNTERS,
@@ -63,6 +67,7 @@ from anastomosis.core.model import (
     Condition,
     ContactKind,
     ContactPoint,
+    DocumentArtifact,
     Encounter,
     Identifier,
     IdentifierKind,
@@ -75,7 +80,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.patient import Address
 
-__all__ = ["DECLARED_LOSSES", "CcdMeasurement", "build_ccd", "measure_ccd"]
+__all__ = ["DECLARED_LOSSES", "CcdMeasurement", "DeliveredArtifact", "build_ccd", "measure_ccd"]
 
 logger = logging.getLogger(__name__)
 
@@ -135,16 +140,19 @@ _SEX_CODE = {"f": "F", "female": "F", "m": "M", "male": "M"}
 # here is narrated, whatever its namespace.
 _NATIVE_EXT_KEYS = frozenset({"ccda:route", "ccda:dose", "ccda:allergen_code", "ccda:negationInd"})
 
-# The one extension whose value is not narrated because it is DELIVERED: an
-# artifact that came inline with its record (a C-CDA Unstructured Document's
-# scan lives inside the XML, not beside it) rides here as base64 until the run
-# writes it into the attachments directory, named by ``documents[].path`` and
-# witnessed by ``documents[].sha256``. Every other attachment this toolkit
-# handles is already a file whose BYTES no CDA carries — only its name, type and
-# digest narrate — so narrating these would not preserve one thing more; it
-# would inline tens of megabytes of base64 into the document and, since a
-# re-ingest recovers the narrative and the next export re-narrates it, grow it
-# without bound generation over generation. Declared in DECLARED_LOSSES.
+# The one extension whose value is not narrated because it is DELIVERED as
+# BYTES: an artifact that came inline with its record (a C-CDA Unstructured
+# Document's scan lives inside the XML, not beside it) rides here as base64
+# until a writer puts it on disk. Two writers do: the run writes it into the
+# attachments directory beside the charts, and :func:`deliver_ccda` writes it
+# again beside the C-CDA it hands the receiving EHR, referenced from the
+# document by :func:`_delivered_documents`.
+#
+# It stays out of the narrative because narrating it would preserve nothing
+# more — the bytes are on disk twice, witnessed by ``documents[].sha256`` —
+# while inlining tens of megabytes of base64 into the document and, since a
+# re-ingest recovers the narrative and the next export re-narrates it, growing
+# it without bound generation over generation. Declared in DECLARED_LOSSES.
 _DELIVERED_NOT_NARRATED = frozenset({EXT_INLINE_CONTENT})
 
 # The canonical display the parser stamps on the one social-history observation
@@ -189,13 +197,16 @@ DECLARED_LOSSES: dict[str, str] = {
         "narrative, the source document's id/effectiveTime/title) is narrated "
         "like any vendor extension, because this exporter re-emits none of them"
     ),
-    "documents[]:inline artifact bytes": (
-        "an artifact carried inline with its record (the anast:inline_content "
-        "extension) is DELIVERED, not narrated: the run writes the bytes into "
-        "the attachments directory beside the charts, and documents[].path, "
-        ".mime_type and .sha256 narrate as usual so the file stays findable and "
-        "checkable. Every other attachment behaves this way already — no CDA "
-        "this toolkit writes has ever carried an attachment's bytes"
+    "documents[]:artifact bytes": (
+        "an artifact's BYTES are delivered as a file, never inlined into the "
+        "document: the run writes them into the attachments directory beside "
+        "the charts, and deliver_ccda writes them again into the delivery "
+        "directory beside the CCD, where an <observationMedia> entry names the "
+        "file, its media type and its SHA-256 so a re-ingest resolves it back "
+        "to the same artifact. build_ccd alone writes no files, so a caller "
+        "that delivers nothing gets a document with no artifact entries and "
+        "documents[].path/.mime_type/.sha256 narrated instead — nothing is "
+        "dropped either way, but only the DELIVERER conserves the bytes"
     ),
     "*:narrative-only recovery": (
         "every other populated field with no structured CDA slot (native fields "
@@ -258,6 +269,13 @@ _EXPORTED_FIELDS: dict[str, frozenset[str]] = {
     # _measurements (vitals + results) and _social_history share the Observation
     # fields they consume; the social tobacco entry consumes a subset.
     "observations": frozenset({"category", "code", "display", "value", "unit", "effective_at"}),
+    # _delivered_documents, and ONLY for an artifact this delivery wrote a file
+    # for (see _consumed_fields): the <observationMedia> entry carries the media
+    # type on @mediaType and the digest on the ED's @integrityCheck, and the
+    # parser reads both back. ``path`` is deliberately absent — the reference
+    # names the file THIS tool wrote, under its own PHI-free name, so the
+    # source's own path is still a source field with no CDA slot and narrates.
+    "documents": frozenset({"mime_type", "sha256"}),
     # _encounters + _notes: the structured Encounters section consumes type+date;
     # the Notes section consumes the note BODY and kind label (sections[].text /
     # sections[].kind) + note_type + date. Section title/html and every other
@@ -295,6 +313,10 @@ _STRUCTURAL_SKIP_ANYWHERE = frozenset({"provenance"})
 
 # A fixed namespace for deterministic document ids derived from the patient id.
 _DOC_NS = uuid5(NAMESPACE_URL, "anastomosis:ccda-export:document")
+
+#: What the caller wrote beside the document, by artifact id. Empty means this
+#: build delivers no files — see :func:`_delivered_documents`.
+_Delivered = Mapping[str, "DeliveredArtifact"]
 
 
 # --- element construction helpers --------------------------------------------
@@ -856,12 +878,18 @@ def _encounters(body: etree._Element, encounters: list[Encounter]) -> None:
 # --- notes -------------------------------------------------------------------
 
 
-def _notes(body: etree._Element, encounters: list[Encounter]) -> None:
+def _notes(body: etree._Element, encounters: list[Encounter]) -> etree._Element:
     """Notes section: one act per encounter that carries narrative content.
 
     The parser models each note act as a single narrative section. SOAP
     sections are concatenated into one labelled body (declared loss: the
-    subjective/objective/assessment/plan split does not survive)."""
+    subjective/objective/assessment/plan split does not survive).
+
+    Returns the section so :func:`_delivered_documents` can hang the delivered
+    artifacts off the same one — a scanned chart IS the note for the visit it
+    documents, and giving them a second 34109-9 section would tell a receiving
+    EHR the document has two Notes sections when it has one.
+    """
     section = _section(body, LOINC_NOTES, "Notes", "Note")
     with_notes = [e for e in encounters if e.has_note_content]
     _narrative(section, [e.note_type or "Note" for e in with_notes])
@@ -879,6 +907,122 @@ def _notes(body: etree._Element, encounters: list[Encounter]) -> None:
         else:
             _el(author, "time", nullFlavor="NI")
         _el(author, "assignedAuthor")  # CDA requires the wrapper; parser ignores it
+    return section
+
+
+@dataclass(frozen=True)
+class DeliveredArtifact:
+    """One source artifact a delivery has written beside the document it builds.
+
+    The deliverer owns the filesystem — it budgets the name against the output
+    directory, claims it against the run's collision ledger, writes the bytes
+    and re-reads their digest — and this is what it tells the builder about the
+    file it wrote. Two independent derivations of the same name would let the
+    deliverer write ``<id>.pdf`` while the document referenced ``<id>``: a
+    chart pointing at a file that is not there, which is #373 again from the
+    other side.
+
+    ``sha256`` is the digest of the bytes actually on disk, not the digest the
+    source claimed — the deliverer compares the two and refuses when they
+    disagree, so by the time this reaches the builder they are the same number.
+    """
+
+    name: str
+    sha256: str
+
+
+def _delivered_documents(
+    section: etree._Element, documents: list[DocumentArtifact], delivered: _Delivered
+) -> None:
+    """Reference each delivered artifact from the Notes section, as CDA media.
+
+    #373: a C-CDA whose whole clinical content is ``nonXMLBody`` artifacts
+    parsed into ``DocumentArtifact``s and was preserved byte-for-byte in the
+    charts and the archive, while the ``--ccda`` deliverable — the directory an
+    operator hands to the receiving EHR — held neither the artifacts nor any
+    resolvable reference to them, and the run exited 0. A physician opening
+    that import saw a patient with a name, a date of birth and no chart.
+
+    ``<observationMedia>`` with an ED ``<value>`` is base CDA R2's own
+    mechanism for a non-XML artifact inside a structured body, and the ED's
+    ``<reference value="…"/>`` naming a file beside the document is the same
+    construct the reader already resolves for a referenced ``nonXMLBody``. The
+    C-CDA R2.1 Unstructured Document template is not the answer here: CDA gives
+    a ``ClinicalDocument`` exactly one ``<component>``, so a CCD carrying a
+    ``structuredBody`` cannot also carry a ``nonXMLBody``, and splitting each
+    artifact into its own document would deliver several documents per patient
+    into a directory whose filenames are one per patient.
+
+    Bytes stay OUT of the document: base64 in the CDA would grow it past what a
+    destination accepts, and the digest travels instead on the ED's own
+    ``@integrityCheck``, which is what makes a swapped or truncated sidecar a
+    loud failure on re-ingest rather than a silently different scan.
+
+    An artifact absent from ``delivered`` gets no entry: the caller wrote no
+    file for it, and a reference to a file nobody wrote is worse than none.
+    Its fields narrate instead (see :func:`_consumed_fields`).
+    """
+    for index, doc in enumerate(documents, start=1):
+        landed = delivered.get(doc.id)
+        if landed is None:
+            continue
+        anchor = f"anast-artifact-{index}"
+        _render_multimedia(section, anchor, landed.name)
+        media = _el(
+            _el(section, "entry"),
+            "observationMedia",
+            classCode="OBS",
+            moodCode="EVN",
+            ID=anchor,
+        )
+        _el(media, "templateId", root=ARTIFACT_TEMPLATE_ROOT)
+        # The artifact's canonical id, as the id root the parser reads it back
+        # from. Not root+extension under one shared root: the ledger can only
+        # attribute a construct by an id root that occurs ONCE in the document,
+        # and two artifacts sharing a root would report both as unattributable.
+        _el(media, "id", root=doc.id)
+        value = _el(
+            media,
+            "value",
+            xsi_type="ED",
+            mediaType=doc.mime_type,
+            integrityCheckAlgorithm=ARTIFACT_INTEGRITY_ALGORITHM,
+            integrityCheck=_integrity_check(landed.sha256),
+        )
+        _el(value, "reference", value=landed.name)
+
+
+def _render_multimedia(section: etree._Element, anchor: str, name: str) -> None:
+    """Link the section's human narrative to one media object.
+
+    ``<renderMultiMedia>`` is how a CDA renderer knows to show the artifact
+    where the prose mentions it; without it the entry is machine-readable and
+    invisible to a person reading the document. The prose names the delivered
+    FILE, which this tool named after the artifact's own pseudonymous id — the
+    source's own filename may carry a patient name and stays in the narrative
+    ledger with the rest of the source's fields.
+    """
+    text = _find_or_add_text(section)
+    paragraph = _el(text, "paragraph")
+    paragraph.text = f"Attached document: {name}"
+    _el(paragraph, "renderMultiMedia", referencedObject=anchor)
+
+
+def _find_or_add_text(section: etree._Element) -> etree._Element:
+    """The section's ``<text>``, created if :func:`_narrative` did not."""
+    existing = section.find(f"{{{V3}}}text")
+    return _el(section, "text") if existing is None else existing
+
+
+def _integrity_check(digest: str) -> str:
+    """A hex sha256 as the ED ``@integrityCheck`` BIN the datatype calls for.
+
+    The datatype's integrity check is the raw digest base64-encoded, not its
+    hex spelling, so the bytes go back through ``fromhex`` first. A digest this
+    tool did not compute would raise here rather than travel as a check nothing
+    can verify — the deliverer only ever passes one it just measured.
+    """
+    return base64.b64encode(bytes.fromhex(digest)).decode("ascii")
 
 
 def _note_body(enc: Encounter) -> str | None:
@@ -904,7 +1048,7 @@ def _midnight_utc(value: date) -> datetime:
 # --- declared-loss extensions section ----------------------------------------
 
 
-def _extensions_section(body: etree._Element, record: PatientRecord) -> None:
+def _extensions_section(body: etree._Element, record: PatientRecord, delivered: _Delivered) -> None:
     """Emit the loss ledger as narrative on a single, stamped 51899-3 section.
 
     This is the no-silent-drop mechanism, systematic rather than whack-a-mole:
@@ -922,7 +1066,7 @@ def _extensions_section(body: etree._Element, record: PatientRecord) -> None:
     ledger instead of growing without bound. Exactly ONE 51899-3 section is ever
     emitted.
     """
-    current = _collect_lost_fields(record)
+    current = _collect_lost_fields(record, delivered)
     prior = _prior_narrative(record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE))
     generation, prior_entries = prior if prior is not None else (None, [])
     lines = current + _carried_forward(prior_entries, current)
@@ -1062,7 +1206,14 @@ _CONSUMED["observations"] = _observation_consumed
 _CONSUMED["encounters"] = _encounter_consumed
 
 
-def _consumed_fields(attr: str, item: dict[str, Any]) -> frozenset[str]:
+def _consumed_fields(attr: str, item: dict[str, Any], delivered: _Delivered) -> frozenset[str]:
+    if attr == "documents":
+        # The documents emitter consumes nothing for an artifact this delivery
+        # wrote no file for: with no <observationMedia> entry to carry them,
+        # suppressing the media type and the digest from the narrative would
+        # drop two source fields to nowhere. Per artifact, not per collection —
+        # one delivered and one not is an ordinary batch.
+        return _EXPORTED_FIELDS[attr] if item.get("id") in delivered else frozenset()
     hook = _CONSUMED.get(attr)
     if hook is None:
         return frozenset()  # no structured emitter for this collection at all
@@ -1071,7 +1222,7 @@ def _consumed_fields(attr: str, item: dict[str, Any]) -> frozenset[str]:
     return hook  # type: ignore[return-value]
 
 
-def _collect_lost_fields(record: PatientRecord) -> list[str]:
+def _collect_lost_fields(record: PatientRecord, delivered: _Delivered) -> list[str]:
     """Every populated source field with no native CDA round trip, as sorted
     ``path = value`` text lines.
 
@@ -1093,12 +1244,13 @@ def _collect_lost_fields(record: PatientRecord) -> list[str]:
     for attr in sorted(dump):
         value = dump[attr]
         if attr == "patient":
-            lines += _walk_model("patient", value, _consumed_fields("patient", value))
+            lines += _walk_model("patient", value, _consumed_fields("patient", value, delivered))
         elif isinstance(value, list):
             for index, item in enumerate(value):
                 if not isinstance(item, dict):
                     continue
-                lines += _walk_model(f"{attr}[{index}]", item, _consumed_fields(attr, item))
+                consumed = _consumed_fields(attr, item, delivered)
+                lines += _walk_model(f"{attr}[{index}]", item, consumed)
         elif isinstance(value, dict):
             # The record's OWN dict attrs — `extensions` (vendor namespaces the
             # sources hang off the record, e.g. pf_tebra:unmapped:<table>) and
@@ -1269,15 +1421,30 @@ def measure_ccd(xml: bytes) -> CcdMeasurement:
     return CcdMeasurement(total_bytes=len(xml), preserved_bytes=preserved)
 
 
-def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes:
+def build_ccd(
+    record: PatientRecord,
+    *,
+    document_id: str | None = None,
+    delivered: _Delivered | None = None,
+) -> bytes:
     """Export a :class:`PatientRecord` to CCD XML bytes (UTF-8).
 
     The document round-trips through :mod:`anastomosis.sources.ccda` back to the
     same canonical clinical content. ``document_id`` defaults to a uuid5 over the
     patient id, so output is deterministic and byte-identical for a given record.
     See the module docstring for scope and the declared-loss list.
+
+    ``delivered`` names the artifact files the caller has already written beside
+    this document, by artifact id (:class:`DeliveredArtifact`). Each one gets an
+    ``<observationMedia>`` entry that references it and witnesses its digest, so
+    a re-ingest of the delivered directory recovers the artifact rather than a
+    patient with an empty chart (#373). This function writes no files, so it
+    cannot invent that mapping: with none, no artifact entry is emitted and
+    every artifact field narrates, which is honest but is NOT conservation —
+    :func:`~anastomosis.deliver.ccda_export.deliver_ccda` is what conserves.
     """
     doc_id = document_id or str(uuid5(_DOC_NS, record.patient.id))
+    carried: _Delivered = {} if delivered is None else delivered
     # Deterministic effectiveTime: derived from the record, never wall-clock.
     effective = _document_effective(record)
 
@@ -1310,8 +1477,8 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
         [o for o in record.observations if o.category == ObservationCategory.SOCIAL_HISTORY],
     )
     _encounters(body, _structured_encounters(record.encounters))
-    _notes(body, record.encounters)
-    _extensions_section(body, record)
+    _delivered_documents(_notes(body, record.encounters), record.documents, carried)
+    _extensions_section(body, record, carried)
 
     logger.info(
         "built CCD for patient %s: %d conditions, %d meds, %d allergies, %d encounters",
