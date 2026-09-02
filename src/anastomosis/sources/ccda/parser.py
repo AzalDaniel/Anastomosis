@@ -379,12 +379,17 @@ def entry_verbatim(entry: _Element) -> str:
     return etree.tostring(entry, encoding="unicode", with_tail=False)
 
 
-def _free_key(extensions: dict[str, Any], key: str) -> str:
+def free_key(extensions: dict[str, Any], key: str) -> str:
     """``key``, or its first free ``#2``, ``#3``, … variant, in document order.
 
     Documents legitimately repeat a section code (Problems (Active) and Problems
     (Resolved) are both 11450-4) and may carry several code-less sections — one
     stored section must never silently replace another.
+
+    Public because the pipeline's fold (one patient's several source records
+    into one chart) parks a clashing extension the same way. Two spellings of
+    "keep both" would put a key somewhere the reader of the other one never
+    looks, so there is one.
     """
     if key not in extensions:
         return key
@@ -415,7 +420,7 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     extensions = record.patient.extensions
     if title is None and text is None:
         return
-    key = _free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
+    key = free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
     extensions[key] = {"title": title, "text": text}
 
 
@@ -468,7 +473,7 @@ def _store_entries(
     entries = captured.get(section)
     if not entries:
         return
-    key = _free_key(
+    key = free_key(
         extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
     )
     extensions[key] = entries
@@ -564,19 +569,35 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
         return
-    generation = _loss_generation(section)
-    prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    merge_loss_narrative(record.patient.extensions, _loss_generation(section), entries)
+
+
+def merge_loss_narrative(
+    extensions: dict[str, Any], generation: int | None, entries: list[str]
+) -> None:
+    """Fold one stamped loss ledger into whatever ``extensions`` already holds.
+
+    Entries concatenate in the order they were read and the highest generation
+    wins, so neither ledger is overwritten and the exporter still dedupes a
+    single carry-forward appendix. An absent generation on either side does not
+    reset the counter for the other.
+
+    Public because two callers fold ledgers into one key: this module, walking
+    the several stamped sections of one document, and the pipeline's fold,
+    merging the several source records of one patient. The rule is the same on
+    both sides, so it is written once.
+    """
+    prior = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
     if isinstance(prior, dict):
-        prior["entries"] = [*prior["entries"], *entries]
         prior_generation = prior["generation"]
-        prior["generation"] = (
-            generation if prior_generation is None else max(prior_generation, generation or 0)
-        )
+        extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
+            "generation": (
+                generation if prior_generation is None else max(prior_generation, generation or 0)
+            ),
+            "entries": [*prior["entries"], *entries],
+        }
         return
-    record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
-        "generation": generation,
-        "entries": entries,
-    }
+    extensions[EXT_PRIOR_LOSS_NARRATIVE] = {"generation": generation, "entries": entries}
 
 
 # --- problems ----------------------------------------------------------------
@@ -929,7 +950,7 @@ def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
     return True
 
 
-def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
+def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
     """One ``<id root>`` is one visit when the halves agree.
 
     A C-CDA may describe the same encounter twice: once as an entry in the
@@ -943,6 +964,12 @@ def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounte
     Complementary halves fold — first non-None wins per scalar, lists
     concatenate, order preserved. Contradictory ones do not: they stay separate
     so the collision still surfaces.
+
+    Public because the same two halves also arrive in two DOCUMENTS: an export
+    holding one patient's visit summary and its note names that visit twice
+    across two files, and the pipeline's fold unions their encounters. The rule
+    is a property of the canonical Encounter, not of one traversal, so both
+    callers run this one.
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []
@@ -2219,6 +2246,6 @@ def parse_document(path: Path) -> PatientRecord:
 
     record.practitioners = actors.practitioners
     record.facilities = list(actors.facilities.values())
-    record.encounters = _fold_encounters_sharing_an_id(record.encounters)
+    record.encounters = fold_encounters_sharing_an_id(record.encounters)
     _link_measurements_to_encounters(record)
     return record

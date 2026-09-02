@@ -28,7 +28,7 @@ from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import budgeted_name
-from anastomosis.deliver._shared import claim_delivered_name
+from anastomosis.deliver._shared import claim_delivered_name, record_witness
 
 from .builder import build_ccd, measure_ccd
 
@@ -85,9 +85,10 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExpor
     record never sinks a batch.
 
     A name COLLISION is not one of those survivable failures: ``write_bytes``
-    overwrites, so two patient ids that sanitize to one filename would deliver
-    one CCD carrying the second patient over the first. The per-run claimed-name
-    ledger makes that a hard stop.
+    overwrites, so two patient ids that sanitize to one filename — or two
+    records arriving under one patient id — would deliver one CCD carrying the
+    second over the first. The per-run claimed-name ledger makes that a hard
+    stop.
     """
     out = secure_output_dir(out_dir)
     written: list[Path] = []
@@ -101,7 +102,19 @@ def deliver_ccda(records: list[PatientRecord], out_dir: str | Path) -> CcdaExpor
         # OSError inside the write below, and the batch-continues handler would
         # record that record as merely "failed" — a silently dropped export.
         pid = budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=".xml")
-        claim_delivered_name(claimed, pid, record.patient.id, kind="C-CDA document")
+        # The record goes in as the claim's witness because a patient id is not
+        # guaranteed unique either: an adapter that yields one record per source
+        # DOCUMENT hands two records for a patient with two of them, and without
+        # the witness the second document's CCD lands on the first while the run
+        # reports two patients. The pipeline folds those into one record before
+        # delivery; this is what makes a future regression loud.
+        claim_delivered_name(
+            claimed,
+            pid,
+            record.patient.id,
+            kind="C-CDA document",
+            content=record_witness(record),
+        )
         target = out / f"{pid}.xml"
         try:
             xml = build_ccd(record)

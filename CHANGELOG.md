@@ -297,6 +297,44 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **One patient was several charts, and only one of them arrived.** Every
+  per-patient destination is keyed by `patient.id` — the C-CDA export writes
+  `<patient-id>.xml`, the archive and the bundle each write one directory —
+  and every writer in them is exist_ok/overwrite. The C-CDA adapter yields one
+  record per DOCUMENT, because a document is the unit its conservation ledger
+  has to account for, so a patient with two documents arrived as two records
+  and the second landed on the first. The run reported two patients over one
+  file, and a physician opening it read one visit with nothing saying the other
+  had ever existed; the scanned case was worse, because the attachments travel
+  on a path named per document and both of them were sitting in the delivered
+  archive while `bundle.json` referred to one.
+
+  A patient is now one record by the time anything is delivered, folded at
+  `pipeline.load_records` where every adapter passes — so an adapter that
+  already meets the contract is untouched, and the per-document ledger the
+  C-CDA reading depends on keeps measuring documents. Collections union in
+  document order and are deduplicated only where the model already says two
+  objects are one: two encounters under one `<id root>` fold by the rule that
+  already folds them inside a single document, and nothing else, because a
+  rule invented for the others would delete a real repeat prescription.
+  Extensions merge with the losslessness rule that governs them everywhere
+  else — equal values keep their key, a carried-forward loss ledger merges as
+  one ledger, and anything else two documents state differently keeps BOTH,
+  parked at the `#2` variant the parser already uses for a repeated section.
+  A SINGLE-VALUED demographic that disagrees is not reconciled: two documents
+  stating two birth dates under one id are a source that cannot say who this
+  patient is, and the run refuses at exit 2 naming the field and the count,
+  never the values. A demographic the model holds as a LIST cannot contradict
+  itself, and unions like every other collection — one document listing the
+  home phone where the next lists the home phone and a mobile is a patient
+  with two numbers, and one repeating the social security number the other
+  omits is a gap rather than a disagreement. Reading those as two people would
+  have refused the ordinary export instead of the ambiguous one, which is the
+  opposite of what the refusal is for. Behind the fold, the three per-patient
+  claims now put the record up as the witness their name is claimed against,
+  so a future regression is a loud refusal instead of a silent overwrite.
+  (#375)
+
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
   `intendedRecipient/assignedPerson`, but an `intendedRecipient` plays an
