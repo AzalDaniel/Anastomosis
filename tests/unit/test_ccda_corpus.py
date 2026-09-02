@@ -30,7 +30,12 @@ from tools.ccda_corpus import (
 
 from anastomosis.core.conservation import ConservationError
 from anastomosis.sources import get_source
-from anastomosis.sources.ccda.ledger import Disposition, aggregate, document_ledger
+from anastomosis.sources.ccda.ledger import (
+    _NARRATIVE_CONTAINERS,
+    Disposition,
+    aggregate,
+    document_ledger,
+)
 from anastomosis.sources.ccda.parser import parse_document
 
 #: Big enough to span the shape space, small enough that the unit lane stays a
@@ -519,4 +524,92 @@ def test_every_element_it_emits_is_legal_where_it_stands(
         _check_conformance(etree.fromstring(xml), "", seen)
     assert seen == set(_CONTENT_MODEL), (
         f"content models the corpus never exercises: {sorted(set(_CONTENT_MODEL) - seen)}"
+    )
+
+
+def test_it_writes_the_narrative_arrangements_the_ledger_argues_about(
+    corpus: list[tuple[str, bytes]],
+) -> None:
+    """A corpus of one narrative shape agrees with any containment rule at all.
+
+    Every cited entry used to point at a bare ``<content>`` sitting directly
+    under the section's ``<text>``, and every cited entry was one the adapter
+    takes apart structurally — so the whole question of which name over a word
+    is a claim and which is an address was never asked of these 6,144
+    documents. Three real defects in that rule came and went across four
+    rounds of review without moving the reading by a byte.
+
+    What has to be here: a row whose name sits above the words with an unnamed
+    cell in between; a name at more than one level over the same words, which
+    is the only shape that can tell a rule asking about direct children from
+    one asking about ancestry; a name on the arrangement itself, which must
+    NOT be credited; a cell that renders nothing; a citation that resolves to
+    nothing; and entries with no structured home of their own to do the citing.
+    """
+    from lxml import etree
+
+    v3 = "urn:hl7-org:v3"
+    seen = {
+        "a row named above an unnamed cell": 0,
+        "a name at two levels over one set of words": 0,
+        "a name on the arrangement itself": 0,
+        "a cell that renders nothing": 0,
+        "a citation that resolves to nothing": 0,
+    }
+    for _, xml in corpus:
+        for section in etree.fromstring(xml).iter(f"{{{v3}}}section"):
+            text = section.find(f"{{{v3}}}text")
+            if text is None:
+                continue
+            named = [n for n in text.iter() if not callable(n.tag) and n.get("ID")]
+            for node in named:
+                local = etree.QName(node).localname
+                if local == "tr" and node.find(f"{{{v3}}}td") is not None:
+                    seen["a row named above an unnamed cell"] += 1
+                if local in _NARRATIVE_CONTAINERS:
+                    seen["a name on the arrangement itself"] += 1
+                if node.find(f"{{{v3}}}renderMultiMedia") is not None:
+                    seen["a cell that renders nothing"] += 1
+                if any(node in other.iterancestors() for other in named):
+                    seen["a name at two levels over one set of words"] += 1
+            defined = {node.get("ID") for node in named}
+            for entry in section.findall(f"{{{v3}}}entry"):
+                for reference in entry.iter(f"{{{v3}}}reference"):
+                    value = (reference.get("value") or "").lstrip("#")
+                    if value and value not in defined:
+                        seen["a citation that resolves to nothing"] += 1
+
+    missing = sorted(shape for shape, count in seen.items() if not count)
+    assert not missing, f"the corpus never writes: {missing}"
+
+
+def test_an_entry_with_no_structured_home_is_the_one_that_cites(
+    corpus: list[tuple[str, bytes]],
+) -> None:
+    """Only an entry with nothing else to show ever asks the narrative.
+
+    A parsed entry's evidence is its own object, so it never spends a cell. If
+    every citation in the corpus sits on an entry the adapter takes apart, the
+    narrative-credit rule is generated into documents and then read by nobody —
+    which is how forcing every citation to fail, and forcing every one to
+    succeed, both left the 6,144-document reading byte-identical.
+    """
+    from lxml import etree
+
+    v3 = "urn:hl7-org:v3"
+    unstructured_cites = 0
+    for _, xml in corpus:
+        for section in etree.fromstring(xml).iter(f"{{{v3}}}section"):
+            for entry in section.findall(f"{{{v3}}}entry"):
+                # An <observation> carrying no templateId at all: nothing about
+                # it is malformed and this adapter has no dispatch for it, which
+                # is what makes it the entry that has to ask the narrative.
+                observation = entry.find(f"{{{v3}}}observation")
+                if observation is None or observation.find(f"{{{v3}}}templateId") is not None:
+                    continue
+                if next(entry.iter(f"{{{v3}}}reference"), None) is not None:
+                    unstructured_cites += 1
+    assert unstructured_cites, (
+        "no entry outside this adapter's structured dispatch cites the narrative, "
+        "so nothing in the corpus exercises the narrative-credit rule"
     )

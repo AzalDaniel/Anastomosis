@@ -104,6 +104,28 @@ issue and fixed in its own pull request.
   capturing every section's entries makes the loss narrative grow by a
   generation on each round trip — and it belongs to that decision.
 
+- **A corpus that can see what the ledger argues about.** The 6,144-document
+  corpus wrote its cited narrative one way — a bare `<content>` sitting
+  directly under the section's `<text>` — and every entry that cited it was
+  one this adapter takes apart structurally. A parsed entry's evidence is its
+  own object, so it never asks the narrative for anything. Between those two
+  facts the whole narrative-credit rule was generated into 6,144 documents and
+  read by nobody: forcing every citation to fail, and forcing every one to
+  succeed, both left the reading byte-identical.
+
+  It now writes the arrangements a real document has — a row named above an
+  unnamed cell, a name at more than one level over the same words, a name on
+  the arrangement itself (which must not be credited), a cell that renders
+  nothing, and a citation that resolves to nothing — and the entries doing the
+  citing are the ones with no structured home of their own. Nine mutations of
+  the containment and claim rules were invisible to this corpus before; all
+  nine move it now.
+
+  The reading moves accordingly, and toward credit: entries that really do
+  name a cell the record kept are counted as keeping it, so `58cbcf57…`
+  becomes `733b5eae…` (65 lines, 3,427 bytes). Nothing about the ledger
+  changed here; the instrument was pointed at documents it could not see.
+
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
   layout's NAME, so a run into a folder whose layout had been edited since
