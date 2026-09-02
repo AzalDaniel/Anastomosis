@@ -73,6 +73,24 @@ def _write(tmp_path: Path, *, body: str = "", header: str = "") -> Path:
     return path
 
 
+def _unparked(record: PatientRecord) -> PatientRecord:
+    """``record`` with the verbatim entry copies taken away.
+
+    The parser parks EVERY section's entries, so an entry's own bytes answer
+    for it before anything else is consulted. The citation tests below are
+    about what a ``<reference>`` into narrative proves, and answering them with
+    the wrong evidence would leave that whole rule untested — so they take the
+    copies away first, the same move
+    ``test_the_same_entries_unparked_read_unsupported`` makes about the copies
+    themselves. It is not a hypothetical shape either: the entries the parser
+    parks nothing for — our own stamped loss ledger, and a subsection nested
+    deeper than its walk reaches — are settled by exactly this rule.
+    """
+    for key in [k for k in record.patient.extensions if k.startswith("ccda:entries:")]:
+        del record.patient.extensions[key]
+    return record
+
+
 def _row(ledger: object, construct: str) -> object:
     """The one merged row for ``construct``.
 
@@ -874,24 +892,56 @@ def test_one_stored_copy_credits_one_entry_not_two(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize("prose", ["", "<text>Prose that cites nothing.</text>"])
+def test_an_entry_reads_the_same_whether_or_not_its_section_renders_prose(
+    tmp_path: Path, prose: str
+) -> None:
+    """One entry, two documents, one reading.
+
+    The same coded observation this adapter has no dispatch for used to be
+    preserved or dropped by nothing but whether the section above it happened to
+    carry a sentence — and a sentence about a section is not a copy of the
+    entries beneath it, which is the finding this ledger already applies
+    everywhere it counts. Both halves park now, so both say the same thing about
+    the same entry.
+    """
+    body = f"""
+    <component><section>
+      <code code="18776-5" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Plan of Treatment</title>
+      {prose}
+      <entry><observation classCode="OBS" moodCode="EVN">
+        <id root="feedface-plan-0000-0000-000000000911"/>
+        <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
+        <value displayName="No current problems"/>
+      </observation></entry>
+    </section></component>
+    """
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+
+    assert record.patient.extensions["ccda:entries:18776-5"]
+    row = _row(document_ledger(path, record), "section:18776-5")
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
 def test_a_sections_prose_does_not_answer_for_an_entry_it_never_states(
     tmp_path: Path,
 ) -> None:
-    """The section keeps its narrative; the entry under it is still uncredited.
+    """The section keeps its narrative; what answers for the entry is its bytes.
 
-    This test used to assert the opposite, and the assumption underneath it was
-    that a section's ``<text>`` is a copy of what its entries say. C-CDA makes
-    no such promise, and the corpus this repo generates disproves it in its own
-    documents: a Plan of Treatment whose prose reads "Continue lisinopril and
-    recheck blood pressure in three months" carries an entry stating the coded
-    value "No current problems", and the old rule counted that entry preserved
-    by that sentence. Nothing preserved it.
+    This test used to assert that the prose credited the entry, and the
+    assumption underneath it was that a section's ``<text>`` is a copy of what
+    its entries say. C-CDA makes no such promise, and the corpus this repo
+    generates disproves it in its own documents: a Plan of Treatment whose prose
+    reads "Continue lisinopril and recheck blood pressure in three months"
+    carries an entry stating the coded value "No current problems".
 
-    So the section's narrative answers for the SECTION — the row below still
-    reads narrative_preserved — and the entry is asked at its own address. With
-    no verbatim copy of it in the record, the honest answer is that it was not
-    credited as data, which is the ledger's epistemic position and not a claim
-    that a chart was destroyed.
+    So the section's narrative answers for the SECTION, and the entry is asked
+    at its own address. It has an answer there now — the parser parks every
+    section's entries verbatim, prose or no prose — and the second half of this
+    test is the same document with that copy taken away: the prose is still
+    sitting there, and it still credits nothing.
     """
     body = """
     <component><section>
@@ -905,10 +955,16 @@ def test_a_sections_prose_does_not_answer_for_an_entry_it_never_states(
     """
     path = _write(tmp_path, body=body)
     record = parse_document(path)
-    assert not [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
+    assert [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
     row = _row(document_ledger(path, record), "section:11450-4")
-    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
     assert row.instances == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+    stripped = _row(document_ledger(path, _unparked(parse_document(path))), "section:11450-4")
+    assert stripped.entries == {Disposition.UNSUPPORTED: 1}, (  # type: ignore[attr-defined]
+        "the prose credited an entry it states nothing of"
+    )
+    assert stripped.instances == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
 
 # --- the reading a physician gets ---------------------------------------------
@@ -1174,6 +1230,11 @@ def test_a_sibling_lost_inside_one_entry_is_not_a_parsed_entry(tmp_path: Path) -
     under the entry reached the record. Organizer entries routinely carry
     several results or vital signs, so a regression could drop any subset and
     the ledger would still certify the wrapper.
+
+    What the entry falls back to is the verbatim copy of its own bytes, so the
+    partial loss reads as preserved rather than as unsupported. The column this
+    test forbids is the other one: a dropped measurement is not a parse,
+    whatever else under the entry survived.
     """
     path = _write(tmp_path, body=_TWO_MEASUREMENTS)
     record = parse_document(path)
@@ -1189,11 +1250,17 @@ def test_a_sibling_lost_inside_one_entry_is_not_a_parsed_entry(tmp_path: Path) -
         partial = record.model_copy(deep=True)
         partial.observations = record.observations[keep]
         row = _row(document_ledger(path, partial), construct)
-        assert row.entries == {Disposition.UNSUPPORTED: 1}, f"{keep} still read as parsed"  # type: ignore[attr-defined]
+        assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}, (  # type: ignore[attr-defined]
+            f"{keep} still read as parsed"
+        )
 
     total = record.model_copy(deep=True)
     total.observations = []
     row = _row(document_ledger(path, total), construct)
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+    # And with the verbatim copy gone too, nothing is left to credit it.
+    stripped = _unparked(total.model_copy(deep=True))
+    row = _row(document_ledger(path, stripped), construct)
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
 
@@ -1395,7 +1462,7 @@ def test_an_entry_pointing_at_narrative_the_record_kept_is_preserved(
   </section></component>
 """
     path = _write(tmp_path, body=body)
-    record = parse_document(path)
+    record = _unparked(parse_document(path))
     row = _row(document_ledger(path, record), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
@@ -1423,7 +1490,7 @@ def test_an_entry_citing_narrative_the_record_lost_is_not_preserved(tmp_path: Pa
   </section></component>
 """
     path = _write(tmp_path, body=body)
-    record = parse_document(path)
+    record = _unparked(parse_document(path))
     for key in [k for k in record.patient.extensions if k.startswith("ccda:section:47519-4")]:
         del record.patient.extensions[key]
 
@@ -1496,7 +1563,9 @@ def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
     calibrating one does not make an obligation of the other.
 
     The first entry stays parsed. The second must not, and must not become so
-    on the strength of an id sitting inside it.
+    on the strength of an id sitting inside it — it reads as preserved, on the
+    verbatim copy of its own bytes the parser parks, which is a different column
+    from the one this test forbids.
     """
     body = """
   <component><section>
@@ -1542,7 +1611,7 @@ def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
     row = _row(document_ledger(path, moved), "section:11450-4")
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.STRUCTURALLY_PARSED: 1,
-        Disposition.UNSUPPORTED: 1,
+        Disposition.NARRATIVE_PRESERVED: 1,
     }
 
 
@@ -1605,7 +1674,7 @@ def test_a_sections_whole_prose_is_not_one_of_its_own_narrative_cells(
         + _cites(2, "#sect-text", "Colonoscopy due 2031"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 2}  # type: ignore[attr-defined]
 
@@ -1627,7 +1696,7 @@ def test_a_cell_in_another_section_does_not_answer_here(tmp_path: Path) -> None:
         _cites(1, "#payer-cell", "Appendectomy"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
@@ -1643,7 +1712,7 @@ def test_one_narrative_cell_answers_for_one_entry(tmp_path: Path) -> None:
         _cites(1, "#proc-1", "A") + _cites(2, "#proc-1", "B") + _cites(3, "#proc-1", "C"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
@@ -1672,7 +1741,7 @@ def test_an_entry_citing_one_real_cell_and_one_dangling_gets_nothing(
 """,
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
@@ -1697,7 +1766,7 @@ def test_one_entry_naming_one_cell_twice_is_one_citation(tmp_path: Path) -> None
 """,
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -1708,12 +1777,13 @@ def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
     """Two byte-identical entries, one parked copy, and no theft between them.
 
     An empty coded entry repeats across sections, and the stored copies were
-    pooled by their bytes alone — so the section that parked nothing could claim
-    the copy parked for the other, and which one got it depended on document
-    order. The parser writes the section code into the key; this side reads it.
+    pooled by their bytes alone — so a section could claim the copy parked for
+    another, and which one got it depended on document order. The parser writes
+    the section code into the key; this side reads it.
 
-    Payers renders text and parks nothing, so its entry is uncredited. Plan
-    renders none, parks its own, and keeps it.
+    Both sections park now, so the theft is asked for by taking Payers' own copy
+    away: with the bytes alone as the handle it would answer itself out of the
+    copy Plan parked, and both would read preserved.
     """
     entry = """
     <entry><observation classCode="OBS" moodCode="EVN">
@@ -1731,6 +1801,7 @@ def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
 """
     path = _write(tmp_path, body=body)
     record = parse_document(path)
+    del record.patient.extensions["ccda:entries:48768-6"]
     ledger = document_ledger(path, record)
 
     assert _row(ledger, "section:48768-6").entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
@@ -1764,7 +1835,7 @@ def test_a_cell_deep_inside_a_narrative_table_is_still_a_cell(tmp_path: Path) ->
         _cites(1, "#proc-1", "Medication reconciliation"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -1781,7 +1852,7 @@ def test_the_shipped_vendor_fixture_keeps_its_cited_entry(tmp_path: Path) -> Non
     fixture = (
         Path(__file__).resolve().parents[1] / "fixtures" / "synthea" / "synthea_ccda_sample.xml"
     )
-    row = _row(document_ledger(fixture, parse_document(fixture)), "section:47519-4")
+    row = _row(document_ledger(fixture, _unparked(parse_document(fixture))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -1798,7 +1869,7 @@ def test_a_cell_that_renders_no_words_preserves_nothing(tmp_path: Path) -> None:
         _cites(1, "#proc-1", "Appendectomy"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
@@ -1818,7 +1889,7 @@ def test_a_table_holding_the_prose_is_not_one_of_its_cells(tmp_path: Path) -> No
         _cites(1, "#whole", "No current problems") + _cites(2, "#whole", "Colonoscopy due 2031"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 2}  # type: ignore[attr-defined]
 
@@ -1836,7 +1907,7 @@ def test_one_id_on_two_nodes_is_still_one_cell(tmp_path: Path) -> None:
         _cites(1, "#proc-1", "A") + _cites(2, "#proc-1", "B"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
@@ -1858,12 +1929,15 @@ def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
     """Problems (Active) and Problems (Resolved) are both 11450-4.
 
     Keying the stored copies by section code narrowed the theft rather than
-    ending it: two sections of one code, one rendering prose and parking
-    nothing, still met in the same bucket, and which of them got the copy
-    depended on which came first. Only a section of the shape the parser parks
-    for may claim one, so the reading is the same either way round.
+    ending it: two sections of one code met in the same bucket, and which of
+    them got a copy depended on which came first. The bucket holds as many
+    copies as there are sections that parked into it — both of these do — and
+    each takes exactly one, so the reading is the same either way round. A
+    parser that parked for only one of them would leave the other reading
+    unsupported in one order and preserved in the other, which is the reading
+    nobody could reproduce.
     """
-    parked = f"""
+    textless = f"""
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
     <title>Problems (Resolved)</title>{_SHARED_CODE_ENTRY}
@@ -1876,7 +1950,7 @@ def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
     <text>Prose that cites nothing.</text>{_SHARED_CODE_ENTRY}
   </section></component>
 """
-    path = _write(tmp_path, body=(parked + prose) if textless_first else (prose + parked))
+    path = _write(tmp_path, body=(textless + prose) if textless_first else (prose + textless))
     # Per OCCURRENCE, in document order: the merged row cannot tell which of
     # the two got the copy, and which one got it is the entire question.
     rows = [
@@ -1885,13 +1959,8 @@ def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
         if row.construct == "section:11450-4"
     ]
     assert len(rows) == 2
-    first, second = (0, 1) if textless_first else (1, 0)
-
-    assert rows[first].entries == {Disposition.NARRATIVE_PRESERVED: 1}, (
-        "the parked section lost its own copy"
-    )
-    assert rows[second].entries == {Disposition.UNSUPPORTED: 1}, (
-        "a section that parked nothing took a copy"
+    assert [row.entries for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}] * 2, (
+        "a section did not get the copy it parked"
     )
 
 
@@ -1965,7 +2034,7 @@ def test_a_padded_reference_value_still_names_its_cell(tmp_path: Path) -> None:
         _cites(1, " #proc-1 ", "A"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -2034,7 +2103,7 @@ def test_no_narrative_container_is_one_of_its_own_cells(tmp_path: Path, containe
         _cites(1, "#whole", "No current problems"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
@@ -2054,7 +2123,7 @@ def test_a_table_row_is_one_statement_and_may_be_cited(tmp_path: Path) -> None:
         _cites(1, "#proc-1", "Appendectomy"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -2073,7 +2142,7 @@ def test_a_cell_wrapped_in_another_named_cell_is_one_statement(tmp_path: Path) -
         _cites(1, "#a1", "A") + _cites(2, "#a2", "B") + _cites(3, "#a3", "C"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
@@ -2118,7 +2187,7 @@ def test_a_cell_is_wrapped_at_any_depth_not_only_by_its_parent(
         _cites(1, "#a1", "A") + _cites(3, "#a3", "C"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
@@ -2171,7 +2240,7 @@ def test_one_entry_naming_a_word_by_two_addresses_makes_one_claim(
         entry,
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -2204,7 +2273,7 @@ def test_an_entry_claiming_two_cells_spends_both_or_neither(tmp_path: Path) -> N
         + two_cells.format(n=3, first="x2", second="x3"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 2,
@@ -2226,7 +2295,7 @@ def test_every_level_of_a_nested_arrangement_is_an_address(tmp_path: Path) -> No
     )
     body = _procedures(f"<text>{narrative}</text>", _cites(1, "#a2", "A") + _cites(3, "#a3", "C"))
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1,
@@ -2251,7 +2320,7 @@ def test_two_cells_inside_one_named_cell_are_still_two_statements(
         _cites(1, "#x1", "A") + _cites(3, "#x2", "C"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
 
@@ -2277,7 +2346,7 @@ def test_the_reading_does_not_turn_on_which_entry_is_listed_first(
         (row + cells) if row_first else (cells + row),
     )
     path = _write(tmp_path, body=body)
-    record = parse_document(path)
+    record = _unparked(parse_document(path))
     ledger_row = _row(document_ledger(path, record), "section:47519-4")
 
     assert record.patient.extensions["ccda:section:47519-4"]["text"], (
@@ -2375,7 +2444,7 @@ def test_entries_whose_claims_overlap_in_a_chain_read_the_same_either_way(
         ),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 2,
@@ -2403,7 +2472,7 @@ def test_one_entry_reaching_into_two_rows_does_not_kill_them_both(
         _cites(1, "#r1", "R1") + _cites(2, "#r2", "R2") + _two_cell_entry(3, "#a1", "#b1"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 2,
@@ -2547,7 +2616,7 @@ def test_a_reference_without_a_hash_names_no_cell(tmp_path: Path) -> None:
 """,
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
 
@@ -2565,7 +2634,7 @@ def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:
         _cites(1, "#a1", "A") + _cites(3, "#a3", "C"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
 
@@ -2582,7 +2651,7 @@ def test_a_comment_in_the_narrative_is_not_a_cell(tmp_path: Path) -> None:
         _cites(1, "#proc-1", "A"),
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
@@ -2606,6 +2675,6 @@ def test_a_bare_hash_is_a_citation_that_cannot_resolve(tmp_path: Path) -> None:
 """,
     )
     path = _write(tmp_path, body=body)
-    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+    row = _row(document_ledger(path, _unparked(parse_document(path))), "section:47519-4")
 
     assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]

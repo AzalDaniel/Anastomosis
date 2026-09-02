@@ -55,6 +55,25 @@ That covers:
   onto their models (`_NATIVE_EXT_KEYS`) — including the `ccda:section:*`
   narratives an earlier CDA ingest captured, which no emitter here re-derives.
 
+The one family that is neither narrated nor lost is `ccda:entries:<code>`: the
+`<entry>` elements a C-CDA ingest parked verbatim, because prose about a
+section is not a copy of the entries beneath it. Those are **delivered** —
+re-emitted as the entries of the section carrying that code, or of a carrier
+section when this exporter emits none for it, so they leave as the entries they
+arrived as and a re-ingest parks the same bytes. Narrating them instead would
+serialise XML into `path = value` lines no emitter consumes, which the next
+generation would park and narrate again: measured at ~15 KB per round trip,
+without bound.
+
+Delivering them changes what the structured emitters write. A parked entry is
+the source's own statement of a clinical fact and the canonical object read out
+of it states the same fact in this exporter's words, so emitting both would say
+it twice — and a re-ingest would read two objects where the chart has one, four
+the generation after. Each emitter therefore skips the object whose source id a
+preserved entry carries (`_Preserved.own`) and emits the rest as usual. What the
+section preserved leaves as the entry it arrived as; what it did not leaves as
+this exporter's own entry; the section's human narrative still lists both.
+
 The section is stamped with `LOSS_NARRATIVE_TEMPLATE_ROOT` so a later ingest can
 tell this tool's loss ledger from a third party's 51899-3 section.
 `sources/ccda` reads a stamped section back into
@@ -79,6 +98,13 @@ discrete and are re-emitted as a carry-forward appendix, deduplicated against
 this generation's own by `_carried_forward` — identical entries collapse,
 distinct ones survive at their multiplicity, and the document carries exactly
 one 51899-3 section stamped with its generation number.
+
+A chart ingested from C-CDA settles the same way: measured over three
+generations of parse -> `build_ccd` on the three CDA fixtures, the 51899-3
+section runs 8,400 -> 9,857 -> 9,857 bytes (`feedface_ccd.xml`),
+11,191 -> 13,573 -> 13,573 (`synthea_ccda_sample.xml`) and
+8,499 -> 9,991 -> 9,991 (`feedface_ccd_duplicate_encounter_id.xml`), still a
+fixed point at generation five.
 
 **The ledger is bounded: it stops growing once the record's own ids stop
 moving, and never grows again.** Which generation that lands on depends on the

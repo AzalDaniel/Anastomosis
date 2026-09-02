@@ -297,6 +297,50 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **An entry under prose was preserved by nothing.** The C-CDA parser kept a
+  section's `<entry>` elements verbatim only when that section rendered no
+  text, so the same coded observation — one this adapter has no dispatch for —
+  survived or was lost on nothing but whether its section happened to carry a
+  sentence. The finding #364 closed says prose about a section is not a copy of
+  the entries beneath it, which is exactly why the sentence could not stand in
+  for them.
+
+  What kept that limit in place was the export side, and it had to be fixed
+  first. A parked key was NARRATED into the 51899-3 loss section as
+  `path = value` lines holding whole XML entries; a re-ingest parked those and
+  the next export narrated them again, so simply preserving every section grew
+  the exported loss narrative by ~15 KB per generation, without bound
+  (32,455 → 48,356 → 63,788 bytes on `feedface_ccd.xml`). So the builder now
+  DELIVERS them: each preserved entry is re-emitted as a real `<entry>` in the
+  section carrying its code, and a code this exporter writes no section for
+  gets a carrier section rather than a refusal — a section with no structured
+  emitter here is the ordinary case, and refusing the export would refuse the
+  common path. The loss ledger converges again, one generation later and about
+  100 bytes larger than before the change: 8,400 → 9,857 → 9,857 on
+  `feedface_ccd.xml`, 11,191 → 13,573 → 13,573 on the Synthea sample, still a
+  fixed point at generation five.
+
+  Delivering an entry means not saying the same thing twice. A parked entry is
+  the source's own statement of a clinical fact and the canonical object read
+  out of it says the same fact in the exporter's words, so each emitter now
+  skips the object whose source id a preserved entry carries and emits the
+  rest as usual — an object from another adapter still gets its structured
+  entry, and an object the parser could give no source id is matched by an
+  entry that carries none. Emitting both would have re-ingested as two objects
+  where the chart has one, and four the generation after.
+
+  The reading moves, and it moves back to where it was before #366: the
+  6,144-document corpus ledger is byte-identical to the pre-#366 pin
+  (`823a60b6…`, 65 lines, 3,408 bytes, against `58cbcf57…` / 3,433 bytes
+  before this change), because the 10,238 entries that pass credited entries
+  under nine unparsed section codes from `unsupported` back to
+  `narrative_preserved` — this time on a byte-exact copy of each entry in the
+  record rather than on prose that may state nothing about it. `unsupported`
+  no longer occurs anywhere in that corpus, which is the honest reading of an
+  adapter that now keeps every entry it is offered; the ledger's ability to
+  report loss is proved by the stripped-record probe that was written for
+  exactly this day. (#365)
+
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
   `intendedRecipient/assignedPerson`, but an `intendedRecipient` plays an

@@ -56,6 +56,7 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
     PrescriptionTransaction,
+    Provenance,
     ScreeningEvent,
     SectionKind,
 )
@@ -68,6 +69,7 @@ from anastomosis.deliver.ccda_export.builder import (
     LOSS_NARRATIVE_TITLE,
     _carried_forward,
     _entry_key,
+    measure_ccd,
 )
 from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, parse_document
 
@@ -704,6 +706,435 @@ def test_source_document_metadata_rides_the_loss_narrative(tmp_path: Path) -> No
     # The re-derived header keys are the EXPORTER's, not the source's — which is
     # exactly why the source values had to be narrated.
     assert reingested.patient.extensions["ccda:title"] == "Continuity of Care Document"
+
+
+# --- preserved entries: delivered as entries, never narrated -----------------
+#
+# A C-CDA ingest parks every section's entries verbatim under
+# `ccda:entries:<code>`, because prose about a section is not a copy of the
+# entries beneath it. This exporter re-emits those bytes as the entries of the
+# section carrying that code. Narrating them instead would serialise XML into
+# `path = value` lines no emitter consumes, so the next generation would park
+# and re-narrate them — measured at ~15 KB per round trip, without bound.
+
+
+def _entries_under(document: bytes, code: str | None) -> list[etree._Element]:
+    """Every ``<entry>`` of every section carrying ``code`` (``None`` for a
+    section that states no code at all)."""
+    root = etree.fromstring(document, _PARSER)
+    out: list[etree._Element] = []
+    for section in root.iter(f"{{{V3}}}section"):
+        node = section.find(f"{{{V3}}}code")
+        spelled = None if node is None else node.get("code")
+        if spelled == code:
+            out += section.findall(f"{{{V3}}}entry")
+    return out
+
+
+def _parked(record: PatientRecord) -> dict[str, list[str]]:
+    """The verbatim entries a record carries, by section code."""
+    prefix = "ccda:entries:"
+    out: dict[str, list[str]] = {}
+    for key, value in record.patient.extensions.items():
+        if key.startswith(prefix):
+            out.setdefault(key[len(prefix) :].partition("#")[0], []).extend(value)
+    return out
+
+
+def _shape(entry: str) -> object:
+    """One entry as the element it is: tags, attributes and non-blank text.
+
+    Re-emitting an entry into a document that declares more namespaces than its
+    source did, and through a pretty-printer, can change the STRING without
+    changing anything the element says: it gains an unused ``xmlns:sdtc``, and a
+    closing tag written flush against its child gains the indentation the
+    printer would have given it. Whether the BYTES survive is asked separately,
+    of documents that already carry both — which every C-CDA this repository
+    ships does.
+    """
+
+    def shape(node: etree._Element) -> object:
+        return (
+            node.tag,
+            sorted(node.attrib.items()),
+            (node.text or "").strip(),
+            [shape(child) for child in node],
+        )
+
+    return shape(etree.fromstring(entry.encode(), _PARSER))
+
+
+def _shapes(record: PatientRecord) -> dict[str, list[object]]:
+    return {code: [_shape(e) for e in entries] for code, entries in _parked(record).items()}
+
+
+_PROSE_AND_ENTRY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda5"/>
+  <title>Prose-and-entry CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000005"/>
+    <patient><name><given>Pia</given><family>Prose</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Procedures</title>
+      <text>PROSE-THAT-STATES-NOTHING-OF-THE-ENTRY</text>
+      <entry><procedure classCode="PROC" moodCode="EVN">
+        <id root="feedface-proc-0000-0000-000000000905"/>
+        <code code="430193006" displayName="SENTINEL-PROCEDURE"/>
+      </procedure></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_an_entry_under_prose_leaves_as_an_entry_and_is_not_narrated(tmp_path: Path) -> None:
+    """The defect this closes, from the export side.
+
+    A coded procedure under a section this exporter has no emitter for used to
+    reach the document only as narrative — and only if its section rendered no
+    text. It leaves as the entry it arrived as now, and the loss ledger does not
+    restate it: a ledger line holding a whole XML entry is a line the next
+    generation parks and narrates again.
+    """
+    source_doc = tmp_path / "prose_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _parked(ingested)["47519-4"], "the parser parked nothing to deliver"
+
+    document = build_ccd(ingested)
+    entries = _entries_under(document, "47519-4")
+    assert len(entries) == 1
+    assert entries[0].find(f"{{{V3}}}procedure/{{{V3}}}code").get("displayName") == (
+        "SENTINEL-PROCEDURE"
+    )
+
+    exported = tmp_path / "prose_out.xml"
+    exported.write_bytes(document)
+    text = _loss_text(parse_document(exported))
+    assert "ccda:entries" not in text, "the entries were narrated as well as delivered"
+    assert "SENTINEL-PROCEDURE" not in text
+    # The section's own prose is a different key and still narrates.
+    assert "PROSE-THAT-STATES-NOTHING-OF-THE-ENTRY" in text
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        Path("ccda") / "feedface_ccd.xml",
+        Path("synthea") / "synthea_ccda_sample.xml",
+        Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
+    ],
+    ids=lambda path: path.name,
+)
+def test_a_preserved_entry_comes_back_as_the_same_bytes(fixture: Path, tmp_path: Path) -> None:
+    """What went in comes back out: the same strings, the same count.
+
+    Asked of every C-CDA this repository ships, because these are the documents
+    with a real header — an entry re-emitted into one carries exactly the
+    namespace declarations its source did, so the byte question is answerable at
+    all. An entry delivered twice would show here as two, and one reformatted on
+    the way through as a different string.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
+    ingested = parse_document(source_doc)
+    assert _parked(ingested), "the parser parked nothing to deliver"
+
+    exported = tmp_path / "bytes_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert _parked(parse_document(exported)) == _parked(ingested)
+
+
+def test_a_re_emitted_entry_says_the_same_thing_and_then_stops_moving(tmp_path: Path) -> None:
+    """A source that declares fewer namespaces than this exporter writes.
+
+    Its entry says exactly what it said — same element, same attributes — but
+    the string gains the declarations the export root carries and the indent the
+    printer gives a flush closing tag. That is a one-generation settling, not a
+    drift: generation 2 and generation 3 are the same bytes, which is what keeps
+    the round trip a fixed point rather than a slow leak.
+    """
+    source_doc = tmp_path / "settle_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+
+    out = tmp_path / "settle_out.xml"
+    generations = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        generations.append(_parked(ingested))
+
+    assert [_shape(e) for e in generations[0]["47519-4"]] == [
+        _shape(e) for e in _parked(parse_document(source_doc))["47519-4"]
+    ]
+    assert generations[1] == generations[2], "the preserved bytes never settle"
+
+
+def test_a_code_the_builder_emits_no_section_for_still_delivers_its_entries(
+    tmp_path: Path,
+) -> None:
+    """47519-4 has no structured emitter here, and the entries arrive anyway.
+
+    The decision this pins: a carrier section, not a refusal. A code with no
+    emitter is the ordinary case, and an export that refused the chart would
+    refuse the common path. The carrier states the code and nothing the record
+    does not — no codeSystem, because a parked key preserves the section's code
+    and not the system it was drawn from.
+    """
+    source_doc = tmp_path / "carrier_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    document = build_ccd(parse_document(source_doc))
+
+    root = etree.fromstring(document, _PARSER)
+    carriers = [
+        section
+        for section in root.iter(f"{{{V3}}}section")
+        if (node := section.find(f"{{{V3}}}code")) is not None and node.get("code") == "47519-4"
+    ]
+    assert len(carriers) == 1, "the entries reached no section of their own"
+    code = carriers[0].find(f"{{{V3}}}code")
+    assert code.get("codeSystem") is None, "a code system the record never stated"
+    assert carriers[0].findall(f"{{{V3}}}entry")
+
+
+def test_a_foreign_loss_sections_entries_are_not_swallowed_by_our_ledger(
+    tmp_path: Path,
+) -> None:
+    """51899-3 is a public LOINC, and a re-ingest reads OUR 51899-3 section as
+    paragraphs and never looks at its entries.
+
+    So a third party's 51899-3 entries may not be appended to the stamped ledger
+    this tool writes: they would leave the document and never come back. They get
+    a carrier of their own, which is why the "exactly one" rule is about the
+    STAMPED section rather than about the code.
+    """
+    foreign = _FOREIGN_LOSS_CODE_CCD.replace(
+        "</section></component>",
+        """<entry><observation classCode="OBS" moodCode="EVN">
+             <id root="feedface-vend-0000-0000-000000000906"/>
+             <code code="75326-9" displayName="SENTINEL-VENDOR-ENTRY"/>
+           </observation></entry></section></component>""",
+    )
+    source_doc = tmp_path / "foreign_entries_in.xml"
+    source_doc.write_text(foreign, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _parked(ingested)[LOINC_EXTENSIONS]
+
+    exported = tmp_path / "foreign_entries_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reingested = parse_document(exported)
+    assert _shapes(reingested) == _shapes(ingested), "a third party's entries were lost"
+    # Ours is still exactly one, and still the stamped one.
+    stamped = [
+        section
+        for section in _loss_sections(exported.read_bytes())
+        if section.find(f"{{{V3}}}templateId") is not None
+    ]
+    assert len(stamped) == 1
+
+
+def test_a_code_less_sections_entries_are_delivered_too(tmp_path: Path) -> None:
+    """A section with no ``<code>`` parks under the one bucket both halves name,
+    and its carrier states no code either — the record preserved none."""
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        '<code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>', ""
+    )
+    source_doc = tmp_path / "codeless_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert "unknown" in _parked(ingested)
+
+    exported = tmp_path / "codeless_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert len(_entries_under(exported.read_bytes(), None)) == 1
+    assert _shapes(parse_document(exported)) == _shapes(ingested)
+
+
+def test_the_object_and_the_entry_it_came_from_are_stated_once(tmp_path: Path) -> None:
+    """The compounding this avoids, measured on the repository's own fixture.
+
+    Every condition, medication and measurement in it was read out of an entry
+    the parser also parked. Emitting the derived entry beside the preserved one
+    would state each fact twice, a re-ingest would read two objects where the
+    chart has one, and the generation after that would read four.
+    """
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    ingested = parse_document(fixture)
+    out = tmp_path / "once.xml"
+
+    counts = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        counts.append(
+            (
+                len(ingested.conditions),
+                len(ingested.medications),
+                len(ingested.allergies),
+                len(ingested.observations),
+                len(ingested.encounters),
+            )
+        )
+    assert counts == [(2, 2, 2, 8, 2)] * 3, f"a chart doubled around the loop: {counts}"
+
+
+def test_an_object_no_preserved_entry_states_keeps_its_structured_entry(tmp_path: Path) -> None:
+    """Only the object the preserved entries actually state is left to them.
+
+    A record can carry both — a C-CDA ingest's parked entries and an object from
+    somewhere else — and the one nothing preserved has to be emitted, or the
+    export drops it silently.
+    """
+    source_doc = tmp_path / "mixed_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    ingested.patient.extensions["ccda:entries:11450-4"] = ingested.patient.extensions[
+        "ccda:entries:47519-4"
+    ]
+    ingested.conditions = [
+        Condition(
+            patient_id=ingested.patient.id,
+            snomed="38341003",
+            display="ELSEWHERE-CONDITION",
+            active=True,
+            provenance=Provenance(source_system="pf-tebra", source_id="pf-row-0001"),
+        )
+    ]
+
+    exported = tmp_path / "mixed_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reingested = parse_document(exported)
+    assert [c.display for c in reingested.conditions] == ["ELSEWHERE-CONDITION"]
+    assert _shape(_parked(ingested)["11450-4"][0]) in _shapes(reingested)["11450-4"], (
+        "the preserved entry was dropped in favour of the structured one"
+    )
+    assert len(_parked(reingested)["11450-4"]) == 2, "one fact, two entries"
+
+
+def test_an_entry_with_no_id_of_its_own_is_not_stated_twice(tmp_path: Path) -> None:
+    """The object an id-less entry produced is matched by the absence of an id.
+
+    An entry carrying no ``<id>`` gives its object no source id, so identity
+    cannot match them by one. It is the only kind of entry such an object can
+    have come from, and pairing them on that is what keeps a malformed document
+    — C-CDA requires the id — from doubling its entries on every export.
+    """
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        '<id root="feedface-proc-0000-0000-000000000905"/>', ""
+    ).replace("47519-4", "11450-4")
+    source_doc = tmp_path / "noid_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    ingested.conditions = [
+        Condition(patient_id=ingested.patient.id, display="FROM-THE-ID-LESS-ENTRY", active=True)
+    ]
+
+    out = tmp_path / "noid_out.xml"
+    counts = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        counts.append(len(_entries_under(out.read_bytes(), "11450-4")))
+    assert counts == [1, 1, 1], f"an id-less entry multiplied around the loop: {counts}"
+
+
+def test_two_sections_sharing_a_code_deliver_into_the_one_section(tmp_path: Path) -> None:
+    """Problems (Active) and Problems (Resolved) are both 11450-4, and the parser
+    parks the second under ``…#2``. This exporter writes one section per code, so
+    both lists are delivered into it and a re-ingest parks them as one."""
+    section = """
+    <component><section>
+      <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Procedures ({half})</title>
+      <entry><procedure classCode="PROC" moodCode="EVN">
+        <id root="feedface-proc-0000-0000-00000000090{half}"/>
+        <code code="430193006" displayName="SENTINEL-{half}"/>
+      </procedure></entry>
+    </section></component>"""
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        "<component><structuredBody>",
+        "<component><structuredBody>" + section.format(half=1) + section.format(half=2),
+    )
+    source_doc = tmp_path / "repeat_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert "ccda:entries:47519-4#2" in ingested.patient.extensions
+
+    exported = tmp_path / "repeat_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert len(_entries_under(exported.read_bytes(), "47519-4")) == 3
+    assert _shapes(parse_document(exported))["47519-4"] == _shapes(ingested)["47519-4"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(["<entry>SENTINEL-UNDELIVERABLE"], id="not-well-formed"),
+        pytest.param(
+            ['<observation xmlns="urn:hl7-org:v3">SENTINEL-UNDELIVERABLE</observation>'],
+            id="not-an-entry",
+        ),
+        pytest.param({"entry": "SENTINEL-UNDELIVERABLE"}, id="not-a-list"),
+        pytest.param([{"note": "SENTINEL-UNDELIVERABLE"}], id="not-a-string"),
+        # A mapping iterates its KEYS, so a shape read by iterating alone would
+        # deliver this one's key and drop its value without a word.
+        pytest.param(
+            {'<entry xmlns="urn:hl7-org:v3"><observation/></entry>': "SENTINEL-UNDELIVERABLE"},
+            id="a-mapping-whose-key-looks-like-an-entry",
+        ),
+    ],
+)
+def test_a_preserved_value_the_exporter_cannot_re_emit_is_narrated_instead(
+    value: object, tmp_path: Path
+) -> None:
+    """A key this exporter cannot deliver must not be BOTH skipped here and
+    exempted there — that is the silent drop.
+
+    Four shapes it cannot: bytes that will not parse, an element that is not an
+    ``<entry>`` (appending one to a section puts it somewhere the parser's own
+    entry walk never looks, which is a drop wearing a delivery's clothes), a
+    value that is not a list of them, and a member that is not a string. Each
+    narrates instead. The value is patient content, so an unparseable one is
+    answered with the narrative tier rather than with an exception quoting the
+    bytes.
+    """
+    record = PatientRecord(
+        patient=Patient(
+            id="feedface-0000-0000-0000-000000000007",
+            extensions={"ccda:entries:11450-4": value},
+        )
+    )
+    exported = tmp_path / "undeliverable_out.xml"
+    exported.write_bytes(build_ccd(record))
+    assert "SENTINEL-UNDELIVERABLE" in _loss_text(parse_document(exported))
+
+
+def test_the_loss_ledger_stops_growing_for_a_chart_ingested_from_ccda(tmp_path: Path) -> None:
+    """The constraint that made this change hard, pinned.
+
+    Narrating the parked entries instead of delivering them grew the 51899-3
+    section by ~15 KB per generation for as long as the loop ran. Delivered, the
+    chart reaches its fixed point at generation 2 — measured on this repository's
+    own C-CDA fixture — and the converged section is within ~100 bytes of what it
+    was before any entry under prose was preserved at all.
+    """
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    record = parse_document(fixture)
+    # One stable file name: the parser derives fallback ids from it, so a
+    # churning name would inject churn the real path does not have.
+    out = tmp_path / "generations.xml"
+    sizes = []
+    for _ in range(3):
+        document = build_ccd(record)
+        out.write_bytes(document)
+        sizes.append(measure_ccd(document).preserved_bytes)
+        record = parse_document(out)
+    assert sizes[1] == sizes[2], f"the loss ledger is still growing: {sizes}"
+    assert sizes[2] < 11_000, f"the converged ledger is far larger than it was: {sizes}"
 
 
 # --- export → ingest generations ---------------------------------------------

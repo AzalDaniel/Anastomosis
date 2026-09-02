@@ -22,6 +22,7 @@ from __future__ import annotations
 
 __all__ = [
     "EXT_PRIOR_LOSS_NARRATIVE",
+    "EXT_SECTION_ENTRIES",
     "LOINC_ALLERGIES",
     "LOINC_ENCOUNTERS",
     "LOINC_EXTENSIONS",
@@ -40,6 +41,7 @@ __all__ = [
     "OID_SNOMED",
     "OID_SSN",
     "SDTC",
+    "SECTION_CODE_UNKNOWN",
     "TPL_SEVERITY",
     "V3",
     "XSI",
@@ -97,3 +99,17 @@ LOSS_NARRATIVE_TITLE = "Anastomosis Preserved Source Fields"
 
 # Where a re-ingest parks a stamped section's entries.
 EXT_PRIOR_LOSS_NARRATIVE = "ccda:prior_loss_narrative"
+
+# Where a re-ingest parks a section's OWN entries, verbatim:
+# ``ccda:entries:<code>``, suffixed ``#2``, ``#3``, … for a repeated section
+# code, in document order. Shared because both halves read it now — the parser
+# writes the bytes, and the builder re-emits them as entries in the section
+# carrying that code rather than narrating them (see docs/CCDA_EXPORT.md).
+EXT_SECTION_ENTRIES = "ccda:entries"
+
+# The bucket a section with no ``<code>`` at all parks under: the parser writes
+# ``ccda:entries:unknown`` / ``ccda:section:unknown`` for it, the ledger reads
+# the same bucket, and the builder re-emits its entries into a section that
+# states no code — because the record preserved none, and a code is not a
+# detail to invent.
+SECTION_CODE_UNKNOWN = "unknown"
