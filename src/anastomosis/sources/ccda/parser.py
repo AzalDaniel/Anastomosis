@@ -546,7 +546,28 @@ def _narrative_entries(text_node: _Element | None) -> list[str]:
     return entries
 
 
-def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
+def _capture_loss_lines(root: _Element) -> dict[_Element, list[str]]:
+    """Every stamped loss ledger's lines, exactly as the document spells them.
+
+    The companion of :func:`_capture_entries`, taken in the same pass over the
+    untouched tree and for the same reason. `_inline_narrative_references`
+    fills a ``<reference>`` element's own text in place, so a line read after
+    it runs carries words the document does not spell at that position; the
+    conservation ledger asks whether the record holds this section's lines by
+    reading them off the file again, and a hydrated copy matches none of them —
+    a ledger that arrived whole reads lost.
+
+    Only the sections the walk reaches, because only those are stored.
+    """
+    return {
+        section: entries
+        for section in _sections(root)
+        if _is_own_loss_narrative(section, _section_code(section))
+        and (entries := _narrative_entries(_find(section, "v3:text")))
+    }
+
+
+def _capture_loss_narrative(record: PatientRecord, section: _Element, entries: list[str]) -> None:
     """Preserve OUR OWN loss ledger under ``ccda:prior_loss_narrative``.
 
     Captured as discrete entries (one per ``<paragraph>``, as the exporter wrote
@@ -560,8 +581,13 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     entries CONCATENATE into the one key (highest generation wins) so the
     exporter dedupes a single carry-forward ledger and neither one is
     overwritten.
+
+    ``entries`` arrives from :func:`_capture_loss_lines`, read before this
+    module rewrites the tree, for the reason the verbatim entries are: the
+    conservation ledger asks whether the record holds this section's lines by
+    reading them off the file again, so a copy hydrated in between is a copy of
+    the parser's tree and matches nothing.
     """
-    entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
         return
     generation = _loss_generation(section)
@@ -2156,6 +2182,7 @@ def parse_document(path: Path) -> PatientRecord:
     # the file, and broke the byte-exact question the ledger asks of it. The
     # copy is taken from the document as parsed, and nothing else touches it.
     entries_by_section = _capture_entries(root)
+    loss_lines_by_section = _capture_loss_lines(root)
 
     _inline_narrative_references(root)
 
@@ -2212,7 +2239,7 @@ def parse_document(path: Path) -> PatientRecord:
         # loss ledger is the one exception — captured entry-by-entry so a repeat
         # export cannot nest it inside the next one.
         if _is_own_loss_narrative(section, loinc):
-            _capture_loss_narrative(record, section)
+            _capture_loss_narrative(record, section, loss_lines_by_section.get(section, []))
         else:
             _capture_narrative(record, section, loinc)
             _store_entries(record.patient.extensions, entries_by_section, section, loinc)

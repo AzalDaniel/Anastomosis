@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from anastomosis.core.ccda_codes import (
+    EXT_PRIOR_LOSS_NARRATIVE,
     LOSS_NARRATIVE_TEMPLATE_ROOT,
     LOSS_NARRATIVE_TITLE,
 )
@@ -1908,34 +1909,58 @@ def _stamped_ledger(title_suffix: str, *paragraphs: str) -> str:
 """
 
 
-def test_a_loss_ledger_the_parser_never_reached_is_not_credited(tmp_path: Path) -> None:
-    """One key, however many stamped ledgers a document carries.
+def _out_of_the_walk(kind: str, ledger: str) -> str:
+    """``ledger``, placed where the parser's section walk does not go.
 
-    The parser concatenates every stamped 51899-3 it walks into a single
-    ``ccda:prior_loss_narrative`` — so a re-export carries one deduplicated
-    appendix rather than nesting each generation inside the next. Asking
-    whether that key EXISTS therefore answers for the construct class and not
-    for any one construct: a second stamped section, buried under a nested
-    ``<structuredBody>`` where the walk does not go, read as preserved on the
-    strength of the first one's key while nothing of it was in the record.
+    The walk is one anchored path, ``component/structuredBody/component/
+    section``, and there is more than one way to sit off it. Nesting is the
+    shape the defect was found in; a section straight under
+    ``<structuredBody>``, with no ``<component>`` of its own, is the same
+    document saying the same thing with less ceremony.
     """
-    # The buried ledger SHARES one entry with the readable one and adds a
-    # second of its own. Sharing is what makes the claim have to be all of
-    # them: spending any single entry it names would let the first paragraph —
-    # which really is in the record, because the other section put it there —
-    # answer for the paragraph that is not.
-    buried = f"""
+    if kind == "nested":
+        return f"""
   <component><section>
     <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
     <title>Results</title>
     <text>Ordinary results prose.</text>
-    <component><structuredBody>{
-        _stamped_ledger(" (buried)", "coverage: 1 dropped", "buried: 1 dropped")
-    }
-    </structuredBody></component>
+    <component><structuredBody>{ledger}</structuredBody></component>
   </section></component>
 """
-    path = _write(tmp_path, body=buried + _stamped_ledger("", "coverage: 1 dropped"))
+    return ledger.replace("<component><section>", "<section>").replace(
+        "</section></component>", "</section>"
+    )
+
+
+@pytest.mark.parametrize("burial", ["nested", "no component"])
+@pytest.mark.parametrize(
+    "buried_lines", [("coverage: 1 dropped", "buried: 1 dropped"), ("coverage: 1 dropped",)]
+)
+@pytest.mark.parametrize("readable_first", [False, True])
+def test_a_loss_ledger_the_parser_never_reached_is_not_credited(
+    tmp_path: Path, burial: str, buried_lines: tuple[str, ...], readable_first: bool
+) -> None:
+    """One key, however many stamped ledgers a document carries.
+
+    The parser concatenates every stamped 51899-3 IT WALKS into a single
+    ``ccda:prior_loss_narrative`` — so a re-export carries one deduplicated
+    appendix rather than nesting each generation inside the next. That store's
+    address is therefore "the lines the walked ledgers put there", and a
+    stamped section off the walk has no claim on it: nothing of that section
+    is anywhere in the record.
+
+    The second parameter is the one that bites. A buried ledger naming a line
+    of its own can be caught by the store simply not holding it; a buried
+    ledger whose lines are all ALSO in a readable one's is held out by nothing
+    but the address. Both are ordinary — two exports that dropped the same
+    field write the same line — and in the second the reachable ledger, which
+    really did deliver every line, was the one reported lost. Which of the two
+    got the credit came down to which came first in the document, so the
+    order is a parameter too.
+    """
+    readable = _stamped_ledger("", "coverage: 1 dropped", "and: 1 dropped")
+    buried = _out_of_the_walk(burial, _stamped_ledger(" (buried)", *buried_lines))
+    path = _write(tmp_path, body=readable + buried if readable_first else buried + readable)
     record = parse_document(path)
     assert "buried" not in repr(record.patient.extensions), (
         "the parser reached the buried section after all, so this is not the case at issue"
@@ -1943,12 +1968,66 @@ def test_a_loss_ledger_the_parser_never_reached_is_not_credited(tmp_path: Path) 
     rows = [row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"]
     assert len(rows) == 2
 
-    assert rows[0].instances == {Disposition.UNSUPPORTED: 1}, (
+    # Rows come in document order, so the readable one is first or second by
+    # the same parameter that placed it.
+    read_row, buried_row = rows if readable_first else rows[::-1]
+    assert buried_row.instances == {Disposition.UNSUPPORTED: 1}, (
         "a ledger the parser never reached was reported preserved"
     )
-    assert rows[1].instances == {Disposition.NARRATIVE_PRESERVED: 1}, (
+    assert read_row.instances == {Disposition.NARRATIVE_PRESERVED: 1}, (
         "the ledger the parser did read lost its own credit to the buried one"
     )
+
+
+def test_a_ledger_that_said_nothing_is_not_credited_for_saying_nothing(
+    tmp_path: Path,
+) -> None:
+    """A stamped section with an empty ``<text/>`` stores nothing, so it is
+    owed nothing.
+
+    The claim is every line the section offers, and a claim of no lines is
+    vacuously true — "all zero of them arrived" — which reads as preserved on
+    a section the record has no trace of. It is the emptiest possible false
+    clean bill, and the only thing standing between it and the report is that
+    the claim is refused when there is nothing to claim.
+    """
+    path = _write(tmp_path, body=_stamped_ledger(""))
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:51899-3"
+    ]
+    assert [row.instances for row in rows] == [{Disposition.UNSUPPORTED: 1}]
+
+
+def test_a_ledger_line_pointing_into_the_narrative_is_still_its_own_line(
+    tmp_path: Path,
+) -> None:
+    """The two sides must read the same tree state, not the same file twice.
+
+    ``_inline_narrative_references`` fills a ``<reference>`` element's own text
+    in place before the section walk, so a line captured after it runs carries
+    words the document does not spell at that position. The ledger reads the
+    lines off the file again, finds the hydrated copy matching none of them,
+    and reports a ledger that arrived whole as lost. The verbatim entries were
+    bitten by this once and are captured before hydration; the loss ledger is
+    captured there now too.
+    """
+    problems = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><paragraph ID="p1">coverage: 1 dropped</paragraph></text>
+  </section></component>
+"""
+    ledger = _stamped_ledger("", "coverage: 1 dropped", 'see <reference value="#p1"/>')
+    path = _write(tmp_path, body=problems + ledger)
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:51899-3"
+    ]
+    assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
 
 
 @pytest.mark.parametrize("second_entry", ["allergy severity: 2 dropped", "coverage: 1 dropped"])
@@ -1981,6 +2060,32 @@ def test_two_loss_ledgers_the_parser_does_read_are_both_credited(
         {Disposition.NARRATIVE_PRESERVED: 1},
         {Disposition.NARRATIVE_PRESERVED: 1},
     ]
+
+
+def test_a_line_the_record_kept_only_once_does_not_answer_for_two(
+    tmp_path: Path,
+) -> None:
+    """The claim is the section's LINES, not the set of them.
+
+    A ledger repeating a line is ordinary — an export that dropped the same
+    field in two places says so twice — and the store holds it twice because
+    both were kept. If something between the two ever collapsed them, the
+    section would be offering two lines the record answers for once, and a
+    claim that asked only which distinct lines are present would call that
+    whole. The record is an input here, so the shortfall is stated directly
+    rather than waiting for a future dedup to introduce it.
+    """
+    line = "coverage: 1 dropped"
+    path = _write(tmp_path, body=_stamped_ledger("", line, line))
+    record = parse_document(path)
+    store = record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]
+    assert store["entries"] == [line, line], "the parser stopped keeping both copies"
+
+    store["entries"] = [line]
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"]
+    assert [row.instances for row in rows] == [{Disposition.UNSUPPORTED: 1}], (
+        "one kept line answered for two offered ones"
+    )
 
 
 def test_a_stamped_loss_ledger_does_not_claim_a_foreign_sections_copy(

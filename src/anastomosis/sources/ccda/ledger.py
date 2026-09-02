@@ -88,14 +88,16 @@ from anastomosis.core.conservation import Conservation
 from anastomosis.core.model import Practitioner
 from anastomosis.core.model.base import AnastBase
 
-# The parser's own helpers, imported rather than re-spelled. Four of them encode
+# The parser's own helpers, imported rather than re-spelled. Each encodes
 # knowledge this ledger must not hold a second copy of: `_PARSER` is the
 # hardened XML posture every third-party document is read under, `_section_code`
-# and `_is_own_loss_narrative` are the parser's own answers about a section, and
-# `_text_content` and `_attr` are the exact normalizations whose output the
-# parser STORED — a ledger that collapsed whitespace even slightly differently
-# would compare its own spelling of a value against the parser's and conclude
-# that every section, and every actor, had been dropped.
+# and `_is_own_loss_narrative` are the parser's own answers about a section,
+# `_sections` is the walk that decides which sections the record can hold
+# anything of at all, and `_text_content`, `_attr`, `_narrative_entries` and
+# `entry_verbatim` are the exact normalizations whose output the parser STORED —
+# a ledger that collapsed whitespace even slightly differently would compare its
+# own spelling of a value against the parser's and conclude that every section,
+# and every actor, had been dropped.
 from .parser import (
     _PARSER,
     EXT_SECTION_ENTRIES,
@@ -897,7 +899,13 @@ def _own_loss_pool(record: PatientRecord) -> Counter[str]:
     if not isinstance(stored, dict):
         return Counter()
     entries = stored.get("entries")
-    return Counter(entries) if isinstance(entries, list) else Counter()
+    if not isinstance(entries, list):
+        return Counter()
+    # A list OF STRINGS is the rest of that key's contract, and the narrowing
+    # finishes here rather than half way: a record this module did not build is
+    # still an input, and an unhashable element would raise out of `Counter`
+    # and abort the whole reading instead of leaving one section uncredited.
+    return Counter(entry for entry in entries if isinstance(entry, str))
 
 
 def _parked_pool(record: PatientRecord) -> Counter[str]:
@@ -1319,6 +1327,22 @@ def _parks_its_entries(section: _Element) -> bool:
         return False
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
+    return _parser_walks(section)
+
+
+def _parser_walks(section: _Element) -> bool:
+    """Whether the parser's section walk actually reaches this element.
+
+    The walk is an anchored path — ``component/structuredBody/component/
+    section`` — so a section nested inside another one, or sitting straight
+    under ``<structuredBody>`` without its ``<component>``, is not on it. The
+    parser visits neither, which means nothing of either is anywhere in the
+    record, and no store may be asked about them.
+
+    Asked once here because two questions need it and a second spelling would
+    drift from the first. It ASKS the walk rather than restating it, for the
+    reason :func:`_parks_its_entries` gives.
+    """
     walked = _parser_sections(section.getroottree().getroot())
     return any(candidate is section for candidate in walked)
 
@@ -1455,8 +1479,20 @@ def _narrative_kept(
     entry by entry under ``ccda:prior_loss_narrative``, so a re-export cannot
     nest generation N-1 inside generation N — so it is asked about at its own
     address rather than reported as dropped.
+
+    That store is filled from the parser's section walk, which means its
+    address is "the lines the WALKED ledgers put there". A stamped section off
+    the walk contributed nothing to it, and its lines can still be in there
+    because another ledger wrote the same ones: an export that dropped the same
+    field twice says so twice. Asking the store about such a section is asking
+    the wrong address, and it answered yes — a section entirely absent from the
+    record read preserved, and the ledger that had really delivered the lines
+    was left holding an empty pool and reported lost. Which of the two got the
+    credit came down to document order.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
+        if not _parser_walks(section):
+            return False
         return evidence.own_loss_kept(_narrative_entries(_find(section, "v3:text")))
     if pair == (None, None):
         return False

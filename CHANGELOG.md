@@ -121,6 +121,23 @@ issue and fixed in its own pull request.
   same line arrives twice; a ledger whose lines are only partly there is
   credited by none of them.
 
+  Counting alone was not enough, because the pool cannot say who put a line
+  in it. A buried ledger repeating a line the reachable one had also written
+  emptied the pool first and was reported preserved, and the section that
+  really had delivered every line was reported lost — which of the two got the
+  credit came down to document order. So the question is asked at the store's
+  actual address: that store is filled from the parser's section walk, and a
+  section off the walk is asked nothing, because nothing of it is in the
+  record. The one walk both this and the parked-entry rule ask is now one
+  function, so the two cannot drift.
+
+  The last of it was on the other side. The parser filled in a `<reference>`
+  element's text before capturing the ledger's lines, so a line pointing into
+  the narrative was stored with words the document does not spell there and
+  matched nothing when the ledger read the file again — a ledger that arrived
+  whole reported lost. The verbatim entries were bitten by this once and are
+  captured before hydration; the loss ledger is captured there now too.
+
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
   layout's NAME, so a run into a folder whose layout had been edited since
