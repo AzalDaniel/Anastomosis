@@ -278,19 +278,23 @@ def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]
 def test_all_four_dispositions_actually_occur(
     scale_report: dict[str, object], tmp_path: Path
 ) -> None:
-    """Three dispositions occur in vivo; the fourth is proved by taking.
+    """All four occur in vivo, and the fourth is also proved by taking.
 
-    Until #314 the corpus carried its own loss: a text-less section's entries
-    reached neither book, and ``unsupported`` occurred naturally. Those entries
-    are now preserved verbatim, and with that the corpus holds NO shape the
-    parser fails to keep — which is the product working, not the test slipping.
-    Manufacturing a fake parser hole in the generator to tick this box would be
-    the opposite of what this suite protects.
+    ``unsupported`` occurs naturally again, and the reason it stopped for a
+    while is worth keeping written down. #314 taught the parser to preserve a
+    text-less section's entries verbatim, and after it the corpus read as
+    though nothing was lost anywhere. It was: the entries under a section that
+    HAS narrative were being credited to that narrative, on the assumption that
+    a section's prose says what its entries say. These documents disprove it —
+    a Plan of Treatment reading "Continue lisinopril and recheck blood pressure
+    in three months" carries an entry stating the coded value "No current
+    problems" — so the clean reading was the instrument flattering itself, and
+    those entries are counted honestly now.
 
-    ``unsupported`` still has to be provably reachable, so it is proved the way
-    loss actually arrives: an adapter that dropped something. Strip every
-    practitioner from one parsed record and the ledger must say so — if this
-    half fails, the ledger has learned to flatter a defective adapter.
+    The stripped-practitioner probe below stays. Loss arriving from an adapter
+    that dropped something is a different route to the same disposition, and a
+    ledger that learned to flatter a defective adapter would still be caught by
+    it even if the corpus one day carried no natural loss at all.
     """
     constructs = scale_report["constructs"]
     assert isinstance(constructs, list)
@@ -298,11 +302,7 @@ def test_all_four_dispositions_actually_occur(
     for entry in constructs:
         seen |= {name for name, count in entry["instances"].items() if count}
         seen |= {name for name, count in entry["entries"].items() if count}
-    assert seen == {
-        Disposition.STRUCTURALLY_PARSED.value,
-        Disposition.NARRATIVE_PRESERVED.value,
-        Disposition.SOURCE_EMPTY.value,
-    }, "a natural unsupported here means a preservation path regressed"
+    assert seen == {disposition.value for disposition in Disposition}
 
     name, xml = next(documents(1, seed=7))
     path = tmp_path / name

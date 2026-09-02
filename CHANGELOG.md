@@ -15,6 +15,95 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A positive verdict has to be backed by the thing it claims.** An
+  adversarial pass over the C-CDA conservation ledger found three ways it
+  awarded credit it had not earned, and every one of them read as preservation
+  to an operator. A participation was counted preserved when a `ccda:` key
+  existed, whatever was under it — so an adapter that wrote the namespace and
+  stored an empty list scored what one storing the facts scored, and the credit
+  was for the cheapest thing in the record to be right about. An `<entry>` was
+  counted parsed when ANY id beneath it reached the record, so an `<organizer>`
+  of two results kept its verdict after one of the two was dropped, on the
+  strength of its sibling. And an entry the parser could not take was counted
+  preserved by its section's prose, one shared flag handed to every entry
+  beneath it.
+
+  Each is now asked at its own address. The parked payload is counted, not the
+  key, and one stored item answers for one offered construct and is spent.
+  An entry's clinical statements are asked one at a time and the answer is all
+  of them — calibrated against the statement KINDS this document has been seen
+  to link, by template OID, because a Problem Concern Act is what a condition
+  is recorded by and its nested Problem Observation never carries provenance of
+  its own; requiring that one would report every conforming problem as half
+  lost, which is the same lie told backwards. And an unparsed entry is credited
+  only by a verbatim copy of itself, or by the narrative cells it NAMES, never
+  by prose about the section.
+
+  That second route is C-CDA's own: an entry says which cell of the table is
+  its human-readable form, in `<reference value="#id"/>`, and a cell whose
+  words the record kept is a real preservation of that entry. It is held to
+  the same arithmetic as everything else here. The cells are the named things
+  strictly inside this section's `<text>` — the `<text>` itself is the whole
+  prose, and a `<table>` or a `<caption>` is the arrangement, not a statement
+  in it.
+
+  A word can be addressed by more than one name. A table writes the row's
+  name on the row and the cell's name on the cell inside it, and an entry may
+  reach the word by either; C-CDA's ordinary spelling has one entry use both
+  at once. So the names are addresses and the innermost cells are the claims:
+  every name over a word leads to the one claim on it, and one entry naming
+  it twice over is one preservation, not two. Each claim answers one entry
+  and is spent, so three entries citing one row are one preservation and two
+  losses. An entry whose citations do not ALL resolve is credited by none of
+  them, because a citation naming nothing is a claim the document cannot
+  back, and it keeps no half it did find — that half belongs to whichever
+  entry named it on its own.
+
+  A section settles its entries by what they ask for, never by the order it
+  happens to list them in — otherwise an entry citing a whole row takes every
+  cell under it and starves the entries that named those cells, and the same
+  three entries over the same two words read two preserved or one depending
+  on which came first. A reading nobody can reproduce from the content alone
+  is not a reading. Both ends are tried, narrowest claim first and widest
+  first, and whichever honours more entries is the answer; neither alone is
+  enough, because a narrow claim reaching into two rows can kill both of
+  them and a wide one can swallow cells its own entries had named.
+
+  Choosing the most entries a set of cells can honour is set packing, and
+  this is a heuristic over it, stated plainly rather than implied to be
+  exact: measured against a brute-force maximum over 4,000 arrangements it
+  never credits more than an honest assignment could — no preservation is
+  invented — and on 5 of them it credits fewer, reporting loss an optimal
+  assignment would not. Over-reporting loss is the safe direction for an
+  instrument whose whole purpose is to be believed about absences.
+
+  The third of those was hiding real loss rather than only mis-labelling it,
+  and the corpus this repo generates says so in its own documents: a Plan of
+  Treatment whose narrative reads "Continue lisinopril and recheck blood
+  pressure in three months" carries an entry stating the coded value "No
+  current problems", and of 281 such entries measured, not one had every fact
+  it states present in the narrative crediting it. So the 6,144-document
+  reading moves, and it moves by a lot — roughly half the entries under each
+  unsupported section go from preserved to not credited as data (`58cbcf57…`,
+  65 lines, 3,433 bytes, against `823a60b6…` before). Nothing about the parse
+  changed: the same documents yield the same charts, and the instrument stopped
+  flattering them.
+
+  A fourth defect fell out of fixing the third. `_inline_narrative_references`
+  fills each `<reference>` element's text in place so the structural parsers
+  can read a coded entry's referenced name, and it ran BEFORE the verbatim
+  entry capture — so the copy #314 preserves was a copy of the parser's tree
+  rather than of the file, and the ledger's byte-exact question about it
+  answered no for entries that were sitting right there. The capture happens
+  first now.
+
+  Not done here, and named rather than left implicit: a section WITH narrative
+  still parks no entries, so an entry the parser cannot take there is genuinely
+  not preserved. Extending the capture is a change to what every export
+  carries — the builder narrates each parked key into the 51899-3 section, so
+  capturing every section's entries makes the loss narrative grow by a
+  generation on each round trip — and it belongs to that decision.
+
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
   layout's NAME, so a run into a folder whose layout had been edited since
