@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
+import random
 import re
 from collections import Counter
 from pathlib import Path
@@ -759,8 +760,8 @@ def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
         assert surface <= allowed, f"{type(pool).__name__} offers more than taking"
 
     # ``demand`` is the one reader, and it reads the ADDRESS map: it says how
-    # much an entry is asking for so a section can serve the narrowest claims
-    # first, and it can never report what is still unspent.
+    # much an entry is asking for so a section can serve its claims from both
+    # ends, and it can never report what is still unspent.
     addressed = ledger._Anchors({"row": frozenset({"cell"}), "cell": frozenset({"cell"})})
     assert addressed.demand(["row"]) == addressed.demand(["cell"]) == 1
     assert addressed.demand(["row", "cell"]) == 1, "two addresses over one cell asked for two"
@@ -2264,8 +2265,8 @@ def test_the_reading_does_not_turn_on_which_entry_is_listed_first(
     Served in the order the section lists them, an entry citing a whole row
     takes every cell under it and starves the entries that cite those cells by
     name — so these same three entries over these same two words read two
-    preserved or one, decided by nothing but which came first. The narrowest
-    claims are settled first now, and the answer is the same either way round.
+    preserved or one, decided by nothing but which came first. Both ends are
+    tried now, and the answer is the same either way round.
     """
     row = _cites(1, "#row1", "A")
     cells = _cites(2, "#cell-a", "B") + _cites(3, "#cell-b", "C")
@@ -2408,6 +2409,124 @@ def test_one_entry_reaching_into_two_rows_does_not_kill_them_both(
         Disposition.NARRATIVE_PRESERVED: 2,
         Disposition.UNSUPPORTED: 1,
     }
+
+
+def _random_section(rng: random.Random) -> tuple[object, list[list[str]]]:
+    """A small table of rows and cells, and entries citing names from it."""
+    from lxml import etree
+
+    # Two rows minimum, and every entry naming at least two cells: the
+    # settlement only has anything to decide when claims actually contend, and
+    # a generator of one-cell sections would agree with any rule at all.
+    names: list[str] = []
+    rows = []
+    for r in range(rng.randint(2, 3)):
+        cells = []
+        for c in range(rng.randint(2, 3)):
+            cell = f"c{r}{c}"
+            names.append(cell)
+            cells.append(f'<td ID="{cell}">W{r}{c}</td>')
+        row = f"r{r}"
+        names.append(row)
+        rows.append(f'<tr ID="{row}">{"".join(cells)}</tr>')
+    citations = [
+        [f"#{rng.choice(names)}" for _ in range(rng.randint(2, 3))]
+        for _ in range(rng.randint(3, 5))
+    ]
+    entries = "".join(
+        '<entry><procedure classCode="PROC" moodCode="EVN">'
+        f'<id root="feedface-proc-0000-0000-0000000009{i:02d}"/>'
+        '<code code="430193"><originalText>'
+        + "".join(f'<reference value="{ref}"/>' for ref in refs)
+        + "</originalText></code></procedure></entry>"
+        for i, refs in enumerate(citations)
+    )
+    section = etree.fromstring(
+        '<section xmlns="urn:hl7-org:v3"><code code="47519-4"/>'
+        f"<text><table><tbody>{''.join(rows)}</tbody></table></text>{entries}</section>".encode()
+    )
+    return section, citations
+
+
+def _credited(section: object) -> int:
+    """How many of this section's entries the ledger credits to narrative."""
+    covers = ledger._section_anchors(section)  # type: ignore[arg-type]
+    asking = list(section.findall("{urn:hl7-org:v3}entry"))  # type: ignore[attr-defined]
+    return len(ledger._narrative_credits(asking, covers))
+
+
+def _most_honestly_creditable(section: object) -> int:
+    """The most entries a disjoint assignment of these cells could ever credit.
+
+    Brute force over every subset, deliberately: it is the SPECIFICATION the
+    ledger's rule is measured against, written independently of it, and a
+    slower oracle is the point. An entry naming a cell this narrative does not
+    define claims nothing and can never be credited.
+    """
+    covers = ledger._section_anchors(section)  # type: ignore[arg-type]
+    demands = []
+    for entry in section.findall("{urn:hl7-org:v3}entry"):  # type: ignore[attr-defined]
+        cited = ledger._cited_anchors(entry)
+        demands.append(
+            set()
+            if not cited or any(name not in covers for name in cited)
+            else {cell for name in cited for cell in covers[name]}
+        )
+    for size in range(len(demands), 0, -1):
+        for pick in itertools.combinations(demands, size):
+            used: set[str] = set()
+            if all(want and not (want & used) and not used.update(want) for want in pick):
+                return size
+    return 0
+
+
+def test_the_ledger_never_credits_more_than_the_cells_could_honour() -> None:
+    """The one property the whole instrument rests on, checked against a brute force.
+
+    Settling entries against cells is set packing, and this ledger's rule is a
+    heuristic over it — it may credit FEWER entries than an optimal assignment
+    would, and says so. What it must never do is credit MORE, because every
+    extra credit is a preservation that no assignment of the surviving cells
+    supports: an invented one. Reported once as a measurement, this is now
+    asked on every run.
+
+    Only the ceiling is asserted. How OFTEN the rule falls short of it is a
+    few cases in a thousand, and an assertion about that on a few hundred
+    would be a coin toss dressed as a check.
+    """
+    rng = random.Random(20260902)
+    for _ in range(400):
+        section, _ = _random_section(rng)
+        credited = _credited(section)
+        ceiling = _most_honestly_creditable(section)
+        assert credited <= ceiling, (
+            f"credited {credited} entries where {ceiling} is the most any "
+            f"assignment of these cells could honour"
+        )
+
+
+def test_the_order_a_document_writes_its_references_in_changes_nothing() -> None:
+    """``<reference>`` children are a set of names, not a sequence.
+
+    The settlement breaks a tie between two entries asking for the same amount
+    by the names they ask BY, and it has to compare those names as a set: an
+    entry writing ``#b`` before ``#a`` is naming what an entry writing ``#a``
+    before ``#b`` names. Comparing the raw lists instead reads the two as
+    different claims and reorders the settlement around a difference the
+    document does not have.
+    """
+    rng = random.Random(4711)
+    for _ in range(200):
+        section, _ = _random_section(rng)
+        before = _credited(section)
+        for entry in section.findall("{urn:hl7-org:v3}entry"):  # type: ignore[attr-defined]
+            for original in entry.iter("{urn:hl7-org:v3}originalText"):
+                shuffled = list(original)
+                rng.shuffle(shuffled)
+                original[:] = shuffled
+        assert _credited(section) == before, (
+            "the reading moved when the entries' references were reordered"
+        )
 
 
 def test_a_reference_without_a_hash_names_no_cell(tmp_path: Path) -> None:
