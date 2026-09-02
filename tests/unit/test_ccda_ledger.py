@@ -736,11 +736,25 @@ def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
 
     A caller that could ask without spending could write a predicate crediting
     one stored thing twice, which is the arithmetic this ledger exists to
-    refuse. ``take`` is the entire query surface of both pools.
+    refuse. Taking is the entire query surface of both pools — ``take_all``
+    joined it for a caller that needs several claims to answer one question,
+    and it obeys the same law: a yes costs, and a no costs nothing precisely
+    because it credited nothing.
     """
     for pool in (ledger._KeyedPool(Counter()), ledger._MatchedPool([])):
         surface = {name for name in vars(type(pool)) if not name.startswith("_")}
-        assert surface == {"take"}, f"{type(pool).__name__} offers more than take"
+        assert surface <= {"take", "take_all"}, f"{type(pool).__name__} offers more than taking"
+
+    stocked = ledger._KeyedPool(Counter({"a": 1, "b": 1}))
+    assert stocked.take_all(["a", "b"]) is True
+    assert stocked.take("a") is False, "a successful take_all did not spend"
+
+    partial = ledger._KeyedPool(Counter({"a": 1}))
+    assert partial.take_all(["a", "b"]) is False
+    assert partial.take("a") is True, "a failed take_all spent something anyway"
+
+    twice = ledger._KeyedPool(Counter({"a": 1}))
+    assert twice.take_all(["a", "a"]) is False, "one stored item answered for two claims"
 
 
 # --- the sixth question: entries preserved verbatim (#314) --------------------
@@ -1504,4 +1518,185 @@ def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.STRUCTURALLY_PARSED: 1,
         Disposition.UNSUPPORTED: 1,
+    }
+
+
+# --- what the mismatch-repair review found in the repair itself ---------------
+#
+# The <reference> credit was resolved against every ID in the document and
+# tested by asking whether the cell's words occurred anywhere in the section's
+# prose. Both halves were wrong, and together they handed back the credit this
+# whole branch removes. It is decided by the tree now: a cited cell must be one
+# this section's own <text> defines, and one cell answers for one entry.
+
+
+def _procedures(text: str, entries: str) -> str:
+    return f"""
+  <component><section>
+    <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Procedures</title>
+    {text}
+    {entries}
+  </section></component>
+"""
+
+
+def _cites(number: int, reference: str, display: str) -> str:
+    return f"""
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-00000000090{number}"/>
+      <code code="4301930{number}"><originalText>
+        <reference value="{reference}"/></originalText></code>
+      <text>{display}</text>
+    </procedure></entry>
+"""
+
+
+def test_a_sections_whole_prose_is_not_one_of_its_own_narrative_cells(
+    tmp_path: Path,
+) -> None:
+    """The section's ``<text>`` may carry an ID, and citing it is citing prose.
+
+    This is the section-level credit coming back through the front door: put an
+    ID on the narrative and every entry beneath can name it, and a containment
+    test passes trivially because the text contains itself. A cell is something
+    INSIDE the narrative; the narrative is not a cell.
+    """
+    body = _procedures(
+        '<text ID="sect-text">Continue lisinopril and recheck in three months.</text>',
+        _cites(1, "#sect-text", "No current problems")
+        + _cites(2, "#sect-text", "Colonoscopy due 2031"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 2}  # type: ignore[attr-defined]
+
+
+def test_a_cell_in_another_section_does_not_answer_here(tmp_path: Path) -> None:
+    """Containment decided by the tree, not by one string occurring in another.
+
+    The cited cell lives in another section and reads a word this section's
+    prose happens to contain. Resolving anchors document-wide and asking only
+    whether the words occur made that a preservation.
+    """
+    body = """
+  <component><section>
+    <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/><title>Payers</title>
+    <text><paragraph ID="payer-cell">No</paragraph></text>
+  </section></component>
+""" + _procedures(
+        "<text><paragraph>No procedures were performed.</paragraph></text>",
+        _cites(1, "#payer-cell", "Appendectomy"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_one_narrative_cell_answers_for_one_entry(tmp_path: Path) -> None:
+    """The same arithmetic every other place in this file obeys.
+
+    One cell is one statement of fact. Three entries naming it are not three
+    preservations, and the anchor is spent by the first.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Medication reconciliation (procedure)</paragraph></text>',
+        _cites(1, "#proc-1", "A") + _cites(2, "#proc-1", "B") + _cites(3, "#proc-1", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 2,
+    }
+
+
+def test_an_entry_citing_one_real_cell_and_one_dangling_gets_nothing(
+    tmp_path: Path,
+) -> None:
+    """All of them, not any — which is what the docstring said and the code did not.
+
+    Filtering unresolved anchors out before the check meant an entry could name
+    a cell the document never defined and still be counted, on the strength of
+    its other citation. Half an account is not an account.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Medication reconciliation (procedure)</paragraph></text>',
+        """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText><reference value="#proc-1"/></originalText>
+        <translation><originalText><reference value="#never-defined"/></originalText></translation>
+      </code>
+    </procedure></entry>
+""",
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_one_entry_naming_one_cell_twice_is_one_citation(tmp_path: Path) -> None:
+    """A procedure names its row from ``<originalText>`` and again from ``<text>``.
+
+    That is C-CDA's ordinary spelling, and it is one entry citing one cell —
+    not a claim on two copies of it. Requiring a copy per reference made the
+    real vendor document's only cited entry read as lost, which is the false
+    alarm this credit exists to remove.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Medication reconciliation (procedure)</paragraph></text>',
+        """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText>
+        <reference value="#proc-1"/></originalText></code>
+      <text><reference value="#proc-1"/></text>
+    </procedure></entry>
+""",
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
+    tmp_path: Path,
+) -> None:
+    """Two byte-identical entries, one parked copy, and no theft between them.
+
+    An empty coded entry repeats across sections, and the stored copies were
+    pooled by their bytes alone — so the section that parked nothing could claim
+    the copy parked for the other, and which one got it depended on document
+    order. The parser writes the section code into the key; this side reads it.
+
+    Payers renders text and parks nothing, so its entry is uncredited. Plan
+    renders none, parks its own, and keeps it.
+    """
+    entry = """
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
+    </observation></entry>
+"""
+    body = f"""
+  <component><section>
+    <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/><title>Payers</title>
+    <text>Prose that cites nothing.</text>{entry}
+  </section></component>
+  <component><section>
+    <code code="18776-5" codeSystem="2.16.840.1.113883.6.1"/><title>Plan</title>{entry}
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    ledger = document_ledger(path, record)
+
+    assert _row(ledger, "section:48768-6").entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+    assert _row(ledger, "section:18776-5").entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1
     }

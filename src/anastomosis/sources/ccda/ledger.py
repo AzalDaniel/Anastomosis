@@ -618,6 +618,19 @@ class _KeyedPool(Generic[_Key]):
         self._counts[key] -= 1
         return True
 
+    def take_all(self, keys: Iterable[_Key]) -> bool:
+        """Claim every one of ``keys``, or claim none of them.
+
+        A caller needing several claims to answer one question must not spend
+        half of them and then fail: the ones it spent would be gone from the
+        next asker, which is a loss this ledger invented rather than found.
+        """
+        needed = Counter(keys)
+        if any(self._counts[key] < count for key, count in needed.items()):
+            return False
+        self._counts -= needed
+        return True
+
 
 class _MatchedPool:
     """A place whose members are claimed by a predicate, one claim each.
@@ -680,12 +693,7 @@ class _Evidence:
     #: Where a text-less section's verbatim entries are claimed, one claim per
     #: stored copy — the sixth place, added for #314, and an instance of an
     #: existing type rather than a new kind of question.
-    entries: _KeyedPool[str]
-    #: What each narrative anchor in this document says, by its ``ID``. A fact:
-    #: reading one costs nothing and answers for as many entries as point at
-    #: it, because a narrative cell is true rather than owed. PHI: compared,
-    #: never emitted.
-    narrative_anchors: Mapping[str, str]
+    entries: _KeyedPool[tuple[str, str]]
     #: The source ids the record's DOCUMENT artifacts name. Kept apart from
     #: ``source_ids`` because the body constructs are asked a narrower question
     #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
@@ -785,7 +793,7 @@ class _Evidence:
         """Whether the record kept this construct's own narrative, spending it."""
         return self.narrative.take((title, text))
 
-    def entry_kept(self, entry: _Element) -> bool:
+    def entry_kept(self, code: str, entry: _Element) -> bool:
         """Whether the record preserved this exact entry verbatim, spending it.
 
         The handle is the entry's own serialisation, through the same function
@@ -798,32 +806,7 @@ class _Evidence:
         is the point: this side reads what the record HOLDS rather than
         reconstructing the rule by which it was written.
         """
-        return self.entries.take(entry_verbatim(entry))
-
-    def narrated_by(self, entry: _Element, narrative: str | None) -> bool:
-        """Whether the entry POINTS AT narrative the record kept, spending nothing.
-
-        C-CDA's own mechanism for saying "this is my human-readable form" is a
-        ``<reference value="#id"/>`` into the section's narrative, and it is the
-        one entry-to-narrative link a machine can check. So an entry that names
-        one is asked the question its document already answered: do the cells
-        it points at still read inside the text this record stored?
-
-        All of them, not any: an entry citing two cells and finding one is an
-        entry half of whose account is missing. An entry naming no reference
-        gets nothing here — the section's prose is not evidence about it, which
-        is the whole point of asking per entry — and neither does one whose
-        anchor the document never defined.
-        """
-        if narrative is None:
-            return False
-        anchors = {
-            value[1:]
-            for reference in entry.iter(_q("reference"))
-            if (value := reference.get("value") or "").startswith("#")
-        }
-        stated = [text for anchor in anchors if (text := self.narrative_anchors.get(anchor))]
-        return bool(stated) and all(text in narrative for text in stated)
+        return self.entries.take((code, entry_verbatim(entry)))
 
     def carried_as_document(self, identifier: str | None) -> bool | None:
         """Whether a document artifact in the record came from ``identifier``.
@@ -875,7 +858,6 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
         parked_items=_KeyedPool(_parked_pool(record)),
         objects=_MatchedPool(_provenanced(record)),
         entries=_KeyedPool(_entry_pool(record)),
-        narrative_anchors=_narrative_anchors(root),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
 
@@ -883,10 +865,12 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
 def _parked_pool(record: PatientRecord) -> Counter[str]:
     """How many facts the record parked under each ``ccda:`` namespace.
 
-    Keyed by the namespace's first segment, so a key the parser deepens
-    (``ccda:serviceEvent:...``) or numbers for a repeated construct
-    (``ccda:serviceEvent#2`` — ``#``, which is what ``_free_key`` writes)
-    answers for ``serviceEvent`` without this side mirroring either rule.
+    Keyed by the namespace's first segment. Both separators are cut because
+    both are shapes the parser's own key-writing can produce — ``:`` for a key
+    it deepens, ``#`` for the number ``_free_key`` appends to a repeat — and
+    neither is reached by any participation key it writes today: this side
+    reads the shape rather than the current caller list, so a parked
+    participation that later repeats is bucketed without an edit here.
 
     PHI: the values are COUNTED and never read. A list is as many facts as it
     has members, a mapping or a scalar is one when it holds anything, and
@@ -903,38 +887,93 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
     return pool
 
 
-def _narrative_anchors(root: _Element) -> dict[str, str]:
-    """Every narrative anchor in the document, by ``ID``, as the words it shows.
+def _section_anchors(section: _Element) -> Counter[str]:
+    """The narrative cells INSIDE this section's ``<text>``, one claim each.
 
-    Built once per document because an anchor answers for as many entries as
-    cite it. Read from the whole tree rather than from each section's ``<text>``
-    alone: a reference may legitimately name a cell in another section, and a
-    mirror of the parser's own reach would report its blind spot as loss.
+    Strictly inside: the ``<text>`` element's own ``ID`` is not a cell, and an
+    entry citing it is citing the section's whole prose, which is the credit
+    this ledger stopped giving. A cell in another section is not here either —
+    containment is decided by the tree rather than by whether one string
+    happens to occur inside another, so a cell reading "No" cannot answer for
+    an entry in a section whose prose contains the word.
 
-    PHI: these strings are COMPARED against the narrative the record already
-    stored and never emitted, exactly as the narrative pool beside them is.
+    Counted, because one cell is one statement: three entries citing it are
+    not three preservations, and the second and third get nothing.
+
+    PHI: only the anchors' NAMES are held. No narrative text is read here.
     """
-    anchors: dict[str, str] = {}
-    for node in root.iter():
-        if not callable(node.tag) and (identifier := node.get("ID")):
-            if (text := _text_content(node)) is not None:
-                anchors[identifier] = text
-    return anchors
+    text = _find(section, "v3:text")
+    if text is None:
+        return Counter()
+    return Counter(
+        identifier
+        for node in text.iter()
+        if node is not text and not callable(node.tag) and (identifier := node.get("ID"))
+    )
 
 
-def _entry_pool(record: PatientRecord) -> Counter[str]:
-    """Every verbatim entry the record stored, as a multiset of exact strings.
+def _cited_anchors(entry: _Element) -> list[str]:
+    """The narrative cells this entry names, in ``<reference value="#id"/>``.
 
-    Read from what the parser actually wrote under ``ccda:entries:*`` — the
-    stored shape, never a reconstruction of the storing rule — and counted,
+    Each distinct cell once, in document order. An entry routinely names the
+    same cell twice — a procedure's ``<originalText>`` and its ``<text>`` both
+    point at the row that describes it — and that is one citation of one cell,
+    not a claim on two copies of it.
+
+    ``strip`` because :func:`~.parser._inline_narrative_references` strips
+    before it resolves, and two sides of one mirror that disagree about
+    whitespace report the disagreement as loss.
+    """
+    cited = [
+        value[1:]
+        for reference in entry.iter(_q("reference"))
+        if (value := (reference.get("value") or "").strip()).startswith("#") and len(value) > 1
+    ]
+    return list(dict.fromkeys(cited))
+
+
+def _narrated_by(entry: _Element, anchors: _KeyedPool[str] | None) -> bool:
+    """Whether this entry's own narrative cells survived, spending them.
+
+    C-CDA's mechanism for "this is my human-readable form" is a reference into
+    the section's narrative, and it is the one entry-to-narrative link a
+    machine can check. An entry that names one is asked the question its
+    document already answered.
+
+    All of them and not any: an entry citing two cells and finding one is an
+    entry half of whose account is missing. An entry naming no reference gets
+    nothing — the section's prose is not evidence about it, which is the whole
+    reason for asking per entry — and neither does one naming a cell this
+    section's narrative does not define, or one whose section kept no
+    narrative at all.
+    """
+    if anchors is None:
+        return False
+    cited = _cited_anchors(entry)
+    return bool(cited) and anchors.take_all(cited)
+
+
+def _entry_pool(record: PatientRecord) -> Counter[tuple[str, str]]:
+    """Every verbatim entry the record stored, by the section that stored it.
+
+    Read from what the parser actually wrote under ``ccda:entries:<code>`` —
+    the stored shape, never a reconstruction of the storing rule — and counted,
     because two identical entries in two text-less sections are two stored
     copies and must answer for exactly two constructs.
+
+    Keyed by the section code as well as the bytes. Two byte-identical entries
+    in different sections are ordinary (an empty coded entry repeats), and with
+    the bytes alone the section that parked nothing could claim the copy parked
+    for the other, making the reading depend on document order. The parser
+    writes the code into the key, so this side reads it rather than guessing.
     """
-    pool: Counter[str] = Counter()
+    pool: Counter[tuple[str, str]] = Counter()
     prefix = f"{EXT_SECTION_ENTRIES}:"
     for key, value in record.patient.extensions.items():
-        if key.startswith(prefix) and isinstance(value, list):
-            pool.update(item for item in value if isinstance(item, str))
+        if not key.startswith(prefix) or not isinstance(value, list):
+            continue
+        code = key[len(prefix) :].partition("#")[0]
+        pool.update((code, item) for item in value if isinstance(item, str))
     return pool
 
 
@@ -1106,7 +1145,7 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _entry_dispositions(
-    entries: list[_Element], evidence: _Evidence, narrative: str | None
+    entries: list[_Element], evidence: _Evidence, code: str, anchors: _KeyedPool[str] | None
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
@@ -1128,7 +1167,7 @@ def _entry_dispositions(
         kept = (
             not linked
             and _has_element_child(entry)
-            and (evidence.entry_kept(entry) or evidence.narrated_by(entry, narrative))
+            and (evidence.entry_kept(code, entry) or _narrated_by(entry, anchors))
         )
         counts[_entry_disposition(entry, linked, kept)] += 1
     return dict(counts), unlinkable
@@ -1183,10 +1222,13 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
         _text_content(_find(section, "v3:text")),
     )
     kept = _narrative_kept(section, evidence, pair)
-    # The text the record demonstrably holds for this section — `kept_narrative`
-    # has just claimed this exact pair — so an entry citing a cell inside it is
-    # citing something that survived. Nothing when the narrative did not.
-    entry_counts, unlinkable = _entry_dispositions(entries, evidence, pair[1] if kept else None)
+    # The cells inside the narrative the record demonstrably holds —
+    # `kept_narrative` has just claimed this exact pair — so an entry citing one
+    # is citing something that survived. Nothing when the narrative did not.
+    anchors = _KeyedPool(_section_anchors(section)) if kept else None
+    entry_counts, unlinkable = _entry_dispositions(
+        entries, evidence, _section_code(section) or "unknown", anchors
+    )
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),
