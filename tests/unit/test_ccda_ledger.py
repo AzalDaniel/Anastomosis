@@ -1891,3 +1891,155 @@ def test_a_padded_reference_value_still_names_its_cell(tmp_path: Path) -> None:
     row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
 
     assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+# --- what round four found ----------------------------------------------------
+
+
+def test_a_section_the_parser_never_walked_parks_nothing(tmp_path: Path) -> None:
+    """Asking the parser's walk, rather than restating it.
+
+    The first version of this predicate restated the rule — "parent is a
+    component under a structuredBody" — and diverged from the parser in both
+    directions. A document nesting a second ``<structuredBody>`` inside a
+    section has children whose parent chain satisfies that test and which the
+    parser's anchored path never reaches: they parked nothing, and took the
+    copy earned by the section that did. Whichever came first won, which is
+    exactly the order-dependence this was supposed to end.
+    """
+    entry = """
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
+    </observation></entry>
+"""
+    body = f"""
+  <component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/><title>Outer</title>
+    <text>Prose that cites nothing.</text>
+    <component><structuredBody><component><section>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/><title>Buried</title>{entry}
+    </section></component></structuredBody></component>
+  </section></component>
+  <component><section>
+    <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/><title>Parked</title>{entry}
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:30954-2" and row.entries
+    ]
+    assert len(rows) == 2
+    buried, parked = rows
+
+    assert buried.entries == {Disposition.UNSUPPORTED: 1}, (
+        "a section the parser skipped took a copy"
+    )
+    assert parked.entries == {Disposition.NARRATIVE_PRESERVED: 1}, (
+        "the parking section lost its own"
+    )
+
+
+@pytest.mark.parametrize("container", ["table", "thead", "tbody", "tfoot", "list", "caption"])
+def test_no_narrative_container_is_one_of_its_own_cells(tmp_path: Path, container: str) -> None:
+    """Each name in the list, not just the one that had a test.
+
+    Only ``table`` was pinned, so five of the six could have been deleted with
+    the suite still green. An ID on any of them names the whole arrangement —
+    or, for a caption, labels it — and an entry citing that is citing the
+    section's prose by another route.
+    """
+    body = _procedures(
+        f"""<text><{container} ID="whole"><tbody><tr>
+        <td>Continue lisinopril and recheck blood pressure in three months.</td>
+      </tr></tbody></{container}></text>""",
+        _cites(1, "#whole", "No current problems"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_table_row_is_one_statement_and_may_be_cited(tmp_path: Path) -> None:
+    """``<tr>`` is not a container of everything — it is one row.
+
+    It was on the exclusion list, and that reported loss for narrative the
+    record demonstrably holds: the same document, with the ID moved one level
+    down to the ``<td>``, read preserved. A row is the granularity of an
+    ``<item>``, and the rule is about elements that hold EVERY cell.
+    """
+    body = _procedures(
+        """<text><table><tbody>
+        <tr ID="proc-1"><td>Appendectomy</td><td>2019-04-02</td></tr>
+      </tbody></table></text>""",
+        _cites(1, "#proc-1", "Appendectomy"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_cell_wrapped_in_another_named_cell_is_one_statement(tmp_path: Path) -> None:
+    """One word cannot preserve three entries by wearing three labels.
+
+    Keying the pool by name stopped a repeated name answering twice, and left
+    nesting open: three ids around one word minted three claims against the
+    single word the record holds. Only the innermost name over any given words
+    is a cell.
+    """
+    body = _procedures(
+        '<text><content ID="a1"><content ID="a2">'
+        '<content ID="a3">Appendectomy</content></content></content></text>',
+        _cites(1, "#a1", "A") + _cites(2, "#a2", "B") + _cites(3, "#a3", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 2,
+    }
+
+
+def test_a_comment_in_the_narrative_is_not_a_cell(tmp_path: Path) -> None:
+    """lxml gives a comment a callable tag, and asking it for a name raises.
+
+    The guard against it had no test, so deleting it did not fail the suite —
+    it made the ledger raise ``ValueError: Invalid input tag`` on any document
+    whose narrative carries a comment, which is ordinary in exported XML.
+    """
+    body = _procedures(
+        '<text><!-- generated by the exporter --><paragraph ID="proc-1">Med rec</paragraph></text>',
+        _cites(1, "#proc-1", "A"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_bare_hash_is_a_citation_that_cannot_resolve(tmp_path: Path) -> None:
+    """``#`` names no cell, so it fails its entry like ``#never-defined``.
+
+    Filtering it out instead let an entry carrying it be credited on its other
+    citation — and this commit's own argument is that the two are equally
+    unresolvable.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Med rec</paragraph></text>',
+        """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="430193006"><originalText><reference value="#proc-1"/></originalText>
+        <translation><originalText><reference value="#"/></originalText></translation>
+      </code>
+    </procedure></entry>
+""",
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]

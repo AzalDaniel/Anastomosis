@@ -109,6 +109,9 @@ from .parser import (
     entry_verbatim,
     parse_document,
 )
+from .parser import (
+    _sections as _parser_sections,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -887,52 +890,80 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
     return pool
 
 
-#: Narrative elements that GROUP other cells rather than being one. An ID on
-#: any of these names the whole arrangement, and an entry citing it is citing
-#: the section's prose by another route — which is the credit this ledger
-#: stopped giving, so the identity test below is not enough on its own.
-_NARRATIVE_CONTAINERS = frozenset({"table", "thead", "tbody", "tfoot", "tr", "list"})
+#: Narrative elements that GROUP every cell rather than being one, plus the
+#: caption that labels the group. An ID on any of these names the whole
+#: arrangement, and an entry citing it is citing the section's prose by another
+#: route — the credit this ledger stopped giving — so excluding the ``<text>``
+#: element by identity is not enough on its own.
+#:
+#: A ``<tr>`` is deliberately NOT here: one row is one statement, the same
+#: granularity as the ``<item>`` of a list or the ``<td>`` inside it, and
+#: excluding it reported loss for narrative the record demonstrably holds.
+_NARRATIVE_CONTAINERS = frozenset({"table", "thead", "tbody", "tfoot", "list", "caption"})
+
+
+def _is_narrative_cell(node: _Element, text: _Element) -> bool:
+    """Whether this node inside ``text`` is one citable cell of narrative.
+
+    Strictly inside, and not one of the things that merely hold cells: an entry
+    citing the ``<text>`` element, or the ``<table>`` filling it, is citing the
+    section's whole prose, which is the credit this ledger stopped giving.
+
+    It must carry a name, because an unnamed cell cannot be cited, and it must
+    render words. A ``<content>`` holding only a ``renderMultiMedia`` reaches
+    the record as nothing at all, so crediting an entry to it would be
+    crediting it to something the record does not have. A comment is not a
+    cell either, and lxml gives comments a callable tag rather than a string.
+
+    PHI: the text is read to ask whether there is any, and is neither stored
+    nor emitted.
+    """
+    return (
+        node is not text
+        and not callable(node.tag)
+        and etree.QName(node).localname not in _NARRATIVE_CONTAINERS
+        and bool(node.get("ID"))
+        and _text_content(node) is not None
+    )
+
+
+def _innermost_names(named: list[_Element]) -> Iterator[str]:
+    """The names of the cells among ``named`` that wrap no other one.
+
+    A cell wrapped in another named cell is one statement wearing two labels:
+    three nested ids around one word bought three preservations against the
+    single word the record holds, which is the "one cell is one statement"
+    arithmetic defeated by nesting rather than by counting. The innermost name
+    is the one over those words, so it is the one that answers for them.
+    """
+    for node in named:
+        identifier = node.get("ID")
+        if identifier and not any(other in node for other in named):
+            yield identifier
 
 
 def _section_anchors(section: _Element) -> Counter[str]:
     """The narrative cells INSIDE this section's ``<text>``, one claim each.
 
-    Strictly inside, and not one of the things that merely hold cells: an entry
-    citing the ``<text>`` element, or the ``<table>`` filling it, is citing the
-    section's whole prose, which is the credit this ledger stopped giving. A
-    cell in another section is not here either — containment is decided by the
-    tree rather than by whether one string happens to occur inside another, so
-    a cell reading "No" cannot answer for an entry in a section whose prose
+    A cell in another section is not here — containment is decided by the tree
+    rather than by whether one string happens to occur inside another, so a
+    cell reading "No" cannot answer for an entry in a section whose prose
     contains the word.
 
-    A cell that renders no words is not one. A ``<content>`` holding only a
-    ``renderMultiMedia`` reaches the record as nothing at all, so crediting an
-    entry to it would be crediting it to something the record does not have.
-
     Counted, because one cell is one statement: three entries citing it are
-    not three preservations, and the second and third get nothing.
+    not three preservations, and the second and third get nothing. Counted by
+    NAME, once. Two nodes may carry one ID — malformed, but documents do it —
+    and the parser's own resolver keeps one node per name, so counting
+    occurrences would let one name answer twice on a disagreement between the
+    two sides of this mirror.
 
-    PHI: only the anchors' NAMES are kept. The text is read to ask whether
-    there is any, and is neither stored nor emitted.
+    PHI: only the anchors' NAMES are kept.
     """
     text = _find(section, "v3:text")
     if text is None:
         return Counter()
-    # A NAME, once. Two nodes may carry one ID — malformed, but documents do
-    # it — and the parser's own resolver keeps one node per name, so counting
-    # occurrences would let one name answer twice on a disagreement between the
-    # two sides of this mirror.
-    return Counter(
-        {
-            identifier
-            for node in text.iter()
-            if node is not text
-            and not callable(node.tag)
-            and etree.QName(node).localname not in _NARRATIVE_CONTAINERS
-            and (identifier := node.get("ID"))
-            and _text_content(node) is not None
-        }
-    )
+    named = [node for node in text.iter() if _is_narrative_cell(node, text)]
+    return Counter(set(_innermost_names(named)))
 
 
 def _cited_anchors(entry: _Element) -> list[str]:
@@ -1168,28 +1199,30 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _parks_its_entries(section: _Element) -> bool:
-    """Whether this is the shape :func:`~.parser._capture_entries` parks for.
-
-    Renders no ``<text>``, and sits directly under ``<structuredBody>`` — the
-    parser's own section walk goes exactly one component deep, so a subsection
-    nested further is one it never parks for.
+    """Whether this is a section :func:`~.parser._capture_entries` parks for.
 
     Asked because the stored copies are keyed by section CODE, and a code is
     not unique: Problems (Active) and Problems (Resolved) are both 11450-4, and
-    a nested subsection repeats its parent's. Without this, the section that
+    a nested subsection repeats its parent's. Without this, a section that
     parked nothing could claim the copy parked for its namesake, and which one
     got it depended on document order.
+
+    It ASKS the parser's own walk rather than restating it. The first attempt
+    restated it — "parent is a component under a structuredBody" — and the two
+    diverged in both directions, which is the whole reason this file reads the
+    record instead of a table of what the parser is believed to do. A document
+    nesting a second ``<structuredBody>`` inside a section has children whose
+    parent chain satisfies that test and which the parser's anchored path never
+    reaches; they parked nothing and took the copy earned by the section that
+    did. The loss-narrative section is the same mistake from the other side:
+    the parser skips it deliberately, so it parks nothing either.
     """
     if _text_content(_find(section, "v3:text")) is not None:
         return False
-    component = section.getparent()
-    parent = component.getparent() if component is not None else None
-    return (
-        component is not None
-        and component.tag == _q("component")
-        and parent is not None
-        and parent.tag == _q("structuredBody")
-    )
+    if _is_own_loss_narrative(section, _section_code(section)):
+        return False
+    walked = _parser_sections(section.getroottree().getroot())
+    return any(candidate is section for candidate in walked)
 
 
 def _entry_dispositions(
