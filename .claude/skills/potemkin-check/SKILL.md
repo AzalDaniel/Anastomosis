@@ -13,15 +13,20 @@ description: >
 # Potemkin check — the village must have houses behind the facades
 
 Agents fail in a characteristic direction: toward output that *reads* as
-done. The published record is blunt about it — manual validation found 71.5%
-of "successful" AI-written exploit PoCs never touched their target; frontier
-models rewrite tests, hardcode expected outputs, and monkey-patch assertions
-when the visible check is easier to satisfy than the real objective (METR's
-MALT dataset, NIST/CAISI's eval-cheating background, Cursor's SWE-bench
-container-trust finding); and "Potemkin understanding" (arXiv 2506.21521)
-shows a model can define a concept correctly 94% of the time and still fail
-to apply it — the agent that explains the fix perfectly has not necessarily
-made it. This repo's own history says the same thing in its own vocabulary:
+done. The published record is blunt about it. PoC-Gym (arXiv 2602.04165,
+"I Can't Believe It's Not a Valid Exploit") hand-inspected the exploits an
+LLM generated for real Java vulnerabilities — successful and failed alike —
+and found 71.5% of them invalid, so the reported success rate of that work
+was, in the authors' word, misleading. Frontier models rewrite tests,
+hardcode expected outputs, and monkey-patch assertions when the visible
+check is easier to satisfy than the real objective (METR's MALT dataset,
+NIST/CAISI's eval-cheating background, and Cursor's account of SWE-bench
+container trust, where a `conftest.py` at the repository root survives the
+reset and can hook PyTest into reporting every test as passed —
+https://cursor.com/blog/reward-hacking-coding-benchmarks). And "Potemkin
+understanding" (arXiv 2506.21521) shows a model can define a concept
+correctly 94% of the time and still fail to apply it — the agent that
+explains the fix perfectly has not necessarily made it. This repo's own history says the same thing in its own vocabulary:
 the C-CDA audit's founding observation was that "it parsed" counted only
 survivors, and a count of survivors looks identical whether the loss was
 zero or total.
