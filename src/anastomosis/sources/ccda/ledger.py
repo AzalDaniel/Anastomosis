@@ -887,28 +887,51 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
     return pool
 
 
+#: Narrative elements that GROUP other cells rather than being one. An ID on
+#: any of these names the whole arrangement, and an entry citing it is citing
+#: the section's prose by another route — which is the credit this ledger
+#: stopped giving, so the identity test below is not enough on its own.
+_NARRATIVE_CONTAINERS = frozenset({"table", "thead", "tbody", "tfoot", "tr", "list"})
+
+
 def _section_anchors(section: _Element) -> Counter[str]:
     """The narrative cells INSIDE this section's ``<text>``, one claim each.
 
-    Strictly inside: the ``<text>`` element's own ``ID`` is not a cell, and an
-    entry citing it is citing the section's whole prose, which is the credit
-    this ledger stopped giving. A cell in another section is not here either —
-    containment is decided by the tree rather than by whether one string
-    happens to occur inside another, so a cell reading "No" cannot answer for
-    an entry in a section whose prose contains the word.
+    Strictly inside, and not one of the things that merely hold cells: an entry
+    citing the ``<text>`` element, or the ``<table>`` filling it, is citing the
+    section's whole prose, which is the credit this ledger stopped giving. A
+    cell in another section is not here either — containment is decided by the
+    tree rather than by whether one string happens to occur inside another, so
+    a cell reading "No" cannot answer for an entry in a section whose prose
+    contains the word.
+
+    A cell that renders no words is not one. A ``<content>`` holding only a
+    ``renderMultiMedia`` reaches the record as nothing at all, so crediting an
+    entry to it would be crediting it to something the record does not have.
 
     Counted, because one cell is one statement: three entries citing it are
     not three preservations, and the second and third get nothing.
 
-    PHI: only the anchors' NAMES are held. No narrative text is read here.
+    PHI: only the anchors' NAMES are kept. The text is read to ask whether
+    there is any, and is neither stored nor emitted.
     """
     text = _find(section, "v3:text")
     if text is None:
         return Counter()
+    # A NAME, once. Two nodes may carry one ID — malformed, but documents do
+    # it — and the parser's own resolver keeps one node per name, so counting
+    # occurrences would let one name answer twice on a disagreement between the
+    # two sides of this mirror.
     return Counter(
-        identifier
-        for node in text.iter()
-        if node is not text and not callable(node.tag) and (identifier := node.get("ID"))
+        {
+            identifier
+            for node in text.iter()
+            if node is not text
+            and not callable(node.tag)
+            and etree.QName(node).localname not in _NARRATIVE_CONTAINERS
+            and (identifier := node.get("ID"))
+            and _text_content(node) is not None
+        }
     )
 
 
@@ -927,7 +950,7 @@ def _cited_anchors(entry: _Element) -> list[str]:
     cited = [
         value[1:]
         for reference in entry.iter(_q("reference"))
-        if (value := (reference.get("value") or "").strip()).startswith("#") and len(value) > 1
+        if (value := (reference.get("value") or "").strip()).startswith("#")
     ]
     return list(dict.fromkeys(cited))
 
@@ -1144,8 +1167,36 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
     return Disposition.NARRATIVE_PRESERVED if narrative_kept else Disposition.UNSUPPORTED
 
 
+def _parks_its_entries(section: _Element) -> bool:
+    """Whether this is the shape :func:`~.parser._capture_entries` parks for.
+
+    Renders no ``<text>``, and sits directly under ``<structuredBody>`` — the
+    parser's own section walk goes exactly one component deep, so a subsection
+    nested further is one it never parks for.
+
+    Asked because the stored copies are keyed by section CODE, and a code is
+    not unique: Problems (Active) and Problems (Resolved) are both 11450-4, and
+    a nested subsection repeats its parent's. Without this, the section that
+    parked nothing could claim the copy parked for its namesake, and which one
+    got it depended on document order.
+    """
+    if _text_content(_find(section, "v3:text")) is not None:
+        return False
+    component = section.getparent()
+    parent = component.getparent() if component is not None else None
+    return (
+        component is not None
+        and component.tag == _q("component")
+        and parent is not None
+        and parent.tag == _q("structuredBody")
+    )
+
+
 def _entry_dispositions(
-    entries: list[_Element], evidence: _Evidence, code: str, anchors: _KeyedPool[str] | None
+    entries: list[_Element],
+    evidence: _Evidence,
+    code: str | None,
+    anchors: _KeyedPool[str] | None,
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
@@ -1167,7 +1218,10 @@ def _entry_dispositions(
         kept = (
             not linked
             and _has_element_child(entry)
-            and (evidence.entry_kept(code, entry) or _narrated_by(entry, anchors))
+            and (
+                (code is not None and evidence.entry_kept(code, entry))
+                or _narrated_by(entry, anchors)
+            )
         )
         counts[_entry_disposition(entry, linked, kept)] += 1
     return dict(counts), unlinkable
@@ -1226,9 +1280,8 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     # `kept_narrative` has just claimed this exact pair — so an entry citing one
     # is citing something that survived. Nothing when the narrative did not.
     anchors = _KeyedPool(_section_anchors(section)) if kept else None
-    entry_counts, unlinkable = _entry_dispositions(
-        entries, evidence, _section_code(section) or "unknown", anchors
-    )
+    code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
+    entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, anchors)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),

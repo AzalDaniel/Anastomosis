@@ -1700,3 +1700,194 @@ def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
     assert _row(ledger, "section:18776-5").entries == {  # type: ignore[attr-defined]
         Disposition.NARRATIVE_PRESERVED: 1
     }
+
+
+# --- what round three found ---------------------------------------------------
+#
+# The headline outcome of the anchor rewrite — the one real vendor document's
+# cited entry reading preserved — was pinned by nothing: every test here put the
+# cited cell on a direct child of <text>, while a real C-CDA puts it in a <td>
+# inside <table><tbody><tr>. A one-token mutation flipped that document and the
+# whole suite stayed green. These are the shapes that were missing.
+
+
+def test_a_cell_deep_inside_a_narrative_table_is_still_a_cell(tmp_path: Path) -> None:
+    """Where a real C-CDA actually puts its anchors.
+
+    Every other test in this file cites a ``<paragraph ID>`` sitting directly
+    under ``<text>``, and so does the corpus generator — so the descendant walk
+    could have been a direct-child walk and nothing would have failed, while
+    the one vendor-shaped fixture in the tree silently lost its credit.
+    """
+    body = _procedures(
+        """<text><table><tbody><tr>
+        <td ID="proc-1">Medication reconciliation (procedure)</td>
+        <td ID="proc-code-1">430193006</td>
+      </tr></tbody></table></text>""",
+        _cites(1, "#proc-1", "Medication reconciliation"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_the_shipped_vendor_fixture_keeps_its_cited_entry(tmp_path: Path) -> None:
+    """The claim this change is verified by, asserted rather than described.
+
+    The Synthea sample's Procedures entry cites a ``<td>`` in its own section's
+    narrative table. It is the only document in the tree that exercises the
+    citation path end to end, so it gets an assertion of its own instead of
+    being a sentence in a commit message.
+    """
+    del tmp_path
+    fixture = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "synthea" / "synthea_ccda_sample.xml"
+    )
+    row = _row(document_ledger(fixture, parse_document(fixture)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_cell_that_renders_no_words_preserves_nothing(tmp_path: Path) -> None:
+    """A citation has to land on something the record actually kept.
+
+    ``<content ID="x"><renderMultiMedia/></content>`` reaches the stored
+    narrative as nothing at all, so an entry citing it is pointing at a hole.
+    """
+    body = _procedures(
+        """<text>The following procedure was performed.
+        <content ID="proc-1"><renderMultiMedia referencedObject="MM1"/></content></text>""",
+        _cites(1, "#proc-1", "Appendectomy"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 1}  # type: ignore[attr-defined]
+
+
+def test_a_table_holding_the_prose_is_not_one_of_its_cells(tmp_path: Path) -> None:
+    """The whole-prose credit, wearing a container's clothes.
+
+    Excluding the ``<text>`` element by identity closed the direct route and
+    left the obvious detour: wrap the prose in a ``<table ID>`` and every entry
+    beneath can cite the arrangement instead. A cell is a thing inside the
+    table, not the table.
+    """
+    body = _procedures(
+        """<text><table ID="whole"><tbody><tr>
+        <td>Continue lisinopril and recheck blood pressure in three months.</td>
+      </tr></tbody></table></text>""",
+        _cites(1, "#whole", "No current problems") + _cites(2, "#whole", "Colonoscopy due 2031"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.UNSUPPORTED: 2}  # type: ignore[attr-defined]
+
+
+def test_one_id_on_two_nodes_is_still_one_cell(tmp_path: Path) -> None:
+    """Counting occurrences let a repeated name answer twice.
+
+    A document carrying one ID on two nodes is malformed and real. The parser's
+    own resolver keeps one node per name, so counting the nodes made the two
+    sides of this mirror disagree about how many cells a name is.
+    """
+    body = _procedures(
+        """<text><paragraph ID="proc-1">Medication reconciliation</paragraph>
+        <paragraph ID="proc-1">Medication reconciliation</paragraph></text>""",
+        _cites(1, "#proc-1", "A") + _cites(2, "#proc-1", "B"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+_SHARED_CODE_ENTRY = """
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
+    </observation></entry>
+"""
+
+
+@pytest.mark.parametrize("textless_first", [False, True])
+def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
+    tmp_path: Path, textless_first: bool
+) -> None:
+    """Problems (Active) and Problems (Resolved) are both 11450-4.
+
+    Keying the stored copies by section code narrowed the theft rather than
+    ending it: two sections of one code, one rendering prose and parking
+    nothing, still met in the same bucket, and which of them got the copy
+    depended on which came first. Only a section of the shape the parser parks
+    for may claim one, so the reading is the same either way round.
+    """
+    parked = f"""
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems (Resolved)</title>{_SHARED_CODE_ENTRY}
+  </section></component>
+"""
+    prose = f"""
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems (Active)</title>
+    <text>Prose that cites nothing.</text>{_SHARED_CODE_ENTRY}
+  </section></component>
+"""
+    path = _write(tmp_path, body=(parked + prose) if textless_first else (prose + parked))
+    # Per OCCURRENCE, in document order: the merged row cannot tell which of
+    # the two got the copy, and which one got it is the entire question.
+    rows = [
+        row
+        for row in document_ledger(path, parse_document(path)).rows
+        if row.construct == "section:11450-4"
+    ]
+    assert len(rows) == 2
+    first, second = (0, 1) if textless_first else (1, 0)
+
+    assert rows[first].entries == {Disposition.NARRATIVE_PRESERVED: 1}, (
+        "the parked section lost its own copy"
+    )
+    assert rows[second].entries == {Disposition.UNSUPPORTED: 1}, (
+        "a section that parked nothing took a copy"
+    )
+
+
+def test_a_code_less_section_still_claims_its_own_parked_entries(tmp_path: Path) -> None:
+    """The ``unknown`` bucket both sides have to agree on.
+
+    The parser writes ``ccda:entries:unknown`` for a section with no code and
+    numbers a repeat ``#2``; this side has to name the same bucket, and neither
+    the suffix strip nor the fallback was pinned by anything.
+    """
+    entry = _SHARED_CODE_ENTRY.replace("75326-9", "75327-9")
+    body = f"""
+  <component><section><title>No code at all</title>{_SHARED_CODE_ENTRY}</section></component>
+  <component><section><title>Also no code</title>{entry}</section></component>
+"""
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:none")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
+
+
+def test_a_padded_reference_value_still_names_its_cell(tmp_path: Path) -> None:
+    """Both sides strip, or the mirror reports its own drift as loss.
+
+    The parser strips before it resolves a reference, so a ``value=" #id "``
+    resolves there; this side must read the same citation rather than see no
+    ``#`` and call the entry lost.
+    """
+    body = _procedures(
+        '<text><paragraph ID="proc-1">Medication reconciliation</paragraph></text>',
+        _cites(1, " #proc-1 ", "A"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
