@@ -2022,12 +2022,111 @@ def test_a_ledger_line_pointing_into_the_narrative_is_still_its_own_line(
 """
     ledger = _stamped_ledger("", "coverage: 1 dropped", 'see <reference value="#p1"/>')
     path = _write(tmp_path, body=problems + ledger)
-    rows = [
-        row
-        for row in document_ledger(path, parse_document(path)).rows
-        if row.construct == "section:51899-3"
+    record = parse_document(path)
+
+    # What was STORED is asserted first and on purpose. A fix that made the two
+    # sides agree by capturing BEFORE the parser resolves the reference passes
+    # the verdict assertion below and quietly stores "see" — and a line that is
+    # only a reference stores as nothing at all, so the carried-forward appendix
+    # loses it. Agreement bought by deleting content is the wrong trade, and
+    # only this assertion can tell the two fixes apart.
+    assert record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]["entries"] == [
+        "coverage: 1 dropped",
+        "see coverage: 1 dropped",
     ]
+
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"]
     assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
+
+
+def test_a_ledger_line_that_is_only_a_reference_is_kept_whole(tmp_path: Path) -> None:
+    """The same trade, in the shape where it costs the most.
+
+    A ``<paragraph>`` holding nothing but a ``<reference>`` has no words of its
+    own, so a capture taken before the parser resolves it stores NOTHING for
+    that line — the appendix that exists to carry what this toolkit cannot
+    model would drop it silently, and the verdict would still read preserved
+    because the ledger asked for a list that no longer mentioned it.
+    """
+    problems = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><paragraph ID="p1">prior.coverage.plan = HMO</paragraph></text>
+  </section></component>
+"""
+    ledger = _stamped_ledger("", "a = 1", '<reference value="#p1"/>')
+    path = _write(tmp_path, body=problems + ledger)
+    record = parse_document(path)
+
+    assert record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]["entries"] == [
+        "a = 1",
+        "prior.coverage.plan = HMO",
+    ], "the line the appendix exists to carry was dropped on the way in"
+
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"]
+    assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
+
+
+def test_an_ordinary_sections_prose_that_points_elsewhere_is_not_reported_lost(
+    tmp_path: Path,
+) -> None:
+    """The same mismatch, on the sections there are most of.
+
+    A ``<reference>`` in a section's own prose is resolved by the parser before
+    the narrative is stored, so the record holds the words it points at. This
+    side re-reads the file, sees the pointer, and used to conclude that a
+    section which arrived whole had been dropped — a false loss on the
+    instrument whose whole job is to be believed about loss.
+
+    The corpus cannot see this one: no generated document puts a resolving
+    reference in an ordinary section's ``<text>``, so the 6,144-document
+    reading is byte-identical either way. It is pinned here instead.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><paragraph ID="p1">asthma</paragraph></text>
+  </section></component>
+  <component><section>
+    <code code="10160-0" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Medications</title>
+    <text><paragraph>see <reference value="#p1"/></paragraph></text>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert record.patient.extensions["ccda:section:10160-0"]["text"] == "see asthma", (
+        "the parser stopped resolving the reference, so this tests nothing"
+    )
+
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:10160-0"]
+    assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
+
+
+def test_a_loss_ledger_key_that_is_not_a_list_of_strings_is_read_not_raised(
+    tmp_path: Path,
+) -> None:
+    """The pool's boundary, which a record this module did not build can breach.
+
+    ``ccda:prior_loss_narrative`` is contracted to hold a list of strings. A
+    record from somewhere else may not, and the reading is a report rather than
+    a parser: an unhashable member used to raise out of ``Counter`` and abort
+    the whole document, and a bare string used to be counted one CHARACTER at a
+    time, which is a pool of nonsense answering real questions.
+    """
+    path = _write(tmp_path, body=_stamped_ledger("", "a = 1"))
+    for entries in ([{"k": 1}, "a = 1"], "a = 1", 7):
+        record = parse_document(path)
+        record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
+            "generation": None,
+            "entries": entries,
+        }
+        rows = [
+            row for row in document_ledger(path, record).rows if row.construct == "section:51899-3"
+        ]
+        assert len(rows) == 1, f"the reading did not survive entries={type(entries).__name__}"
 
 
 @pytest.mark.parametrize("second_entry", ["allergy severity: 2 dropped", "coverage: 1 dropped"])

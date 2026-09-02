@@ -77,8 +77,10 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from lxml import etree
@@ -104,6 +106,7 @@ from .parser import (
     _attr,
     _find,
     _findall,
+    _inline_narrative_references,
     _is_own_loss_narrative,
     _narrative_entries,
     _q,
@@ -859,10 +862,10 @@ class _Evidence:
     def own_loss_kept(self, entries: list[str]) -> bool:
         """Whether THIS stamped ledger's own entries are among the stored ones.
 
-        All of them, and spent. A stamped 51899-3 section the parser never
-        reached — buried where its walk does not go — used to be reported
-        preserved because a DIFFERENT section had stored the key, which is a
-        clean bill of health for a section nothing of which is in the record.
+        All of them, and spent — a claim, not a look. Which sections may make
+        the claim at all is the CALLER's question and is settled in
+        :func:`_narrative_kept`, because the store is filled from the parser's
+        walk and a section off that walk has no standing to ask.
         """
         return bool(entries) and self.own_loss_entries.take_all(entries)
 
@@ -1327,11 +1330,12 @@ def _parks_its_entries(section: _Element) -> bool:
         return False
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
-    return _parser_walks(section)
+    return _walked_index(section) is not None
 
 
-def _parser_walks(section: _Element) -> bool:
-    """Whether the parser's section walk actually reaches this element.
+def _walked_index(section: _Element) -> int | None:
+    """Where this section sits in the parser's own walk, or ``None`` if it does
+    not sit there at all.
 
     The walk is an anchored path — ``component/structuredBody/component/
     section`` — so a section nested inside another one, or sitting straight
@@ -1339,12 +1343,17 @@ def _parser_walks(section: _Element) -> bool:
     parser visits neither, which means nothing of either is anywhere in the
     record, and no store may be asked about them.
 
-    Asked once here because two questions need it and a second spelling would
-    drift from the first. It ASKS the walk rather than restating it, for the
-    reason :func:`_parks_its_entries` gives.
+    A position rather than a yes, because the one caller that needs the yes
+    also needs to find this same section in a second reading of the document
+    (:func:`_hydrated_loss_lines`), and matching by position is the only way
+    that does not depend on element identity across two parses. It ASKS the
+    walk rather than restating it, for the reason :func:`_parks_its_entries`
+    gives.
     """
-    walked = _parser_sections(section.getroottree().getroot())
-    return any(candidate is section for candidate in walked)
+    for position, candidate in enumerate(_parser_sections(section.getroottree().getroot())):
+        if candidate is section:
+            return position
+    return None
 
 
 def _entry_evidence(
@@ -1491,12 +1500,44 @@ def _narrative_kept(
     credit came down to document order.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
-        if not _parser_walks(section):
+        position = _walked_index(section)
+        if position is None:
             return False
-        return evidence.own_loss_kept(_narrative_entries(_find(section, "v3:text")))
+        twin = _hydrated_sections(section.getroottree().getroot())[position]
+        return evidence.own_loss_kept(_narrative_entries(_find(twin, "v3:text")))
     if pair == (None, None):
         return False
     return evidence.kept_narrative(*pair)
+
+
+@lru_cache(maxsize=8)
+def _hydrated_sections(root: _Element) -> list[_Element]:
+    """The walked sections, read as the PARSER reads them.
+
+    The parser resolves ``<reference value="#id"/>`` in place before it captures
+    anything, so a ledger line that points into the narrative is stored carrying
+    the words it points at. This side re-reads the file and sees the pointer
+    instead, matches nothing, and reports a ledger that arrived whole as lost.
+
+    The fix has to be here rather than on the capture side. Capturing before
+    hydration makes the two sides agree, but they agree on LESS: a line that is
+    only a reference has no text of its own, so it is stored as nothing at all
+    and the carried-forward appendix quietly loses it. That is a real deletion
+    in the one mechanism this repo has for keeping what it cannot model, traded
+    for a reporting fix — the wrong way round.
+
+    So the document is hydrated on a COPY, and only for this question. The
+    verbatim-entry mirror next door depends on the untouched tree
+    (:func:`~.parser._capture_entries` is taken before hydration on purpose, and
+    a hydrated copy of an ``<entry>`` matches nothing the parser stored), which
+    is why this resolves a second reading rather than the shared one.
+
+    Keyed by position in the walk because element identity does not survive a
+    second parse.
+    """
+    twin = deepcopy(root)
+    _inline_narrative_references(twin)
+    return list(_parser_sections(twin))
 
 
 def _section_disposition(
@@ -1519,9 +1560,19 @@ def _section_disposition(
 
 def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     entries = _findall(section, "v3:entry")
+    # Read off the hydrated twin, for the reason `_hydrated_sections` gives: the
+    # parser stored this pair with its references resolved, and asking with the
+    # pointer instead reported a section that arrived whole as lost. A section
+    # off the walk has no twin and no stored narrative either, so the raw
+    # reading is the right one for it.
+    read = (
+        section
+        if (at := _walked_index(section)) is None
+        else _hydrated_sections(section.getroottree().getroot())[at]
+    )
     pair = (
-        _text_content(_find(section, "v3:title")),
-        _text_content(_find(section, "v3:text")),
+        _text_content(_find(read, "v3:title")),
+        _text_content(_find(read, "v3:text")),
     )
     kept = _narrative_kept(section, evidence, pair)
     # The cells inside the narrative the record demonstrably holds —

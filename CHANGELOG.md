@@ -131,12 +131,29 @@ issue and fixed in its own pull request.
   record. The one walk both this and the parked-entry rule ask is now one
   function, so the two cannot drift.
 
-  The last of it was on the other side. The parser filled in a `<reference>`
-  element's text before capturing the ledger's lines, so a line pointing into
-  the narrative was stored with words the document does not spell there and
-  matched nothing when the ledger read the file again — a ledger that arrived
-  whole reported lost. The verbatim entries were bitten by this once and are
-  captured before hydration; the loss ledger is captured there now too.
+  The last of it was the two sides reading the document in different states.
+  The parser resolves a `<reference value="#id"/>` in place before it stores a
+  section's narrative, so the record holds the words the pointer names; the
+  ledger re-read the file, saw the pointer, matched nothing, and reported a
+  section that arrived whole as lost.
+
+  The first fix for that was wrong in a way worth writing down. Capturing
+  BEFORE the parser resolves anything makes the two sides agree — and they
+  agree on less: a ledger line that is only a reference has no words of its
+  own, so it stored as nothing at all and the carried-forward appendix lost
+  it silently. That is a real deletion in the one mechanism this toolkit has
+  for keeping what it cannot model, bought to fix a reporting error. The test
+  covering it asserted the verdict and never the stored bytes, so it passed.
+
+  So the resolution happens on the ledger's side instead, on a copy of the
+  document made for that one question — the verbatim-entry mirror next door
+  genuinely needs the untouched tree, and hydrating the shared one breaks it.
+  Ordinary sections were reading the same document in the same wrong state and
+  are fixed with it: a section whose prose points into itself is no longer a
+  false loss. That one costs no reading change — no generated document puts a
+  resolving reference in an ordinary section's `<text>`, so the corpus is
+  byte-identical either way, and it is pinned by its own test rather than by
+  the pin.
 
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
