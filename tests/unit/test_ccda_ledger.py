@@ -2087,6 +2087,110 @@ def test_a_cell_is_wrapped_at_any_depth_not_only_by_its_parent(
     }
 
 
+@pytest.mark.parametrize("narrative", _NESTED_CELLS)
+def test_an_entry_citing_the_cell_that_holds_its_word_is_credited(
+    tmp_path: Path, narrative: str
+) -> None:
+    """The other direction, and the one a real document takes.
+
+    Dropping the outer name from the pool stopped two entries splitting one
+    word, and it also stopped ONE entry citing its own row — the ordinary
+    arrangement, where no double credit is even possible. The record holds
+    the word; the ledger called it unsupported. A name over a word is an
+    address for it, not a competing claim on it.
+    """
+    body = _procedures(f"<text>{narrative}</text>", _cites(1, "#a1", "A"))
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    row = _row(document_ledger(path, record), "section:47519-4")
+
+    assert record.patient.extensions["ccda:section:47519-4"]["text"], (
+        "the record does not hold the word, so this is not a false-loss case"
+    )
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_one_entry_naming_a_word_by_two_addresses_makes_one_claim(
+    tmp_path: Path,
+) -> None:
+    """A procedure names its row from ``originalText`` and its cell from ``text``.
+
+    Two names, one word, one entry. The all-or-nothing claim must resolve them
+    to the single cell they both stand over, not demand two copies of it.
+    """
+    entry = """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="43019301"><originalText>
+        <reference value="#a1"/></originalText></code>
+      <text><reference value="#a3"/></text>
+    </procedure></entry>
+"""
+    body = _procedures(
+        '<text><table><tbody><tr ID="a1"><td>'
+        '<content ID="a3">Appendectomy</content></td></tr></tbody></table></text>',
+        entry,
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
+
+
+def test_an_entry_claiming_two_cells_spends_both_or_neither(tmp_path: Path) -> None:
+    """All of them and not any, and the difference is visible in the totals.
+
+    An entry citing two cells that finds one is an entry half of whose account
+    is missing, and it must not keep the half it found — that half is a claim
+    the next entry to name it would have been owed. Spending greedily and
+    answering yes moves a preservation from one entry to another and inverts
+    the reading: the greedy rule reads two preserved and one lost where the
+    document supports one preserved and two lost.
+    """
+    body = _procedures(
+        '<text><content ID="x1">Colonoscopy</content>'
+        '<content ID="x2">Appendectomy</content></text>',
+        """
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-000000000901"/>
+      <code code="43019301"><originalText>
+        <reference value="#x1"/><reference value="#x2"/></originalText></code>
+    </procedure></entry>
+"""
+        + _cites(2, "#x1", "B")
+        + _cites(3, "#x2", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 1,
+        Disposition.UNSUPPORTED: 2,
+    }
+
+
+def test_two_cells_inside_one_named_cell_are_still_two_statements(
+    tmp_path: Path,
+) -> None:
+    """Which end of the nesting answers, pinned.
+
+    A rule keeping the OUTERMOST name instead of the innermost satisfies every
+    other test here — one preserved and one unsupported reads the same either
+    way round — and is wrong: two cells over two different words, wrapped in
+    one named cell, are two statements the record holds both of.
+    """
+    body = _procedures(
+        '<text><table><tbody><tr><td ID="c1">'
+        '<content ID="x1">Colonoscopy</content>'
+        '<content ID="x2">Appendectomy</content></td></tr></tbody></table></text>',
+        _cites(1, "#x1", "A") + _cites(3, "#x2", "C"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {Disposition.NARRATIVE_PRESERVED: 2}  # type: ignore[attr-defined]
+
+
 def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:
     """The counterweight: the rule must not collapse cells that are separate.
 

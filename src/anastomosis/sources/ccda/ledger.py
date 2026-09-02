@@ -927,50 +927,111 @@ def _is_narrative_cell(node: _Element, text: _Element) -> bool:
     )
 
 
-def _innermost_names(named: list[_Element]) -> Iterator[str]:
-    """The names of the cells among ``named`` that wrap no other one.
+def _enclosing_cells(named: list[_Element]) -> dict[_Element, _Element | None]:
+    """Each cell mapped to the nearest cell that encloses it, or ``None``.
 
-    A cell wrapped in another named cell is one statement wearing two labels:
-    three nested ids around one word bought three preservations against the
-    single word the record holds, which is the "one cell is one statement"
-    arithmetic defeated by nesting rather than by counting. The innermost name
-    is the one over those words, so it is the one that answers for them.
-
-    Wrapped at ANY depth. ``other in node`` asks lxml whether ``other`` is a
-    direct CHILD, and a table puts a ``<td>`` between the row and the cell —
-    the shape that made a row citable in the first place — so that question
-    let ``<tr ID>``/``<td>``/``<content ID>`` mint two preservations against
-    one word. Asked from the descendant's side, where the walk is upward and
-    unbounded, it is one.
+    Asked upward, once per cell, because asking downward — "does any other
+    cell lie inside this one" — is a question about every pair and costs the
+    square of them: a results table of 4,800 rows spent 14 seconds answering
+    it. The walk up is bounded by how deeply narrative nests, which is small.
     """
-    for node in named:
-        identifier = node.get("ID")
-        if identifier and not any(node in other.iterancestors() for other in named):
-            yield identifier
+    inside = set(named)
+    return {
+        node: next((cell for cell in node.iterancestors() if cell in inside), None)
+        for node in named
+    }
 
 
-def _section_anchors(section: _Element) -> Counter[str]:
-    """The narrative cells INSIDE this section's ``<text>``, one claim each.
+def _leaf_cells(enclosing: Mapping[_Element, _Element | None]) -> list[_Element]:
+    """The cells that enclose no other cell: one word belongs to one of these."""
+    wrappers = set(enclosing.values())
+    return [node for node in enclosing if node not in wrappers]
+
+
+def _cell_names_from(
+    leaf: _Element, enclosing: Mapping[_Element, _Element | None]
+) -> Iterator[str]:
+    """This cell's name, then the name of every cell that encloses it."""
+    walk: _Element | None = leaf
+    while walk is not None:
+        name = walk.get("ID")
+        if name:
+            yield name
+        walk = enclosing[walk]
+
+
+def _cell_cover(named: list[_Element]) -> dict[str, frozenset[str]]:
+    """Every cell's name mapped to the innermost cells it stands over.
+
+    One word is one statement, and it can be addressed by more than one name.
+    A table writes the row's name on the row and the cell's name on the cell
+    inside it, and an entry may reach that word by either — a procedure's
+    ``<originalText>`` names the row while its ``<text>`` names the content.
+    So the names are addresses and the innermost cells are the claims: two
+    addresses over one word spend the one claim, and the second entry to ask
+    gets nothing.
+
+    Dropping the outer name instead was tried, and it reported loss for a word
+    the record demonstrably holds — a single entry citing its own row, the
+    ordinary arrangement, came back unsupported.
+
+    A cell that wraps another keeps no claim of its own. Words of its own
+    outside the wrapped cell are not separately claimable, which is the
+    conservative reading: overlapping text is one statement, not two.
+    """
+    enclosing = _enclosing_cells(named)
+    cover: dict[str, set[str]] = {}
+    for leaf in _leaf_cells(enclosing):
+        path = list(_cell_names_from(leaf, enclosing))
+        for name in path:
+            cover.setdefault(name, set()).update(path[:1])
+    return {name: frozenset(cells) for name, cells in cover.items()}
+
+
+class _Anchors:
+    """One section's narrative cells, addressable by any name written over them.
+
+    A place, like the pools above, and spent the same way: :meth:`take` is the
+    only way in, and a yes costs a claim. What it adds is that several names
+    may lead to one claim, because C-CDA lets a document write a name at every
+    level of its table and an entry cite whichever it likes.
+    """
+
+    def __init__(self, covers: Mapping[str, frozenset[str]]) -> None:
+        self._covers = covers
+        self._cells: _KeyedPool[str] = _KeyedPool(
+            Counter({cell for cells in covers.values() for cell in cells})
+        )
+
+    def take(self, cited: list[str]) -> bool:
+        """Claim the cells ``cited`` addresses, all of them or none.
+
+        A name this section's narrative does not define is a citation the
+        document cannot back, and it fails the whole claim rather than being
+        quietly dropped — the entry named something that is not there.
+        """
+        if not cited or any(name not in self._covers for name in cited):
+            return False
+        return self._cells.take_all({cell for name in cited for cell in self._covers[name]})
+
+
+def _section_anchors(section: _Element) -> dict[str, frozenset[str]]:
+    """The narrative cells INSIDE this section's ``<text>``, by every name.
 
     A cell in another section is not here — containment is decided by the tree
     rather than by whether one string happens to occur inside another, so a
     cell reading "No" cannot answer for an entry in a section whose prose
-    contains the word.
+    contains the word. Nor is the ``<text>`` element itself, or a ``<table>``
+    or ``<caption>``: those name the whole arrangement, and an entry citing
+    one is citing the section's prose by another route.
 
-    Counted, because one cell is one statement: three entries citing it are
-    not three preservations, and the second and third get nothing. Counted by
-    NAME, once. Two nodes may carry one ID — malformed, but documents do it —
-    and the parser's own resolver keeps one node per name, so counting
-    occurrences would let one name answer twice on a disagreement between the
-    two sides of this mirror.
-
-    PHI: only the anchors' NAMES are kept.
+    PHI: only the cells' NAMES are kept. The text is read to ask whether there
+    is any, and is neither stored nor emitted.
     """
     text = _find(section, "v3:text")
     if text is None:
-        return Counter()
-    named = [node for node in text.iter() if _is_narrative_cell(node, text)]
-    return Counter(set(_innermost_names(named)))
+        return {}
+    return _cell_cover([node for node in text.iter() if _is_narrative_cell(node, text)])
 
 
 def _cited_anchors(entry: _Element) -> list[str]:
@@ -993,7 +1054,7 @@ def _cited_anchors(entry: _Element) -> list[str]:
     return list(dict.fromkeys(cited))
 
 
-def _narrated_by(entry: _Element, anchors: _KeyedPool[str] | None) -> bool:
+def _narrated_by(entry: _Element, anchors: _Anchors | None) -> bool:
     """Whether this entry's own narrative cells survived, spending them.
 
     C-CDA's mechanism for "this is my human-readable form" is a reference into
@@ -1010,8 +1071,7 @@ def _narrated_by(entry: _Element, anchors: _KeyedPool[str] | None) -> bool:
     """
     if anchors is None:
         return False
-    cited = _cited_anchors(entry)
-    return bool(cited) and anchors.take_all(cited)
+    return anchors.take(_cited_anchors(entry))
 
 
 def _entry_pool(record: PatientRecord) -> Counter[tuple[str, str]]:
@@ -1236,7 +1296,7 @@ def _entry_dispositions(
     entries: list[_Element],
     evidence: _Evidence,
     code: str | None,
-    anchors: _KeyedPool[str] | None,
+    anchors: _Anchors | None,
 ) -> tuple[dict[Disposition, int], int]:
     counts: Counter[Disposition] = Counter()
     unlinkable = 0
@@ -1319,7 +1379,7 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     # The cells inside the narrative the record demonstrably holds —
     # `kept_narrative` has just claimed this exact pair — so an entry citing one
     # is citing something that survived. Nothing when the narrative did not.
-    anchors = _KeyedPool(_section_anchors(section)) if kept else None
+    anchors = _Anchors(_section_anchors(section)) if kept else None
     code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
     entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, anchors)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
