@@ -59,12 +59,23 @@ issue and fixed in its own pull request.
   back, and it keeps no half it did find — that half belongs to whichever
   entry named it on its own.
 
-  A section settles its entries narrowest claim first, and only then in
-  document order. Otherwise an entry citing a whole row takes every cell
-  under it and starves the entries that named those cells, and the same three
-  entries over the same two words read two preserved or one depending on
-  which the section happened to list first. A reading nobody can reproduce
-  from the content alone is not a reading.
+  A section settles its entries by what they ask for, never by the order it
+  happens to list them in — otherwise an entry citing a whole row takes every
+  cell under it and starves the entries that named those cells, and the same
+  three entries over the same two words read two preserved or one depending
+  on which came first. A reading nobody can reproduce from the content alone
+  is not a reading. Both ends are tried, narrowest claim first and widest
+  first, and whichever honours more entries is the answer; neither alone is
+  enough, because a narrow claim reaching into two rows can kill both of
+  them and a wide one can swallow cells its own entries had named.
+
+  Choosing the most entries a set of cells can honour is set packing, and
+  this is a heuristic over it, stated plainly rather than implied to be
+  exact: measured against a brute-force maximum over 4,000 arrangements it
+  never credits more than an honest assignment could — no preservation is
+  invented — and on 5 of them it credits fewer, reporting loss an optimal
+  assignment would not. Over-reporting loss is the safe direction for an
+  instrument whose whole purpose is to be believed about absences.
 
   The third of those was hiding real loss rather than only mis-labelling it,
   and the corpus this repo generates says so in its own documents: a Plan of

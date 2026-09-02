@@ -15,6 +15,7 @@ Synthetic throughout (``feedface-`` ids, invented names, the 555 exchange).
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import re
 from collections import Counter
 from pathlib import Path
@@ -748,9 +749,14 @@ def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
     places = (ledger._KeyedPool(Counter()), ledger._MatchedPool([]), ledger._Anchors({}))
     for pool in places:
         surface = {name for name in vars(type(pool)) if not name.startswith("_")}
-        assert surface <= {"take", "take_all", "demand"}, (
-            f"{type(pool).__name__} offers more than taking"
+        # ``demand`` is allowed to ONE place, and only because what it reads is
+        # the static address map. Allowing it everywhere would let a counted
+        # pool grow a method that reports what is still unspent, which is the
+        # arithmetic all of this exists to refuse.
+        allowed = {"take", "take_all"} | (
+            {"demand"} if isinstance(pool, ledger._Anchors) else set()
         )
+        assert surface <= allowed, f"{type(pool).__name__} offers more than taking"
 
     # ``demand`` is the one reader, and it reads the ADDRESS map: it says how
     # much an entry is asking for so a section can serve the narrowest claims
@@ -1559,6 +1565,18 @@ def _procedures(text: str, entries: str) -> str:
 """
 
 
+def _two_cell_entry(number: int, first: str, second: str) -> str:
+    """One entry naming two cells, which is one claim on both of them."""
+    return f"""
+    <entry><procedure classCode="PROC" moodCode="EVN">
+      <id root="feedface-proc-0000-0000-0000000009{number:02d}"/>
+      <code code="430193{number:02d}"><originalText>
+        <reference value="{first}"/><reference value="{second}"/>
+      </originalText></code>
+    </procedure></entry>
+"""
+
+
 def _cites(number: int, reference: str, display: str) -> str:
     return f"""
     <entry><procedure classCode="PROC" moodCode="EVN">
@@ -2324,6 +2342,71 @@ def test_a_parsed_entry_does_not_take_the_cell_its_sibling_needs(
     assert row.entries == {  # type: ignore[attr-defined]
         Disposition.STRUCTURALLY_PARSED: 1,
         Disposition.NARRATIVE_PRESERVED: 1,
+    }
+
+
+_CHAINED = {
+    "A": ("#x1", "#x2"),
+    "B": ("#x2", "#x3"),
+    "C": ("#x3", "#x4"),
+}
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations("ABC")))
+def test_entries_whose_claims_overlap_in_a_chain_read_the_same_either_way(
+    tmp_path: Path, order: tuple[str, ...]
+) -> None:
+    """Ties are not a licence to fall back on document order.
+
+    Serving the narrowest claim first fixed the case where one entry asked for
+    more than the others. It did nothing when they all ask for the SAME
+    number: three entries over four cells, each naming two, chained so that
+    each overlaps its neighbour — every demand is two, the sort is stable, and
+    the section's listing order decided the answer again. The order is decided
+    by the content now: how much is asked for, then the names it is asked by.
+    """
+    body = _procedures(
+        "<text>"
+        + "".join(f'<content ID="x{i}">Word{i}</content>' for i in range(1, 5))
+        + "</text>",
+        "".join(
+            _two_cell_entry(number, *_CHAINED[key]) for number, key in enumerate(order, start=1)
+        ),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 2,
+        Disposition.UNSUPPORTED: 1,
+    }
+
+
+def test_one_entry_reaching_into_two_rows_does_not_kill_them_both(
+    tmp_path: Path,
+) -> None:
+    """The narrowest claim is not always the one to serve first.
+
+    Two rows of three cells, an entry citing each row, and one entry naming a
+    single cell from each. That last claim is the smallest, and serving it
+    first takes a cell out of both rows and leaves neither row-citing entry
+    able to complete — one preservation where the record holds every word and
+    an assignment for two plainly exists. Both ends are tried now, and the
+    reading is whichever honours more entries.
+    """
+    body = _procedures(
+        "<text><table><tbody>"
+        '<tr ID="r1"><td ID="a1">A1</td><td ID="a2">A2</td><td ID="a3">A3</td></tr>'
+        '<tr ID="r2"><td ID="b1">B1</td><td ID="b2">B2</td><td ID="b3">B3</td></tr>'
+        "</tbody></table></text>",
+        _cites(1, "#r1", "R1") + _cites(2, "#r2", "R2") + _two_cell_entry(3, "#a1", "#b1"),
+    )
+    path = _write(tmp_path, body=body)
+    row = _row(document_ledger(path, parse_document(path)), "section:47519-4")
+
+    assert row.entries == {  # type: ignore[attr-defined]
+        Disposition.NARRATIVE_PRESERVED: 2,
+        Disposition.UNSUPPORTED: 1,
     }
 
 

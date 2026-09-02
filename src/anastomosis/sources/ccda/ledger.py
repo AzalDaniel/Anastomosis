@@ -1070,26 +1070,6 @@ def _cited_anchors(entry: _Element) -> list[str]:
     ]
 
 
-def _narrated_by(entry: _Element, anchors: _Anchors | None) -> bool:
-    """Whether this entry's own narrative cells survived, spending them.
-
-    C-CDA's mechanism for "this is my human-readable form" is a reference into
-    the section's narrative, and it is the one entry-to-narrative link a
-    machine can check. An entry that names one is asked the question its
-    document already answered.
-
-    All of them and not any: an entry citing two cells and finding one is an
-    entry half of whose account is missing. An entry naming no reference gets
-    nothing — the section's prose is not evidence about it, which is the whole
-    reason for asking per entry — and neither does one naming a cell this
-    section's narrative does not define, or one whose section kept no
-    narrative at all.
-    """
-    if anchors is None:
-        return False
-    return anchors.take(_cited_anchors(entry))
-
-
 def _entry_pool(record: PatientRecord) -> Counter[tuple[str, str]]:
     """Every verbatim entry the record stored, by the section that stored it.
 
@@ -1349,35 +1329,62 @@ def _entries_asking_narrative(
     ]
 
 
-def _narrative_credits(asking: list[_Element], anchors: _Anchors | None) -> set[_Element]:
+def _settle(
+    asking: list[_Element], covers: Mapping[str, frozenset[str]], widest_first: bool
+) -> set[_Element]:
+    """One deterministic pass: which of these entries these cells can honour.
+
+    The order is decided by the CONTENT — how many cells an entry asks for,
+    then the names it asks by — and never by the position the section happened
+    to list it in. Two entries that tie on both are asking for the same thing,
+    so whichever of them wins, the count is the same.
+    """
+    anchors = _Anchors(covers)
+    order = sorted(
+        ((entry, _cited_anchors(entry)) for entry in asking),
+        key=lambda claim: (anchors.demand(claim[1]), sorted(claim[1])),
+        reverse=widest_first,
+    )
+    return {entry for entry, cited in order if anchors.take(cited)}
+
+
+def _narrative_credits(
+    asking: list[_Element], covers: Mapping[str, frozenset[str]]
+) -> set[_Element]:
     """Which of these entries the section's cells can honour, settled together.
 
-    SMALLEST CLAIM FIRST, and document order only to break a tie. Served in
-    the order the document lists them, an entry citing a whole row takes every
-    cell under it and starves the entries that cite those cells by name — so
-    the same three entries over the same two words read two preserved or one,
-    decided by which the section happened to list first. A reading that turns
-    on that is the defect this module refuses everywhere else it counts.
+    Served in the order the section lists them, an entry citing a whole row
+    takes every cell under it and starves the entries that cite those cells by
+    name — so the same three entries over the same two words read two
+    preserved or one, decided by nothing but which came first. A reading that
+    turns on that is the defect this module refuses everywhere else it counts.
 
-    An entry naming one cell is making the narrower and fully specific claim,
-    and honouring it first cannot invent loss the other order avoids: whatever
-    a wrapper citation could have taken, the cells it covers are still there
-    to be taken by the entries that named them.
+    Both ends are tried, narrowest claim first and widest first, and the one
+    that honours more entries is the reading. Neither alone is enough: serving
+    the narrow claims first lets one entry citing a cell from each of two rows
+    kill both row-citing entries; serving the wide ones first lets a row
+    swallow cells its own entries had named.
+
+    What this is NOT is a proof of the best possible assignment. Choosing the
+    most entries a set of cells can honour is set packing, and this is a
+    heuristic over it: measured against a brute-force maximum it never credits
+    MORE than an honest assignment could — no preservation is ever invented —
+    but on some arrangements it credits fewer, and reports loss an optimal
+    assignment would not. That is the safe direction for this instrument, and
+    it is stated here rather than implied to be exact.
     """
-    if anchors is None:
+    if not covers:
         return set()
-    claims = sorted(
-        ((entry, _cited_anchors(entry)) for entry in asking),
-        key=lambda claim: anchors.demand(claim[1]),
-    )
-    return {entry for entry, cited in claims if anchors.take(cited)}
+    narrow = _settle(asking, covers, widest_first=False)
+    widest = _settle(asking, covers, widest_first=True)
+    return narrow if len(narrow) >= len(widest) else widest
 
 
 def _entry_dispositions(
     entries: list[_Element],
     evidence: _Evidence,
     code: str | None,
-    anchors: _Anchors | None,
+    covers: Mapping[str, frozenset[str]],
 ) -> tuple[dict[Disposition, int], int]:
     """Every entry's verdict, and how many the ledger could not reach at all.
 
@@ -1389,7 +1396,7 @@ def _entry_dispositions(
     was absent from the record as preserved.
     """
     verdicts = _entry_evidence(entries, evidence, code)
-    narrated = _narrative_credits(_entries_asking_narrative(entries, verdicts), anchors)
+    narrated = _narrative_credits(_entries_asking_narrative(entries, verdicts), covers)
     counts = Counter(
         _entry_disposition(entry, linked, copied or entry in narrated)
         for entry, (linked, copied) in zip(entries, verdicts, strict=True)
@@ -1449,9 +1456,9 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     # The cells inside the narrative the record demonstrably holds —
     # `kept_narrative` has just claimed this exact pair — so an entry citing one
     # is citing something that survived. Nothing when the narrative did not.
-    anchors = _Anchors(_section_anchors(section)) if kept else None
+    covers = _section_anchors(section) if kept else {}
     code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
-    entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, anchors)
+    entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, covers)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(
         construct=_construct(_SECTION_KIND, _vocabulary(_section_code(section), _LOINC_RE)),
