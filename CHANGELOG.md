@@ -104,6 +104,58 @@ issue and fixed in its own pull request.
   capturing every section's entries makes the loss narrative grow by a
   generation on each round trip — and it belongs to that decision.
 
+- **A corpus that can see what the ledger argues about.** The 6,144-document
+  corpus wrote its cited narrative one way — a bare `<content>` sitting
+  directly under the section's `<text>` — and every entry that cited it was
+  one this adapter takes apart structurally. A parsed entry's evidence is its
+  own object, so it never asks the narrative for anything. Between those two
+  facts the whole narrative-credit rule was generated into 6,144 documents and
+  read by nobody: forcing every citation to fail, and forcing every one to
+  succeed, both left the reading byte-identical.
+
+  It now writes the arrangements a real document has — a row named above two
+  named cells, a name at more than one level over the same words, a name on
+  the arrangement itself (which must not be credited), a cell that renders an
+  image instead of words, and a citation that resolves to nothing — and the
+  entries doing the citing are the ones with no structured home of their own.
+  Thirteen mutations of the containment and claim rules were invisible to this
+  corpus before; eleven move it now, including the two the arithmetic rests
+  on: all-or-nothing against take-any, and refusing a citation that names a
+  cell the section does not define against crediting it for the half that
+  resolved. The row is the reason those two became visible — it is the one
+  arrangement where a single name leads to more than one claim, and until it
+  had two named cells under it every name in 6,144 documents stood over
+  exactly one word.
+
+  Six guards are still invisible from here, and are named rather than
+  implied away. That a cell wrapping another keeps no claim of its own — it
+  needs a wrapper with words outside the cell it wraps. That the settlement
+  gains anything from its widest-first end — on every shape here the narrow
+  end is never worse. That a `<text>` carrying an `ID` is the whole prose
+  and not a cell, and that a `<reference>` without a `#` is not a citation —
+  no document writes either. That a linked entry is not asked the narrative
+  — the corpus never makes one compete with an unlinked sibling for a cell.
+  And that an address is counted by the cells behind it rather than by its
+  names — no arrangement forces a different settlement order. A reviewer
+  measured the last four; the first two were known.
+
+  The reading moves accordingly, and toward credit: entries that really do
+  name a cell the record kept are counted as keeping it. It moves the other
+  way too, and honestly — a `<renderMultiMedia>` must name an
+  `<observationMedia>` the document declares, `referencedObject` being an
+  IDREFS, and that image is a coded entry this adapter has nowhere to put. So
+  1,514 entries a real chart carrying a scanned tracing would offer are now
+  offered, and counted lost. `58cbcf57…` becomes `71392fc9…` (71 lines, 3,702
+  bytes). Nothing about the ledger changed here; the instrument was pointed at
+  documents it could not see, and stopped writing one it could not have
+  produced.
+
+  The corpus's own legality test could not see that either: it stopped at the
+  section's `<text>` because narrative is StrucDoc rather than CDA. It reads
+  the narrative now, against StrucDoc's own models — membership only where the
+  schema states a choice, position where it states a sequence — and a second
+  test asks the question no content model can, that every name a document
+  points at is one it declares. Both fail on the shape that got past them.
 - **One loss ledger answers for one section.** A 51899-3 section this
   exporter wrote is read back as prior losses rather than parked, and the
   ledger asked whether the record held the `ccda:prior_loss_narrative` key at
