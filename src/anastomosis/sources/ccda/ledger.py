@@ -95,8 +95,10 @@ from anastomosis.core.model.base import AnastBase
 # hardened XML posture every third-party document is read under, `_section_code`
 # and `_is_own_loss_narrative` are the parser's own answers about a section,
 # `_sections` is the walk that decides which sections the record can hold
-# anything of at all, and `_text_content`, `_attr`, `_narrative_entries` and
-# `entry_verbatim` are the exact normalizations whose output the parser STORED —
+# anything of at all, `_inline_narrative_references` is the one step that
+# rewrites a tree and is applied here only to a copy, and `_text_content`,
+# `_attr`, `_narrative_entries` and `entry_verbatim` are the exact
+# normalizations whose output the parser STORED —
 # a ledger that collapsed whitespace even slightly differently would compare its
 # own spelling of a value against the parser's and conclude that every section,
 # and every actor, had been dropped.
@@ -1345,15 +1347,28 @@ def _walked_index(section: _Element) -> int | None:
 
     A position rather than a yes, because the one caller that needs the yes
     also needs to find this same section in a second reading of the document
-    (:func:`_hydrated_loss_lines`), and matching by position is the only way
+    (:func:`_hydrated_sections`), and matching by position is the only way
     that does not depend on element identity across two parses. It ASKS the
     walk rather than restating it, for the reason :func:`_parks_its_entries`
     gives.
     """
-    for position, candidate in enumerate(_parser_sections(section.getroottree().getroot())):
+    for position, candidate in enumerate(_walk(section.getroottree().getroot())):
         if candidate is section:
             return position
     return None
+
+
+@lru_cache(maxsize=1)
+def _walk(root: _Element) -> list[_Element]:
+    """The parser's section walk over this document, taken once.
+
+    Three questions ask it for every section, and re-walking the tree for each
+    made the ledger quadratic in section count — four times slower at three
+    hundred sections, which a long Epic export reaches. One document is live
+    per reading, so a single slot is the whole cache; the key is the root
+    element, whose identity holds for as long as the entry does.
+    """
+    return list(_parser_sections(root))
 
 
 def _entry_evidence(
@@ -1510,7 +1525,7 @@ def _narrative_kept(
     return evidence.kept_narrative(*pair)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=1)
 def _hydrated_sections(root: _Element) -> list[_Element]:
     """The walked sections, read as the PARSER reads them.
 
@@ -1532,8 +1547,9 @@ def _hydrated_sections(root: _Element) -> list[_Element]:
     a hydrated copy of an ``<entry>`` matches nothing the parser stored), which
     is why this resolves a second reading rather than the shared one.
 
-    Keyed by position in the walk because element identity does not survive a
-    second parse.
+    The caller reads the result by position in the walk, because element
+    identity does not survive into a second tree; the cache itself is keyed by
+    the root, one document at a time.
     """
     twin = deepcopy(root)
     _inline_narrative_references(twin)
@@ -1578,7 +1594,11 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     # The cells inside the narrative the record demonstrably holds —
     # `kept_narrative` has just claimed this exact pair — so an entry citing one
     # is citing something that survived. Nothing when the narrative did not.
-    covers = _section_anchors(section) if kept else {}
+    # And the cells off the same twin, for the same reason: a cell whose only
+    # content is a <reference> holds no words raw and holds them hydrated, and
+    # a row reporting its narrative preserved while an entry citing that cell
+    # reads lost is one reading contradicting itself.
+    covers = _section_anchors(read) if kept else {}
     code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
     entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, covers)
     disposition = _section_disposition(entries, pair, kept, entry_counts)

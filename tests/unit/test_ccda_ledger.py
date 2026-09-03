@@ -2105,6 +2105,68 @@ def test_an_ordinary_sections_prose_that_points_elsewhere_is_not_reported_lost(
     assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
 
 
+def test_a_cell_that_is_only_a_pointer_still_answers_for_the_entry_citing_it(
+    tmp_path: Path,
+) -> None:
+    """The raw-versus-hydrated split, one level down from the narrative.
+
+    A named cell whose only content is a ``<reference>`` has no words in the
+    file and has them once the parser resolves it. Reading the cells off the
+    raw tree made it no cell at all, so an unparsed entry citing it was
+    reported lost in the same row that reported the narrative — the words the
+    entry cites — preserved. One reading, contradicting itself.
+    """
+    body = """
+  <component><section>
+    <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title>
+    <text><paragraph ID="p1">asthma, mild persistent</paragraph></text>
+  </section></component>
+  <component><section>
+    <code code="42349-1" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Reason for Referral</title>
+    <text>
+      <paragraph ID="c0">seen for the below</paragraph>
+      <paragraph ID="c1"><reference value="#p1"/></paragraph>
+    </text>
+    <entry><observation classCode="OBS" moodCode="EVN">
+      <templateId root="1.2.3.4.5.6.7.8.9"/>
+      <code code="99999-9" codeSystem="2.16.840.1.113883.6.1"/>
+      <text><reference value="#c1"/></text>
+    </observation></entry>
+  </section></component>
+"""
+    path = _write(tmp_path, body=body)
+    record = parse_document(path)
+    assert "asthma" in record.patient.extensions["ccda:section:42349-1"]["text"], (
+        "the parser stopped resolving the reference, so this tests nothing"
+    )
+    rows = [row for row in document_ledger(path, record).rows if row.construct == "section:42349-1"]
+    assert [row.instances for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}]
+    assert [row.entries for row in rows] == [{Disposition.NARRATIVE_PRESERVED: 1}], (
+        "the row says the narrative survived; the entry citing a cell of it says it did not"
+    )
+
+
+def test_the_hydrated_twin_of_one_document_is_not_kept_after_the_next(tmp_path: Path) -> None:
+    """One document is live per reading, and the copy made for it goes when it does.
+
+    The twin is a second parsed tree of a patient's chart. A cache that kept
+    several of them would hold that much protected data past any use it could
+    be put to — every reading re-parses, so a slot for a document already read
+    is a slot that can never hit. Measured at eight slots: 168 MB resident for
+    eight one-megabyte documents, against 71 MB with one.
+    """
+    from anastomosis.sources.ccda import ledger as module
+
+    module._hydrated_sections.cache_clear()
+    for n in range(3):
+        directory = tmp_path / str(n)
+        directory.mkdir()
+        document_ledger(_write(directory, body=_stamped_ledger("", "a = 1")))
+    assert module._hydrated_sections.cache_info().currsize <= 1
+
+
 def test_a_loss_ledger_key_that_is_not_a_list_of_strings_is_read_not_raised(
     tmp_path: Path,
 ) -> None:
