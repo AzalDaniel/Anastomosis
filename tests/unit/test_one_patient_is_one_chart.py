@@ -335,6 +335,250 @@ def test_two_scanned_documents_for_one_patient_both_reach_the_chart(tmp_path: Pa
     assert on_disk == sorted(referenced), "the bundle and the attachments agree"
 
 
+# --- the cross-document encounter fold, and its real boundary -----------------
+
+
+def test_two_documents_naming_one_visit_under_a_guid_root_fold_to_one_encounter(
+    tmp_path: Path,
+) -> None:
+    """Two documents can name the SAME visit under one GUID ``<id root>`` — a
+    visit summary and a note that documents it, arriving as two files instead
+    of two sections of one. ``fold_encounters_sharing_an_id`` already folds
+    that pair inside a single document; this proves the pipeline's own fold
+    calls it across the two documents it merges too, rather than only unioning
+    them into a doubled visit. This is what the "delete the fold call"
+    mutation survives without: reproduced red (``encounters == 2``) in a
+    disposable copy of the tree before this test existed.
+    """
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    shared_encounter = "feedface-e000-0000-0000-00000000009a"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=shared_encounter,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=shared_encounter,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    assert len(record.encounters) == 1, "one visit named by two documents is one encounter"
+    assert record.encounters[0].id == shared_encounter
+
+
+def test_a_vendor_oid_root_does_not_fold_across_documents_and_the_docstring_says_so(
+    tmp_path: Path,
+) -> None:
+    """A PIN of today's behaviour, not an endorsement of it. Most vendors emit
+    a system OID as the encounter id root (paired with a per-instance
+    extension), and ``_encounter_id`` trusts only a GUID-shaped root —
+    anything else derives a per-DOCUMENT id from the file name and position.
+    So the same visit stated under one OID root in two documents keeps two
+    encounter objects here; changing ``_encounter_id`` to honour an OID root
+    too is a clinical identity decision outside this fix, filed by the
+    orchestrator separately.
+    """
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    vendor_root = "2.16.840.1.113883.19.5.99999.1"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+    # A vendor OID root pairs with a per-encounter extension in practice;
+    # `_encounter_id` reads only the root, so the shape is faithful even
+    # though the extension itself plays no part in the outcome below.
+    for name in ("one.xml", "two.xml"):
+        path = export / name
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                f'<id root="{vendor_root}"/>', f'<id root="{vendor_root}" extension="9001"/>'
+            ),
+            encoding="utf-8",
+        )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    assert len(record.encounters) == 2, "an OID root keeps one id per document, so no fold"
+    assert record.encounters[0].id != record.encounters[1].id
+
+
+def test_two_documents_carrying_one_appendix_are_read_as_two_declared_losses(
+    tmp_path: Path,
+) -> None:
+    """Two documents can both already carry the SAME stamped 51899-3 appendix
+    — an ordinary shape for a chart exported more than once and then split
+    across two files. The merge cannot tell "the same fact stamped twice" from
+    "two distinct objects that happen to share a value" — an entry string does
+    not carry enough to say — so it keeps the multiset rather than deduping:
+    the merged ledger states the entry twice, and a re-export writes the line
+    twice. That is the conservative direction, chosen on purpose: a loss
+    ledger may say a thing twice, but it must never say it zero times.
+    """
+    from anastomosis.deliver.ccda_export import deliver_ccda
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    entry = "patient.notes = carried twice"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter="feedface-enc0-0000-0000-000000000001",
+        condition="feedface-cnd0-0000-0000-000000000001",
+        extra=_LOSS_LEDGER_SECTION.format(generation="1", entry=entry),
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter="feedface-enc0-0000-0000-000000000002",
+        condition="feedface-cnd0-0000-0000-000000000002",
+        extra=_LOSS_LEDGER_SECTION.format(generation="1", entry=entry),
+    )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    ledger = record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE]
+    assert ledger["entries"] == [entry, entry], "both documents' declared loss survive, unmerged"
+
+    result = deliver_ccda([record], tmp_path / "cda")
+    delivered = result.paths[0].read_text(encoding="utf-8")
+    assert delivered.count(f"<paragraph>{entry}</paragraph>") == 2, "the appendix writes it twice"
+
+
+def test_merged_extensions_treats_a_non_ledger_occupant_as_a_clashing_key() -> None:
+    """A dict at the loss-ledger key that is not actually shaped like one — no
+    source in this codebase writes one, but a hand-made FHIR bundle can park
+    any JSON at all under any key — must not be folded into as though it were
+    a ledger: ``merge_loss_narrative`` would have to read entries/generation it
+    does not have. It is parked the same way any other clashing extension is,
+    in EITHER arrival order — the crash this pins against only showed up with
+    the non-ledger value first, then a real ledger second.
+    """
+    from anastomosis.pipeline import _merged_extensions
+
+    ledger = {EXT_PRIOR_LOSS_NARRATIVE: {"generation": 1, "entries": ["patient.notes = x"]}}
+    stray = {EXT_PRIOR_LOSS_NARRATIVE: {"vendor": "unrecognised shape"}}
+
+    ledger_first = _merged_extensions([ledger, stray])
+    stray_first = _merged_extensions([stray, ledger])
+
+    assert ledger_first[EXT_PRIOR_LOSS_NARRATIVE] == ledger[EXT_PRIOR_LOSS_NARRATIVE]
+    assert ledger_first[f"{EXT_PRIOR_LOSS_NARRATIVE}#2"] == stray[EXT_PRIOR_LOSS_NARRATIVE]
+    assert stray_first[EXT_PRIOR_LOSS_NARRATIVE] == stray[EXT_PRIOR_LOSS_NARRATIVE]
+    assert stray_first[f"{EXT_PRIOR_LOSS_NARRATIVE}#2"] == ledger[EXT_PRIOR_LOSS_NARRATIVE]
+
+
+def test_record_fold_refuses_a_field_it_does_not_recognise() -> None:
+    """``_record_list_fields`` raises loudly on any ``PatientRecord`` field
+    that is neither one of the four fields the fold names nor a ``list[...]``
+    collection: a new field kind is a code change the fold must not guess at.
+    ``TypeError`` is the right shape — this is caught wiring up a new field,
+    not from data a run produced, so it is never a pipeline-level refusal.
+    """
+    from anastomosis.core.model import PatientRecord
+    from anastomosis.pipeline import _record_list_fields
+
+    class _RecordWithATuple(PatientRecord):
+        oddments: tuple[str, ...] = ()
+
+    with pytest.raises(TypeError, match="oddments"):
+        _record_list_fields(_RecordWithATuple)
+
+
+def test_patient_fold_refuses_a_collection_shape_it_does_not_recognise() -> None:
+    """The same guard on the demographic side. ``get_origin(tuple[str, ...])``
+    is not ``list``, so without this guard a future tuple-valued demographic
+    would be silently classed single-valued and start refusing runs the first
+    time two documents state it in a different order. ``TypeError`` for the
+    same reason as the record-level guard above: a new field kind is a code
+    change, not a runtime condition.
+    """
+    from anastomosis.core.model import Patient
+    from anastomosis.pipeline import _patient_list_fields
+
+    class _PatientWithATuple(Patient):
+        oddments: tuple[str, ...] = ()
+
+    with pytest.raises(TypeError, match="oddments"):
+        _patient_list_fields(_PatientWithATuple)
+
+
+def test_the_archive_and_bundle_bundles_are_byte_identical_and_the_ccd_reparses_both(
+    tmp_path: Path,
+) -> None:
+    """#375's own claim — "compares delivered artifacts by hash" — pinned by
+    actually hashing something. The archive and the bundle both write
+    ``bundle.json`` through the same ``deliver._shared.write_fhir_bundle`` on
+    the same merged record, so their bytes have to be identical, not merely
+    similar; and the delivered CCD has to re-parse to both documents' visits
+    and problems, not just exist on disk.
+    """
+    import hashlib
+
+    from anastomosis.sources.ccda.parser import parse_document
+
+    export, out = tmp_path / "export", tmp_path / "charts"
+    archive, bundles, ccda = tmp_path / "arc", tmp_path / "bun", tmp_path / "cda"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter="feedface-enc0-0000-0000-000000000001",
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter="feedface-enc0-0000-0000-000000000002",
+        condition="feedface-cnd0-0000-0000-000000000002",
+        visit="Follow up",
+        problem="Hypertension",
+        snomed="38341003",
+        date="20230712",
+    )
+
+    _run(export, out, "--archive", str(archive), "--bundle", str(bundles), "--ccda", str(ccda))
+
+    (patient_dir,) = (archive / "patients").iterdir()
+    (bundle_dir,) = [path for path in bundles.iterdir() if path.is_dir()]
+    archive_bundle = (patient_dir / "bundle.json").read_bytes()
+    bundle_bundle = (bundle_dir / "bundle.json").read_bytes()
+    assert hashlib.sha256(archive_bundle).hexdigest() == hashlib.sha256(bundle_bundle).hexdigest()
+    assert archive_bundle == bundle_bundle, "byte-identical, not merely equal-hashing"
+
+    (delivered,) = ccda.glob("*.xml")
+    reparsed = parse_document(delivered)
+    assert len(reparsed.encounters) == 2, "both documents' visits are on the delivered CCD"
+    assert len(reparsed.conditions) == 2, "both documents' problems are on the delivered CCD"
+    assert {e.encounter_type for e in reparsed.encounters} == {"Office visit", "Follow up"}
+
+
 # --- the counterweight: the fold must not over-merge --------------------------
 
 
@@ -396,8 +640,14 @@ def test_disagreeing_demographics_under_one_id_refuse_the_run(tmp_path: Path) ->
 
     The message names the FIELD and the counts and nothing else: the values are
     on the operator's screen already, and a refusal that quoted them would put a
-    patient's date of birth into a log line and a terminal scrollback.
+    patient's date of birth into a log line and a terminal scrollback. It DOES
+    name the patient — as a run-scoped surrogate — because a refusal that named
+    only a field and a count on a 60-document export gave an operator nothing
+    to bisect the export by hand with, which is exactly the recourse this
+    toolkit already refuses to leave for an unreadable document.
     """
+    from anastomosis.core.logutil import safe_log_id
+
     export, out = tmp_path / "export", tmp_path / "charts"
     _write_structured(
         export,
@@ -424,8 +674,19 @@ def test_disagreeing_demographics_under_one_id_refuse_the_run(tmp_path: Path) ->
     assert result.exit_code == 2, result.output
     message = " ".join(result.output.split())
     assert "birth_date" in message
-    assert "2 records share one patient id" in message
-    for value in ("1985", "1991", "19850314", "19911122", "Ada", "Fixture", "one.xml", "two.xml"):
+    assert "2 records" in message and "share one patient id" in message
+    assert safe_log_id(_PATIENT) in message, "the patient rides as a run-scoped surrogate"
+    for value in (
+        "1985",
+        "1991",
+        "19850314",
+        "19911122",
+        "Ada",
+        "Fixture",
+        "one.xml",
+        "two.xml",
+        _PATIENT,
+    ):
         assert value not in message, f"the refusal leaked {value!r}"
 
 

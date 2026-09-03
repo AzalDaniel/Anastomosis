@@ -572,15 +572,48 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     merge_loss_narrative(record.patient.extensions, _loss_generation(section), entries)
 
 
+def is_loss_ledger(value: Any) -> bool:
+    """Whether ``value`` has the ``{generation, entries}`` shape this module
+    writes under :data:`EXT_PRIOR_LOSS_NARRATIVE`.
+
+    Public because two callers need to tell a real carried-forward ledger from
+    an ordinary dict that happens to sit under the same key — a hand-made FHIR
+    bundle may park any JSON at all there — before folding into it: this
+    module's own :func:`merge_loss_narrative`, checking what it is about to
+    fold INTO, and the pipeline's fold, checking what it is about to fold IN.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("entries"), list)
+        and isinstance(value.get("generation"), int | None)
+    )
+
+
 def merge_loss_narrative(
     extensions: dict[str, Any], generation: int | None, entries: list[str]
 ) -> None:
     """Fold one stamped loss ledger into whatever ``extensions`` already holds.
 
-    Entries concatenate in the order they were read and the highest generation
-    wins, so neither ledger is overwritten and the exporter still dedupes a
-    single carry-forward appendix. An absent generation on either side does not
-    reset the counter for the other.
+    Entries CONCATENATE in the order they were read and the highest generation
+    wins, so neither ledger is overwritten. That keeps one document's own
+    round trip — export, re-ingest, export again — down to a single
+    carry-forward appendix, because the exporter dedupes prior against current
+    (``_carried_forward``) before it writes the next generation. It does NOT
+    dedupe across the several source records one patient's chart can now be
+    merged from (:mod:`anastomosis.pipeline`'s fold): two documents that both
+    already carry an identical stamped entry merge into a ledger that states it
+    twice, on purpose — an entry string does not carry enough to tell "the same
+    fact stamped twice" from "two distinct objects that genuinely share a
+    value", so the accepted direction is to risk saying a true thing twice
+    rather than ever say it zero times. An absent generation on either side
+    does not reset the counter for the other.
+
+    The accumulator is checked with :func:`is_loss_ledger`, not merely
+    ``isinstance(prior, dict)``: a chart merged from several source records can
+    already hold a non-ledger dict at this key from one of them (an ordinary
+    extensions clash the pipeline's fold has not yet resolved), and folding
+    into it as though it were a ledger would raise on the shape it does not
+    have instead of leaving it for the pipeline's own clashing-key rule.
 
     Public because two callers fold ledgers into one key: this module, walking
     the several stamped sections of one document, and the pipeline's fold,
@@ -588,7 +621,7 @@ def merge_loss_narrative(
     both sides, so it is written once.
     """
     prior = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
-    if isinstance(prior, dict):
+    if isinstance(prior, dict) and is_loss_ledger(prior):
         prior_generation = prior["generation"]
         extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
             "generation": (
@@ -969,7 +1002,12 @@ def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter
     holding one patient's visit summary and its note names that visit twice
     across two files, and the pipeline's fold unions their encounters. The rule
     is a property of the canonical Encounter, not of one traversal, so both
-    callers run this one.
+    callers run this one — but the reach across documents is only as wide as
+    :func:`_encounter_id` makes it: that function honours the source's
+    ``<id root>`` verbatim only when it looks like a GUID, and otherwise derives
+    an id from the source FILE name and position, so a vendor OID root (the
+    shape most vendors emit) still gets one id PER DOCUMENT and never folds
+    here, across two documents, no matter how it agrees with itself.
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []

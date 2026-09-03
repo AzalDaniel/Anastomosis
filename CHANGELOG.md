@@ -314,9 +314,13 @@ issue and fixed in its own pull request.
   already meets the contract is untouched, and the per-document ledger the
   C-CDA reading depends on keeps measuring documents. Collections union in
   document order and are deduplicated only where the model already says two
-  objects are one: two encounters under one `<id root>` fold by the rule that
-  already folds them inside a single document, and nothing else, because a
-  rule invented for the others would delete a real repeat prescription.
+  objects are one: two encounters under one GUID `<id root>` fold by the rule
+  that already folds them inside a single document, and nothing else, because
+  a rule invented for the others would delete a real repeat prescription. An
+  encounter under a vendor OID root does not reach this — the parser gives it
+  one id per document — so a source that names encounters that way keeps two
+  encounter objects across two documents, a clinical-identity decision left
+  for its own change.
   Extensions merge with the losslessness rule that governs them everywhere
   else — equal values keep their key, a carried-forward loss ledger merges as
   one ledger, and anything else two documents state differently keeps BOTH,

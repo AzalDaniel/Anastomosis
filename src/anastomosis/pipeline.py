@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, get_origin
 
 from anastomosis.core.ccda_codes import EXT_PRIOR_LOSS_NARRATIVE
 from anastomosis.core.conservation import ConservationError
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.sources import (
     SourceDataError,
     available_sources,
@@ -427,9 +427,13 @@ def _merged_record(group: list[PatientRecord]) -> PatientRecord:
 
     Every collection unions in the order the records were read. De-duplication
     happens only where the model already defines identity: two encounters under
-    one ``<id root>`` are one visit when the halves agree
+    one GUID ``<id root>`` are one visit when the halves agree
     (:func:`~anastomosis.sources.ccda.parser.fold_encounters_sharing_an_id` —
-    the same rule inside one document and across two). Nothing else is deduped,
+    the same rule inside one document and across two). An encounter under a
+    vendor OID root does not reach this: the parser gives it one id PER
+    DOCUMENT (:func:`~anastomosis.sources.ccda.parser._encounter_id` honours
+    only a GUID-shaped root), so two documents naming the same visit under an
+    OID keep two encounter objects here. Nothing else is deduped,
     because nothing else in the canonical model says when two objects are the
     same object, and a rule invented here would delete a real repeat prescription
     or a real second reading.
@@ -503,10 +507,11 @@ def _merged_patient(patients: list[Patient]) -> Patient:
     A LIST-valued one is not that. Two documents naming different phone numbers
     are not two people; a patient has two phone numbers, and the model holds a
     list precisely so both fit. Refusing there would reject the ordinary export
-    — the identifiers alone make it certain, because one of them is a GUID
-    derived from the SOURCE DOCUMENT, so every patient with two documents
-    "disagrees" with themselves. The lists are unioned in document order,
-    keeping each distinct value once.
+    — the identifiers alone make it certain, because the parser also derives an
+    identifier from the ``patientRole`` id, so any pair of documents filed
+    under different assigning authorities states two identifiers for the same
+    patient by design, not by disagreement. The lists are unioned in document
+    order, keeping each distinct value once.
     """
     model = type(patients[0])
     update: dict[str, Any] = {}
@@ -515,7 +520,7 @@ def _merged_patient(patients: list[Patient]) -> Patient:
         for name in _patient_demographic_fields(model)
         if name not in _patient_list_fields(model)
     }
-    _refuse_disagreeing_demographics(singles, len(patients))
+    _refuse_disagreeing_demographics(patients[0].id, singles, len(patients))
     update.update({name: values[0] for name, values in singles.items() if values})
     update.update(
         {
@@ -527,14 +532,46 @@ def _merged_patient(patients: list[Patient]) -> Patient:
     return patients[0].model_copy(update=update)
 
 
+#: Typing origins that state "several values at once" without being the
+#: ``list[...]`` shape :func:`_patient_list_fields` looks for. A demographic
+#: added to :class:`~anastomosis.core.model.Patient` in one of these shapes
+#: would otherwise pass ``get_origin(...) is list`` as False and fall silently
+#: into the SINGLE-valued bucket in :func:`_merged_patient` — where two
+#: documents stating it in a different order becomes a refused "disagreement"
+#: instead of the union it should be.
+_SEQUENCE_LIKE_ORIGINS = (tuple, frozenset, set, Sequence)
+
+
 @cache
 def _patient_list_fields(model: type[Patient]) -> frozenset[str]:
-    """The demographics that hold several values at once, read off the model."""
-    return frozenset(
+    """The demographics that hold several values at once, read off the model.
+
+    A field neither this collects nor :data:`_MODEL_IDENTITY_FIELDS` names is
+    read by :func:`_merged_patient` as single-valued by default — correct for
+    an ordinary scalar demographic, wrong for a collection this function
+    failed to recognise. So a field whose origin still LOOKS like a collection
+    (:data:`_SEQUENCE_LIKE_ORIGINS`) stops the fold loudly instead, the same
+    way :func:`_record_list_fields` refuses to run rather than guess at a
+    record-level field it does not recognise.
+    """
+    collections = frozenset(
         name
         for name, info in model.model_fields.items()
         if name not in _MODEL_IDENTITY_FIELDS and get_origin(info.annotation) is list
     )
+    unhandled = sorted(
+        name
+        for name, info in model.model_fields.items()
+        if name not in _MODEL_IDENTITY_FIELDS
+        and name not in collections
+        and get_origin(info.annotation) in _SEQUENCE_LIKE_ORIGINS
+    )
+    if unhandled:
+        raise TypeError(
+            f"Patient field(s) {', '.join(unhandled)} look like a collection but are not "
+            "list[...], so the fold's single-valued/list split would misclassify them"
+        )
+    return collections
 
 
 def _unioned(lists: list[list[Any]]) -> list[Any]:
@@ -574,13 +611,23 @@ def _stated_values(patients: list[Patient], name: str) -> list[Any]:
     ]
 
 
-def _refuse_disagreeing_demographics(stated: dict[str, list[Any]], records: int) -> None:
+def _refuse_disagreeing_demographics(
+    patient_id: str, stated: dict[str, list[Any]], records: int
+) -> None:
     """Stop the run when the records for one patient id describe two people.
 
     PHI: the refusal names the FIELDS and the counts — schema words and integers,
     the same contract every adapter refusal keeps — and never what the fields
     said. The operator repairs the export by looking at the named fields; the
     values are on their screen already and have no business in ours.
+
+    It DOES carry the patient, as :func:`~anastomosis.core.logutil.safe_log_id`'s
+    run-scoped surrogate — the same one ``deliver._shared.claim_delivered_name``
+    already puts in a collision message. Without it, a refusal on a batch
+    export named a field and a count and nothing else, and bisecting the
+    export by hand to find which patient triggered it was the operator's only
+    recourse: the same failure ``sources/ccda/__init__.py`` already refused to
+    leave one with for a document it cannot parse.
     """
     disagreed = sorted(
         name for name, values in stated.items() if any(value != values[0] for value in values)
@@ -588,9 +635,10 @@ def _refuse_disagreeing_demographics(stated: dict[str, list[Any]], records: int)
     if not disagreed:
         return
     raise PipelineError(
-        f"{records} records share one patient id but disagree on "
-        f"{len(disagreed)} demographic field(s) ({', '.join(disagreed)}); refusing to merge "
-        "them into one chart — the source cannot say which of them is the patient",
+        f"{records} records for patient {safe_log_id(patient_id)} share one patient id but "
+        f"disagree on {len(disagreed)} demographic field(s) ({', '.join(disagreed)}); "
+        "refusing to merge them into one chart — the source cannot say which of them is "
+        "the patient",
         exit_code=2,
         kind="bad_input",
     )
@@ -602,9 +650,15 @@ def _merged_extensions(dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
     Three rules, in the order a key meets them:
 
     * a carried-forward loss ledger merges as one ledger — entries concatenate,
-      the highest generation wins — because that is what a re-export dedupes
+      the highest generation wins — because that is what one document's own
+      round trip dedupes
       (:func:`~anastomosis.sources.ccda.parser.merge_loss_narrative`, the same
-      rule that folds two stamped ledgers inside one document);
+      rule that folds two stamped ledgers inside one document). This applies
+      only when BOTH sides already have the ledger shape
+      (:func:`~anastomosis.sources.ccda.parser.is_loss_ledger`): a hand-made
+      FHIR bundle can park any JSON at all under this key, and an incoming
+      ledger meeting a non-ledger occupant is a clash like any other — folding
+      into it would silently discard whatever the occupant held;
     * a key only one record holds, or one they hold with EQUAL values, keeps its
       value at its own key;
     * a key two records hold with DIFFERENT values keeps BOTH: the later one is
@@ -614,34 +668,23 @@ def _merged_extensions(dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
       source data is the whole purpose of this dict, so a merge that dropped
       half of it would defeat it at the one point it exists to hold.
     """
-    from anastomosis.sources.ccda.parser import free_key, merge_loss_narrative
+    from anastomosis.sources.ccda.parser import free_key, is_loss_ledger, merge_loss_narrative
 
     merged: dict[str, Any] = {}
     for extensions in dicts:
         for key, value in extensions.items():
-            if key == EXT_PRIOR_LOSS_NARRATIVE and _is_loss_ledger(value):
+            existing = merged.get(key)
+            if (
+                key == EXT_PRIOR_LOSS_NARRATIVE
+                and is_loss_ledger(value)
+                and (existing is None or is_loss_ledger(existing))
+            ):
                 merge_loss_narrative(merged, value["generation"], value["entries"])
             elif key not in merged or merged[key] == value:
                 merged[key] = value
             else:
                 merged[free_key(merged, key)] = value
     return merged
-
-
-def _is_loss_ledger(value: Any) -> bool:
-    """Whether a value under the prior-loss-narrative key has the shape the
-    parser stores there.
-
-    Anything else arrived from somewhere this pipeline did not write — a
-    hand-made FHIR bundle may carry any JSON at all under any key — and is
-    merged as an ordinary clashing key rather than handed to a merge that
-    assumes the shape.
-    """
-    return (
-        isinstance(value, dict)
-        and isinstance(value.get("entries"), list)
-        and isinstance(value.get("generation"), int | None)
-    )
 
 
 #: Where a run keeps the source attachments it carried through, inside the same
