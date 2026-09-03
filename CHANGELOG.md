@@ -156,6 +156,56 @@ issue and fixed in its own pull request.
   schema states a choice, position where it states a sequence — and a second
   test asks the question no content model can, that every name a document
   points at is one it declares. Both fail on the shape that got past them.
+- **One loss ledger answers for one section.** A 51899-3 section this
+  exporter wrote is read back as prior losses rather than parked, and the
+  ledger asked whether the record held the `ccda:prior_loss_narrative` key at
+  all. The parser concatenates every stamped ledger it walks into that one
+  key — so a re-export carries a single deduplicated appendix instead of
+  nesting each generation inside the next — which means the key's existence
+  answers for the construct class and not for any one construct. A second
+  stamped section, buried where the walk does not reach it, read as preserved
+  on the strength of the first one's key while nothing of it was in the
+  record. A clean bill of health for a section that is entirely absent.
+
+  It claims its own entries now, all of them, out of a counted pool of what
+  was actually stored. Two ledgers a document legitimately carries are still
+  both credited, including when two exports dropped the same field and the
+  same line arrives twice; a ledger whose lines are only partly there is
+  credited by none of them.
+
+  Counting alone was not enough, because the pool cannot say who put a line
+  in it. A buried ledger repeating a line the reachable one had also written
+  emptied the pool first and was reported preserved, and the section that
+  really had delivered every line was reported lost — which of the two got the
+  credit came down to document order. So the question is asked at the store's
+  actual address: that store is filled from the parser's section walk, and a
+  section off the walk is asked nothing, because nothing of it is in the
+  record. The one walk both this and the parked-entry rule ask is now one
+  function, so the two cannot drift.
+
+  The last of it was the two sides reading the document in different states.
+  The parser resolves a `<reference value="#id"/>` in place before it stores a
+  section's narrative, so the record holds the words the pointer names; the
+  ledger re-read the file, saw the pointer, matched nothing, and reported a
+  section that arrived whole as lost.
+
+  The first fix for that was wrong in a way worth writing down. Capturing
+  BEFORE the parser resolves anything makes the two sides agree — and they
+  agree on less: a ledger line that is only a reference has no words of its
+  own, so it stored as nothing at all and the carried-forward appendix lost
+  it silently. That is a real deletion in the one mechanism this toolkit has
+  for keeping what it cannot model, bought to fix a reporting error. The test
+  covering it asserted the verdict and never the stored bytes, so it passed.
+
+  So the resolution happens on the ledger's side instead, on a copy of the
+  document made for that one question — the verbatim-entry mirror next door
+  genuinely needs the untouched tree, and hydrating the shared one breaks it.
+  Ordinary sections were reading the same document in the same wrong state and
+  are fixed with it: a section whose prose points into itself is no longer a
+  false loss. That one costs no reading change — no generated document puts a
+  resolving reference in an ordinary section's `<text>`, so the corpus is
+  byte-identical either way, and it is pinned by its own test rather than by
+  the pin.
 
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
