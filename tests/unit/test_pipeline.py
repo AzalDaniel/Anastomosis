@@ -187,6 +187,37 @@ def test_a_ccda_load_settles_its_ledger_and_reading(tmp_path: Path) -> None:
     assert {row["construct"] for row in report["constructs"]} >= {"participation:author"}
 
 
+def test_a_skipped_file_reaches_the_reading_and_the_ledger(tmp_path: Path) -> None:
+    """#384: a document the adapter's own sniff recognises as a CDA but whose
+    extension it does not read (``.txt`` here) is never opened, but the LOSS
+    must not be silent the way ``.ccd`` itself used to be. The count rides the
+    same settlement as every other construct — into ``loss_ledger.json`` and
+    the physician reading — never a channel of its own."""
+    import json
+    import shutil
+
+    from anastomosis.sources import get_source
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+    export = tmp_path / "export"
+    export.mkdir()
+    shutil.copy(fixture / "feedface_ccd.xml", export / "summary.xml")
+    shutil.copy(fixture / "feedface_ccd.xml", export / "extra.txt")
+
+    adapter = get_source("ccda")
+    records = load_records(adapter, export)
+    assert len(records) == 1  # the .txt copy was never opened
+    assert adapter.skipped_files == 1
+
+    out = tmp_path / "out"
+    out.mkdir()
+    reading = settle_source_ledger(adapter, out)
+    assert any("1 file" in line and "skipped, not read" in line for line in reading)
+    report = json.loads((out / LOSS_LEDGER_FILENAME).read_text(encoding="utf-8"))
+    assert report["skipped_files"] == 1
+    assert report["documents"] == 1  # the one document that WAS opened still balances
+
+
 def test_a_source_without_a_ledger_settles_to_nothing(tmp_path: Path) -> None:
     """Every non-C-CDA adapter: empty reading, no artifact — and a STALE
     artifact from a previous run into the same folder is removed, so last

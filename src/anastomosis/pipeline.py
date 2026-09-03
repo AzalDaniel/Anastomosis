@@ -679,16 +679,25 @@ def settle_source_ledger(adapter: SourceAdapter, out: Path) -> tuple[str, ...]:
     returns an empty reading and writes nothing, and a re-run that ledgered
     nothing removes the stale artifact for the reason ``settle_quarantine``
     does.
+
+    ``skipped_files`` (see ``sources.ccda.CCDAAdapter``, #384) rides the same
+    settlement rather than a channel of its own: a file the export held that
+    read as a CDA document but was never opened belongs beside the account of
+    what WAS opened, not off in a report nobody reads unless they already knew
+    to ask. It keeps the ledger open even when ``ledgers`` is empty — an export
+    holding nothing else BUT unopened look-alikes must still say so, not read
+    as a source with nothing to report.
     """
     from anastomosis.core.output import secure_output_dir
 
     ledgers = list(getattr(adapter, "ledgers", ()))
-    if not ledgers:
+    skipped_files = getattr(adapter, "skipped_files", 0)
+    if not ledgers and not skipped_files:
         (out / LOSS_LEDGER_FILENAME).unlink(missing_ok=True)
         return ()
     from anastomosis.sources.ccda.ledger import aggregate, physician_reading
 
-    corpus = aggregate(ledgers)
+    corpus = aggregate(ledgers, skipped_files=skipped_files)
     _write_json(secure_output_dir(out) / LOSS_LEDGER_FILENAME, corpus.as_report())
     return physician_reading(corpus)
 

@@ -120,6 +120,97 @@ def test_utf16_encoded_cda_is_detected_and_loaded(tmp_path: Path) -> None:
     )
 
 
+# --- extension matching (#384) ------------------------------------------------
+
+
+def test_a_ccd_extension_loads_beside_an_xml_export(tmp_path: Path) -> None:
+    """The walk matched ``*.xml`` only, so a document Kareo/Tebra write as
+    ``<name>.ccd`` was never opened, never counted, and never mentioned — a
+    whole patient's chart silently absent from a run that exited 0 and
+    reported success. An export holding one of each extension must load both.
+    """
+    import shutil
+
+    fixture = CCDA_FIXTURE / "feedface_ccd.xml"
+    shutil.copy(fixture, tmp_path / "summary.xml")
+    shutil.copy(fixture, tmp_path / "ccd.ccd")
+
+    loaded = list(get_source("ccda").load(tmp_path))
+    assert len(loaded) == 2
+
+
+@pytest.mark.parametrize("name", ["patient.CCD", "patient.Ccda"])
+def test_uppercase_and_mixed_case_extensions_load(tmp_path: Path, name: str) -> None:
+    """Matched on ``Path.suffix.lower()``, so a capitalised extension — a
+    Windows EHR's own spelling, or an operator's rename — is not a second
+    silent miss on top of #384's first one. Proven on this test's own
+    filesystem, which is case-sensitive (POSIX): nothing here relies on the OS
+    folding the case for us.
+    """
+    import shutil
+
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / name)
+
+    loaded = list(get_source("ccda").load(tmp_path))
+    assert len(loaded) == 1
+
+
+def test_detect_true_on_a_directory_holding_only_ccd_documents(tmp_path: Path) -> None:
+    """Before the extension set widened, ``detect`` globbed ``*.xml`` too, so
+    an export holding only ``.ccd`` documents — Kareo/Tebra's own spelling —
+    was invisible to auto-detection: the pipeline would never even offer this
+    adapter as the match."""
+    import shutil
+
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / "summary.ccd")
+
+    assert get_source("ccda").detect(tmp_path)
+
+
+_REFERENCING_UNSTRUCTURED_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <realmCode code="US"/>
+  <id root="feedface-docu-0000-0000-000000000384"/>
+  <code code="34133-9" displayName="Summarization of Episode Note"
+        codeSystem="2.16.840.1.113883.6.1"/>
+  <title>Scanned Referral</title>
+  <effectiveTime value="20230510150000-0500"/>
+  <recordTarget>
+    <patientRole>
+      <id root="feedface-pati-0000-0000-000000000384"/>
+      <patient>
+        <name><given>Ada</given><family>Fixture</family></name>
+        <birthTime value="19850314"/>
+      </patient>
+    </patientRole>
+  </recordTarget>
+  <component><nonXMLBody>
+    <text mediaType="application/pdf"><reference value="referral.pdf"/></text>
+  </nonXMLBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_a_non_cda_file_beside_the_export_is_not_counted(tmp_path: Path) -> None:
+    """An export legitimately carries non-CDA files beside its documents — a
+    ``nonXMLBody``'s own referenced attachment, for one (see
+    ``parser._resolved_reference``). Counting every one of those as skipped
+    would bury #384's actual finding — a document the adapter's own sniff
+    recognised, left unread by an accident of its extension — in noise about
+    files this adapter was never going to read regardless. Neither matching an
+    accepted extension nor sniffing as CDA, the referenced PDF is not counted,
+    and the document that references it still loads.
+    """
+    (tmp_path / "referral.xml").write_text(_REFERENCING_UNSTRUCTURED_CCD, encoding="utf-8")
+    (tmp_path / "referral.pdf").write_bytes(b"not a CDA document, unaccepted extension\n")
+
+    adapter = get_source("ccda")
+    loaded = list(adapter.load(tmp_path))
+    assert len(loaded) == 1
+    assert adapter.skipped_files == 0
+    assert loaded[0].documents, "the referenced artifact must still be carried"
+
+
 # --- demographics ------------------------------------------------------------
 
 
