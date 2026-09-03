@@ -34,7 +34,7 @@
 # AND raising the workflow's gate with it; the two must agree, and
 # tests/unit/test_workflow_supply_chain.py reads the bound so a bump that
 # admits a 2.5 release fails CI before a tag is spent.
-requires = ["hatchling>=1.27,<1.30"]
+requires = ["hatchling>=1.32.0,<1.33"]
 build-backend = "hatchling.build"
 
 [project]
@@ -110,7 +110,7 @@ dev = [
   "pytest-cov>=7.1.0",
   "pytest-socket>=0.8.1",
   "hypothesis>=6.165.10",
-  "ruff>=0.16.4",
+  "ruff>=0.16.5",
   "mypy>=2.3.1",
   # The complexity ratchet (tools/complexity_gate.py) reads radon's JSON;
   # xenon rides along for humans who want the threshold view directly.
