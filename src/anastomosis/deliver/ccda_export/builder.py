@@ -56,6 +56,7 @@ from anastomosis.core.ccda_codes import (
     TPL_SEVERITY,
     V3,
     XSI,
+    organizer_component_source_id,
 )
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
@@ -617,17 +618,61 @@ def _source_id(obj: AnastBase) -> str | None:
     return obj.provenance.source_id if obj.provenance is not None else None
 
 
-def _stated_ids(entry: etree._Element) -> set[str | None]:
-    """Every ``<id root>`` this entry carries, at any depth, or ``{None}`` when
-    it carries none — the shape :meth:`_Preserved.own` compares against.
+def _first_rooted_id(node: etree._Element) -> tuple[str, str | None] | None:
+    """``node``'s first direct-child ``<id root=…>``, or ``None`` when it has none.
 
-    Any depth, because the parser reads an entry's id at whatever depth the
-    template puts it: a problem's act, an allergy's inner observation, a
-    measurement's component.
+    An ``<id nullFlavor="NI"/>`` states no id and is skipped rather than read
+    as an empty root — mirrors ``sources/ccda/parser.py``'s ``_attr``.
+    """
+    for id_node in node.findall(f"{{{V3}}}id"):
+        if id_node.get("nullFlavor") is not None:
+            continue
+        if root := id_node.get("root"):
+            return root, id_node.get("extension")
+    return None
+
+
+def _derived_component_ids(entry: etree._Element) -> set[str]:
+    """The organizer-derived id for each component observation this entry
+    carries that states no id of its own.
+
+    ``_stated_ids``'s any-depth walk finds an organizer's own id and any
+    component id that IS stated; it cannot see the one case
+    ``organizer_component_source_id`` exists for, a component under an
+    identified organizer whose only ``<id>`` is null. Same walk order the
+    parser used to derive the id in the first place — same organizer path,
+    same 0-based position — so the two sides land on the same string.
+    """
+    derived: set[str] = set()
+    for organizer in entry.iter(f"{{{V3}}}organizer"):
+        organizer_id = _first_rooted_id(organizer)
+        if organizer_id is None:
+            continue
+        root, extension = organizer_id
+        components = organizer.findall(f"{{{V3}}}component/{{{V3}}}observation")
+        for index, component in enumerate(components):
+            if _first_rooted_id(component) is None:
+                derived.add(organizer_component_source_id(root, extension, index))
+    return derived
+
+
+def _stated_ids(entry: etree._Element) -> set[str | None]:
+    """Every ``<id root>`` this entry carries, at any depth, plus each id-less
+    component observation's organizer-derived id, or ``{None}`` when neither
+    finds one — the shape :meth:`_Preserved.own` compares against.
+
+    The any-depth walk is unchanged: the parser reads an entry's id at
+    whatever depth the template puts it — a problem's act, an allergy's inner
+    observation, a measurement's component. ``None`` is now the fallback
+    rather than the mechanism: a positive, id-to-id match is added for the one
+    construct (an id-less organizer component) the walk alone could only ever
+    pair by absence, which paired every such construct with every other one
+    that also stated no id.
     """
     roots: set[str | None] = {
         root for node in entry.iter(f"{{{V3}}}id") if (root := node.get("root")) is not None
     }
+    roots |= _derived_component_ids(entry)
     return roots or {None}
 
 

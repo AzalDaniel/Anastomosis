@@ -297,6 +297,39 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **An id-less organizer component was stated once by the parser and never
+  matched on export, so it doubled and stayed doubled.** A results or vitals
+  organizer can carry a real `<id root extension>` while one of its component
+  `<observation>`s carries only `<id nullFlavor="NI"/>` — a real vendor shape,
+  the panel stamped and an analyte left with no id of its own. The parser gave
+  that component `source_id=None`; the exporter's `_Preserved.own` pairs a
+  structured object with its preserved twin by stated id, so `None` paired
+  with nothing, and the same lab fact was emitted once structured and once
+  preserved on every export — a duplicate that never resolved, because the
+  pairing was matching two absences rather than two ids.
+
+  Both a parser-only and a pairing-only fix were tried and rejected: deriving
+  an id on ingest alone left the export id-less again, so the next generation
+  gained another `None` and the count grew without bound (6 → 7 → 8 → 9 on a
+  driven case); narrowing the pairing to direct-child ids alone turned other
+  id-less constructs into new duplicates and dropped a provenance-less
+  Problem outright. `core.ccda_codes.organizer_component_source_id(root,
+  extension, index)` gives the fix to both sides at once: a uuid5 over the
+  organizer's own id and the component's 0-based position, document-intrinsic
+  so it survives a rename between export and re-ingest. The parser takes it
+  as `source_id` when a component states none of its own; the builder's
+  `_stated_ids` adds the identical id to what a preserved entry is taken to
+  state, additively — the existing any-depth `<id root>` walk is unchanged,
+  so a component that DOES carry its own id is never touched by the new
+  branch. The match becomes positive (id-to-id) rather than negative
+  (absence-to-absence), so the new stated set can only ever gain members the
+  old one lacked, never lose one — driven over both required fixtures and a
+  live document: generation counts hold flat where they used to grow, and
+  every model count is unchanged. `sources/ccda/ledger.py` is untouched on
+  purpose: a derived id is a uuid5, never an `<id root>` the document itself
+  carries, so it cannot enter `linkable_roots` or move a `links()`
+  obligation. (#365)
+
 - **An entry under prose was preserved by nothing.** The C-CDA parser kept a
   section's `<entry>` elements verbatim only when that section rendered no
   text, so the same coded observation — one this adapter has no dispatch for —

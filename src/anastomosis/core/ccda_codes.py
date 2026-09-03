@@ -20,6 +20,8 @@ live here, in a leaf module of literals that both may depend on.
 
 from __future__ import annotations
 
+from uuid import NAMESPACE_URL, uuid5
+
 __all__ = [
     "EXT_PRIOR_LOSS_NARRATIVE",
     "EXT_SECTION_ENTRIES",
@@ -45,6 +47,7 @@ __all__ = [
     "TPL_SEVERITY",
     "V3",
     "XSI",
+    "organizer_component_source_id",
 ]
 
 # XML namespaces.
@@ -113,3 +116,25 @@ EXT_SECTION_ENTRIES = "ccda:entries"
 # states no code — because the record preserved none, and a code is not a
 # detail to invent.
 SECTION_CODE_UNKNOWN = "unknown"
+
+
+def organizer_component_source_id(root: str, extension: str | None, index: int) -> str:
+    """Derive a provenance id for an organizer component that states none of its own.
+
+    A component ``<observation>`` under an identified organizer (e.g. a
+    30954-2 Results organizer) is the organizer's statement, not a free-floating
+    one, even when its own ``<id>`` is ``nullFlavor="NI"``. Both the parser
+    (source_id on ingest) and the builder (the pairing key on export) need the
+    SAME id for the same position, or the round trip either loses the pairing
+    (unbounded duplication) or invents a match that isn't there — so the
+    recipe lives once, here, and both sides import it rather than mirror it.
+
+    Deliberately document-intrinsic: no ``source_file`` in the recipe, unlike
+    the file-scoped ids elsewhere in this codebase, because this id has to
+    survive an export/re-ingest round trip under a different filename.
+    ``index`` is the component's 0-based position among the organizer's
+    ``v3:component`` children in document order — components carry no other
+    positional handle once their own id is gone.
+    """
+    name = f"anastomosis:ccda:organizer:{root}:{extension or ''}:component:{index}"
+    return str(uuid5(NAMESPACE_URL, name))

@@ -84,6 +84,7 @@ from anastomosis.core.ccda_codes import (
     TPL_SEVERITY,
     V3,
     XSI,
+    organizer_component_source_id,
 )
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.model import (
@@ -766,6 +767,19 @@ def _interval_value(value: _Element) -> tuple[str | None, str | None] | None:
     return reading, _attr(low, "unit") or _attr(high, "unit")
 
 
+def _organizer_id(organizer: _Element) -> tuple[str, str | None] | None:
+    """The organizer's first ``<id root=…>``, or ``None`` when it states none.
+
+    ``_attr`` treats an ``<id nullFlavor="NI"/>`` as absent, so a component's
+    parent organizer that states no id derives nothing rather than a root
+    read as an empty string.
+    """
+    for id_node in _findall(organizer, "v3:id"):
+        if (root := _attr(id_node, "root")) is not None:
+            return root, _attr(id_node, "extension")
+    return None
+
+
 def _measurements(
     section: _Element,
     patient_id: str,
@@ -778,9 +792,18 @@ def _measurements(
         organizer = _find(entry, organizer_path)
         if organizer is None:
             continue
-        for component in _findall(organizer, "v3:component/v3:observation"):
+        organizer_id = _organizer_id(organizer)
+        components = _findall(organizer, "v3:component/v3:observation")
+        for index, component in enumerate(components):
             code = _find(component, "v3:code")
             reading, unit = _observation_value(_find(component, "v3:value"))
+            # A component with no id of its own is still the organizer's
+            # statement, not a statement with no provenance at all — see
+            # organizer_component_source_id.
+            source_id = _val_attr(component, "v3:id", "root")
+            if source_id is None and organizer_id is not None:
+                root, extension = organizer_id
+                source_id = organizer_component_source_id(root, extension, index)
             out.append(
                 Observation(
                     patient_id=patient_id,
@@ -791,7 +814,7 @@ def _measurements(
                     unit=unit,
                     effective_at=_ts(component, "v3:effectiveTime")
                     or _ts(organizer, "v3:effectiveTime"),
-                    provenance=_prov(source_file, _val_attr(component, "v3:id", "root")),
+                    provenance=_prov(source_file, source_id),
                 )
             )
     return out

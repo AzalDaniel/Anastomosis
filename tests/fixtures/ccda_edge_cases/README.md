@@ -11,3 +11,4 @@ the fixtures.
 | file | what it exercises |
 | --- | --- |
 | `feedface_ccd_duplicate_encounter_id.xml` | Two `<encounter>` entries under one `<id root>`. The parser keeps a GUID-shaped root verbatim, so this arrives as two `Encounter` objects — different dates, different CPT codes — carrying one id. Delivery used to write one page and report two. See #121. |
+| `feedface_ccd_idless_result_component.xml` | A `30954-2` Results organizer carrying a real `<id root extension>`, whose one component `<observation>` carries only `<id nullFlavor="NI"/>` — no id of its own at all. `feedface_ccd.xml`'s Results section gives every component its own id, so it never reaches this. Export -> ingest used to state the resulting lab fact twice, forever. See #378. |

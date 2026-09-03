@@ -69,6 +69,7 @@ from anastomosis.deliver.ccda_export.builder import (
     LOSS_NARRATIVE_TITLE,
     _carried_forward,
     _entry_key,
+    _stated_ids,
     measure_ccd,
 )
 from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, parse_document
@@ -1135,6 +1136,97 @@ def test_the_loss_ledger_stops_growing_for_a_chart_ingested_from_ccda(tmp_path: 
         record = parse_document(out)
     assert sizes[1] == sizes[2], f"the loss ledger is still growing: {sizes}"
     assert sizes[2] < 11_000, f"the converged ledger is far larger than it was: {sizes}"
+
+
+def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: Path) -> None:
+    """A results organizer with an id, and a component with none, is one fact.
+
+    ``_stated_ids`` used to pair a preserved entry with its structured twin
+    only by a shared ``<id root>`` — so an id-less component observation
+    paired with nothing, and ``_Preserved.own`` kept re-emitting it beside
+    its own preserved bytes: 1 observation -> 2 -> 2, a stable duplicate
+    rather than a stable count. Red on the unpatched head (goes to 2 and
+    stays there); the fix pairs the component to its organizer instead of to
+    absence, so the count never leaves 1. See #378.
+    """
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_idless_result_component.xml"
+    )
+    record = parse_document(source_doc)
+    out = tmp_path / "idless_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"the lab observation duplicated across generations: {counts}"
+    assert [o.code for o in record.observations] == ["2345-7"]
+
+
+def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
+    """Regression guard, not an acceptance test for #378 — passes unpatched too.
+
+    The organizer-derived fallback in ``_stated_ids``/``_measurements`` must
+    never shadow a component's own stated id: the five vitals of
+    ``feedface_ccd.xml`` each carry one, and a build->parse must hand every
+    one of those five GUIDs back unchanged.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    record = parse_document(source_doc)
+    before = {
+        o.code: o.provenance.source_id if o.provenance else None
+        for o in record.observations
+        if o.category == ObservationCategory.VITAL_SIGNS
+    }
+    assert len(before) == 5
+    assert all(sid is not None and sid.startswith("feedface-vitl-") for sid in before.values())
+
+    exported = tmp_path / "vitals_out.xml"
+    exported.write_bytes(build_ccd(record))
+    reingested = parse_document(exported)
+    after = {
+        o.code: o.provenance.source_id if o.provenance else None
+        for o in reingested.observations
+        if o.category == ObservationCategory.VITAL_SIGNS
+    }
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        Path("ccda") / "feedface_ccd.xml",
+        Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
+        Path("ccda_edge_cases") / "feedface_ccd_idless_result_component.xml",
+    ],
+    ids=lambda path: path.name,
+)
+def test_a_preserved_entry_states_more_than_it_did_and_never_less(fixture: Path) -> None:
+    """The new ``_stated_ids`` set is a strict superset of the old one.
+
+    The old set was the any-depth ``<id root>`` walk alone, with ``{None}``
+    as its only fallback; the fix adds a positive, id-to-id match for an id-less
+    organizer component and changes nothing else. So for every entry of every
+    document, the new set can only ever gain members the old one lacked, and
+    ``None`` can only leave the set where something concrete replaced it —
+    never appear where the old walk had already found a real id. Red on the
+    unpatched head for the new fixture's organizer entry (the derived id is
+    simply absent from the old set, which the current ``_stated_ids`` IS).
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
+    root = etree.parse(str(source_doc), _PARSER).getroot()
+    entries = list(root.iter(f"{{{V3}}}entry"))
+    assert entries, "fixture carries no entries to compare"
+    for entry in entries:
+        old = {r for node in entry.iter(f"{{{V3}}}id") if (r := node.get("root")) is not None} or {
+            None
+        }
+        new = _stated_ids(entry)
+        assert new >= old, f"lost a previously-stated id: {old - new}"
+        assert (None in new) == (None in old), "None's presence changed where a walk alone decides"
 
 
 # --- export → ingest generations ---------------------------------------------

@@ -556,6 +556,42 @@ def test_encounter_ids_are_deterministic_across_reparses() -> None:
     assert [e.id for e in first.encounters] == [e.id for e in second.encounters]
 
 
+def test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer(
+    tmp_path: Path,
+) -> None:
+    # A component <observation> under a Results organizer whose own <id> is
+    # nullFlavor="NI" is still the organizer's statement, not one with no
+    # provenance at all (#378). The id has to be document-intrinsic — no
+    # source_file in the recipe, unlike _encounter_id's fallback — because it
+    # has to survive an export/re-ingest round trip that lands under a
+    # different name; proven here by reparsing the identical bytes under a
+    # file name that shares nothing with the fixture's own.
+    from anastomosis.core.ccda_codes import organizer_component_source_id
+    from anastomosis.sources.ccda.parser import parse_document
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_idless_result_component.xml"
+    )
+    expected = organizer_component_source_id(
+        "feedface-idls-0000-0000-000000000001", "feedface-idls-panel-0001", 0
+    )
+
+    parsed = parse_document(fixture)
+    [observation] = parsed.observations
+    assert observation.provenance is not None
+    assert observation.provenance.source_id == expected
+
+    renamed = tmp_path / "a_file_name_sharing_nothing_with_the_fixture.xml"
+    renamed.write_bytes(fixture.read_bytes())
+    reparsed = parse_document(renamed)
+    [reobservation] = reparsed.observations
+    assert reobservation.provenance is not None
+    assert reobservation.provenance.source_id == expected
+
+
 # --- cross-adapter FHIR round trip -------------------------------------------
 
 

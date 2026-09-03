@@ -74,6 +74,21 @@ preserved entry carries (`_Preserved.own`) and emits the rest as usual. What the
 section preserved leaves as the entry it arrived as; what it did not leaves as
 this exporter's own entry; the section's human narrative still lists both.
 
+The match `_Preserved.own` runs (`_stated_ids`) is an any-depth walk of a
+preserved entry's `<id root>`s, and a component `<observation>` under a Results
+or Vitals organizer can carry none of its own — a real vendor shape, an
+organizer stamped and each analyte left `<id nullFlavor="NI"/>`. Pairing that
+case only by shared absence (every id-less component matching every other) is
+what let one such fact duplicate on every generation (#378). The fix gives it a
+real id instead: `core.ccda_codes.organizer_component_source_id(root,
+extension, index)`, derived from the organizer's own id and the component's
+0-based position, document-intrinsic so it survives a rename between export and
+re-ingest. `sources/ccda/parser.py::_measurements` computes the same id as
+`source_id` on ingest when a component states none; `_stated_ids` adds the
+identical id to what a preserved entry is taken to state. A component that
+carries its own id is untouched either way — the derived id is purely additive,
+never a substitute for one a component actually states.
+
 The section is stamped with `LOSS_NARRATIVE_TEMPLATE_ROOT` so a later ingest can
 tell this tool's loss ledger from a third party's 51899-3 section.
 `sources/ccda` reads a stamped section back into
