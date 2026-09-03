@@ -91,17 +91,26 @@ updates:
       # hatchling is not a dependency, it is the BUILD BACKEND: `[build-system]
       # requires` decides what produces the wheel. The core-metadata version it
       # emits oscillates release to release (1.30 and 1.32 emit 2.5, 1.31 emits
-      # 2.4, and 1.30 has since been yanked), and the twine inside the pinned
-      # publish action rejects 2.5 — which failed a real 0.7.0 upload. No CI
+      # 2.4, and 1.30 has since been yanked), and release.yml's own metadata
+      # gate admits 2.1–2.4 only — which failed a real 0.7.0 upload. No CI
       # lane can catch that, because the release workflow only runs on a tag.
-      # Dependabot proposed >=1.32.0 in #337, which is one of the bad ones.
       # Every bump here therefore needs the measurement recorded in
       # pyproject.toml, which is a person reading a table, not a check a bot
       # can wait on.
+      #
+      # A bare ignore, unlike the two above, and deliberately. The scoped form
+      # was here first, and Dependabot opened #337 and then #379 straight
+      # through it: `update-types` classifies a bump relative to the
+      # dependency's CURRENT version, and a two-bound range (`>=1.27,<1.30`)
+      # resolves to no single version, so dependabot-core's
+      # `IgnoreCondition#versions_by_type` returns nothing and the condition
+      # matches nothing (common/lib/dependabot/config/ignore_condition.rb; the
+      # partial fix in dependabot-core#11156 regexes a three-part version out
+      # of the first requirement and finds none in `1.27`). A name-only ignore
+      # takes the `ALL_VERSIONS` branch and does not depend on a version it
+      # cannot find. It costs nothing on the security path: that pass returns
+      # before either form is consulted, so a published advisory still opens.
       - dependency-name: "hatchling"
-        update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
     groups:
       pip-dependencies:
         patterns:
