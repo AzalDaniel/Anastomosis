@@ -104,9 +104,20 @@ class CCDARenderResult:
     ``documents`` are the written/kept PDFs (one per patient); ``failed`` carries
     ``(patient_id, exception-type-name)`` pairs — pseudonymous ids and type names
     only, never exception text — mirroring the engine's PHI-safe failure record.
+
+    ``records`` is the record that produced each entry of ``documents``, one per
+    index — additive, so the two existing readers of ``documents``
+    (``cli_commands/migrate.py`` and ``core/migrate.py``, both counting or
+    truthiness-checking it) are untouched. A caller that needs to grade what was
+    actually written — the pipeline's QA stage — needs the record BESIDE the
+    path, because ``documents`` alone cannot say whose bytes are at a path two
+    patients' records mapped to (see ``_allocate``: same ``patient.id``, same
+    file). Kept parallel rather than zipped into ``documents`` itself so the
+    existing field stays exactly what it always was.
     """
 
     documents: list[Path] = field(default_factory=list)
+    records: list[PatientRecord] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
 
@@ -178,6 +189,7 @@ def render_ccda_standard(
             if target.exists() and not force:
                 result.skipped.append(target)
                 result.documents.append(target)
+                result.records.append(record)
                 continue
             try:
                 html = render_ccda_html(build_ccd(record))
@@ -185,6 +197,7 @@ def render_ccda_standard(
                     renderer = factory()
                 _write_pdf(renderer, html, target)
                 result.documents.append(target)
+                result.records.append(record)
             except Exception as exc:
                 logger.error(
                     "ccda_standard render failed for patient %s (%s)",

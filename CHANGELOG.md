@@ -297,6 +297,37 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A chart with no encounters was never verified.** `run_pipeline` gated the
+  whole QA stage on `if qa and result.documents:` — the per-encounter render's
+  own output. A C-CDA Unstructured Document renders no encounter at all (its
+  clinical content is a scan, not a coded section), so an attachment-only
+  export offered nothing to that population and QA never ran: no
+  `qa_report.json`, the manifest gate read `not_run`, and `assert_deliverable`
+  refused a bundle nothing had ever graded — silently, since nothing in the
+  stage rail said QA had been skipped.
+
+  The bundle already carries something QA can honestly verify: the
+  whole-patient record summary every pack-mode run writes, HL7's own
+  stylesheet over the whole record with every chartable kind declared carried,
+  so a fact family the record holds and this page does not show is a FAIL
+  rather than a layout choice. The stage now enters on what actually
+  RENDERED — the engine's per-encounter documents or the summaries just
+  written, whichever is non-empty — never on the records list that was merely
+  offered. `_render_record_summaries` returns its render result instead of
+  discarding it, so the stage grades the paths it actually wrote and the
+  record behind each one, rather than re-deriving a path from `records` a
+  second time: two `PatientRecord`s sharing one patient id (the C-CDA adapter
+  yields one per source document) render to the SAME summary path, and
+  re-deriving it graded the one file on disk once per record that named it —
+  a naive `if qa:` fix grades that file twice, as two indistinguishable rows,
+  and grades an all-empty run as a vacuous pass. Neither survives here: the
+  summary population is deduped to one row per distinct rendered file, and a
+  report that graded zero documents (both populations empty — unreachable
+  through the pipeline's own gate, but not through a direct call) downgrades
+  to `not_run` with the same skipped-stage event a missing PyMuPDF install
+  already emits, rather than a false `pass`. The GUI reaches the identical fix
+  for free, through the same shared pipeline core. (#383)
+
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
   `intendedRecipient/assignedPerson`, but an `intendedRecipient` plays an
