@@ -360,18 +360,24 @@ def test_no_workflow_runs_twice_for_one_commit() -> None:
 def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
     """`[build-system] requires` may not admit a hatchling that emits metadata 2.5.
 
-    This is the one failure in this repository that CI structurally cannot see.
-    That line decides which backend builds the wheel; the core-metadata version
-    a hatchling release emits oscillates; and the twine bundled in the pinned
-    publish action rejects 2.5 outright. So a bad backend does not fail a test,
-    it fails the UPLOAD — after a tag exists and a version number has been
-    spent. It already did, on 0.7.0.
+    That line decides which backend builds the wheel, and the core-metadata
+    version a hatchling release emits oscillates. The publish path refuses 2.5
+    — release.yml reads Metadata-Version out of the built wheel and admits 2.1
+    through 2.4 only — so a bad backend fails the release BUILD. That gate is
+    ours, and it exists because the failure used to land one step later, at
+    the irreversible upload: twine refused 2.5 outright on the real 0.7.0
+    publish, after a tag existed and a version number had been spent. The
+    twine inside the pinned publish action accepts 2.5 now; the gate stays,
+    because 2.4 is what every path accepts and it carries PEP 639
+    license-files identically. Either way the release workflow only runs on a
+    tag, so this test is what catches a bad bound BEFORE one is spent.
 
     Measured by reading DEFAULT_METADATA_VERSION out of each release, most
-    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`:
+    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`,
+    and checked against pypa/hatch's own release history on 2026-09-03:
 
-        1.27.0 -> 2.4    1.29.0 -> 2.4    1.31.0 -> 2.4
-        1.30.0 -> 2.5    1.32.0 -> 2.5    1.33.0 -> 2.5
+        1.27.0 -> 2.4    1.29.0 -> 2.4    1.30.1 -> 2.4    1.31.0 -> 2.4
+        1.30.0 -> 2.5    1.32.0 -> 2.5
 
     Asserted against the FILE rather than against an installed hatchling, and
     that is deliberate: PEP 517 builds the backend in an isolated environment,
@@ -387,7 +393,7 @@ def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
 
     requires = tomllib.loads(PYPROJECT.read_text())["build-system"]["requires"]
     backend = next(r for r in (Requirement(entry) for entry in requires) if r.name == "hatchling")
-    for bad in ("1.30.0", "1.32.0", "1.33.0"):
+    for bad in ("1.30.0", "1.32.0"):
         assert not backend.specifier.contains(Version(bad)), (
             f"[build-system] requires admits hatchling {bad}, which emits "
             "core-metadata 2.5 and fails the publish upload"

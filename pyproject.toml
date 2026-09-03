@@ -10,22 +10,30 @@
 # version a hatchling release emits has oscillated, and still does. Measured on
 # this project 2026-08-21 and RE-MEASURED 2026-08-31 against a Dependabot
 # proposal of >=1.32.0,<1.33, by reading DEFAULT_METADATA_VERSION out of each
-# installed release:
+# installed release, and checked against pypa/hatch's own release history on
+# 2026-09-03:
 #
-#     1.27.0 -> 2.4    1.29.0 -> 2.4    1.31.0 -> 2.4
-#     1.30.0 -> 2.5    1.32.0 -> 2.5    1.33.0 -> 2.5
+#     1.27.0 -> 2.4    1.29.0 -> 2.4    1.30.1 -> 2.4    1.31.0 -> 2.4
+#     1.30.0 -> 2.5    1.32.0 -> 2.5
 #
-# 1.30.0 has since been YANKED upstream, which is independent corroboration
-# that the 2.5 releases are the anomaly rather than the direction of travel.
-# The oscillation is why this is a range and not a floor: `<1.32` would be
-# tempting because 1.31 is good, and it would admit 1.30, which is not. The
-# twine bundled inside the pinned
-# pypa/gh-action-pypi-publish image rejects 2.5 outright
-# ("'2.5' is not a valid metadata version"), which failed a real publish of
-# 0.7.0 at the upload step. 2.4 is what PyPI and that action both accept, and
-# it carries PEP 639 license-files exactly the same way. Re-measure before
-# raising this bound; the release workflow asserts the emitted version too, so
-# a bad backend fails the build rather than the irreversible upload.
+# 1.30.0 has since been YANKED upstream and 1.30.1 reverted it, which is
+# independent corroboration that the 2.5 releases are the anomaly rather than
+# the direction of travel. The oscillation is why this is a range and not a
+# floor: `<1.32` would be tempting because 1.31 is good, and it would admit
+# 1.30.0, which is not.
+#
+# What refuses 2.5 is this repository's OWN gate: release.yml reads
+# Metadata-Version out of the built wheel and admits 2.1 through 2.4 only, so
+# a backend emitting 2.5 fails the build step rather than the irreversible
+# upload. It was twine's refusal too, once — "'2.5' is not a valid metadata
+# version" is what failed the real publish of 0.7.0 at the upload step — but
+# the pinned pypa/gh-action-pypi-publish has since bundled a twine that
+# accepts 2.5, so the ceiling is a line this repository keeps, not one PyPI
+# imposes. 2.4 is what every publish path accepts, and it carries PEP 639
+# license-files exactly the same way. Raising this bound means re-measuring
+# AND raising the workflow's gate with it; the two must agree, and
+# tests/unit/test_workflow_supply_chain.py reads the bound so a bump that
+# admits a 2.5 release fails CI before a tag is spent.
 requires = ["hatchling>=1.27,<1.30"]
 build-backend = "hatchling.build"
 
