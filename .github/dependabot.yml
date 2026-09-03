@@ -88,20 +88,26 @@ updates:
         update-types:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
-      # hatchling is not a dependency, it is the BUILD BACKEND: `[build-system]
-      # requires` decides what produces the wheel. The core-metadata version it
-      # emits oscillates release to release (1.30 and 1.32 emit 2.5, 1.31 emits
-      # 2.4, and 1.30 has since been yanked), and the twine inside the pinned
-      # publish action rejects 2.5 — which failed a real 0.7.0 upload. No CI
-      # lane can catch that, because the release workflow only runs on a tag.
-      # Dependabot proposed >=1.32.0 in #337, which is one of the bad ones.
-      # Every bump here therefore needs the measurement recorded in
-      # pyproject.toml, which is a person reading a table, not a check a bot
-      # can wait on.
-      - dependency-name: "hatchling"
-        update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+      # No ignore for hatchling, deliberately. It is not a dependency but the
+      # BUILD BACKEND: `[build-system] requires` decides what produces the
+      # wheel, and the core-metadata version it emits oscillates release to
+      # release (1.30 and 1.32 emit 2.5, 1.31 emits 2.4), while release.yml's
+      # own metadata gate admits 2.1–2.4 only — which failed a real 0.7.0
+      # upload. No CI lane can see that, because the release workflow only
+      # runs on a tag. Every bump therefore needs the measurement recorded in
+      # pyproject.toml, which is a person reading a table.
+      #
+      # An ignore cannot hold that line. The scoped form (`update-types`) sat
+      # here and Dependabot opened #337 and then #379 straight through it: a
+      # semver level is judged against one current version, and a two-sided
+      # bound names none. The bare form does fire — and silences hatchling's
+      # SECURITY updates with it, which tests/unit/test_workflow_supply_chain.py
+      # refuses. So the bound is guarded where it lives instead:
+      # test_the_build_backend_bound_excludes_the_measured_bad_releases turns
+      # every test lane red on a bump that admits a measured-bad release, and
+      # that is what closed #379. The cost is a red Dependabot pull request
+      # now and then, closed by hand; the alternative was an advisory nobody
+      # hears.
     groups:
       pip-dependencies:
         patterns:
