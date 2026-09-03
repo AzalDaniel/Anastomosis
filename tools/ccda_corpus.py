@@ -1134,9 +1134,8 @@ def _narrative(section: etree._Element, spec: SectionSpec, doc: Doc) -> None:
     # are as many document TYPES as arrangements, so under `index % 6` the
     # shape index WAS the doc-type index: one arrangement fell forever to the
     # unstructured type, which has no sections at all, and was generated into a
-    # corpus nothing read. The rest were merely lopsided — 512 sections for the
-    # thinnest against 1664 for the widest, where dividing first gives each
-    # about 700.
+    # corpus nothing read. Dividing first, each arrangement lands in between
+    # 700 and 754 sections that hold a citing entry, measured at 6,144.
     shape = doc.index // len(DOC_TYPES) % len(_CITED_SHAPES)
     _CITED_SHAPES[shape](text, spec, doc)
 

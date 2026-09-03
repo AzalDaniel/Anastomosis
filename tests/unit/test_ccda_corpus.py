@@ -483,9 +483,15 @@ _NARRATIVE_CHOICE: dict[str, tuple[str, ...]] = {
     key: tuple(model.split())
     for key, model in {
         "text": "content linkHtml sub sup br footnote renderMultiMedia paragraph list table",
-        "paragraph": "caption content linkHtml sub sup br footnote renderMultiMedia",
-        "content": "caption content linkHtml sub sup br footnote renderMultiMedia",
+        # StrucDoc.Paragraph is (caption?, choice*): a caption is legal only
+        # FIRST, which a choice row cannot say. The corpus writes no caption in
+        # a paragraph, so the row omits it rather than admit one anywhere.
+        "paragraph": "content linkHtml sub sup br footnote renderMultiMedia",
+        # StrucDoc.Content has no caption at all (NarrativeBlock.xsd).
+        "content": "content linkHtml sub sup br footnote renderMultiMedia",
         "td": "content linkHtml sub sup br footnote renderMultiMedia paragraph list",
+        # StrucDoc.Tr is an unbounded choice of th | td — no order.
+        "tr": "th td",
     }.items()
 }
 
@@ -493,10 +499,11 @@ _NARRATIVE_CHOICE: dict[str, tuple[str, ...]] = {
 _NARRATIVE_SEQUENCE: dict[str, tuple[str, ...]] = {
     key: tuple(model.split())
     for key, model in {
-        "table": "caption col colgroup thead tfoot tbody",
+        # col and colgroup are a choice in StrucDoc.Table and the corpus writes
+        # neither; the row holds only what it can judge by position.
+        "table": "caption thead tfoot tbody",
         "list": "caption item",
         "tbody": "tr",
-        "tr": "th td",
     }.items()
 }
 
@@ -585,11 +592,41 @@ def test_every_element_it_emits_is_legal_where_it_stands(
     assert seen == expected, f"content models the corpus never exercises: {sorted(expected - seen)}"
 
 
-#: The two names `_cited_dangling` writes on purpose. Anything else that
-#: fails to resolve — a `feedface-mm-…` above all, since a
-#: `renderMultiMedia` naming no `observationMedia` is the shape that got
-#: past every other check — is a defect.
-_DELIBERATELY_DANGLING = re.compile(r"^feedface-(narr|elsewhere)-")
+def _dangling_under(node, declared: set[str]):  # type: ignore[no-untyped-def]
+    """Every name pointed at beneath ``node`` that the document never declares.
+
+    ``referencedObject`` is an ``xs:IDREFS`` and may carry several names
+    separated by whitespace; a ``<reference value="#…">`` carries one.
+    """
+    for element in node.iter():
+        for value in (element.get("referencedObject") or "").split():
+            if value not in declared:
+                yield element, value
+        value = element.get("value") or ""
+        if value.startswith("#") and value[1:] not in declared:
+            yield element, value[1:]
+
+
+def _why_it_may_dangle(missing: str, has_text: bool, names_in_text: set[str]) -> str | None:
+    """The one reason a citation in THIS section is allowed to resolve to nothing.
+
+    Three arrangements dangle on purpose, and the reason is a property of the
+    section rather than of the name: an entry may cite the narrative in a
+    section written with no narrative at all; `_cited_dangling` on an odd
+    document names a different cell and lets the entry cite the absent one;
+    on an even document it names the cited cell and writes a second name
+    beside it that nothing declares. A `narr` dangling in a section whose
+    text DOES exist and declares nothing is the regression the first version
+    of this test forgave: every entry in every bare-content section citing a
+    name that had been dropped, and the suite green.
+    """
+    if "-narr-" in missing and not has_text:
+        return "no narrative at all"
+    if "-narr-" in missing and any("-elsewhere-" in n for n in names_in_text):
+        return "the narrative names another cell"
+    if "-elsewhere-" in missing and any("-narr-" in n for n in names_in_text):
+        return "a second name beside a resolving one"
+    return None
 
 
 def test_every_name_a_document_points_at_is_a_name_it_declares(
@@ -611,24 +648,41 @@ def test_every_name_a_document_points_at_is_a_name_it_declares(
     """
     from lxml import etree
 
-    dangling_documents = 0
+    v3 = "urn:hl7-org:v3"
+    forgiven = {
+        "no narrative at all": 0,
+        "the narrative names another cell": 0,
+        "a second name beside a resolving one": 0,
+    }
     for name, xml in corpus:
         root = etree.fromstring(xml)
         declared = {value for node in root.iter() if (value := node.get("ID"))}
-        pointed = {
-            value.removeprefix("#")
-            for node in root.iter()
-            for value in (node.get("referencedObject"), node.get("value"))
-            if value and (node.get("referencedObject") or value.startswith("#"))
-        }
-        missing = sorted(pointed - declared)
-        dangling_documents += bool(missing)
-        assert all(_DELIBERATELY_DANGLING.match(one) for one in missing), (
-            f"{name}: points at {missing}, which the document never declares"
-        )
-    assert dangling_documents, (
-        "no document dangles a citation, so the ledger's refusal to credit one "
-        "is measured by nothing and the exception above forgives nothing real"
+        # Keyed by path, never by ``id()``: an lxml proxy is not the same object
+        # across two walks of the tree, so identity would call every citation
+        # "outside any section" on the second pass.
+        judged: set[tuple[str, str]] = set()
+        for section in root.iter(f"{{{v3}}}section"):
+            text = section.find(f"{{{v3}}}text")
+            names_in_text = (
+                {n.get("ID") for n in text.iter() if n.get("ID")} if text is not None else set()
+            )
+            for element, missing in _dangling_under(section, declared):
+                judged.add((root.getroottree().getpath(element), missing))
+                why = _why_it_may_dangle(missing, text is not None, names_in_text)
+                assert why is not None, (
+                    f"{name}: points at {missing!r}, which the document never declares, "
+                    "from a section no arrangement lets dangle"
+                )
+                forgiven[why] += 1
+        outside = [
+            m
+            for element, m in _dangling_under(root, declared)
+            if (root.getroottree().getpath(element), m) not in judged
+        ]
+        assert not outside, f"{name}: points at {outside} from outside any section"
+    assert all(forgiven.values()), (
+        "an arrangement this test forgives was never generated, so the exception "
+        f"forgives nothing real: {forgiven}"
     )
 
 
@@ -669,13 +723,24 @@ def test_it_writes_the_narrative_arrangements_the_ledger_argues_about(
             named = [n for n in text.iter() if not callable(n.tag) and n.get("ID")]
             for node in named:
                 local = etree.QName(node).localname
-                if local == "tr" and node.find(f"{{{v3}}}td") is not None:
+                # The cell must be UNNAMED, or a row over two named cells
+                # (`_cited_row`) satisfies a counter written for `_cited_nested`.
+                if local == "tr" and any(
+                    td.get("ID") is None for td in node.findall(f"{{{v3}}}td")
+                ):
                     seen["a row named above an unnamed cell"] += 1
                 if local in _NARRATIVE_CONTAINERS:
                     seen["a name on the arrangement itself"] += 1
                 if node.find(f"{{{v3}}}renderMultiMedia") is not None:
                     seen["a cell that renders nothing"] += 1
-                if any(node in other.iterancestors() for other in named):
+                # Two names with an UNNAMED element between them — a named
+                # child of a named parent (`_cited_row` again) is the shape at
+                # which nearest-enclosing and outermost coincide and the
+                # containment rule cannot be told from its neighbour.
+                if any(
+                    node in other.iterancestors() and other.getparent() is not node
+                    for other in named
+                ):
                     seen["a name at two levels over one set of words"] += 1
             defined = {node.get("ID") for node in named}
             for entry in section.findall(f"{{{v3}}}entry"):

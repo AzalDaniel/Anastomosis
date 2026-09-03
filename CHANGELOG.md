@@ -127,11 +127,17 @@ issue and fixed in its own pull request.
   had two named cells under it every name in 6,144 documents stood over
   exactly one word.
 
-  Two guards are still invisible from here and said so rather than implied
-  otherwise: that a cell wrapping another keeps no claim of its own, and that
-  the settlement gains anything from its widest-first end. The first needs a
-  wrapper with words outside the cell it wraps; the second, on every shape
-  this corpus writes, is never the better of the two ends.
+  Six guards are still invisible from here, and are named rather than
+  implied away. That a cell wrapping another keeps no claim of its own — it
+  needs a wrapper with words outside the cell it wraps. That the settlement
+  gains anything from its widest-first end — on every shape here the narrow
+  end is never worse. That a `<text>` carrying an `ID` is the whole prose
+  and not a cell, and that a `<reference>` without a `#` is not a citation —
+  no document writes either. That a linked entry is not asked the narrative
+  — the corpus never makes one compete with an unlinked sibling for a cell.
+  And that an address is counted by the cells behind it rather than by its
+  names — no arrangement forces a different settlement order. A reviewer
+  measured the last four; the first two were known.
 
   The reading moves accordingly, and toward credit: entries that really do
   name a cell the record kept are counted as keeping it. It moves the other
