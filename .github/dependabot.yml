@@ -112,3 +112,15 @@ updates:
       pip-dependencies:
         patterns:
           - "*"
+        exclude-patterns:
+          # The build backend rides alone. It has no ignore (see above) and it
+          # never will, so Dependabot proposes every hatchling release — and
+          # the supply-chain guard refuses the ones measured to emit
+          # core-metadata 2.5, which is the whole point. Grouped, that red
+          # takes the rest of the batch down with it: #389 carried a ruff floor
+          # and a Nuitka pin that had nothing wrong with them and could not
+          # merge, because one commit either lands whole or not at all.
+          # Excluded, hatchling gets its own pull request to be closed by hand
+          # and the batch stays mergeable. Nothing is silenced: an exclusion
+          # decides which PR an update lands in, not whether it is opened.
+          - "hatchling"

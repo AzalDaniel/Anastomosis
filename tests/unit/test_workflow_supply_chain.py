@@ -248,6 +248,30 @@ def test_dependabot_groups_every_update_within_each_ecosystem() -> None:
         )
 
 
+def test_the_build_backend_does_not_ride_with_the_rest_of_the_pip_batch() -> None:
+    """hatchling is excluded from the `pip` group, and that is not a silencing.
+
+    The backend has no `ignore` — a bare one would stop its security updates
+    and a scoped one never fired against a two-sided bound — so every release
+    is proposed, and the bound guard below refuses the ones measured to emit
+    core-metadata 2.5. Inside the group that red is contagious: a single
+    Dependabot commit lands whole or not at all, so #389's ruff floor and
+    Nuitka pin sat behind a hatchling bump that could never merge. Excluding
+    the backend gives it its own pull request to close by hand and leaves the
+    batch mergeable, while the `*` pattern above still covers everything else
+    in one PR.
+    """
+    updates = _load(DEPENDABOT_YML).get("updates") or []
+    pip = next(u for u in updates if u.get("package-ecosystem") == "pip")
+    groups = pip.get("groups") or {}
+    excluded = {p for group in groups.values() for p in group.get("exclude-patterns", [])}
+    assert "hatchling" in excluded, (
+        "dependabot.yml's `pip` group no longer excludes hatchling, so a bump the "
+        "build-backend guard refuses would again block every other pip update in "
+        "the same batch."
+    )
+
+
 def _ignore_conditions(ecosystem: str) -> list[dict[str, Any]]:
     updates = _load(DEPENDABOT_YML).get("updates") or []
     block = next(u for u in updates if u.get("package-ecosystem") == ecosystem)

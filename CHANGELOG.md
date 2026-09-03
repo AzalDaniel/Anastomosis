@@ -400,6 +400,21 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A build-backend bump nobody can accept blocked every other pip update.**
+  hatchling has no Dependabot `ignore` and never will — a bare one silences
+  its security updates, a scoped one never fired against a two-sided bound —
+  so every release is proposed and the supply-chain guard refuses the ones
+  measured to emit core-metadata 2.5. Inside the single `pip` group that
+  refusal was contagious: #389 carried a ruff floor and a Nuitka pin with
+  nothing wrong with them, behind a hatchling bump that could not merge, and
+  one Dependabot commit lands whole or not at all. The backend is excluded
+  from the group now, so it arrives in its own pull request to be closed by
+  hand while the batch stays mergeable. An exclusion decides which PR an
+  update lands in, never whether it is opened, so nothing is silenced. #389's
+  other two updates are taken here: Nuitka 4.2, which builds the frozen
+  Windows exes, and the ruff floor, which only records the version the lint
+  lane already resolves (#389).
+
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
   `intendedRecipient/assignedPerson`, but an `intendedRecipient` plays an
