@@ -444,7 +444,9 @@ def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) 
 _DATA_ABSENT_REASON_EXT = "http://hl7.org/fhir/StructureDefinition/data-absent-reason"
 
 
-def test_the_two_artifact_fixture_resolves_through_the_real_cli(tmp_path: Path) -> None:
+def test_the_two_artifact_fixture_resolves_through_the_real_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Driven through the real CLI, the two-artifact fixture (one embedded
     B64 2-page PDF, one ``<reference>``d 1-page PDF, one patient, no
     encounters): both attachments land on disk (#372/#380), and now each
@@ -452,14 +454,37 @@ def test_the_two_artifact_fixture_resolves_through_the_real_cli(tmp_path: Path) 
     own directory, with ``size`` and ``hash`` matching what is actually there.
     RED on main: both Attachments carried contentType only, url/size/hash all
     ``None``.
+
+    Chromium is stubbed the way the sibling end-to-end test over this same
+    fixture stubs it. The subject here is what the bundle SAYS about the
+    documents beside it, not whether a browser is installed: the unit lanes
+    have no Chromium, and a whole-patient view is still rendered for this
+    patient, so leaving the real renderer in place made the run exit 1 on
+    ``RendererUnavailable`` before the assertions were ever reached. The CLI,
+    the pipeline and the bundle deliverer all still run for real.
     """
     import base64
     import hashlib
 
+    pytest.importorskip("pymupdf", reason="pipeline e2e needs PyMuPDF (render extra)")
+    from _render_fakes import write_text_pdf
     from test_ccda_delivered_documents import _embedded_and_referenced_export
     from typer.testing import CliRunner
 
+    import anastomosis.reconstruct.chromium as chromium
     from anastomosis.cli import app
+
+    class _FakeChromium:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def render(self, html: str, pdf_path: Path) -> None:
+            write_text_pdf(html, pdf_path)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
 
     export = tmp_path / "export"
     charts = tmp_path / "charts"
