@@ -5,9 +5,6 @@ EHI exports are full of temporal traps this module exists to absorb:
 * **Sentinel dates.** Practice Fusion / Tebra TSVs spell "no value" as
   ``1/1/0001 12:00:00 AM`` (the SQL min-date). A sentinel parsed as a real
   date puts nonsense on a chart, so parsing returns ``None`` for year-1 dates.
-  A C-CDA vendor's own spelling — a TS ``@value`` that is a run of nothing
-  but zeros, e.g. ``"0"`` — gets the same treatment (:func:`is_zero_sentinel`):
-  it names no year, so it names no instant, one notch further than year-1.
 * **Mixed formats.** A single export mixes several timestamp spellings
   (ISO, US slash-dates with and without 12-hour clocks, C-CDA ``TS`` blobs).
   :func:`parse_dt` recognizes all of them; an *unrecognized* non-empty value
@@ -119,9 +116,15 @@ def is_zero_sentinel(value: str | None) -> bool:
     A vendor's "0" (or "00000000", or any other length) is one notch further
     than the year-1 SQL sentinel :func:`parse_dt` already absorbs: year-1 at
     least names a year, however bogus; an all-zero run names none, so it names
-    no instant. ``parse_dt`` reads it the same way it reads a ``nullFlavor``
-    TS — absent, not an error — so one vendor's spelling for "no date" does not
-    abort a whole document over a single medication with no known start.
+    no instant. This is NOT consulted by :func:`parse_dt` itself — that
+    function is shared with every row-based adapter (``sources/_rowutil.
+    clean_dt``/``clean_date``, read by pf_tebra and oracle_ehi, and the
+    learned adapter's own ``parse_date``/``parse_datetime`` transform verbs),
+    and a TSV cell holding a bare "0" states something a loud failure needs to
+    surface, not a vendor's spelling for "no date". The C-CDA parser's own
+    ``_ts``/``_ts_date`` readers consult this directly, on the value they read
+    off the document, before it ever reaches :func:`parse_dt` — the one place
+    this specific vendor quirk is actually known.
 
     ``2023-13-45`` still raises: it names a year and gets the rest wrong,
     which is "the source said something we could not read", not "the source
@@ -140,17 +143,14 @@ def parse_dt(value: str | None, *, assume: tzinfo = UTC) -> datetime | None:
 
     Naive inputs get ``assume`` attached (default UTC — the EHI database
     convention); inputs carrying their own offset keep it. Returns ``None``
-    for empty values, year-1 sentinels, and zero-run sentinels (see
-    :func:`is_zero_sentinel`); raises :exc:`ValueError` for a non-empty value
-    in a format this module has never seen, so new source quirks surface in
-    QA instead of disappearing.
+    for empty values and year-1 sentinels; raises :exc:`ValueError` for a
+    non-empty value in a format this module has never seen, so new source
+    quirks surface in QA instead of disappearing.
     """
     if value is None:
         return None
     text = value.strip()
     if not text:
-        return None
-    if is_zero_sentinel(text):
         return None
     parsed = _parse_raw(text)
     if parsed is None:

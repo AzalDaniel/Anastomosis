@@ -194,13 +194,31 @@ def _val_attr(node: _Element | None, path: str, name: str) -> str | None:
 
 
 def _ts(node: _Element | None, path: str) -> Any:
-    """``@value`` of the element at ``path``, parsed as an aware datetime."""
-    return parse_dt(_val_attr(node, path, "value"))
+    """``@value`` of the element at ``path``, parsed as an aware datetime.
+
+    A run-of-zeros ``@value`` (:func:`~anastomosis.core.timeutil.
+    is_zero_sentinel`) reads as absent HERE, before ``parse_dt`` ever sees
+    it — not inside ``parse_dt`` itself. ``parse_dt`` is shared with every
+    row-based adapter (``sources/_rowutil.clean_dt``, read by pf_tebra and
+    oracle_ehi, and the learned adapter's own ``parse_datetime`` transform
+    verb): a bare "0" in a TSV cell is a value that states something, and
+    reading it as absent there would go unaccounted, in none of those
+    adapters' ledgers. This vendor's C-CDA-specific spelling for "no date"
+    is read only by this C-CDA-specific caller.
+    """
+    raw = _val_attr(node, path, "value")
+    return None if is_zero_sentinel(raw) else parse_dt(raw)
 
 
 def _ts_date(node: _Element | None, path: str) -> Any:
-    """``@value`` of the element at ``path``, parsed as a calendar date."""
-    return parse_date(_val_attr(node, path, "value"))
+    """``@value`` of the element at ``path``, parsed as a calendar date.
+
+    Same zero-sentinel guard as :func:`_ts`, for the same reason: `parse_date`
+    calls `parse_dt` under the hood and would raise on a zero run exactly as
+    loudly.
+    """
+    raw = _val_attr(node, path, "value")
+    return None if is_zero_sentinel(raw) else parse_date(raw)
 
 
 def _text_content(node: _Element | None) -> str | None:
@@ -2267,13 +2285,14 @@ def _count_zero_sentinels(root: _Element) -> dict[str, int]:
 def _record_zero_sentinels(record: PatientRecord, root: _Element) -> None:
     """Credit a run-of-zeros TS the parser read as absent, on the record itself.
 
-    `is_zero_sentinel` makes `parse_dt` treat a "0" (of any length) as absent
-    rather than raising, so the medication (or condition, encounter, ...) it
-    belongs to survives with no start instead of aborting the whole document.
-    That is a real loss — a start date the source named nothing usable for —
-    and losslessness means it rides the record rather than vanishing at the
-    parse boundary. Sets the key only when the count is non-empty, so an
-    ordinary document carries no trace of a check that found nothing.
+    `_ts`/`_ts_date` treat a "0" (of any length) as absent rather than raising
+    `parse_dt`'s own ValueError, so the medication (or condition, encounter,
+    ...) it belongs to survives with no start instead of aborting the whole
+    document. That is a real loss — a start date the source named nothing
+    usable for — and losslessness means it rides the record rather than
+    vanishing at the parse boundary. Sets the key only when the count is
+    non-empty, so an ordinary document carries no trace of a check that found
+    nothing.
     """
     if counts := _count_zero_sentinels(root):
         record.patient.extensions[EXT_TS_NO_INSTANT] = counts
