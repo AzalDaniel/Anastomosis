@@ -48,6 +48,25 @@ issue and fixed in its own pull request.
   page is missing". The slice belongs to the patient, so it now asks for the
   patient: either one of the record's encounter ids, or the patient's own. A
   row keyed on one patient still cannot reach another patient's bundle. (#399)
+- **A QA context now reads back the document it was asked about, not the
+  first one it ever saw.** `_SnapshotCache`, the per-run cache that lets every
+  engine check share one `pymupdf.open` instead of five, kept a single slot
+  and served it for any path handed to `.get()` after the first — so a
+  `QAContext` primed on one PDF would return that PDF's text for every later
+  document asked of it. Nothing has tripped it yet: today's runner builds one
+  context per document, so each context is only ever asked about the one PDF
+  it was primed on. But that one-document-per-context shape was never a
+  contract, only an accident of how the runner happens to call it, and #383
+  already has the QA stage grading two populations — a per-encounter chart
+  and the whole-record summary — into a single report. The next check that
+  reads a second document against an already-primed context would have
+  silently graded the first document's bytes under the second document's
+  name and reported a pass, the same vacuous-pass shape this repository has
+  fixed twice before, sitting in a helper. The cache is now keyed by path —
+  one extraction per PDF per context, not one document per context — and
+  left unbounded on purpose: a context grades a handful of documents, not
+  thousands, so an eviction policy would trade a real bug for an invented
+  ceiling. (#398)
 
 - **A positive verdict has to be backed by the thing it claims.** An
   adversarial pass over the C-CDA conservation ledger found three ways it
@@ -471,6 +490,31 @@ issue and fixed in its own pull request.
   `@value="0"`, never routes through `parse_dt` at all and is untouched.
   `sources/ccda/ledger.py` is unchanged — the medication is credited exactly
   as it was — and the 6,144-document corpus ledger pin does not move. (#385)
+- **An encounter with no type and no note was exported by nothing.**
+  `_structured_encounters` kept only encounters carrying an `encounter_type`;
+  `_notes` keeps only those with note content. An encounter clearing NEITHER
+  gate reached neither section and vanished from the document on every
+  generation, though the record still held it — the shape a real visit takes
+  when nothing charts its kind and nothing was written about it. The issue
+  proposed `<code nullFlavor="OTH">` for it; refused, driven:
+  `_encounter_code`'s own docstring says OTH is the arm for a KNOWN type
+  carried in `originalText`, and there is none here to carry — `NI` is the
+  honest answer, already the branch's own fallback.
+
+  The gate now reads: the Encounters section takes every encounter the Notes
+  section does not already stand for. `build_ccd` checks that the partition
+  held by reading the emitted tree the same way `measure_ccd` reads emitted
+  bytes — classifying each offered encounter by whether its id turns up under
+  `46240-8`, `34109-9`, or both — and `core.conservation.Conservation` raises
+  before the document ships if one lands in neither, naming the stage, the
+  unit, and the three disposition counts, never a value. Matching an
+  encounter to its emitted id had to check two keys, not one: a *preserved*
+  entry (one `_Preserved.own` suppressed the fresh structural build for)
+  re-emits the source's own `<id root>` verbatim, which is a different string
+  from the canonical `Encounter.id` whenever that root fails the parser's GUID
+  check and falls back to a deterministic uuid5 — checking `Encounter.id`
+  alone read every such chart's encounters as unaccounted and raised on
+  fixtures that were never broken. (#388)
 - **A build-backend bump nobody can accept blocked every other pip update.**
   hatchling has no Dependabot `ignore` and never will — a bare one silences
   its security updates, a scoped one never fired against a two-sided bound —
