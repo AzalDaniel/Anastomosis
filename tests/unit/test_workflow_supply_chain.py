@@ -272,6 +272,38 @@ def test_the_build_backend_does_not_ride_with_the_rest_of_the_pip_batch() -> Non
     )
 
 
+def test_the_installer_lane_does_not_rebuild_on_every_source_merge() -> None:
+    """The Windows installer is built on a schedule and for releases, not per merge.
+
+    A Nuitka standalone build plus the installer smoke test took 63 minutes of
+    windows-latest when it was last measured, on the scarcest runner class and
+    out of the same pool every pull request's test matrix draws on. Watching
+    `src/anastomosis/**` spent that on every ordinary source merge — four in
+    one evening, for an artifact nobody downloaded — and the queue that built
+    up was paid for by the pull requests waiting behind it.
+
+    So the path filter watches only what decides the frozen layout, the
+    nightly build is the canary for everything else, and a tag still builds
+    unconditionally. Re-adding a source path here is a real decision with a
+    real bill; this test is where it gets made deliberately.
+    """
+    triggers = _load(WINDOWS_YML)[_ON]
+    push = triggers["push"]
+    assert "src/anastomosis/**" not in push.get("paths", []), (
+        "windows-package.yml watches src/anastomosis/** again, so every source "
+        "merge rebuilds the installer — about an hour of windows-latest each. If "
+        "that is wanted, say why here and in the workflow's own comment."
+    )
+    assert push.get("tags") == ["v*"], (
+        "windows-package.yml must still build unconditionally for a release tag: "
+        "the schedule is a canary, not the release path."
+    )
+    assert triggers.get("schedule"), (
+        "windows-package.yml no longer builds on a schedule, so a source change "
+        "that only breaks the frozen build has nothing left watching for it."
+    )
+
+
 def _ignore_conditions(ecosystem: str) -> list[dict[str, Any]]:
     updates = _load(DEPENDABOT_YML).get("updates") or []
     block = next(u for u in updates if u.get("package-ecosystem") == ecosystem)

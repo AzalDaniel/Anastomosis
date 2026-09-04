@@ -400,6 +400,18 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The Windows installer was rebuilt on every source merge, and the queue was
+  paid for by everything waiting behind it.** A Nuitka standalone build plus
+  the installer smoke test took 63 minutes of `windows-latest` when it was
+  last measured, on the scarcest runner class and out of the same pool every
+  pull request's test matrix draws on — and the lane watched `src/anastomosis/**`, so four merges
+  in one evening bought four builds of an artifact nobody downloaded. The path
+  filter now watches only what decides the frozen layout (the packaging
+  scripts, the workflow itself, the dependency set); a nightly build is the
+  canary for a source change that breaks only once frozen; and a release tag
+  still builds unconditionally. A test pins the decision so the source path
+  cannot come back unnoticed.
+
 - **A vendor's `value="0"` date sentinel aborted the whole export.** A C-CDA
   TS `@value` that is a run of nothing but zeros — one vendor's own spelling
   for "no start date" on a `substanceAdministration/effectiveTime/low` — made
