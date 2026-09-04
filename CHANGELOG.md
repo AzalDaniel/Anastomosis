@@ -400,6 +400,31 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **An encounter with no type and no note was exported by nothing.**
+  `_structured_encounters` kept only encounters carrying an `encounter_type`;
+  `_notes` keeps only those with note content. An encounter clearing NEITHER
+  gate reached neither section and vanished from the document on every
+  generation, though the record still held it — the shape a real visit takes
+  when nothing charts its kind and nothing was written about it. The issue
+  proposed `<code nullFlavor="OTH">` for it; refused, driven:
+  `_encounter_code`'s own docstring says OTH is the arm for a KNOWN type
+  carried in `originalText`, and there is none here to carry — `NI` is the
+  honest answer, already the branch's own fallback.
+
+  The gate now reads: the Encounters section takes every encounter the Notes
+  section does not already stand for. `build_ccd` checks that the partition
+  held by reading the emitted tree the same way `measure_ccd` reads emitted
+  bytes — classifying each offered encounter by whether its id turns up under
+  `46240-8`, `34109-9`, or both — and `core.conservation.Conservation` raises
+  before the document ships if one lands in neither, naming the stage, the
+  unit, and the three disposition counts, never a value. Matching an
+  encounter to its emitted id had to check two keys, not one: a *preserved*
+  entry (one `_Preserved.own` suppressed the fresh structural build for)
+  re-emits the source's own `<id root>` verbatim, which is a different string
+  from the canonical `Encounter.id` whenever that root fails the parser's GUID
+  check and falls back to a deterministic uuid5 — checking `Encounter.id`
+  alone read every such chart's encounters as unaccounted and raised on
+  fixtures that were never broken. (#388)
 - **A build-backend bump nobody can accept blocked every other pip update.**
   hatchling has no Dependabot `ignore` and never will — a bare one silences
   its security updates, a scoped one never fired against a two-sided bound —

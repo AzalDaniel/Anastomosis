@@ -34,6 +34,28 @@ external validator tooling (`docs/PLAN.md` M6). Today the deliverable is the
 own-parser round trip and nothing broader. **Do not represent this output as
 schema-valid C-CDA to a destination that will validate it.**
 
+## Encounters and Notes: a partition, not two filters
+
+`_structured_encounters` and `_notes` decide together which section(s) one
+encounter reaches, and between them every encounter must land somewhere. The
+Notes section (`34109-9`) takes an encounter with note content; the
+Encounters section (`46240-8`) takes every encounter the Notes section does
+not already stand for — one with an `encounter_type`, or one with neither a
+type nor note content. A visit with both a type and a note reaches both
+sections at once (the parser reads them from different sections, so nothing
+is duplicated); a typeless, noteless encounter — a real visit with nothing
+charted about its kind, or an unattributed one the source names but never
+describes — gets `<code nullFlavor="NI"/>` and, absent a date,
+`<effectiveTime nullFlavor="NI"/>`: no information, not a fabricated OTH
+value with nothing behind it.
+
+`build_ccd` checks that this partition actually held, reading the emitted
+tree the same way `measure_ccd` reads emitted bytes: every `record.encounters`
+entry is classified by whether its id turns up under `46240-8`, `34109-9`, or
+both, and `core.conservation.Conservation` raises if one lands in neither —
+the loud failure an artifact-only check cannot produce, because an artifact
+that never arrived leaves nothing to inspect.
+
 ## Declared losses — the no-silent-drop rule, made explicit
 
 A canonical `PatientRecord` carries far more than standard CDA has structured
