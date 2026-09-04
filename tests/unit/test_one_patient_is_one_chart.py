@@ -385,8 +385,7 @@ def test_a_vendor_oid_root_does_not_fold_across_documents_and_the_docstring_says
     anything else derives a per-DOCUMENT id from the file name and position.
     So the same visit stated under one OID root in two documents keeps two
     encounter objects here; changing ``_encounter_id`` to honour an OID root
-    too is a clinical identity decision outside this fix, filed by the
-    orchestrator separately.
+    too is a clinical identity decision outside this fix, filed as #393.
     """
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
