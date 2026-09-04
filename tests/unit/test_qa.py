@@ -734,6 +734,122 @@ def test_a_social_history_observation_on_no_encounter_is_not_a_finding(tmp_path:
     )
 
 
+def test_a_vital_carried_by_the_record_summary_warns_instead_of_failing(
+    tmp_path: Path,
+) -> None:
+    """#392: the check must ask what was RENDERED, not infer "no page" from
+    "no encounter". A summary page carrying the orphaned value is a genuine
+    defect (the visit link is still missing) but not a lost fact, so the run
+    does not refuse a bundle that carries it.
+    """
+    record = _record()
+    record.observations[0].encounter_id = None
+    chart = make_pdf(tmp_path / "chart.pdf", GOOD_LINES)
+    summary = make_pdf(tmp_path / "summary.pdf", GOOD_LINES)
+
+    report = run_qa(
+        [(chart, record.encounters[0], record)],
+        record_summary_paths={record.patient.id: summary},
+    )
+
+    verdict, findings = _result(report, "unattributed_vitals")
+    assert verdict is Verdict.WARN
+    assert findings == [
+        "1 vital(s) are on no encounter, so no chart carries the visit link, "
+        "but the value is on the record summary"
+    ]
+    assert report.ok  # WARN never fails the run
+
+
+def test_a_vital_missing_from_a_rendered_summary_still_fails(tmp_path: Path) -> None:
+    """Rendered is not the same as carried: a summary that DOES exist but
+    omits the value is exactly as bad as no summary at all, and the finding
+    says so.
+    """
+    record = _record()
+    record.observations[0].encounter_id = None
+    chart = make_pdf(tmp_path / "chart.pdf", GOOD_LINES)
+    # A summary page that never mentions the systolic reading.
+    summary_lines = [ln for ln in GOOD_LINES if "Blood pressure" not in ln]
+    summary = make_pdf(tmp_path / "summary.pdf", summary_lines)
+
+    report = run_qa(
+        [(chart, record.encounters[0], record)],
+        record_summary_paths={record.patient.id: summary},
+    )
+
+    verdict, findings = _result(report, "unattributed_vitals")
+    assert verdict is Verdict.FAIL
+    assert findings == [
+        "vital Systolic blood pressure is on no encounter and not on the "
+        "record summary either, so it is on no chart"
+    ]
+    assert not report.ok
+
+
+def test_unattributed_vitals_never_decides_presence_from_the_record(tmp_path: Path) -> None:
+    """The false-PASS a raw substring match would produce: the DOB "01/02/1980"
+    contains the digits "180" but not the orphaned vital's actual value as a
+    standalone token, and the boundary-anchored matcher must say so.
+    """
+    record = _record()
+    record.observations[0].value = "180"  # would hide inside "01/02/1980"
+    record.observations[0].encounter_id = None
+    chart = make_pdf(tmp_path / "chart.pdf", GOOD_LINES)
+    summary = make_pdf(tmp_path / "summary.pdf", GOOD_LINES)  # DOB 01/02/1980, no bare "180"
+
+    report = run_qa(
+        [(chart, record.encounters[0], record)],
+        record_summary_paths={record.patient.id: summary},
+    )
+
+    verdict, findings = _result(report, "unattributed_vitals")
+    assert verdict is Verdict.FAIL
+    assert any("not on the record summary either" in f for f in findings)
+
+
+def test_a_patient_missing_from_the_summary_map_reads_as_no_summary(tmp_path: Path) -> None:
+    """`record_summary_paths` is keyed by patient id; a patient absent from it
+    gets ``None`` — the same FAIL as no mapping at all — never a KeyError and
+    never a silent pass.
+    """
+    record = _record()
+    record.observations[0].encounter_id = None
+    chart = make_pdf(tmp_path / "chart.pdf", GOOD_LINES)
+
+    report = run_qa(
+        [(chart, record.encounters[0], record)],
+        record_summary_paths={"some-other-patient": tmp_path / "summary.pdf"},
+    )
+
+    verdict, findings = _result(report, "unattributed_vitals")
+    assert verdict is Verdict.FAIL
+    assert findings == ["vital Systolic blood pressure is on no encounter, so it is on no chart"]
+
+
+def test_the_whole_patient_report_grades_a_vital_against_its_own_page(tmp_path: Path) -> None:
+    """`whole_patient_report`'s graded document IS the record summary — the
+    ONLY page that can ever carry an orphaned vital's value for THIS
+    population — so `unattributed_vitals` has to read that page rather than
+    treat it as a document with no summary at all.
+    """
+    from anastomosis.qa.wholepatient import whole_patient_report
+
+    record = _record()
+    record.observations[0].encounter_id = None
+    summary = make_pdf(tmp_path / "summary.pdf", GOOD_LINES)
+
+    report = whole_patient_report([(summary, record)])
+
+    (doc,) = report.documents
+    result = next(r for r in doc.results if r.check == "unattributed_vitals")
+    assert result.verdict is Verdict.WARN
+    assert result.findings == [
+        "1 vital(s) are on no encounter, so no chart carries the visit link, "
+        "but the value is on the record summary"
+    ]
+
+
 def test_the_whole_patient_report_names_every_check_the_neutral_path_does() -> None:
     """A check must never fall out of a whole-patient report unnoticed.
 

@@ -68,6 +68,18 @@ class QAContext:
     #: absence is expected, counted, and reported — never graded as a pass with
     #: nothing said.
     omits: dict[str, str] = field(default_factory=dict)
+    #: The rendered whole-patient record summary for THIS patient, when one was
+    #: rendered. ``None`` means nothing was rendered for the whole record — it
+    #: does NOT mean a check declined to look. A fact the per-encounter charts
+    #: cannot place (a measurement on no dated encounter) can still be on this
+    #: page, and a check asking whether something reached ANY chart has to open
+    #: it rather than infer absence from the record it is meant to audit
+    #: (:class:`~anastomosis.qa.checks.UnattributedVitalsCheck`). Read through
+    #: the same ``_document_text(path, ctx)`` every other check uses — the
+    #: shared snapshot cache is keyed by path (#398), so asking for a SECOND
+    #: document through one context reads that document's own bytes rather than
+    #: the one already open for ``pdf_path``.
+    record_summary_path: Path | None = None
 
     @property
     def coverage_declared(self) -> bool:

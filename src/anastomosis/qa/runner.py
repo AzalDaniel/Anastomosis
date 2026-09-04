@@ -72,6 +72,7 @@ def run_qa(
     carries: frozenset[str] | None = None,
     omits: dict[str, str] | None = None,
     checks: list[QACheck] | None = None,
+    record_summary_paths: dict[str, Path] | None = None,
 ) -> QAReport:
     """Apply every check to every document; check crashes are check bugs and
     surface as CRASH findings rather than aborting the batch.
@@ -90,6 +91,13 @@ def run_qa(
     and means undeclared, which the coverage check treats as conservatively as
     it can — it verifies every kind and softens its verdict, because with no
     statement it cannot tell a lost section from a layout that never had one.
+
+    ``record_summary_paths`` keys the rendered whole-patient record summary by
+    ``patient.id``, so each document's ``QAContext.record_summary_path`` is the
+    SAME patient's summary rather than whichever one happened to render last. A
+    patient absent from the mapping (or no mapping at all) gets ``None`` —
+    nothing was rendered for that whole record, not that this run declined to
+    check.
     """
     active = checks if checks is not None else engine_checks()
     report = QAReport()
@@ -103,6 +111,9 @@ def run_qa(
             render_day_stamps=render_day_stamps,
             carries=carries or frozenset(),
             omits=omits or {},
+            record_summary_path=(
+                record_summary_paths.get(record.patient.id) if record_summary_paths else None
+            ),
         )
         # Extract the PDF's text + geometry once for this document; the engine
         # checks share it instead of each re-opening the file (up to 4x per run).
