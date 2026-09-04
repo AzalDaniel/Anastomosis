@@ -26,13 +26,14 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
 from anastomosis.core.ccda_codes import (
     EXT_PRIOR_LOSS_NARRATIVE,
+    EXT_SECTION_ENTRIES,
     LOINC_ALLERGIES,
     LOINC_ENCOUNTERS,
     LOINC_EXTENSIONS,
@@ -51,9 +52,12 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    SECTION_CODE_UNKNOWN,
     TPL_SEVERITY,
     V3,
     XSI,
+    first_rooted_id,
+    organizer_component_source_id,
 )
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
@@ -73,6 +77,7 @@ from anastomosis.core.model import (
     Patient,
     PatientRecord,
 )
+from anastomosis.core.model.base import AnastBase
 from anastomosis.core.model.patient import Address
 
 __all__ = ["DECLARED_LOSSES", "CcdMeasurement", "build_ccd", "measure_ccd"]
@@ -187,7 +192,18 @@ DECLARED_LOSSES: dict[str, str] = {
         "re-emitted entry-by-entry as the deduplicated carry-forward appendix "
         "(_carried_forward). Every OTHER ccda:* key (a captured section "
         "narrative, the source document's id/effectiveTime/title) is narrated "
-        "like any vendor extension, because this exporter re-emits none of them"
+        "like any vendor extension, because this exporter re-emits none of "
+        "them — except the ccda:entries: family below, which it does"
+    ),
+    "patient.extensions:ccda:entries:<code>": (
+        "a section's own <entry> elements, which a C-CDA ingest parked verbatim "
+        "because prose about a section is not a copy of the entries beneath it, "
+        "are DELIVERED, not narrated: _carry_preserved re-emits them as the "
+        "entries of the section carrying that code — a carrier section when this "
+        "exporter emits none for it — so they leave as the entries they arrived "
+        "as, and a re-ingest parks the same bytes again. Narrating them instead "
+        "would serialise XML into path = value lines no emitter consumes, which "
+        "a re-ingest parks and the next export narrates again, without bound"
     ),
     "documents[]:inline artifact bytes": (
         "an artifact carried inline with its record (the anast:inline_content "
@@ -537,13 +553,233 @@ def _narrative(section: etree._Element, lines: list[str]) -> None:
         _text_el(text, "paragraph", line)
 
 
+# --- the source's own entries, delivered rather than narrated ----------------
+
+
+#: The title a carrier section gets. It must not be ``LOSS_NARRATIVE_TITLE``:
+#: the parser recognises this tool's own loss ledger by that title as well as by
+#: the stamp, and a carrier wearing it would have its entries read as ledger
+#: paragraphs — which is to say, not read at all.
+PRESERVED_ENTRIES_TITLE = "Preserved Source Entries"
+
+#: The same hardened posture ``sources/ccda`` reads a document under. These
+#: bytes came from a parsed document and are being turned back into elements,
+#: not fetched — no entities, no network, no DTD.
+_ENTRY_PARSER = etree.XMLParser(
+    resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False
+)
+
+_Stated = TypeVar("_Stated", bound=AnastBase)
+
+
+@dataclass(frozen=True)
+class _Preserved:
+    """The source's own ``<entry>`` bytes, and the objects they already state.
+
+    ``sources/ccda`` parks every section's entries verbatim under
+    ``ccda:entries:<code>``; for an entry no structural parser could take
+    apart, those bytes are the only copy of what the document said. This
+    exporter DELIVERS them — re-emitted as real ``<entry>`` elements in the
+    section carrying that code — instead of narrating them. Narrating serialises
+    the XML into ``path = value`` lines that no structured emitter consumes, so
+    a re-ingest parks them again and the next export narrates them again:
+    measured at ~15 KB of loss narrative per generation, without bound.
+
+    A parked entry is the source's own statement of a clinical fact, and the
+    canonical object the parser read out of it states the same fact in this
+    exporter's words. Emitting both would say it twice, and a re-ingest would
+    read two objects where the chart has one — four the generation after, then
+    eight. So each emitter asks :meth:`own` which of its objects the preserved
+    entries do not already state, and emits structured entries for those alone.
+    Nothing is dropped either way: what the section preserved leaves as the
+    entry it arrived as, and what it did not still leaves as this exporter's own.
+    """
+
+    entries: dict[str, list[etree._Element]]
+    stated: dict[str, frozenset[str | None]]
+
+    def own(self, loinc: str, objects: list[_Stated]) -> list[_Stated]:
+        """``objects`` minus the ones this section's preserved entries state.
+
+        An object is matched by the source id its provenance names — the ``<id
+        root>`` of the construct it was read from, which the preserved entry
+        carries because the entry IS that construct. An object the parser could
+        give no source id matches ``None``, and ``None`` is in the set exactly
+        when some preserved entry carries no id of its own: an entry with no id
+        is the only kind such an object can have been read from. An object from
+        anywhere else — another adapter, a record assembled by hand — carries a
+        source id no preserved entry states, so it keeps its structured entry.
+        """
+        stated = self.stated.get(loinc, frozenset())
+        return [obj for obj in objects if _source_id(obj) not in stated]
+
+
+def _source_id(obj: AnastBase) -> str | None:
+    """The source id an object's provenance names, or ``None`` when it has none."""
+    return obj.provenance.source_id if obj.provenance is not None else None
+
+
+def _derived_component_ids(entry: etree._Element) -> set[str]:
+    """The organizer-derived id for each component observation this entry
+    carries that states no id of its own.
+
+    ``_stated_ids``'s any-depth walk finds an organizer's own id and any
+    component id that IS stated; it cannot see the one case
+    ``organizer_component_source_id`` exists for, a component under an
+    identified organizer whose only ``<id>`` is null. Both this walk and
+    ``sources/ccda/parser.py``'s derivation read an organizer's and a
+    component's id through the SAME function, :func:`first_rooted_id` — same
+    organizer path, same 0-based position, same nullFlavor/whitespace
+    handling — so the two sides land on the same string by construction, not
+    by two hand-written readings that were promised to agree and did not
+    (#378's own duplication, reintroduced by four fixture shapes before this
+    helper existed).
+    """
+    derived: set[str] = set()
+    for organizer in entry.iter(f"{{{V3}}}organizer"):
+        organizer_id = first_rooted_id(organizer)
+        if organizer_id is None:
+            continue
+        root, extension = organizer_id
+        components = organizer.findall(f"{{{V3}}}component/{{{V3}}}observation")
+        for index, component in enumerate(components):
+            if first_rooted_id(component) is None:
+                derived.add(organizer_component_source_id(root, extension, index))
+    return derived
+
+
+def _stated_ids(entry: etree._Element) -> set[str | None]:
+    """Every ``<id root>`` this entry carries, at any depth, plus each id-less
+    component observation's organizer-derived id, or ``{None}`` when neither
+    finds one — the shape :meth:`_Preserved.own` compares against.
+
+    The any-depth walk is unchanged: the parser reads an entry's id at
+    whatever depth the template puts it — a problem's act, an allergy's inner
+    observation, a measurement's component. ``None`` is now the fallback
+    rather than the mechanism: a positive, id-to-id match is added for the one
+    construct (an id-less organizer component) the walk alone could only ever
+    pair by absence, which paired every such construct with every other one
+    that also stated no id.
+    """
+    roots: set[str | None] = {
+        root for node in entry.iter(f"{{{V3}}}id") if (root := node.get("root")) is not None
+    }
+    roots |= _derived_component_ids(entry)
+    return roots or {None}
+
+
+def _preserved_entries(value: Any) -> list[etree._Element] | None:
+    """The ``<entry>`` elements parked in ``value``, or ``None`` for a shape this
+    exporter cannot re-emit.
+
+    ``None`` is the honest answer for an unrecognized value, and it is the same
+    answer :func:`_prior_narrative` gives for one: the caller then leaves the key
+    to :func:`_walk_extensions`, which narrates it like any other vendor
+    extension. A key this exporter cannot re-emit must never be BOTH skipped
+    here and exempted there — that is the silent drop.
+
+    PHI: a value that will not parse is answered with ``None``. It is never
+    raised, and never named in a message — these are patient bytes, and an
+    XML parser's complaint quotes the text it choked on.
+    """
+    if not isinstance(value, list) or not value:
+        return None
+    parsed: list[etree._Element] = []
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        try:
+            node = etree.fromstring(item.encode(), _ENTRY_PARSER)
+        except etree.XMLSyntaxError:
+            return None
+        if node.tag != f"{{{V3}}}entry":
+            return None
+        parsed.append(node)
+    return parsed
+
+
+def _preserved(record: PatientRecord) -> _Preserved:
+    """Every preserved entry the record carries, by the section code that parked it.
+
+    Repeated section codes (``…#2``, ``#3``) collapse into the one code: this
+    exporter writes one section per code, so that is where all of them are
+    delivered, and a re-ingest parks the merged list under the bare key again.
+    """
+    entries: dict[str, list[etree._Element]] = {}
+    stated: dict[str, set[str | None]] = {}
+    prefix = f"{EXT_SECTION_ENTRIES}:"
+    for key, value in record.patient.extensions.items():
+        parsed = _preserved_entries(value) if key.startswith(prefix) else None
+        if parsed is None:
+            continue
+        code = key[len(prefix) :].partition("#")[0]
+        entries.setdefault(code, []).extend(parsed)
+        for node in parsed:
+            stated.setdefault(code, set()).update(_stated_ids(node))
+    return _Preserved(entries, {code: frozenset(ids) for code, ids in stated.items()})
+
+
+def _sections_by_code(body: etree._Element) -> dict[str, etree._Element]:
+    """The first section this document carries for each section code."""
+    found: dict[str, etree._Element] = {}
+    for section in body.iterfind(f"{{{V3}}}component/{{{V3}}}section"):
+        code = section.find(f"{{{V3}}}code")
+        name = SECTION_CODE_UNKNOWN if code is None else (code.get("code") or SECTION_CODE_UNKNOWN)
+        found.setdefault(name, section)
+    return found
+
+
+def _carrier_section(body: etree._Element, code: str) -> etree._Element:
+    """A section that exists to carry preserved entries, for a code this exporter
+    emits no section of its own for.
+
+    Emitting one is the decision, over refusing the export: a code with no
+    structured emitter here is the ORDINARY case — Procedures, Plan of
+    Treatment, Payers — and a chart that cannot be exported because it carries a
+    section this tool does not model would be a refusal of the common path, not
+    a guard on a strange one. The entries would reach nobody at all.
+
+    It states the section's code and nothing the record does not: no
+    ``codeSystem``, because the parked key preserves the section's code and not
+    the system it was drawn from, and naming one would assert a vocabulary this
+    export cannot know it belongs to; no code at all for the bucket a section
+    with none parks under; and no narrative, because the section's own prose is a
+    separate extension key that narrates on its own.
+    """
+    section = _el(_el(body, "component"), "section")
+    if code != SECTION_CODE_UNKNOWN:
+        _el(section, "code", code=code)
+    _text_el(section, "title", PRESERVED_ENTRIES_TITLE)
+    return section
+
+
+def _carry_preserved(body: etree._Element, preserved: _Preserved) -> None:
+    """Append every preserved entry to the section carrying its code.
+
+    Runs after the structured sections and BEFORE :func:`_extensions_section`,
+    which matters for one code only: entries preserved from a third party's
+    unstamped 51899-3 section must not land inside the stamped ledger this tool
+    writes, where a re-ingest reads the paragraphs and never looks at the
+    entries. Reaching that code before ours exists gives them a carrier of their
+    own instead.
+    """
+    sections = _sections_by_code(body)
+    for code, entries in preserved.entries.items():
+        section = sections.get(code)
+        if section is None:
+            section = _carrier_section(body, code)
+        section.extend(entries)
+
+
 # --- problems ----------------------------------------------------------------
 
 
-def _problems(body: etree._Element, conditions: list[Condition]) -> None:
+def _problems(body: etree._Element, conditions: list[Condition], preserved: _Preserved) -> None:
     section = _section(body, LOINC_PROBLEMS, "Problems", "Problem List")
+    # The narrative lists every condition; the entries are only the ones the
+    # section's own preserved entries do not already state (see _Preserved).
     _narrative(section, [_condition_line(c) for c in conditions])
-    for condition in conditions:
+    for condition in preserved.own(LOINC_PROBLEMS, conditions):
         act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
         _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.3", extension="2015-08-01")
         _el(act, "code", code="CONC", codeSystem=OID_ACTCLASS)
@@ -592,10 +828,12 @@ def _condition_line(condition: Condition) -> str:
 # --- allergies ---------------------------------------------------------------
 
 
-def _allergies(body: etree._Element, allergies: list[AllergyIntolerance]) -> None:
+def _allergies(
+    body: etree._Element, allergies: list[AllergyIntolerance], preserved: _Preserved
+) -> None:
     section = _section(body, LOINC_ALLERGIES, "Allergies", "Allergies and Adverse Reactions")
     _narrative(section, [a.substance or "Allergy" for a in allergies])
-    for allergy in allergies:
+    for allergy in preserved.own(LOINC_ALLERGIES, allergies):
         act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
         _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.30", extension="2015-08-01")
         _el(act, "code", code="CONC", codeSystem=OID_ACTCLASS)
@@ -649,10 +887,12 @@ def _severity(obs: etree._Element, severity: str) -> None:
 # --- medications -------------------------------------------------------------
 
 
-def _medications(body: etree._Element, medications: list[MedicationStatement]) -> None:
+def _medications(
+    body: etree._Element, medications: list[MedicationStatement], preserved: _Preserved
+) -> None:
     section = _section(body, LOINC_MEDICATIONS, "Medications", "History of Medication Use")
     _narrative(section, [m.display_name or "Medication" for m in medications])
-    for med in medications:
+    for med in preserved.own(LOINC_MEDICATIONS, medications):
         entry = _el(section, "entry")
         admin = _el(entry, "substanceAdministration", classCode="SBADM", moodCode="EVN")
         _el(admin, "templateId", root="2.16.840.1.113883.10.20.22.4.16", extension="2014-06-09")
@@ -697,10 +937,12 @@ def _med_consumable(admin: etree._Element, med: MedicationStatement) -> None:
 # --- immunizations -----------------------------------------------------------
 
 
-def _immunizations(body: etree._Element, immunizations: list[Immunization]) -> None:
+def _immunizations(
+    body: etree._Element, immunizations: list[Immunization], preserved: _Preserved
+) -> None:
     section = _section(body, LOINC_IMMUNIZATIONS, "Immunizations", "History of Immunizations")
     _narrative(section, [i.vaccine or "Immunization" for i in immunizations])
-    for imm in immunizations:
+    for imm in preserved.own(LOINC_IMMUNIZATIONS, immunizations):
         refused = imm.extensions.get("ccda:negationInd") == "true"
         admin = _el(
             _el(section, "entry"),
@@ -733,18 +975,20 @@ def _measurements(
     display_name: str,
     organizer_class: str,
     observations: list[Observation],
+    preserved: _Preserved,
 ) -> None:
     section = _section(body, loinc, title, display_name)
     _narrative(section, [_measurement_line(o) for o in observations])
-    if not observations:
+    own = preserved.own(loinc, observations)
+    if not own:
         return
     organizer = _el(_el(section, "entry"), "organizer", classCode=organizer_class, moodCode="EVN")
     _el(organizer, "statusCode", code="completed")
     # An organizer-level effectiveTime gives the parser a fallback timestamp.
-    effs = [o.effective_at for o in observations if o.effective_at is not None]
+    effs = [o.effective_at for o in own if o.effective_at is not None]
     if effs:
         _el(organizer, "effectiveTime", value=_ts_datetime(effs[0]))
-    for obs in observations:
+    for obs in own:
         component = _el(organizer, "component")
         node = _el(component, "observation", classCode="OBS", moodCode="EVN")
         _el(node, "code", code=obs.code, displayName=obs.display, codeSystem=OID_LOINC)
@@ -780,7 +1024,9 @@ def _is_smoking_status(obs: Observation) -> bool:
     )
 
 
-def _social_history(body: etree._Element, observations: list[Observation]) -> None:
+def _social_history(
+    body: etree._Element, observations: list[Observation], preserved: _Preserved
+) -> None:
     """Emit the structured 72166-2 entry ONLY for smoking-status observations.
 
     Every other social observation has no structured slot the parser reads and
@@ -789,7 +1035,7 @@ def _social_history(body: etree._Element, observations: list[Observation]) -> No
     in this section's human narrative for document readability."""
     section = _section(body, LOINC_SOCIAL, "Social History", "Social History")
     _narrative(section, [_measurement_line(o) for o in observations])
-    for obs in observations:
+    for obs in preserved.own(LOINC_SOCIAL, observations):
         if not _is_smoking_status(obs):
             continue  # non-tobacco social obs → loss narrative, never 72166-2
         entry = _el(section, "entry")
@@ -837,10 +1083,10 @@ def _encounter_code(node: etree._Element, encounter_type: str | None) -> None:
     _text_el(_el(node, "code", nullFlavor="OTH"), "originalText", encounter_type)
 
 
-def _encounters(body: etree._Element, encounters: list[Encounter]) -> None:
+def _encounters(body: etree._Element, encounters: list[Encounter], preserved: _Preserved) -> None:
     section = _section(body, LOINC_ENCOUNTERS, "Encounters", "History of Encounters")
     _narrative(section, [e.encounter_type or "Encounter" for e in encounters])
-    for enc in encounters:
+    for enc in preserved.own(LOINC_ENCOUNTERS, encounters):
         node = _el(_el(section, "entry"), "encounter", classCode="ENC", moodCode="EVN")
         _el(node, "templateId", root="2.16.840.1.113883.10.20.22.4.49", extension="2015-08-01")
         # id @root drives the deterministic encounter id on re-ingest.
@@ -856,7 +1102,7 @@ def _encounters(body: etree._Element, encounters: list[Encounter]) -> None:
 # --- notes -------------------------------------------------------------------
 
 
-def _notes(body: etree._Element, encounters: list[Encounter]) -> None:
+def _notes(body: etree._Element, encounters: list[Encounter], preserved: _Preserved) -> None:
     """Notes section: one act per encounter that carries narrative content.
 
     The parser models each note act as a single narrative section. SOAP
@@ -865,7 +1111,7 @@ def _notes(body: etree._Element, encounters: list[Encounter]) -> None:
     section = _section(body, LOINC_NOTES, "Notes", "Note")
     with_notes = [e for e in encounters if e.has_note_content]
     _narrative(section, [e.note_type or "Note" for e in with_notes])
-    for enc in with_notes:
+    for enc in preserved.own(LOINC_NOTES, with_notes):
         act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
         _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.202", extension="2016-11-01")
         _el(act, "id", root=enc.id)
@@ -919,8 +1165,11 @@ def _extensions_section(body: etree._Element, record: PatientRecord) -> None:
     Round trip N of the same chart appends that prior ledger here as a
     deduplicated carry-forward (:func:`_carried_forward`) rather than as one
     swallowed blob, and stamps the generation, so the section stays a readable
-    ledger instead of growing without bound. Exactly ONE 51899-3 section is ever
-    emitted.
+    ledger instead of growing without bound. Exactly ONE STAMPED 51899-3 section
+    is ever emitted; a third party's 51899-3 entries, which a re-ingest preserved
+    verbatim, are carried in a section of their own (:func:`_carry_preserved`)
+    rather than inside this one, where a re-ingest reads the paragraphs and never
+    looks at the entries.
     """
     current = _collect_lost_fields(record)
     prior = _prior_narrative(record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE))
@@ -1174,17 +1423,25 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
     re-ingest writes it onto) and to a shape the exporter can actually re-emit,
     so an unrecognized value still narrates rather than vanishing.
 
-    Every other key narrates — a vendor namespace, and equally the ``ccda:*``
-    keys an earlier ingest of a CDA document left behind. Those are NOT
-    re-derived: a captured section narrative (``ccda:section:<loinc>``, the only
-    copy of an entry no structural parser could take apart) has no emitter at
-    all, and the header this exporter writes carries its own title, its own
-    deterministic document id and its own effectiveTime — so exempting the
-    ingest-side metadata keys would drop the source document's values. Anything
-    not re-emitted must ride the loss narrative."""
+    The patient's ``ccda:entries:<code>`` keys are exempt on the same terms:
+    :func:`_carry_preserved` re-emits those bytes as the entries of the section
+    carrying that code, so they leave as entries rather than as ``path = value``
+    lines. Narrating them as well is what made capturing every section's entries
+    unaffordable — the lines are XML no emitter consumes, so a re-ingest parks
+    them and the next export narrates them again.
+
+    Every other key narrates — a vendor namespace, and equally the remaining
+    ``ccda:*`` keys an earlier ingest of a CDA document left behind. Those are
+    NOT re-derived: a captured section narrative (``ccda:section:<loinc>``) has
+    no emitter at all, and the header this exporter writes carries its own title,
+    its own deterministic document id and its own effectiveTime — so exempting
+    the ingest-side metadata keys would drop the source document's values.
+    Anything not re-emitted must ride the loss narrative."""
     lines: list[str] = []
     for key in sorted(extensions):
         if key in _NATIVE_EXT_KEYS or key in _DELIVERED_NOT_NARRATED:
+            continue
+        if path == "patient" and _delivered_as_entries(key, extensions[key]):
             continue
         if (
             path == "patient"
@@ -1194,6 +1451,17 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
             continue
         lines += _serialize(f"{path}.extensions.{key}", extensions[key])
     return lines
+
+
+def _delivered_as_entries(key: str, value: Any) -> bool:
+    """Whether this extension key leaves the document as ``<entry>`` elements
+    rather than as narrative.
+
+    The narration side of the question :func:`_preserved` asks when it collects
+    them. Both go through :func:`_preserved_entries`, so a value one side cannot
+    re-emit is a value the other narrates, and no key is ever skipped by both.
+    """
+    return key.startswith(f"{EXT_SECTION_ENTRIES}:") and _preserved_entries(value) is not None
 
 
 def _serialize(path: str, value: Any) -> list[str]:
@@ -1256,9 +1524,11 @@ def measure_ccd(xml: bytes) -> CcdMeasurement:
     Reads the document back rather than instrumenting the builder, so the
     number is of the bytes actually written — the thing the destination
     receives — rather than of an intermediate the serializer might still
-    change. Exactly one 51899-3 section is ever emitted by this builder (see
-    ``_loss_narrative_section``); a document carrying none measures zero, which
-    is the honest answer for a record with nothing unmapped.
+    change. Every 51899-3 section is counted: this builder emits one stamped
+    ledger (see :func:`_extensions_section`) and, for a document that arrived
+    carrying a third party's own 51899-3 entries, the carrier holding those —
+    both are preservation, which is what this number is of. A document carrying
+    none measures zero, the honest answer for a record with nothing unmapped.
     """
     root = etree.fromstring(xml)
     preserved = 0
@@ -1276,6 +1546,13 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
     same canonical clinical content. ``document_id`` defaults to a uuid5 over the
     patient id, so output is deterministic and byte-identical for a given record.
     See the module docstring for scope and the declared-loss list.
+
+    Each clinical fact is stated once. A record carrying entries a C-CDA ingest
+    preserved verbatim (``ccda:entries:<code>``) has those bytes re-emitted as
+    the entries of the section carrying that code, and the structured entry for
+    the object read out of one is not emitted beside it — see :class:`_Preserved`
+    for why both would compound. A code this exporter emits no section for gets a
+    carrier section rather than a refusal (:func:`_carrier_section`).
     """
     doc_id = document_id or str(uuid5(_DOC_NS, record.patient.id))
     # Deterministic effectiveTime: derived from the record, never wall-clock.
@@ -1284,11 +1561,12 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
     doc = _root_el("ClinicalDocument")
     _header(doc, record.patient, doc_id, effective)
 
+    preserved = _preserved(record)
     body = _el(_el(doc, "component"), "structuredBody")
-    _problems(body, record.conditions)
-    _allergies(body, record.allergies)
-    _medications(body, record.medications)
-    _immunizations(body, record.immunizations)
+    _problems(body, record.conditions, preserved)
+    _allergies(body, record.allergies, preserved)
+    _medications(body, record.medications, preserved)
+    _immunizations(body, record.immunizations, preserved)
     _measurements(
         body,
         LOINC_VITALS,
@@ -1296,6 +1574,7 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
         "Vital Signs",
         "CLUSTER",
         [o for o in record.observations if o.category == ObservationCategory.VITAL_SIGNS],
+        preserved,
     )
     _measurements(
         body,
@@ -1304,13 +1583,16 @@ def build_ccd(record: PatientRecord, *, document_id: str | None = None) -> bytes
         "Relevant Diagnostic Tests and/or Laboratory Data",
         "BATTERY",
         [o for o in record.observations if o.category == ObservationCategory.LABORATORY],
+        preserved,
     )
     _social_history(
         body,
         [o for o in record.observations if o.category == ObservationCategory.SOCIAL_HISTORY],
+        preserved,
     )
-    _encounters(body, _structured_encounters(record.encounters))
-    _notes(body, record.encounters)
+    _encounters(body, _structured_encounters(record.encounters), preserved)
+    _notes(body, record.encounters, preserved)
+    _carry_preserved(body, preserved)
     _extensions_section(body, record)
 
     logger.info(

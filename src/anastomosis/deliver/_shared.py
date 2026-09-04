@@ -17,6 +17,8 @@ identical across them today:
 * :func:`claim_delivered_name` — the per-run ledger that makes a name
   collision between two different source ids a loud failure instead of a
   silent merge of two patients' output;
+* :func:`record_witness` — what a per-patient claim puts up as the artifact it
+  is about to write, so two records under one patient id are two owners;
 * :func:`copy_claimed_chart` — the budget→claim→copy sequence for one chart,
   built on the three above, that every attributed-, unattributed-, and
   bundle-copy site runs identically.
@@ -46,6 +48,7 @@ __all__ = [
     "claim_delivered_name",
     "copy_claimed_chart",
     "copy_delivered_file",
+    "record_witness",
     "write_fhir_bundle",
 ]
 
@@ -149,6 +152,26 @@ def claim_delivered_name(
         f"({safe_log_id(previous)} and {safe_log_id(source_id)}); refusing to "
         "merge two records into one slot"
     )
+
+
+def record_witness(record: PatientRecord) -> str:
+    """The ``content`` a per-patient deliverer claims its slot with.
+
+    The three per-patient sites — the archive's ``patients/<id>/``, the bundle's
+    ``<id>/``, the C-CDA export's ``<id>.xml`` — claim a name before the
+    artifact exists: two of them are directories filled afterwards, and the
+    third is a document not built yet. So the RECORD stands as the witness
+    instead of the bytes. It can: each of those artifacts is a rendition of
+    exactly this object, so two records that differ anywhere are two owners, and
+    two that do not differ at all are one record delivered twice into a slot
+    that ends up holding what both of them said.
+
+    ``default=str`` for the reason the FHIR export carries it: ``extensions`` is
+    ``dict[str, Any]`` and an adapter may park something JSON has no spelling
+    for. A witness that raised would turn a preserved field into a failed
+    delivery.
+    """
+    return json.dumps(record.model_dump(), sort_keys=True, default=str)
 
 
 def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:

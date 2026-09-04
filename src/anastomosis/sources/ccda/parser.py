@@ -3,12 +3,14 @@
 The lossless rule, applied to a CDA document: every section the adapter knows
 how to take apart becomes discrete canonical models, and **every section** —
 structurally parsed or not — has its title and normalized narrative captured
-into ``patient.extensions["ccda:section:<loinc>"]`` so nothing on the chart is
-ever silently dropped (a known section whose entries the parser cannot take
-apart would otherwise yield nothing at all). A document repeating a section
-code — split Problems (Active)/(Resolved) is ordinary C-CDA — keeps each
-occurrence at its own key (``…:<loinc>#2``, ``#3``, … in document order), so a
-second section can never overwrite the first. Document-level metadata rides
+into ``patient.extensions["ccda:section:<loinc>"]`` and its ``<entry>``
+elements kept verbatim under ``patient.extensions["ccda:entries:<loinc>"]``, so
+nothing on the chart is ever silently dropped (a known section whose entries
+the parser cannot take apart would otherwise yield nothing at all, and its
+prose is under no obligation to say what those entries say). A document
+repeating a section code — split Problems (Active)/(Resolved) is ordinary
+C-CDA — keeps each occurrence at its own key (``…:<loinc>#2``, ``#3``, … in
+document order), so a second section can never overwrite the first. Document-level metadata rides
 ``patient.extensions`` too.
 
 One section is captured differently: a 51899-3 section carrying this repo's own
@@ -59,6 +61,7 @@ from lxml import etree
 
 from anastomosis.core.ccda_codes import (
     EXT_PRIOR_LOSS_NARRATIVE,
+    EXT_SECTION_ENTRIES,
     LOINC_ALLERGIES,
     LOINC_ENCOUNTERS,
     LOINC_EXTENSIONS,
@@ -77,9 +80,12 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    SECTION_CODE_UNKNOWN,
     TPL_SEVERITY,
     V3,
     XSI,
+    first_rooted_id,
+    organizer_component_source_id,
 )
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.model import (
@@ -357,15 +363,6 @@ def _entries(section: _Element) -> list[_Element]:
     return _findall(section, "v3:entry")
 
 
-#: Key family for a text-less section's entries, preserved verbatim as
-#: ``ccda:entries:<loinc>`` (suffixed ``#2``, ``#3``, … for repeated section
-#: codes, in document order). Defined here rather than in ``ccda_codes``
-#: because only this half and the ledger read it — the export builder does not
-#: — and the mirror test's doctrine is that a constant one half reads belongs
-#: to that half.
-EXT_SECTION_ENTRIES = "ccda:entries"
-
-
 def entry_verbatim(entry: _Element) -> str:
     """One ``<entry>``, exactly as the document spells it.
 
@@ -379,12 +376,17 @@ def entry_verbatim(entry: _Element) -> str:
     return etree.tostring(entry, encoding="unicode", with_tail=False)
 
 
-def _free_key(extensions: dict[str, Any], key: str) -> str:
+def free_key(extensions: dict[str, Any], key: str) -> str:
     """``key``, or its first free ``#2``, ``#3``, … variant, in document order.
 
     Documents legitimately repeat a section code (Problems (Active) and Problems
     (Resolved) are both 11450-4) and may carry several code-less sections — one
     stored section must never silently replace another.
+
+    Public because the pipeline's fold (one patient's several source records
+    into one chart) parks a clashing extension the same way. Two spellings of
+    "keep both" would put a key somewhere the reader of the other one never
+    looks, so there is one.
     """
     if key not in extensions:
         return key
@@ -399,10 +401,10 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
 
     Runs for EVERY section, structurally parsed or not: a structural parser
     skips an entry whose shape it does not support, and the narrative is then
-    the only copy of what that entry said. A section with neither a title nor
-    narrative text has no prose to keep — but if it carries entries, those are
-    then the only copy of what it said, and they are preserved verbatim instead
-    (see :func:`_capture_entries`); a section with neither adds no key
+    one of the two copies of what that section said — the other being its
+    entries, kept verbatim beside this by :func:`_capture_entries`, since prose
+    about a section is not a copy of the entries beneath it. A section with
+    neither a title nor narrative text has no prose to keep and adds no key
     (sentinel discipline — absent stays absent). Mutating the model's
     extensions dict in place persists it on the patient (it is the validated
     dict object, not a fresh copy).
@@ -415,7 +417,7 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     extensions = record.patient.extensions
     if title is None and text is None:
         return
-    key = _free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
+    key = free_key(extensions, f"ccda:section:{loinc or SECTION_CODE_UNKNOWN}")
     extensions[key] = {"title": title, "text": text}
 
 
@@ -436,24 +438,24 @@ def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
     consumed it would make this capture depend on the parser's reach, and the
     point of preservation is that it must not.
 
-    Still only the text-less sections, and that is now a stated limit rather
-    than an assumption: a section WITH text is the same shape wearing a better
-    coat, since a C-CDA narrative is under no obligation to state what its
-    entries state. Extending the capture there is a change to what every export
-    carries — the builder narrates each parked key into the 51899-3 section, so
-    capturing every section's entries makes the loss narrative grow by a
-    generation each round trip — and it belongs to that decision, not to this
-    one. Until it is made, the ledger says what is true today: such an entry is
-    credited by nothing and reads unsupported.
+    EVERY section, whatever it renders. The capture used to stop at sections
+    rendering no text, on the reading that prose about a section stands in for
+    the entries beneath it. It does not: a C-CDA narrative is under no
+    obligation to state what its entries state, and the corpus disproves it in
+    its own documents — a Plan of Treatment reading "Continue lisinopril and
+    recheck blood pressure in three months" carries an entry stating the coded
+    value "No current problems". So the same entry was preserved or dropped by
+    nothing but whether its section happened to carry prose. What made that
+    limit hold for so long was the export side: the builder narrated each
+    parked key into the 51899-3 loss section, which a re-ingest parked and the
+    next export narrated again, so capturing every section grew the ledger
+    without bound. The builder now DELIVERS these bytes as ``<entry>`` elements
+    in the section carrying their code instead of narrating them, which is what
+    lets this capture be complete.
     """
     captured: dict[_Element, list[str]] = {}
     for section in _sections(root):
-        # RENDERS no text, not HAS no <text> element. An empty <text/>, one
-        # holding only whitespace, a nullFlavor, or a <renderMultiMedia> with
-        # no words beside it are all sections whose entries are the only thing
-        # the document said — and testing for the element instead of its
-        # content quietly stopped preserving four real narrative shapes.
-        if _text_content(_find(section, "v3:text")) is None and (entries := _entries(section)):
+        if entries := _entries(section):
             captured[section] = [entry_verbatim(entry) for entry in entries]
     return captured
 
@@ -464,13 +466,17 @@ def _store_entries(
     section: _Element,
     loinc: str | None,
 ) -> None:
-    """Park one section's captured entries under ``ccda:entries:<loinc>``."""
+    """Park one section's captured entries under ``ccda:entries:<loinc>``.
+
+    The stored shape is read by two other places — the ingest ledger's entry
+    pool and, since the export delivers these bytes as entries rather than
+    narrating them, ``deliver/ccda_export``. A section with no code of its own
+    parks under :data:`SECTION_CODE_UNKNOWN`, the one bucket all three name.
+    """
     entries = captured.get(section)
     if not entries:
         return
-    key = _free_key(
-        extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
-    )
+    key = free_key(extensions, f"{EXT_SECTION_ENTRIES}:{loinc or SECTION_CODE_UNKNOWN}")
     extensions[key] = entries
 
 
@@ -564,19 +570,72 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
         return
-    generation = _loss_generation(section)
-    prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
-    if isinstance(prior, dict):
-        prior["entries"] = [*prior["entries"], *entries]
+    merge_loss_narrative(record.patient.extensions, _loss_generation(section), entries)
+
+
+def is_loss_ledger(value: Any) -> bool:
+    """Whether ``value`` has the ``{generation, entries}`` shape this module
+    writes under :data:`EXT_PRIOR_LOSS_NARRATIVE`.
+
+    Public because two callers need to tell a real carried-forward ledger from
+    an ordinary dict that happens to sit under the same key — a hand-made FHIR
+    bundle may park any JSON at all there — before folding into it: this
+    module's own :func:`merge_loss_narrative`, checking what it is about to
+    fold INTO, and the pipeline's fold, checking what it is about to fold IN.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("entries"), list)
+        and isinstance(value.get("generation"), int | None)
+    )
+
+
+def merge_loss_narrative(
+    extensions: dict[str, Any], generation: int | None, entries: list[str]
+) -> None:
+    """Fold one stamped loss ledger into whatever ``extensions`` already holds.
+
+    Entries CONCATENATE in the order they were read and the highest generation
+    wins, so neither ledger is overwritten. That keeps one document's own
+    round trip — export, re-ingest, export again — down to a single
+    carry-forward appendix, because the exporter dedupes prior against current
+    (``_carried_forward``) before it writes the next generation. It does NOT
+    dedupe across the several source records one patient's chart can now be
+    merged from (:mod:`anastomosis.pipeline`'s fold): two documents that both
+    already carry an identical stamped entry merge into a ledger that states it
+    twice, on purpose — an entry string does not carry enough to tell "the same
+    fact stamped twice" from "two distinct objects that genuinely share a
+    value", so the accepted direction is to risk saying a true thing twice
+    rather than ever say it zero times. An absent generation on either side
+    does not reset the counter for the other.
+
+    The accumulator is checked with :func:`is_loss_ledger`, not merely
+    ``isinstance(prior, dict)``: a chart merged from several source records can
+    already hold a non-ledger dict at this key from one of them (an ordinary
+    extensions clash the pipeline's fold has not yet resolved), and folding
+    into it as though it were a ledger would raise on the shape it does not
+    have instead of leaving it for the pipeline's own clashing-key rule.
+
+    Public because two callers fold ledgers into one key: this module, walking
+    the several stamped sections of one document, and the pipeline's fold,
+    merging the several source records of one patient. The rule is the same on
+    both sides, so it is written once.
+    """
+    # Annotated (rather than left to inference): `dict[str, Any].get` without a
+    # default types as `Any | None`, and `is_loss_ledger` is an ordinary bool
+    # (not a TypeGuard), so mypy cannot narrow the `| None` away on its own —
+    # only the isinstance this function no longer needs at runtime did that.
+    prior: Any = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if is_loss_ledger(prior):
         prior_generation = prior["generation"]
-        prior["generation"] = (
-            generation if prior_generation is None else max(prior_generation, generation or 0)
-        )
+        extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
+            "generation": (
+                generation if prior_generation is None else max(prior_generation, generation or 0)
+            ),
+            "entries": [*prior["entries"], *entries],
+        }
         return
-    record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
-        "generation": generation,
-        "entries": entries,
-    }
+    extensions[EXT_PRIOR_LOSS_NARRATIVE] = {"generation": generation, "entries": entries}
 
 
 # --- problems ----------------------------------------------------------------
@@ -779,9 +838,23 @@ def _measurements(
         organizer = _find(entry, organizer_path)
         if organizer is None:
             continue
-        for component in _findall(organizer, "v3:component/v3:observation"):
+        organizer_id = first_rooted_id(organizer)
+        components = _findall(organizer, "v3:component/v3:observation")
+        for index, component in enumerate(components):
             code = _find(component, "v3:code")
             reading, unit = _observation_value(_find(component, "v3:value"))
+            # A component with no id of its own is still the organizer's
+            # statement, not a statement with no provenance at all — see
+            # organizer_component_source_id. ``first_rooted_id`` reads every
+            # ``<id>`` child in document order, not only the first, so a
+            # component whose first ``<id>`` is nullFlavor and whose second
+            # is rooted is read as owning that second id — the same reading
+            # the builder's stated-id walk already gives it.
+            component_id = first_rooted_id(component)
+            source_id = component_id[0] if component_id is not None else None
+            if source_id is None and organizer_id is not None:
+                root, extension = organizer_id
+                source_id = organizer_component_source_id(root, extension, index)
             out.append(
                 Observation(
                     patient_id=patient_id,
@@ -792,7 +865,7 @@ def _measurements(
                     unit=unit,
                     effective_at=_ts(component, "v3:effectiveTime")
                     or _ts(organizer, "v3:effectiveTime"),
-                    provenance=_prov(source_file, _val_attr(component, "v3:id", "root")),
+                    provenance=_prov(source_file, source_id),
                 )
             )
     return out
@@ -929,7 +1002,7 @@ def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
     return True
 
 
-def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
+def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
     """One ``<id root>`` is one visit when the halves agree.
 
     A C-CDA may describe the same encounter twice: once as an entry in the
@@ -943,6 +1016,17 @@ def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounte
     Complementary halves fold — first non-None wins per scalar, lists
     concatenate, order preserved. Contradictory ones do not: they stay separate
     so the collision still surfaces.
+
+    Public because the same two halves also arrive in two DOCUMENTS: an export
+    holding one patient's visit summary and its note names that visit twice
+    across two files, and the pipeline's fold unions their encounters. The rule
+    is a property of the canonical Encounter, not of one traversal, so both
+    callers run this one — but the reach across documents is only as wide as
+    :func:`_encounter_id` makes it: that function honours the source's
+    ``<id root>`` verbatim only when it looks like a GUID, and otherwise derives
+    an id from the source FILE name and position, so a vendor OID root (the
+    shape most vendors emit) still gets one id PER DOCUMENT and never folds
+    here, across two documents, no matter how it agrees with itself.
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []
@@ -2219,6 +2303,6 @@ def parse_document(path: Path) -> PatientRecord:
 
     record.practitioners = actors.practitioners
     record.facilities = list(actors.facilities.values())
-    record.encounters = _fold_encounters_sharing_an_id(record.encounters)
+    record.encounters = fold_encounters_sharing_an_id(record.encounters)
     _link_measurements_to_encounters(record)
     return record
