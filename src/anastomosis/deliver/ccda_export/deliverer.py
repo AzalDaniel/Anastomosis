@@ -184,9 +184,7 @@ def deliver_ccda(
             # used to end there: the count returned was the count WRITTEN, so a
             # patient with no document at all was indistinguishable from a
             # smaller batch and the operator saw an unqualified green line.
-            logger.warning(
-                "ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc)
-            )
+            logger.warning("ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc))
             missing += 1
             continue
         written.append(target)
