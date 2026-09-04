@@ -88,7 +88,9 @@ def test_migrate_neutral_uses_generic_soap_and_emits_both(
     assert list((out / "ccda").glob("*.xml"))  # structured C-CDA payload
     assert result.ccda_export.counts["patients"] == 3
     # A migration writes the upload manifest by default (into <out>/charts).
-    _assert_manifest(out / "charts", expected_items=6)
+    # Six rendered charts plus the source document the run carried beside
+    # them: the upload route delivers the same record the bundle does.
+    _assert_manifest(out / "charts", expected_items=7)
 
 
 def test_migrate_pack_render_uses_named_pack(
@@ -155,7 +157,10 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
     assert result.ccda_export.counts["largest_bytes"] > 0
     assert list((out / "ccda").glob("*.xml"))
     # The upload manifest is written in ccda-standard mode too — one item per
-    # patient (the whole-patient view has no per-encounter documents).
+    # patient (the whole-patient view has no per-encounter documents). Three,
+    # not four: this mode carries no attachments into the bundle, so the
+    # fixture's source document is not there to deliver and the writer says so
+    # in a warning rather than inventing an item for a file that is absent.
     _assert_manifest(out / "charts", expected_items=3)
 
 

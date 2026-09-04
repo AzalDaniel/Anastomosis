@@ -630,6 +630,49 @@ issue and fixed in its own pull request.
   generation's. A third party's `<observationMedia>` carries none of this
   tool's stamp, is nobody's to restate, and is preserved verbatim as before.
   (#373)
+- **An upload manifest with no items, for a patient whose whole chart is
+  attachments.** `--upload-manifest` serialized the rendered charts and nothing
+  else. A C-CDA Unstructured Document renders no encounter — its clinical
+  content is a scan, carried into `charts/attachments` as a canonical document
+  artifact — so a run over one wrote `manifest: 0 item(s)`, `0 patients`, and
+  exited 0 while both of that patient's documents sat on disk beside the file
+  that said there was nothing to deliver. The archive and the bundle carried
+  them in the same run; only the upload route reported nothing, successfully.
+
+  Every carried source document is now an item: one per delivered FILE, hashed
+  and sized off the bytes an upload would actually send, refused if it no
+  longer matches what the record recorded for it, and attributed to exactly one
+  patient — two records claiming one delivered file is a refusal, because
+  `_carry_attachments` catches that collision only while the two artifacts
+  differ, and the pair that slips past it is the pair that would file one
+  patient's scan into another's chart. Two items that would share an `item_key`
+  are refused for the neighbouring reason: the upload ledger keys on it, so a
+  collision is not an overwrite but a file that is silently never sent. The
+  patient reaches `patients` by the rule every other patient always has: an
+  item names them. `file_path` is
+  stored relative to the bundle (`attachments/…`) instead of as a bare
+  basename, so the item resolves on the machine that reads the manifest rather
+  than to a file that is not there, and a stored path that would climb out of
+  the bundle is refused on read.
+
+  Each item also carries the verification policy its bytes can support, which
+  is a schema v4 file. The L0–L6 ladder is calibrated for a chart this toolkit
+  printed: L1 rejects a sub-KiB file because a Chromium print is never that
+  small, and L2/L3 read a name, a DOB and the pack's header fields off page
+  one. A scanned referral is none of those, so the levels that cannot honestly
+  run over it SKIP and name that reason in the run report, while L0 re-hashes
+  the bytes against the digest the SOURCE recorded and L1 still checks the exact
+  page count of anything the source DECLARED pageable — declared, never sniffed.
+  A pre-v4 manifest reads exactly as it did: every item in one is a chart.
+
+  What a bundle cannot deliver is now said rather than omitted. A document a
+  record names with no file in the bundle — `migrate --render ccda-standard`
+  carries no attachments — is counted and warned about, loudly, instead of
+  vanishing; and the run's `manifest:` line counts what the WRITER wrote, not
+  the documents handed to it, because a rail reporting the input while the file
+  holds something else is how this read as a clean run in the first place. CLI
+  and GUI reach the one writer through the same command, and a test drives both
+  over the same scanned export to keep it that way. (#374)
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
