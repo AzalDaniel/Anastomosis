@@ -120,6 +120,271 @@ def test_utf16_encoded_cda_is_detected_and_loaded(tmp_path: Path) -> None:
     )
 
 
+# --- extension matching (#384) ------------------------------------------------
+
+
+def test_a_ccd_extension_loads_beside_an_xml_export(tmp_path: Path) -> None:
+    """The walk matched ``*.xml`` only, so a document Kareo/Tebra write as
+    ``<name>.ccd`` was never opened, never counted, and never mentioned — a
+    whole patient's chart silently absent from a run that exited 0 and
+    reported success. An export holding one of each extension must load both.
+    """
+    import shutil
+
+    fixture = CCDA_FIXTURE / "feedface_ccd.xml"
+    shutil.copy(fixture, tmp_path / "summary.xml")
+    shutil.copy(fixture, tmp_path / "ccd.ccd")
+
+    loaded = list(get_source("ccda").load(tmp_path))
+    assert len(loaded) == 2
+
+
+@pytest.mark.parametrize("name", ["patient.CCD", "patient.Ccda"])
+def test_uppercase_and_mixed_case_extensions_load(tmp_path: Path, name: str) -> None:
+    """Matched on ``Path.suffix.lower()``, so a capitalised extension — a
+    Windows EHR's own spelling, or an operator's rename — is not a second
+    silent miss on top of #384's first one. Proven on this test's own
+    filesystem, which is case-sensitive (POSIX): nothing here relies on the OS
+    folding the case for us.
+    """
+    import shutil
+
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / name)
+
+    loaded = list(get_source("ccda").load(tmp_path))
+    assert len(loaded) == 1
+
+
+def test_detect_true_on_a_directory_holding_only_ccd_documents(tmp_path: Path) -> None:
+    """Before the extension set widened, ``detect`` globbed ``*.xml`` too, so
+    an export holding only ``.ccd`` documents — Kareo/Tebra's own spelling —
+    was invisible to auto-detection: the pipeline would never even offer this
+    adapter as the match."""
+    import shutil
+
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / "summary.ccd")
+
+    assert get_source("ccda").detect(tmp_path)
+
+
+_REFERENCING_UNSTRUCTURED_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <realmCode code="US"/>
+  <id root="feedface-docu-0000-0000-000000000384"/>
+  <code code="34133-9" displayName="Summarization of Episode Note"
+        codeSystem="2.16.840.1.113883.6.1"/>
+  <title>Scanned Referral</title>
+  <effectiveTime value="20230510150000-0500"/>
+  <recordTarget>
+    <patientRole>
+      <id root="feedface-pati-0000-0000-000000000384"/>
+      <patient>
+        <name><given>Ada</given><family>Fixture</family></name>
+        <birthTime value="19850314"/>
+      </patient>
+    </patientRole>
+  </recordTarget>
+  <component><nonXMLBody>
+    <text mediaType="application/pdf"><reference value="referral.pdf"/></text>
+  </nonXMLBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_a_non_cda_file_beside_the_export_is_not_counted(tmp_path: Path) -> None:
+    """An export legitimately carries non-CDA files beside its documents — a
+    ``nonXMLBody``'s own referenced attachment, for one (see
+    ``parser._resolved_reference``). Counting every one of those as skipped
+    would bury #384's actual finding — a document the adapter's own sniff
+    recognised, left unread by an accident of its extension — in noise about
+    files this adapter was never going to read regardless. Neither matching an
+    accepted extension nor sniffing as CDA, the referenced PDF is not counted,
+    and the document that references it still loads.
+    """
+    (tmp_path / "referral.xml").write_text(_REFERENCING_UNSTRUCTURED_CCD, encoding="utf-8")
+    (tmp_path / "referral.pdf").write_bytes(b"not a CDA document, unaccepted extension\n")
+
+    adapter = get_source("ccda")
+    loaded = list(adapter.load(tmp_path))
+    assert len(loaded) == 1
+    assert adapter.skipped_files == 0
+    assert loaded[0].documents, "the referenced artifact must still be carried"
+
+
+# --- #384 round two: detect() never raises (finding 1 / finding 7) -----------
+
+
+def test_detect_never_raises_on_a_file_path(tmp_path: Path) -> None:
+    """``detect`` must never raise (``sources/base.py``). Before this fix, a
+    file path made the unguarded ``path.iterdir()`` raise
+    ``NotADirectoryError`` straight out of ``detect`` — which aborted
+    ``detect_source``'s whole loop over every adapter, so no OTHER adapter
+    (including the learned adapter, documented to accept a FILE path) was
+    ever consulted. A ``False`` here is "not mine", not a crash."""
+    a_file = tmp_path / "export.xml"
+    a_file.write_text("not a directory\n", encoding="utf-8")
+    assert get_source("ccda").detect(a_file) is False
+
+
+def test_detect_never_raises_on_a_missing_path(tmp_path: Path) -> None:
+    assert get_source("ccda").detect(tmp_path / "does-not-exist") is False
+
+
+def test_detect_never_raises_on_a_directory_it_cannot_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same tolerance as a file or a missing path, for the third way
+    ``Path.iterdir()`` can fail: a permission this account lacks."""
+
+    def _forbidden(self: Path) -> list[Path]:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "iterdir", _forbidden)
+    assert get_source("ccda").detect(tmp_path) is False
+
+
+def test_a_subdirectory_sharing_a_document_extension_does_not_abort_the_load(
+    tmp_path: Path,
+) -> None:
+    """A subdirectory (or broken symlink) named ``*.ccd`` used to raise
+    ``IsADirectoryError`` out of the unguarded accepted-extension read inside
+    ``_scan``, aborting the whole walk over one sibling that was never a
+    document at all (#384 round two, finding 7). ``_entries``' ``is_file()``
+    filter excludes it before any content read is attempted, so the one real
+    document beside it still loads."""
+    import shutil
+
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / "summary.xml")
+    (tmp_path / "not_a_document.ccd").mkdir()
+
+    adapter = get_source("ccda")
+    loaded = list(adapter.load(tmp_path))
+    assert len(loaded) == 1
+    assert adapter.skipped_files == 0
+
+
+# --- #384 round two: recognition by first start tag, not a byte window -------
+
+
+def _padded_export(tmp_path: Path) -> Path:
+    """A copy of the reference fixture with a >4 KB comment before its root —
+    longer than the old byte-window sniff ever read."""
+    text = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
+    comment = f"<!-- {'padding ' * 700} -->\n"
+    assert len(comment.encode("utf-8")) > 4096, "the padding must outgrow the old window"
+    idx = text.index("<ClinicalDocument")
+    padded_dir = tmp_path / "padded"
+    padded_dir.mkdir()
+    (padded_dir / "summary.xml").write_text(text[:idx] + comment + text[idx:], encoding="utf-8")
+    return padded_dir
+
+
+def test_a_document_with_a_long_leading_comment_is_still_read(tmp_path: Path) -> None:
+    """A real CCD carrying a vendor comment before its root parsed cleanly
+    through ``parse_document`` directly and was STILL silently absent from
+    every ``load`` — the old 4 KB peek never reached the markers it was
+    looking for (#384 round two, finding 4). Recognition now decides by the
+    document's FIRST START TAG, which a comment of any length cannot move."""
+    padded_dir = _padded_export(tmp_path)
+    adapter = get_source("ccda")
+    loaded = list(adapter.load(padded_dir))
+    assert len(loaded) == 1
+    assert adapter.skipped_files == 0
+
+
+def test_an_ordinary_non_cda_xml_is_neither_read_nor_counted(tmp_path: Path) -> None:
+    """An accepted-extension file that is genuinely not CDA must stay
+    uncounted either way — a count cannot tell "not CDA" apart from "CDA
+    behind a long comment", so the fix must not paper over the difference by
+    counting everything with the right extension."""
+    (tmp_path / "notes.xml").write_text("<root><a>hi</a></root>", encoding="utf-8")
+    adapter = get_source("ccda")
+    assert list(adapter.load(tmp_path)) == []
+    assert adapter.skipped_files == 0
+
+
+def test_a_truncated_document_is_neither_read_nor_counted_and_does_not_raise(
+    tmp_path: Path,
+) -> None:
+    """Garbage that cannot even produce a first start tag reads as "not CDA",
+    the same tolerance ``detect`` needs, extended to the real ``load``."""
+    (tmp_path / "broken.xml").write_bytes(b"not even well-formed xml")
+    adapter = get_source("ccda")
+    assert list(adapter.load(tmp_path)) == []
+    assert adapter.skipped_files == 0
+
+
+def test_a_clinical_document_in_the_wrong_namespace_is_not_read(tmp_path: Path) -> None:
+    """The root element must be ``ClinicalDocument`` in CDA's OWN namespace —
+    a document that borrows the tag name in some other namespace is not CDA
+    just because a substring search would have matched it."""
+    (tmp_path / "wrong_ns.xml").write_text(
+        '<ClinicalDocument xmlns="urn:other:ns"><realm/></ClinicalDocument>',
+        encoding="utf-8",
+    )
+    adapter = get_source("ccda")
+    assert list(adapter.load(tmp_path)) == []
+    assert adapter.skipped_files == 0
+
+
+# --- #384 round two: document order is filename order, proven (finding 3) ---
+
+
+def test_document_order_is_filename_order_not_creation_order(tmp_path: Path) -> None:
+    """Mutant proof: ``sorted(path.iterdir(), reverse=True)`` produced ZERO
+    failures across the whole suite (#384 round two, finding 3) — the
+    refusal's position is the operator's only PHI-safe handle on which
+    document to repair, and nothing checked it was really filename order.
+
+    Three documents created in REVERSE-alphabetical order (so creation order
+    disagrees with sorted order), with the ALPHABETICALLY-FIRST one broken:
+    a forward sort puts it at position 1 of 3; the ``reverse=True`` mutant
+    would put it at position 3 of 3.
+    """
+    from anastomosis.pipeline import PipelineError, load_records
+
+    good = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
+    for name, index in (("c_chart.xml", 3), ("b_chart.xml", 2), ("a_chart.xml", 1)):
+        body = good.replace(
+            "feedface-0000-0000-0000-000000000001",
+            f"feedface-0000-0000-0000-00000000000{index}",
+        )
+        if name == "a_chart.xml":
+            body = _BIRTHTIME_RE.sub('<birthTime value="not-a-date"/>', body)
+        (tmp_path / name).write_text(body, encoding="utf-8")
+
+    with pytest.raises(PipelineError) as caught:
+        load_records(get_source("ccda"), tmp_path)
+    message = str(caught.value)
+    assert "document 1 of 3" in message
+    assert "c_chart" not in message and "a_chart" not in message  # position, never a filename
+
+
+# --- #384 round two, nit: skipped_files resets on every load, not just some --
+
+
+def test_skipped_files_resets_on_a_load_that_finds_none(tmp_path: Path) -> None:
+    """Reset beside ``ledgers``, before ``_scan`` runs, not only by ``_scan``'s
+    own return value: a process-singleton adapter must not keep reporting a
+    PREVIOUS run's unrelated count on a run that found none of its own."""
+    import shutil
+
+    first = tmp_path / "first"
+    first.mkdir()
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", first / "summary.xml")
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", first / "extra.txt")
+
+    adapter = get_source("ccda")
+    list(adapter.load(first))
+    assert adapter.skipped_files == 1
+
+    second = tmp_path / "second"
+    second.mkdir()
+    shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", second / "summary.xml")
+    list(adapter.load(second))
+    assert adapter.skipped_files == 0
+
+
 # --- demographics ------------------------------------------------------------
 
 

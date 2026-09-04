@@ -127,6 +127,27 @@ def test_detect_unknown_dir_is_none(tmp_path: Path) -> None:
     assert controller.detect(str(tmp_path)) == {"ok": True, "source": None}
 
 
+def test_detect_a_file_path_never_raises(tmp_path: Path) -> None:
+    """#384 round two, finding 1: the ccda adapter's ``detect`` used to raise
+    ``NotADirectoryError`` on a file path (typed into the wizard's input, or
+    handed by ``anast pipeline run --source`` auto-detect), which escaped
+    ``detect_source``'s loop uncaught and turned the GUI's clean "no match"
+    result into a red banner (``{'ok': False, 'error': 'NotADirectoryError'}``
+    — driven and confirmed on the pre-fix code). A file path is simply not a
+    match, the same as any other unrecognised path."""
+    a_file = tmp_path / "export.ccd"
+    a_file.write_text("not a directory\n", encoding="utf-8")
+    controller = GuiController(_RecordingSink())
+    assert controller.detect(str(a_file)) == {"ok": True, "source": None}
+
+
+def test_detect_a_missing_path_never_raises(tmp_path: Path) -> None:
+    """Same seam, the other raise the pre-fix adapter let through
+    (``FileNotFoundError``)."""
+    controller = GuiController(_RecordingSink())
+    assert controller.detect(str(tmp_path / "does-not-exist")) == {"ok": True, "source": None}
+
+
 # --- run_pipeline end to end ----------------------------------------------
 
 

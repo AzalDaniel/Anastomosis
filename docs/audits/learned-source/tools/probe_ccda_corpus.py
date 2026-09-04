@@ -23,11 +23,36 @@ from collections import Counter
 from pathlib import Path
 
 from anastomosis.core.model import PatientRecord
-from anastomosis.sources.ccda import _looks_like_cda
 from anastomosis.sources.ccda.parser import parse_document
 
 MAX_XML_BYTES = 64 * 1024 * 1024
 SNIFF_BYTES = 4096
+
+
+def _looks_like_cda(head: bytes) -> bool:
+    """Whether a byte PREFIX looks like an HL7 CDA document, tolerant of the
+    XML encodings real exports use.
+
+    Kept local rather than imported from the adapter (#384 round two): the
+    adapter's own recognition now decides by the document's first start tag
+    via a bounded ``iterparse``, which needs a real file on disk — this probe
+    reads a bounded PREFIX off a ZIP member stream instead, on purpose, so an
+    oversized or malicious archive member is never pulled fully into memory
+    before this probe decides whether to keep reading it at all. That is a
+    different safety trade than the adapter's, and this probe's copy of the
+    old byte-window check is exactly right for it; it is not a regression of
+    finding 4, which is about documents this adapter is expected to READ, not
+    a corpus-characterization probe deciding what to sample.
+
+    The markers are ASCII, but a UTF-16 document (some Windows EHRs export
+    UTF-16) interleaves every ASCII byte with a NUL, so a raw byte search
+    misses them. Decode the head by its BOM first, then match as text.
+    """
+    encoding = "utf-16" if head[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+    text = head.decode(encoding, errors="ignore")
+    return "urn:hl7-org:v3" in text and "ClinicalDocument" in text
+
+
 PATIENT_FIELDS = (
     "id",
     "extensions",

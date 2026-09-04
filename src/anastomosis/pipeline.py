@@ -340,7 +340,11 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
     * a load that yields ZERO records → an ``empty_export`` error. A source that
       reads nothing from a non-empty directory is a defect — most often a
       ``--from``/``--source`` that does not match the export — never a 0-document
-      "success" that writes empty output and exits 0.
+      "success" that writes empty output and exits 0. When the C-CDA adapter's
+      own sniff recognised files as CDA content it still could not read (an
+      export holding nothing BUT wrongly-extensioned documents, #384 round two,
+      finding 2), the refusal says so by count instead of asking "is this a
+      ccda export?" — a question the adapter already answered yes to.
 
     A :class:`PipelineError` an adapter raises itself (e.g. the FHIR adapter's
     no-Patient guard) passes through unchanged.
@@ -372,6 +376,22 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
             kind="bad_input",
         ) from None
     if not records:
+        # A count the adapter's own sniff already gathered (C-CDA's
+        # `skipped_files`, #384 round two) says something the generic question
+        # below gets backwards: the export DID read like a ccda export, just
+        # under the wrong extension, so "is this a ccda export?" would send the
+        # operator looking for the wrong defect. `getattr` because every other
+        # adapter keeps no such count, the same contract `ledgers` reads under.
+        skipped = getattr(adapter, "skipped_files", 0)
+        if skipped:
+            from anastomosis.sources.ccda.ledger import skipped_files_clause
+
+            raise PipelineError(
+                f"No records loaded from the {adapter.name} export: "
+                f"{skipped_files_clause(skipped)}.",
+                exit_code=2,
+                kind="empty_export",
+            )
         raise PipelineError(
             f"No records loaded from the {adapter.name} export — is this a {adapter.name} export?",
             exit_code=2,
@@ -1083,16 +1103,32 @@ def settle_source_ledger(adapter: SourceAdapter, out: Path) -> tuple[str, ...]:
     returns an empty reading and writes nothing, and a re-run that ledgered
     nothing removes the stale artifact for the reason ``settle_quarantine``
     does.
+
+    ``skipped_files`` (see ``sources.ccda.CCDAAdapter``, #384) rides the same
+    settlement rather than a channel of its own: a file the export held that
+    read as a CDA document but was never opened belongs beside the account of
+    what WAS opened, not off in a report nobody reads unless they already knew
+    to ask. Gated on ``ledgers`` alone, not also on ``skipped_files``: BOTH
+    call sites run ``load_records`` first, which already refuses the whole run
+    (``empty_export``) the moment it yields zero records, so ``ledgers`` empty
+    means this function is never reached at all — the ``skipped_files``-only
+    case (an export holding nothing else BUT unopened look-alikes) is said
+    there instead, by count, in ``load_records``' own refusal (#384 round two,
+    finding 2). A second clause here checking a state that call order already
+    forecloses is not a second safeguard; it is untested dead code wearing the
+    shape of one, which is exactly how it was found — a mutation deleting it
+    passed the whole suite.
     """
     from anastomosis.core.output import secure_output_dir
 
     ledgers = list(getattr(adapter, "ledgers", ()))
+    skipped_files = getattr(adapter, "skipped_files", 0)
     if not ledgers:
         (out / LOSS_LEDGER_FILENAME).unlink(missing_ok=True)
         return ()
     from anastomosis.sources.ccda.ledger import aggregate, physician_reading
 
-    corpus = aggregate(ledgers)
+    corpus = aggregate(ledgers, skipped_files=skipped_files)
     _write_json(secure_output_dir(out) / LOSS_LEDGER_FILENAME, corpus.as_report())
     return physician_reading(corpus)
 
