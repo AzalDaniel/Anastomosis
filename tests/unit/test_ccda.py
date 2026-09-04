@@ -4,6 +4,8 @@ Each test asserts one section's mapping (or one trap) documented in
 tests/fixtures/ccda/README.md.
 """
 
+import ast
+import inspect
 import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -25,6 +27,7 @@ from anastomosis.sources import get_source
 CCDA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
 _BIRTHTIME_RE = re.compile(r'<birthTime value="[^"]*"/>')
 PF_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
+CCDA_EDGE_CASES = Path(__file__).resolve().parents[1] / "fixtures" / "ccda_edge_cases"
 
 
 @pytest.fixture(scope="module")
@@ -34,6 +37,17 @@ def record() -> PatientRecord:
     loaded = list(adapter.load(CCDA_FIXTURE))
     assert len(loaded) == 1
     return loaded[0]
+
+
+@pytest.fixture(scope="module")
+def zero_sentinel_record() -> PatientRecord:
+    # Parsed directly, not via adapter.load(directory): ccda_edge_cases holds
+    # several fixtures side by side, and loading the whole directory would
+    # glob every one of them into a single multi-document load (the same
+    # reason the individual-edge-case tests above parse a single file).
+    from anastomosis.sources.ccda.parser import parse_document
+
+    return parse_document(CCDA_EDGE_CASES / "feedface_ccd_zero_date_sentinel.xml")
 
 
 # --- detection ---------------------------------------------------------------
@@ -195,6 +209,109 @@ def test_immunizations(record: PatientRecord) -> None:
     assert flu.comment is None
     refused = next(i for i in record.immunizations if i.comment == "Refused")
     assert refused.extensions["ccda:negationInd"] == "true"
+
+
+# --- zero-sentinel timestamps (#385) ------------------------------------------
+#
+# A vendor's TS @value of nothing but zeros ("0", "00000000", ...) used to
+# make parse_dt raise and abort the whole document over one medication with
+# no known start. It now reads as absent, and the loss is credited on the
+# record — see core.timeutil.is_zero_sentinel and
+# sources.ccda.parser._record_zero_sentinels.
+
+
+def test_a_medication_whose_start_is_a_zero_sentinel_is_kept_without_one(
+    zero_sentinel_record: PatientRecord,
+) -> None:
+    """Red on main: `parse_document` raised `ValueError: unrecognized
+    date/time format: '0'` on this fixture's substanceAdministration/
+    effectiveTime/low. The medication must now survive with no start (high
+    was already nullFlavor="UNK", already None before this fix), and the
+    loss must be named on the record rather than vanishing."""
+    [medication] = zero_sentinel_record.medications
+    assert medication.start is None
+    assert medication.stop is None
+    assert zero_sentinel_record.patient.extensions["ccda:timestamp_named_no_instant"] == {
+        "effectiveTime/low": 1
+    }
+
+
+def test_a_numeric_zero_is_not_a_date_sentinel(zero_sentinel_record: PatientRecord) -> None:
+    """Red on main (the fixture would not even parse). The same document's
+    30954-2 result carries a real PQ @value="0" that never routes through
+    parse_dt — it must keep reading as the number zero, and the sentinel
+    count above must not grow because of it: the count stays 1, naming only
+    the medication's TS, never this observation's PQ."""
+    [observation] = [o for o in zero_sentinel_record.observations if o.code == "11555-0"]
+    assert observation.value == "0"
+    assert zero_sentinel_record.patient.extensions["ccda:timestamp_named_no_instant"] == {
+        "effectiveTime/low": 1
+    }
+
+
+def test_a_nullflavor_timestamp_is_absent_not_a_sentinel(record: PatientRecord) -> None:
+    """Regression guard, NOT a #385 acceptance test — this already passed on
+    main. `_attr`'s own nullFlavor check already reads a nullFlavor TS as
+    absent, and `is_zero_sentinel` must not change that: the main fixture's
+    medications section carries nullFlavor TS elements (lisinopril's high
+    nullFlavor="UNK") and no all-zero run, so the zero-sentinel extension
+    this fix adds must never appear on it."""
+    assert "ccda:timestamp_named_no_instant" not in record.patient.extensions
+
+
+def test_every_timestamp_path_the_parser_reads_is_named_in_TS_PATHS() -> None:
+    """Anti-drift guard: TS_PATHS is the list `_count_zero_sentinels` walks to
+    find a zero-sentinel TS, kept by hand beside the `_ts`/`_ts_date` call
+    sites it has to agree with. Read as an AST (comments and docstrings are
+    invisible to it, unlike a plain-text scan) rather than trusted from
+    memory, so a new call reading a path TS_PATHS does not name — or a name
+    in TS_PATHS nothing reads any more — fails here instead of separating
+    silently. One indirection is resolved: medications reads an
+    already-found effectiveTime node's own low/high (`_ts_date(period,
+    "v3:low")`), and the path that is actually read is still
+    "effectiveTime/low", not the bare "low" the call spells locally.
+    """
+    from anastomosis.sources.ccda import parser as ccda_parser
+
+    tree = ast.parse(inspect.getsource(ccda_parser))
+
+    def _is_find_of(node: ast.AST, path: str) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_find"
+            and len(node.args) == 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == path
+        )
+
+    effective_time_vars = {
+        node.targets[0].id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and _is_find_of(node.value, "v3:effectiveTime")
+    }
+
+    read_paths: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"_ts", "_ts_date"}
+            and len(node.args) == 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            continue
+        stripped = "/".join(seg.removeprefix("v3:") for seg in node.args[1].value.split("/"))
+        first = node.args[0]
+        if isinstance(first, ast.Name) and first.id in effective_time_vars:
+            stripped = f"effectiveTime/{stripped}"
+        read_paths.add(stripped)
+
+    assert read_paths == set(ccda_parser.TS_PATHS)
 
 
 # --- vitals + results --------------------------------------------------------

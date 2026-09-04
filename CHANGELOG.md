@@ -400,6 +400,31 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A vendor's `value="0"` date sentinel aborted the whole export.** A C-CDA
+  TS `@value` that is a run of nothing but zeros — one vendor's own spelling
+  for "no start date" on a `substanceAdministration/effectiveTime/low` — made
+  `parse_dt` raise `unrecognized date/time format`, so a single medication
+  with no known start took the whole document down with it. Widening
+  `_parse_raw` to accept it was rejected: `datetime.MINYEAR` is 1, and a zero
+  run names no year at all, so making one up would be the silent
+  substitution the loud-failure contract forbids. `core.timeutil.
+  is_zero_sentinel` instead reads a zero run the way `parse_dt` already read
+  the year-1 SQL sentinel, one notch further: a run of zeros names no year,
+  so it names no instant, and `parse_dt` now returns `None` for it rather
+  than raising. Narrowed, not loosened — `0.0`, `-0`, `0000-00-00` and
+  `2023-13-45` still raise, because each holds a character that is not `0`,
+  or names a year and gets the rest wrong.
+
+  The loss is recorded on the record rather than absorbed silently:
+  `sources/ccda/parser._record_zero_sentinels` walks every TS shape the
+  parser reads (`TS_PATHS`, kept honest against the actual `_ts`/`_ts_date`
+  call sites by its own anti-drift test) and credits
+  `patient.extensions["ccda:timestamp_named_no_instant"]` with a count per
+  shape — recomputed fresh on every parse, so it never grows across an
+  export/re-ingest loop. A legitimate numeric zero, a lab result's PQ
+  `@value="0"`, never routes through `parse_dt` at all and is untouched.
+  `sources/ccda/ledger.py` is unchanged — the medication is credited exactly
+  as it was — and the 6,144-document corpus ledger pin does not move. (#385)
 - **A build-backend bump nobody can accept blocked every other pip update.**
   hatchling has no Dependabot `ignore` and never will — a bare one silences
   its security updates, a scoped one never fired against a two-sided bound —

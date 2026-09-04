@@ -12,7 +12,14 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
-from anastomosis.core.timeutil import age_at, age_display, parse_date, parse_dt, to_local
+from anastomosis.core.timeutil import (
+    age_at,
+    age_display,
+    is_zero_sentinel,
+    parse_date,
+    parse_dt,
+    to_local,
+)
 
 # --- parsing ---------------------------------------------------------------
 
@@ -65,6 +72,30 @@ def test_parse_dt_sentinels_and_blanks(raw: str | None) -> None:
 def test_parse_dt_rejects_unknown_formats_loudly() -> None:
     with pytest.raises(ValueError, match="unrecognized"):
         parse_dt("the 14th of March")
+
+
+@pytest.mark.parametrize("raw", ["0", "00", "000", "0000", "000000", "00000000", "0" * 12])
+def test_a_run_of_zeros_is_the_source_saying_nothing(raw: str) -> None:
+    """#385: a vendor's all-zero TS `@value` (any length) names no year, so it
+    names no instant — one notch further than the year-1 SQL sentinel. Before
+    this, `parse_dt`/`parse_date` raised on every one of these and aborted the
+    whole document over a single medication with no known start.
+    """
+    assert is_zero_sentinel(raw)
+    assert parse_dt(raw) is None
+    assert parse_date(raw) is None
+
+
+@pytest.mark.parametrize("raw", ["0.0", "-0", "0000-00-00", "2023-13-45", "20230510T"])
+def test_a_near_miss_is_not_a_zero_sentinel_and_still_raises(raw: str) -> None:
+    """Narrowed, not loosened: each of these holds a character that is not
+    `0` (a dot, a minus sign, a dash, a real-looking year that gets the rest
+    wrong), so `is_zero_sentinel` must not match it and `parse_dt` must keep
+    raising — silently accepting a near-miss as "no date" would hide a vendor
+    quirk the loud-failure contract exists to surface."""
+    assert not is_zero_sentinel(raw)
+    with pytest.raises(ValueError, match="unrecognized"):
+        parse_dt(raw)
 
 
 def test_parse_date_is_calendar_faithful() -> None:
