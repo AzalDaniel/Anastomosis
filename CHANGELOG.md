@@ -15,6 +15,20 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A bundle's QA report left out the verdict on the one page the bundle is
+  for.** The run's report is sliced per patient before it rides in that
+  patient's bundle, and the slice asked which of the record's ENCOUNTERS a
+  graded row belongs to. A record summary grades a chart rather than a visit,
+  so its row carries the patient's own id in that slot — the same stand-in the
+  upload manifest and the export's encounter check use for a whole-patient
+  document — and it matched nothing. An ordinary export put three rows in
+  `charts/qa_report.json` and two in the bundle; a patient whose whole chart is
+  a scan got a well-formed report with no rows at all beside the only page it
+  carries, which reads as "nothing to say" rather than "the verdict for this
+  page is missing". The slice belongs to the patient, so it now asks for the
+  patient: either one of the record's encounter ids, or the patient's own. A
+  row keyed on one patient still cannot reach another patient's bundle. (#399)
+
 - **A positive verdict has to be backed by the thing it claims.** An
   adversarial pass over the C-CDA conservation ledger found three ways it
   awarded credit it had not earned, and every one of them read as preservation

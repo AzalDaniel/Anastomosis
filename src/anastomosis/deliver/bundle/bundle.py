@@ -40,7 +40,7 @@ from anastomosis.deliver._shared import (
 )
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.pipeline import ATTACHMENTS_DIRNAME
-from anastomosis.qa import QAReport, Verdict
+from anastomosis.qa import DocumentQA, QAReport, Verdict
 
 __all__ = ["BundleDeliverer", "BundleResult"]
 
@@ -323,6 +323,23 @@ class BundleDeliverer:
             copied.append(target_dir / delivered)
         return copied
 
+    @staticmethod
+    def _is_this_patients(doc: DocumentQA, record: PatientRecord) -> bool:
+        """Whether a graded row belongs in ``record``'s bundle.
+
+        The row names the visit it graded, and a whole-patient page has none:
+        the record summary — the one page in a scan-only patient's bundle —
+        carries the PATIENT id in that slot, the same stand-in the upload
+        manifest and the export's own encounter check use where a document
+        covers a chart rather than a visit. Selecting on the record's encounter
+        ids alone therefore dropped exactly the row a reader most needs, and an
+        empty report reads as "nothing to say" rather than "the verdict for
+        this page is missing" (#399).
+        """
+        return doc.encounter_id == record.patient.id or doc.encounter_id in {
+            encounter.id for encounter in record.encounters
+        }
+
     def _write_qa_slice(
         self,
         record: PatientRecord,
@@ -331,8 +348,7 @@ class BundleDeliverer:
     ) -> Path | None:
         if qa_report is None:
             return None
-        encounter_ids = {encounter.id for encounter in record.encounters}
-        slice_docs = [doc for doc in qa_report.documents if doc.encounter_id in encounter_ids]
+        slice_docs = [doc for doc in qa_report.documents if self._is_this_patients(doc, record)]
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
             "patient_id": record.patient.id,
