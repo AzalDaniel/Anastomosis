@@ -51,12 +51,31 @@ on:
         default: false
   push:
     branches: [main]
+    # `src/anastomosis/**` is deliberately NOT here, and that is the whole
+    # difference between this lane costing an hour a day and costing an hour
+    # per merge. A Nuitka standalone build plus the installer smoke test takes
+    # 63 minutes of windows-latest, measured on run 33798695980, and every
+    # ordinary source merge used to spend it: four merges in one evening bought
+    # four builds of an artifact nobody downloaded, on the scarcest runner
+    # class, out of the same pool every pull request's test matrix draws on.
+    #
+    # What is left is what actually decides the frozen layout — the packaging
+    # scripts, this workflow, and the dependency set — plus the nightly build
+    # below, which is what catches a source change that only breaks once
+    # frozen (a new import Nuitka cannot resolve, an asset that never gets
+    # bundled). That is a day's exposure at worst, on a lane whose output ships
+    # only from a tag, and the tag build is unconditional.
     paths:
       - "packaging/**"
       - ".github/workflows/windows-package.yml"
-      - "src/anastomosis/**"
       - "pyproject.toml"
     tags: ["v*"]
+  # The canary for everything the path filter above no longer watches. 04:17
+  # UTC: after the working day in every timezone this project is developed in,
+  # so a red installer is waiting in the morning rather than interrupting a
+  # merge train.
+  schedule:
+    - cron: "17 4 * * *"
 
 # One build per head: a newer push to the same ref supersedes a running build,
 # EXCEPT a tag's — a release build is never cancelled by a later event.
