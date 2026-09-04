@@ -9,6 +9,10 @@ identical across them today:
 
 * :func:`write_fhir_bundle` — the machine-readable rendition every persona
   emits, same filename, same JSON serialization, same PHI-BY-DESIGN guarantee;
+* :func:`measure_delivered_attachment` — what a per-patient deliverer tells
+  the bundle about a source document it just copied beside it: the one place
+  that measures a delivered attachment's bytes, so the FHIR rendition and the
+  filesystem cannot independently drift;
 * :func:`copy_delivered_file` — the copy-never-move step, returning the
   PHI-safe exception TYPE name so each caller logs the artifact it was copying
   with its own module logger and its own message;
@@ -34,10 +38,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_text
-from anastomosis.core.fhir import to_bundle
+from anastomosis.core.fhir import DeliveredAttachment, to_bundle
+from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import PatientRecord
 from anastomosis.core.textutil import budgeted_name
@@ -48,6 +54,8 @@ __all__ = [
     "claim_delivered_name",
     "copy_claimed_chart",
     "copy_delivered_file",
+    "measure_delivered_attachment",
+    "measured_attachment",
     "record_witness",
     "write_fhir_bundle",
 ]
@@ -174,12 +182,26 @@ def record_witness(record: PatientRecord) -> str:
     return json.dumps(record.model_dump(), sort_keys=True, default=str)
 
 
-def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:
+def write_fhir_bundle(
+    record: PatientRecord,
+    out_dir: Path,
+    attachments: Mapping[str, DeliveredAttachment] | None = None,
+) -> Path:
     """Write ``record`` as ``out_dir/bundle.json`` (FHIR R4) and return the path.
 
     ``indent=2, sort_keys=True`` makes the file diffable and byte-stable across
     runs — delivered archives and bundles are compared by operators, so the
     serialization is part of the contract, not an implementation detail.
+
+    ``attachments`` is what THIS caller measured off the source documents it
+    just copied beside ``out_dir`` (see :func:`measure_delivered_attachment`),
+    keyed by the :class:`~anastomosis.core.model.DocumentArtifact` id each
+    belongs to. Passed straight to :func:`~anastomosis.core.fhir.to_bundle`,
+    which fills each DocumentReference's Attachment with it, or — for a
+    document that names a file this delivery did not carry — says so
+    explicitly on the Attachment rather than shipping silent nulls. Omitted,
+    the bundle carries no attachment url/size/hash at all: the caller has no
+    filesystem to measure and is not asserting one either way.
     """
     target = out_dir / BUNDLE_FILENAME
     # PHI-BY-DESIGN: writing the patient's FHIR record to disk IS the product.
@@ -190,8 +212,47 @@ def write_fhir_bundle(record: PatientRecord, out_dir: Path) -> Path:
     # they reach here. See SECURITY.md, "Code scanning & suppression policy
     # (auditable)".
     # codeql[py/clear-text-storage-sensitive-data]
-    atomic_write_text(target, json.dumps(to_bundle(record), indent=2, sort_keys=True))
+    atomic_write_text(target, json.dumps(to_bundle(record, attachments), indent=2, sort_keys=True))
     return target
+
+
+def measure_delivered_attachment(path: Path, url: str) -> DeliveredAttachment:
+    """The :class:`~anastomosis.core.fhir.DeliveredAttachment` for a file this
+    run just wrote at ``path``.
+
+    Measured off the bytes on disk with the one streaming hasher every
+    integrity check in this toolkit shares
+    (:func:`~anastomosis.core.hashutil.hash_and_size`) — never a record's own
+    ``sha256`` claim, so a short write or a swapped source file is reported as
+    what actually landed, not what the source said it would be. ``url`` is the
+    caller's own relative spelling of where ``path`` sits next to the
+    ``bundle.json`` that will reference it (forward slashes, always); this
+    function only measures, it does not name.
+    """
+    sha256, size = hash_and_size(path)
+    return DeliveredAttachment(url=url, size=size, sha256=sha256)
+
+
+def measured_attachment(
+    landed: dict[str, DeliveredAttachment], path: Path, url: str
+) -> DeliveredAttachment:
+    """The :class:`~anastomosis.core.fhir.DeliveredAttachment` for the file at
+    ``path``, from ``landed``'s per-run cache when a document under this same
+    delivered NAME (``path.name``) was already measured this call, freshly
+    measured (and cached) otherwise.
+
+    Two artifacts naming ONE carried file share this: the second is
+    recognized by that name and reuses the first's measurement rather than
+    re-hashing a copy :func:`copy_claimed_chart` already wrote once. Both
+    per-patient attachment copiers — the archive's and the bundle's — run
+    this same check, so the caching rule cannot drift between the two
+    personas the way two independent inline copies of it eventually would.
+    """
+    measured = landed.get(path.name)
+    if measured is None:
+        measured = measure_delivered_attachment(path, url)
+        landed[path.name] = measured
+    return measured
 
 
 def copy_claimed_chart(

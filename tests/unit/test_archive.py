@@ -813,6 +813,46 @@ def test_a_patients_documents_land_in_their_own_directory(
         assert here <= owned, f"{directory} holds a document its record does not name"
 
 
+def test_a_patients_bundle_json_resolves_its_own_documents(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """#382 applies here too: ``write_fhir_bundle`` is the shared mechanic
+    (see ``deliver._shared``), so the archive's own ``bundle.json`` must name
+    its documents' delivered files, not just the HTML page.
+    """
+    import base64
+    import hashlib
+
+    charts = _charts_with_attachments(tmp_path, records)
+
+    ArchiveDeliverer().deliver(records, charts, tmp_path / "archive")
+
+    for record in records:
+        named = {Path(d.path).name: d.id for d in record.documents if d.path}
+        if not named:
+            continue
+        (patient_dir,) = [
+            p
+            for p in (tmp_path / "archive" / "patients").iterdir()
+            if p.is_dir() and record.patient.id in (p / "index.html").read_text(encoding="utf-8")
+        ]
+        bundle = json.loads((patient_dir / "bundle.json").read_text())
+        docrefs = {
+            e["resource"]["id"]: e["resource"]
+            for e in bundle["entry"]
+            if e["resource"]["resourceType"] == "DocumentReference"
+            and e["resource"]["id"] in named.values()
+        }
+        for name, doc_id in named.items():
+            attachment = docrefs[doc_id]["content"][0]["attachment"]
+            assert attachment["url"] == f"attachments/{name}"
+            data = (patient_dir / "attachments" / name).read_bytes()
+            assert attachment["size"] == len(data)
+            assert attachment["hash"] == base64.b64encode(hashlib.sha256(data).digest()).decode(
+                "ascii"
+            )
+
+
 def test_the_patient_page_links_each_document_by_name_and_length(
     tmp_path: Path, records: list[PatientRecord]
 ) -> None:

@@ -18,7 +18,7 @@ The bundle is plain JSON-shaped dicts: exporting needs no optional
 dependency; the ``fhir`` extra adds schema validation on top.
 """
 
-from .export import to_bundle
+from .export import DeliveredAttachment, to_bundle
 from .ingest import from_bundle
 
-__all__ = ["from_bundle", "to_bundle"]
+__all__ = ["DeliveredAttachment", "from_bundle", "to_bundle"]

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
-from anastomosis.core.fhir import from_bundle, to_bundle
+from anastomosis.core.fhir import DeliveredAttachment, from_bundle, to_bundle
 from anastomosis.core.fhir.export import FhirExportError, _prune
 from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord, SectionKind
 from anastomosis.sources import get_source
@@ -338,3 +338,142 @@ def test_a_record_whose_documents_all_carry_ids_still_exports(
     for record in records:
         entries = to_bundle(record)["entry"]
         assert entries and all(entry["fullUrl"] for entry in entries)
+
+
+# --- #382: the Attachment names where its bytes actually landed --------------
+
+
+def _artifact_docref(bundle: dict, artifact_id: str) -> dict:
+    (resource,) = [
+        e["resource"]
+        for e in bundle["entry"]
+        if e["resource"]["resourceType"] == "DocumentReference"
+        and e["resource"]["id"] == artifact_id
+    ]
+    return resource
+
+
+def test_a_bare_export_carries_no_attachment_claim() -> None:
+    """``to_bundle(record)`` with no ``attachments`` — every existing caller in
+    this suite, and any export with no deliverer in the loop — makes no
+    assertion either way: no url/size/hash, and no "missing" marker either,
+    because nothing here has a filesystem to check against.
+    """
+    pid = "feedface-0000-4000-8000-000000000382"
+    record = PatientRecord(
+        patient=Patient(id=pid),
+        documents=[
+            DocumentArtifact(
+                id="feedface-doc0-0000-0000-000000000001",
+                patient_id=pid,
+                path="scan.pdf",
+                mime_type="application/pdf",
+            )
+        ],
+    )
+
+    bundle = to_bundle(record)
+
+    attachment = _artifact_docref(bundle, "feedface-doc0-0000-0000-000000000001")["content"][0][
+        "attachment"
+    ]
+    assert "url" not in attachment
+    assert "size" not in attachment
+    assert "hash" not in attachment
+    assert "extension" not in attachment
+
+
+def test_a_delivered_attachment_resolves_with_a_relative_forward_slash_url() -> None:
+    """The Attachment carries what the deliverer measured, base64 not hex."""
+    import hashlib
+
+    pid = "feedface-0000-4000-8000-000000000382"
+    doc_id = "feedface-doc0-0000-0000-000000000001"
+    record = PatientRecord(
+        patient=Patient(id=pid),
+        documents=[
+            DocumentArtifact(
+                id=doc_id, patient_id=pid, path="scan.pdf", mime_type="application/pdf"
+            )
+        ],
+    )
+    content = b"%PDF-1.4 synthetic\n"
+    attachments = {
+        doc_id: DeliveredAttachment(
+            url="attachments/scan.pdf",
+            size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+    }
+
+    bundle = to_bundle(record, attachments)
+
+    attachment = _artifact_docref(bundle, doc_id)["content"][0]["attachment"]
+    assert attachment["url"] == "attachments/scan.pdf"
+    assert "\\" not in attachment["url"]
+    assert not attachment["url"].startswith(("/", "file://"))
+    assert attachment["size"] == len(content)
+    assert attachment["hash"] == base64.b64encode(hashlib.sha256(content).digest()).decode("ascii")
+    # R4's Attachment.hash is base64Binary, not the hex spelling this toolkit's
+    # other digests carry — the schema is the check that would catch a slip.
+    assert attachment["hash"] != hashlib.sha256(content).hexdigest()
+
+    pytest.importorskip("fhir.resources", reason="schema validation needs the fhir extra")
+    from fhir.resources.R4B.bundle import Bundle
+
+    Bundle.model_validate(bundle)
+
+
+def test_a_named_document_the_delivery_did_not_carry_says_so_plainly() -> None:
+    """A ``DocumentArtifact`` whose ``path`` is set but has no entry in
+    ``attachments`` is one the deliverer tried to carry and could not — the
+    Attachment says so with FHIR's own data-absent-reason extension rather
+    than shipping url/size/hash all silently ``None``, the shape #382 found:
+    a DocumentReference asserting a document exists with nothing to find it
+    with, indistinguishable from "nobody checked".
+    """
+    pid = "feedface-0000-4000-8000-000000000382"
+    doc_id = "feedface-doc0-0000-0000-000000000001"
+    record = PatientRecord(
+        patient=Patient(id=pid),
+        documents=[
+            DocumentArtifact(
+                id=doc_id, patient_id=pid, path="scan.pdf", mime_type="application/pdf"
+            )
+        ],
+    )
+
+    bundle = to_bundle(record, {})  # the deliverer carried nothing
+
+    attachment = _artifact_docref(bundle, doc_id)["content"][0]["attachment"]
+    assert "url" not in attachment
+    assert "size" not in attachment
+    assert "hash" not in attachment
+    assert attachment["extension"] == [
+        {"url": "http://hl7.org/fhir/StructureDefinition/data-absent-reason", "valueCode": "error"}
+    ]
+
+    pytest.importorskip("fhir.resources", reason="schema validation needs the fhir extra")
+    from fhir.resources.R4B.bundle import Bundle
+
+    Bundle.model_validate(bundle)
+
+
+def test_a_document_with_no_path_makes_no_claim_even_with_attachments_given() -> None:
+    """A document the SOURCE never resolved (no ``path`` at all — an
+    unfetched remote blob) is not "missing from this delivery"; it was never
+    going to have a file. An empty ``attachments`` mapping must not turn that
+    into a false "not carried" marker.
+    """
+    pid = "feedface-0000-4000-8000-000000000382"
+    doc_id = "feedface-doc0-0000-0000-000000000001"
+    record = PatientRecord(
+        patient=Patient(id=pid),
+        documents=[DocumentArtifact(id=doc_id, patient_id=pid, mime_type="application/pdf")],
+    )
+
+    bundle = to_bundle(record, {})
+
+    attachment = _artifact_docref(bundle, doc_id)["content"][0]["attachment"]
+    assert "extension" not in attachment
+    assert "url" not in attachment
