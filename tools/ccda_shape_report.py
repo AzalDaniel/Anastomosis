@@ -114,9 +114,20 @@ def _documents(source: Path) -> Iterator[Iterator[tuple[str, bytes]]]:
 
     The label is an index, never the filename: a real export names its files
     after the patient, so the name is PHI even when the contents are not read.
+
+    Matched against the adapter's own ``_DOCUMENT_SUFFIXES`` (``.xml``,
+    ``.ccd``, ``.ccda``), not a bare ``*.xml`` glob: this tool audits a real
+    corpus for the shapes the adapter has never seen, so an instrument with
+    the SAME blind spot #384 fixed in the adapter itself would silently drop
+    the ``.ccd``/``.ccda`` documents from the very corpus it exists to
+    characterize (#384 round two, finding 5).
     """
+    from anastomosis.sources.ccda import _DOCUMENT_SUFFIXES
+
     if source.is_dir():
-        paths = sorted(p for p in source.rglob("*.xml"))
+        paths = sorted(
+            p for p in source.rglob("*") if p.is_file() and p.suffix.lower() in _DOCUMENT_SUFFIXES
+        )
 
         def from_dir() -> Iterator[tuple[str, bytes]]:
             for i, p in enumerate(paths):
@@ -125,7 +136,7 @@ def _documents(source: Path) -> Iterator[Iterator[tuple[str, bytes]]]:
         yield from_dir()
         return
     with zipfile.ZipFile(source) as zf:
-        names = sorted(n for n in zf.namelist() if n.lower().endswith(".xml"))
+        names = sorted(n for n in zf.namelist() if Path(n).suffix.lower() in _DOCUMENT_SUFFIXES)
 
         def from_zip() -> Iterator[tuple[str, bytes]]:
             for i, n in enumerate(names):

@@ -15,10 +15,13 @@ from pathlib import Path
 
 import pytest
 from _render_fakes import write_text_pdf
+from test_ccda_unstructured import _embedded, _pdf, _write
 
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
 from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.deliver.browser.gates import GATE_PASS, assert_deliverable
+from anastomosis.deliver.browser.persist import load_upload_manifest
 from anastomosis.gui.controller import GuiApi, GuiController
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
@@ -124,6 +127,27 @@ def test_detect_unknown_dir_is_none(tmp_path: Path) -> None:
     assert controller.detect(str(tmp_path)) == {"ok": True, "source": None}
 
 
+def test_detect_a_file_path_never_raises(tmp_path: Path) -> None:
+    """#384 round two, finding 1: the ccda adapter's ``detect`` used to raise
+    ``NotADirectoryError`` on a file path (typed into the wizard's input, or
+    handed by ``anast pipeline run --source`` auto-detect), which escaped
+    ``detect_source``'s loop uncaught and turned the GUI's clean "no match"
+    result into a red banner (``{'ok': False, 'error': 'NotADirectoryError'}``
+    — driven and confirmed on the pre-fix code). A file path is simply not a
+    match, the same as any other unrecognised path."""
+    a_file = tmp_path / "export.ccd"
+    a_file.write_text("not a directory\n", encoding="utf-8")
+    controller = GuiController(_RecordingSink())
+    assert controller.detect(str(a_file)) == {"ok": True, "source": None}
+
+
+def test_detect_a_missing_path_never_raises(tmp_path: Path) -> None:
+    """Same seam, the other raise the pre-fix adapter let through
+    (``FileNotFoundError``)."""
+    controller = GuiController(_RecordingSink())
+    assert controller.detect(str(tmp_path / "does-not-exist")) == {"ok": True, "source": None}
+
+
 # --- run_pipeline end to end ----------------------------------------------
 
 
@@ -199,6 +223,41 @@ def test_run_pipeline_returns_per_patient_summary(
     blob = repr(sink.events)
     for name in FIXTURE_NAMES:
         assert name not in blob, f"event log leaked patient name {name!r}"
+
+
+def test_the_gui_run_reports_the_same_qa_verdict_as_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#383, driven through the GUI rather than read off the delegation chain:
+    an export with zero encounters (two C-CDA Unstructured Documents for one
+    patient) still yields a verified bundle. FAILS on main — the roll-up
+    carries no `pass`/`warn`/`fail` key, the manifest gate reads `not_run`,
+    and `assert_deliverable` refuses."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
+    export = tmp_path / "export"
+    _write(export, _embedded(_pdf(pages=1)), name="doc1.xml")
+    _write(export, _embedded(_pdf(pages=2)), name="doc2.xml")
+    out = tmp_path / "out"
+
+    sink = _RecordingSink()
+    result = GuiController(sink).run_pipeline(
+        str(export),
+        str(out),
+        source="ccda",
+        qa=True,
+        force=True,
+        write_manifest=True,
+    )
+
+    assert result["ok"] is True
+    assert {"pass", "warn", "fail"} <= set(result)  # a `qa` StageEvent reached the rollup
+    assert result["pass"] == 1 and result["fail"] == 0  # the one summary, graded once
+
+    manifest = load_upload_manifest(out)
+    assert manifest.gates is not None
+    assert manifest.gates.qa == GATE_PASS
+    assert_deliverable(manifest)  # must not raise
 
 
 def test_last_run_summary_serves_async_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

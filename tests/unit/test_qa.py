@@ -332,6 +332,7 @@ def test_the_pipeline_hands_qa_the_clock_the_engine_renders_in(
     import anastomosis.qa as qa_module
     from anastomosis.pipeline import _run_qa_stage
     from anastomosis.reconstruct import discover_packs
+    from anastomosis.reconstruct.ccda_standard import CCDARenderResult
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
 
     status = discover_packs()["generic_soap"]
@@ -345,7 +346,9 @@ def test_the_pipeline_hands_qa_the_clock_the_engine_renders_in(
         return QAReport()
 
     monkeypatch.setattr(qa_module, "run_qa", fake_run_qa)
-    _run_qa_stage([], RenderResult(), engine, tmp_path, "Letter", lambda event: None)
+    _run_qa_stage(
+        [], RenderResult(), CCDARenderResult(), engine, tmp_path, "Letter", lambda event: None
+    )
     assert captured["render_tz"] == status.pack.manifest.timezone
 
 

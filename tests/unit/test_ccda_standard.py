@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import anastomosis.pipeline  # noqa: F401  registers the built-in source adapters
 from anastomosis.deliver.ccda_export.builder import build_ccd
 from anastomosis.reconstruct.ccda_standard import (
@@ -189,6 +191,34 @@ def test_render_failure_is_recorded_per_patient(tmp_path: Path) -> None:
     assert len(result.failed) == 3
     assert all(exc_type == "RuntimeError" for _, exc_type in result.failed)
     assert result.documents == []  # nothing written
+
+
+def test_render_ccda_standard_by_path_names_the_writer(tmp_path: Path) -> None:
+    """Two DISTINCT records sharing a patient id (and so the same allocated
+    path — `_allocate` embeds both the id hash and the name) at `force=False`:
+    the first writes, the second idempotent-skips. `by_path` (and `records`,
+    derived from it) must name the WRITER object, not whichever record ran
+    last."""
+    out = tmp_path / "ccda"
+    writer = _named("id-alpha")
+    skipped = _named("id-alpha")
+    assert writer is not skipped
+
+    result = render_ccda_standard([writer, skipped], out, renderer_factory=_FakeChromium)
+
+    (target,) = set(result.documents)
+    assert result.by_path[target] is writer
+    assert result.records == [writer, writer]
+
+
+def test_ccda_render_result_rejects_mismatched_documents_and_records() -> None:
+    """`CCDARenderResult` is public; a caller building one with `documents` but
+    no matching `records` used to fail far away, at whatever `zip(...,
+    strict=True)` call site paired them next. `__post_init__` names both
+    fields at the point of construction instead."""
+    with pytest.raises(ValueError, match="documents") as excinfo:
+        CCDARenderResult(documents=[Path("a.pdf")])
+    assert "records" in str(excinfo.value)
 
 
 # --- PF demoted to an opt-in skin ------------------------------------------

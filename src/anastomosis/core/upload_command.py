@@ -471,6 +471,11 @@ def run_upload_command(
         # the run report (and, for a pre-v2 manifest or an unavailable pack, a
         # warning in the log) — never to a level that passes without checking.
         #
+        # `verify_policies` says which items are the SOURCE's own documents
+        # rather than charts this toolkit printed: the page-one text levels
+        # cannot read a scan and skip, naming that reason in the report. A
+        # pre-v4 manifest carries none, and every one of its items is a chart.
+        #
         # If this constructor raises, the stack already owns both the
         # destination release and the ledger close, so neither leaks.
         verifier = None
@@ -482,6 +487,7 @@ def run_upload_command(
                 pack=_verification_pack(manifest.pack),
                 records=manifest.encounters,
                 expected_pages=manifest.expected_pages,
+                verify_policies=manifest.verify_policies,
             )
         run_id = tracking.begin_run(managed.name)
         # The engine contract: the CALLER recovers any mid-flight items from a

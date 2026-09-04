@@ -12,13 +12,40 @@ pipeline, so it needs the render run's `UploadItem` manifest and the `Patient`
 demographics (the resolver searches the destination by name + DOB) written to
 disk, ready to read back.
 
-## v3 — the current version
+## v4 — the current version
 
-`MANIFEST_VERSION` is 3. Beyond v2, a v3 file carries the run's REVIEWED
+`MANIFEST_VERSION` is 4. Beyond v3, a v4 file carries the bundle's SOURCE
+DOCUMENTS — the scans and reports in `charts/attachments` — as items, and the
+per-item verification policy they need. Before it, `--upload-manifest`
+serialized the rendered charts alone, so a patient whose whole chart is a C-CDA
+Unstructured Document (no encounter to render, every byte of the record a
+carried artifact) got a manifest with zero items and zero patients and a run
+that exited 0 (#374).
+
+| Field | Scope | Why it is there |
+| --- | --- | --- |
+| `verify_policy` | item | Which of the L0–L6 levels can honestly run over these bytes: `rendered_chart` (a chart this run printed — the whole ladder), `source_paged` (the source's own document under a media type this toolkit pages, so L0 and L1 apply and the page-one text levels do not), `source_opaque` (the source's own bytes under a type nothing here pages — L0's re-hash is the whole of what can be proven). A level that cannot run SKIPs with that reason in the run report; it never passes unchecked. |
+
+A source document's `file_path` is stored relative to the output directory
+(`attachments/<name>`) rather than as a bare basename — a basename would
+re-absolutize to a file that is not there. The reader refuses a stored path that
+resolves outside the output directory: a bundle is copied between machines, and
+what it names has to stay inside it.
+
+The version describes the FILE's content, as it has since v3: a bundle carrying
+no source document is still the v3 (or v2) file it always was, with no
+`verify_policy` key on its items, and a pre-v4 file loads with every item read
+as a `rendered_chart` — which is what every item in one is.
+
+## v3 — still loadable
+
+Beyond v2, a v3 file carries the run's REVIEWED
 context: the destination route the run was prepared for, and the gates it
 passed before the bundle was written. Those are what
 `deliver/browser/gates.py`'s `assert_deliverable` refuses on, so the bundle an
-executor moves is the bundle somebody checked.
+executor moves is the bundle somebody checked. Its per-item re-hash covers
+every item, so from v4 a source document that changed after review refuses the
+bundle exactly as a changed chart does.
 
 | Field | Scope | Why it is there |
 | --- | --- | --- |
@@ -34,10 +61,10 @@ is treated the same as a pre-v3 file: warned about, loudly, never refused. See
 Beyond v1's identity and integrity fields, a v2 file carries exactly what the
 L0–L6 verification ladder needs to run in FULL on the upload path, and nothing
 more. Each field group is gated on the version that INTRODUCED it
-(`LADDER_VERSION` = 2, `GATE_VERSION` = 3), never on `MANIFEST_VERSION` — the
-reader used to compare against the current version, which was correct only
-while 2 was newest and would have silently dropped these fields out of a v2
-file the moment 3 existed.
+(`LADDER_VERSION` = 2, `GATE_VERSION` = 3, `POLICY_VERSION` = 4), never on
+`MANIFEST_VERSION` — the reader used to compare against the current version,
+which was correct only while 2 was newest and would have silently dropped these
+fields out of a v2 file the moment 3 existed.
 
 | Field | Scope | Why it is there |
 | --- | --- | --- |

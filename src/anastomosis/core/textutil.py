@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import html as html_mod
+import mimetypes
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -41,6 +42,7 @@ __all__ = [
     "clean_numeric",
     "format_phone",
     "html_to_text",
+    "media_type_suffix",
     "safe_name",
     "sanitize_soap_html",
 ]
@@ -162,6 +164,27 @@ def safe_name(value: str | None, fallback: str) -> str:
     """
     cleaned = _UNSAFE_NAME_RE.sub("_", (value or "").strip()).strip("_")
     return _hash_tagged(cleaned or fallback, MAX_NAME_CHARS)
+
+
+def media_type_suffix(media_type: str | None) -> str:
+    """A file extension for bytes a source declared as ``media_type``.
+
+    Naming a file, not typing it: whatever the source declared stays on the
+    artifact's ``mime_type`` verbatim, and this is only what the bytes are
+    called on disk. A media type nothing maps to gets NO suffix rather than a
+    plausible one — a scan announced as a PDF it may not be is worse than one
+    whose filename admits the document said nothing.
+
+    Shared by the C-CDA reader (naming an embedded artifact it carries out of a
+    document) and the C-CDA deliverer (naming the sidecar it writes beside the
+    delivered document). Two derivations would let the deliverer write
+    ``<id>.pdf`` while the document referenced ``<id>`` — a chart with a
+    reference pointing at nothing, which is #373's failure wearing a different
+    hat.
+    """
+    if not media_type:
+        return ""
+    return mimetypes.guess_extension(media_type.split(";")[0].strip()) or ""
 
 
 def budgeted_name(

@@ -249,12 +249,18 @@ def _write_manifest_with_event(
     manifest. The pack-mode path reaches the same fields through
     ``core.commands._write_pipeline_manifest``; both modes must record them or
     an executor's refusal would depend on which representation was chosen.
+
+    The count comes from what the writer WROTE, for the reason the pack path's
+    does: a manifest can hold items nobody handed this function — a patient
+    whose whole chart is an attachment has no rendered document at all — and a
+    rail reporting the input while the file holds something else is how #374
+    read as a clean run.
     """
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
-    write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
-    emit(StageEvent(STAGE_MANIFEST, counts={"items": len(docs)}))
+    written = write_upload_manifest(docs, records, charts_dir, pack=pack, route=route, gates=gates)
+    emit(StageEvent(STAGE_MANIFEST, counts={"items": written.items}))
 
 
 def resolve_pack(render: str) -> str | None:
@@ -534,7 +540,7 @@ def _run_pack_mode(
 
 
 def _run_ccda_standard_qa(
-    records: list[PatientRecord],
+    view: CCDARenderResult,
     charts: Path,
     emit: Callable[[StageEvent], None],
 ) -> bool | None:
@@ -556,9 +562,17 @@ def _run_ccda_standard_qa(
     recorded as skipped-with-reason, every chartable kind declared carried — is
     :func:`anastomosis.qa.whole_patient_report`, shared with the record summaries
     the pack pipeline writes into every bundle.
+
+    ``view.by_path`` (not a per-record re-derivation of ``ccda_standard_doc_path``)
+    is what this grades: the same NIT the pipeline's own QA stage carried — two
+    ``PatientRecord``s sharing a patient id (``_allocate`` keys on it) render to
+    one file, and re-deriving the path per record graded that one file once per
+    record that named it, two indistinguishable rows for a chart verified
+    exactly once. ``render_ccda_standard`` already resolves path:writer
+    correctly (#383's round-two blocker); this reads that resolution rather
+    than re-deriving a second, easier-to-get-wrong one.
     """
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
-    from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
     try:
         from anastomosis.qa import whole_patient_report
@@ -568,9 +582,7 @@ def _run_ccda_standard_qa(
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
         return None
 
-    report = whole_patient_report(
-        (ccda_standard_doc_path(charts, record), record) for record in records
-    )
+    report = whole_patient_report(view.by_path.items())
     settle_qa(report, charts, emit)  # raises on a FAIL, so reaching here IS the pass
     return True
 
@@ -590,6 +602,7 @@ def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
         "bytes": result.total_bytes,
         "preserved_bytes": result.preserved_bytes,
         "largest_bytes": result.largest_bytes,
+        "documents": result.artifact_count,
     }
 
 
@@ -611,7 +624,7 @@ def _run_ccda_standard(
     from anastomosis.core.commands import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.deliver.browser.gates import RunGates, route_plan_of
-    from anastomosis.deliver.ccda_export import deliver_ccda
+    from anastomosis.deliver.ccda_export import ArtifactNotDelivered, deliver_ccda
     from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.ccda_standard import (
         ccda_standard_doc_path,
@@ -657,7 +670,7 @@ def _run_ccda_standard(
             # written, exactly as run_pipeline's QA stage precedes delivery.
             qa_ok: bool | None = None
             if cmd.qa and view.documents:
-                qa_ok = _run_ccda_standard_qa(records, charts, emit)
+                qa_ok = _run_ccda_standard_qa(view, charts, emit)
 
             # Write the upload manifest by default (a migration intends to
             # deliver). The whole-patient view has no RenderedDoc list, so the
@@ -691,9 +704,19 @@ def _run_ccda_standard(
                 gates=RunGates.from_run(qa_ok=qa_ok, layout_hash=None),
             )
 
-            ccda_result = deliver_ccda(records, ccda)
+            # The export directory is where this mode's source documents
+            # still live — it renders the HL7 standard view rather than
+            # running the pipeline's attachment carry — so it is what the
+            # deliverer copies them out of. Same conservation rule as the
+            # pipeline route, one function enforcing it (#373).
+            ccda_result = deliver_ccda(records, ccda, artifacts_dir=cmd.export_dir)
     except OutputLockedError as exc:
         raise PipelineError(str(exc), exit_code=2, kind="output_locked") from None
+    except ArtifactNotDelivered as exc:
+        # Same refusal the pipeline route makes, at the same exit code: a
+        # delivery that cannot carry a document the record names stops rather
+        # than reporting a migration the documents are missing from (#373).
+        raise PipelineError(str(exc), exit_code=1, kind="artifact_missing") from None
 
     ccda_export = DeliveryOutcome(
         kind="ccda",

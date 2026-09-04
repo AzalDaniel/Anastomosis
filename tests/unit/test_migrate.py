@@ -88,7 +88,9 @@ def test_migrate_neutral_uses_generic_soap_and_emits_both(
     assert list((out / "ccda").glob("*.xml"))  # structured C-CDA payload
     assert result.ccda_export.counts["patients"] == 3
     # A migration writes the upload manifest by default (into <out>/charts).
-    _assert_manifest(out / "charts", expected_items=6)
+    # Six rendered charts plus the source document the run carried beside
+    # them: the upload route delivers the same record the bundle does.
+    _assert_manifest(out / "charts", expected_items=7)
 
 
 def test_migrate_pack_render_uses_named_pack(
@@ -155,7 +157,10 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
     assert result.ccda_export.counts["largest_bytes"] > 0
     assert list((out / "ccda").glob("*.xml"))
     # The upload manifest is written in ccda-standard mode too — one item per
-    # patient (the whole-patient view has no per-encounter documents).
+    # patient (the whole-patient view has no per-encounter documents). Three,
+    # not four: this mode carries no attachments into the bundle, so the
+    # fixture's source document is not there to deliver and the writer says so
+    # in a warning rather than inventing an item for a file that is absent.
     _assert_manifest(out / "charts", expected_items=3)
 
 
@@ -594,6 +599,49 @@ def test_migrate_ccda_standard_qa_fail_exits_nonzero(
     # neither the identity anchor nor any of the record's clinical facts. Two
     # checks, two different things wrong with the same page.
     assert fails == {"data_integrity", "record_coverage"}
+
+
+def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
+    tmp_path: Path,
+) -> None:
+    """Round-two NIT: the sibling of `pipeline.py`'s #383 blocker, in the
+    ccda-standard migration's own QA stage. Two records share one patient id
+    (`_allocate` keys on it) and render to ONE file; `_run_ccda_standard_qa`
+    used to re-derive `ccda_standard_doc_path(charts, record)` per record,
+    grading that one file on disk twice — two indistinguishable rows for a
+    chart verified exactly once. Fixed by grading `view.by_path`
+    (`render_ccda_standard`'s own writer resolution) instead of re-deriving a
+    second, easier-to-get-wrong path per record.
+
+    The QA stage is entered directly rather than through `run_migration`,
+    because two records under one patient id no longer survive a whole run and
+    should not: #377 folds them into one chart at `load_records`, and past that
+    point #381's manifest writer refuses two items sharing an `item_key` and
+    the C-CDA delivery refuses a pair it cannot tell apart. Each of those is
+    right, each has its own tests, and a test of THIS stage that asserted which
+    of them fires first would be pinning an ordering nobody promised. So the
+    real renderer produces the view and the real QA stage grades it, which is
+    the seam the NIT was in.
+    """
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    from anastomosis.core.migrate import _run_ccda_standard_qa
+    from anastomosis.core.model import Patient
+    from anastomosis.qa.runner import REPORT_NAME
+    from anastomosis.reconstruct.ccda_standard import render_ccda_standard
+
+    pid = "feedface-0000-0000-0000-000000000401"
+    records = [
+        PatientRecord(patient=Patient(id=pid, given_name="Wren", family_name="Ashgrove")),
+        PatientRecord(patient=Patient(id=pid, given_name="Wren", family_name="Ashgrove")),
+    ]
+    charts = tmp_path / "charts"
+    view = render_ccda_standard(records, charts, renderer_factory=lambda: _ViewChromium())
+    assert len(list(charts.glob("*.pdf"))) == 1  # one file, named from the shared patient id
+
+    _run_ccda_standard_qa(view, charts, lambda _event: None)
+
+    report = json.loads((charts / REPORT_NAME).read_text(encoding="utf-8"))
+    assert len(report["documents"]) == 1  # one row, not one per record naming the file
 
 
 def test_migrate_ccda_standard_no_qa_writes_no_report(
