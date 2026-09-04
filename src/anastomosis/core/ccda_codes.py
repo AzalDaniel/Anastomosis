@@ -26,6 +26,8 @@ from uuid import NAMESPACE_URL, uuid5
 from lxml import etree
 
 __all__ = [
+    "ARTIFACT_INTEGRITY_ALGORITHM",
+    "ARTIFACT_TEMPLATE_ROOT",
     "EXT_PRIOR_LOSS_NARRATIVE",
     "EXT_SECTION_ENTRIES",
     "LOINC_ALLERGIES",
@@ -120,6 +122,26 @@ EXT_SECTION_ENTRIES = "ccda:entries"
 # states no code — because the record preserved none, and a code is not a
 # detail to invent.
 SECTION_CODE_UNKNOWN = "unknown"
+
+# The stamp on a delivered document artifact, and the ED attributes that carry
+# its digest. Both halves key on all three: the builder writes an
+# <observationMedia> entry per artifact it delivers a sidecar for, and the
+# parser reads exactly those entries back into DocumentArtifacts. An unstamped
+# <observationMedia> is a third party's multimedia and is left to the ordinary
+# narrative/entry capture, which is what it has always been.
+#
+# Why an entry rather than a second <component><nonXMLBody>: CDA R2 gives a
+# ClinicalDocument exactly one <component>, so a CCD carrying a structuredBody
+# cannot also carry a nonXMLBody — the shape the C-CDA R2.1 Unstructured
+# Document template (2.16.840.1.113883.10.20.22.1.10) is for is a WHOLE
+# document, not an attachment to one. <observationMedia> with an ED value is
+# base CDA R2's own mechanism for a non-XML artifact inside a structured body,
+# and the ED's <reference value="…"/> naming a file beside the document is the
+# same construct the reader already resolves for a referenced nonXMLBody.
+ARTIFACT_TEMPLATE_ROOT = "urn:anastomosis:ccda:artifact"
+#: ED @integrityCheckAlgorithm. "SHA-256" is one of the two values the HL7 v3
+#: ED datatype admits, and the digest this toolkit witnesses artifacts with.
+ARTIFACT_INTEGRITY_ALGORITHM = "SHA-256"
 
 
 def first_rooted_id(element: etree._Element) -> tuple[str, str | None] | None:

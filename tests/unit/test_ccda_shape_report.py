@@ -137,3 +137,51 @@ def test_it_counts_the_facts_that_went_nowhere(tool: object, tmp_path: Path) -> 
 
     # And the file it wrote carries no patient text — the guard ran for real.
     tool._assert_safe(report)  # type: ignore[attr-defined]
+
+
+# --- #384 round two, finding 5: the walk matches .ccd/.ccda too, not *.xml --
+
+
+def test_the_dir_walk_matches_ccd_and_ccda_extensions_too(tool: object, tmp_path: Path) -> None:
+    """The instrument that audits an export for the shapes the adapter has
+    never seen had the SAME blind spot #384 fixed in the adapter itself:
+    ``source.rglob("*.xml")`` silently dropped every ``.ccd``/``.ccda``
+    document from the very corpus it exists to characterize."""
+    import shutil
+
+    shutil.copy(_FIXTURES / "feedface_ccd.xml", tmp_path / "summary.ccd")
+    out = tmp_path / "report.json"
+    import sys
+
+    argv = sys.argv
+    sys.argv = ["ccda_shape_report.py", str(tmp_path), "--out", str(out)]
+    try:
+        assert tool.main() == 0  # type: ignore[attr-defined]
+    finally:
+        sys.argv = argv
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["documents_seen"] == 1
+    assert report["documents_parsed"] == 1
+
+
+def test_the_zip_walk_matches_ccd_and_ccda_extensions_too(tool: object, tmp_path: Path) -> None:
+    import zipfile
+
+    zip_path = tmp_path / "corpus.zip"
+    xml_bytes = (_FIXTURES / "feedface_ccd.xml").read_bytes()
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("summary.ccda", xml_bytes)
+    out = tmp_path / "report.json"
+    import sys
+
+    argv = sys.argv
+    sys.argv = ["ccda_shape_report.py", str(zip_path), "--out", str(out)]
+    try:
+        assert tool.main() == 0  # type: ignore[attr-defined]
+    finally:
+        sys.argv = argv
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["documents_seen"] == 1
+    assert report["documents_parsed"] == 1

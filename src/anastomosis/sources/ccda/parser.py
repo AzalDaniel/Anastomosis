@@ -46,20 +46,22 @@ is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
-import mimetypes
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
 
 from anastomosis.core.ccda_codes import (
+    ARTIFACT_INTEGRITY_ALGORITHM,
+    ARTIFACT_TEMPLATE_ROOT,
     EXT_PRIOR_LOSS_NARRATIVE,
     EXT_SECTION_ENTRIES,
     LOINC_ALLERGIES,
@@ -112,7 +114,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.model.patient import Address
-from anastomosis.core.textutil import format_phone
+from anastomosis.core.textutil import format_phone, media_type_suffix
 from anastomosis.core.timeutil import parse_date, parse_dt
 from anastomosis.sources.base import SourceDataError
 
@@ -363,6 +365,28 @@ def _entries(section: _Element) -> list[_Element]:
     return _findall(section, "v3:entry")
 
 
+def _artifact_media(entry: _Element) -> _Element | None:
+    """``entry``'s ``<observationMedia>`` when THIS toolkit's export wrote it.
+
+    One reading, used by both halves that care: :func:`_delivered_artifacts`
+    takes such an entry apart into a :class:`DocumentArtifact`, and
+    :func:`_capture_entries` leaves it out of the verbatim copies for exactly
+    that reason. Two hand-written spellings of "is this ours" would drift, and
+    the drift is not visible until a document has been round-tripped four
+    times.
+
+    The stamp is what decides, never the element name: a third party's
+    ``<observationMedia>`` carries no ``ARTIFACT_TEMPLATE_ROOT`` templateId and
+    stays what it has always been — narrative and entries preserved verbatim,
+    nothing claimed about it.
+    """
+    media = _find(entry, "v3:observationMedia")
+    if media is None:
+        return None
+    stamped = any(t.get("root") == ARTIFACT_TEMPLATE_ROOT for t in _findall(media, "v3:templateId"))
+    return media if stamped else None
+
+
 def entry_verbatim(entry: _Element) -> str:
     """One ``<entry>``, exactly as the document spells it.
 
@@ -436,7 +460,22 @@ def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
     A parsed entry's copy is redundant with its canonical object, and that
     redundancy is accepted on purpose — deciding per entry whether the parser
     consumed it would make this capture depend on the parser's reach, and the
-    point of preservation is that it must not.
+    point of preservation is that it must not. The exporter resolves the
+    redundancy at the other end: each structured emitter asks which of its
+    objects the preserved entries already state and emits only the rest.
+
+    One kind of entry is left out, and it is not an exception to that rule but
+    the same rule from the other side: an ``<observationMedia>`` THIS toolkit's
+    own export stamped (:func:`_artifact_media`). Those bytes are not the
+    source's statement — this tool wrote them last generation, naming a file it
+    delivered and witnessing that file's digest — and they are read back into a
+    :class:`DocumentArtifact` here, so the next export restates them from the
+    typed object with the name and digest of the file it actually wrote. Parked
+    as well, the copy would ride beside the entry rewritten from it: the two
+    documents grew 7,464 → 9,990 → 12,850 → 18,892 bytes over four generations,
+    each round doubling the artifact entries and narrating the doubled ones in
+    the loss ledger. A third party's unstamped ``<observationMedia>`` is not
+    ours to restate and is preserved verbatim like anything else.
 
     EVERY section, whatever it renders. The capture used to stop at sections
     rendering no text, on the reading that prose about a section stands in for
@@ -455,7 +494,8 @@ def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
     """
     captured: dict[_Element, list[str]] = {}
     for section in _sections(root):
-        if entries := _entries(section):
+        entries = [entry for entry in _entries(section) if _artifact_media(entry) is None]
+        if entries:
             captured[section] = [entry_verbatim(entry) for entry in entries]
     return captured
 
@@ -1881,6 +1921,7 @@ UNSTRUCTURED_BODY_NOTE = (
 
 _EMBEDDED = "embedded artifact"
 _REFERENCED = "referenced artifact"
+_DELIVERED = "delivered document"
 
 
 class UnstructuredBodyMissingError(SourceDataError):
@@ -1912,8 +1953,8 @@ def _within_ceiling(size: int, what: str) -> None:
         )
 
 
-def _resolved_reference(reference: str, document: Path) -> Path:
-    """The file a ``nonXMLBody`` reference names, beside the document itself.
+def _beside_document(reference: str, document: Path) -> Path | None:
+    """The file ``reference`` names beside ``document``, or ``None`` for none.
 
     The value is a third party's word about the filesystem, so it is resolved
     and then checked back against the directory it was resolved in: a ``../`` in
@@ -1921,17 +1962,31 @@ def _resolved_reference(reference: str, document: Path) -> Path:
     never pointed at.
 
     A value that is not a relative filename at all — an absolute path, a URL, a
-    ``#`` fragment — resolves to nothing beside the document and is refused by
-    the same check, which is the right answer for all three: this parser reads
-    the export the operator pointed at and fetches nothing.
+    ``#`` fragment — resolves to nothing beside the document and fails the same
+    check, which is the right answer for all three: this parser reads the export
+    the operator pointed at and fetches nothing.
+
+    Returns rather than raises because two constructs resolve references this
+    way and a missing file means a different thing to each: a ``nonXMLBody``'s
+    is the whole chart, a delivered artifact's is one document on it. Each
+    caller says its own sentence.
+    """
+    directory = document.parent.resolve()
+    resolved = (directory / reference).resolve()
+    if not resolved.is_relative_to(directory) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def _resolved_reference(reference: str, document: Path) -> Path:
+    """The file a ``nonXMLBody`` reference names, beside the document itself.
 
     PHI: the refusal names no filename. A C-CDA export names its files after the
     patient, so the reference value is a patient-derived string and the message
     says the SHAPE of what is missing instead.
     """
-    directory = document.parent.resolve()
-    resolved = (directory / reference).resolve()
-    if not resolved.is_relative_to(directory) or not resolved.is_file():
+    resolved = _beside_document(reference, document)
+    if resolved is None:
         raise UnstructuredBodyMissingError(
             "a C-CDA Unstructured Document's entire content is a referenced file that is "
             "not beside it in the export, so this patient's chart did not resolve to "
@@ -1970,18 +2025,6 @@ def _embedded_bytes(text: _Element) -> bytes:
     content = base64.b64decode(packed, validate=True)
     _within_ceiling(len(content), _EMBEDDED)
     return content
-
-
-def _delivered_suffix(media_type: str | None) -> str:
-    """A file extension for an embedded artifact's delivered name.
-
-    Naming a file, not typing it: ``mime_type`` keeps whatever the document
-    declared, verbatim, and this is only what the bytes are called on disk. A
-    media type nothing maps to gets no suffix rather than a plausible one.
-    """
-    if not media_type:
-        return ""
-    return mimetypes.guess_extension(media_type.split(";")[0].strip()) or ""
 
 
 def _non_xml_body_extensions(body: _Element, text: _Element) -> dict[str, Any]:
@@ -2024,7 +2067,7 @@ def _artifact_content(
         return reference, digest
     content = _embedded_bytes(text)
     extensions[EXT_INLINE_CONTENT] = base64.b64encode(content).decode("ascii")
-    return f"{_artifact_name(document, index)}{_delivered_suffix(media_type)}", _digest(content)
+    return f"{_artifact_name(document, index)}{media_type_suffix(media_type)}", _digest(content)
 
 
 def _digest(content: bytes) -> str:
@@ -2106,7 +2149,142 @@ def _artifact(
     )
 
 
+# --- documents this toolkit delivered beside a C-CDA -------------------------
+
+
+class DeliveredArtifactError(SourceDataError):
+    """A document this toolkit's own C-CDA export named is missing or is not it.
+
+    The export writes each of a record's source documents into the delivery
+    directory and names it from the CCD with its media type and its SHA-256
+    (#373). A stamped entry whose file is gone, or whose bytes hash to
+    something else, means the directory was split up, truncated or edited
+    between the export and here — so the chart in front of the operator refers
+    to a document nobody can produce. Refused rather than carried: a chart
+    naming a scan that is not the scan is worse than one that stops.
+    """
+
+
+def _delivered_artifacts(
+    section: _Element, document: Path, patient_id: str
+) -> list[DocumentArtifact]:
+    """The documents this toolkit delivered beside ``document``, as artifacts.
+
+    The inverse of ``deliver.ccda_export.builder._delivered_documents``. Only
+    an ``<observationMedia>`` stamped with :data:`ARTIFACT_TEMPLATE_ROOT` is
+    read this way: a third party's multimedia carries no such stamp and stays
+    what it has always been — narrative and entries preserved, nothing claimed
+    about it.
+
+    Reading it back is what makes the C-CDA deliverable a round trip rather
+    than a one-way door. Before #373 a re-ingest of the delivered directory
+    produced the patient with an empty chart, which is precisely the reading
+    that let the loss ship.
+    """
+    return [
+        _delivered_artifact(media, document, patient_id)
+        for entry in _entries(section)
+        if (media := _artifact_media(entry)) is not None
+    ]
+
+
+def _delivered_artifact(media: _Element, document: Path, patient_id: str) -> DocumentArtifact:
+    """One stamped ``<observationMedia>`` as the artifact it names.
+
+    Every field this reads is one the exporter wrote, so anything missing is a
+    document that was edited after it was written, and that is a refusal rather
+    than a best guess: an artifact recovered under a made-up id would be filed
+    as a different document from the one the chart means.
+    """
+    value = _find(media, "v3:value")
+    artifact_id = _val_attr(media, "v3:id", "root")
+    reference = _val_attr(value, "v3:reference", "value")
+    if value is None or artifact_id is None or reference is None:
+        raise DeliveredArtifactError(
+            "a document entry written by this toolkit's own C-CDA export is missing its "
+            "id, its media value or the reference naming the file; refusing to guess which "
+            "document a chart means"
+        )
+    resolved = _beside_document(reference, document)
+    if resolved is None:
+        raise DeliveredArtifactError(
+            "a C-CDA delivered by this toolkit names a document that is not beside it. The "
+            "delivery directory holds the CCD and its documents together; refusing to carry "
+            "a chart whose documents did not travel with it. The file is not named here "
+            "because a delivery is read by whoever it was handed to"
+        )
+    digest, size = hash_and_size(resolved)
+    _within_ceiling(size, _DELIVERED)
+    _verify_integrity(value, digest)
+    return DocumentArtifact(
+        id=artifact_id,
+        patient_id=patient_id,
+        path=reference,
+        sha256=digest,
+        # As DECLARED, exactly as for a nonXMLBody: a type this adapter
+        # normalized would be this tool telling a receiving system what a scan
+        # is, which is a claim only the document holding it can make.
+        mime_type=value.get("mediaType") or UNDECLARED_MEDIA_TYPE,
+        # Deliberately not the document's <title>: that titles the CCD, not the
+        # scan inside it. The source's own document title rides the export's
+        # loss narrative with the rest of the fields no CDA slot holds.
+        title=None,
+        provenance=_prov(document.name, artifact_id),
+    )
+
+
+def _verify_integrity(value: _Element, digest: str) -> None:
+    """Check the delivered file against the digest the ED witnesses.
+
+    The HL7 v3 ED datatype carries ``@integrityCheck`` (the digest, base64) and
+    ``@integrityCheckAlgorithm``; the export writes SHA-256 into both. A file
+    that hashes to something else is not a slightly different file, it is a
+    different document, so it stops the run here rather than being carried as
+    the one the chart names.
+
+    An ED declaring no check at all is not refused — the datatype allows it,
+    and a document without one is simply unwitnessed. What is refused is a
+    check this reader cannot evaluate: an algorithm it does not implement would
+    otherwise pass silently by not being compared.
+    """
+    declared = value.get("integrityCheck")
+    if declared is None:
+        return
+    algorithm = value.get("integrityCheckAlgorithm") or ARTIFACT_INTEGRITY_ALGORITHM
+    if algorithm != ARTIFACT_INTEGRITY_ALGORITHM:
+        raise DeliveredArtifactError(
+            f"a delivered document witnesses its bytes with {algorithm!r}, which this "
+            f"adapter does not compute; refusing to carry a document it cannot check "
+            f"rather than reporting an unchecked one as verified"
+        )
+    try:
+        witnessed = base64.b64decode(declared, validate=True).hex()
+    except (binascii.Error, ValueError) as exc:
+        raise DeliveredArtifactError(
+            f"a delivered document's integrity check did not decode ({type(exc).__name__}); "
+            "refusing to carry a document whose witness is unreadable"
+        ) from None
+    if witnessed != digest:
+        raise DeliveredArtifactError(
+            "a delivered document's bytes do not match the SHA-256 the C-CDA naming it "
+            "witnesses; the delivery was edited or truncated after it was written, and "
+            "the chart in front of you refers to a document nobody can produce"
+        )
+
+
 # --- top-level assembly ------------------------------------------------------
+
+
+class _HardenedXMLKwargs(TypedDict):
+    """The keyword shape of :data:`_HARDENED_XML_KWARGS` — a ``TypedDict`` so
+    unpacking it with ``**`` at a call site still type-checks under strict
+    mypy, the way a plain ``dict[str, bool]`` cannot against ``XMLParser`` or
+    ``iterparse``'s own keyword-only signatures."""
+
+    resolve_entities: bool
+    no_network: bool
+    load_dtd: bool
+    huge_tree: bool
 
 
 # Hardened XML parser: third-party clinical documents must never resolve
@@ -2114,12 +2292,20 @@ def _artifact(
 # expand into unbounded trees (billion-laughs / quadratic blowup). These
 # flags are the OWASP-recommended posture for any XML ingest the
 # application does not author itself.
-_PARSER = etree.XMLParser(
-    resolve_entities=False,
-    no_network=True,
-    load_dtd=False,
-    huge_tree=False,
-)
+#
+# Kept as a dict, not only as the ``_PARSER`` built from it, because
+# ``etree.iterparse`` — the cheap "does this look like CDA" sniff in
+# ``sources/ccda/__init__.py`` (#384 round two) — has no ``parser=`` argument
+# to hand a built ``XMLParser`` to; it takes these same flags directly. A
+# document sniffed under weaker settings than the one it is then read under
+# would defeat the point of hardening the read at all.
+_HARDENED_XML_KWARGS: _HardenedXMLKwargs = {
+    "resolve_entities": False,
+    "no_network": True,
+    "load_dtd": False,
+    "huge_tree": False,
+}
+_PARSER = etree.XMLParser(**_HARDENED_XML_KWARGS)
 
 
 def _inline_narrative_references(root: _Element) -> None:
@@ -2288,6 +2474,11 @@ def parse_document(path: Path) -> PatientRecord:
             record.encounters += _encounters(section, pid, actors)
         elif loinc == LOINC_NOTES:
             record.encounters += _note_encounters(section, pid, actors)
+            # The documents a C-CDA this toolkit delivered carries beside it.
+            # Read in the Notes section because that is where the export hangs
+            # them: a scanned chart IS the note for the visit it documents, and
+            # a second 34109-9 section would tell a reader the document has two.
+            record.documents += _delivered_artifacts(section, path, pid)
         # Losslessness: the narrative and the entries are captured for every
         # section, not only the unparsed ones. The structural parsers above `continue` past an entry
         # whose shape they do not support, so a known section can yield nothing
