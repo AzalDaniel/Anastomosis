@@ -400,6 +400,18 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **The Windows installer was rebuilt on every source merge, and the queue was
+  paid for by everything waiting behind it.** A Nuitka standalone build plus
+  the installer smoke test takes about an hour of `windows-latest`, billed at
+  twice a Linux minute, out of the same runner pool every pull request's test
+  matrix draws on — and the lane watched `src/anastomosis/**`, so four merges
+  in one evening bought four builds of an artifact nobody downloaded. The path
+  filter now watches only what decides the frozen layout (the packaging
+  scripts, the workflow itself, the dependency set); a nightly build is the
+  canary for a source change that breaks only once frozen; and a release tag
+  still builds unconditionally. A test pins the decision so the source path
+  cannot come back unnoticed.
+
 - **A build-backend bump nobody can accept blocked every other pip update.**
   hatchling has no Dependabot `ignore` and never will — a bare one silences
   its security updates, a scoped one never fired against a two-sided bound —
