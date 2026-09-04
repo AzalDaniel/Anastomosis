@@ -55,6 +55,7 @@ register_learned_sources()
 if TYPE_CHECKING:
     from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord
     from anastomosis.qa import QAReport
+    from anastomosis.reconstruct.ccda_standard import CCDARenderResult
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
     from anastomosis.reconstruct.provenance import RenderProvenance
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
@@ -1254,7 +1255,9 @@ def _write_inline(content: str, destination: Path) -> str | None:
 RECORD_SUMMARY_DIRNAME = "record-summary"
 
 
-def _render_record_summaries(records: list[PatientRecord], out: Path, *, force: bool) -> None:
+def _render_record_summaries(
+    records: list[PatientRecord], out: Path, *, force: bool
+) -> CCDARenderResult:
     """Render one whole-patient record summary per patient into the bundle.
 
     A visit note is a note about ONE visit, so every layout selects by encounter
@@ -1273,6 +1276,11 @@ def _render_record_summaries(records: list[PatientRecord], out: Path, *, force: 
     bundle that quietly lost one. The ``(patient_id, exception-type)`` pairs ride
     on the error exactly as the per-encounter render failures do — pseudonymous
     ids and type names, never exception text.
+
+    Returns the render result (rather than discarding it, as before #383):
+    a chart with no encounters renders zero per-encounter documents, and this
+    is the only population left to gate QA on and grade — the caller needs
+    the paths this actually wrote, and the record behind each one.
     """
     from anastomosis.reconstruct.ccda_standard import render_ccda_standard
 
@@ -1284,6 +1292,7 @@ def _render_record_summaries(records: list[PatientRecord], out: Path, *, force: 
             kind="render_failed",
             failed=tuple(view.failed),
         )
+    return view
 
 
 def run_pipeline(
@@ -1439,7 +1448,7 @@ def run_pipeline(
     # attachments are carried and before QA, so a bundle that could not carry
     # the whole record for every patient stops here rather than being graded and
     # delivered as complete.
-    _render_record_summaries(records, out, force=force)
+    summaries = _render_record_summaries(records, out, force=force)
 
     # `out` is hardened by the engine above, so this is the first point a
     # patient's own files may be written beside their charts.
@@ -1467,8 +1476,8 @@ def run_pipeline(
     )
 
     qa_report = None
-    if qa and result.documents:
-        qa_report = _run_qa_stage(records, result, engine, out, manifest.page.size, emit)
+    if qa:
+        qa_report = _run_qa_stage(records, result, summaries, engine, out, manifest.page.size, emit)
     return PipelineResult(
         records=records,
         render_result=result,
@@ -1513,12 +1522,14 @@ def settle_qa(report: QAReport, out: Path, emit: EventSink) -> None:
 def _run_qa_stage(
     records: list[PatientRecord],
     result: RenderResult,
+    summaries: CCDARenderResult,
     engine: ReconstructionEngine,
     out: Path,
     page_size: str,
     emit: EventSink,
 ) -> QAReport | None:
-    """Verify every rendered document; return the report (None if QA downgraded).
+    """Verify every rendered document; return the report (None if QA downgraded
+    or nothing was rendered to verify).
 
     Two populations, ONE report. The charts are graded against the pack's own
     ``carries``/``omits`` — a SOAP note is allowed to have no problem list, and
@@ -1527,6 +1538,39 @@ def _run_qa_stage(
     declared carried: between them the run cannot come back clean while a fact
     family the record holds reached no page at all. One report because there is
     one bundle, and an operator reading two summaries has to reconcile them.
+    The caller gates on ``qa`` alone now — no longer on whether anything
+    actually rendered. A chart with no encounters renders zero per-encounter
+    documents and still owes an operator a verified bundle through the
+    summaries (#383); gating entry on ``result.documents or summaries.
+    documents`` used to try to say so, but ``_render_record_summaries`` raises
+    on any render failure and otherwise returns exactly one ``documents``
+    entry per record, and ``load_records`` never returns an empty ``records``
+    list — so ``summaries.documents`` was truthy on every real run and the
+    per-encounter half of that condition never decided anything (#383's
+    round-two dead-arm finding). Worse, on the one shape where a caller COULD
+    force both populations empty (stubbing the renderer itself), that gate
+    refused entry before this function's own emptiness rule ever ran, so the
+    rail stayed silent instead of getting a skip event — the exact complaint
+    #383 closed, reappeared through the gate meant to fix it. So both
+    populations may simply be empty here, and this copes with either or both
+    being empty rather than assuming a per-encounter document exists — that
+    rule, not a pre-condition on the caller's side, is what decides.
+
+    ``summaries.by_path`` carries the record beside each distinct path it
+    wrote, which is what lets this grade ONE row per rendered file. Two
+    ``PatientRecord``s sharing a patient id (the C-CDA adapter yields one per
+    source document, and an attachment-only chart's Unstructured Documents are
+    exactly this) render to the SAME summary path (``_allocate`` keys on
+    ``patient.id``); re-deriving that path per record, as this used to, graded
+    the one file on disk once per record that named it — an indistinguishable
+    duplicate row for a chart that was verified exactly once. This reads
+    ``by_path`` directly rather than re-zipping ``summaries.documents`` and
+    ``summaries.records`` itself: that used to be a plain ``dict(zip(...))``,
+    which keeps the LAST list entry for a repeated key — under ``force=False``
+    the record whose render took the idempotent-skip branch, never the writer
+    (#383's round-two blocker). ``render_ccda_standard`` already resolves that
+    association correctly; re-deriving it here a second way is exactly how it
+    was lost the first time.
 
     A missing PyMuPDF (the optional ``render`` extra) downgrades QA to a
     no-op rather than failing the run — the only ``ImportError`` allowed to
@@ -1548,7 +1592,6 @@ def _run_qa_stage(
             )
         )
         return None
-    from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
     lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
     report = run_qa(
@@ -1562,11 +1605,22 @@ def _run_qa_stage(
     )
     # ``documents`` is the report's only state — ``ok`` and ``not_carried`` are
     # derived from it — so extending it merges the two batches soundly.
-    summaries = out / RECORD_SUMMARY_DIRNAME
-    report.documents.extend(
-        whole_patient_report(
-            (ccda_standard_doc_path(summaries, record), record) for record in records
-        ).documents
-    )
+    report.documents.extend(whole_patient_report(summaries.by_path.items()).documents)
+
+    if not report.documents:
+        # Both populations were empty. The gate above no longer screens for
+        # this (it is just ``qa``), so this rule alone decides — and a report
+        # that graded nothing is not evidence of anything passing, the same
+        # downgrade the missing-PyMuPDF branch takes, for the same reason: a
+        # tick over a verification that never ran is a false completion.
+        emit(
+            StageEvent(
+                STAGE_QA,
+                detail="skipped: nothing rendered to verify",
+                skipped=True,
+            )
+        )
+        return None
+
     settle_qa(report, out, emit)
     return report

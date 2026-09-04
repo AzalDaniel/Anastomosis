@@ -673,6 +673,45 @@ issue and fixed in its own pull request.
   holds something else is how this read as a clean run in the first place. CLI
   and GUI reach the one writer through the same command, and a test drives both
   over the same scanned export to keep it that way. (#374)
+- **A chart with no encounters was never verified.** `run_pipeline` gated the
+  whole QA stage on `if qa and result.documents:` — the per-encounter render's
+  own output. A C-CDA Unstructured Document renders no encounter at all (its
+  clinical content is a scan, not a coded section), so an attachment-only
+  export offered nothing to that population and QA never ran: no
+  `qa_report.json`, the manifest gate read `not_run`, and `assert_deliverable`
+  refused a bundle nothing had ever graded — silently, since nothing in the
+  stage rail said QA had been skipped.
+
+  The bundle already carries something QA can honestly verify: the
+  whole-patient record summary every pack-mode run writes, HL7's own
+  stylesheet over the whole record with every chartable kind declared carried,
+  so a fact family the record holds and this page does not show is a FAIL
+  rather than a layout choice. The QA stage now enters whenever QA was asked
+  for, full stop — a chart with no encounters still owes an operator a
+  verified bundle through the summaries, and the stage's own rule (not a
+  precondition on its caller) is what downgrades a run that genuinely graded
+  nothing to `not_run` with a skip event, the same shape a missing PyMuPDF
+  install already gets, rather than a false `pass`.
+
+  `_render_record_summaries` returns its render result instead of discarding
+  it, so the stage grades the paths it actually wrote and the record BEHIND
+  each one — but two `PatientRecord`s sharing one patient id (the C-CDA
+  adapter yields one per source document) render to the SAME summary path,
+  and the render's own idempotent skip means only ONE of them actually wrote
+  the bytes there. Deduping on the path is not enough on its own: the first
+  attempt kept whichever record's render ran LAST, which under the run's own
+  default (`force=False`) is the one that took the skip branch, never the
+  writer — so the graded row could be checked against a DIFFERENT record's
+  identity and content than the page in front of it actually shows, disarming
+  `record_coverage` and failing `data_integrity` on values that were never
+  going to be on that page. The render now keeps the path:record association
+  live as it writes — a write always claims its path, a skip only holds it if
+  nothing already has — so the association is always the WRITER. Both QA
+  stages that grade a whole-patient view carried the same "re-derive the path
+  per record" defect (`pipeline.py`'s pack-mode stage and `core/migrate.py`'s
+  ccda-standard-mode stage) and both now read that one resolution rather than
+  computing their own. The GUI reaches the identical fix for free, through the
+  same shared pipeline core. (#383)
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
