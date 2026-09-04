@@ -310,23 +310,32 @@ issue and fixed in its own pull request.
   whole-patient record summary every pack-mode run writes, HL7's own
   stylesheet over the whole record with every chartable kind declared carried,
   so a fact family the record holds and this page does not show is a FAIL
-  rather than a layout choice. The stage now enters on what actually
-  RENDERED — the engine's per-encounter documents or the summaries just
-  written, whichever is non-empty — never on the records list that was merely
-  offered. `_render_record_summaries` returns its render result instead of
-  discarding it, so the stage grades the paths it actually wrote and the
-  record behind each one, rather than re-deriving a path from `records` a
-  second time: two `PatientRecord`s sharing one patient id (the C-CDA adapter
-  yields one per source document) render to the SAME summary path, and
-  re-deriving it graded the one file on disk once per record that named it —
-  a naive `if qa:` fix grades that file twice, as two indistinguishable rows,
-  and grades an all-empty run as a vacuous pass. Neither survives here: the
-  summary population is deduped to one row per distinct rendered file, and a
-  report that graded zero documents (both populations empty — unreachable
-  through the pipeline's own gate, but not through a direct call) downgrades
-  to `not_run` with the same skipped-stage event a missing PyMuPDF install
-  already emits, rather than a false `pass`. The GUI reaches the identical fix
-  for free, through the same shared pipeline core. (#383)
+  rather than a layout choice. The QA stage now enters whenever QA was asked
+  for, full stop — a chart with no encounters still owes an operator a
+  verified bundle through the summaries, and the stage's own rule (not a
+  precondition on its caller) is what downgrades a run that genuinely graded
+  nothing to `not_run` with a skip event, the same shape a missing PyMuPDF
+  install already gets, rather than a false `pass`.
+
+  `_render_record_summaries` returns its render result instead of discarding
+  it, so the stage grades the paths it actually wrote and the record BEHIND
+  each one — but two `PatientRecord`s sharing one patient id (the C-CDA
+  adapter yields one per source document) render to the SAME summary path,
+  and the render's own idempotent skip means only ONE of them actually wrote
+  the bytes there. Deduping on the path is not enough on its own: the first
+  attempt kept whichever record's render ran LAST, which under the run's own
+  default (`force=False`) is the one that took the skip branch, never the
+  writer — so the graded row could be checked against a DIFFERENT record's
+  identity and content than the page in front of it actually shows, disarming
+  `record_coverage` and failing `data_integrity` on values that were never
+  going to be on that page. The render now keeps the path:record association
+  live as it writes — a write always claims its path, a skip only holds it if
+  nothing already has — so the association is always the WRITER. Both QA
+  stages that grade a whole-patient view carried the same "re-derive the path
+  per record" defect (`pipeline.py`'s pack-mode stage and `core/migrate.py`'s
+  ccda-standard-mode stage) and both now read that one resolution rather than
+  computing their own. The GUI reaches the identical fix for free, through the
+  same shared pipeline core. (#383)
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as

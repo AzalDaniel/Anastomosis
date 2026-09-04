@@ -596,6 +596,37 @@ def test_migrate_ccda_standard_qa_fail_exits_nonzero(
     assert fails == {"data_integrity", "record_coverage"}
 
 
+def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-two NIT: the sibling of `pipeline.py`'s #383 blocker, in the
+    ccda-standard migration's own QA stage. Two records share one patient id
+    (`_allocate` keys on it) and render to ONE file; `_run_ccda_standard_qa`
+    used to re-derive `ccda_standard_doc_path(charts, record)` per record,
+    grading that one file on disk twice — two indistinguishable rows for a
+    chart verified exactly once. Fixed by grading `view.by_path`
+    (`render_ccda_standard`'s own writer resolution) instead of re-deriving a
+    second, easier-to-get-wrong path per record."""
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    import anastomosis.pipeline as pipeline_mod
+    from anastomosis.core.model import Patient
+    from anastomosis.qa.runner import REPORT_NAME
+
+    pid = "feedface-0000-0000-0000-000000000401"
+    records = [
+        PatientRecord(patient=Patient(id=pid, given_name="Wren", family_name="Ashgrove")),
+        PatientRecord(patient=Patient(id=pid, given_name="Wren", family_name="Ashgrove")),
+    ]
+    monkeypatch.setattr(pipeline_mod, "load_records", lambda _adapter, _export_dir: records)
+    _patch_ccda_renderer(monkeypatch, lambda: _ViewChromium())
+    out = tmp_path / "out"
+
+    run_migration(_ccda_command(out))
+
+    report = json.loads((out / "charts" / REPORT_NAME).read_text(encoding="utf-8"))
+    assert len(report["documents"]) == 1  # one row, not one per record naming the file
+
+
 def test_migrate_ccda_standard_no_qa_writes_no_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -892,19 +892,6 @@ def _render_record_summaries(
     return view
 
 
-def _qa_gate_applies(qa: bool, result: RenderResult, summaries: CCDARenderResult) -> bool:
-    """Whether this run has anything for the QA stage to grade.
-
-    Gated on what actually RENDERED — the engine's per-encounter documents or
-    the summaries just written — never on ``records``, which is the POPULATION
-    offered, not what reached disk. A chart with no encounters renders zero of
-    the former and still owes an operator a verified bundle through the
-    latter; ``records`` alone could not tell the two apart from the shape that
-    made this a defect in the first place (#383).
-    """
-    return qa and bool(result.documents or summaries.documents)
-
-
 def run_pipeline(
     *,
     export_dir: Path,
@@ -1086,7 +1073,7 @@ def run_pipeline(
     )
 
     qa_report = None
-    if _qa_gate_applies(qa, result, summaries):
+    if qa:
         qa_report = _run_qa_stage(records, result, summaries, engine, out, manifest.page.size, emit)
     return PipelineResult(
         records=records,
@@ -1148,23 +1135,39 @@ def _run_qa_stage(
     declared carried: between them the run cannot come back clean while a fact
     family the record holds reached no page at all. One report because there is
     one bundle, and an operator reading two summaries has to reconcile them.
-    Both populations may be empty — a chart with no encounters renders zero of
-    the first, and the caller is only reached at all because it did not gate on
-    ``records`` (#383) — so this copes with either or both being empty rather
-    than assuming a per-encounter document exists.
+    The caller gates on ``qa`` alone now — no longer on whether anything
+    actually rendered. A chart with no encounters renders zero per-encounter
+    documents and still owes an operator a verified bundle through the
+    summaries (#383); gating entry on ``result.documents or summaries.
+    documents`` used to try to say so, but ``_render_record_summaries`` raises
+    on any render failure and otherwise returns exactly one ``documents``
+    entry per record, and ``load_records`` never returns an empty ``records``
+    list — so ``summaries.documents`` was truthy on every real run and the
+    per-encounter half of that condition never decided anything (#383's
+    round-two dead-arm finding). Worse, on the one shape where a caller COULD
+    force both populations empty (stubbing the renderer itself), that gate
+    refused entry before this function's own emptiness rule ever ran, so the
+    rail stayed silent instead of getting a skip event — the exact complaint
+    #383 closed, reappeared through the gate meant to fix it. So both
+    populations may simply be empty here, and this copes with either or both
+    being empty rather than assuming a per-encounter document exists — that
+    rule, not a pre-condition on the caller's side, is what decides.
 
-    ``summaries`` carries the record BESIDE each path it wrote, which is what
-    lets this grade ONE row per distinct rendered file. Two ``PatientRecord``s
-    sharing a patient id (the C-CDA adapter yields one per source document, and
-    an attachment-only chart's Unstructured Documents are exactly this) render
-    to the SAME summary path (``_allocate`` keys on ``patient.id``); re-deriving
-    that path per record, as this used to, graded the one file on disk once per
-    record that named it — an indistinguishable duplicate row for a chart that
-    was verified exactly once. Deduping on the path and keeping the LAST record
-    to claim it is the same "last write wins" a dict already gives a repeated
-    key, and it is the record whose render actually put the bytes there when
-    this run wrote them (``force``); an idempotent skip keeps whichever record
-    an earlier run associated, which is the only association left to make.
+    ``summaries.by_path`` carries the record beside each distinct path it
+    wrote, which is what lets this grade ONE row per rendered file. Two
+    ``PatientRecord``s sharing a patient id (the C-CDA adapter yields one per
+    source document, and an attachment-only chart's Unstructured Documents are
+    exactly this) render to the SAME summary path (``_allocate`` keys on
+    ``patient.id``); re-deriving that path per record, as this used to, graded
+    the one file on disk once per record that named it — an indistinguishable
+    duplicate row for a chart that was verified exactly once. This reads
+    ``by_path`` directly rather than re-zipping ``summaries.documents`` and
+    ``summaries.records`` itself: that used to be a plain ``dict(zip(...))``,
+    which keeps the LAST list entry for a repeated key — under ``force=False``
+    the record whose render took the idempotent-skip branch, never the writer
+    (#383's round-two blocker). ``render_ccda_standard`` already resolves that
+    association correctly; re-deriving it here a second way is exactly how it
+    was lost the first time.
 
     A missing PyMuPDF (the optional ``render`` extra) downgrades QA to a
     no-op rather than failing the run — the only ``ImportError`` allowed to
@@ -1197,18 +1200,16 @@ def _run_qa_stage(
         carries=engine.carries,
         omits=engine.omits,
     )
-    by_path = dict(zip(summaries.documents, summaries.records, strict=True))
     # ``documents`` is the report's only state — ``ok`` and ``not_carried`` are
     # derived from it — so extending it merges the two batches soundly.
-    report.documents.extend(whole_patient_report(by_path.items()).documents)
+    report.documents.extend(whole_patient_report(summaries.by_path.items()).documents)
 
     if not report.documents:
-        # Both populations were empty. Unreachable through this module's own
-        # gate (which requires one of them to be non-empty before calling
-        # here) but not through a direct call, and a report that graded
-        # nothing is not evidence of anything passing — the same downgrade the
-        # missing-PyMuPDF branch takes, for the same reason: a tick over a
-        # verification that never ran is a false completion.
+        # Both populations were empty. The gate above no longer screens for
+        # this (it is just ``qa``), so this rule alone decides — and a report
+        # that graded nothing is not evidence of anything passing, the same
+        # downgrade the missing-PyMuPDF branch takes, for the same reason: a
+        # tick over a verification that never ran is a false completion.
         emit(
             StageEvent(
                 STAGE_QA,
