@@ -115,7 +115,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.patient import Address
 from anastomosis.core.textutil import format_phone, media_type_suffix
-from anastomosis.core.timeutil import parse_date, parse_dt
+from anastomosis.core.timeutil import is_zero_sentinel, parse_date, parse_dt
 from anastomosis.sources.base import SourceDataError
 
 __all__ = [
@@ -196,13 +196,31 @@ def _val_attr(node: _Element | None, path: str, name: str) -> str | None:
 
 
 def _ts(node: _Element | None, path: str) -> Any:
-    """``@value`` of the element at ``path``, parsed as an aware datetime."""
-    return parse_dt(_val_attr(node, path, "value"))
+    """``@value`` of the element at ``path``, parsed as an aware datetime.
+
+    A run-of-zeros ``@value`` (:func:`~anastomosis.core.timeutil.
+    is_zero_sentinel`) reads as absent HERE, before ``parse_dt`` ever sees
+    it — not inside ``parse_dt`` itself. ``parse_dt`` is shared with every
+    row-based adapter (``sources/_rowutil.clean_dt``, read by pf_tebra and
+    oracle_ehi, and the learned adapter's own ``parse_datetime`` transform
+    verb): a bare "0" in a TSV cell is a value that states something, and
+    reading it as absent there would go unaccounted, in none of those
+    adapters' ledgers. This vendor's C-CDA-specific spelling for "no date"
+    is read only by this C-CDA-specific caller.
+    """
+    raw = _val_attr(node, path, "value")
+    return None if is_zero_sentinel(raw) else parse_dt(raw)
 
 
 def _ts_date(node: _Element | None, path: str) -> Any:
-    """``@value`` of the element at ``path``, parsed as a calendar date."""
-    return parse_date(_val_attr(node, path, "value"))
+    """``@value`` of the element at ``path``, parsed as a calendar date.
+
+    Same zero-sentinel guard as :func:`_ts`, for the same reason: `parse_date`
+    calls `parse_dt` under the hood and would raise on a zero run exactly as
+    loudly.
+    """
+    raw = _val_attr(node, path, "value")
+    return None if is_zero_sentinel(raw) else parse_date(raw)
 
 
 def _text_content(node: _Element | None) -> str | None:
@@ -2408,6 +2426,64 @@ def _link_measurements_to_encounters(record: PatientRecord) -> None:
             observation.encounter_id = same_day[0].id
 
 
+# --- zero-sentinel timestamps -------------------------------------------
+
+# Every TS shape a _ts/_ts_date call in this module reads, named the way
+# _count_zero_sentinels walks it: a bare tag read straight off an entry
+# (birthTime, effectiveTime, author/time), or a two-level parent-then-child
+# for a TS read off an already-resolved parent — an IVL_TS's own low/high,
+# where the medications reader resolves the effectiveTime node once and then
+# reads its low and high children off that node, rather than re-stating the
+# whole path each time. The shape read is still effectiveTime/low, regardless
+# of which already-found node the call started from.
+# test_every_timestamp_path_the_parser_reads_is_named_in_TS_PATHS is the
+# anti-drift guard: a _ts/_ts_date call reading a path not named here (or a
+# name here nothing reads any more) fails it, so the two cannot separate
+# silently.
+TS_PATHS = ("birthTime", "effectiveTime", "effectiveTime/low", "effectiveTime/high", "author/time")
+
+EXT_TS_NO_INSTANT = "ccda:timestamp_named_no_instant"
+
+
+def _count_zero_sentinels(root: _Element) -> dict[str, int]:
+    """How many TS elements the document itself names as a run of zeros, by shape.
+
+    Walked over the whole document independently of any `_ts`/`_ts_date` call
+    site — this is what the DOCUMENT states, not what one field extractor
+    happened to read, so the count does not depend on which caller's local
+    variable reached the node first. A node carrying `nullFlavor` is skipped:
+    that is an explicit "absent", not a zero run, and already reads as `None`
+    with no help from `is_zero_sentinel`.
+    """
+    counts: dict[str, int] = {}
+    for shape in TS_PATHS:
+        xpath = ".//v3:" + "/v3:".join(shape.split("/"))
+        n = sum(
+            1
+            for node in _findall(root, xpath)
+            if node.get("nullFlavor") is None and is_zero_sentinel(node.get("value"))
+        )
+        if n:
+            counts[shape] = n
+    return counts
+
+
+def _record_zero_sentinels(record: PatientRecord, root: _Element) -> None:
+    """Credit a run-of-zeros TS the parser read as absent, on the record itself.
+
+    `_ts`/`_ts_date` treat a "0" (of any length) as absent rather than raising
+    `parse_dt`'s own ValueError, so the medication (or condition, encounter,
+    ...) it belongs to survives with no start instead of aborting the whole
+    document. That is a real loss — a start date the source named nothing
+    usable for — and losslessness means it rides the record rather than
+    vanishing at the parse boundary. Sets the key only when the count is
+    non-empty, so an ordinary document carries no trace of a check that found
+    nothing.
+    """
+    if counts := _count_zero_sentinels(root):
+        record.patient.extensions[EXT_TS_NO_INSTANT] = counts
+
+
 def parse_document(path: Path) -> PatientRecord:
     """Parse one C-CDA / CCD XML file into a :class:`PatientRecord`.
 
@@ -2494,6 +2570,7 @@ def parse_document(path: Path) -> PatientRecord:
 
     record.practitioners = actors.practitioners
     record.facilities = list(actors.facilities.values())
+    _record_zero_sentinels(record, root)
     record.encounters = fold_encounters_sharing_an_id(record.encounters)
     _link_measurements_to_encounters(record)
     return record

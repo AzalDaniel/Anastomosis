@@ -29,6 +29,7 @@ __all__ = [
     "age_at",
     "age_display",
     "all_date_spellings",
+    "is_zero_sentinel",
     "parse_date",
     "parse_dt",
     "to_local",
@@ -107,6 +108,34 @@ def _parse_raw(text: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def is_zero_sentinel(value: str | None) -> bool:
+    """True for a value that names no year at all — a run of nothing but zeros.
+
+    A vendor's "0" (or "00000000", or any other length) is one notch further
+    than the year-1 SQL sentinel :func:`parse_dt` already absorbs: year-1 at
+    least names a year, however bogus; an all-zero run names none, so it names
+    no instant. This is NOT consulted by :func:`parse_dt` itself — that
+    function is shared with every row-based adapter (``sources/_rowutil.
+    clean_dt``/``clean_date``, read by pf_tebra and oracle_ehi, and the
+    learned adapter's own ``parse_date``/``parse_datetime`` transform verbs),
+    and a TSV cell holding a bare "0" states something a loud failure needs to
+    surface, not a vendor's spelling for "no date". The C-CDA parser's own
+    ``_ts``/``_ts_date`` readers consult this directly, on the value they read
+    off the document, before it ever reaches :func:`parse_dt` — the one place
+    this specific vendor quirk is actually known.
+
+    ``2023-13-45`` still raises: it names a year and gets the rest wrong,
+    which is "the source said something we could not read", not "the source
+    said nothing". NOT matched, and so still raising through the normal
+    unrecognized-format path: ``0.0``, ``-0``, ``0000-00-00``, the letter
+    ``O`` — each holds at least one character that is not ``0``.
+    """
+    if value is None:
+        return False
+    text = value.strip()
+    return bool(text) and set(text) == {"0"}
 
 
 def parse_dt(value: str | None, *, assume: tzinfo = UTC) -> datetime | None:
