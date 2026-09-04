@@ -63,6 +63,7 @@ from anastomosis.core.ccda_codes import (
     first_rooted_id,
     organizer_component_source_id,
 )
+from anastomosis.core.conservation import Conservation
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import (
     EXT_INLINE_CONTENT,
@@ -1097,9 +1098,10 @@ def _encounter_code(node: etree._Element, encounter_type: str | None) -> None:
     there is no type either, ``NI``: no information, which is the truth.
     """
     if encounter_type is None:
-        # No caller reaches this today — _structured_encounters keeps only typed
-        # encounters — but OTH is not the fallback if that filter ever widens:
-        # OTH asserts a real value outside CPT while showing none of it.
+        # Reached by an encounter with neither a type nor note content:
+        # _structured_encounters routes it here because the Notes section does
+        # not stand for it either. OTH is still the wrong fallback — it asserts
+        # a real value outside CPT while showing none of it.
         _el(node, "code", nullFlavor="NI")
         return
     _text_el(_el(node, "code", nullFlavor="OTH"), "originalText", encounter_type)
@@ -1763,6 +1765,7 @@ def build_ccd(
     _delivered_documents(_notes(body, record.encounters, preserved), record.documents, carried)
     _carry_preserved(body, preserved)
     _extensions_section(body, record, carried)
+    _assert_encounters_reach_a_section(body, record)
 
     logger.info(
         "built CCD for patient %s: %d conditions, %d meds, %d allergies, %d encounters",
@@ -1787,7 +1790,71 @@ def _document_effective(record: PatientRecord) -> datetime:
 def _structured_encounters(encounters: list[Encounter]) -> list[Encounter]:
     """Encounters that belong in the structured Encounters section.
 
-    An encounter carrying only a note (no encounter_type) is represented solely
-    by the Notes section; one with an encounter_type is a structured encounter.
-    Both can be true at once — the parser reads them from different sections."""
-    return [e for e in encounters if e.encounter_type is not None]
+    The Encounters section takes every encounter the Notes section does not
+    already stand for: one with an encounter_type, OR one with neither a type
+    nor note content — the partition's third case, and the one a plain
+    ``encounter_type is not None`` gate used to drop on the floor. An encounter
+    with only a note (no type) is represented solely by the Notes section, and
+    an encounter with both a type and note content reaches both sections at
+    once — the parser reads them from different sections, so nothing here is
+    a duplicate.
+
+    :func:`_assert_encounters_reach_a_section` is the check that this partition
+    actually holds, read back off the emitted tree rather than trusted from
+    this predicate alone."""
+    return [e for e in encounters if e.encounter_type is not None or not e.has_note_content]
+
+
+def _section_id_roots(body: etree._Element, loinc: str) -> set[str]:
+    """Every ``<id root>`` under the first section carrying ``loinc``, at any
+    depth — empty when the document has no such section.
+
+    Reads the emitted tree the same way :func:`measure_ccd` reads emitted
+    bytes, and for the same stated reason: an artifact check cannot see a unit
+    that reached no artifact at all, so the count has to come from what is
+    actually in the document rather than from an emitter's own bookkeeping."""
+    section = _sections_by_code(body).get(loinc)
+    if section is None:
+        return set()
+    return {root for node in section.iter(f"{{{V3}}}id") if (root := node.get("root")) is not None}
+
+
+def _assert_encounters_reach_a_section(body: etree._Element, record: PatientRecord) -> None:
+    """Every offered encounter must reach the Encounters section, the Notes
+    section, or both — the partition :func:`_structured_encounters` and
+    :func:`_notes` are supposed to hold between them.
+
+    An encounter is classified by whether EITHER key it can appear under turns
+    up in a section's id roots: ``enc.id``, what a freshly built entry writes,
+    or ``_source_id(enc)``, what a *preserved* entry re-emits instead when
+    :meth:`_Preserved.own` has suppressed the fresh one — the source's own
+    ``<id root>``, byte-verbatim, which is a different string from ``enc.id``
+    whenever the parser's GUID check sent that root through the deterministic
+    uuid5 fallback (:func:`_encounter_id` in ``sources/ccda/parser.py``) rather
+    than carrying it as the canonical id. Checking one key alone reads a
+    preserved encounter as unaccounted and raises on every ordinary chart.
+
+    One in neither column is in no disposition at all, so
+    :meth:`Conservation.check` raises: the loud failure this repo's own history
+    says an artifact-only check cannot produce, because an artifact that never
+    arrived has nothing on it to inspect."""
+    encounters_ids = _section_id_roots(body, LOINC_ENCOUNTERS)
+    notes_ids = _section_id_roots(body, LOINC_NOTES)
+    both = encounters_only = notes_only = 0
+    for enc in record.encounters:
+        keys = {enc.id, _source_id(enc)} - {None}
+        in_encounters = bool(keys & encounters_ids)
+        in_notes = bool(keys & notes_ids)
+        both += in_encounters and in_notes
+        encounters_only += in_encounters and not in_notes
+        notes_only += in_notes and not in_encounters
+    Conservation(
+        stage="canonical -> ccda",
+        unit="encounter",
+        offered=len(record.encounters),
+        dispositions={
+            "both_sections": both,
+            "encounters_section": encounters_only,
+            "notes_section": notes_only,
+        },
+    ).check()

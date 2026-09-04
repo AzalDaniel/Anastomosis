@@ -311,10 +311,6 @@
       "avg": 5.1579,
       "rank": "B"
     },
-    "src/anastomosis/deliver/bundle/bundle.py": {
-      "avg": 5.2,
-      "rank": "B"
-    },
     "src/anastomosis/packs/generic_soap/context.py": {
       "avg": 9.0,
       "rank": "B"
