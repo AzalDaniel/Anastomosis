@@ -328,7 +328,29 @@ issue and fixed in its own pull request.
   every model count is unchanged. `sources/ccda/ledger.py` is untouched on
   purpose: a derived id is a uuid5, never an `<id root>` the document itself
   carries, so it cannot enter `linkable_roots` or move a `links()`
-  obligation. (#365)
+  obligation.
+
+  "Both sides read the same organizer/component id" was a promise, not yet a
+  fact: the parser read an `<id>` through `_attr` (`nullFlavor`-aware,
+  whitespace-stripped) while the builder read one by raw truthiness
+  (unstripped), and the parser looked only at a component's FIRST `<id>`
+  child while the builder scanned every one. A padded root, a padded
+  extension, or a component whose first `<id>` is `nullFlavor` with a second,
+  rooted `<id>` behind it then derived one id on ingest and stated a
+  different one — or none — on export: the same unbounded duplication this
+  entry had just closed, reopened for four shapes. `core.ccda_codes.
+  first_rooted_id(element)` is now the one reading both the organizer's and
+  the component's own id go through — every `<id>` child in document order,
+  `nullFlavor` skipped, `root`/`extension` stripped, first survivor wins —
+  so the two sides agree on what id a component states by construction. One
+  driven fixture (a component's id `nullFlavor` first, rooted second) reads
+  differently under `sources/ccda/ledger.py` than it did before this
+  correction: the component's real, stated id is now what the parser reads
+  (previously it derived a spurious one instead, having missed the second
+  `<id>`), so that id is linkable and the entry moves from
+  `narrative_preserved` to `structurally_parsed` in the ledger's own
+  accounting — a correction to a wrong reading, not a change in what the
+  document says. (#365)
 
 - **An entry under prose was preserved by nothing.** The C-CDA parser kept a
   section's `<entry>` elements verbatim only when that section rendered no

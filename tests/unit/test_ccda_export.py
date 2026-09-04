@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 
 import anastomosis.sources.ccda  # noqa: F401 — registers the adapter
 from anastomosis.cli import app
+from anastomosis.core.ccda_codes import first_rooted_id, organizer_component_source_id
 from anastomosis.core.model import (
     Addendum,
     AdvanceDirective,
@@ -72,7 +73,7 @@ from anastomosis.deliver.ccda_export.builder import (
     _stated_ids,
     measure_ccd,
 )
-from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, parse_document
+from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, _measurements, parse_document
 
 V3 = "urn:hl7-org:v3"
 XSI = "http://www.w3.org/2001/XMLSchema-instance"
@@ -1166,6 +1167,392 @@ def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: P
     assert [o.code for o in record.observations] == ["2345-7"]
 
 
+# The two readings of an organizer/component id had to be genuinely one: before
+# `core.ccda_codes.first_rooted_id` existed, the parser read an `<id>` through
+# `_attr` (stripped, nullFlavor-aware) while the builder read one by raw
+# truthiness (unstripped), and the parser looked only at a component's FIRST
+# `<id>` child while the builder scanned all of them — so a padded root, a
+# padded extension, or a component whose first `<id>` is nullFlavor and whose
+# second is rooted derived one id on ingest and stated a different one (or
+# none) on export: exactly the growth #378 had just closed, reopened for four
+# shapes. See #378.
+_ORGANIZER_SECTION = """<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      {orgids}
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          {compids}
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <effectiveTime value="20240101"/>
+          <value xsi:type="PQ" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 value="5" unit="mg/dL"/>
+        </observation>
+      </component>
+    </organizer>
+  </entry>
+</section>"""
+
+
+@pytest.mark.parametrize(
+    "name,orgids,compids",
+    [
+        pytest.param(
+            "padded organizer extension",
+            '<id root="1.2.3.4" extension="  LAB1  "/>',
+            '<id nullFlavor="NI"/>',
+            id="padded organizer extension",
+        ),
+        pytest.param(
+            "padded organizer root",
+            '<id root="  1.2.3.4  " extension="LAB1"/>',
+            '<id nullFlavor="NI"/>',
+            id="padded organizer root",
+        ),
+        pytest.param(
+            "component nullFlavor then rooted",
+            '<id root="1.2.3.4" extension="LAB1"/>',
+            '<id nullFlavor="NI"/><id root="COMPROOT"/>',
+            id="component nullFlavor then rooted",
+        ),
+        pytest.param(
+            "component whitespace-only root",
+            '<id root="1.2.3.4" extension="LAB1"/>',
+            '<id root="   "/>',
+            id="component whitespace-only root",
+        ),
+    ],
+)
+def test_the_parsers_derived_id_is_always_one_the_builder_states(
+    name: str, orgids: str, compids: str
+) -> None:
+    """The parser's ``source_id`` is a member of the built entry's ``_stated_ids``.
+
+    Feeding the SAME organizer XML through both halves (mirrors the reviewer's
+    ``qaprobe/p1_divergence.py``): whatever id the parser derives or reads for
+    the component, the builder's ``_stated_ids`` walk over that same XML must
+    already contain it, or a re-export pairs the component with nothing and
+    the fact duplicates without bound. Red on the unpatched head for all four
+    of these (the two id-reading mismatches above); green once both sides
+    read through ``first_rooted_id``.
+    """
+    section = etree.fromstring(
+        _ORGANIZER_SECTION.format(orgids=orgids, compids=compids).encode(), _PARSER
+    )
+    [observation] = _measurements(
+        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+    )
+    entry = section.find(f"{{{V3}}}entry")
+    stated = _stated_ids(entry)
+    assert observation.provenance is not None
+    assert observation.provenance.source_id in stated, (
+        f"{name}: parser derived {observation.provenance.source_id!r}, "
+        f"builder states {sorted(str(s) for s in stated)!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "feedface_ccd_organizer_extension_whitespace.xml",
+        "feedface_ccd_organizer_root_whitespace.xml",
+        "feedface_ccd_component_id_nullflavor_then_rooted.xml",
+        "feedface_ccd_component_root_whitespace.xml",
+    ],
+)
+def test_a_padded_or_partially_id_less_organizer_never_grows(
+    fixture_name: str, tmp_path: Path
+) -> None:
+    """Generation counts stay flat at 1 for each of the four mismatch shapes.
+
+    Copies of the reviewer's ``qaprobe/fx/{E_ws_extension,F_ws_root,
+    H_nullflavor_then_rooted,J_ws_root_component}.xml``. Red on the unpatched
+    head: each grows 1 -> 2 -> 3 -> 4 -> 5, because the parser's derived id
+    for the lab observation was never a member of what the builder's
+    ``_stated_ids`` states for that entry, so ``_Preserved.own`` paired it
+    with nothing and it duplicated once per generation, unbounded — a faster
+    growth than #378's own id-less-component defect, which stabilised at 2.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda_edge_cases" / fixture_name
+    record = parse_document(source_doc)
+    out = tmp_path / "gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"{fixture_name}: {counts}"
+
+
+def test_two_id_less_components_under_one_organizer_derive_distinct_ids(
+    tmp_path: Path,
+) -> None:
+    """Two id-less analytes under one panel get two different derived ids.
+
+    ``index`` is what tells them apart once their own ids are gone — without
+    it both would hash to the same ``organizer_component_source_id`` and
+    collapse to one observation. Pinned against the LITERAL uuid5 strings (a
+    recipe change is a decision that rewrites every already-migrated chart's
+    provenance, and a test that recomputes the value under test proves
+    nothing about the value itself — see #378's own round two). Generations
+    stay flat at 2, not 4: each analyte pairs with its own preserved twin.
+    """
+    root = "feedface-idls-0000-0000-000000000001"
+    extension = "feedface-idls-panel-0001"
+    expected_first = organizer_component_source_id(root, extension, 0)
+    expected_second = organizer_component_source_id(root, extension, 1)
+    assert expected_first == "7029466a-7630-5f95-9072-85ca63f186dc"
+    assert expected_second == "f244f1d6-d7d6-5bc0-ac55-fc41390a3c9b"
+    assert expected_first != expected_second
+
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_two_idless_components.xml"
+    )
+    record = parse_document(source_doc)
+    ids = sorted(o.provenance.source_id for o in record.observations if o.provenance is not None)
+    assert ids == sorted([expected_first, expected_second])
+
+    out = tmp_path / "two_idless_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [2, 2, 2, 2], f"the two lab facts collapsed or duplicated: {counts}"
+
+
+@pytest.mark.parametrize(
+    "xml,expected",
+    [
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="1.2.3.4" extension="LAB1"/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="plain root and extension",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id root="  1.2.3.4  " extension="LAB1"/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="padded root is stripped",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id root="1.2.3.4" extension="  LAB1  "/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="padded extension is stripped",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="1.2.3.4" extension="   "/></organizer>',
+            ("1.2.3.4", None),
+            id="whitespace-only extension normalizes to None",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id nullFlavor="NI"/><id root="1.2.3.4"/></organizer>',
+            ("1.2.3.4", None),
+            id="nullFlavor id skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root=""/><id root="ZZZ"/></organizer>',
+            ("ZZZ", None),
+            id="blank root skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="   "/><id root="ZZZ"/></organizer>',
+            ("ZZZ", None),
+            id="whitespace-only root skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI" root="X"/></organizer>',
+            None,
+            id="nullFlavor wins even with a root present",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI"/></organizer>',
+            None,
+            id="only a nullFlavor id: no id at all",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"></organizer>',
+            None,
+            id="no id children at all",
+        ),
+    ],
+)
+def test_first_rooted_id_reads_every_id_child_stripped_and_nullflavor_aware(
+    xml: str, expected: tuple[str, str | None] | None
+) -> None:
+    """Pins ``first_rooted_id`` against an INDEPENDENT expectation, never
+    against the other half merely agreeing with it.
+
+    The cross-check above (``test_the_parsers_derived_id_is_...``) proves the
+    parser and the builder read an id the SAME way, which a bug inside
+    ``first_rooted_id`` itself can never fail: both callers share the one
+    function, so a mistake shared by both sides is invisible to a
+    mutual-agreement check (driven: mutating away either ``.strip()`` call,
+    or narrowing the scan to only the first ``<id>`` child, survives the
+    whole suite without this test). This one pins the VALUE independently —
+    a padded root or extension strips to the unpadded string; a blank
+    extension normalizes to ``None``; a nullFlavor id is skipped even when it
+    also carries a root; and the scan continues past a blank or nullFlavor
+    id to the NEXT ``<id>`` rather than stopping at the first child, which is
+    what left #378 open for the nullFlavor-then-rooted shape the first time.
+    """
+    element = etree.fromstring(xml.encode())
+    assert first_rooted_id(element) == expected
+
+
+def test_a_nullflavor_id_is_skipped_even_when_it_also_carries_a_root() -> None:
+    """``<id nullFlavor="NI" root="X"/>`` states no id: nullFlavor wins.
+
+    A vendor id that carries both attributes at once is still an absent id —
+    reading the root anyway (mut.py's M4: drop the nullFlavor check) would
+    treat a null id as a real, if odd, stated one on one side without the
+    other agreeing, reopening exactly the mismatch this file's other new
+    tests close.
+    """
+    organizer = etree.fromstring(
+        '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI" root="X"/></organizer>',
+        _PARSER,
+    )
+    assert first_rooted_id(organizer) is None
+
+
+def test_a_component_that_is_not_an_observation_is_never_derived_for() -> None:
+    """A ``<procedure>`` component does not count toward the derived index.
+
+    ``_measurements``/``_derived_component_ids`` both walk
+    ``component/observation`` only, so a non-observation component sibling
+    (a procedure, in template order before the observation) is invisible to
+    the derivation on both sides — an id-less component's index is its
+    position among the organizer's OBSERVATION components, never its
+    position among all of them.
+    """
+    section = etree.fromstring(
+        b"""<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      <id root="1.2.3.4" extension="LAB1"/>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <procedure classCode="PROC" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="X" codeSystem="2.16.840.1.113883.6.1"/>
+        </procedure>
+      </component>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <effectiveTime value="20240101"/>
+          <value xsi:type="PQ" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 value="5" unit="mg/dL"/>
+        </observation>
+      </component>
+    </organizer>
+  </entry>
+</section>""",
+        _PARSER,
+    )
+    [observation] = _measurements(
+        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+    )
+    assert observation.provenance is not None
+    assert observation.provenance.source_id == organizer_component_source_id("1.2.3.4", "LAB1", 0)
+    entry = section.find(f"{{{V3}}}entry")
+    assert observation.provenance.source_id in _stated_ids(entry)
+
+
+def test_a_nested_organizers_own_idless_component_is_still_derived_for() -> None:
+    """An organizer inside an organizer: the INNER one's id-less component too.
+
+    ``_derived_component_ids`` finds an organizer at ANY depth
+    (``entry.iter``, not ``entry.findall`` — mut.py's M6), because a
+    preserved entry's structure is not this exporter's to assume flat. The
+    OUTER organizer's own id-less component is a direct child of ``entry``
+    either way, so a round-trip observation COUNT cannot tell the two walks
+    apart on this shape — ``_measurements`` reads only ONE organizer per
+    entry (its direct child), so the inner organizer's fact is never
+    structurally extracted at all, only preserved verbatim (see the flat
+    ``[1, 1, 1, 1]`` in the regression test below). What has to hold
+    independently of that is that ``_stated_ids``, read over the preserved
+    entry, still credits the INNER organizer's own analyte — or a future
+    structural reader that does walk nested organizers would duplicate it
+    the same way #378 duplicated an id-less component in the first place.
+    """
+    section = etree.fromstring(
+        b"""<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      <id root="1.2.3.4" extension="OUTER"/>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+        </observation>
+      </component>
+      <component>
+        <organizer classCode="BATTERY" moodCode="EVN">
+          <id root="5.6.7.8" extension="INNER"/>
+          <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <component>
+            <observation classCode="OBS" moodCode="EVN">
+              <id nullFlavor="NI"/>
+              <code code="2951-2" codeSystem="2.16.840.1.113883.6.1"/>
+            </observation>
+          </component>
+        </organizer>
+      </component>
+    </organizer>
+  </entry>
+</section>""",
+        _PARSER,
+    )
+    entry = section.find(f"{{{V3}}}entry")
+    stated = _stated_ids(entry)
+    outer_derived = organizer_component_source_id("1.2.3.4", "OUTER", 0)
+    inner_derived = organizer_component_source_id("5.6.7.8", "INNER", 0)
+    assert outer_derived in stated, "the direct-child organizer's own id-less analyte is lost"
+    assert inner_derived in stated, "the nested organizer's own id-less analyte is lost"
+
+
+def test_a_nested_organizer_never_duplicates_or_crashes(tmp_path: Path) -> None:
+    """Regression pin: a real (if unusual) organizer-inside-organizer document
+    round-trips without growth. The parser only structurally reads the
+    entry's direct-child organizer, so only the outer id-less analyte ever
+    becomes an ``Observation`` — the inner one rides the preserved entry's
+    bytes — and the count this fixture actually produces is 1, held flat.
+    """
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_nested_organizer.xml"
+    )
+    record = parse_document(source_doc)
+    out = tmp_path / "nested_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"a nested organizer's components misbehaved: {counts}"
+
+
 def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
     """Regression guard, not an acceptance test for #378 — passes unpatched too.
 
@@ -1196,30 +1583,55 @@ def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "fixture",
+    "fixture,expected_added",
     [
-        Path("ccda") / "feedface_ccd.xml",
-        Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
-        Path("ccda_edge_cases") / "feedface_ccd_idless_result_component.xml",
+        pytest.param(
+            Path("ccda") / "feedface_ccd.xml",
+            frozenset(),
+            id="feedface_ccd.xml",
+        ),
+        pytest.param(
+            Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
+            frozenset(),
+            id="feedface_ccd_duplicate_encounter_id.xml",
+        ),
+        pytest.param(
+            Path("ccda_edge_cases") / "feedface_ccd_idless_result_component.xml",
+            frozenset(
+                {
+                    organizer_component_source_id(
+                        "feedface-idls-0000-0000-000000000001",
+                        "feedface-idls-panel-0001",
+                        0,
+                    )
+                }
+            ),
+            id="feedface_ccd_idless_result_component.xml",
+        ),
     ],
-    ids=lambda path: path.name,
 )
-def test_a_preserved_entry_states_more_than_it_did_and_never_less(fixture: Path) -> None:
-    """The new ``_stated_ids`` set is a strict superset of the old one.
+def test_a_preserved_entry_states_more_than_it_did_and_never_less(
+    fixture: Path, expected_added: frozenset[str]
+) -> None:
+    """The new ``_stated_ids`` set is a strict superset of the old one — proven positively.
 
-    The old set was the any-depth ``<id root>`` walk alone, with ``{None}``
-    as its only fallback; the fix adds a positive, id-to-id match for an id-less
-    organizer component and changes nothing else. So for every entry of every
-    document, the new set can only ever gain members the old one lacked, and
-    ``None`` can only leave the set where something concrete replaced it —
-    never appear where the old walk had already found a real id. Red on the
-    unpatched head for the new fixture's organizer entry (the derived id is
-    simply absent from the old set, which the current ``_stated_ids`` IS).
+    This test used to re-implement ``_stated_ids``'s OWN any-depth walk inline
+    and compare it against the real thing, so ``new >= old`` and ``(None in
+    new) == (None in old)`` held trivially even with the derived-id branch
+    deleted entirely (``new == old`` then, by construction of the comparison
+    itself) — a superset check that could not fail. It now asserts the actual
+    diff every entry contributes across a fixture: nothing for the two
+    fixtures with no id-less organizer component, and exactly the one
+    derived id — computed independently via
+    :func:`organizer_component_source_id`, not read back off ``_stated_ids``
+    — for the fixture that has one. Red on the unpatched head for the third
+    fixture (``total_added`` comes back empty where one id was expected).
     """
     source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
     root = etree.parse(str(source_doc), _PARSER).getroot()
     entries = list(root.iter(f"{{{V3}}}entry"))
     assert entries, "fixture carries no entries to compare"
+    total_added: set[str | None] = set()
     for entry in entries:
         old = {r for node in entry.iter(f"{{{V3}}}id") if (r := node.get("root")) is not None} or {
             None
@@ -1227,6 +1639,8 @@ def test_a_preserved_entry_states_more_than_it_did_and_never_less(fixture: Path)
         new = _stated_ids(entry)
         assert new >= old, f"lost a previously-stated id: {old - new}"
         assert (None in new) == (None in old), "None's presence changed where a walk alone decides"
+        total_added |= new - old
+    assert total_added == set(expected_added), f"{fixture.name}: added {total_added}"
 
 
 # --- export → ingest generations ---------------------------------------------

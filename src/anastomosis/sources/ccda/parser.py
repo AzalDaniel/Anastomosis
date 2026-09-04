@@ -84,6 +84,7 @@ from anastomosis.core.ccda_codes import (
     TPL_SEVERITY,
     V3,
     XSI,
+    first_rooted_id,
     organizer_component_source_id,
 )
 from anastomosis.core.hashutil import hash_and_size
@@ -767,19 +768,6 @@ def _interval_value(value: _Element) -> tuple[str | None, str | None] | None:
     return reading, _attr(low, "unit") or _attr(high, "unit")
 
 
-def _organizer_id(organizer: _Element) -> tuple[str, str | None] | None:
-    """The organizer's first ``<id root=…>``, or ``None`` when it states none.
-
-    ``_attr`` treats an ``<id nullFlavor="NI"/>`` as absent, so a component's
-    parent organizer that states no id derives nothing rather than a root
-    read as an empty string.
-    """
-    for id_node in _findall(organizer, "v3:id"):
-        if (root := _attr(id_node, "root")) is not None:
-            return root, _attr(id_node, "extension")
-    return None
-
-
 def _measurements(
     section: _Element,
     patient_id: str,
@@ -792,15 +780,20 @@ def _measurements(
         organizer = _find(entry, organizer_path)
         if organizer is None:
             continue
-        organizer_id = _organizer_id(organizer)
+        organizer_id = first_rooted_id(organizer)
         components = _findall(organizer, "v3:component/v3:observation")
         for index, component in enumerate(components):
             code = _find(component, "v3:code")
             reading, unit = _observation_value(_find(component, "v3:value"))
             # A component with no id of its own is still the organizer's
             # statement, not a statement with no provenance at all — see
-            # organizer_component_source_id.
-            source_id = _val_attr(component, "v3:id", "root")
+            # organizer_component_source_id. ``first_rooted_id`` reads every
+            # ``<id>`` child in document order, not only the first, so a
+            # component whose first ``<id>`` is nullFlavor and whose second
+            # is rooted is read as owning that second id — the same reading
+            # the builder's stated-id walk already gives it.
+            component_id = first_rooted_id(component)
+            source_id = component_id[0] if component_id is not None else None
             if source_id is None and organizer_id is not None:
                 root, extension = organizer_id
                 source_id = organizer_component_source_id(root, extension, index)

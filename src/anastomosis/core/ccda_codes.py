@@ -20,7 +20,10 @@ live here, in a leaf module of literals that both may depend on.
 
 from __future__ import annotations
 
+from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid5
+
+from lxml import etree
 
 __all__ = [
     "EXT_PRIOR_LOSS_NARRATIVE",
@@ -47,6 +50,7 @@ __all__ = [
     "TPL_SEVERITY",
     "V3",
     "XSI",
+    "first_rooted_id",
     "organizer_component_source_id",
 ]
 
@@ -118,6 +122,44 @@ EXT_SECTION_ENTRIES = "ccda:entries"
 SECTION_CODE_UNKNOWN = "unknown"
 
 
+def first_rooted_id(element: etree._Element) -> tuple[str, str | None] | None:
+    """``element``'s first direct-child ``<id>`` that states a root, or ``None``.
+
+    The single reading both halves of the C-CDA round trip use for "what id
+    does this element state" — an organizer's own id, and a component
+    observation's own id. Before this helper existed, the parser read an
+    id through ``_attr`` (nullFlavor-aware, whitespace-stripped) while the
+    builder read one by raw truthiness (``id_node.get("root")``, unstripped);
+    a padded root or extension then hashed to two different derived ids, and
+    the parser separately read only a component's FIRST ``<id>`` child while
+    the builder scanned all of them — so a component whose first ``<id>`` was
+    ``nullFlavor="NI"`` and whose second carried a root was read as id-less by
+    one side and as owning ``COMPROOT`` by the other. Four fixture shapes
+    (padded root, padded extension, nullFlavor-then-rooted, whitespace-only
+    root) reproduced the duplication #378 had just removed, on the derived-id
+    branch alone.
+
+    An ``<id nullFlavor="NI"/>`` states no id and is skipped, not read as an
+    empty root. ``root`` and ``extension`` are ``.strip()``ed the way
+    ``sources/ccda``'s ``_attr`` always has; a root that is blank after
+    stripping is not a root either, so the search continues to the next
+    ``<id>`` rather than stopping on it; a blank extension normalizes to
+    ``None``. The first ``<id>`` to survive all three checks wins, in
+    document order — "first rooted id", not "first id".
+    """
+    for id_node in element.findall(f"{{{V3}}}id"):
+        if id_node.get("nullFlavor") is not None:
+            continue
+        root = id_node.get("root")
+        root = root.strip() if root is not None else ""
+        if not root:
+            continue
+        extension = id_node.get("extension")
+        extension = extension.strip() if extension is not None else None
+        return root, extension or None
+    return None
+
+
 def organizer_component_source_id(root: str, extension: str | None, index: int) -> str:
     """Derive a provenance id for an organizer component that states none of its own.
 
@@ -128,13 +170,23 @@ def organizer_component_source_id(root: str, extension: str | None, index: int) 
     SAME id for the same position, or the round trip either loses the pairing
     (unbounded duplication) or invents a match that isn't there — so the
     recipe lives once, here, and both sides import it rather than mirror it.
+    Both read ``root``/``extension`` through :func:`first_rooted_id`, so the
+    two sides agree on the pair by construction rather than by promise.
 
     Deliberately document-intrinsic: no ``source_file`` in the recipe, unlike
     the file-scoped ids elsewhere in this codebase, because this id has to
     survive an export/re-ingest round trip under a different filename.
-    ``index`` is the component's 0-based position among the organizer's
-    ``v3:component`` children in document order — components carry no other
-    positional handle once their own id is gone.
+    ``index`` is the 0-based position among the organizer's component
+    ``<observation>``s in document order (a ``<procedure>`` component does
+    not count — driven: neither side derives an id for one).
+    ``root``/``extension`` are each ``quote``d (``safe=""``) into the recipe,
+    so a literal ``:`` inside either (a vendor extension has been seen to use
+    one) can never be misread as the field separator: unquoted,
+    ``("1.2.3", "X:4", 0)`` and ``("1.2.3:X", "4", 0)`` would hash to the same
+    string.
     """
-    name = f"anastomosis:ccda:organizer:{root}:{extension or ''}:component:{index}"
+    name = (
+        f"anastomosis:ccda:organizer:{quote(root, safe='')}:"
+        f"{quote(extension or '', safe='')}:component:{index}"
+    )
     return str(uuid5(NAMESPACE_URL, name))

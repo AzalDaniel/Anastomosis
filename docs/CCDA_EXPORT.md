@@ -89,6 +89,17 @@ identical id to what a preserved entry is taken to state. A component that
 carries its own id is untouched either way — the derived id is purely additive,
 never a substitute for one a component actually states.
 
+Deriving the SAME id on both sides depends on both sides reading "what id does
+this organizer/component state" identically, and hand-mirroring that reading
+reopened the duplication for four shapes a whitespace-padded root or extension,
+or a component's first `<id>` being `nullFlavor` with a second, rooted `<id>`
+behind it — before it was worth its own name. `core.ccda_codes.first_rooted_id`
+is that one reading: every `<id>` child in document order, `nullFlavor` skipped,
+`root`/`extension` stripped, the first survivor wins. Both
+`_measurements`'s organizer/component id and `_derived_component_ids`'s
+organizer/component id call it, so the two sides agree on the pair by
+construction — there is no second, independent reading left to drift.
+
 The section is stamped with `LOSS_NARRATIVE_TEMPLATE_ROOT` so a later ingest can
 tell this tool's loss ledger from a third party's 51899-3 section.
 `sources/ccda` reads a stamped section back into

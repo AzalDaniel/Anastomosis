@@ -566,7 +566,16 @@ def test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer(
     # has to survive an export/re-ingest round trip that lands under a
     # different name; proven here by reparsing the identical bytes under a
     # file name that shares nothing with the fixture's own.
-    from anastomosis.core.ccda_codes import organizer_component_source_id
+    #
+    # `expected` is the LITERAL uuid5 string, not a call to
+    # organizer_component_source_id: computing it via the function under test
+    # let three mutations of the recipe itself survive the suite (the
+    # namespace word "organizer" -> "organiser", the extension dropped from
+    # the name, `{index}` pinned to 0) — the test and the code always agreed
+    # because they were the same code. A recipe change is a decision that
+    # rewrites every already-migrated chart's provenance and belongs behind
+    # a literal someone has to notice changed, not a helper call that moves
+    # with it silently.
     from anastomosis.sources.ccda.parser import parse_document
 
     fixture = (
@@ -575,9 +584,7 @@ def test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer(
         / "ccda_edge_cases"
         / "feedface_ccd_idless_result_component.xml"
     )
-    expected = organizer_component_source_id(
-        "feedface-idls-0000-0000-000000000001", "feedface-idls-panel-0001", 0
-    )
+    expected = "7029466a-7630-5f95-9072-85ca63f186dc"
 
     parsed = parse_document(fixture)
     [observation] = parsed.observations
