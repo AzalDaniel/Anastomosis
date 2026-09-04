@@ -55,6 +55,7 @@ from datetime import date
 from functools import cache
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
@@ -954,18 +955,57 @@ def _social_history(section: _Element, patient_id: str, source_file: str) -> lis
 # --- encounters + notes ------------------------------------------------------
 
 
-def _encounter_id(root: str | None, source_file: str, index: int) -> str:
-    """Stable encounter id.
+def _encounter_identity_from_pair(root: str, extension: str) -> str:
+    """Deterministic id for a stated ``(root, extension)`` HL7 v3 ``II``.
 
-    Prefers the source's id-root when it looks like a real GUID (the
-    synthetic-fixture shape, or any 8-4-4-4-12 hex pattern a vendor would
-    emit). Otherwise derives a deterministic UUID from the file name and
-    the encounter's positional index in the document — so re-parsing the
-    same CCD yields the same encounter ids, which is what the engine's
-    idempotent-skip invariant rides on.
+    Document-intrinsic like :func:`~anastomosis.core.ccda_codes.
+    organizer_component_source_id` beside it — no ``source_file`` in the
+    recipe, because the whole point of honouring the pair is that it
+    survives the same visit being named in a different file. Each half is
+    ``quote``d (``safe=""``) for the same reason that function documents:
+    unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` would hash to the
+    same string, and a vendor extension carrying a literal ``:`` has been
+    seen. Kept here rather than moved beside that helper because only this
+    module reads it — the C-CDA builder always re-exports an encounter's
+    canonical id as a bare ``<id root=…>`` with no extension, so re-ingest
+    lands on the GUID-root-alone branch below rather than this one.
     """
-    if root and _GUID_RE.match(root):
-        return root
+    name = f"anastomosis:ccda:encounter:{quote(root, safe='')}:{quote(extension, safe='')}"
+    return str(uuid5(NAMESPACE_URL, name))
+
+
+def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, index: int) -> str:
+    """Stable encounter id: the identifier the source states, when it states one.
+
+    HL7 v3's ``II`` datatype is the PAIR ``(root, extension)``: a root names a
+    namespace and an extension names the instance within it. Two encounters
+    stating the same pair are the same encounter by the datatype's own
+    definition — so ANY root paired with a non-blank extension is trusted as
+    identity, hashed deterministically by :func:`_encounter_identity_from_pair`.
+    A GUID root standing ALONE (no extension, the synthetic-fixture shape or
+    any 8-4-4-4-12 hex pattern a vendor would emit) is trusted too, verbatim,
+    because a GUID needs no assigning authority to be unique.
+
+    An OID root standing alone is different: it usually names the vendor's
+    assigning authority, shared by every encounter that vendor ever writes,
+    not a visit — so it is not treated as identity. Those encounters (and any
+    with no usable id at all) fall through to a deterministic UUID derived
+    from the file name and the encounter's positional index in the document
+    — so re-parsing the same CCD still yields the same encounter ids, which is
+    what the engine's idempotent-skip invariant rides on.
+
+    An extension that is blank or all-whitespace is not an extension —
+    ``id_pair`` never carries one (see :func:`~anastomosis.core.ccda_codes.
+    first_rooted_id`, which normalizes a blank extension to ``None`` before
+    this function ever sees it) — so a root with only a blank extension is
+    read as root-only, same as a bare root.
+    """
+    if id_pair is not None:
+        root, extension = id_pair
+        if extension:
+            return _encounter_identity_from_pair(root, extension)
+        if _GUID_RE.match(root):
+            return root
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:encounter:{index}"))
 
 
@@ -984,7 +1024,7 @@ def _encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Enc
         encounter_type = _attr(code, "displayName") or original_text
         out.append(
             Encounter(
-                id=_encounter_id(_val_attr(enc, "v3:id", "root"), source_file, index),
+                id=_encounter_id(first_rooted_id(enc), source_file, index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(enc, "v3:effectiveTime")
                 or _ts_date(enc, "v3:effectiveTime/v3:low"),
@@ -1023,7 +1063,7 @@ def _note_encounters(section: _Element, patient_id: str, actors: _Actors) -> lis
         author = _find(act, "v3:author")
         out.append(
             Encounter(
-                id=_encounter_id(_val_attr(act, "v3:id", "root"), f"{source_file}:note", index),
+                id=_encounter_id(first_rooted_id(act), f"{source_file}:note", index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(act, "v3:author/v3:time"),
                 note_type=_val_attr(act, "v3:code", "displayName"),
@@ -1080,11 +1120,12 @@ def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter
     across two files, and the pipeline's fold unions their encounters. The rule
     is a property of the canonical Encounter, not of one traversal, so both
     callers run this one — but the reach across documents is only as wide as
-    :func:`_encounter_id` makes it: that function honours the source's
-    ``<id root>`` verbatim only when it looks like a GUID, and otherwise derives
-    an id from the source FILE name and position, so a vendor OID root (the
-    shape most vendors emit) still gets one id PER DOCUMENT and never folds
-    here, across two documents, no matter how it agrees with itself.
+    :func:`_encounter_id` makes it: the cross-document fold reaches encounters
+    whose ``<id>`` states an identity — a GUID root standing alone, or ANY
+    root paired with a non-blank extension (HL7 v3's ``II`` is the pair, not
+    the root alone). An OID root standing alone names an assigning authority
+    rather than a visit, so it still gets one id PER DOCUMENT and never folds
+    here, across two documents, no matter how it agrees with itself (#393).
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []
@@ -1832,7 +1873,7 @@ def _encompassing_encounters(root: _Element, patient_id: str, actors: _Actors) -
         _encounter_participants(enc, actors)
         out.append(
             Encounter(
-                id=_encounter_id(root_id, f"{source_file}:encompassing", index),
+                id=_encounter_id(first_rooted_id(enc), f"{source_file}:encompassing", index),
                 patient_id=patient_id,
                 date_of_service=_ts_date(enc, "v3:effectiveTime")
                 or _ts_date(enc, "v3:effectiveTime/v3:low"),

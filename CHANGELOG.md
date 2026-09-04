@@ -15,6 +15,26 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A visit named by two documents was two charts, when the source stated one
+  id.** `_encounter_id` trusted a source's `<id root>` as an encounter's own
+  identity only when it looked like a GUID; a vendor OID root — the shape most
+  vendors emit, paired with a per-instance extension — got a fresh id per
+  DOCUMENT instead, so a visit summary and its own note in two separate files
+  never folded, and the pipeline delivered two charts for one visit. HL7 v3's
+  `II` is the PAIR: a root names a namespace, an extension names the instance
+  within it, and two encounters stating the same pair are the same encounter
+  by the datatype's own definition — not by convenience. The rule now
+  implemented: a GUID root standing alone is still trusted verbatim; ANY root
+  paired with a non-blank extension hashes deterministically over BOTH,
+  document-intrinsic so the id survives being read from a different file; an
+  OID root standing alone still names an assigning authority rather than a
+  visit, so those encounters keep the per-document derived id they have
+  always had — folding on a bare root would merge every distinct visit that
+  vendor ever wrote. The `<id>` is now read through `first_rooted_id`, not by
+  raw first-child lookup, so an `<id nullFlavor="NI"/>` ahead of a real rooted
+  `<id>` no longer reads as id-less (#378's duplication, reproduced on this
+  branch alone). (#393)
+
 - **A bundle's QA report left out the verdict on the one page the bundle is
   for.** The run's report is sliced per patient before it rides in that
   patient's bundle, and the slice asked which of the record's ENCOUNTERS a

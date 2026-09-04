@@ -464,17 +464,19 @@ def _merged_record(entries: list[tuple[int, PatientRecord]], total: int) -> Pati
     disagreement refusal downstream reads them.
 
     Every collection unions in the order the records were read. De-duplication
-    happens only where the model already defines identity: two encounters under
-    one GUID ``<id root>`` are one visit when the halves agree
-    (:func:`~anastomosis.sources.ccda.parser.fold_encounters_sharing_an_id` —
-    the same rule inside one document and across two). An encounter under a
-    vendor OID root does not reach this: the parser gives it one id PER
-    DOCUMENT (:func:`~anastomosis.sources.ccda.parser._encounter_id` honours
-    only a GUID-shaped root), so two documents naming the same visit under an
-    OID keep two encounter objects here. Nothing else is deduped,
-    because nothing else in the canonical model says when two objects are the
-    same object, and a rule invented here would delete a real repeat prescription
-    or a real second reading.
+    happens only where the model already defines identity: two encounters
+    stating the same identity — a GUID ``<id root>`` standing alone, or ANY
+    root paired with a non-blank extension — are one visit when the halves
+    agree (:func:`~anastomosis.sources.ccda.parser.fold_encounters_sharing_an_id`
+    — the same rule inside one document and across two). An encounter under a
+    vendor OID root with NO extension does not reach this: the root alone
+    names an assigning authority rather than a visit, so the parser gives it
+    one id PER DOCUMENT (:func:`~anastomosis.sources.ccda.parser._encounter_id`
+    #393), and two documents naming the same visit under a bare OID root keep
+    two encounter objects here. Nothing else is deduped, because nothing else
+    in the canonical model says when two objects are the same object, and a
+    rule invented here would delete a real repeat prescription or a real
+    second reading.
 
     The first record's ``id`` and ``provenance`` stay: a merged chart is the
     first document's record with the rest folded into it, and how many records
