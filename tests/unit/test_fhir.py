@@ -237,7 +237,10 @@ def test_round_trip_edge_cases_from_qa_review() -> None:
     bundle = to_bundle(record)
     json.dumps(bundle)  # NaN guard: bundle must stay JSON-serializable
     rebuilt = from_bundle(bundle)
-    assert rebuilt.id == record.id
+    # NOT `rebuilt.id == record.id`. The record's own id is a uuid4 minted at
+    # parse time that no adapter sets and no source states, so carrying it into
+    # the bundle only made two runs over one export differ (#405). The
+    # extensions beside it ARE the source's, and those must survive.
     assert rebuilt.extensions == record.extensions
     assert rebuilt.patient.model_dump(mode="json", exclude={"provenance"}) == (
         record.patient.model_dump(mode="json", exclude={"provenance"})
@@ -249,6 +252,55 @@ def test_round_trip_edge_cases_from_qa_review() -> None:
     from fhir.resources.R4B.bundle import Bundle
 
     Bundle.model_validate(bundle)
+
+
+def test_the_records_own_runtime_id_does_not_reach_the_bundle(tmp_path: Path) -> None:
+    """A uuid4 minted at parse time is not part of a delivered artifact.
+
+    `AnastBase.id` defaults to a fresh uuid4 and no adapter sets `PatientRecord.id`,
+    so it says nothing about the source; it is this run's bookkeeping. Carried in
+    the `__record__` extra it made two loads of one export differ in a file whose
+    writer's docstring calls byte-stability a contract, and which operators are
+    told to diff. The CCD side never carried it — which is exactly why
+    `test_ccda_export.py::test_two_ingests_of_one_export_build_identical_documents`
+    can exist there.
+
+    Two genuinely separate loads, because a reused record would mint no second
+    id and the test would pass while carrying it.
+
+    This does NOT yet make `bundle.json` byte-stable: every clinical object
+    (observations, conditions, allergies, medications, immunizations) still
+    takes an `AnastBase.id` uuid4 that becomes its FHIR resource id and
+    `fullUrl`. That is the same defect one layer down, measured at 16 resources
+    on this fixture, and it stays open on #405 rather than being claimed here.
+    """
+    from anastomosis.core.fhir import to_bundle
+    from anastomosis.sources import get_source
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+    first, second = (next(iter(get_source("ccda").load(fixture))) for _ in range(2))
+    assert first.id != second.id, "two independent loads mint different record ids"
+
+    extras = _record_extras(to_bundle(first))
+    assert "id" not in extras, "the record's runtime id must not ride in the bundle"
+    assert extras["extensions"] == first.extensions, "the source's own extensions still do"
+    assert json.dumps(to_bundle(first)).count(first.id) == 0, (
+        "the record's runtime id must not appear anywhere in the delivered bundle"
+    )
+    assert _record_extras(to_bundle(second)) == extras, (
+        "and what does ride is identical across two loads of one export"
+    )
+
+
+def _record_extras(bundle: dict) -> dict:
+    """The `__record__` extra out of a bundle's Patient resource."""
+    from anastomosis.core.fhir.export import EXTRAS_NS
+
+    patient = next(
+        e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == "Patient"
+    )
+    blob = next(x["valueString"] for x in patient["extension"] if x["url"] == EXTRAS_NS)
+    return json.loads(blob)["__record__"]
 
 
 def test_non_json_serializable_extension_value_survives_export() -> None:

@@ -187,7 +187,17 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
         )
         if getattr(record, name)
     }
-    extras["__record__"] = {"id": record.id, "extensions": record.extensions}
+    # The record's OWN id is deliberately absent. `AnastBase.id` defaults to a
+    # fresh uuid4 and no adapter sets it, so it is instance bookkeeping minted
+    # at parse time with no relationship to anything the source said — unlike
+    # `patient.id`, which the source states and this tool derives from it. A
+    # runtime-minted id in a delivered artifact makes two runs over one export
+    # differ in a file whose whole job is to be compared, and this writer's
+    # docstring calls that byte-stability a contract. The CCD side has never
+    # carried it (`build_ccd` serializes no record id at all), which is why
+    # `test_two_ingests_of_one_export_build_identical_documents` can exist
+    # there; this is that guarantee reaching the other rendition (#405).
+    extras["__record__"] = {"extensions": record.extensions}
     extension = _exts(
         p,
         {
