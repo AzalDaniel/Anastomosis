@@ -186,6 +186,7 @@ def deliver_outputs(
     into its command's ``out_dir``.
     """
     from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.deliver.ccda_export import ArtifactNotDelivered
     from anastomosis.pipeline import PipelineError
 
     ordered = sorted(deliveries, key=lambda d: _DELIVERY_ORDER[d.kind])
@@ -198,6 +199,25 @@ def deliver_outputs(
         except OutputPathError as exc:
             raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
     outcomes: dict[str, DeliveryOutcome] = {}
+    try:
+        _run_deliveries(result, charts_dir, ordered, outcomes)
+    except ArtifactNotDelivered as exc:
+        # A delivery that cannot carry a document the record names is a run
+        # that must stop, not a shortfall to print under a success line: the
+        # operator would otherwise hand a receiving EHR a chart pointing at a
+        # file that is not there. Exit 1, the code the pipeline already uses
+        # when a stage cannot account for what it was given (#373).
+        raise PipelineError(str(exc), exit_code=1, kind="artifact_missing") from None
+    return outcomes
+
+
+def _run_deliveries(
+    result: PipelineResult,
+    charts_dir: Path,
+    ordered: list[DeliveryCommand],
+    outcomes: dict[str, DeliveryOutcome],
+) -> None:
+    """Invoke each deliverer in canonical order, filling ``outcomes`` in place."""
     for dc in ordered:
         if dc.kind == "archive":
             from anastomosis.deliver.archive import ArchiveDeliverer
@@ -237,8 +257,16 @@ def deliver_outputs(
             )
         elif dc.kind == "ccda":
             from anastomosis.deliver.ccda_export import deliver_ccda
+            from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 
-            ccda = deliver_ccda(result.records, dc.out_dir)
+            # The run already put every source document the records name into
+            # charts/attachments (and refused if any did not arrive), so this
+            # is where the deliverer copies them from. Without it the C-CDA
+            # deliverable was the one destination that got a patient's chart
+            # with none of their documents on it (#373).
+            ccda = deliver_ccda(
+                result.records, dc.out_dir, artifacts_dir=charts_dir / ATTACHMENTS_DIRNAME
+            )
             outcomes["ccda"] = DeliveryOutcome(
                 kind="ccda",
                 out_dir=dc.out_dir,
@@ -252,9 +280,9 @@ def deliver_outputs(
                     "bytes": ccda.total_bytes,
                     "preserved_bytes": ccda.preserved_bytes,
                     "largest_bytes": ccda.largest_bytes,
+                    "documents": ccda.artifact_count,
                 },
             )
-    return outcomes
 
 
 def run_pipeline_command(cmd: PipelineCommand, on_event: EventSink | None = None) -> CommandResult:

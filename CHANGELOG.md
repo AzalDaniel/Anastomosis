@@ -567,6 +567,69 @@ issue and fixed in its own pull request.
   tests rather than by the corpus. A finer instrument superseded by a blunter
   one that happens to be right more often is still a loss of resolution, and
   it is recorded here rather than discovered later. (#365)
+- **`--ccda` delivered a patient's chart with none of their documents on it.**
+  A C-CDA whose entire clinical content is `nonXMLBody` artifacts — a scanned
+  referral, a faxed discharge summary — parsed into canonical
+  `DocumentArtifact`s and was preserved byte-for-byte in the charts and in the
+  archive. The same exit-0 run's `--ccda` directory, the one an operator hands
+  to the receiving EHR, held neither the artifacts nor any resolvable
+  reference to them, and reparsing it produced the patient with correct
+  demographics and an empty chart. That is what a physician would have opened.
+  The export's own declared-loss table said the bytes needed no narrating
+  because "the run writes them into the attachments directory beside the
+  charts" — true of the charts, and the deliverer was never given an
+  attachment directory nor wrote a sidecar, so the one destination the claim
+  did not cover was the one it was written on.
+
+  The delivery now writes every source document into the delivery directory
+  and names it from the CCD: an `<observationMedia>` entry per artifact,
+  carrying the artifact's canonical id as its `<id root>`, the declared media
+  type on the ED's `@mediaType`, and the SHA-256 on the ED's own
+  `@integrityCheck`, with an ED `<reference>` naming the file beside the
+  document. That construct rather than a re-embedded `nonXMLBody`, because CDA
+  R2 gives a `ClinicalDocument` exactly one `<component>`: a CCD carrying a
+  `structuredBody` cannot also carry a non-XML body, and the C-CDA R2.1
+  Unstructured Document template is for a whole document, not an attachment to
+  one. Bytes stay out of the XML, so a repeated export → ingest → export loop
+  carries no base64 at all and the document settles at generation 2 and never
+  moves again.
+
+  Loud where it cannot conserve, and before anything reports success: a
+  document the run resolved but that is not in the directory the run put it in,
+  one whose delivered bytes do not hash to what the record witnesses, and
+  inline bytes that will not decode all stop the run at exit 1 rather than
+  handing a receiving EHR a chart pointing at a file that is not there. The
+  reader holds the same line from the other side — a delivered document that
+  did not travel with its CCD, or that was edited after it was written, refuses
+  the re-ingest instead of carrying a patient whose scan silently is not the
+  one their chart means.
+
+  One more loss came out with it. The deliverer wrote `<patient-id>.xml` per
+  RECORD but a C-CDA export gives a patient one document per encounter, so a
+  patient with four documents got one file — the last one — and the other
+  three vanished under a green line, artifacts and all. Second and later
+  records for a patient are now `<patient-id>-2.xml`, `-3.xml`, in the source's
+  own order; a patient with one record keeps the name they have always had.
+  Delivered filenames stay PHI-free: a document is named after its own
+  pseudonymous artifact id, never after the source's filename, because a C-CDA
+  export names its attachments after the patient and this is the directory most
+  likely to travel. The source's own filename is not lost, only moved — it
+  narrates in the loss ledger with every other field CDA has no slot for. The
+  CLI and the GUI reach one implementation, so both conserve or both refuse.
+
+  A document entry is this tool's own writing, and is no longer copied as
+  though it were the source's. The C-CDA ingest parks every section's entries
+  verbatim so an export can re-emit rather than narrate them, and a delivered
+  document was being kept twice — read back into an artifact AND parked as a
+  copy — so the next export wrote the entry again beside the copy. Four
+  generations of the same chart went 7,464 → 9,990 → 12,850 → 18,892 bytes,
+  the artifacts doubling each round and the doubles narrating in the loss
+  ledger. It settles at generation 2 and never moves again. The typed object
+  is the better copy anyway: restated with the name of the file this run
+  actually delivered and that file's verified digest, rather than last
+  generation's. A third party's `<observationMedia>` carries none of this
+  tool's stamp, is nobody's to restate, and is preserved verbatim as before.
+  (#373)
 - **An upload manifest with no items, for a patient whose whole chart is
   attachments.** `--upload-manifest` serialized the rendered charts and nothing
   else. A C-CDA Unstructured Document renders no encounter — its clinical

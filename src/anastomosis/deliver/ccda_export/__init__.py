@@ -8,7 +8,14 @@ C-CDA parser. See :mod:`.builder` for scope, determinism, and the declared
 list of source fields that do not survive a C-CDA round trip.
 """
 
-from .builder import DECLARED_LOSSES, build_ccd
-from .deliverer import CcdaExportResult, deliver_ccda
+from .builder import DECLARED_LOSSES, DeliveredArtifact, build_ccd
+from .deliverer import ArtifactNotDelivered, CcdaExportResult, deliver_ccda
 
-__all__ = ["DECLARED_LOSSES", "CcdaExportResult", "build_ccd", "deliver_ccda"]
+__all__ = [
+    "DECLARED_LOSSES",
+    "ArtifactNotDelivered",
+    "CcdaExportResult",
+    "DeliveredArtifact",
+    "build_ccd",
+    "deliver_ccda",
+]
