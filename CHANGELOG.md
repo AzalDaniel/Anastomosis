@@ -726,6 +726,35 @@ issue and fixed in its own pull request.
   ccda-standard-mode stage) and both now read that one resolution rather than
   computing their own. The GUI reaches the identical fix for free, through the
   same shared pipeline core. (#383)
+- **A `.ccd` export was never read.** The C-CDA adapter's directory walk
+  matched `path.glob("*.xml")`, twice — once for the count, once for the
+  load — so a document a vendor wrote under any other spelling was never
+  opened, never counted, and never mentioned. Kareo/Tebra write a CCD as
+  `<name>.ccd`; other vendors write `.ccda`. Driving the owner's own Kareo
+  export end to end found a CCD saved beside a Summary of Care saved as
+  `.xml`: the run reported `1 rendered, 0 skipped, 0 failed` and exited 0 for
+  an export holding two documents, with no row anywhere for the second one —
+  whole-document loss behind a green line, one directory listing before the
+  conservation machinery that exists to catch exactly this ever runs. The
+  adapter now matches `.xml`, `.ccd`, and `.ccda` on `Path.suffix.lower()`
+  (case-insensitively, on a case-sensitive filesystem too), and `detect`
+  recognises an export holding only `.ccd` documents rather than missing it
+  for auto-detection. The same directory walk that finds the documents now
+  also counts every OTHER file whose document element reads as CDA's
+  `ClinicalDocument` but whose extension names none of the three — decided
+  by the file's first start tag, not a byte window, so a leading comment,
+  BOM or DTD cannot hide a real document from either count — never its
+  name, which a C-CDA export gives after the patient — and that count rides
+  the existing source-ledger settlement into `loss_ledger.json` and the
+  run's reading beside everything that WAS opened, on the same
+  reset-and-`getattr` contract the document ledgers already use; a file
+  that legitimately isn't CDA at all (a `nonXMLBody`'s own referenced
+  attachment, say) is not counted, because
+  burying the one loss that matters in files this adapter was never going to
+  read regardless would be the same false accounting by another route. The
+  6,144-document corpus pin is unmoved — `skipped_files` defaults to 0 and
+  rides the report only as a key nothing in the printed gap table reads, so
+  the aggregate is byte-identical either way (#384).
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as
