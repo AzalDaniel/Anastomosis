@@ -219,22 +219,49 @@ def test_an_artifact_the_source_never_resolved_is_not_a_delivery_failure(tmp_pat
     assert len(result.paths) == 1
 
 
-def test_a_patient_with_two_documents_gets_two_delivered_ccdas(tmp_path: Path) -> None:
-    """One file per RECORD, not per patient.
+def test_a_patient_with_two_documents_is_one_ccd_carrying_both(tmp_path: Path) -> None:
+    """One file per PATIENT, carrying every document their records held.
 
     A C-CDA export gives a patient one document per encounter and this adapter
     reads each as its own record, so writing them all to ``<patient-id>.xml``
     handed the receiving EHR the LAST one and silently dropped the rest —
     artifacts and all, which is how #373's own reproduction lost a scan even
-    once the bytes were being written.
+    once the bytes were being written. #375 settled where that is fixed: the
+    pipeline folds a patient's records into one before any deliverer sees
+    them, so this one is handed a single record carrying both documents and
+    writes a single CCD with both artifacts beside it. Two records arriving
+    here still under one id is the collision it refuses, which the loud half
+    below covers.
     """
-    first = PatientRecord(patient=Patient(id=PATIENT_ID, given_name="Synthia"))
-    second = PatientRecord(patient=Patient(id=PATIENT_ID, given_name="Synthia"))
+    from anastomosis.pipeline import _fold_records_sharing_a_patient
+
+    def _scanned(tag: bytes, pages: int) -> DocumentArtifact:
+        return DocumentArtifact(
+            patient_id=PATIENT_ID,
+            mime_type="application/pdf",
+            extensions={EXT_INLINE_CONTENT: base64.b64encode(_pdf(pages, tag)).decode()},
+        )
+
+    records = [
+        PatientRecord(
+            patient=Patient(id=PATIENT_ID, given_name="Synthia"), documents=[_scanned(b"first", 1)]
+        ),
+        PatientRecord(
+            patient=Patient(id=PATIENT_ID, given_name="Synthia"), documents=[_scanned(b"second", 3)]
+        ),
+    ]
 
     out = tmp_path / "ccda"
-    written = deliver_ccda([first, second], out, artifacts_dir=None).paths
+    result = deliver_ccda(_fold_records_sharing_a_patient(records), out, artifacts_dir=None)
 
-    assert sorted(p.name for p in written) == [f"{PATIENT_ID}-2.xml", f"{PATIENT_ID}.xml"]
+    assert [path.name for path in result.paths] == [f"{PATIENT_ID}.xml"]
+    assert result.artifact_count == 2
+    assert sorted(
+        hashlib.sha256(pdf.read_bytes()).hexdigest() for pdf in out.glob("*.pdf")
+    ) == sorted(
+        hashlib.sha256(_pdf(pages, tag)).hexdigest()
+        for pages, tag in ((1, b"first"), (3, b"second"))
+    )
 
 
 # --- the loud half -----------------------------------------------------------

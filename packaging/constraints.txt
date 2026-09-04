@@ -30,7 +30,7 @@ pywebview==6.2
 # without a line of this project changing. It was a literal pin in
 # windows-package.yml, which is one more place than "single source of truth"
 # allows.
-nuitka==4.1.3
+nuitka==4.2
 
 # The SBOM generator. Its output IS a shipped artifact, so its version decides
 # the document's shape and spec level. It was pinned literally in BOTH release

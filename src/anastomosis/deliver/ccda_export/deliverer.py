@@ -28,7 +28,6 @@ import base64
 import binascii
 import hashlib
 import logging
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,7 +37,7 @@ from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.core.model import EXT_INLINE_CONTENT, DocumentArtifact, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import budgeted_name, media_type_suffix
-from anastomosis.deliver._shared import claim_delivered_name
+from anastomosis.deliver._shared import claim_delivered_name, record_witness
 
 from .builder import DeliveredArtifact, build_ccd, measure_ccd
 
@@ -134,25 +133,38 @@ def deliver_ccda(
     to a document that is missing or is not the one the source held.
 
     A name COLLISION is likewise a hard stop: ``write_bytes`` overwrites, so two
-    patient ids that sanitize to one filename would deliver one CCD carrying the
-    second patient over the first. The per-run claimed-name ledger — shared by
-    the documents and the artifacts, since they land in one directory — makes
-    that a loud failure instead of a merge.
+    patient ids that sanitize to one filename — or two records arriving under one
+    patient id — would deliver one CCD carrying the second over the first. The
+    per-run claimed-name ledger — shared by the documents and the artifacts, since
+    they land in one directory — makes that a loud failure instead of a merge.
     """
     out = secure_output_dir(out_dir)
     written: list[Path] = []
     claimed: dict[str, str] = {}
-    seen: Counter[str] = Counter()
     missing = 0
     total_bytes = 0
     preserved_bytes = 0
     largest_bytes = 0
     artifacts = 0
     for index, record in enumerate(records):
-        seen[record.patient.id] += 1
-        name = _document_name(record, index, seen[record.patient.id], out)
-        claim_delivered_name(claimed, name, record.patient.id, kind="C-CDA document")
-        target = out / name
+        # Budgeted against ``out``: an over-long path would otherwise raise
+        # OSError inside the write below, and the batch-continues handler would
+        # record that record as merely "failed" — a silently dropped export.
+        pid = budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=".xml")
+        # The record goes in as the claim's witness because a patient id is not
+        # guaranteed unique either: an adapter that yields one record per source
+        # DOCUMENT hands two records for a patient with two of them, and without
+        # the witness the second document's CCD lands on the first while the run
+        # reports two patients. The pipeline folds those into one record before
+        # delivery; this is what makes a future regression loud.
+        claim_delivered_name(
+            claimed,
+            pid,
+            record.patient.id,
+            kind="C-CDA document",
+            content=record_witness(record),
+        )
+        target = out / f"{pid}.xml"
         # Before the build, and outside the batch-continues handler: the CCD is
         # what NAMES these files, so a build that could not have its artifacts
         # must not be written at all, and this refusal must not be swallowed as
@@ -173,7 +185,7 @@ def deliver_ccda(
             # patient with no document at all was indistinguishable from a
             # smaller batch and the operator saw an unqualified green line.
             logger.warning(
-                "ccda export failed for patient %s (%s)", safe_log_id(name), exc_tag(exc)
+                "ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc)
             )
             missing += 1
             continue
@@ -221,31 +233,6 @@ def _warn_on_preservation_share(result: CcdaExportResult) -> None:
         result.total_bytes,
         result.largest_bytes,
     )
-
-
-def _document_name(record: PatientRecord, index: int, ordinal: int, out: Path) -> str:
-    """This record's delivered filename, ``<patient-id>.xml`` where it can be.
-
-    One file per RECORD, not per patient. A C-CDA export gives a patient one
-    document per encounter — a referral, a discharge summary, four scans — and
-    this adapter reads each as its own record, so writing them all to
-    ``<patient-id>.xml`` handed the receiving EHR the LAST one and silently
-    dropped the rest, artifacts and all. The second and later records for one
-    patient are therefore ``<patient-id>-2.xml``, ``-3.xml``, in the source's
-    own stable order, and a patient with a single record keeps exactly the name
-    they have always had.
-
-    The ordinal rather than the record's source document id: that id is
-    optional and free-form (a record from a hand-made FHIR bundle has none),
-    while the position always exists and is as deterministic as the load order
-    every other delivered name already depends on.
-
-    Budgeted against ``out``: an over-long path would otherwise raise OSError
-    inside the write, and the batch-continues handler would record that record
-    as merely "failed" — a silently dropped export.
-    """
-    tail = ".xml" if ordinal == 1 else f"-{ordinal}.xml"
-    return budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=tail) + tail
 
 
 def _deliver_artifacts(

@@ -59,6 +59,7 @@ from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
 from anastomosis.deliver._shared import (
     claim_delivered_name,
     copy_claimed_chart,
+    record_witness,
     write_fhir_bundle,
 )
 from anastomosis.deliver.render_index import RenderIndex
@@ -237,11 +238,12 @@ class ArchiveDeliverer:
         records_list = list(records)
         qa_lookup = _qa_lookup(qa_report)
         owned_pdfs: set[str] = set()
-        # Per-run ledger of delivered directory name -> the patient id that
-        # claimed it. Two ids that sanitize to ONE name (``MRN 1234`` and
-        # ``MRN/1234`` both collapse to ``MRN_1234``) would otherwise merge into
-        # a single ``patients/<id>/`` slot, because every writer below is
-        # exist_ok/overwrite. A second claimant is a hard failure.
+        # Per-run ledger of delivered directory name -> the record that claimed
+        # it. Two ids that sanitize to ONE name (``MRN 1234`` and ``MRN/1234``
+        # both collapse to ``MRN_1234``), or two different records under one id,
+        # would otherwise merge into a single ``patients/<id>/`` slot, because
+        # every writer below is exist_ok/overwrite. A second claimant is a hard
+        # failure.
         claimed_dirs: dict[str, str] = {}
 
         for record in records_list:
@@ -255,7 +257,20 @@ class ArchiveDeliverer:
                 parent=out / "patients",
                 reserve=_PATIENT_CHILD_RESERVE,
             )
-            claim_delivered_name(claimed_dirs, pid, record.patient.id, kind="patient directory")
+            # The record is the claim's witness for the reason the encounter
+            # page below has one: a patient id is not guaranteed unique either.
+            # An adapter that yields one record per source DOCUMENT hands two
+            # records for a patient with two of them, and one exist_ok directory
+            # would then hold the second document's bundle over the first while
+            # the run reported two patients. The pipeline folds those into one
+            # record before delivery; this is what makes a regression loud.
+            claim_delivered_name(
+                claimed_dirs,
+                pid,
+                record.patient.id,
+                kind="patient directory",
+                content=record_witness(record),
+            )
             patient_dir = out / "patients" / pid
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
