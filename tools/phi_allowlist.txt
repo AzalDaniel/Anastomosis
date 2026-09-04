@@ -107,6 +107,21 @@ billingpatientrelationshipoption
 7029466a-7630-5f95-9072-85ca63f186dc
 f244f1d6-d7d6-5bc0-ac55-fc41390a3c9b
 
+# sources.ccda.parser's encounter identity recipe (#393), pinned LITERALLY in
+# tests/unit/test_ccda.py and tests/unit/test_one_patient_is_one_chart.py for
+# the same reason as the pair above — a test that recomputes the value it is
+# meant to pin cannot catch a change to the recipe itself. All four are
+# uuid5(NAMESPACE_URL, "anastomosis:ccda:encounter:<root>:<extension>") over
+# synthetic (root, extension) pairs the tests construct inline (a vendor OID
+# "2.16.840.1.113883.19.5.99999.1" with extension "9001"; the synthetic GUID
+# "feedface-e000-0000-0000-00000000009b" with extension "visit-42"; and the
+# colon-collision pair "1.2.3"/"X:4" vs "1.2.3:X"/"4") — this repo's own
+# deterministic hash of synthetic input, not an identifier any system issued.
+20c70a5e-f37d-5241-86d1-39c1ae15d794
+5582544a-2141-5900-9cdf-b68f2a8ec44f
+efa36b0c-c55f-54d6-bcb3-35741a0c8b43
+f773cf29-b409-5f2b-9d86-736aab997c80
+
 # The Microsoft Edge WebView2 Runtime's EdgeUpdate "Clients" GUID — a fixed,
 # PUBLIC Microsoft product identifier the Windows installer (packaging/
 # anastomosis.iss) reads to detect whether WebView2 is present

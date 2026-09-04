@@ -376,16 +376,21 @@ def test_two_documents_naming_one_visit_under_a_guid_root_fold_to_one_encounter(
     assert record.encounters[0].id == shared_encounter
 
 
-def test_a_vendor_oid_root_does_not_fold_across_documents_and_the_docstring_says_so(
+def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_fold_to_one_encounter(
     tmp_path: Path,
 ) -> None:
-    """A PIN of today's behaviour, not an endorsement of it. Most vendors emit
-    a system OID as the encounter id root (paired with a per-instance
-    extension), and ``_encounter_id`` trusts only a GUID-shaped root —
-    anything else derives a per-DOCUMENT id from the file name and position.
-    So the same visit stated under one OID root in two documents keeps two
-    encounter objects here; changing ``_encounter_id`` to honour an OID root
-    too is a clinical identity decision outside this fix, filed as #393.
+    """The inverse of #377's old pin (superseded by #393): HL7 v3's ``II`` is
+    the PAIR ``(root, extension)``, not the root alone. Most vendors emit a
+    system OID as the encounter id root paired with a per-instance extension
+    — the owner's own exports do — and two documents stating the SAME pair
+    describe the same visit by the datatype's own definition, so the
+    cross-document fold must reach them too, not only a GUID root.
+
+    The id itself is the literal uuid5 the recipe produces (computed by hand,
+    not by calling the function under test — see
+    ``test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer``
+    for why a literal is the point): document-intrinsic, so it does not
+    change if this same pair is later read from a third file.
     """
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
@@ -406,9 +411,9 @@ def test_a_vendor_oid_root_does_not_fold_across_documents_and_the_docstring_says
         encounter=vendor_root,
         condition="feedface-cnd0-0000-0000-000000000002",
     )
-    # A vendor OID root pairs with a per-encounter extension in practice;
-    # `_encounter_id` reads only the root, so the shape is faithful even
-    # though the extension itself plays no part in the outcome below.
+    # `_write_structured` writes a bare `<id root=…/>`; add the per-instance
+    # extension a vendor OID root pairs with in practice, identical in both
+    # documents — the same visit stated twice under the same (root, extension).
     for name in ("one.xml", "two.xml"):
         path = export / name
         path.write_text(
@@ -420,8 +425,181 @@ def test_a_vendor_oid_root_does_not_fold_across_documents_and_the_docstring_says
 
     (record,) = load_records(get_source("ccda"), export)
 
-    assert len(record.encounters) == 2, "an OID root keeps one id per document, so no fold"
+    assert len(record.encounters) == 1, "one visit named twice folds to one (root, extension) pair"
+    assert record.encounters[0].id == "efa36b0c-c55f-54d6-bcb3-35741a0c8b43"
+
+
+def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_deliver_one_chart(
+    tmp_path: Path,
+) -> None:
+    """The physician-facing shape of the same fix: before #393 the archive
+    wrote one page per Encounter OBJECT, and a vendor OID root plus extension
+    named across two documents was two objects, so a physician opening this
+    patient's chart found the same visit twice. Driven through the real
+    cross-document fold (:func:`~anastomosis.pipeline.load_records`) and the
+    real archive delivery — no PDFs directory is needed for the archive to
+    write its per-encounter page, so this stays fast and Chromium-free.
+    """
+    from anastomosis.deliver.archive.archive import ArchiveDeliverer
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    vendor_root = "2.16.840.1.113883.19.5.99999.1"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+    for name in ("one.xml", "two.xml"):
+        path = export / name
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                f'<id root="{vendor_root}"/>', f'<id root="{vendor_root}" extension="9001"/>'
+            ),
+            encoding="utf-8",
+        )
+
+    (record,) = load_records(get_source("ccda"), export)
+    pdfs = tmp_path / "pdfs"
+    pdfs.mkdir()
+
+    result = ArchiveDeliverer().deliver([record], pdfs, tmp_path / "archive")
+
+    pages = list((tmp_path / "archive" / "patients").rglob("encounters/*.html"))
+    assert len(pages) == 1, "one visit named by two documents is one delivered chart"
+    assert result.encounter_count == 1
+
+
+def test_a_bare_oid_root_with_no_extension_still_does_not_fold_across_documents(
+    tmp_path: Path,
+) -> None:
+    """The authority case, and it must NOT fold. An OID root with no
+    extension is typically an assigning authority a vendor stamps on every
+    encounter it ever writes, not one visit's identity — HL7 v3's ``II`` is
+    the (root, extension) PAIR, and a root alone states only the namespace.
+    Folding on it would merge every distinct visit that vendor ever
+    documented into one, which is the misfiling this project exists to
+    prevent. So a bare OID root still derives a per-DOCUMENT id from the file
+    name and position, exactly as before #393, and two documents stating the
+    same bare root keep two encounter objects.
+    """
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    vendor_root = "2.16.840.1.113883.19.5.99999.1"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    assert len(record.encounters) == 2, "a bare OID root names an authority, not a visit — no fold"
     assert record.encounters[0].id != record.encounters[1].id
+
+
+def test_a_blank_extension_after_stripping_is_not_an_extension(tmp_path: Path) -> None:
+    """A blank or whitespace-only ``extension`` states nothing, so a root
+    paired with one is read as root-only — an OID root plus a blank
+    extension is still the authority case (#393's third consequence), not the
+    stated-pair case, and must not fold.
+    """
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    vendor_root = "2.16.840.1.113883.19.5.99999.1"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=vendor_root,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+    for name in ("one.xml", "two.xml"):
+        path = export / name
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                f'<id root="{vendor_root}"/>', f'<id root="{vendor_root}" extension="   "/>'
+            ),
+            encoding="utf-8",
+        )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    assert len(record.encounters) == 2, "a whitespace-only extension is not an extension"
+    assert record.encounters[0].id != record.encounters[1].id
+
+
+def test_a_guid_root_paired_with_an_extension_hashes_the_pair_not_the_bare_root(
+    tmp_path: Path,
+) -> None:
+    """A GUID root standing ALONE is trusted verbatim; paired with a non-blank
+    extension it is not standing alone any more — HL7 v3's ``II`` is the PAIR,
+    so this takes the same ``(root, extension)`` recipe an OID root would,
+    and the resulting id is the derived uuid5, not the raw GUID.
+    """
+    from anastomosis.pipeline import load_records
+    from anastomosis.sources import get_source
+
+    export = tmp_path / "export"
+    shared_guid = "feedface-e000-0000-0000-00000000009b"
+    _write_structured(
+        export,
+        "one.xml",
+        document="feedface-doc0-0000-0000-000000000001",
+        encounter=shared_guid,
+        condition="feedface-cnd0-0000-0000-000000000001",
+    )
+    _write_structured(
+        export,
+        "two.xml",
+        document="feedface-doc0-0000-0000-000000000002",
+        encounter=shared_guid,
+        condition="feedface-cnd0-0000-0000-000000000002",
+    )
+    for name in ("one.xml", "two.xml"):
+        path = export / name
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                f'<id root="{shared_guid}"/>', f'<id root="{shared_guid}" extension="visit-42"/>'
+            ),
+            encoding="utf-8",
+        )
+
+    (record,) = load_records(get_source("ccda"), export)
+
+    assert len(record.encounters) == 1, "the same (root, extension) pair still folds"
+    assert record.encounters[0].id != shared_guid, "the pair hashes, it is not returned verbatim"
+    assert record.encounters[0].id == "f773cf29-b409-5f2b-9d86-736aab997c80"
 
 
 def test_two_documents_carrying_one_appendix_are_read_as_two_declared_losses(

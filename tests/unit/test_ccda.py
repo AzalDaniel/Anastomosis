@@ -938,6 +938,114 @@ def test_encounter_ids_are_deterministic_across_reparses() -> None:
     assert [e.id for e in first.encounters] == [e.id for e in second.encounters]
 
 
+_TWO_ENCOUNTER_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-000000000401"/>
+  <code code="34133-9" displayName="Summarization of Episode Note"
+        codeSystem="2.16.840.1.113883.6.1"/>
+  <effectiveTime value="20230510150000-0500"/>
+  <recordTarget>
+    <patientRole>
+      <id root="feedface-0000-0000-0000-000000000402"/>
+      <patient>
+        <name><given>Test</given><family>Patient</family></name>
+        <administrativeGenderCode code="F" displayName="Female"
+                                  codeSystem="2.16.840.1.113883.5.1"/>
+        <birthTime value="19800101"/>
+      </patient>
+    </patientRole>
+  </recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="46240-8" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Encounters</title>
+      <text><paragraph>Office visit</paragraph></text>
+      <entry><encounter classCode="ENC" moodCode="EVN">
+        <id root="1.2.3" extension="X:4"/>
+        <code code="99213" displayName="Office visit"/>
+        <effectiveTime><low value="20230510"/></effectiveTime>
+      </encounter></entry>
+      <entry><encounter classCode="ENC" moodCode="EVN">
+        <id root="1.2.3:X" extension="4"/>
+        <code code="99214" displayName="Follow up"/>
+        <effectiveTime><low value="20230712"/></effectiveTime>
+      </encounter></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_encounter_identity_pair_quotes_each_half_so_a_colon_cannot_cross_it(
+    tmp_path: Path,
+) -> None:
+    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` must NOT hash to the same
+    encounter id — the same collision :func:`organizer_component_source_id`
+    guards against, for the same reason: a vendor extension carrying a
+    literal ``:`` has been seen, and an unquoted recipe would let it cross
+    into the root half. Pinned against LITERAL uuid5 strings, not against a
+    second call to the function under test (#378's own precedent) — a recipe
+    change is a decision that rewrites every already-migrated chart's id.
+    """
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "two_encounters.xml"
+    doc.write_text(_TWO_ENCOUNTER_CCD, encoding="utf-8")
+
+    record = parse_document(doc)
+
+    ids = sorted(e.id for e in record.encounters)
+    assert ids == sorted(
+        ["20c70a5e-f37d-5241-86d1-39c1ae15d794", "5582544a-2141-5900-9cdf-b68f2a8ec44f"]
+    )
+
+
+def test_an_oid_root_and_extension_encounter_id_is_stable_across_reparses(
+    tmp_path: Path,
+) -> None:
+    """#393's own idempotent-skip invariant, on the NEW identity path
+    specifically: :func:`test_encounter_ids_are_deterministic_across_reparses`
+    above exercises only the shared fixture's GUID-root encounters, which
+    this change leaves untouched, so it proves nothing about the
+    ``(root, extension)`` recipe re-parsing the same way twice.
+    """
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "two_encounters.xml"
+    doc.write_text(_TWO_ENCOUNTER_CCD, encoding="utf-8")
+
+    first = parse_document(doc)
+    second = parse_document(doc)
+
+    assert [e.id for e in first.encounters] == [e.id for e in second.encounters]
+
+
+def test_an_encounter_whose_first_id_is_nullflavor_still_reads_its_second_rooted_id(
+    tmp_path: Path,
+) -> None:
+    """The consequence #393 calls out by name: the encounter walk reads its
+    ``<id>`` through :func:`~anastomosis.core.ccda_codes.first_rooted_id`,
+    not by raw first-child attribute lookup — an ``<id nullFlavor="NI"/>``
+    ahead of a real rooted ``<id>`` used to read as id-less (#378's
+    duplication, reproduced here on the encounter branch specifically).
+    """
+    from anastomosis.sources.ccda.parser import parse_document
+
+    doc = tmp_path / "nullflavor_first.xml"
+    doc.write_text(
+        _TWO_ENCOUNTER_CCD.replace(
+            '<id root="1.2.3" extension="X:4"/>',
+            '<id nullFlavor="NI"/><id root="feedface-e000-0000-0000-00000000009c"/>',
+        ),
+        encoding="utf-8",
+    )
+
+    record = parse_document(doc)
+
+    by_type = {e.encounter_type: e.id for e in record.encounters}
+    assert by_type["Office visit"] == "feedface-e000-0000-0000-00000000009c"
+
+
 def test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer(
     tmp_path: Path,
 ) -> None:
