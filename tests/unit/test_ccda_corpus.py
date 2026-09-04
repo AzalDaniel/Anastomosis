@@ -34,6 +34,7 @@ from anastomosis.sources import get_source
 from anastomosis.sources.ccda.ledger import (
     _NARRATIVE_CONTAINERS,
     Disposition,
+    DocumentLedger,
     aggregate,
     document_ledger,
 )
@@ -332,21 +333,29 @@ def test_all_four_dispositions_are_reachable(
     assert Disposition.UNSUPPORTED in dropped
 
 
-def test_the_empty_loss_column_is_held_up_by_the_copies_under_it(
+def test_taking_the_parked_copies_away_can_only_worsen_the_reading(
     corpus: list[tuple[str, bytes]], tmp_path: Path
 ) -> None:
     """An instrument that cannot report loss is not an instrument.
 
-    The reading above has an empty ``unsupported`` column, and there are two
-    ways that can happen: nothing was lost, or nothing could be seen to be.
-    Telling them apart takes the copies away — strip the parked entries back
-    out of each record and the column has to come straight back, because the
-    credit was resting on them and on nothing else.
+    Strip the parked entries back out of each record and the reading has to
+    get WORSE or stay put — never better — and on at least one document the
+    ``unsupported`` column has to come back, because there the credit was
+    resting on those copies and on nothing else. If some later refactor
+    credits an entry for merely existing, the reading will not move and this
+    will.
+
+    It stops short of demanding the column come back on EVERY document that
+    parks, which is what it asked before the corpus learned to write cited
+    narrative. An entry can now be credited two ways — by the copy its
+    section parked, and by the narrative cell it cites — and where both hold,
+    removing one leaves the other standing. That is two mechanisms working,
+    not a credit resting on nothing, so the monotonic half is what holds
+    everywhere and the existence half is what proves the copies are load
+    bearing at all.
 
     It is the same doubt the stripped-practitioner probe answers for
-    participations, asked of the construct this release actually changed. If
-    some later refactor credits an entry for merely existing, the reading will
-    not move and this will.
+    participations, asked of the construct this release actually changed.
     """
     depended = 0
     for name, xml in corpus[:32]:
@@ -356,20 +365,26 @@ def test_the_empty_loss_column_is_held_up_by_the_copies_under_it(
         parked = [key for key in record.patient.extensions if key.startswith(EXT_SECTION_ENTRIES)]
         if not parked:
             continue
+        before = _unsupported_entries(document_ledger(path, record))
         for key in parked:
             del record.patient.extensions[key]
-        lost = {
-            disposition
-            for row in document_ledger(path, record).rows
-            for disposition, count in row.entries.items()
-            if count
-        }
-        assert Disposition.UNSUPPORTED in lost, (
-            f"{name}: every parked copy removed and no entry reads unsupported, "
-            "so the credit was not resting on them"
+        after = _unsupported_entries(document_ledger(path, record))
+        assert after >= before, (
+            f"{name}: {before} entries read unsupported with the parked copies in the "
+            f"record and only {after} with them gone, so removing a copy IMPROVED the "
+            "reading — a credit that does not depend on what it claims to rest on"
         )
-        depended += 1
-    assert depended, "no document in the sample parks an entry, so this proves nothing"
+        depended += after > before
+    assert depended, (
+        "no document in the sample lost an entry to the unsupported column when its "
+        "parked copies were removed, so nothing here shows the copies are what hold "
+        "the credit up"
+    )
+
+
+def _unsupported_entries(ledger: DocumentLedger) -> int:
+    """How many entries this reading counts lost, across every row."""
+    return sum(row.entries.get(Disposition.UNSUPPORTED, 0) for row in ledger.rows)
 
 
 def test_every_section_the_generator_knows_appears_in_the_reading(
