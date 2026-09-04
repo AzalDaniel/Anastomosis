@@ -77,8 +77,10 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from lxml import etree
@@ -88,21 +90,27 @@ from anastomosis.core.conservation import Conservation
 from anastomosis.core.model import Practitioner
 from anastomosis.core.model.base import AnastBase
 
-# The parser's own helpers, imported rather than re-spelled. Four of them encode
+# The parser's own helpers, imported rather than re-spelled. Each encodes
 # knowledge this ledger must not hold a second copy of: `_PARSER` is the
 # hardened XML posture every third-party document is read under, `_section_code`
-# and `_is_own_loss_narrative` are the parser's own answers about a section, and
-# `_text_content` and `_attr` are the exact normalizations whose output the
-# parser STORED — a ledger that collapsed whitespace even slightly differently
-# would compare its own spelling of a value against the parser's and conclude
-# that every section, and every actor, had been dropped.
+# and `_is_own_loss_narrative` are the parser's own answers about a section,
+# `_sections` is the walk that decides which sections the record can hold
+# anything of at all, `_inline_narrative_references` is the one step that
+# rewrites a tree and is applied here only to a copy, and `_text_content`,
+# `_attr`, `_narrative_entries` and `entry_verbatim` are the exact
+# normalizations whose output the parser STORED —
+# a ledger that collapsed whitespace even slightly differently would compare its
+# own spelling of a value against the parser's and conclude that every section,
+# and every actor, had been dropped.
 from .parser import (
     _PARSER,
     EXT_SECTION_ENTRIES,
     _attr,
     _find,
     _findall,
+    _inline_narrative_references,
     _is_own_loss_narrative,
+    _narrative_entries,
     _q,
     _section_code,
     _text_content,
@@ -697,6 +705,11 @@ class _Evidence:
     #: it that cost nothing: whether the prior-loss narrative is held, and
     #: whether a key exists at all.
     extension_keys: _Facts
+    #: The entries the record stored from OUR OWN exported loss ledgers, one
+    #: claim each. Counted, not merely present: the parser concatenates every
+    #: stamped ledger it walks into one key, so the key's existence says a
+    #: ledger arrived and says nothing about WHICH.
+    own_loss_entries: _KeyedPool[str]
     #: Where a parked PAYLOAD is claimed, one claim per stored item. Counted
     #: and spent rather than asked as a fact, because a key is not a payload:
     #: `ccda:serviceEvent` holding `[]` is the adapter having written the
@@ -860,6 +873,16 @@ class _Evidence:
         """
         return self.parked_items.take(name)
 
+    def own_loss_kept(self, entries: list[str]) -> bool:
+        """Whether THIS stamped ledger's own entries are among the stored ones.
+
+        All of them, and spent — a claim, not a look. Which sections may make
+        the claim at all is the CALLER's question and is settled in
+        :func:`_narrative_kept`, because the store is filled from the parser's
+        walk and a section off that walk has no standing to ask.
+        """
+        return bool(entries) and self.own_loss_entries.take_all(entries)
+
 
 def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
     source_ids = _record_source_ids(record)
@@ -870,11 +893,36 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
         linked_kinds=_Facts(frozenset(_linked_kinds(root, linkable, source_ids))),
         narrative=_KeyedPool(_narrative_pool(record)),
         extension_keys=_Facts(frozenset(record.patient.extensions)),
+        own_loss_entries=_KeyedPool(_own_loss_pool(record)),
         parked_items=_KeyedPool(_parked_pool(record)),
         objects=_MatchedPool(_provenanced(record)),
         entries=_KeyedPool(_entry_pool(record)),
         document_source_ids=_Facts(frozenset(_source_ids(record.documents))),
     )
+
+
+def _own_loss_pool(record: PatientRecord) -> Counter[str]:
+    """The entries the record kept from this exporter's own loss ledgers.
+
+    ``ccda:prior_loss_narrative`` is ONE key however many stamped 51899-3
+    sections the parser walked — it concatenates their entries so a re-export
+    carries a single deduplicated appendix — so the key answers for the
+    construct class and not for any one construct. Counted here for the same
+    reason every other place in this module is counted: two ledgers offered
+    and one stored is one preserved and one lost, and asking whether the key
+    exists reads it as two.
+    """
+    stored = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if not isinstance(stored, dict):
+        return Counter()
+    entries = stored.get("entries")
+    if not isinstance(entries, list):
+        return Counter()
+    # A list OF STRINGS is the rest of that key's contract, and the narrowing
+    # finishes here rather than half way: a record this module did not build is
+    # still an input, and an unhashable element would raise out of `Counter`
+    # and abort the whole reading instead of leaving one section uncredited.
+    return Counter(entry for entry in entries if isinstance(entry, str))
 
 
 def _parked_pool(record: PatientRecord) -> Counter[str]:
@@ -1296,8 +1344,43 @@ def _parks_its_entries(section: _Element) -> bool:
         return False
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
-    walked = _parser_sections(section.getroottree().getroot())
-    return any(candidate is section for candidate in walked)
+    return _walked_index(section) is not None
+
+
+def _walked_index(section: _Element) -> int | None:
+    """Where this section sits in the parser's own walk, or ``None`` if it does
+    not sit there at all.
+
+    The walk is an anchored path — ``component/structuredBody/component/
+    section`` — so a section nested inside another one, or sitting straight
+    under ``<structuredBody>`` without its ``<component>``, is not on it. The
+    parser visits neither, which means nothing of either is anywhere in the
+    record, and no store may be asked about them.
+
+    A position rather than a yes, because the one caller that needs the yes
+    also needs to find this same section in a second reading of the document
+    (:func:`_hydrated_sections`), and matching by position is the only way
+    that does not depend on element identity across two parses. It ASKS the
+    walk rather than restating it, for the reason :func:`_parks_its_entries`
+    gives.
+    """
+    for position, candidate in enumerate(_walk(section.getroottree().getroot())):
+        if candidate is section:
+            return position
+    return None
+
+
+@lru_cache(maxsize=1)
+def _walk(root: _Element) -> list[_Element]:
+    """The parser's section walk over this document, taken once.
+
+    Three questions ask it for every section, and re-walking the tree for each
+    made the ledger quadratic in section count — four times slower at three
+    hundred sections, which a long Epic export reaches. One document is live
+    per reading, so a single slot is the whole cache; the key is the root
+    element, whose identity holds for as long as the entry does.
+    """
+    return list(_parser_sections(root))
 
 
 def _entry_evidence(
@@ -1432,12 +1515,57 @@ def _narrative_kept(
     entry by entry under ``ccda:prior_loss_narrative``, so a re-export cannot
     nest generation N-1 inside generation N — so it is asked about at its own
     address rather than reported as dropped.
+
+    That store is filled from the parser's section walk, which means its
+    address is "the lines the WALKED ledgers put there". A stamped section off
+    the walk contributed nothing to it, and its lines can still be in there
+    because another ledger wrote the same ones: an export that dropped the same
+    field twice says so twice. Asking the store about such a section is asking
+    the wrong address, and it answered yes — a section entirely absent from the
+    record read preserved, and the ledger that had really delivered the lines
+    was left holding an empty pool and reported lost. Which of the two got the
+    credit came down to document order.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
-        return evidence.extension_keys.holds(EXT_PRIOR_LOSS_NARRATIVE)
+        position = _walked_index(section)
+        if position is None:
+            return False
+        twin = _hydrated_sections(section.getroottree().getroot())[position]
+        return evidence.own_loss_kept(_narrative_entries(_find(twin, "v3:text")))
     if pair == (None, None):
         return False
     return evidence.kept_narrative(*pair)
+
+
+@lru_cache(maxsize=1)
+def _hydrated_sections(root: _Element) -> list[_Element]:
+    """The walked sections, read as the PARSER reads them.
+
+    The parser resolves ``<reference value="#id"/>`` in place before it captures
+    anything, so a ledger line that points into the narrative is stored carrying
+    the words it points at. This side re-reads the file and sees the pointer
+    instead, matches nothing, and reports a ledger that arrived whole as lost.
+
+    The fix has to be here rather than on the capture side. Capturing before
+    hydration makes the two sides agree, but they agree on LESS: a line that is
+    only a reference has no text of its own, so it is stored as nothing at all
+    and the carried-forward appendix quietly loses it. That is a real deletion
+    in the one mechanism this repo has for keeping what it cannot model, traded
+    for a reporting fix — the wrong way round.
+
+    So the document is hydrated on a COPY, and only for this question. The
+    verbatim-entry mirror next door depends on the untouched tree
+    (:func:`~.parser._capture_entries` is taken before hydration on purpose, and
+    a hydrated copy of an ``<entry>`` matches nothing the parser stored), which
+    is why this resolves a second reading rather than the shared one.
+
+    The caller reads the result by position in the walk, because element
+    identity does not survive into a second tree; the cache itself is keyed by
+    the root, one document at a time.
+    """
+    twin = deepcopy(root)
+    _inline_narrative_references(twin)
+    return list(_parser_sections(twin))
 
 
 def _section_disposition(
@@ -1460,15 +1588,29 @@ def _section_disposition(
 
 def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     entries = _findall(section, "v3:entry")
+    # Read off the hydrated twin, for the reason `_hydrated_sections` gives: the
+    # parser stored this pair with its references resolved, and asking with the
+    # pointer instead reported a section that arrived whole as lost. A section
+    # off the walk has no twin and no stored narrative either, so the raw
+    # reading is the right one for it.
+    read = (
+        section
+        if (at := _walked_index(section)) is None
+        else _hydrated_sections(section.getroottree().getroot())[at]
+    )
     pair = (
-        _text_content(_find(section, "v3:title")),
-        _text_content(_find(section, "v3:text")),
+        _text_content(_find(read, "v3:title")),
+        _text_content(_find(read, "v3:text")),
     )
     kept = _narrative_kept(section, evidence, pair)
     # The cells inside the narrative the record demonstrably holds —
     # `kept_narrative` has just claimed this exact pair — so an entry citing one
     # is citing something that survived. Nothing when the narrative did not.
-    covers = _section_anchors(section) if kept else {}
+    # And the cells off the same twin, for the same reason: a cell whose only
+    # content is a <reference> holds no words raw and holds them hydrated, and
+    # a row reporting its narrative preserved while an entry citing that cell
+    # reads lost is one reading contradicting itself.
+    covers = _section_anchors(read) if kept else {}
     code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
     entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, covers)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
