@@ -76,15 +76,68 @@ from .levels import (
 # imports and hitting a circular import: verify.composite -> browser.errors
 # -> browser/__init__ -> browser.reports -> verify.composite, which only
 # surfaces in a fresh interpreter).
-from .types import LevelCoverage
+from .types import LevelCoverage, VerifyPolicy
 
-__all__ = ["ALL_LEVELS", "LayeredVerifier", "LevelCoverage"]
+__all__ = ["ALL_LEVELS", "LayeredVerifier", "LevelCoverage", "VerifyPolicy"]
 
 
 logger = logging.getLogger(__name__)
 
 # Every level id the stack knows, in run order. The default ``levels`` set.
 ALL_LEVELS: frozenset[str] = frozenset({"L0", "L1", "L2", "L3", "L4", "L5", "L6"})
+
+
+#: What a source document's bytes cannot support, and the PHI-safe reason each
+#: skip carries into the run report.
+#:
+#: A scan is not a chart this toolkit printed. L2 and L3 read a name, a DOB and
+#: the pack's declared header fields off page one; a scanned referral has no
+#: rendered text layer and no pack ever touched it, so running them means
+#: failing every source document for the absence of something that was never
+#: going to be there. Worse, they parse the file to do it — over a TIFF or an
+#: undeclared blob that parse RAISES, and an exception out of ``verify_pre`` is
+#: not one item failing, it is the run.
+#:
+#: What still runs is what still means something: L0 re-hashes the bytes against
+#: the manifest (for a source document that digest is the SOURCE's own, so L0 is
+#: a stronger statement here than anywhere else), L1 checks the page count of
+#: anything the source declared pageable, L4 still refuses the wrong open chart,
+#: and L6's byte-identity read-back still proves what landed.
+_POLICY_SKIPS: dict[VerifyPolicy, dict[str, str]] = {
+    VerifyPolicy.SOURCE_PAGED: {
+        "L2": "source document: no rendered page text to match a name against",
+        "L3": "source document: no pack rendered it, so it declares no header fields",
+    },
+    VerifyPolicy.SOURCE_OPAQUE: {
+        "L1": "source document: its declared media type is not one this toolkit pages",
+        "L2": "source document: no rendered page text to match a name against",
+        "L3": "source document: no pack rendered it, so it declares no header fields",
+        "L5": "source document: no local page count to compare the destination's against",
+    },
+}
+
+
+def _skip_step(level: str, reason: str) -> Callable[[], LevelResult]:
+    """A step that records why this level cannot run over these bytes.
+
+    A recorded SKIP rather than a dropped step: ``coverage_summary`` reports it,
+    so the run report says which levels did not run and why instead of quietly
+    claiming a narrower ladder was the whole one.
+    """
+    return lambda: LevelResult(level, LevelStatus.SKIP, reason)
+
+
+def _for_policy(
+    steps: tuple[tuple[str, Callable[[], LevelResult]], ...], policy: VerifyPolicy
+) -> tuple[tuple[str, Callable[[], LevelResult]], ...]:
+    """The same steps, with the ones this item's bytes cannot support skipped."""
+    skips = _POLICY_SKIPS.get(policy)
+    if skips is None:
+        return steps
+    return tuple(
+        (level, _skip_step(level, skips[level]) if level in skips else step)
+        for level, step in steps
+    )
 
 
 class _PreVerifyError(PermanentDeliveryError):
@@ -106,6 +159,7 @@ class LayeredVerifier:
         destination: Destination | None = None,
         expected_pages: Mapping[str, int] | None = None,
         levels: frozenset[str] | None = None,
+        verify_policies: Mapping[str, VerifyPolicy] | None = None,
     ) -> None:
         # item.encounter_id -> Encounter, for L3 "dos".
         self._records = dict(records) if records else {}
@@ -113,6 +167,10 @@ class LayeredVerifier:
         self._destination = destination
         self._expected_pages = dict(expected_pages) if expected_pages else {}
         self._levels = levels if levels is not None else ALL_LEVELS
+        # item_key -> what kind of file this item is. Empty (and every lookup
+        # defaulting to a rendered chart) for a pre-v4 manifest, whose items all
+        # were one.
+        self._policies = dict(verify_policies) if verify_policies else {}
         # item_key -> DestinationPatient, captured in verify_pre so verify_post
         # (which the engine calls without a patient) can resolve a read-back.
         self._resolved: dict[str, DestinationPatient] = {}
@@ -153,6 +211,7 @@ class LayeredVerifier:
         # Capture the destination patient once (feeds L5/L6 read-back later).
         self._capture_dest_patient(item, patient, dest_patient)
         encounter = self._records.get(item.encounter_id)
+        policy = self._policies.get(item.item_key, VerifyPolicy.RENDERED_CHART)
         # One parse of the local PDF for the whole pre phase: L1 wants the page
         # count, L2 and L3 want page-1 text. Lazy, so L1's sub-KiB size floor
         # still rejects a file without opening it, and a corrupt PDF still
@@ -168,6 +227,7 @@ class LayeredVerifier:
                     item,
                     expected_pages=self._expected_pages.get(item.item_key),
                     snapshot=snapshot,
+                    policy=policy,
                 ),
             ),
             ("L2", lambda: self._l2.run(item, patient, snapshot=snapshot)),
@@ -179,6 +239,7 @@ class LayeredVerifier:
             ),
             ("L4", lambda: self._l4.run(patient, banner=self._banner())),
         )
+        steps = _for_policy(steps, policy)
         # An L4 banner wrong-patient escapes the loop as a WrongPatientError —
         # the engine's abort handler owns it; the partial table recorded so far
         # stays on the instance for a report to inspect.
@@ -224,6 +285,7 @@ class LayeredVerifier:
                 ),
             ),
         )
+        steps = _for_policy(steps, self._policies.get(item.item_key, VerifyPolicy.RENDERED_CHART))
         first_failure = self._run_steps(item.item_key, steps, append=True)
         if first_failure is not None:
             raise _PostVerifyError(f"{first_failure.level}: {first_failure.detail}")

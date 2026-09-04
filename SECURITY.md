@@ -255,6 +255,9 @@ The audited suppression sites are exactly:
   `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/bundle/bundle.py` (bundle README) —
   `py/clear-text-storage-sensitive-data`
+- `src/anastomosis/deliver/ccda_export/deliverer.py` (a patient's own scanned
+  document, written beside the C-CDA that references it so the deliverable
+  carries the chart the source held) — `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/browser/persist.py` (upload manifest) —
   `py/clear-text-storage-sensitive-data`
 - `src/anastomosis/deliver/render_index.py` (render-index sidecar) —
