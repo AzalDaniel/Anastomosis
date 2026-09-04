@@ -85,18 +85,32 @@ def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
 
 
 class _SnapshotCache:
-    """A lazily-populated page snapshot for one document, shared across a run's
-    checks so the PDF is opened and text-extracted exactly once."""
+    """A lazily-populated page snapshot PER PDF PATH, shared across a run's
+    checks so each document is opened and text-extracted at most once.
+
+    This is one extraction per PDF per context — not a single-document store.
+    A context is created once per QA run and today's checks only ever ask it
+    about the one document they are grading, so keying by path costs one dict
+    and changes nothing observable yet. But a context is not contractually
+    one-document: the first version of this cache kept a single slot and
+    silently served it for every path asked after the first, so a check that
+    later opens a SECOND document against the same context (#392 asks the
+    per-encounter vitals against the whole-record summary page, not the
+    per-encounter chart) would have graded the first document's text under
+    the second document's name and reported a pass. Unbounded on purpose: a
+    context grades a handful of documents, not thousands, so eviction would
+    trade a real bug (the one above) for a fabricated ceiling.
+    """
 
     __slots__ = ("_pages",)
 
     def __init__(self) -> None:
-        self._pages: list[PageInfo] | None = None
+        self._pages: dict[Path, list[PageInfo]] = {}
 
     def get(self, pdf_path: Path) -> list[PageInfo]:
-        if self._pages is None:
-            self._pages = _open_snapshot(pdf_path)
-        return self._pages
+        if pdf_path not in self._pages:
+            self._pages[pdf_path] = _open_snapshot(pdf_path)
+        return self._pages[pdf_path]
 
 
 def prime_snapshot_cache(ctx: QAContext) -> None:
