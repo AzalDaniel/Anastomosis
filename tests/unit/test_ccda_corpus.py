@@ -28,11 +28,13 @@ from tools.ccda_corpus import (
     write_corpus,
 )
 
+from anastomosis.core.ccda_codes import EXT_SECTION_ENTRIES
 from anastomosis.core.conservation import ConservationError
 from anastomosis.sources import get_source
 from anastomosis.sources.ccda.ledger import (
     _NARRATIVE_CONTAINERS,
     Disposition,
+    DocumentLedger,
     aggregate,
     document_ledger,
 )
@@ -280,26 +282,28 @@ def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]
     assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
 
 
-def test_all_four_dispositions_actually_occur(
+def test_all_four_dispositions_are_reachable(
     scale_report: dict[str, object], tmp_path: Path
 ) -> None:
-    """All four occur in vivo, and the fourth is also proved by taking.
+    """Three occur in vivo; the fourth is proved by taking.
 
-    ``unsupported`` occurs naturally again, and the reason it stopped for a
-    while is worth keeping written down. #314 taught the parser to preserve a
-    text-less section's entries verbatim, and after it the corpus read as
-    though nothing was lost anywhere. It was: the entries under a section that
-    HAS narrative were being credited to that narrative, on the assumption that
-    a section's prose says what its entries say. These documents disprove it —
-    a Plan of Treatment reading "Continue lisinopril and recheck blood pressure
-    in three months" carries an entry stating the coded value "No current
-    problems" — so the clean reading was the instrument flattering itself, and
-    those entries are counted honestly now.
+    ``unsupported`` no longer occurs anywhere in this corpus, and that is the
+    reading rather than a gap in it: the parser parks every section's entries
+    verbatim, so every construct these documents offer reaches the record as
+    data or as bytes, and a column for what reached neither is empty because
+    nothing did. It was not always: the entries under a section that HAS
+    narrative used to be credited to that narrative, on the assumption that a
+    section's prose says what its entries say. These documents disprove it — a
+    Plan of Treatment reading "Continue lisinopril and recheck blood pressure in
+    three months" carries an entry stating the coded value "No current problems"
+    — so they were counted as lost, honestly, until the parser started keeping
+    them.
 
-    The stripped-practitioner probe below stays. Loss arriving from an adapter
-    that dropped something is a different route to the same disposition, and a
-    ledger that learned to flatter a defective adapter would still be caught by
-    it even if the corpus one day carried no natural loss at all.
+    Which is exactly why the stripped-practitioner probe below stays, and why
+    this test was written to anticipate it: loss arriving from an adapter that
+    dropped something is a different route to the same disposition, and a ledger
+    that learned to flatter a defective adapter is still caught by it now that
+    the corpus carries no natural loss at all.
     """
     constructs = scale_report["constructs"]
     assert isinstance(constructs, list)
@@ -307,7 +311,11 @@ def test_all_four_dispositions_actually_occur(
     for entry in constructs:
         seen |= {name for name, count in entry["instances"].items() if count}
         seen |= {name for name, count in entry["entries"].items() if count}
-    assert seen == {disposition.value for disposition in Disposition}
+    assert seen == {
+        Disposition.STRUCTURALLY_PARSED.value,
+        Disposition.NARRATIVE_PRESERVED.value,
+        Disposition.SOURCE_EMPTY.value,
+    }
 
     name, xml = next(documents(1, seed=7))
     path = tmp_path / name
@@ -323,6 +331,60 @@ def test_all_four_dispositions_actually_occur(
         if count
     }
     assert Disposition.UNSUPPORTED in dropped
+
+
+def test_taking_the_parked_copies_away_can_only_worsen_the_reading(
+    corpus: list[tuple[str, bytes]], tmp_path: Path
+) -> None:
+    """An instrument that cannot report loss is not an instrument.
+
+    Strip the parked entries back out of each record and the reading has to
+    get WORSE or stay put — never better — and on at least one document the
+    ``unsupported`` column has to come back, because there the credit was
+    resting on those copies and on nothing else. If some later refactor
+    credits an entry for merely existing, the reading will not move and this
+    will.
+
+    It stops short of demanding the column come back on EVERY document that
+    parks, which is what it asked before the corpus learned to write cited
+    narrative. An entry can now be credited two ways — by the copy its
+    section parked, and by the narrative cell it cites — and where both hold,
+    removing one leaves the other standing. That is two mechanisms working,
+    not a credit resting on nothing, so the monotonic half is what holds
+    everywhere and the existence half is what proves the copies are load
+    bearing at all.
+
+    It is the same doubt the stripped-practitioner probe answers for
+    participations, asked of the construct this release actually changed.
+    """
+    depended = 0
+    for name, xml in corpus[:32]:
+        path = tmp_path / name
+        path.write_bytes(xml)
+        record = parse_document(path)
+        parked = [key for key in record.patient.extensions if key.startswith(EXT_SECTION_ENTRIES)]
+        if not parked:
+            continue
+        before = _unsupported_entries(document_ledger(path, record))
+        for key in parked:
+            del record.patient.extensions[key]
+        after = _unsupported_entries(document_ledger(path, record))
+        assert after >= before, (
+            f"{name}: {before} entries read unsupported with the parked copies in the "
+            f"record and only {after} with them gone, so removing a copy IMPROVED the "
+            "reading — a credit that does not depend on what it claims to rest on"
+        )
+        depended += after > before
+    assert depended, (
+        "no document in the sample lost an entry to the unsupported column when its "
+        "parked copies were removed, so nothing here shows the copies are what hold "
+        "the credit up"
+    )
+
+
+def _unsupported_entries(ledger: DocumentLedger) -> int:
+    """How many entries this reading counts lost, across every row."""
+    return sum(row.entries.get(Disposition.UNSUPPORTED, 0) for row in ledger.rows)
 
 
 def test_every_section_the_generator_knows_appears_in_the_reading(

@@ -3,12 +3,14 @@
 The lossless rule, applied to a CDA document: every section the adapter knows
 how to take apart becomes discrete canonical models, and **every section** —
 structurally parsed or not — has its title and normalized narrative captured
-into ``patient.extensions["ccda:section:<loinc>"]`` so nothing on the chart is
-ever silently dropped (a known section whose entries the parser cannot take
-apart would otherwise yield nothing at all). A document repeating a section
-code — split Problems (Active)/(Resolved) is ordinary C-CDA — keeps each
-occurrence at its own key (``…:<loinc>#2``, ``#3``, … in document order), so a
-second section can never overwrite the first. Document-level metadata rides
+into ``patient.extensions["ccda:section:<loinc>"]`` and its ``<entry>``
+elements kept verbatim under ``patient.extensions["ccda:entries:<loinc>"]``, so
+nothing on the chart is ever silently dropped (a known section whose entries
+the parser cannot take apart would otherwise yield nothing at all, and its
+prose is under no obligation to say what those entries say). A document
+repeating a section code — split Problems (Active)/(Resolved) is ordinary
+C-CDA — keeps each occurrence at its own key (``…:<loinc>#2``, ``#3``, … in
+document order), so a second section can never overwrite the first. Document-level metadata rides
 ``patient.extensions`` too.
 
 One section is captured differently: a 51899-3 section carrying this repo's own
@@ -61,6 +63,7 @@ from anastomosis.core.ccda_codes import (
     ARTIFACT_INTEGRITY_ALGORITHM,
     ARTIFACT_TEMPLATE_ROOT,
     EXT_PRIOR_LOSS_NARRATIVE,
+    EXT_SECTION_ENTRIES,
     LOINC_ALLERGIES,
     LOINC_ENCOUNTERS,
     LOINC_EXTENSIONS,
@@ -79,9 +82,12 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    SECTION_CODE_UNKNOWN,
     TPL_SEVERITY,
     V3,
     XSI,
+    first_rooted_id,
+    organizer_component_source_id,
 )
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.model import (
@@ -359,13 +365,26 @@ def _entries(section: _Element) -> list[_Element]:
     return _findall(section, "v3:entry")
 
 
-#: Key family for a text-less section's entries, preserved verbatim as
-#: ``ccda:entries:<loinc>`` (suffixed ``#2``, ``#3``, … for repeated section
-#: codes, in document order). Defined here rather than in ``ccda_codes``
-#: because only this half and the ledger read it — the export builder does not
-#: — and the mirror test's doctrine is that a constant one half reads belongs
-#: to that half.
-EXT_SECTION_ENTRIES = "ccda:entries"
+def _artifact_media(entry: _Element) -> _Element | None:
+    """``entry``'s ``<observationMedia>`` when THIS toolkit's export wrote it.
+
+    One reading, used by both halves that care: :func:`_delivered_artifacts`
+    takes such an entry apart into a :class:`DocumentArtifact`, and
+    :func:`_capture_entries` leaves it out of the verbatim copies for exactly
+    that reason. Two hand-written spellings of "is this ours" would drift, and
+    the drift is not visible until a document has been round-tripped four
+    times.
+
+    The stamp is what decides, never the element name: a third party's
+    ``<observationMedia>`` carries no ``ARTIFACT_TEMPLATE_ROOT`` templateId and
+    stays what it has always been — narrative and entries preserved verbatim,
+    nothing claimed about it.
+    """
+    media = _find(entry, "v3:observationMedia")
+    if media is None:
+        return None
+    stamped = any(t.get("root") == ARTIFACT_TEMPLATE_ROOT for t in _findall(media, "v3:templateId"))
+    return media if stamped else None
 
 
 def entry_verbatim(entry: _Element) -> str:
@@ -406,10 +425,10 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
 
     Runs for EVERY section, structurally parsed or not: a structural parser
     skips an entry whose shape it does not support, and the narrative is then
-    the only copy of what that entry said. A section with neither a title nor
-    narrative text has no prose to keep — but if it carries entries, those are
-    then the only copy of what it said, and they are preserved verbatim instead
-    (see :func:`_capture_entries`); a section with neither adds no key
+    one of the two copies of what that section said — the other being its
+    entries, kept verbatim beside this by :func:`_capture_entries`, since prose
+    about a section is not a copy of the entries beneath it. A section with
+    neither a title nor narrative text has no prose to keep and adds no key
     (sentinel discipline — absent stays absent). Mutating the model's
     extensions dict in place persists it on the patient (it is the validated
     dict object, not a fresh copy).
@@ -422,7 +441,7 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     extensions = record.patient.extensions
     if title is None and text is None:
         return
-    key = free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
+    key = free_key(extensions, f"ccda:section:{loinc or SECTION_CODE_UNKNOWN}")
     extensions[key] = {"title": title, "text": text}
 
 
@@ -441,26 +460,42 @@ def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
     A parsed entry's copy is redundant with its canonical object, and that
     redundancy is accepted on purpose — deciding per entry whether the parser
     consumed it would make this capture depend on the parser's reach, and the
-    point of preservation is that it must not.
+    point of preservation is that it must not. The exporter resolves the
+    redundancy at the other end: each structured emitter asks which of its
+    objects the preserved entries already state and emits only the rest.
 
-    Still only the text-less sections, and that is now a stated limit rather
-    than an assumption: a section WITH text is the same shape wearing a better
-    coat, since a C-CDA narrative is under no obligation to state what its
-    entries state. Extending the capture there is a change to what every export
-    carries — the builder narrates each parked key into the 51899-3 section, so
-    capturing every section's entries makes the loss narrative grow by a
-    generation each round trip — and it belongs to that decision, not to this
-    one. Until it is made, the ledger says what is true today: such an entry is
-    credited by nothing and reads unsupported.
+    One kind of entry is left out, and it is not an exception to that rule but
+    the same rule from the other side: an ``<observationMedia>`` THIS toolkit's
+    own export stamped (:func:`_artifact_media`). Those bytes are not the
+    source's statement — this tool wrote them last generation, naming a file it
+    delivered and witnessing that file's digest — and they are read back into a
+    :class:`DocumentArtifact` here, so the next export restates them from the
+    typed object with the name and digest of the file it actually wrote. Parked
+    as well, the copy would ride beside the entry rewritten from it: the two
+    documents grew 7,464 → 9,990 → 12,850 → 18,892 bytes over four generations,
+    each round doubling the artifact entries and narrating the doubled ones in
+    the loss ledger. A third party's unstamped ``<observationMedia>`` is not
+    ours to restate and is preserved verbatim like anything else.
+
+    EVERY section, whatever it renders. The capture used to stop at sections
+    rendering no text, on the reading that prose about a section stands in for
+    the entries beneath it. It does not: a C-CDA narrative is under no
+    obligation to state what its entries state, and the corpus disproves it in
+    its own documents — a Plan of Treatment reading "Continue lisinopril and
+    recheck blood pressure in three months" carries an entry stating the coded
+    value "No current problems". So the same entry was preserved or dropped by
+    nothing but whether its section happened to carry prose. What made that
+    limit hold for so long was the export side: the builder narrated each
+    parked key into the 51899-3 loss section, which a re-ingest parked and the
+    next export narrated again, so capturing every section grew the ledger
+    without bound. The builder now DELIVERS these bytes as ``<entry>`` elements
+    in the section carrying their code instead of narrating them, which is what
+    lets this capture be complete.
     """
     captured: dict[_Element, list[str]] = {}
     for section in _sections(root):
-        # RENDERS no text, not HAS no <text> element. An empty <text/>, one
-        # holding only whitespace, a nullFlavor, or a <renderMultiMedia> with
-        # no words beside it are all sections whose entries are the only thing
-        # the document said — and testing for the element instead of its
-        # content quietly stopped preserving four real narrative shapes.
-        if _text_content(_find(section, "v3:text")) is None and (entries := _entries(section)):
+        entries = [entry for entry in _entries(section) if _artifact_media(entry) is None]
+        if entries:
             captured[section] = [entry_verbatim(entry) for entry in entries]
     return captured
 
@@ -471,13 +506,17 @@ def _store_entries(
     section: _Element,
     loinc: str | None,
 ) -> None:
-    """Park one section's captured entries under ``ccda:entries:<loinc>``."""
+    """Park one section's captured entries under ``ccda:entries:<loinc>``.
+
+    The stored shape is read by two other places — the ingest ledger's entry
+    pool and, since the export delivers these bytes as entries rather than
+    narrating them, ``deliver/ccda_export``. A section with no code of its own
+    parks under :data:`SECTION_CODE_UNKNOWN`, the one bucket all three name.
+    """
     entries = captured.get(section)
     if not entries:
         return
-    key = free_key(
-        extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
-    )
+    key = free_key(extensions, f"{EXT_SECTION_ENTRIES}:{loinc or SECTION_CODE_UNKNOWN}")
     extensions[key] = entries
 
 
@@ -839,9 +878,23 @@ def _measurements(
         organizer = _find(entry, organizer_path)
         if organizer is None:
             continue
-        for component in _findall(organizer, "v3:component/v3:observation"):
+        organizer_id = first_rooted_id(organizer)
+        components = _findall(organizer, "v3:component/v3:observation")
+        for index, component in enumerate(components):
             code = _find(component, "v3:code")
             reading, unit = _observation_value(_find(component, "v3:value"))
+            # A component with no id of its own is still the organizer's
+            # statement, not a statement with no provenance at all — see
+            # organizer_component_source_id. ``first_rooted_id`` reads every
+            # ``<id>`` child in document order, not only the first, so a
+            # component whose first ``<id>`` is nullFlavor and whose second
+            # is rooted is read as owning that second id — the same reading
+            # the builder's stated-id walk already gives it.
+            component_id = first_rooted_id(component)
+            source_id = component_id[0] if component_id is not None else None
+            if source_id is None and organizer_id is not None:
+                root, extension = organizer_id
+                source_id = organizer_component_source_id(root, extension, index)
             out.append(
                 Observation(
                     patient_id=patient_id,
@@ -852,7 +905,7 @@ def _measurements(
                     unit=unit,
                     effective_at=_ts(component, "v3:effectiveTime")
                     or _ts(organizer, "v3:effectiveTime"),
-                    provenance=_prov(source_file, _val_attr(component, "v3:id", "root")),
+                    provenance=_prov(source_file, source_id),
                 )
             )
     return out
@@ -2130,8 +2183,8 @@ def _delivered_artifacts(
     """
     return [
         _delivered_artifact(media, document, patient_id)
-        for media in _findall(section, "v3:entry/v3:observationMedia")
-        if any(t.get("root") == ARTIFACT_TEMPLATE_ROOT for t in _findall(media, "v3:templateId"))
+        for entry in _entries(section)
+        if (media := _artifact_media(entry)) is not None
     ]
 
 

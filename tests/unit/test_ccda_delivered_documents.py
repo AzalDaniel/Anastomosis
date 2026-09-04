@@ -434,6 +434,50 @@ def test_a_third_partys_multimedia_is_not_read_as_a_delivered_document(tmp_path:
 
     assert record.documents == []
     assert record.patient.extensions["ccda:section:34109-9"]["text"] == "Imaging"
+    # And it is preserved the ordinary way: the entry's own bytes, verbatim.
+    parked = record.patient.extensions["ccda:entries:34109-9"]
+    assert len(parked) == 1
+    assert "observationMedia" in parked[0]
+    assert "theirs.jpg" in parked[0]
+
+
+def test_our_own_document_entry_is_read_back_rather_than_parked(tmp_path: Path) -> None:
+    """A stamped artifact entry is taken apart, so it is not ALSO copied.
+
+    The C-CDA ingest parks every section's entries verbatim, and each structured
+    emitter then asks which of its objects those copies already state. A
+    document entry had no such question asked of it: the reader took the stamped
+    ``<observationMedia>`` into a ``DocumentArtifact`` AND the capture parked a
+    copy of the same entry, so the next export wrote the artifact entry again
+    beside the copy — 7,464 → 9,990 → 12,850 → 18,892 bytes over four
+    generations, artifacts doubling each round and the doubles narrating in the
+    loss ledger.
+
+    These bytes are this tool's own writing rather than the source's, and the
+    typed object is the better copy: restated next generation with the name of
+    the file the run actually delivered and that file's verified digest, not
+    with last generation's. The third-party test above holds the other side —
+    an unstamped ``<observationMedia>`` is nobody's to restate and stays parked.
+    """
+    export = tmp_path / "export"
+    _embedded_and_referenced_export(export)
+    record = parse_document(next(iter(sorted(export.glob("*.xml")))))
+    delivered = tmp_path / "ccda"
+    written = deliver_ccda(
+        [record], delivered, artifacts_dir=_carried(record, export, tmp_path / "charts")
+    ).paths
+
+    reread = parse_document(written[0])
+
+    assert len(reread.documents) == 2
+    assert "ccda:entries:34109-9" not in reread.patient.extensions
+    assert not any(
+        "urn:anastomosis:ccda:artifact" in entry
+        for value in reread.patient.extensions.values()
+        if isinstance(value, list)
+        for entry in value
+        if isinstance(entry, str)
+    )
 
 
 # --- generations -------------------------------------------------------------

@@ -456,6 +456,117 @@ issue and fixed in its own pull request.
   claims now put the record up as the witness their name is claimed against,
   so a future regression is a loud refusal instead of a silent overwrite.
   (#375)
+- **An id-less organizer component was stated once by the parser and never
+  matched on export, so it doubled and stayed doubled.** A results or vitals
+  organizer can carry a real `<id root extension>` while one of its component
+  `<observation>`s carries only `<id nullFlavor="NI"/>` — a real vendor shape,
+  the panel stamped and an analyte left with no id of its own. The parser gave
+  that component `source_id=None`; the exporter's `_Preserved.own` pairs a
+  structured object with its preserved twin by stated id, so `None` paired
+  with nothing, and the same lab fact was emitted once structured and once
+  preserved on every export — a duplicate that never resolved, because the
+  pairing was matching two absences rather than two ids.
+
+  Both a parser-only and a pairing-only fix were tried and rejected: deriving
+  an id on ingest alone left the export id-less again, so the next generation
+  gained another `None` and the count grew without bound (6 → 7 → 8 → 9 on a
+  driven case); narrowing the pairing to direct-child ids alone turned other
+  id-less constructs into new duplicates and dropped a provenance-less
+  Problem outright. `core.ccda_codes.organizer_component_source_id(root,
+  extension, index)` gives the fix to both sides at once: a uuid5 over the
+  organizer's own id and the component's 0-based position, document-intrinsic
+  so it survives a rename between export and re-ingest. The parser takes it
+  as `source_id` when a component states none of its own; the builder's
+  `_stated_ids` adds the identical id to what a preserved entry is taken to
+  state, additively — the existing any-depth `<id root>` walk is unchanged,
+  so a component that DOES carry its own id is never touched by the new
+  branch. The match becomes positive (id-to-id) rather than negative
+  (absence-to-absence), so the new stated set can only ever gain members the
+  old one lacked, never lose one — driven over both required fixtures and a
+  live document: generation counts hold flat where they used to grow, and
+  every model count is unchanged. `sources/ccda/ledger.py` is untouched on
+  purpose: a derived id is a uuid5, never an `<id root>` the document itself
+  carries, so it cannot enter `linkable_roots` or move a `links()`
+  obligation.
+
+  "Both sides read the same organizer/component id" was a promise, not yet a
+  fact: the parser read an `<id>` through `_attr` (`nullFlavor`-aware,
+  whitespace-stripped) while the builder read one by raw truthiness
+  (unstripped), and the parser looked only at a component's FIRST `<id>`
+  child while the builder scanned every one. A padded root, a padded
+  extension, or a component whose first `<id>` is `nullFlavor` with a second,
+  rooted `<id>` behind it then derived one id on ingest and stated a
+  different one — or none — on export: the same unbounded duplication this
+  entry had just closed, reopened for four shapes. `core.ccda_codes.
+  first_rooted_id(element)` is now the one reading both the organizer's and
+  the component's own id go through — every `<id>` child in document order,
+  `nullFlavor` skipped, `root`/`extension` stripped, first survivor wins —
+  so the two sides agree on what id a component states by construction. One
+  driven fixture (a component's id `nullFlavor` first, rooted second) reads
+  differently under `sources/ccda/ledger.py` than it did before this
+  correction: the component's real, stated id is now what the parser reads
+  (previously it derived a spurious one instead, having missed the second
+  `<id>`), so that id is linkable and the entry moves from
+  `narrative_preserved` to `structurally_parsed` in the ledger's own
+  accounting — a correction to a wrong reading, not a change in what the
+  document says. (#365)
+
+- **An entry under prose was preserved by nothing.** The C-CDA parser kept a
+  section's `<entry>` elements verbatim only when that section rendered no
+  text, so the same coded observation — one this adapter has no dispatch for —
+  survived or was lost on nothing but whether its section happened to carry a
+  sentence. The finding #364 closed says prose about a section is not a copy of
+  the entries beneath it, which is exactly why the sentence could not stand in
+  for them.
+
+  What kept that limit in place was the export side, and it had to be fixed
+  first. A parked key was NARRATED into the 51899-3 loss section as
+  `path = value` lines holding whole XML entries; a re-ingest parked those and
+  the next export narrated them again, so simply preserving every section grew
+  the exported loss narrative by ~15 KB per generation, without bound
+  (32,455 → 48,356 → 63,788 bytes on `feedface_ccd.xml`). So the builder now
+  DELIVERS them: each preserved entry is re-emitted as a real `<entry>` in the
+  section carrying its code, and a code this exporter writes no section for
+  gets a carrier section rather than a refusal — a section with no structured
+  emitter here is the ordinary case, and refusing the export would refuse the
+  common path. The loss ledger converges again, one generation later and about
+  100 bytes larger than before the change: 8,400 → 9,857 → 9,857 on
+  `feedface_ccd.xml`, 11,191 → 13,573 → 13,573 on the Synthea sample, still a
+  fixed point at generation five.
+
+  Delivering an entry means not saying the same thing twice. A parked entry is
+  the source's own statement of a clinical fact and the canonical object read
+  out of it says the same fact in the exporter's words, so each emitter now
+  skips the object whose source id a preserved entry carries and emits the
+  rest as usual — an object from another adapter still gets its structured
+  entry, and an object the parser could give no source id is matched by an
+  entry that carries none. Emitting both would have re-ingested as two objects
+  where the chart has one, and four the generation after.
+
+  The reading moves, and it moves back to where it was before #366: the
+  6,144-document corpus ledger is byte-identical to the pre-#366 pin
+  (`823a60b6…`, 65 lines, 3,408 bytes, against `58cbcf57…` / 3,433 bytes
+  before this change), because the 10,238 entries that pass credited entries
+  under nine unparsed section codes from `unsupported` back to
+  `narrative_preserved` — this time on a byte-exact copy of each entry in the
+  record rather than on prose that may state nothing about it. `unsupported`
+  no longer occurs anywhere in that corpus, which is the honest reading of an
+  adapter that now keeps every entry it is offered.
+
+  That is a claim worth doubting, so it was driven rather than argued: strip
+  the parked copies back out of the record and the column comes straight
+  back — 8 entries a document turn `unsupported` on 80 of 96 documents. The
+  credit rests on the copy, and the day the parser stops keeping one the
+  ledger says so. What the corpus can no longer see is the OTHER route to the
+  same verdict. An entry is asked for its own bytes first, and on a document
+  the parser walks it now always has them, so the narrative-citation rule —
+  which cell of the table an entry names, and which name over a word is a
+  claim rather than an address — is never reached: deleting that whole
+  subsystem leaves the 6,144-document reading byte-identical. It survives for
+  the sections the walk does not reach, and is held there by its own unit
+  tests rather than by the corpus. A finer instrument superseded by a blunter
+  one that happens to be right more often is still a loss of resolution, and
+  it is recorded here rather than discovered later. (#365)
 - **`--ccda` delivered a patient's chart with none of their documents on it.**
   A C-CDA whose entire clinical content is `nonXMLBody` artifacts — a scanned
   referral, a faxed discharge summary — parsed into canonical
@@ -505,6 +616,19 @@ issue and fixed in its own pull request.
   likely to travel. The source's own filename is not lost, only moved — it
   narrates in the loss ledger with every other field CDA has no slot for. The
   CLI and the GUI reach one implementation, so both conserve or both refuse.
+
+  A document entry is this tool's own writing, and is no longer copied as
+  though it were the source's. The C-CDA ingest parks every section's entries
+  verbatim so an export can re-emit rather than narrate them, and a delivered
+  document was being kept twice — read back into an artifact AND parked as a
+  copy — so the next export wrote the entry again beside the copy. Four
+  generations of the same chart went 7,464 → 9,990 → 12,850 → 18,892 bytes,
+  the artifacts doubling each round and the doubles narrating in the loss
+  ledger. It settles at generation 2 and never moves again. The typed object
+  is the better copy anyway: restated with the name of the file this run
+  actually delivered and that file's verified digest, rather than last
+  generation's. A third party's `<observationMedia>` carries none of this
+  tool's stamp, is nobody's to restate, and is preserved verbatim as before.
   (#373)
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The

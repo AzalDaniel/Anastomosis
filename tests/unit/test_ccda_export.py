@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 
 import anastomosis.sources.ccda  # noqa: F401 — registers the adapter
 from anastomosis.cli import app
+from anastomosis.core.ccda_codes import first_rooted_id, organizer_component_source_id
 from anastomosis.core.model import (
     Addendum,
     AdvanceDirective,
@@ -56,6 +57,7 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
     PrescriptionTransaction,
+    Provenance,
     ScreeningEvent,
     SectionKind,
 )
@@ -68,8 +70,10 @@ from anastomosis.deliver.ccda_export.builder import (
     LOSS_NARRATIVE_TITLE,
     _carried_forward,
     _entry_key,
+    _stated_ids,
+    measure_ccd,
 )
-from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, parse_document
+from anastomosis.sources.ccda.parser import EXT_PRIOR_LOSS_NARRATIVE, _measurements, parse_document
 
 V3 = "urn:hl7-org:v3"
 XSI = "http://www.w3.org/2001/XMLSchema-instance"
@@ -704,6 +708,939 @@ def test_source_document_metadata_rides_the_loss_narrative(tmp_path: Path) -> No
     # The re-derived header keys are the EXPORTER's, not the source's — which is
     # exactly why the source values had to be narrated.
     assert reingested.patient.extensions["ccda:title"] == "Continuity of Care Document"
+
+
+# --- preserved entries: delivered as entries, never narrated -----------------
+#
+# A C-CDA ingest parks every section's entries verbatim under
+# `ccda:entries:<code>`, because prose about a section is not a copy of the
+# entries beneath it. This exporter re-emits those bytes as the entries of the
+# section carrying that code. Narrating them instead would serialise XML into
+# `path = value` lines no emitter consumes, so the next generation would park
+# and re-narrate them — measured at ~15 KB per round trip, without bound.
+
+
+def _entries_under(document: bytes, code: str | None) -> list[etree._Element]:
+    """Every ``<entry>`` of every section carrying ``code`` (``None`` for a
+    section that states no code at all)."""
+    root = etree.fromstring(document, _PARSER)
+    out: list[etree._Element] = []
+    for section in root.iter(f"{{{V3}}}section"):
+        node = section.find(f"{{{V3}}}code")
+        spelled = None if node is None else node.get("code")
+        if spelled == code:
+            out += section.findall(f"{{{V3}}}entry")
+    return out
+
+
+def _parked(record: PatientRecord) -> dict[str, list[str]]:
+    """The verbatim entries a record carries, by section code."""
+    prefix = "ccda:entries:"
+    out: dict[str, list[str]] = {}
+    for key, value in record.patient.extensions.items():
+        if key.startswith(prefix):
+            out.setdefault(key[len(prefix) :].partition("#")[0], []).extend(value)
+    return out
+
+
+def _shape(entry: str) -> object:
+    """One entry as the element it is: tags, attributes and non-blank text.
+
+    Re-emitting an entry into a document that declares more namespaces than its
+    source did, and through a pretty-printer, can change the STRING without
+    changing anything the element says: it gains an unused ``xmlns:sdtc``, and a
+    closing tag written flush against its child gains the indentation the
+    printer would have given it. Whether the BYTES survive is asked separately,
+    of documents that already carry both — which every C-CDA this repository
+    ships does.
+    """
+
+    def shape(node: etree._Element) -> object:
+        return (
+            node.tag,
+            sorted(node.attrib.items()),
+            (node.text or "").strip(),
+            [shape(child) for child in node],
+        )
+
+    return shape(etree.fromstring(entry.encode(), _PARSER))
+
+
+def _shapes(record: PatientRecord) -> dict[str, list[object]]:
+    return {code: [_shape(e) for e in entries] for code, entries in _parked(record).items()}
+
+
+_PROSE_AND_ENTRY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <id root="feedface-0000-0000-0000-00000000cda5"/>
+  <title>Prose-and-entry CCD</title>
+  <recordTarget><patientRole>
+    <id root="feedface-0000-0000-0000-000000000005"/>
+    <patient><name><given>Pia</given><family>Prose</family></name></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody>
+    <component><section>
+      <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Procedures</title>
+      <text>PROSE-THAT-STATES-NOTHING-OF-THE-ENTRY</text>
+      <entry><procedure classCode="PROC" moodCode="EVN">
+        <id root="feedface-proc-0000-0000-000000000905"/>
+        <code code="430193006" displayName="SENTINEL-PROCEDURE"/>
+      </procedure></entry>
+    </section></component>
+  </structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def test_an_entry_under_prose_leaves_as_an_entry_and_is_not_narrated(tmp_path: Path) -> None:
+    """The defect this closes, from the export side.
+
+    A coded procedure under a section this exporter has no emitter for used to
+    reach the document only as narrative — and only if its section rendered no
+    text. It leaves as the entry it arrived as now, and the loss ledger does not
+    restate it: a ledger line holding a whole XML entry is a line the next
+    generation parks and narrates again.
+    """
+    source_doc = tmp_path / "prose_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _parked(ingested)["47519-4"], "the parser parked nothing to deliver"
+
+    document = build_ccd(ingested)
+    entries = _entries_under(document, "47519-4")
+    assert len(entries) == 1
+    assert entries[0].find(f"{{{V3}}}procedure/{{{V3}}}code").get("displayName") == (
+        "SENTINEL-PROCEDURE"
+    )
+
+    exported = tmp_path / "prose_out.xml"
+    exported.write_bytes(document)
+    text = _loss_text(parse_document(exported))
+    assert "ccda:entries" not in text, "the entries were narrated as well as delivered"
+    assert "SENTINEL-PROCEDURE" not in text
+    # The section's own prose is a different key and still narrates.
+    assert "PROSE-THAT-STATES-NOTHING-OF-THE-ENTRY" in text
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        Path("ccda") / "feedface_ccd.xml",
+        Path("synthea") / "synthea_ccda_sample.xml",
+        Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
+    ],
+    ids=lambda path: path.name,
+)
+def test_a_preserved_entry_comes_back_as_the_same_bytes(fixture: Path, tmp_path: Path) -> None:
+    """What went in comes back out: the same strings, the same count.
+
+    Asked of every C-CDA this repository ships, because these are the documents
+    with a real header — an entry re-emitted into one carries exactly the
+    namespace declarations its source did, so the byte question is answerable at
+    all. An entry delivered twice would show here as two, and one reformatted on
+    the way through as a different string.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
+    ingested = parse_document(source_doc)
+    assert _parked(ingested), "the parser parked nothing to deliver"
+
+    exported = tmp_path / "bytes_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert _parked(parse_document(exported)) == _parked(ingested)
+
+
+def test_a_re_emitted_entry_says_the_same_thing_and_then_stops_moving(tmp_path: Path) -> None:
+    """A source that declares fewer namespaces than this exporter writes.
+
+    Its entry says exactly what it said — same element, same attributes — but
+    the string gains the declarations the export root carries and the indent the
+    printer gives a flush closing tag. That is a one-generation settling, not a
+    drift: generation 2 and generation 3 are the same bytes, which is what keeps
+    the round trip a fixed point rather than a slow leak.
+    """
+    source_doc = tmp_path / "settle_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+
+    out = tmp_path / "settle_out.xml"
+    generations = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        generations.append(_parked(ingested))
+
+    assert [_shape(e) for e in generations[0]["47519-4"]] == [
+        _shape(e) for e in _parked(parse_document(source_doc))["47519-4"]
+    ]
+    assert generations[1] == generations[2], "the preserved bytes never settle"
+
+
+def test_a_code_the_builder_emits_no_section_for_still_delivers_its_entries(
+    tmp_path: Path,
+) -> None:
+    """47519-4 has no structured emitter here, and the entries arrive anyway.
+
+    The decision this pins: a carrier section, not a refusal. A code with no
+    emitter is the ordinary case, and an export that refused the chart would
+    refuse the common path. The carrier states the code and nothing the record
+    does not — no codeSystem, because a parked key preserves the section's code
+    and not the system it was drawn from.
+    """
+    source_doc = tmp_path / "carrier_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    document = build_ccd(parse_document(source_doc))
+
+    root = etree.fromstring(document, _PARSER)
+    carriers = [
+        section
+        for section in root.iter(f"{{{V3}}}section")
+        if (node := section.find(f"{{{V3}}}code")) is not None and node.get("code") == "47519-4"
+    ]
+    assert len(carriers) == 1, "the entries reached no section of their own"
+    code = carriers[0].find(f"{{{V3}}}code")
+    assert code.get("codeSystem") is None, "a code system the record never stated"
+    assert carriers[0].findall(f"{{{V3}}}entry")
+
+
+def test_a_foreign_loss_sections_entries_are_not_swallowed_by_our_ledger(
+    tmp_path: Path,
+) -> None:
+    """51899-3 is a public LOINC, and a re-ingest reads OUR 51899-3 section as
+    paragraphs and never looks at its entries.
+
+    So a third party's 51899-3 entries may not be appended to the stamped ledger
+    this tool writes: they would leave the document and never come back. They get
+    a carrier of their own, which is why the "exactly one" rule is about the
+    STAMPED section rather than about the code.
+    """
+    foreign = _FOREIGN_LOSS_CODE_CCD.replace(
+        "</section></component>",
+        """<entry><observation classCode="OBS" moodCode="EVN">
+             <id root="feedface-vend-0000-0000-000000000906"/>
+             <code code="75326-9" displayName="SENTINEL-VENDOR-ENTRY"/>
+           </observation></entry></section></component>""",
+    )
+    source_doc = tmp_path / "foreign_entries_in.xml"
+    source_doc.write_text(foreign, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert _parked(ingested)[LOINC_EXTENSIONS]
+
+    exported = tmp_path / "foreign_entries_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reingested = parse_document(exported)
+    assert _shapes(reingested) == _shapes(ingested), "a third party's entries were lost"
+    # Ours is still exactly one, and still the stamped one.
+    stamped = [
+        section
+        for section in _loss_sections(exported.read_bytes())
+        if section.find(f"{{{V3}}}templateId") is not None
+    ]
+    assert len(stamped) == 1
+
+
+def test_a_code_less_sections_entries_are_delivered_too(tmp_path: Path) -> None:
+    """A section with no ``<code>`` parks under the one bucket both halves name,
+    and its carrier states no code either — the record preserved none."""
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        '<code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>', ""
+    )
+    source_doc = tmp_path / "codeless_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert "unknown" in _parked(ingested)
+
+    exported = tmp_path / "codeless_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert len(_entries_under(exported.read_bytes(), None)) == 1
+    assert _shapes(parse_document(exported)) == _shapes(ingested)
+
+
+def test_the_object_and_the_entry_it_came_from_are_stated_once(tmp_path: Path) -> None:
+    """The compounding this avoids, measured on the repository's own fixture.
+
+    Every condition, medication and measurement in it was read out of an entry
+    the parser also parked. Emitting the derived entry beside the preserved one
+    would state each fact twice, a re-ingest would read two objects where the
+    chart has one, and the generation after that would read four.
+    """
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    ingested = parse_document(fixture)
+    out = tmp_path / "once.xml"
+
+    counts = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        counts.append(
+            (
+                len(ingested.conditions),
+                len(ingested.medications),
+                len(ingested.allergies),
+                len(ingested.observations),
+                len(ingested.encounters),
+            )
+        )
+    assert counts == [(2, 2, 2, 8, 2)] * 3, f"a chart doubled around the loop: {counts}"
+
+
+def test_an_object_no_preserved_entry_states_keeps_its_structured_entry(tmp_path: Path) -> None:
+    """Only the object the preserved entries actually state is left to them.
+
+    A record can carry both — a C-CDA ingest's parked entries and an object from
+    somewhere else — and the one nothing preserved has to be emitted, or the
+    export drops it silently.
+    """
+    source_doc = tmp_path / "mixed_in.xml"
+    source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    ingested.patient.extensions["ccda:entries:11450-4"] = ingested.patient.extensions[
+        "ccda:entries:47519-4"
+    ]
+    ingested.conditions = [
+        Condition(
+            patient_id=ingested.patient.id,
+            snomed="38341003",
+            display="ELSEWHERE-CONDITION",
+            active=True,
+            provenance=Provenance(source_system="pf-tebra", source_id="pf-row-0001"),
+        )
+    ]
+
+    exported = tmp_path / "mixed_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    reingested = parse_document(exported)
+    assert [c.display for c in reingested.conditions] == ["ELSEWHERE-CONDITION"]
+    assert _shape(_parked(ingested)["11450-4"][0]) in _shapes(reingested)["11450-4"], (
+        "the preserved entry was dropped in favour of the structured one"
+    )
+    assert len(_parked(reingested)["11450-4"]) == 2, "one fact, two entries"
+
+
+def test_an_entry_with_no_id_of_its_own_is_not_stated_twice(tmp_path: Path) -> None:
+    """The object an id-less entry produced is matched by the absence of an id.
+
+    An entry carrying no ``<id>`` gives its object no source id, so identity
+    cannot match them by one. It is the only kind of entry such an object can
+    have come from, and pairing them on that is what keeps a malformed document
+    — C-CDA requires the id — from doubling its entries on every export.
+    """
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        '<id root="feedface-proc-0000-0000-000000000905"/>', ""
+    ).replace("47519-4", "11450-4")
+    source_doc = tmp_path / "noid_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    ingested.conditions = [
+        Condition(patient_id=ingested.patient.id, display="FROM-THE-ID-LESS-ENTRY", active=True)
+    ]
+
+    out = tmp_path / "noid_out.xml"
+    counts = []
+    for _ in range(3):
+        out.write_bytes(build_ccd(ingested))
+        ingested = parse_document(out)
+        counts.append(len(_entries_under(out.read_bytes(), "11450-4")))
+    assert counts == [1, 1, 1], f"an id-less entry multiplied around the loop: {counts}"
+
+
+def test_two_sections_sharing_a_code_deliver_into_the_one_section(tmp_path: Path) -> None:
+    """Problems (Active) and Problems (Resolved) are both 11450-4, and the parser
+    parks the second under ``…#2``. This exporter writes one section per code, so
+    both lists are delivered into it and a re-ingest parks them as one."""
+    section = """
+    <component><section>
+      <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
+      <title>Procedures ({half})</title>
+      <entry><procedure classCode="PROC" moodCode="EVN">
+        <id root="feedface-proc-0000-0000-00000000090{half}"/>
+        <code code="430193006" displayName="SENTINEL-{half}"/>
+      </procedure></entry>
+    </section></component>"""
+    document = _PROSE_AND_ENTRY_CCD.replace(
+        "<component><structuredBody>",
+        "<component><structuredBody>" + section.format(half=1) + section.format(half=2),
+    )
+    source_doc = tmp_path / "repeat_in.xml"
+    source_doc.write_text(document, encoding="utf-8")
+    ingested = parse_document(source_doc)
+    assert "ccda:entries:47519-4#2" in ingested.patient.extensions
+
+    exported = tmp_path / "repeat_out.xml"
+    exported.write_bytes(build_ccd(ingested))
+    assert len(_entries_under(exported.read_bytes(), "47519-4")) == 3
+    assert _shapes(parse_document(exported))["47519-4"] == _shapes(ingested)["47519-4"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(["<entry>SENTINEL-UNDELIVERABLE"], id="not-well-formed"),
+        pytest.param(
+            ['<observation xmlns="urn:hl7-org:v3">SENTINEL-UNDELIVERABLE</observation>'],
+            id="not-an-entry",
+        ),
+        pytest.param({"entry": "SENTINEL-UNDELIVERABLE"}, id="not-a-list"),
+        pytest.param([{"note": "SENTINEL-UNDELIVERABLE"}], id="not-a-string"),
+        # A mapping iterates its KEYS, so a shape read by iterating alone would
+        # deliver this one's key and drop its value without a word.
+        pytest.param(
+            {'<entry xmlns="urn:hl7-org:v3"><observation/></entry>': "SENTINEL-UNDELIVERABLE"},
+            id="a-mapping-whose-key-looks-like-an-entry",
+        ),
+    ],
+)
+def test_a_preserved_value_the_exporter_cannot_re_emit_is_narrated_instead(
+    value: object, tmp_path: Path
+) -> None:
+    """A key this exporter cannot deliver must not be BOTH skipped here and
+    exempted there — that is the silent drop.
+
+    Four shapes it cannot: bytes that will not parse, an element that is not an
+    ``<entry>`` (appending one to a section puts it somewhere the parser's own
+    entry walk never looks, which is a drop wearing a delivery's clothes), a
+    value that is not a list of them, and a member that is not a string. Each
+    narrates instead. The value is patient content, so an unparseable one is
+    answered with the narrative tier rather than with an exception quoting the
+    bytes.
+    """
+    record = PatientRecord(
+        patient=Patient(
+            id="feedface-0000-0000-0000-000000000007",
+            extensions={"ccda:entries:11450-4": value},
+        )
+    )
+    exported = tmp_path / "undeliverable_out.xml"
+    exported.write_bytes(build_ccd(record))
+    assert "SENTINEL-UNDELIVERABLE" in _loss_text(parse_document(exported))
+
+
+def test_the_loss_ledger_stops_growing_for_a_chart_ingested_from_ccda(tmp_path: Path) -> None:
+    """The constraint that made this change hard, pinned.
+
+    Narrating the parked entries instead of delivering them grew the 51899-3
+    section by ~15 KB per generation for as long as the loop ran. Delivered, the
+    chart reaches its fixed point at generation 2 — measured on this repository's
+    own C-CDA fixture — and the converged section is within ~100 bytes of what it
+    was before any entry under prose was preserved at all.
+    """
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    record = parse_document(fixture)
+    # One stable file name: the parser derives fallback ids from it, so a
+    # churning name would inject churn the real path does not have.
+    out = tmp_path / "generations.xml"
+    sizes = []
+    for _ in range(3):
+        document = build_ccd(record)
+        out.write_bytes(document)
+        sizes.append(measure_ccd(document).preserved_bytes)
+        record = parse_document(out)
+    assert sizes[1] == sizes[2], f"the loss ledger is still growing: {sizes}"
+    assert sizes[2] < 11_000, f"the converged ledger is far larger than it was: {sizes}"
+
+
+def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: Path) -> None:
+    """A results organizer with an id, and a component with none, is one fact.
+
+    ``_stated_ids`` used to pair a preserved entry with its structured twin
+    only by a shared ``<id root>`` — so an id-less component observation
+    paired with nothing, and ``_Preserved.own`` kept re-emitting it beside
+    its own preserved bytes: 1 observation -> 2 -> 2, a stable duplicate
+    rather than a stable count. Red on the unpatched head (goes to 2 and
+    stays there); the fix pairs the component to its organizer instead of to
+    absence, so the count never leaves 1. See #378.
+    """
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_idless_result_component.xml"
+    )
+    record = parse_document(source_doc)
+    out = tmp_path / "idless_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"the lab observation duplicated across generations: {counts}"
+    assert [o.code for o in record.observations] == ["2345-7"]
+
+
+# The two readings of an organizer/component id had to be genuinely one: before
+# `core.ccda_codes.first_rooted_id` existed, the parser read an `<id>` through
+# `_attr` (stripped, nullFlavor-aware) while the builder read one by raw
+# truthiness (unstripped), and the parser looked only at a component's FIRST
+# `<id>` child while the builder scanned all of them — so a padded root, a
+# padded extension, or a component whose first `<id>` is nullFlavor and whose
+# second is rooted derived one id on ingest and stated a different one (or
+# none) on export: exactly the growth #378 had just closed, reopened for four
+# shapes. See #378.
+_ORGANIZER_SECTION = """<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      {orgids}
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          {compids}
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <effectiveTime value="20240101"/>
+          <value xsi:type="PQ" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 value="5" unit="mg/dL"/>
+        </observation>
+      </component>
+    </organizer>
+  </entry>
+</section>"""
+
+
+@pytest.mark.parametrize(
+    "name,orgids,compids",
+    [
+        pytest.param(
+            "padded organizer extension",
+            '<id root="1.2.3.4" extension="  LAB1  "/>',
+            '<id nullFlavor="NI"/>',
+            id="padded organizer extension",
+        ),
+        pytest.param(
+            "padded organizer root",
+            '<id root="  1.2.3.4  " extension="LAB1"/>',
+            '<id nullFlavor="NI"/>',
+            id="padded organizer root",
+        ),
+        pytest.param(
+            "component nullFlavor then rooted",
+            '<id root="1.2.3.4" extension="LAB1"/>',
+            '<id nullFlavor="NI"/><id root="COMPROOT"/>',
+            id="component nullFlavor then rooted",
+        ),
+        pytest.param(
+            "component whitespace-only root",
+            '<id root="1.2.3.4" extension="LAB1"/>',
+            '<id root="   "/>',
+            id="component whitespace-only root",
+        ),
+    ],
+)
+def test_the_parsers_derived_id_is_always_one_the_builder_states(
+    name: str, orgids: str, compids: str
+) -> None:
+    """The parser's ``source_id`` is a member of the built entry's ``_stated_ids``.
+
+    Feeding the SAME organizer XML through both halves (mirrors the reviewer's
+    ``qaprobe/p1_divergence.py``): whatever id the parser derives or reads for
+    the component, the builder's ``_stated_ids`` walk over that same XML must
+    already contain it, or a re-export pairs the component with nothing and
+    the fact duplicates without bound. Red on the unpatched head for all four
+    of these (the two id-reading mismatches above); green once both sides
+    read through ``first_rooted_id``.
+    """
+    section = etree.fromstring(
+        _ORGANIZER_SECTION.format(orgids=orgids, compids=compids).encode(), _PARSER
+    )
+    [observation] = _measurements(
+        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+    )
+    entry = section.find(f"{{{V3}}}entry")
+    stated = _stated_ids(entry)
+    assert observation.provenance is not None
+    assert observation.provenance.source_id in stated, (
+        f"{name}: parser derived {observation.provenance.source_id!r}, "
+        f"builder states {sorted(str(s) for s in stated)!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "feedface_ccd_organizer_extension_whitespace.xml",
+        "feedface_ccd_organizer_root_whitespace.xml",
+        "feedface_ccd_component_id_nullflavor_then_rooted.xml",
+        "feedface_ccd_component_root_whitespace.xml",
+    ],
+)
+def test_a_padded_or_partially_id_less_organizer_never_grows(
+    fixture_name: str, tmp_path: Path
+) -> None:
+    """Generation counts stay flat at 1 for each of the four mismatch shapes.
+
+    Copies of the reviewer's ``qaprobe/fx/{E_ws_extension,F_ws_root,
+    H_nullflavor_then_rooted,J_ws_root_component}.xml``. Red on the unpatched
+    head: each grows 1 -> 2 -> 3 -> 4 -> 5, because the parser's derived id
+    for the lab observation was never a member of what the builder's
+    ``_stated_ids`` states for that entry, so ``_Preserved.own`` paired it
+    with nothing and it duplicated once per generation, unbounded — a faster
+    growth than #378's own id-less-component defect, which stabilised at 2.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda_edge_cases" / fixture_name
+    record = parse_document(source_doc)
+    out = tmp_path / "gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"{fixture_name}: {counts}"
+
+
+def test_two_id_less_components_under_one_organizer_derive_distinct_ids(
+    tmp_path: Path,
+) -> None:
+    """Two id-less analytes under one panel get two different derived ids.
+
+    ``index`` is what tells them apart once their own ids are gone — without
+    it both would hash to the same ``organizer_component_source_id`` and
+    collapse to one observation. Pinned against the LITERAL uuid5 strings (a
+    recipe change is a decision that rewrites every already-migrated chart's
+    provenance, and a test that recomputes the value under test proves
+    nothing about the value itself — see #378's own round two). Generations
+    stay flat at 2, not 4: each analyte pairs with its own preserved twin.
+    """
+    root = "feedface-idls-0000-0000-000000000001"
+    extension = "feedface-idls-panel-0001"
+    expected_first = organizer_component_source_id(root, extension, 0)
+    expected_second = organizer_component_source_id(root, extension, 1)
+    assert expected_first == "7029466a-7630-5f95-9072-85ca63f186dc"
+    assert expected_second == "f244f1d6-d7d6-5bc0-ac55-fc41390a3c9b"
+    assert expected_first != expected_second
+
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_two_idless_components.xml"
+    )
+    record = parse_document(source_doc)
+    ids = sorted(o.provenance.source_id for o in record.observations if o.provenance is not None)
+    assert ids == sorted([expected_first, expected_second])
+
+    out = tmp_path / "two_idless_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [2, 2, 2, 2], f"the two lab facts collapsed or duplicated: {counts}"
+
+
+@pytest.mark.parametrize(
+    "xml,expected",
+    [
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="1.2.3.4" extension="LAB1"/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="plain root and extension",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id root="  1.2.3.4  " extension="LAB1"/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="padded root is stripped",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id root="1.2.3.4" extension="  LAB1  "/></organizer>',
+            ("1.2.3.4", "LAB1"),
+            id="padded extension is stripped",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="1.2.3.4" extension="   "/></organizer>',
+            ("1.2.3.4", None),
+            id="whitespace-only extension normalizes to None",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3">'
+            '<id nullFlavor="NI"/><id root="1.2.3.4"/></organizer>',
+            ("1.2.3.4", None),
+            id="nullFlavor id skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root=""/><id root="ZZZ"/></organizer>',
+            ("ZZZ", None),
+            id="blank root skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id root="   "/><id root="ZZZ"/></organizer>',
+            ("ZZZ", None),
+            id="whitespace-only root skipped, next rooted id wins",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI" root="X"/></organizer>',
+            None,
+            id="nullFlavor wins even with a root present",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI"/></organizer>',
+            None,
+            id="only a nullFlavor id: no id at all",
+        ),
+        pytest.param(
+            '<organizer xmlns="urn:hl7-org:v3"></organizer>',
+            None,
+            id="no id children at all",
+        ),
+    ],
+)
+def test_first_rooted_id_reads_every_id_child_stripped_and_nullflavor_aware(
+    xml: str, expected: tuple[str, str | None] | None
+) -> None:
+    """Pins ``first_rooted_id`` against an INDEPENDENT expectation, never
+    against the other half merely agreeing with it.
+
+    The cross-check above (``test_the_parsers_derived_id_is_...``) proves the
+    parser and the builder read an id the SAME way, which a bug inside
+    ``first_rooted_id`` itself can never fail: both callers share the one
+    function, so a mistake shared by both sides is invisible to a
+    mutual-agreement check (driven: mutating away either ``.strip()`` call,
+    or narrowing the scan to only the first ``<id>`` child, survives the
+    whole suite without this test). This one pins the VALUE independently —
+    a padded root or extension strips to the unpadded string; a blank
+    extension normalizes to ``None``; a nullFlavor id is skipped even when it
+    also carries a root; and the scan continues past a blank or nullFlavor
+    id to the NEXT ``<id>`` rather than stopping at the first child, which is
+    what left #378 open for the nullFlavor-then-rooted shape the first time.
+    """
+    element = etree.fromstring(xml.encode())
+    assert first_rooted_id(element) == expected
+
+
+def test_a_nullflavor_id_is_skipped_even_when_it_also_carries_a_root() -> None:
+    """``<id nullFlavor="NI" root="X"/>`` states no id: nullFlavor wins.
+
+    A vendor id that carries both attributes at once is still an absent id —
+    reading the root anyway (mut.py's M4: drop the nullFlavor check) would
+    treat a null id as a real, if odd, stated one on one side without the
+    other agreeing, reopening exactly the mismatch this file's other new
+    tests close.
+    """
+    organizer = etree.fromstring(
+        '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI" root="X"/></organizer>',
+        _PARSER,
+    )
+    assert first_rooted_id(organizer) is None
+
+
+def test_a_component_that_is_not_an_observation_is_never_derived_for() -> None:
+    """A ``<procedure>`` component does not count toward the derived index.
+
+    ``_measurements``/``_derived_component_ids`` both walk
+    ``component/observation`` only, so a non-observation component sibling
+    (a procedure, in template order before the observation) is invisible to
+    the derivation on both sides — an id-less component's index is its
+    position among the organizer's OBSERVATION components, never its
+    position among all of them.
+    """
+    section = etree.fromstring(
+        b"""<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      <id root="1.2.3.4" extension="LAB1"/>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <procedure classCode="PROC" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="X" codeSystem="2.16.840.1.113883.6.1"/>
+        </procedure>
+      </component>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <effectiveTime value="20240101"/>
+          <value xsi:type="PQ" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 value="5" unit="mg/dL"/>
+        </observation>
+      </component>
+    </organizer>
+  </entry>
+</section>""",
+        _PARSER,
+    )
+    [observation] = _measurements(
+        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+    )
+    assert observation.provenance is not None
+    assert observation.provenance.source_id == organizer_component_source_id("1.2.3.4", "LAB1", 0)
+    entry = section.find(f"{{{V3}}}entry")
+    assert observation.provenance.source_id in _stated_ids(entry)
+
+
+def test_a_nested_organizers_own_idless_component_is_still_derived_for() -> None:
+    """An organizer inside an organizer: the INNER one's id-less component too.
+
+    ``_derived_component_ids`` finds an organizer at ANY depth
+    (``entry.iter``, not ``entry.findall`` — mut.py's M6), because a
+    preserved entry's structure is not this exporter's to assume flat. The
+    OUTER organizer's own id-less component is a direct child of ``entry``
+    either way, so a round-trip observation COUNT cannot tell the two walks
+    apart on this shape — ``_measurements`` reads only ONE organizer per
+    entry (its direct child), so the inner organizer's fact is never
+    structurally extracted at all, only preserved verbatim (see the flat
+    ``[1, 1, 1, 1]`` in the regression test below). What has to hold
+    independently of that is that ``_stated_ids``, read over the preserved
+    entry, still credits the INNER organizer's own analyte — or a future
+    structural reader that does walk nested organizers would duplicate it
+    the same way #378 duplicated an id-less component in the first place.
+    """
+    section = etree.fromstring(
+        b"""<section xmlns="urn:hl7-org:v3">
+  <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+  <entry>
+    <organizer classCode="BATTERY" moodCode="EVN">
+      <id root="1.2.3.4" extension="OUTER"/>
+      <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+      <statusCode code="completed"/>
+      <component>
+        <observation classCode="OBS" moodCode="EVN">
+          <id nullFlavor="NI"/>
+          <code code="26436-6" codeSystem="2.16.840.1.113883.6.1"/>
+        </observation>
+      </component>
+      <component>
+        <organizer classCode="BATTERY" moodCode="EVN">
+          <id root="5.6.7.8" extension="INNER"/>
+          <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
+          <statusCode code="completed"/>
+          <component>
+            <observation classCode="OBS" moodCode="EVN">
+              <id nullFlavor="NI"/>
+              <code code="2951-2" codeSystem="2.16.840.1.113883.6.1"/>
+            </observation>
+          </component>
+        </organizer>
+      </component>
+    </organizer>
+  </entry>
+</section>""",
+        _PARSER,
+    )
+    entry = section.find(f"{{{V3}}}entry")
+    stated = _stated_ids(entry)
+    outer_derived = organizer_component_source_id("1.2.3.4", "OUTER", 0)
+    inner_derived = organizer_component_source_id("5.6.7.8", "INNER", 0)
+    assert outer_derived in stated, "the direct-child organizer's own id-less analyte is lost"
+    assert inner_derived in stated, "the nested organizer's own id-less analyte is lost"
+
+
+def test_a_nested_organizer_never_duplicates_or_crashes(tmp_path: Path) -> None:
+    """Regression pin: a real (if unusual) organizer-inside-organizer document
+    round-trips without growth. The parser only structurally reads the
+    entry's direct-child organizer, so only the outer id-less analyte ever
+    becomes an ``Observation`` — the inner one rides the preserved entry's
+    bytes — and the count this fixture actually produces is 1, held flat.
+    """
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_nested_organizer.xml"
+    )
+    record = parse_document(source_doc)
+    out = tmp_path / "nested_gen.xml"
+    counts = [len(record.observations)]
+    for _ in range(3):
+        out.write_bytes(build_ccd(record))
+        record = parse_document(out)
+        counts.append(len(record.observations))
+    assert counts == [1, 1, 1, 1], f"a nested organizer's components misbehaved: {counts}"
+
+
+def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
+    """Regression guard, not an acceptance test for #378 — passes unpatched too.
+
+    The organizer-derived fallback in ``_stated_ids``/``_measurements`` must
+    never shadow a component's own stated id: the five vitals of
+    ``feedface_ccd.xml`` each carry one, and a build->parse must hand every
+    one of those five GUIDs back unchanged.
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
+    record = parse_document(source_doc)
+    before = {
+        o.code: o.provenance.source_id if o.provenance else None
+        for o in record.observations
+        if o.category == ObservationCategory.VITAL_SIGNS
+    }
+    assert len(before) == 5
+    assert all(sid is not None and sid.startswith("feedface-vitl-") for sid in before.values())
+
+    exported = tmp_path / "vitals_out.xml"
+    exported.write_bytes(build_ccd(record))
+    reingested = parse_document(exported)
+    after = {
+        o.code: o.provenance.source_id if o.provenance else None
+        for o in reingested.observations
+        if o.category == ObservationCategory.VITAL_SIGNS
+    }
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "fixture,expected_added",
+    [
+        pytest.param(
+            Path("ccda") / "feedface_ccd.xml",
+            frozenset(),
+            id="feedface_ccd.xml",
+        ),
+        pytest.param(
+            Path("ccda_edge_cases") / "feedface_ccd_duplicate_encounter_id.xml",
+            frozenset(),
+            id="feedface_ccd_duplicate_encounter_id.xml",
+        ),
+        pytest.param(
+            Path("ccda_edge_cases") / "feedface_ccd_idless_result_component.xml",
+            frozenset(
+                {
+                    organizer_component_source_id(
+                        "feedface-idls-0000-0000-000000000001",
+                        "feedface-idls-panel-0001",
+                        0,
+                    )
+                }
+            ),
+            id="feedface_ccd_idless_result_component.xml",
+        ),
+    ],
+)
+def test_a_preserved_entry_states_more_than_it_did_and_never_less(
+    fixture: Path, expected_added: frozenset[str]
+) -> None:
+    """The new ``_stated_ids`` set is a strict superset of the old one — proven positively.
+
+    This test used to re-implement ``_stated_ids``'s OWN any-depth walk inline
+    and compare it against the real thing, so ``new >= old`` and ``(None in
+    new) == (None in old)`` held trivially even with the derived-id branch
+    deleted entirely (``new == old`` then, by construction of the comparison
+    itself) — a superset check that could not fail. It now asserts the actual
+    diff every entry contributes across a fixture: nothing for the two
+    fixtures with no id-less organizer component, and exactly the one
+    derived id — computed independently via
+    :func:`organizer_component_source_id`, not read back off ``_stated_ids``
+    — for the fixture that has one. Red on the unpatched head for the third
+    fixture (``total_added`` comes back empty where one id was expected).
+    """
+    source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
+    root = etree.parse(str(source_doc), _PARSER).getroot()
+    entries = list(root.iter(f"{{{V3}}}entry"))
+    assert entries, "fixture carries no entries to compare"
+    total_added: set[str | None] = set()
+    for entry in entries:
+        old = {r for node in entry.iter(f"{{{V3}}}id") if (r := node.get("root")) is not None} or {
+            None
+        }
+        new = _stated_ids(entry)
+        assert new >= old, f"lost a previously-stated id: {old - new}"
+        assert (None in new) == (None in old), "None's presence changed where a walk alone decides"
+        total_added |= new - old
+    assert total_added == set(expected_added), f"{fixture.name}: added {total_added}"
 
 
 # --- export → ingest generations ---------------------------------------------
