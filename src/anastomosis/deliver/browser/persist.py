@@ -20,15 +20,24 @@ hardened ``0o700`` output directory
 (:func:`anastomosis.core.output.secure_output_dir`) beside the chart PDFs those
 values are rendered into — so v2 opens no new exposure surface — is NEVER
 logged (every log line here is a count, a version number, or an exception
-TYPE), and is NEVER committed. ``file_path`` is stored as a basename so the
+TYPE), and is NEVER committed. ``file_path`` is stored relative to ``out_dir``
+— a basename for a chart, ``attachments/<name>`` for a source document — so the
 manifest is relocatable and never embeds an absolute path; it is re-absolutized
-against ``out_dir`` on read.
+against ``out_dir`` on read, and a stored path that would climb out of the
+bundle is refused there rather than followed.
 
 From v3 the file also carries the run's REVIEWED context: the destination route
 plan it was prepared for and the gate outcomes it passed
 (:mod:`anastomosis.deliver.browser.gates`). Those are what
 :func:`~anastomosis.deliver.browser.gates.assert_deliverable` refuses on, so the
 bundle an executor moves is the bundle somebody checked.
+
+From v4 it also carries the bundle's SOURCE DOCUMENTS — the scans and reports
+in ``charts/attachments`` — and, per item, the
+:class:`~anastomosis.deliver.verify.types.VerifyPolicy` that says which of the
+L0-L6 levels can honestly be run over those bytes. Before that, a patient whose
+whole chart is a scanned Unstructured Document produced a manifest with zero
+items and zero patients, and the run exited 0.
 
 See ``docs/UPLOAD_MANIFEST.md`` for what each schema version carries and why a
 v1 file still loads.
@@ -39,7 +48,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,10 +57,12 @@ from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.output import secure_output_dir
+from anastomosis.deliver.verify.types import VerifyPolicy
 from anastomosis.destinations.base import UploadItem
+from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 
 from .gates import GATE_VERSION, RoutePlan, RunGates
-from .manifest import build_manifest
+from .manifest import SourceDocuments, build_attachment_manifest, build_manifest
 
 if TYPE_CHECKING:
     from anastomosis.core.model import PatientRecord
@@ -62,9 +73,11 @@ __all__ = [
     "LADDER_VERSION",
     "MANIFEST_NAME",
     "MANIFEST_VERSION",
+    "POLICY_VERSION",
     "SUPPORTED_MANIFEST_VERSIONS",
     "ManifestError",
     "UploadManifest",
+    "WrittenManifest",
     "load_upload_manifest",
     "read_upload_manifest",
     "write_upload_manifest",
@@ -73,7 +86,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 MANIFEST_NAME = "upload_manifest.json"
-MANIFEST_VERSION = 3
+MANIFEST_VERSION = 4
 
 #: The version that introduced the L0-L6 ladder fields (``pack``,
 #: ``expected_pages``, ``date_of_service``).
@@ -83,12 +96,19 @@ LADDER_VERSION = 2
 #: delivery decision needs it too, and that module cannot import this one back
 #: — and re-exported here, where every caller already looks for it.
 
+#: The version that introduced the bundle's source documents as items, and with
+#: them the per-item ``verify_policy`` they need: nothing before v4 could carry
+#: a file the ladder must not read as a rendered chart.
+POLICY_VERSION = 4
+
 # Versions :func:`load_upload_manifest` accepts; anything else is a defect and
 # raises. Each field group is gated on the version that introduced it, not on
 # ``MANIFEST_VERSION`` — the reader used to do the latter, which was correct
 # only while 2 was the newest and would have silently dropped v2's ladder
 # fields out of a v2 file the moment 3 existed.
-SUPPORTED_MANIFEST_VERSIONS: frozenset[int] = frozenset({1, LADDER_VERSION, GATE_VERSION})
+SUPPORTED_MANIFEST_VERSIONS: frozenset[int] = frozenset(
+    {1, LADDER_VERSION, GATE_VERSION, POLICY_VERSION}
+)
 
 
 class ManifestError(Exception):
@@ -117,6 +137,11 @@ class UploadManifest:
     are what :func:`~anastomosis.deliver.browser.gates.assert_deliverable`
     decides on; ``None`` there means "this bundle never recorded its gates",
     which is a warning rather than a refusal (see that module).
+
+    :attr:`verify_policies` is the v4 addition, keyed by ``item_key`` like
+    :attr:`expected_pages`. Every item of an older file is a rendered chart, so
+    a missing key reads as :attr:`~.VerifyPolicy.RENDERED_CHART` and nothing
+    about an existing tree changes.
     """
 
     version: int
@@ -127,6 +152,7 @@ class UploadManifest:
     encounters: dict[str, Encounter]
     route: RoutePlan | None = None
     gates: RunGates | None = None
+    verify_policies: dict[str, VerifyPolicy] = field(default_factory=dict)
 
     @property
     def degraded(self) -> bool:
@@ -138,32 +164,84 @@ class UploadManifest:
         return self.version < LADDER_VERSION
 
 
-def _item_to_json(
-    item: UploadItem, *, expected_pages: int | None, date_of_service: date | None
-) -> dict[str, Any]:
-    """One item as a deterministic JSON object — ``file_path`` as a basename.
+@dataclass(frozen=True)
+class WrittenManifest:
+    """What one :func:`write_upload_manifest` call put on disk.
 
-    The basename (not the absolute path) is stored so the manifest is
+    The counts are here because the run's own rail reads them. The MANIFEST
+    stage event used to count the RENDERED documents it had been handed, which
+    was the same number as the items only while charts were the only kind of
+    item — an attachment-only bundle then announced ``0 item(s)`` over a file
+    that had two. A writer that reports what it wrote cannot drift from it.
+    """
+
+    path: Path
+    charts: int
+    documents: int
+    not_carried: int
+
+    @property
+    def items(self) -> int:
+        """Every item in the file: the rendered charts and the source documents."""
+        return self.charts + self.documents
+
+
+def _stored_path(item: UploadItem, out_dir: Path) -> str:
+    """The item's file as the manifest records it: relative to the bundle.
+
+    A relative path (not an absolute one) is stored so the manifest is
     relocatable and never embeds the host directory layout; it is re-absolutized
-    against ``out_dir`` on read.
+    against ``out_dir`` on read. A chart sits in the bundle's root and so keeps
+    the basename this has always written; a source document sits in
+    ``attachments/``, and storing ITS basename alone would re-absolutize to a
+    file that is not there — the item would resolve to nothing on a machine that
+    only has the manifest.
+
+    A file outside ``out_dir`` altogether has no relative form, so it keeps its
+    basename: the same answer, and the same limitation, as before.
+    """
+    try:
+        return item.file_path.relative_to(out_dir).as_posix()
+    except ValueError:
+        return item.file_path.name
+
+
+def _item_to_json(
+    item: UploadItem,
+    *,
+    stored_path: str,
+    policy: VerifyPolicy,
+    expected_pages: int | None,
+    date_of_service: date | None,
+    version: int,
+) -> dict[str, Any]:
+    """One item as a deterministic JSON object.
 
     ``expected_pages`` and ``date_of_service`` are ``null`` when the render run
     could not know them (a PDF that would not parse; an item with no encounter,
     as the whole-patient ccda-standard view has). A ``null`` makes the level that
     wants it skip or fail loudly on upload — it never lets a level pass on an
     assumed value.
+
+    ``verify_policy`` appears only in a v4 file. A v2/v3 file's items are all
+    rendered charts by construction, so writing the field into one would state
+    at a version its reader does not know about the one thing every item there
+    already is.
     """
-    return {
+    entry: dict[str, Any] = {
         "item_key": item.item_key,
         "encounter_id": item.encounter_id,
         "patient_id": item.patient_id,
-        "file_path": item.file_path.name,
+        "file_path": stored_path,
         "sha256": item.sha256,
         "size_bytes": item.size_bytes,
         "fingerprint": item.fingerprint,
         "expected_pages": expected_pages,
         "date_of_service": date_of_service.isoformat() if date_of_service is not None else None,
     }
+    if version >= POLICY_VERSION:
+        entry["verify_policy"] = policy.value
+    return entry
 
 
 def _pymupdf_or_none() -> Any:
@@ -183,12 +261,16 @@ def _pymupdf_or_none() -> Any:
 
 
 def _page_counts(items: list[UploadItem]) -> dict[str, int]:
-    """Measure each rendered PDF's page count: L1's ``expected_pages`` on upload.
+    """Measure each pageable PDF's page count: L1's ``expected_pages`` on upload.
 
-    The page count is a RENDER-TIME fact — what this run actually produced — and
-    recording it is what lets L1 assert "exactly N pages" hours later, on another
-    machine, against a file it re-opens itself. Deriving it at upload time
-    instead would prove only that the file agrees with itself.
+    The page count is a WRITE-TIME fact — what this run actually produced, or
+    carried — and recording it is what lets L1 assert "exactly N pages" hours
+    later, on another machine, against a file it re-opens itself. Deriving it at
+    upload time instead would prove only that the file agrees with itself.
+
+    Takes the items worth opening (:func:`_pageable`), not every item: a source
+    document under a media type nothing here pages has no count to take, and
+    asking for one anyway would report it below as unreadable.
 
     Never silent: an item whose count cannot be read (no PyMuPDF, or a file that
     will not parse) is simply absent from the result, and the miss is logged as a
@@ -196,7 +278,7 @@ def _page_counts(items: list[UploadItem]) -> dict[str, int]:
     Absent means L1 falls back to its page floor for that item; it never means an
     invented count.
     """
-    if not items:  # nothing rendered: no counts to take, and nothing to warn about
+    if not items:  # nothing to page: no counts to take, and nothing to warn about
         return {}
     pymupdf = _pymupdf_or_none()
     if pymupdf is None:
@@ -227,6 +309,67 @@ def _page_counts(items: list[UploadItem]) -> dict[str, int]:
     return pages
 
 
+def _pageable(items: list[UploadItem], policies: dict[str, VerifyPolicy]) -> list[UploadItem]:
+    """The items whose page count is worth measuring.
+
+    A rendered chart always is. A source document is only when the SOURCE said
+    it was a media type this toolkit pages: opening a TIFF scan (or a body that
+    declared no type) to ask how many pages it has would report every one of
+    them as an unreadable count, which is a warning about the toolkit dressed up
+    as a warning about the bundle.
+    """
+    opaque = VerifyPolicy.SOURCE_OPAQUE
+    return [
+        item
+        for item in items
+        if policies.get(item.item_key, VerifyPolicy.RENDERED_CHART) is not opaque
+    ]
+
+
+def _assert_one_file_per_item_key(items: list[UploadItem]) -> None:
+    """Two items may not share an ``item_key``, because the ledger dedupes them.
+
+    ``item_key`` is the tracking ledger's PRIMARY KEY — that is what makes a
+    killed run resumable — so two items arriving under one key are enqueued as
+    one row and exactly one file is ever uploaded. The other is not refused and
+    not reported: it is simply never sent.
+
+    Reachable now that source documents are items: one patient's scan carried
+    twice under two names is two files, and both take the same key (no encounter
+    to tell them apart, so the patient id stands in, and identical bytes give an
+    identical digest). Refused rather than half-delivered.
+
+    PHI: counts only. An ``item_key`` embeds an encounter id, so it is not
+    printed even though those ids are pseudonymous.
+    """
+    keys = {item.item_key for item in items}
+    if len(keys) != len(items):
+        raise ManifestError(
+            f"{len(items) - len(keys)} of {len(items)} manifest item(s) share an item_key with "
+            "another; the upload ledger keys on it, so one file per collision would never be "
+            "sent. Refusing to write a manifest that cannot deliver what it lists"
+        )
+
+
+def _file_version(carried: SourceDocuments, *, gates: RunGates | None) -> int:
+    """The schema version this file's CONTENT is, not the build that wrote it.
+
+    A writer given no gate record produces a manifest that carries none, which
+    is exactly a version-2 file — and stamping it 3 anyway was the ambiguity
+    underneath the whole grandfather clause: a reader could not tell "written
+    before gates existed" from "written now and edited since", so the branch
+    meant for old trees was reachable by deleting one value from a current one.
+
+    A file carrying source documents is a v4 file by the same rule, because a
+    v3 reader would take its ``attachments/`` items for rendered charts and run
+    the chart ladder over a scan. Nothing else moves: a bundle of charts with
+    gates is the same v3 file it was.
+    """
+    if carried.items:
+        return POLICY_VERSION
+    return GATE_VERSION if gates is not None else LADDER_VERSION
+
+
 def write_upload_manifest(
     documents: Iterable[RenderedDoc],
     records: Iterable[PatientRecord],
@@ -235,7 +378,7 @@ def write_upload_manifest(
     pack: str | None = None,
     route: RoutePlan | None = None,
     gates: RunGates | None = None,
-) -> Path:
+) -> WrittenManifest:
     """Write ``<out_dir>/upload_manifest.json`` for a later ``anast upload``.
 
     Builds the items via :func:`build_manifest` (so the same content hashing and
@@ -243,6 +386,15 @@ def write_upload_manifest(
     selects the :class:`Patient` each item refers to from ``records``. Only the
     patients an item actually references are written. The file lands inside
     :func:`secure_output_dir` (``0o700``).
+
+    The bundle's SOURCE DOCUMENTS are items too
+    (:func:`~anastomosis.deliver.browser.manifest.build_attachment_manifest`).
+    Serializing the rendered charts alone was the whole of issue #374: a C-CDA
+    Unstructured Document renders no encounter, so a patient whose entire chart
+    is a scan produced ``0 item(s)``, ``0 patients`` and exit 0 while both of
+    their documents sat in ``<out_dir>/attachments``. A patient reaches
+    ``patients`` because an ITEM names them, so an attachment-only patient now
+    arrives there by the same rule every other patient always has.
 
     ``pack`` is the template pack that rendered ``documents`` — the name the
     upload side reloads L3's ``verify_header_fields`` from. ``None`` says no
@@ -265,23 +417,31 @@ def write_upload_manifest(
     inside the hardened output dir and is never logged. The only log lines are
     counts.
     """
-    items = build_manifest(documents)
-    # One pass over ``records`` (it may be a one-shot iterable): the canonical
-    # patient_id -> Patient for the items' lookups, and the encounter_id -> DOS
-    # that L3's ``dos`` field is verified against on upload.
+    held = list(records)  # walked twice below; ``records`` may be a one-shot iterable
+    charts = build_manifest(documents)
+    carried = build_attachment_manifest(held, out_dir / ATTACHMENTS_DIRNAME)
+    items = [*charts, *carried.items]
+    _assert_one_file_per_item_key(items)
+    # One pass over ``records``: the canonical patient_id -> Patient for the
+    # items' lookups, and the encounter_id -> DOS that L3's ``dos`` field is
+    # verified against on upload.
     patients_by_id: dict[str, Patient] = {}
     dos_by_encounter: dict[str, date | None] = {}
-    for record in records:
+    for record in held:
         patients_by_id[record.patient.id] = record.patient
         for encounter in record.encounters:
             dos_by_encounter[encounter.id] = encounter.date_of_service
 
-    page_counts = _page_counts(items)
+    version = _file_version(carried, gates=gates)
+    page_counts = _page_counts(_pageable(items, carried.policies))
     items_json = [
         _item_to_json(
             item,
+            stored_path=_stored_path(item, out_dir),
+            policy=carried.policies.get(item.item_key, VerifyPolicy.RENDERED_CHART),
             expected_pages=page_counts.get(item.item_key),
             date_of_service=dos_by_encounter.get(item.encounter_id),
+            version=version,
         )
         for item in sorted(items, key=lambda it: it.item_key)
     ]
@@ -298,14 +458,6 @@ def write_upload_manifest(
             )
         patients_json[patient_id] = patient.model_dump(mode="json")
 
-    # The version describes the FILE, not the build that wrote it. A writer
-    # given no gate record produces a manifest that carries none, which is
-    # exactly a version-2 file — and stamping it 3 anyway was the ambiguity
-    # underneath the whole grandfather clause: a reader could not tell "written
-    # before gates existed" from "written now and edited since", so the branch
-    # meant for old trees was reachable by deleting one value from a current
-    # one. Version by content, and the two cases separate cleanly.
-    version = MANIFEST_VERSION if gates is not None else LADDER_VERSION
     payload = {
         "version": version,
         "pack": pack,
@@ -328,19 +480,70 @@ def write_upload_manifest(
     # PHI: log COUNTS only — never a name, a DOB, a date of service, or a path
     # under out_dir. The page-count tally is the honest measure of how much of
     # L1 an upload over this manifest can actually run.
+    written = WrittenManifest(
+        path=path,
+        charts=len(charts),
+        documents=len(carried.items),
+        not_carried=carried.not_carried,
+    )
     logger.info(
-        "wrote upload manifest v%d: %d item(s), %d with an expected page count",
+        "wrote upload manifest v%d: %d item(s) (%d source document(s)), "
+        "%d with an expected page count",
         version,
-        len(items_json),
+        written.items,
+        written.documents,
         len(page_counts),
     )
-    return path
+    _report_not_carried(written)
+    return written
+
+
+def _report_not_carried(written: WrittenManifest) -> None:
+    """Say out loud that this manifest leaves out documents the records name.
+
+    Not every caller assembles the bundle it writes a manifest for: the pack
+    pipeline carries every named attachment before it gets here (and refuses the
+    run when one did not land), while a ``migrate --render ccda-standard`` writes
+    its manifest beside charts it rendered and never carried an attachment to at
+    all. So an absent file cannot be a refusal here without stranding that mode
+    — but it must never be a silence either, because "this patient's scan is not
+    in the delivery" is precisely the fact #374 was about.
+
+    PHI: counts only.
+    """
+    if written.not_carried:
+        logger.warning(
+            "%d source document(s) named by these records are not in this bundle and are "
+            "NOT in its upload manifest (%d item(s) written): an upload over it delivers "
+            "the charts and the documents that were carried, and nothing else",
+            written.not_carried,
+            written.items,
+        )
 
 
 def _require(data: dict[str, Any], key: str, path: Path) -> Any:
     if key not in data:
         raise ManifestError(f"upload manifest {path} missing required key {key!r}")
     return data[key]
+
+
+def _resolved_file(stored: str, out_dir: Path, path: Path) -> Path:
+    """Re-absolutize a stored item path against ``out_dir``, or refuse it.
+
+    The stored path is relative BY CONTRACT (a basename for a chart,
+    ``attachments/<name>`` for a source document), and it is read off a file. An
+    absolute path, or one that climbs out with ``..``, would make the manifest a
+    way to point an upload at any file the process can read — a bundle is copied
+    between machines, so what it names has to stay inside the bundle. Refused
+    loudly, never quietly re-based.
+    """
+    resolved = (out_dir / stored).resolve()
+    if not resolved.is_relative_to(out_dir.resolve()):
+        raise ManifestError(
+            f"upload manifest {path} names a file outside its own directory; "
+            "refusing to deliver bytes from outside the bundle"
+        )
+    return out_dir / stored
 
 
 def _item_from_json(
@@ -370,8 +573,8 @@ def _item_from_json(
             item_key=entry["item_key"],
             encounter_id=entry["encounter_id"],
             patient_id=entry["patient_id"],
-            # Re-absolutize the stored basename against out_dir.
-            file_path=out_dir / str(entry["file_path"]),
+            # Re-absolutize the stored relative path against out_dir.
+            file_path=_resolved_file(str(entry["file_path"]), out_dir, path),
             sha256=entry["sha256"],
             size_bytes=int(entry["size_bytes"]),
             fingerprint=entry["fingerprint"],
@@ -384,6 +587,26 @@ def _item_from_json(
             f"upload manifest {path} item entry is malformed ({type(exc).__name__})"
         ) from exc
     return item, pages, dos
+
+
+def _policy_from_json(entry: dict[str, Any], *, version: int, path: Path) -> VerifyPolicy:
+    """One item's verification policy: required at v4, a chart before it.
+
+    A pre-v4 file has only rendered charts in it, so the absent key is not a
+    missing value — it is the answer. At v4 the key is required and its value
+    must be one this build knows: a policy nothing here recognizes would
+    otherwise fall back to the chart ladder, which is exactly the wrong
+    direction to fail in for a scan.
+    """
+    if version < POLICY_VERSION:
+        return VerifyPolicy.RENDERED_CHART
+    raw = _require(entry, "verify_policy", path)
+    try:
+        return VerifyPolicy(str(raw))
+    except ValueError as exc:
+        raise ManifestError(
+            f"upload manifest {path} item declares an unknown verify_policy"
+        ) from exc
 
 
 def _reviewed_context(
@@ -422,9 +645,10 @@ def _reviewed_context(
 def load_upload_manifest(out_dir: Path) -> UploadManifest:
     """Read the manifest back in full, as an :class:`UploadManifest`.
 
-    Re-absolutizes each item's basename ``file_path`` against ``out_dir`` and
-    validates each patient via :meth:`Patient.model_validate`. Loud on malformed:
-    a missing file, an unsupported version, or a missing/wrong-shaped key raises
+    Re-absolutizes each item's relative ``file_path`` against ``out_dir`` (a
+    stored path that would climb out of the bundle is refused) and validates each
+    patient via :meth:`Patient.model_validate`. Loud on malformed: a missing
+    file, an unsupported version, or a missing/wrong-shaped key raises
     :class:`ManifestError` rather than starting a run with partial data.
 
     A v1 file (no pack, no expected pages, no dates of service) is accepted —
@@ -471,11 +695,15 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
     items: list[UploadItem] = []
     expected_pages: dict[str, int] = {}
     encounters: dict[str, Encounter] = {}
+    policies: dict[str, VerifyPolicy] = {}
     for entry in raw_items:
         if not isinstance(entry, dict):
             raise ManifestError(f"upload manifest {path} item entry must be an object")
         item, pages, dos = _item_from_json(entry, out_dir, version=version, path=path)
         items.append(item)
+        # Recorded for every item at every version: a pre-v4 file's items are
+        # rendered charts, which is an answer, not a gap.
+        policies[item.item_key] = _policy_from_json(entry, version=version, path=path)
         if pages is not None:
             expected_pages[item.item_key] = pages
         if version >= LADDER_VERSION:
@@ -505,6 +733,7 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
         encounters=encounters,
         route=route,
         gates=gates,
+        verify_policies=policies,
     )
     if manifest.degraded:
         # PHI-safe: versions and a count. Never silent — an operator uploading an

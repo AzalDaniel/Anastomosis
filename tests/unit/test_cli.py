@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 import anastomosis
 import anastomosis.reconstruct.chromium as chromium
 from anastomosis.cli import app
+from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 
 runner = CliRunner()
 
@@ -144,14 +145,22 @@ def test_pipeline_run_upload_manifest_writes_file_and_line(
         app, ["pipeline", "run", str(FIXTURE), "--out", str(out), "--upload-manifest"]
     )
     assert result.exit_code == 0, result.output
-    assert "manifest: 6 item(s) → upload_manifest.json" in " ".join(result.output.split())
+    # Seven, not six: the fixture's six rendered charts plus the one source
+    # document it carries into charts/attachments. The rail counts what the
+    # writer wrote, which is why it moved when the file did.
+    assert "manifest: 7 item(s) → upload_manifest.json" in " ".join(result.output.split())
     assert (out / "upload_manifest.json").is_file()
-    # The manifest is readable and carries the 6 rendered items + their patients.
+    # The manifest is readable and carries those items + their patients.
     from anastomosis.deliver.browser.persist import read_upload_manifest
 
     items, patients = read_upload_manifest(out)
-    assert len(items) == 6
+    assert len(items) == 7
     assert {item.patient_id for item in items} <= set(patients)
+    # The attachment item resolves back to the file the run carried, under the
+    # attachments/ path the manifest stores relative to the output directory.
+    carried = [item for item in items if item.file_path.parent.name == ATTACHMENTS_DIRNAME]
+    assert len(carried) == 1
+    assert carried[0].file_path.is_file()
 
 
 def test_pipeline_run_delivery_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -672,7 +681,9 @@ def test_migrate_pf_tebra_prints_transit_map_and_outcomes(
     assert "rendered" in normalized
     assert "C-CDA: 3 patients" in normalized
     # A migration writes the upload manifest by default; the additive line fires.
-    assert "manifest: 6 item(s)" in normalized
+    # Seven items: the fixture's six charts and the source document carried
+    # beside them, which is what an upload over this bundle has to deliver.
+    assert "manifest: 7 item(s)" in normalized
     assert (out / "charts" / "upload_manifest.json").is_file()
     # PF/Tebra keeps no source ledger, so the C-CDA load's account never
     # prints here — the block appears only when a source kept one (#315).

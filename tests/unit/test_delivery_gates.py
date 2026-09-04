@@ -37,7 +37,6 @@ from anastomosis.deliver.browser.persist import (
     GATE_VERSION,
     LADDER_VERSION,
     MANIFEST_NAME,
-    MANIFEST_VERSION,
     load_upload_manifest,
     write_upload_manifest,
 )
@@ -115,7 +114,10 @@ def test_the_manifest_carries_the_route_and_the_gates(tmp_path: Path) -> None:
 
     data = json.loads((out / MANIFEST_NAME).read_text(encoding="utf-8"))
 
-    assert data["version"] == MANIFEST_VERSION == 3
+    # A bundle of rendered charts with a gate record IS a version-3 file, and
+    # says so even now that 4 exists: the version describes the CONTENT, and
+    # nothing here carries a source document.
+    assert data["version"] == GATE_VERSION == 3
     assert data["route"] == {"destination": "tebra", "kind": "browser"}
     assert data["gates"] == {
         "qa": "pass",
