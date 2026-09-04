@@ -15,6 +15,26 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A QA context now reads back the document it was asked about, not the
+  first one it ever saw.** `_SnapshotCache`, the per-run cache that lets every
+  engine check share one `pymupdf.open` instead of five, kept a single slot
+  and served it for any path handed to `.get()` after the first — so a
+  `QAContext` primed on one PDF would return that PDF's text for every later
+  document asked of it. Nothing has tripped it yet: today's runner builds one
+  context per document, so each context is only ever asked about the one PDF
+  it was primed on. But that one-document-per-context shape was never a
+  contract, only an accident of how the runner happens to call it, and #383
+  already has the QA stage grading two populations — a per-encounter chart
+  and the whole-record summary — into a single report. The next check that
+  reads a second document against an already-primed context would have
+  silently graded the first document's bytes under the second document's
+  name and reported a pass, the same vacuous-pass shape this repository has
+  fixed twice before, sitting in a helper. The cache is now keyed by path —
+  one extraction per PDF per context, not one document per context — and
+  left unbounded on purpose: a context grades a handful of documents, not
+  thousands, so an eviction policy would trade a real bug for an invented
+  ceiling. (#398)
+
 - **A positive verdict has to be backed by the thing it claims.** An
   adversarial pass over the C-CDA conservation ledger found three ways it
   awarded credit it had not earned, and every one of them read as preservation

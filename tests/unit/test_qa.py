@@ -395,6 +395,64 @@ def test_bare_ctx_without_primed_cache_falls_back_to_opening(tmp_path: Path) -> 
     assert result.verdict is Verdict.PASS
 
 
+def test_snapshot_cache_serves_each_documents_own_text(tmp_path: Path) -> None:
+    """A context primed on one PDF must return a SECOND PDF's own text when
+    asked about it, not the first document's pages under a new name.
+
+    Before the fix, ``_SnapshotCache`` kept a single slot and served whatever
+    it first extracted for every path asked afterward. Nothing in today's
+    runner trips this — one context grades exactly one document per QA run —
+    but #392 asks a second document (the whole-record summary) of a context
+    already primed on the per-encounter chart, and a single-slot cache would
+    silently hand it the first document's words and report a pass on the
+    wrong bytes. Assert on word counts, not on ``is not None``: a stale-cache
+    bug still returns *a* string.
+    """
+    from anastomosis.qa import checks as qa_checks
+    from anastomosis.qa.base import QAContext
+
+    record = _record()
+    ctx = QAContext(encounter=record.encounters[0], record=record)
+    qa_checks.prime_snapshot_cache(ctx)
+
+    first_pdf = make_pdf(tmp_path / "first.pdf", ["Alpha bravo charlie."])
+    second_pdf = make_pdf(tmp_path / "second.pdf", [" ".join(f"word{i}" for i in range(200))])
+
+    first_words = len(qa_checks._document_text(first_pdf, ctx).split())
+    assert first_words == 3  # primes the (buggy, single-slot) cache on the first document
+
+    second_words = len(qa_checks._document_text(second_pdf, ctx).split())
+    assert second_words == 200  # the second document's own count, not the first's 3 again
+
+
+def test_snapshot_cache_still_extracts_a_repeat_document_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keying the cache by path must not turn it into extract-every-time: the
+    SAME pdf asked for twice through the same context is opened once."""
+    import pymupdf
+
+    from anastomosis.qa import checks as qa_checks
+    from anastomosis.qa.base import QAContext
+
+    record = _record()
+    ctx = QAContext(encounter=record.encounters[0], record=record)
+    qa_checks.prime_snapshot_cache(ctx)
+    pdf = make_pdf(tmp_path / "good.pdf", GOOD_LINES)
+
+    calls = {"n": 0}
+    real_open = pymupdf.open
+
+    def counting_open(*args: object, **kwargs: object) -> object:
+        calls["n"] += 1
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(pymupdf, "open", counting_open)
+    qa_checks._document_text(pdf, ctx)
+    qa_checks._document_text(pdf, ctx)
+    assert calls["n"] == 1
+
+
 def test_record_without_identity_anchors_warns(tmp_path: Path) -> None:
     from anastomosis.core.model import Encounter, Patient, PatientRecord
 
