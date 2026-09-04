@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC C-CDA R2.1 Continuity of Care Document (CCD).
+  Every byte here is fabricated. See README.md in this directory for the
+  provenance ledger and the list of traps each section exercises.
+-->
+<ClinicalDocument xmlns="urn:hl7-org:v3"
+                  xmlns:sdtc="urn:hl7-org:sdtc"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <realmCode code="US"/>
+  <typeId root="2.16.840.1.113883.1.3" extension="POCD_HD000040"/>
+  <!-- US Realm Header -->
+  <templateId root="2.16.840.1.113883.10.20.22.1.1" extension="2015-08-01"/>
+  <!-- Continuity of Care Document (CCD) -->
+  <templateId root="2.16.840.1.113883.10.20.22.1.2" extension="2015-08-01"/>
+  <id root="feedface-0000-0000-0000-00000000cda6"/>
+  <code code="34133-9" displayName="Summarization of Episode Note"
+        codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
+  <title>Continuity of Care Document</title>
+  <effectiveTime value="20230612120000-0500"/>
+  <confidentialityCode code="N" codeSystem="2.16.840.1.113883.5.25"/>
+  <languageCode code="en-US"/>
+
+  <recordTarget>
+    <patientRole>
+      <id root="2.16.840.1.113883.4.1" extension="903-71-5541"/>
+      <id root="feedface-0000-0000-0000-00000000cda6" extension="feedface-pat0-0000-0000-000000000006"/>
+      <addr use="HP">
+        <streetAddressLine>19 Sample Terrace</streetAddressLine>
+        <city>Springfield</city>
+        <state>WA</state>
+        <postalCode>98102</postalCode>
+      </addr>
+      <telecom value="tel:+1(206)555-0166" use="HP"/>
+      <telecom value="mailto:jordan.specimen@example.com"/>
+      <patient>
+        <name use="L">
+          <given>Jordan</given>
+          <family>Specimen</family>
+        </name>
+        <administrativeGenderCode code="F" displayName="Female"
+                                  codeSystem="2.16.840.1.113883.5.1"/>
+        <birthTime value="19881230"/>
+        <maritalStatusCode code="S" displayName="Never Married"
+                           codeSystem="2.16.840.1.113883.5.2"/>
+        <raceCode code="2106-3" displayName="White"
+                  codeSystem="2.16.840.1.113883.6.238" codeSystemName="Race &amp; Ethnicity - CDC"/>
+        <ethnicGroupCode code="2186-5" displayName="Not Hispanic or Latino"
+                         codeSystem="2.16.840.1.113883.6.238"
+                         codeSystemName="Race &amp; Ethnicity - CDC"/>
+        <languageCommunication>
+          <languageCode code="en"/>
+          <preferenceInd value="true"/>
+        </languageCommunication>
+      </patient>
+    </patientRole>
+  </recordTarget>
+
+  <author>
+    <time value="20230612120000-0500"/>
+    <assignedAuthor>
+      <id root="feedface-0000-0000-0000-0000000au006"/>
+      <addr use="WP">
+        <streetAddressLine>77 Clinic Court</streetAddressLine>
+        <city>Springfield</city>
+        <state>WA</state>
+        <postalCode>98102</postalCode>
+      </addr>
+      <telecom value="tel:+1(206)555-0144" use="WP"/>
+      <assignedPerson>
+        <name>
+          <given>Sasha</given>
+          <family>Authorwoman</family>
+          <suffix>MD</suffix>
+        </name>
+      </assignedPerson>
+      <representedOrganization>
+        <id root="feedface-0000-0000-0000-0000000org06"/>
+        <name>Sample Diagnostics Group</name>
+      </representedOrganization>
+    </assignedAuthor>
+  </author>
+
+  <custodian>
+    <assignedCustodian>
+      <representedCustodianOrganization>
+        <id root="feedface-0000-0000-0000-0000000org06"/>
+        <name>Sample Diagnostics Group</name>
+        <telecom value="tel:+1(206)555-0144" use="WP"/>
+        <addr use="WP">
+          <streetAddressLine>77 Clinic Court</streetAddressLine>
+          <city>Springfield</city>
+          <state>WA</state>
+          <postalCode>98102</postalCode>
+        </addr>
+      </representedCustodianOrganization>
+    </assignedCustodian>
+  </custodian>
+
+  <component>
+    <structuredBody>
+
+      <!-- ============================ MEDICATIONS ========================= -->
+      <!--
+        One substanceAdministration whose effectiveTime/low is an all-zero
+        run — the vendor "no start date" spelling this fixture exists to
+        exercise (#385). high is nullFlavor="UNK", already read as absent
+        before this fix and untouched by it.
+      -->
+      <component>
+        <section>
+          <templateId root="2.16.840.1.113883.10.20.22.2.1.1" extension="2014-06-09"/>
+          <code code="10160-0" displayName="History of Medication Use"
+                codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
+          <title>Medications</title>
+          <text>
+            <list>
+              <item>Metformin 500 MG tablet, 1 Oral, daily (active, start unknown)</item>
+            </list>
+          </text>
+          <entry>
+            <substanceAdministration classCode="SBADM" moodCode="EVN">
+              <templateId root="2.16.840.1.113883.10.20.22.4.16" extension="2014-06-09"/>
+              <id root="feedface-meds-0000-0000-00000000z001"/>
+              <statusCode code="active"/>
+              <effectiveTime>
+                <low value="0"/>
+                <high nullFlavor="UNK"/>
+              </effectiveTime>
+              <routeCode code="C38288" displayName="Oral"
+                         codeSystem="2.16.840.1.113883.3.26.1.1"/>
+              <doseQuantity value="1" unit="{tablet}"/>
+              <consumable>
+                <manufacturedProduct classCode="MANU">
+                  <templateId root="2.16.840.1.113883.10.20.22.4.23" extension="2014-06-09"/>
+                  <manufacturedMaterial>
+                    <code code="861007" displayName="Metformin 500 MG Oral Tablet"
+                          codeSystem="2.16.840.1.113883.6.88" codeSystemName="RxNorm"/>
+                  </manufacturedMaterial>
+                </manufacturedProduct>
+              </consumable>
+            </substanceAdministration>
+          </entry>
+        </section>
+      </component>
+
+      <!-- ============================= RESULTS =========================== -->
+      <!--
+        One observation carrying a legitimate numeric zero (@value="0" on a
+        PQ, not a TS) so the numeric-zero control sits in the same file as
+        the date sentinel above: is_zero_sentinel must never see this value
+        at all, because _observation_value never routes through parse_dt.
+      -->
+      <component>
+        <section>
+          <templateId root="2.16.840.1.113883.10.20.22.2.3.1" extension="2015-08-01"/>
+          <code code="30954-2" displayName="Relevant Diagnostic Tests and/or Laboratory Data"
+                codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
+          <title>Results</title>
+          <text>Basic metabolic panel: Base excess 0 mmol/L (2023-06-12)</text>
+          <entry>
+            <organizer classCode="BATTERY" moodCode="EVN">
+              <templateId root="2.16.840.1.113883.10.20.22.4.1" extension="2015-08-01"/>
+              <id root="feedface-rslt-0000-0000-00000000z001"/>
+              <code code="51990-0" displayName="Basic metabolic panel"
+                    codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
+              <statusCode code="completed"/>
+              <effectiveTime value="20230612113000-0500"/>
+              <component>
+                <observation classCode="OBS" moodCode="EVN">
+                  <templateId root="2.16.840.1.113883.10.20.22.4.2" extension="2015-08-01"/>
+                  <id root="feedface-rslt-0000-0000-00000000z011"/>
+                  <code code="11555-0" displayName="Base excess"
+                        codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
+                  <statusCode code="completed"/>
+                  <effectiveTime value="20230612113000-0500"/>
+                  <value xsi:type="PQ" value="0" unit="mmol/L"/>
+                </observation>
+              </component>
+            </organizer>
+          </entry>
+        </section>
+      </component>
+
+    </structuredBody>
+  </component>
+</ClinicalDocument>

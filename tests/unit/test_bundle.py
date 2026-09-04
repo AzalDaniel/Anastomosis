@@ -205,6 +205,50 @@ def test_bundle_qa_slice_isolates_each_patient(
         seen_ids.update(slice_encs)
 
 
+def test_bundle_qa_slice_carries_the_record_summarys_verdict(
+    tmp_path: Path, records: list[PatientRecord]
+) -> None:
+    """The whole-patient page's verdict rides in the bundle that holds the page.
+
+    A record summary grades a chart rather than a visit, so its row carries the
+    PATIENT id where an encounter row carries an encounter id — the same
+    stand-in the upload manifest and the export's encounter check use. Slicing
+    on the record's encounter ids alone dropped exactly that row: an ordinary
+    export put three rows in ``charts/qa_report.json`` and two in the bundle,
+    and a patient whose whole chart is a scan got a well-formed report with no
+    rows at all beside the only page it carries. An empty report reads as
+    "nothing to say" rather than "the verdict for this page is missing" (#399).
+
+    The two patients here are deliberately in one report: a row keyed on ONE
+    patient's id must not reach the OTHER patient's bundle, which is the
+    isolation the sibling test above holds for encounter rows.
+    """
+    out = tmp_path / "bundles"
+    docs: list[DocumentQA] = [
+        DocumentQA(
+            path=tmp_path / f"{record.patient.id}_summary.pdf",
+            encounter_id=record.patient.id,
+            results=[CheckResult(check="synthetic", verdict=Verdict.PASS, findings=[])],
+        )
+        for record in records
+    ]
+    qa_report = QAReport(documents=docs)
+
+    deliverer = BundleDeliverer()
+    for record in records:
+        deliverer.deliver(record, None, out, qa_report=qa_report)
+
+    for record in records:
+        payload = json.loads(
+            (out / record.patient.id / "qa_report.json").read_text(encoding="utf-8")
+        )
+        keys = {doc["encounter_id"] for doc in payload["documents"]}
+        assert keys == {record.patient.id}, (
+            f"the summary row for {record.patient.id} did not reach its own bundle, "
+            f"or another patient's did: {keys}"
+        )
+
+
 def test_bundle_no_qa_report_means_no_qa_file(tmp_path: Path, records: list[PatientRecord]) -> None:
     out = tmp_path / "bundles"
     deliverer = BundleDeliverer()
