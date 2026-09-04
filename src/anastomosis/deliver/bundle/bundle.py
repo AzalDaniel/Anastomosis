@@ -32,7 +32,12 @@ from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
 from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
-from anastomosis.deliver._shared import claim_delivered_name, copy_claimed_chart, write_fhir_bundle
+from anastomosis.deliver._shared import (
+    claim_delivered_name,
+    copy_claimed_chart,
+    record_witness,
+    write_fhir_bundle,
+)
 from anastomosis.deliver.render_index import RenderIndex
 from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 from anastomosis.qa import QAReport, Verdict
@@ -200,21 +205,30 @@ class BundleDeliverer:
         the default 0.
 
         ``claimed_dirs`` is the per-run ledger of delivered directory name ->
-        the patient id that claimed it, threaded in by :meth:`deliver_records`;
-        a second, DIFFERENT id claiming a name raises rather than merging two
-        patients into one bundle. A standalone call gets a fresh ledger — a
-        single record cannot collide with itself.
+        the record that claimed it, threaded in by :meth:`deliver_records`; a
+        second, DIFFERENT id claiming a name raises rather than merging two
+        patients into one bundle, and so does a second, different RECORD under
+        the same id. A standalone call gets a fresh ledger — a single record
+        cannot collide with itself.
         """
         out = secure_output_dir(out_dir)
         # Budgeted against the directory this bundle is written into, so a long
         # source id cannot produce a patient directory the filesystem refuses,
         # with room reserved for the deepest child (``pdfs/<chart>.pdf``).
         pid = budgeted_name(record.patient.id, "unknown", parent=out, reserve=_PDF_CHILD_RESERVE)
+        # The record is the claim's witness because a patient id is not
+        # guaranteed unique: an adapter that yields one record per source
+        # DOCUMENT hands two records for a patient with two of them, and the
+        # exist_ok directory below would then hold the second document's bundle
+        # over the first while the run reported two patients. The pipeline folds
+        # those into one record before delivery; this is what makes a regression
+        # loud rather than silent.
         claim_delivered_name(
             claimed_dirs if claimed_dirs is not None else {},
             pid,
             record.patient.id,
             kind="patient directory",
+            content=record_witness(record),
         )
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)

@@ -85,7 +85,11 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from lxml import etree
 
-from anastomosis.core.ccda_codes import EXT_PRIOR_LOSS_NARRATIVE
+from anastomosis.core.ccda_codes import (
+    EXT_PRIOR_LOSS_NARRATIVE,
+    EXT_SECTION_ENTRIES,
+    SECTION_CODE_UNKNOWN,
+)
 from anastomosis.core.conservation import Conservation
 from anastomosis.core.model import Practitioner
 from anastomosis.core.model.base import AnastBase
@@ -104,7 +108,6 @@ from anastomosis.core.model.base import AnastBase
 # and every actor, had been dropped.
 from .parser import (
     _PARSER,
-    EXT_SECTION_ENTRIES,
     _attr,
     _find,
     _findall,
@@ -828,11 +831,13 @@ class _Evidence:
         the parser stored it with — so the question is byte-exact, and a miss
         is a real no: either the record holds these bytes or it does not.
 
-        Asked of every unlinked entry now, not only of one whose section kept
-        no narrative. The parser still parks only where a section RENDERS no
-        text, so the answer is no wherever it did not park — and asking anyway
-        is the point: this side reads what the record HOLDS rather than
-        reconstructing the rule by which it was written.
+        Asked of every unlinked entry, whatever its section rendered. The
+        parser parks every section its walk reaches, so the answer is no only
+        where it parked nothing at all — our own stamped loss ledger, and a
+        subsection nested deeper than that walk goes. Asking the record rather
+        than reconstructing the rule by which it was written is the point:
+        a future change to what the parser parks moves this number without
+        touching this file.
         """
         return self.entries.take((code, entry_verbatim(entry)))
 
@@ -930,7 +935,7 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
 
     Keyed by the namespace's first segment. Both separators are cut because
     both are shapes the parser's own key-writing can produce — ``:`` for a key
-    it deepens, ``#`` for the number ``_free_key`` appends to a repeat — and
+    it deepens, ``#`` for the number ``free_key`` appends to a repeat — and
     neither is reached by any participation key it writes today: this side
     reads the shape rather than the current caller list, so a parked
     participation that later repeats is bucketed without an edit here.
@@ -1339,9 +1344,13 @@ def _parks_its_entries(section: _Element) -> bool:
     reaches; they parked nothing and took the copy earned by the section that
     did. The loss-narrative section is the same mistake from the other side:
     the parser skips it deliberately, so it parks nothing either.
+
+    What it no longer asks is whether the section renders prose. The parser
+    parked only text-less sections once, and the reading that justified it —
+    that a section's narrative stands in for the entries beneath it — is the
+    one this module took apart everywhere else. Both halves park every section
+    now, so both say the same thing about the same document.
     """
-    if _text_content(_find(section, "v3:text")) is not None:
-        return False
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
     return _walked_index(section) is not None
@@ -1611,7 +1620,7 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     # a row reporting its narrative preserved while an entry citing that cell
     # reads lost is one reading contradicting itself.
     covers = _section_anchors(read) if kept else {}
-    code = (_section_code(section) or "unknown") if _parks_its_entries(section) else None
+    code = (_section_code(section) or SECTION_CODE_UNKNOWN) if _parks_its_entries(section) else None
     entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, covers)
     disposition = _section_disposition(entries, pair, kept, entry_counts)
     return LedgerRow(

@@ -55,6 +55,51 @@ That covers:
   onto their models (`_NATIVE_EXT_KEYS`) — including the `ccda:section:*`
   narratives an earlier CDA ingest captured, which no emitter here re-derives.
 
+The one family that is neither narrated nor lost is `ccda:entries:<code>`: the
+`<entry>` elements a C-CDA ingest parked verbatim, because prose about a
+section is not a copy of the entries beneath it. Those are **delivered** —
+re-emitted as the entries of the section carrying that code, or of a carrier
+section when this exporter emits none for it, so they leave as the entries they
+arrived as and a re-ingest parks the same bytes. Narrating them instead would
+serialise XML into `path = value` lines no emitter consumes, which the next
+generation would park and narrate again: measured at ~15 KB per round trip,
+without bound.
+
+Delivering them changes what the structured emitters write. A parked entry is
+the source's own statement of a clinical fact and the canonical object read out
+of it states the same fact in this exporter's words, so emitting both would say
+it twice — and a re-ingest would read two objects where the chart has one, four
+the generation after. Each emitter therefore skips the object whose source id a
+preserved entry carries (`_Preserved.own`) and emits the rest as usual. What the
+section preserved leaves as the entry it arrived as; what it did not leaves as
+this exporter's own entry; the section's human narrative still lists both.
+
+The match `_Preserved.own` runs (`_stated_ids`) is an any-depth walk of a
+preserved entry's `<id root>`s, and a component `<observation>` under a Results
+or Vitals organizer can carry none of its own — a real vendor shape, an
+organizer stamped and each analyte left `<id nullFlavor="NI"/>`. Pairing that
+case only by shared absence (every id-less component matching every other) is
+what let one such fact duplicate on every generation (#378). The fix gives it a
+real id instead: `core.ccda_codes.organizer_component_source_id(root,
+extension, index)`, derived from the organizer's own id and the component's
+0-based position, document-intrinsic so it survives a rename between export and
+re-ingest. `sources/ccda/parser.py::_measurements` computes the same id as
+`source_id` on ingest when a component states none; `_stated_ids` adds the
+identical id to what a preserved entry is taken to state. A component that
+carries its own id is untouched either way — the derived id is purely additive,
+never a substitute for one a component actually states.
+
+Deriving the SAME id on both sides depends on both sides reading "what id does
+this organizer/component state" identically, and hand-mirroring that reading
+reopened the duplication for four shapes a whitespace-padded root or extension,
+or a component's first `<id>` being `nullFlavor` with a second, rooted `<id>`
+behind it — before it was worth its own name. `core.ccda_codes.first_rooted_id`
+is that one reading: every `<id>` child in document order, `nullFlavor` skipped,
+`root`/`extension` stripped, the first survivor wins. Both
+`_measurements`'s organizer/component id and `_derived_component_ids`'s
+organizer/component id call it, so the two sides agree on the pair by
+construction — there is no second, independent reading left to drift.
+
 The section is stamped with `LOSS_NARRATIVE_TEMPLATE_ROOT` so a later ingest can
 tell this tool's loss ledger from a third party's 51899-3 section.
 `sources/ccda` reads a stamped section back into
@@ -79,6 +124,13 @@ discrete and are re-emitted as a carry-forward appendix, deduplicated against
 this generation's own by `_carried_forward` — identical entries collapse,
 distinct ones survive at their multiplicity, and the document carries exactly
 one 51899-3 section stamped with its generation number.
+
+A chart ingested from C-CDA settles the same way: measured over three
+generations of parse -> `build_ccd` on the three CDA fixtures, the 51899-3
+section runs 8,400 -> 9,857 -> 9,857 bytes (`feedface_ccd.xml`),
+11,191 -> 13,573 -> 13,573 (`synthea_ccda_sample.xml`) and
+8,499 -> 9,991 -> 9,991 (`feedface_ccd_duplicate_encounter_id.xml`), still a
+fixed point at generation five.
 
 **The ledger is bounded: it stops growing once the record's own ids stop
 moving, and never grows again.** Which generation that lands on depends on the

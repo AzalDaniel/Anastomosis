@@ -2,8 +2,11 @@
 
 Reads HL7 Consolidated CDA R2.1 documents — the format every certified EHR can
 export and most can import — into canonical :class:`PatientRecord` objects.
-One ``ClinicalDocument`` XML file yields one record; sections the adapter does
-not structurally parse have their narrative preserved into the patient's
+One ``ClinicalDocument`` XML file yields one record — the unit the conservation
+ledger has to measure — and the pipeline folds the several records of one
+patient into the one chart every destination is keyed by
+(``pipeline._fold_records_sharing_a_patient``). Sections the adapter does not
+structurally parse have their narrative preserved into the patient's
 ``extensions`` (the lossless guarantee). See ``parser.py`` for the mapping and
 ``tests/fixtures/ccda/README.md`` for the verified element reference.
 """
@@ -189,7 +192,14 @@ class CCDAAdapter:
         )
 
     def load(self, path: Path) -> Iterator[PatientRecord]:
-        """Every CDA document in ``path``, in filename order.
+        """Every CDA document in ``path``, in filename order — one record each.
+
+        A patient with several documents therefore leaves here as several
+        records, and the pipeline folds them into one chart before anything is
+        delivered (``pipeline._fold_records_sharing_a_patient``). The split
+        stays here because a DOCUMENT is what :class:`DocumentLedger` has to
+        account for, construct by construct; a ledger over a merged record could
+        not say which document went short.
 
         A document this adapter cannot parse refuses the RUN — a partial
         migration that silently omits a patient is the failure this project
