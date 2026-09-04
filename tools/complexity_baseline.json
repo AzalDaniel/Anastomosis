@@ -178,7 +178,7 @@
       "rank": "C"
     },
     "src/anastomosis/pipeline.py::run_pipeline": {
-      "cc": 14,
+      "cc": 13,
       "rank": "C"
     },
     "src/anastomosis/qa/checks.py::DataIntegrityCheck": {

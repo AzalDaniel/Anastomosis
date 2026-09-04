@@ -698,6 +698,74 @@ issue and fixed in its own pull request.
   holds something else is how this read as a clean run in the first place. CLI
   and GUI reach the one writer through the same command, and a test drives both
   over the same scanned export to keep it that way. (#374)
+- **A chart with no encounters was never verified.** `run_pipeline` gated the
+  whole QA stage on `if qa and result.documents:` — the per-encounter render's
+  own output. A C-CDA Unstructured Document renders no encounter at all (its
+  clinical content is a scan, not a coded section), so an attachment-only
+  export offered nothing to that population and QA never ran: no
+  `qa_report.json`, the manifest gate read `not_run`, and `assert_deliverable`
+  refused a bundle nothing had ever graded — silently, since nothing in the
+  stage rail said QA had been skipped.
+
+  The bundle already carries something QA can honestly verify: the
+  whole-patient record summary every pack-mode run writes, HL7's own
+  stylesheet over the whole record with every chartable kind declared carried,
+  so a fact family the record holds and this page does not show is a FAIL
+  rather than a layout choice. The QA stage now enters whenever QA was asked
+  for, full stop — a chart with no encounters still owes an operator a
+  verified bundle through the summaries, and the stage's own rule (not a
+  precondition on its caller) is what downgrades a run that genuinely graded
+  nothing to `not_run` with a skip event, the same shape a missing PyMuPDF
+  install already gets, rather than a false `pass`.
+
+  `_render_record_summaries` returns its render result instead of discarding
+  it, so the stage grades the paths it actually wrote and the record BEHIND
+  each one — but two `PatientRecord`s sharing one patient id (the C-CDA
+  adapter yields one per source document) render to the SAME summary path,
+  and the render's own idempotent skip means only ONE of them actually wrote
+  the bytes there. Deduping on the path is not enough on its own: the first
+  attempt kept whichever record's render ran LAST, which under the run's own
+  default (`force=False`) is the one that took the skip branch, never the
+  writer — so the graded row could be checked against a DIFFERENT record's
+  identity and content than the page in front of it actually shows, disarming
+  `record_coverage` and failing `data_integrity` on values that were never
+  going to be on that page. The render now keeps the path:record association
+  live as it writes — a write always claims its path, a skip only holds it if
+  nothing already has — so the association is always the WRITER. Both QA
+  stages that grade a whole-patient view carried the same "re-derive the path
+  per record" defect (`pipeline.py`'s pack-mode stage and `core/migrate.py`'s
+  ccda-standard-mode stage) and both now read that one resolution rather than
+  computing their own. The GUI reaches the identical fix for free, through the
+  same shared pipeline core. (#383)
+- **A `.ccd` export was never read.** The C-CDA adapter's directory walk
+  matched `path.glob("*.xml")`, twice — once for the count, once for the
+  load — so a document a vendor wrote under any other spelling was never
+  opened, never counted, and never mentioned. Kareo/Tebra write a CCD as
+  `<name>.ccd`; other vendors write `.ccda`. Driving the owner's own Kareo
+  export end to end found a CCD saved beside a Summary of Care saved as
+  `.xml`: the run reported `1 rendered, 0 skipped, 0 failed` and exited 0 for
+  an export holding two documents, with no row anywhere for the second one —
+  whole-document loss behind a green line, one directory listing before the
+  conservation machinery that exists to catch exactly this ever runs. The
+  adapter now matches `.xml`, `.ccd`, and `.ccda` on `Path.suffix.lower()`
+  (case-insensitively, on a case-sensitive filesystem too), and `detect`
+  recognises an export holding only `.ccd` documents rather than missing it
+  for auto-detection. The same directory walk that finds the documents now
+  also counts every OTHER file whose document element reads as CDA's
+  `ClinicalDocument` but whose extension names none of the three — decided
+  by the file's first start tag, not a byte window, so a leading comment,
+  BOM or DTD cannot hide a real document from either count — never its
+  name, which a C-CDA export gives after the patient — and that count rides
+  the existing source-ledger settlement into `loss_ledger.json` and the
+  run's reading beside everything that WAS opened, on the same
+  reset-and-`getattr` contract the document ledgers already use; a file
+  that legitimately isn't CDA at all (a `nonXMLBody`'s own referenced
+  attachment, say) is not counted, because
+  burying the one loss that matters in files this adapter was never going to
+  read regardless would be the same false accounting by another route. The
+  6,144-document corpus pin is unmoved — `skipped_files` defaults to 0 and
+  rides the report only as a key nothing in the printed gap table reads, so
+  the aggregate is byte-identical either way (#384).
 
 - **The corpus generator wrote four shapes C-CDA R2.1 does not play.** The
   document's information recipient was emitted as

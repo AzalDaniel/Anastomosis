@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
@@ -2293,17 +2293,37 @@ def _verify_integrity(value: _Element, digest: str) -> None:
 # --- top-level assembly ------------------------------------------------------
 
 
+class _HardenedXMLKwargs(TypedDict):
+    """The keyword shape of :data:`_HARDENED_XML_KWARGS` — a ``TypedDict`` so
+    unpacking it with ``**`` at a call site still type-checks under strict
+    mypy, the way a plain ``dict[str, bool]`` cannot against ``XMLParser`` or
+    ``iterparse``'s own keyword-only signatures."""
+
+    resolve_entities: bool
+    no_network: bool
+    load_dtd: bool
+    huge_tree: bool
+
+
 # Hardened XML parser: third-party clinical documents must never resolve
 # external entities (XXE), fetch external DTDs over the network (SSRF), or
 # expand into unbounded trees (billion-laughs / quadratic blowup). These
 # flags are the OWASP-recommended posture for any XML ingest the
 # application does not author itself.
-_PARSER = etree.XMLParser(
-    resolve_entities=False,
-    no_network=True,
-    load_dtd=False,
-    huge_tree=False,
-)
+#
+# Kept as a dict, not only as the ``_PARSER`` built from it, because
+# ``etree.iterparse`` — the cheap "does this look like CDA" sniff in
+# ``sources/ccda/__init__.py`` (#384 round two) — has no ``parser=`` argument
+# to hand a built ``XMLParser`` to; it takes these same flags directly. A
+# document sniffed under weaker settings than the one it is then read under
+# would defeat the point of hardening the read at all.
+_HARDENED_XML_KWARGS: _HardenedXMLKwargs = {
+    "resolve_entities": False,
+    "no_network": True,
+    "load_dtd": False,
+    "huge_tree": False,
+}
+_PARSER = etree.XMLParser(**_HARDENED_XML_KWARGS)
 
 
 def _inline_narrative_references(root: _Element) -> None:

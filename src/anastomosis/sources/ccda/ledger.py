@@ -145,6 +145,7 @@ __all__ = [
     "assert_emittable",
     "document_ledger",
     "physician_reading",
+    "skipped_files_clause",
 ]
 
 #: The seam these books are kept at, named as a crossing (the vocabulary
@@ -237,6 +238,7 @@ REPORT_WORDS: frozenset[str] = frozenset(
         "documents",
         "constructs_offered",
         "entries_offered",
+        "skipped_files",
         "constructs",
         "construct",
         "templates",
@@ -345,6 +347,14 @@ class CorpusLedger:
     is the number that separates "this corpus has no advance directives" from
     "this adapter drops advance directives". Without it a zero in the parsed
     column is unreadable.
+
+    ``skipped_files`` is not a construct and merges with no row: it is how
+    many files in the export the adapter's own directory walk recognised as a
+    CDA document but did not open, because their extension named none it
+    accepts (see ``sources.ccda._scan``, #384). Carried here rather than on a
+    row so it survives into ``as_report()`` and :func:`physician_reading`
+    beside the count of everything that WAS opened — an export can under-report
+    its patients even when every document it did open balances perfectly.
     """
 
     documents: int
@@ -352,6 +362,7 @@ class CorpusLedger:
     present_in: Mapping[str, int]
     constructs_offered: int
     entries_offered: int
+    skipped_files: int = 0
 
     def conservation(self) -> Conservation:
         return _conservation("construct", self.constructs_offered, self.rows, _instances)
@@ -372,6 +383,7 @@ class CorpusLedger:
             "documents": self.documents,
             "constructs_offered": self.constructs_offered,
             "entries_offered": self.entries_offered,
+            "skipped_files": self.skipped_files,
             "constructs": [_row_report(row, self.present_in) for row in self.rows],
         }
         assert_emittable(report)
@@ -1773,13 +1785,19 @@ def document_ledger(path: Path, record: PatientRecord | None = None) -> Document
     return _ledger(root, record)
 
 
-def aggregate(ledgers: Iterable[DocumentLedger]) -> CorpusLedger:
+def aggregate(ledgers: Iterable[DocumentLedger], skipped_files: int = 0) -> CorpusLedger:
     """Merge document ledgers into one corpus reading.
 
     Rows merge on construct AND template set, so the same section code declared
     under a vendor's own templateId stays a separate line — that pairing is the
     thing a corpus is read for, and averaging it away hides exactly the variant
     that broke.
+
+    ``skipped_files`` rides straight onto the corpus rather than through any
+    row: it counts files the adapter never opened, so no document ledger in
+    ``ledgers`` can carry it. Defaulted to 0 so every existing caller — the
+    corpus generator included — reads exactly as it did before this parameter
+    existed.
     """
     merged: dict[tuple[str, tuple[str, ...]], LedgerRow] = {}
     present: Counter[str] = Counter()
@@ -1798,6 +1816,7 @@ def aggregate(ledgers: Iterable[DocumentLedger]) -> CorpusLedger:
         present_in=dict(present),
         constructs_offered=constructs,
         entries_offered=entries,
+        skipped_files=skipped_files,
     )
     corpus.check()
     return corpus
@@ -1931,6 +1950,43 @@ def _unlinkable_line(corpus: CorpusLedger) -> str:
     )
 
 
+def skipped_files_clause(count: int) -> str:
+    """The PHI-safe clause naming files the sniff recognised as CDA content but
+    whose extension named none of the three this adapter reads.
+
+    Shared between two tellings of the same fact so they cannot drift apart
+    under one another's edits: the physician reading (:func:`_skip_lines`,
+    said when OTHER documents did load) and ``pipeline.load_records``'s
+    ``empty_export`` refusal (said when NOTHING else loaded — #384 round two,
+    finding 2). Never a filename, which a C-CDA export names after the
+    patient; a count and the three fixed extension strings are the whole of
+    what may leave.
+    """
+    return (
+        f"{_n(count, 'file', 'files')} in the export read like a C-CDA document but carried "
+        "no extension this adapter reads (.xml, .ccd, .ccda)"
+    )
+
+
+def _skip_lines(corpus: CorpusLedger) -> list[str]:
+    """The one line this reading owes about files never opened at all.
+
+    Every other line here accounts for what a document, once opened, offered
+    and kept. A file this adapter's own sniff recognised as a CDA document but
+    whose extension named none of the three it reads (.xml, .ccd, .ccda,
+    matched without regard to case) was never opened — #384's defect was
+    exactly this count going unreported, so an export with a document under
+    the wrong extension read as a complete, successful run. Said first, ahead
+    of the sections a physician might otherwise read as the whole account: a
+    reader who has already learned what the opened documents' SECTIONS held
+    has lost the chance to learn a whole sibling document existed and was not
+    one of them.
+    """
+    if not corpus.skipped_files:
+        return []
+    return [f"{skipped_files_clause(corpus.skipped_files)} — skipped, not read."]
+
+
 def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:
     """The corpus reading in the vocabulary of the chart, one sentence per line.
 
@@ -1944,13 +2000,16 @@ def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:
     The blind spot is published, not buried: ``unlinkable`` gets the closing
     line whichever way it went, because a reading that only mentions its own
     uncertainty when convenient is the kind of clean report this project keeps
-    having to unlearn.
+    having to unlearn. :func:`_skip_lines` is the same discipline applied one
+    level up the stack, before the construct rows below it even start — a
+    document never opened is a bigger loss than any row inside one that was.
 
     PHI: every sentence is these templates' own words plus integers. Nothing a
     document stated — no name, no id, no code — can reach a line, because
     nothing here reads one.
     """
     return (
+        *_skip_lines(corpus),
         *_sections_lines(corpus),
         _participations_line(corpus),
         *_body_lines(corpus),

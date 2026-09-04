@@ -540,7 +540,7 @@ def _run_pack_mode(
 
 
 def _run_ccda_standard_qa(
-    records: list[PatientRecord],
+    view: CCDARenderResult,
     charts: Path,
     emit: Callable[[StageEvent], None],
 ) -> bool | None:
@@ -562,9 +562,17 @@ def _run_ccda_standard_qa(
     recorded as skipped-with-reason, every chartable kind declared carried — is
     :func:`anastomosis.qa.whole_patient_report`, shared with the record summaries
     the pack pipeline writes into every bundle.
+
+    ``view.by_path`` (not a per-record re-derivation of ``ccda_standard_doc_path``)
+    is what this grades: the same NIT the pipeline's own QA stage carried — two
+    ``PatientRecord``s sharing a patient id (``_allocate`` keys on it) render to
+    one file, and re-deriving the path per record graded that one file once per
+    record that named it, two indistinguishable rows for a chart verified
+    exactly once. ``render_ccda_standard`` already resolves path:writer
+    correctly (#383's round-two blocker); this reads that resolution rather
+    than re-deriving a second, easier-to-get-wrong one.
     """
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
-    from anastomosis.reconstruct.ccda_standard import ccda_standard_doc_path
 
     try:
         from anastomosis.qa import whole_patient_report
@@ -574,9 +582,7 @@ def _run_ccda_standard_qa(
         emit(StageEvent(STAGE_QA, detail="skipped: install anastomosis[render] for PyMuPDF"))
         return None
 
-    report = whole_patient_report(
-        (ccda_standard_doc_path(charts, record), record) for record in records
-    )
+    report = whole_patient_report(view.by_path.items())
     settle_qa(report, charts, emit)  # raises on a FAIL, so reaching here IS the pass
     return True
 
@@ -664,7 +670,7 @@ def _run_ccda_standard(
             # written, exactly as run_pipeline's QA stage precedes delivery.
             qa_ok: bool | None = None
             if cmd.qa and view.documents:
-                qa_ok = _run_ccda_standard_qa(records, charts, emit)
+                qa_ok = _run_ccda_standard_qa(view, charts, emit)
 
             # Write the upload manifest by default (a migration intends to
             # deliver). The whole-patient view has no RenderedDoc list, so the
