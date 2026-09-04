@@ -15,6 +15,25 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A uuid4 minted at parse time rode into every delivered bundle.** The FHIR
+  export carried `PatientRecord.id` in its `__record__` extra. That id is
+  `AnastBase.id`'s default and no adapter sets it, so it says nothing about the
+  source — it is the run's own bookkeeping — and it made two loads of one
+  export differ, in a file whose writer's docstring calls byte-stability part
+  of the contract and which operators are told to diff for drift. The CCD side
+  never carried a record id at all, which is exactly why it can assert that two
+  ingests build identical documents; this is that guarantee reaching the other
+  rendition. The extensions beside it are the source's and still ride, and a
+  bundle written before this still parses — its stale id is simply not restored
+  into a fresh record.
+
+  This does not finish the job, and the remaining half is measured rather than
+  guessed: every clinical object — observations, conditions, allergies,
+  medications, immunizations — still takes an `AnastBase.id` uuid4 that becomes
+  its FHIR resource `id` and `fullUrl`, 16 of them on the C-CDA fixture. Giving
+  those deterministic identities is a change to clinical object identity of the
+  same kind #404 just made for patients, and it is left open on #405 rather
+  than claimed here. (#405, partial)
 - **Two patients whose medical-record numbers collided were merged into one
   chart.** A `recordTarget/patientRole/<id>` is not this tool's bookkeeping:
   C-CDA requires it, the originating EHR writes it, and it is that EHR's own

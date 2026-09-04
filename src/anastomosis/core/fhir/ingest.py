@@ -547,6 +547,9 @@ def from_bundle(bundle: dict[str, Any]) -> PatientRecord:
             setattr(record, name, [model.model_validate(item) for item in items])
     meta = extras.get("__record__")
     if meta:
-        record.id = meta["id"]
+        # Only the extensions. A bundle written before #405 also carries an
+        # "id" here; it is the exporting run's own instance bookkeeping, never
+        # anything the source said, so restoring it would import one machine's
+        # transient value into another's record for no one's benefit.
         record.extensions = meta["extensions"]
     return record
