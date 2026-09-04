@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_write_text
+from anastomosis.core.fhir import DeliveredAttachment
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -35,6 +36,7 @@ from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
 from anastomosis.deliver._shared import (
     claim_delivered_name,
     copy_claimed_chart,
+    measured_attachment,
     record_witness,
     write_fhir_bundle,
 )
@@ -194,10 +196,16 @@ class BundleDeliverer:
         *,
         qa_report: QAReport | None = None,
         claimed_dirs: dict[str, str] | None = None,
-        attachments: list[Path] | None = None,
+        attachments: list[tuple[str, Path]] | None = None,
         missing_count: int = 0,
     ) -> BundleResult:
         """Deliver ONE patient's bundle into ``out_dir``.
+
+        ``attachments`` is ``(artifact id, source file)`` pairs — the shape
+        :func:`_attachments_for` returns — so the copy step below can measure
+        what it wrote and hand the FHIR bundle a name it can trust, rather
+        than the bundle re-deriving one from ``DocumentArtifact.path`` on its
+        own and possibly naming a file the copy never produced.
 
         ``missing_count`` is how many charts the caller's index named for this
         patient and could not find; it rides the result so the run summary can
@@ -233,17 +241,23 @@ class BundleDeliverer:
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
 
+        # The source's own documents — what the charts reference. A record
+        # request answered without them hands over notes that cite scans the
+        # bundle does not contain. Copied BEFORE the FHIR bundle below: the
+        # record alone cannot say what name a document lands under, so the
+        # bundle needs what this copy measured, not the other way round.
+        attachment_paths, landed_attachments = self._copy_attachments(
+            attachments or [], patient_dir
+        )
+
         # FHIR R4 Bundle — the machine-readable rendition (the shared deliverer
-        # mechanic; its PHI-BY-DESIGN rationale lives there).
-        bundle_path = write_fhir_bundle(record, patient_dir)
+        # mechanic; its PHI-BY-DESIGN rationale lives there). Carries what was
+        # just measured above, so every DocumentReference resolves to a real
+        # file beside it.
+        bundle_path = write_fhir_bundle(record, patient_dir, landed_attachments)
 
         # PDFs — copied (never moved) so the caller's working tree is intact.
         pdf_paths = self._copy_pdfs(record.patient, pdfs or [], patient_dir)
-
-        # The source's own documents — what the charts reference. A record
-        # request answered without them hands over notes that cite scans the
-        # bundle does not contain.
-        attachment_paths = self._copy_attachments(attachments or [], patient_dir)
 
         # QA slice — only this patient's documents.
         qa_path = self._write_qa_slice(record, patient_dir, qa_report)
@@ -299,20 +313,36 @@ class BundleDeliverer:
             copied.append(target_dir / delivered)
         return copied
 
-    def _copy_attachments(self, attachments: list[Path], patient_dir: Path) -> list[Path]:
-        """Copy this patient's source documents into the bundle's own slot.
+    def _copy_attachments(
+        self, attachments: list[tuple[str, Path]], patient_dir: Path
+    ) -> tuple[list[Path], dict[str, DeliveredAttachment]]:
+        """Copy this patient's source documents into the bundle's own slot, and
+        measure what each landed as for the FHIR rendition beside it.
 
         Same budget-claim-copy sequence as the charts above, and the same
         reason for claiming: two documents resolving to one delivered name
         would file one patient's scan over another's rather than fail.
+
+        Two artifact ids that name the SAME source file (a document the
+        record references twice) still make one entry each in the returned
+        list — one per ARTIFACT, the same accounting the archive's own
+        attachment copier uses — but the disk and the hash are not doubled:
+        the copy is idempotent (the destination is the same bytes either
+        time, and ``claim_delivered_name`` already treats a re-claim by the
+        same source name as the no-op it is), and
+        :func:`~anastomosis.deliver._shared.measured_attachment` recognizes
+        the second artifact by its source name and reuses the first's
+        measurement rather than re-hashing a file already measured once.
         """
         if not attachments:
-            return []
+            return [], {}
         target_dir = patient_dir / ATTACHMENTS_DIRNAME
         target_dir.mkdir(parents=True, exist_ok=True)
         copied: list[Path] = []
         claimed: dict[str, str] = {}
-        for attachment in attachments:
+        landed: dict[str, DeliveredAttachment] = {}  # source filename -> what was measured
+        by_doc: dict[str, DeliveredAttachment] = {}
+        for doc_id, attachment in attachments:
             delivered, failure = copy_claimed_chart(
                 target_dir, claimed, attachment, attachment.name, kind="attachment"
             )
@@ -320,8 +350,12 @@ class BundleDeliverer:
                 logger.warning("attachment copy failed (%s)", failure)
                 continue
             assert delivered is not None  # copy_claimed_chart: no failure => a name
-            copied.append(target_dir / delivered)
-        return copied
+            destination = target_dir / delivered
+            copied.append(destination)
+            by_doc[doc_id] = measured_attachment(
+                landed, destination, f"{ATTACHMENTS_DIRNAME}/{delivered}"
+            )
+        return copied, by_doc
 
     def _write_qa_slice(
         self,
@@ -375,8 +409,15 @@ class BundleDeliverer:
         return target
 
 
-def _attachments_for(record: PatientRecord, landing: Path | None) -> list[Path]:
-    """The files in ``landing`` this record names, in the order it names them.
+def _attachments_for(record: PatientRecord, landing: Path | None) -> list[tuple[str, Path]]:
+    """The ``(artifact id, file)`` pairs ``landing`` holds for this record, in
+    the order it names them.
+
+    The id travels alongside the file — not just the file — so the copy step
+    downstream can tell the FHIR bundle which ``DocumentArtifact`` each
+    delivered name belongs to. Two artifacts naming the SAME file both appear
+    here, each under its own id; :meth:`BundleDeliverer._copy_attachments`
+    copies that file once and gives both ids the one measurement.
 
     A document the record names but the charts directory does not hold is left
     out rather than guessed at. Conservation belongs to the run —
@@ -386,13 +427,13 @@ def _attachments_for(record: PatientRecord, landing: Path | None) -> list[Path]:
     """
     if landing is None or not landing.is_dir():
         return []
-    found: list[Path] = []
+    found: list[tuple[str, Path]] = []
     for doc in record.documents:
         if not doc.path:
             continue
         candidate = landing / Path(doc.path).name
         if candidate.is_file():
-            found.append(candidate)
+            found.append((doc.id, candidate))
         else:
             logger.warning(
                 "record names an attachment the charts directory does not hold for patient %s",

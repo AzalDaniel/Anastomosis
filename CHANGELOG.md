@@ -369,6 +369,34 @@ issue and fixed in its own pull request.
   combination of ten structural traps, generated at test time and never
   committed. This measures; it does not fix. (#309)
 
+- **A `--bundle` `DocumentReference` for a document sitting right beside it.**
+  `bundle.json` named every carried source document with `contentType`
+  and nothing else — no `url`, no `data`, no `size`, no `hash` — even on a
+  run that put the file itself in `attachments/` next to the JSON. A FHIR
+  `Attachment` with none of those asserts a document exists and gives a
+  receiving system nothing to find it with; the file was there, and the
+  bundle that named it could not say where.
+
+  The `Attachment` now carries what the deliverer that copied the file
+  measured off the bytes it actually wrote: `url` is the path relative to
+  `bundle.json` itself (`attachments/<name>`, forward slashes on every
+  platform, never absolute, never `file://`), `size` is the byte count, and
+  `hash` is base64 of the SHA-256 digest — R4's own spelling for
+  `Attachment.hash`, not the hex string every other digest in this toolkit
+  carries. The record alone cannot know its own delivered name, so the
+  association threads from the deliverer that budgets and copies it straight
+  to the serializer, the way `deliver/ccda_export`'s own `DeliveredArtifact`
+  already keeps a CCD from naming a file it never wrote; two documents
+  naming one carried file copy it once and both references resolve to it.
+  A document a record names whose file did not land still delivers — the
+  archive and the bundle are lower-level primitives an operator can run
+  standalone over a partial charts directory, and one patient's shortfall
+  must not cost every other patient's bundle in the same run — but its
+  `Attachment` says so plainly, with FHIR's own data-absent-reason
+  extension, rather than shipping the same silent nulls that started this.
+  The archive's own `bundle.json` carries the identical fix, through the
+  one `write_fhir_bundle` mechanic both personas already shared. (#382)
+
 ### Changed
 
 - **Third-party pack code no longer runs with the desktop user's authority.**

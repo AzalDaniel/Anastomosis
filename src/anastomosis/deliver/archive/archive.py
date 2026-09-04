@@ -52,6 +52,7 @@ from pathlib import Path
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_text
 from anastomosis.core.conservation import Conservation
+from anastomosis.core.fhir import DeliveredAttachment
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
@@ -59,6 +60,7 @@ from anastomosis.core.textutil import HASH_TAG_CHARS, budgeted_name
 from anastomosis.deliver._shared import (
     claim_delivered_name,
     copy_claimed_chart,
+    measured_attachment,
     record_witness,
     write_fhir_bundle,
 )
@@ -274,9 +276,22 @@ class ArchiveDeliverer:
             patient_dir = out / "patients" / pid
             (patient_dir / "encounters").mkdir(parents=True, exist_ok=True)
 
+            # The source's own documents, handed to the patient whose record
+            # names them. Charts and attachments are counted apart: one number
+            # covering both would hide either going missing. Copied BEFORE the
+            # FHIR bundle below: the record alone cannot say what name a
+            # document lands under, so the bundle needs what this copy
+            # measured, not the other way round.
+            patient_attachments, landed_attachments = self._copy_patient_attachments(
+                record, (pdfs_dir or out) / ATTACHMENTS_DIRNAME, patient_dir
+            )
+            attachment_count += len(patient_attachments)
+
             # FHIR R4 Bundle — the machine-readable rendition (the shared
             # deliverer mechanic; its PHI-BY-DESIGN rationale lives there).
-            write_fhir_bundle(record, patient_dir)
+            # Carries what was just measured above, so every DocumentReference
+            # resolves to a real file beside it.
+            write_fhir_bundle(record, patient_dir, landed_attachments)
 
             # PDFs — attributed strictly via the render index (patient_id
             # match; see render_index.py for why name-prefix guessing was
@@ -293,14 +308,6 @@ class ArchiveDeliverer:
             owned_pdfs.update(charts.claimed_sources)
             pdf_count += len(patient_pdfs)
             missing_count += charts.absent
-
-            # The source's own documents, handed to the patient whose record
-            # names them. Charts and attachments are counted apart: one number
-            # covering both would hide either going missing.
-            patient_attachments = self._copy_patient_attachments(
-                record, (pdfs_dir or out) / ATTACHMENTS_DIRNAME, patient_dir
-            )
-            attachment_count += len(patient_attachments)
 
             # Per-encounter HTML pages. Ledger is fresh per patient: page names
             # only need to be distinct within this patient's own encounters/
@@ -395,8 +402,9 @@ class ArchiveDeliverer:
         record: PatientRecord,
         attachments_dir: Path,
         patient_dir: Path,
-    ) -> list[dict[str, object]]:
-        """Copy this patient's source attachments into their own slot.
+    ) -> tuple[list[dict[str, object]], dict[str, DeliveredAttachment]]:
+        """Copy this patient's source attachments into their own slot, and
+        measure what each landed as for the FHIR rendition beside it.
 
         These are not charts this run rendered — they are the files the source
         export carried: a scanned referral, a lab report, the pages a chart
@@ -408,18 +416,23 @@ class ArchiveDeliverer:
         carries no patient id, so ownership had to be looked up; a document is
         named BY the record that owns it, so the record is the attribution.
 
-        Returns what the patient page needs to link them. Two of this
-        patient's documents claiming one delivered name still raises through
-        the shared ledger — that is a wrong-chart hazard, not a missing file.
+        Returns what the patient page needs to link them, and separately what
+        the FHIR bundle needs — the second dict keyed by `DocumentArtifact` id
+        rather than delivered name, since two artifacts may name one file (see
+        below). Two of this patient's documents claiming one delivered name
+        still raises through the shared ledger — that is a wrong-chart hazard,
+        not a missing file.
         """
         wanted = [doc for doc in record.documents if doc.path]
         if not wanted:
-            return []
+            return [], {}
 
         out_dir = patient_dir / ATTACHMENTS_DIRNAME
         out_dir.mkdir(parents=True, exist_ok=True)
         claims: dict[str, str] = {}
         delivered: list[dict[str, object]] = []
+        landed: dict[str, DeliveredAttachment] = {}  # source filename -> what was measured
+        by_doc: dict[str, DeliveredAttachment] = {}
         for doc in wanted:
             name = Path(doc.path or "").name
             source = attachments_dir / name
@@ -445,6 +458,13 @@ class ArchiveDeliverer:
             delivered.append(
                 {"name": copied, "title": doc.title or copied, "pages": doc.page_count}
             )
+            # Two artifacts naming the SAME source file measure it once — see
+            # `measured_attachment` — so both artifacts' DocumentReferences
+            # resolve to the one file that exists rather than each
+            # independently hashing a copy already written once.
+            by_doc[doc.id] = measured_attachment(
+                landed, out_dir / copied, f"{ATTACHMENTS_DIRNAME}/{copied}"
+            )
 
         missing = len(wanted) - len(delivered)
         if missing:
@@ -463,7 +483,7 @@ class ArchiveDeliverer:
                 missing,
                 safe_log_id(record.patient.id),
             )
-        return delivered
+        return delivered, by_doc
 
     def _copy_patient_pdfs(
         self,

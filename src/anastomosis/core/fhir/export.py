@@ -7,6 +7,8 @@ import json
 import math
 import uuid
 from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass
 from html import escape
 from typing import Any
 
@@ -28,7 +30,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.core.model.base import AnastBase
 
-__all__ = ["EXT_NS", "FIELD_NS", "FhirExportError", "to_bundle"]
+__all__ = ["EXT_NS", "FIELD_NS", "DeliveredAttachment", "FhirExportError", "to_bundle"]
 
 EXT_NS = "urn:anastomosis:ext"
 FIELD_NS = "urn:anastomosis:field:"
@@ -106,6 +108,46 @@ def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
 
 class FhirExportError(Exception):
     """A record cannot be expressed as a valid FHIR Bundle."""
+
+
+@dataclass(frozen=True)
+class DeliveredAttachment:
+    """One :class:`~anastomosis.core.model.DocumentArtifact` a deliverer has
+    actually carried, as the FHIR ``Attachment`` fields describing it.
+
+    A ``PatientRecord`` cannot supply these itself: ``url`` is a path relative
+    to a ``bundle.json`` this module never writes, and the DELIVERER — the
+    archive's ``patients/<id>/attachments/``, the bundle's own
+    ``<id>/attachments/`` — is the one that budgets the destination name,
+    copies the bytes, and can measure what actually landed. Threading this in
+    from there, instead of :func:`to_bundle` re-deriving a name from
+    ``DocumentArtifact.path``, is what keeps the two from independently
+    drifting: two derivations of one filename is exactly how a JSON ends up
+    naming a file the deliverer never wrote (the failure
+    ``deliver.ccda_export.builder.DeliveredArtifact`` exists to prevent, on
+    the C-CDA side).
+
+    ``size`` and ``sha256`` (hex) are measured off the bytes the deliverer
+    actually wrote, never copied from ``DocumentArtifact.sha256`` — that field
+    is the SOURCE's claim, and a copy that silently truncated or a source that
+    lied would otherwise travel as a hash nobody re-checked. ``url`` is the
+    deliverer's own relative spelling (forward slashes, always) of where that
+    file sits next to the ``bundle.json`` referencing it.
+    """
+
+    url: str
+    size: int
+    sha256: str
+
+
+#: A FHIR-standard way to say "this element should have a value and does
+#: not, and here is why" (http://hl7.org/fhir/StructureDefinition/data-
+#: absent-reason). Used on an ``Attachment`` whose document a deliverer
+#: names but did not carry — a real receiving system's FHIR tooling already
+#: knows this extension, unlike a namespaced Anastomosis one, so a document
+#: with no url/size/hash reads as "known to be missing" rather than "nobody
+#: checked".
+_DATA_ABSENT_REASON_EXT = "http://hl7.org/fhir/StructureDefinition/data-absent-reason"
 
 
 #: Fields a resource is structurally required to have, which :func:`_prune`
@@ -695,7 +737,37 @@ def _location(f: Facility) -> dict[str, Any]:
     )
 
 
-def _artifact(d: DocumentArtifact) -> dict[str, Any]:
+def _artifact(
+    d: DocumentArtifact, attachments: Mapping[str, DeliveredAttachment] | None
+) -> dict[str, Any]:
+    # ``attachments`` is None for a bare export (no deliverer in the loop —
+    # round-trip and schema tests, an ad hoc `to_bundle(record)`): the
+    # Attachment carries only what the record itself knows, exactly as
+    # before this fix — no deliverer means no claim either way about what
+    # exists on disk.
+    #
+    # A deliverer that DOES pass a mapping is asserting it is complete. A
+    # document naming a file (``path`` set) with no entry in it is one the
+    # deliverer tried to carry and could not — that is reported, loudly, on
+    # the Attachment itself (see below) rather than shipped as silent nulls a
+    # receiving system cannot tell apart from "nobody checked". It is not
+    # refused outright: the archive and bundle deliverers are lower-level
+    # primitives an operator can run standalone over an older or partial
+    # charts directory (conservation of the FULL export belongs to the run —
+    # `pipeline._carry_attachments` — which already refuses there), so one
+    # patient's shortfall must not cost every OTHER patient's bundle in the
+    # same run.
+    landed = attachments.get(d.id) if attachments is not None else None
+    attachment: dict[str, Any] = {"contentType": d.mime_type, "title": d.title}
+    if landed is not None:
+        attachment["url"] = landed.url
+        attachment["size"] = landed.size
+        # R4's Attachment.hash is base64Binary, not the hex spelling every
+        # other digest in this toolkit carries — encoded here, at the one
+        # place a hex digest crosses into a FHIR field.
+        attachment["hash"] = base64.b64encode(bytes.fromhex(landed.sha256)).decode("ascii")
+    elif attachments is not None and d.path:
+        attachment["extension"] = [{"url": _DATA_ABSENT_REASON_EXT, "valueCode": "error"}]
     return _prune(
         {
             "resourceType": "DocumentReference",
@@ -715,7 +787,7 @@ def _artifact(d: DocumentArtifact) -> dict[str, Any]:
             "status": "current",
             "type": {"text": d.title or "Document"},
             "subject": _ref(d.patient_id),
-            "content": [{"attachment": _prune({"contentType": d.mime_type, "title": d.title})}],
+            "content": [{"attachment": _prune(attachment)}],
         }
     )
 
@@ -746,8 +818,26 @@ def _entries(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{"fullUrl": _urn(r["id"]), "resource": r} for r in resources]
 
 
-def to_bundle(record: PatientRecord) -> dict[str, Any]:
-    """Export one PatientRecord as a FHIR R4 Bundle (type=collection)."""
+def to_bundle(
+    record: PatientRecord, attachments: Mapping[str, DeliveredAttachment] | None = None
+) -> dict[str, Any]:
+    """Export one PatientRecord as a FHIR R4 Bundle (type=collection).
+
+    ``attachments`` is what a DELIVERER measured off the files it carried
+    beside this bundle, keyed by :class:`~anastomosis.core.model.
+    DocumentArtifact` id (see :class:`DeliveredAttachment`). Left ``None`` —
+    every bare call this module's own tests make, and any other export with
+    no delivery in the loop — a document's Attachment carries only what the
+    record itself knows, same as always: this function has no filesystem to
+    measure against and makes no claim about one.
+
+    A caller that DOES pass a mapping is asserting it is complete: a document
+    naming a file (``path`` set) with no entry in it is one the deliverer
+    tried to carry and could not, and its Attachment says so explicitly (see
+    :func:`_artifact`) rather than shipping silent nulls a receiving system
+    is told to fetch and cannot — the same asserts-a-document-exists-and-
+    gives-nothing-to-find-it-with shape #373 closed on the C-CDA side.
+    """
     resources: list[dict[str, Any]] = [_patient(record.patient, record)]
     resources += [_actor(p, record.patient.id) for p in record.practitioners]
     resources += [_location(f) for f in record.facilities]
@@ -763,7 +853,7 @@ def to_bundle(record: PatientRecord) -> dict[str, Any]:
     resources += [_immunization(i) for i in record.immunizations]
     resources += [_family_history(f) for f in record.family_history]
     resources += [_coverage(c) for c in record.coverages]
-    resources += [_artifact(d) for d in record.documents]
+    resources += [_artifact(d, attachments) for d in record.documents]
     return {
         "resourceType": "Bundle",
         "type": "collection",

@@ -377,9 +377,237 @@ def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) 
     patient_dir = tmp_path / "bundle"
     patient_dir.mkdir()
 
-    copied = BundleDeliverer()._copy_attachments(
-        [landing / "referral.pdf", landing / "labs.pdf"], patient_dir
+    copied, landed = BundleDeliverer()._copy_attachments(
+        [
+            ("feedface-doc0-0000-0000-000000000001", landing / "referral.pdf"),
+            ("feedface-doc0-0000-0000-000000000002", landing / "labs.pdf"),
+        ],
+        patient_dir,
     )
 
     assert sorted(p.name for p in copied) == ["labs.pdf", "referral.pdf"]
     assert {p.read_bytes() for p in copied} == {b"%PDF-1.4 one\n", b"%PDF-1.4 two\n"}
+    assert set(landed) == {
+        "feedface-doc0-0000-0000-000000000001",
+        "feedface-doc0-0000-0000-000000000002",
+    }
+    assert landed["feedface-doc0-0000-0000-000000000001"].url == "attachments/referral.pdf"
+    assert landed["feedface-doc0-0000-0000-000000000002"].url == "attachments/labs.pdf"
+
+
+# --- #382: the bundle's own FHIR rendition names the files beside it ---------
+
+_DATA_ABSENT_REASON_EXT = "http://hl7.org/fhir/StructureDefinition/data-absent-reason"
+
+
+def test_the_two_artifact_fixture_resolves_through_the_real_cli(tmp_path: Path) -> None:
+    """Driven through the real CLI, the two-artifact fixture (one embedded
+    B64 2-page PDF, one ``<reference>``d 1-page PDF, one patient, no
+    encounters): both attachments land on disk (#372/#380), and now each
+    DocumentReference's ``url`` resolves to one of them from ``bundle.json``'s
+    own directory, with ``size`` and ``hash`` matching what is actually there.
+    RED on main: both Attachments carried contentType only, url/size/hash all
+    ``None``.
+    """
+    import base64
+    import hashlib
+
+    from test_ccda_delivered_documents import _embedded_and_referenced_export
+    from typer.testing import CliRunner
+
+    from anastomosis.cli import app
+
+    export = tmp_path / "export"
+    charts = tmp_path / "charts"
+    bundles = tmp_path / "bundles"
+    _embedded_and_referenced_export(export)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pipeline",
+            "run",
+            str(export),
+            "--source",
+            "ccda",
+            "--out",
+            str(charts),
+            "--no-qa",
+            "--bundle",
+            str(bundles),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    (patient_dir,) = [p for p in bundles.iterdir() if p.is_dir()]
+    bundle = json.loads((patient_dir / "bundle.json").read_text())
+    docrefs = [
+        e["resource"]
+        for e in bundle["entry"]
+        if e["resource"]["resourceType"] == "DocumentReference" and "context" not in e["resource"]
+    ]
+    assert len(docrefs) == 2, "one DocumentReference per carried artifact"
+
+    on_disk = {p.name for p in (patient_dir / "attachments").glob("*")}
+    assert len(on_disk) == 2, "both the embedded and the referenced artifact are on disk"
+
+    for docref in docrefs:
+        attachment = docref["content"][0]["attachment"]
+        assert "data" not in attachment, "the bytes are not doubled inline"
+        url = attachment["url"]
+        assert url.startswith("attachments/") and "\\" not in url
+        assert not url.startswith(("/", "file://"))
+        name = url.removeprefix("attachments/")
+        assert name in on_disk, f"{url} does not resolve from bundle.json's own directory"
+        data = (patient_dir / "attachments" / name).read_bytes()
+        assert attachment["size"] == len(data)
+        assert attachment["hash"] == base64.b64encode(hashlib.sha256(data).digest()).decode("ascii")
+
+
+def test_two_artifacts_naming_one_carried_file_share_one_copy(tmp_path: Path) -> None:
+    """Two artifacts naming one carried file are one file on disk and two
+    working references to it — no duplicate entry, no second copy."""
+    from anastomosis.core.model import DocumentArtifact, Patient
+
+    charts = tmp_path / "charts"
+    landing = charts / "attachments"
+    landing.mkdir(parents=True)
+    (landing / "shared.pdf").write_bytes(b"%PDF-1.4 shared\n")
+
+    pid = "feedface-0000-4000-8000-000000000382"
+    ids = ("feedface-doc0-0000-0000-000000000001", "feedface-doc0-0000-0000-000000000002")
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Two", family_name="Refs"),
+        documents=[
+            DocumentArtifact(id=ids[0], patient_id=pid, path="shared.pdf", title="Referral"),
+            DocumentArtifact(id=ids[1], patient_id=pid, path="shared.pdf", title="Referral (2)"),
+        ],
+    )
+
+    (result,) = BundleDeliverer().deliver_records([record], charts, tmp_path / "bundles")
+
+    on_disk = list(result.out_dir.glob("attachments/*"))
+    assert [p.name for p in on_disk] == ["shared.pdf"], "one file on disk, not a second copy"
+    bundle = json.loads(result.bundle_path.read_text())
+    docrefs = {
+        e["resource"]["id"]: e["resource"]
+        for e in bundle["entry"]
+        if e["resource"]["resourceType"] == "DocumentReference" and e["resource"]["id"] in ids
+    }
+    assert set(docrefs) == set(ids)
+    attachments = [d["content"][0]["attachment"] for d in docrefs.values()]
+    assert {a["url"] for a in attachments} == {"attachments/shared.pdf"}, (
+        "both references resolve to the one file"
+    )
+    assert len({a["hash"] for a in attachments}) == 1, "one file, measured once"
+
+
+def test_two_artifacts_naming_one_file_reuse_one_measurement_object(tmp_path: Path) -> None:
+    """Reuse, not just agreement: two independently-computed digests over the
+    same bytes are numerically equal anyway (hashing is deterministic), so
+    that alone would not prove the second artifact skipped its own re-hash.
+    Identity does: both ids get the exact object the first measured.
+    """
+    landing = tmp_path / "attachments"
+    landing.mkdir()
+    (landing / "shared.pdf").write_bytes(b"%PDF-1.4 shared\n")
+    patient_dir = tmp_path / "bundle"
+    patient_dir.mkdir()
+
+    _, landed = BundleDeliverer()._copy_attachments(
+        [
+            ("feedface-doc0-0000-0000-000000000001", landing / "shared.pdf"),
+            ("feedface-doc0-0000-0000-000000000002", landing / "shared.pdf"),
+        ],
+        patient_dir,
+    )
+
+    first = landed["feedface-doc0-0000-0000-000000000001"]
+    second = landed["feedface-doc0-0000-0000-000000000002"]
+    assert first is second, "the second artifact reused the first's measurement"
+
+
+def test_a_document_whose_file_did_not_land_says_so_plainly(tmp_path: Path) -> None:
+    """Entered for real: the charts directory carries only ONE of the two
+    documents this record names. The bundle still delivers — conservation of
+    the FULL export belongs to the run
+    (see ``test_a_bundle_without_the_carried_attachments_still_delivers``) —
+    but the DocumentReference for the file that did not land says so
+    explicitly, in the field a FHIR consumer already knows to check for
+    absent data, rather than shipping silent nulls indistinguishable from
+    "nobody checked".
+    """
+    from anastomosis.core.model import DocumentArtifact, Patient
+
+    charts = tmp_path / "charts"
+    landing = charts / "attachments"
+    landing.mkdir(parents=True)
+    (landing / "present.pdf").write_bytes(b"%PDF-1.4 present\n")
+    # "absent.pdf" is named by the record but never lands here.
+
+    pid = "feedface-0000-4000-8000-000000000382"
+    present_id = "feedface-doc0-0000-0000-000000000001"
+    absent_id = "feedface-doc0-0000-0000-000000000002"
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="One", family_name="Missing"),
+        documents=[
+            DocumentArtifact(id=present_id, patient_id=pid, path="present.pdf"),
+            DocumentArtifact(id=absent_id, patient_id=pid, path="absent.pdf"),
+        ],
+    )
+
+    (result,) = BundleDeliverer().deliver_records([record], charts, tmp_path / "bundles")
+
+    assert result.bundle_path.is_file(), "the bundle still delivers"
+    bundle = json.loads(result.bundle_path.read_text())
+    docrefs = {
+        e["resource"]["id"]: e["resource"]
+        for e in bundle["entry"]
+        if e["resource"]["resourceType"] == "DocumentReference"
+        and e["resource"]["id"] in (present_id, absent_id)
+    }
+
+    present_attachment = docrefs[present_id]["content"][0]["attachment"]
+    assert present_attachment["url"] == "attachments/present.pdf"
+
+    absent_attachment = docrefs[absent_id]["content"][0]["attachment"]
+    assert "url" not in absent_attachment
+    assert "size" not in absent_attachment
+    assert "hash" not in absent_attachment
+    assert absent_attachment["extension"] == [
+        {"url": _DATA_ABSENT_REASON_EXT, "valueCode": "error"}
+    ]
+
+
+def test_two_deliveries_of_one_record_produce_byte_identical_bundle_json(tmp_path: Path) -> None:
+    """One record object, delivered twice (necessary and not sufficient — see
+    ``deliver.ccda_export``'s own ``test_two_builds_are_byte_identical``):
+    pins that threading measured attachments through does not itself add
+    dict-ordering nondeterminism to the ``sort_keys=True, indent=2`` JSON.
+    """
+    from anastomosis.core.model import DocumentArtifact, Patient
+
+    charts = tmp_path / "charts"
+    landing = charts / "attachments"
+    landing.mkdir(parents=True)
+    (landing / "a.pdf").write_bytes(b"%PDF-1.4 a\n")
+    (landing / "b.pdf").write_bytes(b"%PDF-1.4 b\n")
+
+    pid = "feedface-0000-4000-8000-000000000382"
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Det", family_name="Erministic"),
+        documents=[
+            DocumentArtifact(
+                id="feedface-doc0-0000-0000-000000000001", patient_id=pid, path="a.pdf"
+            ),
+            DocumentArtifact(
+                id="feedface-doc0-0000-0000-000000000002", patient_id=pid, path="b.pdf"
+            ),
+        ],
+    )
+
+    deliverer = BundleDeliverer()
+    (first,) = deliverer.deliver_records([record], charts, tmp_path / "one")
+    (second,) = deliverer.deliver_records([record], charts, tmp_path / "two")
+
+    assert first.bundle_path.read_bytes() == second.bundle_path.read_bytes()

@@ -300,7 +300,7 @@
       "rank": "C"
     },
     "src/anastomosis/core/fhir/export.py": {
-      "avg": 5.9259,
+      "avg": 5.8929,
       "rank": "B"
     },
     "src/anastomosis/core/fhir/ingest.py": {
