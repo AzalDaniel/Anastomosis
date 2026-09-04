@@ -488,14 +488,21 @@ def test_repeated_export_does_not_grow_the_document_without_bound(tmp_path: Path
 
     The documents ride as files with references, never as base64 in the CDA, so
     what a re-ingest recovers and the next export re-narrates is a handful of
-    fixed lines rather than a scan. Four generations: the size settles and the
+    fixed lines rather than a scan. Five generations: the size settles and the
     artifacts keep arriving, and no generation carries a single base64 byte.
+
+    Settles at generation THREE. It settled at two until #404 stopped this
+    patient's id surviving re-ingest verbatim — the identifier states an
+    assigning authority, so the id is derived from the whole pair, and the
+    document id derived from it changes once before it too settles. Driven to
+    generation six: 7,464, 9,100, 9,209, 9,209, 9,209, 9,209. The bound is
+    what this guards; which generation it lands on is not.
     """
     export = tmp_path / "export"
     _embedded_and_referenced_export(export)
     sizes: list[int] = []
     directory = export
-    for generation in range(1, 5):
+    for generation in range(1, 6):
         record = parse_document(next(iter(sorted(directory.glob("*.xml")))))
         attachments = _carried(record, directory, tmp_path / f"charts{generation}")
         out = tmp_path / f"ccda{generation}"
@@ -506,7 +513,7 @@ def test_repeated_export_does_not_grow_the_document_without_bound(tmp_path: Path
         sizes.append(written[0].stat().st_size)
         directory = out
 
-    assert sizes[1] == sizes[2] == sizes[3], f"the document never settled: {sizes}"
+    assert sizes[2] == sizes[3] == sizes[4], f"the document never settled: {sizes}"
 
 
 # --- CLI and GUI take one path -----------------------------------------------

@@ -1707,9 +1707,8 @@ def test_a_preserved_entry_states_more_than_it_did_and_never_less(
 
 
 def _generation_record() -> PatientRecord:
-    """A chart whose canonical ids survive re-ingest verbatim (GUID-shaped, per
-    the parser's ``_GUID_RE``), carrying one loss of every class the ledger has
-    to hold across generations: a native patient field with no CDA slot, a vendor
+    """A chart carrying one loss of every class the ledger has to hold across
+    generations: a native patient field with no CDA slot, a vendor
     extension namespace, a native encounter field, and TWO medications sharing
     one strength value (the multiplicity the dedupe must not collapse)."""
     pid = "feedface-0000-0000-0000-0000000000aa"
@@ -1800,26 +1799,36 @@ def test_three_generations_keep_every_distinct_loss_entry(tmp_path: Path) -> Non
 
 
 def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path) -> None:
-    """Identical entries must not multiply: once the chart has been through one
-    full round trip the ledger stops growing. An unbounded ledger is the
-    regression this guards.
+    """Identical entries must not multiply: once the chart has been through the
+    round trip the ledger stops growing. An unbounded ledger is the regression
+    this guards, and it is the only thing that would be a defect.
 
-    This record's ids survive re-ingest verbatim, which is the fastest case —
-    it settles at generation 2. ``test_ledger_is_bounded_for_a_record_whose_id_
-    is_rederived`` covers the slower one.
+    Settles at generation THREE, as the name says. It settled at two until
+    #404, when this record's patient id stopped surviving re-ingest verbatim:
+    its identifier states an assigning authority, and an extension is unique
+    only inside the root that issued it, so the id is now derived from the
+    pair. ``document_id`` is a uuid5 over the patient id, so a re-derived
+    patient id means a different document id on the second export, which
+    narrates one entry the first pass could not — one extra generation to the
+    fixed point, and then flat. Driven to generation six: 10, 27, 28, 28, 28,
+    28.
+
+    The bound is the claim; the generation it lands on is not, and moving it
+    was the accepted cost of never merging two patients who share a medical
+    record number.
     """
-    documents = _generations(_generation_record(), 3, tmp_path)
+    documents = _generations(_generation_record(), 4, tmp_path)
     counts = [len(_entries_of(document)) for document in documents]
-    assert counts[1] == counts[2], f"loss ledger still growing across generations: {counts}"
+    assert counts[2] == counts[3], f"loss ledger still growing across generations: {counts}"
     # Entry for entry, not just in count. The only text that moves between the
     # two is the regenerated canonical id inside a path — a DECLARED loss, and
     # precisely what the dedupe key erases.
-    assert sorted(_entry_key(entry) for entry in _entries_of(documents[1])) == sorted(
-        _entry_key(entry) for entry in _entries_of(documents[2])
+    assert sorted(_entry_key(entry) for entry in _entries_of(documents[2])) == sorted(
+        _entry_key(entry) for entry in _entries_of(documents[3])
     )
     # And nothing swallowed a whole prior ledger as a single line.
-    assert not any("ccda:section:51899-3" in entry for entry in _entries_of(documents[2]))
-    assert not any(EXT_PRIOR_LOSS_NARRATIVE in entry for entry in _entries_of(documents[2]))
+    assert not any("ccda:section:51899-3" in entry for entry in _entries_of(documents[3]))
+    assert not any(EXT_PRIOR_LOSS_NARRATIVE in entry for entry in _entries_of(documents[3]))
 
 
 def test_ledger_is_bounded_for_a_record_whose_id_is_rederived(tmp_path: Path) -> None:
