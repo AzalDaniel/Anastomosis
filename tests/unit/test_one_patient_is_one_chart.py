@@ -1353,3 +1353,122 @@ def test_one_record_delivered_into_its_own_slot_is_not_a_collision(tmp_path: Pat
 
     assert result.missing_count == 0
     assert len(list((tmp_path / "cda").glob("*.xml"))) == 1
+
+
+# --- the identifier the source states, in full (#404) -------------------------
+
+
+_TWO_AUTHORITY_DOC = """<?xml version="1.0" encoding="UTF-8"?>
+<ClinicalDocument xmlns="urn:hl7-org:v3">
+  <recordTarget><patientRole>
+    <id root="{root}" extension="{extension}"/>
+    <patient><name use="L"><given>Wren</given><family>Ashgrove</family></name>
+      <administrativeGenderCode code="F" displayName="Female"/>
+      <birthTime value="19700101"/></patient>
+  </patientRole></recordTarget>
+  <component><structuredBody><component><section>
+    <code code="11450-4" displayName="Problem List" codeSystem="2.16.840.1.113883.6.1"/>
+    <title>Problems</title><text><paragraph>{note}</paragraph></text>
+  </section></component></structuredBody></component>
+</ClinicalDocument>
+"""
+
+
+def _authority_export(directory: Path, pairs: list[tuple[str, str, str]]) -> Path:
+    """One document per ``(root, extension, note)``, all naming one patient name."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for index, (root, extension, note) in enumerate(pairs):
+        directory.joinpath(f"doc_{index}.xml").write_text(
+            _TWO_AUTHORITY_DOC.format(root=root, extension=extension, note=note),
+            encoding="utf-8",
+        )
+    return directory
+
+
+def test_two_authorities_sharing_one_mrn_are_two_patients(tmp_path: Path) -> None:
+    """The wrong-patient merge #404 is about, at the seam that produced it.
+
+    A medical-record number is unique only inside the authority that issued
+    it — two practices both numbering their patients from 1 is the ordinary
+    case, not the exotic one. Hashing the extension alone merged them: driven
+    on the code before this fix, two documents differing ONLY in their
+    ``<id root>`` produced one canonical patient id, one bundle, one chart,
+    exit 0 and no warning. Demographics are identical here on purpose, so the
+    disagreement guard that happened to catch the owner's real export cannot
+    stand in for the identity rule.
+    """
+    from anastomosis.sources.ccda import parse_document
+
+    export = _authority_export(
+        tmp_path / "export",
+        [
+            ("2.16.840.1.113883.19.5.9999.1", "MRN-000123", "Seen at clinic A"),
+            ("2.16.840.1.113883.19.5.9999.2", "MRN-000123", "Seen at clinic B"),
+        ],
+    )
+    a, b = (parse_document(p) for p in sorted(export.glob("*.xml")))
+
+    assert a.patient.id != b.patient.id, (
+        "two assigning authorities sharing one MRN are two patients, not one chart"
+    )
+
+
+def test_one_authority_naming_one_patient_twice_is_still_one_chart(tmp_path: Path) -> None:
+    """The other half, and the one a narrower fix would have broken.
+
+    Honouring the whole identifier must not stop the SAME patient folding:
+    one authority, one MRN, two documents is one person with two visits.
+    """
+    from anastomosis.sources.ccda import parse_document
+
+    export = _authority_export(
+        tmp_path / "export",
+        [
+            ("2.16.840.1.113883.19.5.9999.1", "MRN-000123", "First visit"),
+            ("2.16.840.1.113883.19.5.9999.1", "MRN-000123", "Second visit"),
+        ],
+    )
+    a, b = (parse_document(p) for p in sorted(export.glob("*.xml")))
+
+    assert a.patient.id == b.patient.id, "one authority, one MRN, one patient"
+
+
+def test_a_patient_id_root_with_no_extension_keeps_the_id_it_had(tmp_path: Path) -> None:
+    """A bare root is not an authority here, unlike an encounter's (#393).
+
+    A document has ONE ``patientRole``, so a root standing alone on it is the
+    only identifier the source gives for that patient rather than a namespace
+    shared across many. Reading it as an authority would flip these patients
+    to a per-file id and stop them folding across documents — which is what
+    the corpus's own root-only patient ids would have hit.
+    """
+    from anastomosis.sources.ccda import parse_document
+
+    body = _TWO_AUTHORITY_DOC.replace(' extension="{extension}"', "")
+    export = tmp_path / "export"
+    export.mkdir()
+    for index, note in enumerate(("First", "Second")):
+        export.joinpath(f"doc_{index}.xml").write_text(
+            body.format(root="1.2.840.114350.1.13.99", note=note), encoding="utf-8"
+        )
+    a, b = (parse_document(p) for p in sorted(export.glob("*.xml")))
+
+    assert a.patient.id == b.patient.id, "a bare root still identifies one patient"
+
+
+def test_a_colon_in_one_half_cannot_impersonate_the_other(tmp_path: Path) -> None:
+    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` are different patients.
+
+    Unquoted, both halves joined by ``:`` hash to one string; a vendor
+    extension carrying a literal colon has been seen. Same defence, same
+    reason, as the organizer and encounter recipes.
+    """
+    from anastomosis.sources.ccda import parse_document
+
+    export = _authority_export(
+        tmp_path / "export",
+        [("1.2.3", "X:4", "one"), ("1.2.3:X", "4", "two")],
+    )
+    a, b = (parse_document(p) for p in sorted(export.glob("*.xml")))
+
+    assert a.patient.id != b.patient.id
