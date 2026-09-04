@@ -728,9 +728,35 @@ def merge_loss_narrative(
 # --- problems ----------------------------------------------------------------
 
 
+def _fact_id(kind: str, element: _Element | None, source_file: str, position: str) -> str:
+    """A clinical fact's canonical id, on the one identifier rule (#412, #405).
+
+    Every clinical object used to take ``AnastBase.id``'s ``uuid4`` default,
+    which no adapter set — so two loads of one document produced two different
+    ids for the same problem, and the FHIR bundle they were written into could
+    not be byte-compared for drift (#405). A fact's identity is not this run's
+    bookkeeping any more than a patient's is: it is the ``<id>`` the source
+    stated, and where the source stated none, its position in the document.
+
+    ``bare_root_names_the_instance=False``, the encounter answer rather than
+    the patient one, and for the encounter reason: a section lists MANY
+    problems, allergies and results, so a bare vendor OID shared between them
+    is the assigning authority, not the fact. Unlike an organization there is
+    no conflict guard here that would catch a wrong fold, so the ambiguous
+    case takes the position it was written in rather than a merge nobody
+    would be told about.
+    """
+    return identity_from_ii(
+        kind,
+        first_rooted_id(element) if element is not None else None,
+        f"{source_file}:{kind}:{position}",
+        bare_root_names_the_instance=False,
+    )
+
+
 def _conditions(section: _Element, patient_id: str, source_file: str) -> list[Condition]:
     out: list[Condition] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         act = _find(entry, "v3:act")
         if act is None:
             continue
@@ -748,6 +774,7 @@ def _conditions(section: _Element, patient_id: str, source_file: str) -> list[Co
         display = _attr(value, "displayName") or _text_content(_find(value, "v3:originalText"))
         out.append(
             Condition(
+                id=_fact_id("condition", act, source_file, str(index)),
                 patient_id=patient_id,
                 snomed=snomed,
                 icd10=icd10,
@@ -766,7 +793,7 @@ def _conditions(section: _Element, patient_id: str, source_file: str) -> list[Co
 
 def _allergies(section: _Element, patient_id: str, source_file: str) -> list[AllergyIntolerance]:
     out: list[AllergyIntolerance] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         obs = _find(entry, "v3:act/v3:entryRelationship/v3:observation")
         if obs is None:
             continue
@@ -794,6 +821,7 @@ def _allergies(section: _Element, patient_id: str, source_file: str) -> list[All
 
         out.append(
             AllergyIntolerance(
+                id=_fact_id("allergy", obs, source_file, str(index)),
                 patient_id=patient_id,
                 substance=substance,
                 category=category,
@@ -812,7 +840,7 @@ def _allergies(section: _Element, patient_id: str, source_file: str) -> list[All
 
 def _medications(section: _Element, patient_id: str, source_file: str) -> list[MedicationStatement]:
     out: list[MedicationStatement] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         admin = _find(entry, "v3:substanceAdministration")
         if admin is None:
             continue
@@ -830,6 +858,7 @@ def _medications(section: _Element, patient_id: str, source_file: str) -> list[M
         is_rxnorm = _attr(material, "codeSystem") == OID_RXNORM
         out.append(
             MedicationStatement(
+                id=_fact_id("medication", admin, source_file, str(index)),
                 patient_id=patient_id,
                 display_name=_attr(material, "displayName"),
                 rxnorm=_attr(material, "code") if is_rxnorm else None,
@@ -848,7 +877,7 @@ def _medications(section: _Element, patient_id: str, source_file: str) -> list[M
 
 def _immunizations(section: _Element, patient_id: str, source_file: str) -> list[Immunization]:
     out: list[Immunization] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         admin = _find(entry, "v3:substanceAdministration")
         if admin is None:
             continue
@@ -861,6 +890,7 @@ def _immunizations(section: _Element, patient_id: str, source_file: str) -> list
 
         out.append(
             Immunization(
+                id=_fact_id("immunization", admin, source_file, str(index)),
                 patient_id=patient_id,
                 vaccine=_attr(code, "displayName"),
                 administered_on=_ts_date(admin, "v3:effectiveTime"),
@@ -921,7 +951,7 @@ def _measurements(
     source_file: str,
 ) -> list[Observation]:
     out: list[Observation] = []
-    for entry in _entries(section):
+    for entry_index, entry in enumerate(_entries(section)):
         organizer = _find(entry, organizer_path)
         if organizer is None:
             continue
@@ -944,6 +974,7 @@ def _measurements(
                 source_id = organizer_component_source_id(root, extension, index)
             out.append(
                 Observation(
+                    id=_fact_id("observation", component, source_file, f"{entry_index}:{index}"),
                     patient_id=patient_id,
                     category=category,
                     code=_attr(code, "code"),
@@ -963,12 +994,13 @@ def _measurements(
 
 def _social_history(section: _Element, patient_id: str, source_file: str) -> list[Observation]:
     out: list[Observation] = []
-    for entry in _entries(section):
+    for index, entry in enumerate(_entries(section)):
         obs = _find(entry, "v3:observation")
         if obs is None or _val_attr(obs, "v3:code", "code") != "72166-2":
             continue
         out.append(
             Observation(
+                id=_fact_id("observation", obs, source_file, str(index)),
                 patient_id=patient_id,
                 category=ObservationCategory.SOCIAL_HISTORY,
                 display="Tobacco use",

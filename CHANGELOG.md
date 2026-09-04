@@ -15,6 +15,22 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A clinical fact keeps the id its source gave it, so a bundle is the same
+  bundle twice.** Every `Condition`, `AllergyIntolerance`, `MedicationStatement`,
+  `Immunization` and `Observation` took `AnastBase.id`'s `uuid4` default, which
+  no adapter set — so the fact's id said nothing about the source, it was this
+  run's bookkeeping, and two loads of one document wrote two different
+  `bundle.json` files. The writer's docstring calls byte-stability part of the
+  contract and operators are told to diff for drift, so there was nothing stable
+  to diff. Each of the six now derives its id the way patients and encounters
+  already do, through the one `identity_from_ii` rule (#412): the `<id>` the
+  source stated, or the fact's position in the document where the source stated
+  none. `bare_root_names_the_instance=False`, the encounter answer, because a
+  section lists many problems and results and there is no conflict guard that
+  would catch a wrong fold. Measured across the fixture corpus and a real
+  two-document export — 66 resources over 10 kinds — two independent loads are
+  now byte-identical, where #405 measured 16 resources drifting. (#405)
+
 - **One HL7 `II` rule, in one place, instead of four hand-written copies.** An
   `II` is the pair `(root, extension)`: the root names an assigning authority,
   the extension names the instance inside it. This repository discovered that
