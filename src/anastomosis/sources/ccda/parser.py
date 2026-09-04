@@ -55,7 +55,6 @@ from datetime import date
 from functools import cache
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid5
 
 from lxml import etree
@@ -65,6 +64,7 @@ from anastomosis.core.ccda_codes import (
     ARTIFACT_TEMPLATE_ROOT,
     EXT_PRIOR_LOSS_NARRATIVE,
     EXT_SECTION_ENTRIES,
+    GUID_RE,
     LOINC_ALLERGIES,
     LOINC_ENCOUNTERS,
     LOINC_EXTENSIONS,
@@ -88,6 +88,7 @@ from anastomosis.core.ccda_codes import (
     V3,
     XSI,
     first_rooted_id,
+    identity_from_ii,
     organizer_component_source_id,
 )
 from anastomosis.core.hashutil import hash_and_size
@@ -152,14 +153,8 @@ _PHONE_USE = {
 # administrativeGenderCode @code → display (when @displayName is absent).
 _SEX_BY_CODE = {"F": "Female", "M": "Male", "UN": None}
 
-# A GUID-shaped string: the synthetic-fixture prefix OR the canonical
-# 8-4-4-4-12 hex form a real EHR would emit. Either is trusted as an
-# already-stable id; everything else gets a deterministic uuid5.
-_GUID_RE = re.compile(
-    r"^(?:feedface-|00000000-)[0-9a-fA-F-]+$|"
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-    re.IGNORECASE,
-)
+# The GUID predicate lives beside the identity rule it serves (#412).
+_GUID_RE = GUID_RE
 _WS_RE = re.compile(r"\s+")
 
 # --- small element helpers ---------------------------------------------------
@@ -281,11 +276,11 @@ def _patient_id(patient_role: _Element, source_file: str) -> str:
     opens that chart and reads somebody else's problems.
 
     So: an extension paired with a root is hashed as the pair, each half
-    ``quote``d (``safe=""``) for the reason :func:`_encounter_identity_from_pair`
-    and :func:`~anastomosis.core.ccda_codes.organizer_component_source_id`
-    already document — unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")``
-    hash to one string. A GUID root standing alone is already globally unique
-    and stays verbatim. A non-GUID root standing alone is the only identifier
+    ``quote``d (``safe=""``) for the reason
+    :func:`~anastomosis.core.ccda_codes.identity_from_ii` documents —
+    unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` hash to one
+    string. A GUID root standing alone is already globally unique and stays
+    verbatim. A non-GUID root standing alone is the only identifier
     the document gives for its one patient, so it remains that patient's
     identity exactly as before — unlike an encounter, where a bare root
     repeated across many visits is manifestly an authority (#393); a document
@@ -298,17 +293,16 @@ def _patient_id(patient_role: _Element, source_file: str) -> str:
     document still yields one id, and one patient named the same way in two
     documents still folds to one chart.
     """
+    fallback = f"{source_file}:patient"
     for ident in _identifiers(patient_role):
         if ident.kind != IdentifierKind.SOURCE_GUID:
             continue
-        if ident.system:
-            root = quote(ident.system, safe="")
-            extension = quote(ident.value, safe="")
-            return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{root}:{extension}"))
-        if _GUID_RE.match(ident.value):
-            return ident.value
-        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{ident.value}"))
-    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:patient"))
+        # `_identifiers` records the root as `system` when an extension exists,
+        # and as `value` when it stands alone — so the pair is (system, value)
+        # or (value, None), never both readings at once.
+        pair = (ident.system, ident.value) if ident.system else (ident.value, None)
+        return identity_from_ii("patient", pair, fallback, bare_root_names_the_instance=True)
+    return identity_from_ii("patient", None, fallback, bare_root_names_the_instance=True)
 
 
 def _telecom(patient_role: _Element) -> list[ContactPoint]:
@@ -989,25 +983,6 @@ def _social_history(section: _Element, patient_id: str, source_file: str) -> lis
 # --- encounters + notes ------------------------------------------------------
 
 
-def _encounter_identity_from_pair(root: str, extension: str) -> str:
-    """Deterministic id for a stated ``(root, extension)`` HL7 v3 ``II``.
-
-    Document-intrinsic like :func:`~anastomosis.core.ccda_codes.
-    organizer_component_source_id` beside it — no ``source_file`` in the
-    recipe, because the whole point of honouring the pair is that it
-    survives the same visit being named in a different file. Each half is
-    ``quote``d (``safe=""``) for the same reason that function documents:
-    unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` would hash to the
-    same string, and a vendor extension carrying a literal ``:`` has been
-    seen. Kept here rather than moved beside that helper because only this
-    module reads it — the C-CDA builder always re-exports an encounter's
-    canonical id as a bare ``<id root=…>`` with no extension, so re-ingest
-    lands on the GUID-root-alone branch below rather than this one.
-    """
-    name = f"anastomosis:ccda:encounter:{quote(root, safe='')}:{quote(extension, safe='')}"
-    return str(uuid5(NAMESPACE_URL, name))
-
-
 def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, index: int) -> str:
     """Stable encounter id: the identifier the source states, when it states one.
 
@@ -1015,7 +990,7 @@ def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, inde
     namespace and an extension names the instance within it. Two encounters
     stating the same pair are the same encounter by the datatype's own
     definition — so ANY root paired with a non-blank extension is trusted as
-    identity, hashed deterministically by :func:`_encounter_identity_from_pair`.
+    identity, hashed deterministically over both halves.
     A GUID root standing ALONE (no extension, the synthetic-fixture shape or
     any 8-4-4-4-12 hex pattern a vendor would emit) is trusted too, verbatim,
     because a GUID needs no assigning authority to be unique.
@@ -1034,13 +1009,12 @@ def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, inde
     this function ever sees it) — so a root with only a blank extension is
     read as root-only, same as a bare root.
     """
-    if id_pair is not None:
-        root, extension = id_pair
-        if extension:
-            return _encounter_identity_from_pair(root, extension)
-        if _GUID_RE.match(root):
-            return root
-    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:encounter:{index}"))
+    return identity_from_ii(
+        "encounter",
+        id_pair,
+        f"{source_file}:encounter:{index}",
+        bare_root_names_the_instance=False,
+    )
 
 
 def _encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
@@ -1432,21 +1406,31 @@ def _participant_id(source_file: str, participation: str, index: int) -> str:
 
 
 def _facility_id(root: str | None, extension: str | None, source_file: str, index: int) -> str:
-    """Stable facility id, mirroring :func:`_patient_id`.
+    """Stable facility id, on the one identifier rule (#412).
 
-    Keyed on the organization's complete CDA II. ``extension`` is a unique
-    identifier only within ``root``; using the root alone merges different
-    facilities that share an assigning authority. A root-only UUID can stay
-    verbatim, while any compound identifier is deterministically namespaced.
-    An organization the document left unidentified falls back to its position,
-    which is the most a document that named nothing supports.
+    A bare root DOES name the organization here, as it does for a patient and
+    unlike an encounter — and the reason is worth stating, because the earlier
+    docstring's bare claim that this "mirrors ``_patient_id``" is what made the
+    rule look accidental. An organization is deliberately re-stated inside one
+    document: the author's practice IS the custodian in most exports, and the
+    same clinic reappears as a performer and a location. Those namings must
+    fold, or one clinic becomes several and each holds a fragment of the
+    address. An encounter is the opposite — a document lists many DISTINCT
+    visits, so folding them on a shared vendor root would merge the lot.
+
+    What makes folding safe here rather than a guess is that the ambiguous case
+    is caught rather than absorbed: two genuinely different organizations
+    reusing one root raise "organization identifier is reused with conflicting
+    facility fields" (below) instead of silently blending into one facility.
+    Identity folds; disagreement refuses. An encounter has no such guard, which
+    is exactly why it takes the positional fallback instead.
     """
-    if root and extension is None and _GUID_RE.match(root):
-        return root
-    if root:
-        compound = f"{len(root)}:{root}:{extension or ''}"
-        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:organization:{compound}"))
-    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:organization:{index}"))
+    return identity_from_ii(
+        "organization",
+        (root, extension) if root else None,
+        f"{source_file}:organization:{index}",
+        bare_root_names_the_instance=True,
+    )
 
 
 def _first(nodes: Sequence[_Element], path: str) -> _Element | None:

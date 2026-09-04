@@ -1472,3 +1472,118 @@ def test_a_colon_in_one_half_cannot_impersonate_the_other(tmp_path: Path) -> Non
     a, b = (parse_document(p) for p in sorted(export.glob("*.xml")))
 
     assert a.patient.id != b.patient.id
+
+
+# --- one rule for one identifier (#412) --------------------------------------
+#
+# Three sites once carried three hand-written recipes for the same HL7 `II`,
+# and the rule was rediscovered as a defect three times — facilities in the
+# PR #320 review, encounters in #393, patients in #404, where it merged two
+# people into one chart. These pin the rule itself, per kind, so a fourth site
+# cannot quietly answer the question a fourth way.
+
+_A_VENDOR_OID = "2.16.840.1.113883.19.5"
+
+
+def _every_kind_keyed_by_ii() -> dict[str, object]:
+    """Every identity site, reduced to `(root, extension) -> id` at position 0.
+
+    Used for the rules that hold at ALL sites. The bare-root question does not
+    hold at all sites and is asserted per kind below, with its reason."""
+    from anastomosis.sources.ccda import parser
+
+    return {
+        "encounter": lambda root, ext: parser._encounter_id((root, ext), "a.xml", 0),
+        "organization": lambda root, ext: parser._facility_id(root, ext, "a.xml", 0),
+    }
+
+
+def test_a_colon_in_one_half_cannot_impersonate_the_other_at_any_site() -> None:
+    # ("1.2.3", "X:4") and ("1.2.3:X", "4") are different identifiers. Unquoted
+    # they would hash to one string; a vendor extension with a literal ":" has
+    # been seen in the wild. Asserted per site, not once for a favourite one.
+    for kind, derive in _every_kind_keyed_by_ii().items():
+        assert derive("1.2.3", "X:4") != derive("1.2.3:X", "4"), kind
+
+
+def test_a_bare_vendor_oid_does_not_merge_the_distinct_visits_a_document_lists() -> None:
+    """A document lists many DISTINCT encounters, and has no guard that would
+    catch two of them wrongly folded — so a shared vendor root is treated as
+    the assigning authority it is, and they keep positional ids (#393).
+
+    Organizations are deliberately NOT in this test. That was my first reading
+    and it was wrong: an organization is re-stated on purpose inside one
+    document (the author's practice is usually the custodian), so it MUST fold
+    on a bare root, and the dangerous case — two different clinics reusing one
+    root — is caught rather than absorbed: `_fill_gaps` raises on conflicting
+    facility fields, pinned by `test_ccda_participations.py`. An encounter has
+    no such guard, which is why it takes the positional fallback instead.
+    """
+    from anastomosis.sources.ccda import parser
+
+    assert parser._encounter_id((_A_VENDOR_OID, None), "a.xml", 0) != parser._encounter_id(
+        (_A_VENDOR_OID, None), "a.xml", 1
+    )
+
+
+def test_one_organization_named_twice_folds_on_its_bare_root() -> None:
+    """The counterpart, and the reason `bare_root_names_the_instance` is an
+    argument rather than one global answer."""
+    from anastomosis.sources.ccda import parser
+
+    assert parser._facility_id(_A_VENDOR_OID, None, "a.xml", 0) == parser._facility_id(
+        _A_VENDOR_OID, None, "a.xml", 1
+    )
+
+
+def test_one_patient_may_be_named_by_a_bare_root_because_a_document_has_one() -> None:
+    # The exception, and the reason it is an argument rather than a per-site
+    # guess: a document has exactly one recordTarget/patientRole, so its bare
+    # root cannot be ambiguous — and folding on it is what lets one patient
+    # named the same way in two files be one chart.
+    from anastomosis.core.ccda_codes import identity_from_ii
+
+    here = identity_from_ii(
+        "patient", (_A_VENDOR_OID, None), "a.xml:patient", bare_root_names_the_instance=True
+    )
+    there = identity_from_ii(
+        "patient", (_A_VENDOR_OID, None), "b.xml:patient", bare_root_names_the_instance=True
+    )
+    assert here == there  # same patient, two files, one chart
+
+
+def test_two_kinds_stating_one_pair_are_still_two_objects() -> None:
+    # `kind` namespaces the hash. An encounter and a facility that happen to
+    # state the same II are not the same thing.
+    from anastomosis.sources.ccda import parser
+
+    assert parser._encounter_id(("1.2.3", "7"), "a.xml", 0) != parser._facility_id(
+        "1.2.3", "7", "a.xml", 0
+    )
+
+
+def test_only_one_module_encodes_a_compound_identifier() -> None:
+    """The point of #412 is not that the facility bug is fixed — it is that the
+    rule has ONE implementation.
+
+    The tell of a hand-written `II` recipe is percent-encoding a half so the
+    two cannot be confused (`quote(root, safe="")`). Every such recipe now
+    lives in ``ccda_codes``. The uuid5 calls that remain elsewhere are purely
+    positional — ``{source_file}:{participation}:{index}`` and
+    ``{document.name}:nonXMLBody:{index}`` — and take neither a root nor an
+    extension, so they are not this rule's business. If a fourth compound
+    recipe is written anywhere else, this fails and names the file.
+    """
+    from pathlib import Path as _Path
+
+    import anastomosis
+
+    root = _Path(anastomosis.__file__).parent
+    offenders = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if path.name != "ccda_codes.py"
+        for text in [path.read_text(encoding="utf-8")]
+        if "quote(" in text and "uuid5(" in text
+    )
+    assert offenders == [], f"a compound id recipe appeared outside ccda_codes: {offenders}"

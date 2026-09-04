@@ -20,6 +20,7 @@ live here, in a leaf module of literals that both may depend on.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 from uuid import NAMESPACE_URL, uuid5
 
@@ -180,6 +181,76 @@ def first_rooted_id(element: etree._Element) -> tuple[str, str | None] | None:
         extension = extension.strip() if extension is not None else None
         return root, extension or None
     return None
+
+
+# A GUID-shaped string: the synthetic-fixture prefix OR the canonical 8-4-4-4-12
+# hex form a real EHR would emit. Either is already globally unique, so it needs
+# no assigning authority to disambiguate it and is trusted verbatim.
+GUID_RE = re.compile(
+    r"^(?:feedface-|00000000-)[0-9a-fA-F-]+$|"
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+    re.IGNORECASE,
+)
+
+
+def identity_from_ii(
+    kind: str,
+    id_pair: tuple[str, str | None] | None,
+    fallback: str,
+    *,
+    bare_root_names_the_instance: bool,
+) -> str:
+    """The one place an HL7 v3 ``II`` becomes an object's canonical id.
+
+    An ``II`` is the PAIR ``(root, extension)``: the root names an assigning
+    authority, the extension names the instance within it. Reading half of it
+    merges distinct things, and this repository learned that three separate
+    times — for facilities and providers in the PR #320 review, for encounters
+    in #393, and for patients in #404, where it put two people in one chart.
+    Each fix was correct and local; none propagated, so the next site paid the
+    bill again. This function exists so there is no next site: it is the only
+    place in the tree that turns a root and an extension into an id, and the
+    per-kind differences are arguments rather than re-implementations (#412).
+
+    The rules, in order:
+
+    * **An extension paired with a root** is the identifier, hashed over BOTH
+      halves. Each is ``quote``d (``safe=""``) because a vendor extension
+      carrying a literal ``:`` has been seen: unquoted, ``("1.2.3", "X:4")``
+      and ``("1.2.3:X", "4")`` would hash to one string.
+    * **A GUID root standing alone** is trusted verbatim — already globally
+      unique, so it names the instance without an authority.
+    * **A non-GUID root standing alone** is the ambiguous case, and the ONLY
+      thing that legitimately varies between kinds. It is an authority's OID,
+      shared by every instance that vendor writes — so it names the instance
+      only where the document structurally admits exactly one holder. That is
+      true of ``recordTarget/patientRole``: a document has one, so its bare
+      root cannot be ambiguous, and folding on it is what lets one patient
+      named the same way in two documents be one chart. It is false of
+      encounters, organizations and participations, which a document may carry
+      many of; there a bare root would merge every distinct visit or facility
+      that vendor ever wrote, so those take ``fallback``.
+    * **No usable id at all** takes ``fallback`` — the caller's deterministic
+      positional recipe, so re-parsing one document still yields one id.
+
+    ``kind`` namespaces the hash so an encounter and a facility stating the
+    same pair are still two objects. ``fallback`` is the complete recipe
+    string, already including its own ``kind``, because the positional
+    fallbacks are file-scoped while the stated-identity branches deliberately
+    are not: an id built from what the source SAID has to survive the same
+    object being named in a different file, which is the whole point of
+    honouring the pair.
+    """
+    if id_pair is not None:
+        root, extension = id_pair
+        if extension:
+            name = f"anastomosis:ccda:{kind}:{quote(root, safe='')}:{quote(extension, safe='')}"
+            return str(uuid5(NAMESPACE_URL, name))
+        if GUID_RE.match(root):
+            return root
+        if bare_root_names_the_instance:
+            return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{kind}:{quote(root, safe='')}"))
+    return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{fallback}"))
 
 
 def organizer_component_source_id(root: str, extension: str | None, index: int) -> str:
