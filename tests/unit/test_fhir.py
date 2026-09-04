@@ -16,6 +16,7 @@ from anastomosis.core.fhir import DeliveredAttachment, from_bundle, to_bundle
 from anastomosis.core.fhir.export import FhirExportError, _prune
 from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord, SectionKind
 from anastomosis.sources import get_source
+from anastomosis.sources.ccda.parser import parse_document
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -529,3 +530,48 @@ def test_a_document_with_no_path_makes_no_claim_even_with_attachments_given() ->
     attachment = _artifact_docref(bundle, doc_id)["content"][0]["attachment"]
     assert "extension" not in attachment
     assert "url" not in attachment
+
+
+def test_a_bundle_is_byte_identical_across_two_independent_loads(tmp_path: Path) -> None:
+    """The contract `to_bundle`'s docstring states, and the reason #405 was filed.
+
+    Every clinical object used to take `AnastBase.id`'s uuid4 default, which no
+    adapter set, so two loads of one document wrote two different bundles and an
+    operator told to diff for drift had nothing stable to diff. A fact's id is
+    now the `<id>` its source stated, or its position where the source stated
+    none — the same rule patients and encounters already follow (#412).
+    """
+    source = Path(__file__).parent.parent / "fixtures" / "ccda"
+    documents = sorted(source.glob("*.xml"))
+    assert documents, "the C-CDA fixture corpus is the input this pins"
+
+    def load() -> str:
+        bundles = [to_bundle(parse_document(doc)) for doc in documents]
+        return json.dumps(bundles, sort_keys=True, default=str)
+
+    assert load() == load()
+
+
+def test_every_clinical_resource_id_is_derived_rather_than_minted() -> None:
+    """The stronger statement, per resource type rather than over the blob.
+
+    A whole-bundle comparison passes if the bundle is empty; this fails unless
+    each kind is actually present AND stable, so it cannot pass vacuously.
+    """
+    source = Path(__file__).parent.parent / "fixtures" / "ccda"
+    documents = sorted(source.glob("*.xml"))
+
+    def ids_by_type() -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for doc in documents:
+            for entry in to_bundle(parse_document(doc)).get("entry", []):
+                resource = entry.get("resource", {})
+                out.setdefault(resource.get("resourceType", "?"), []).append(resource.get("id", ""))
+        return out
+
+    first, second = ids_by_type(), ids_by_type()
+    assert first == second
+    # The five kinds #405 measured as drifting. If a fixture stops carrying one,
+    # this says so rather than quietly narrowing what the test proves.
+    for kind in ("Observation", "Condition", "AllergyIntolerance", "MedicationStatement"):
+        assert first.get(kind), f"no {kind} in the corpus — this test proves less than it claims"
