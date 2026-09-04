@@ -28,6 +28,7 @@ from typer.testing import CliRunner
 import anastomosis.sources.ccda  # noqa: F401 — registers the adapter
 from anastomosis.cli import app
 from anastomosis.core.ccda_codes import first_rooted_id, organizer_component_source_id
+from anastomosis.core.conservation import ConservationError
 from anastomosis.core.model import (
     Addendum,
     AdvanceDirective,
@@ -3207,6 +3208,183 @@ def test_an_encounter_with_no_type_says_no_information() -> None:
     assert code.get("nullFlavor") == "NI"
     assert code.get("code") is None and code.get("codeSystem") is None
     assert list(code) == [], "nothing to show, so nothing shown"
+
+
+# --- #388: an encounter with no type and no note is exported by nothing ------
+#
+# `_structured_encounters` kept only encounters carrying an `encounter_type`;
+# `_notes` keeps only those with note content. An encounter clearing NEITHER
+# gate reached neither section and vanished from the document, though the
+# record still held it. The fix: the Encounters section takes every encounter
+# the Notes section does not already stand for.
+
+
+def test_an_encounter_with_no_type_and_no_note_reaches_the_encounters_section(
+    tmp_path: Path,
+) -> None:
+    """The defect, driven on a real document: a `46240-8` section whose one
+    entry carries only `<id root>` — no `<code>`, no `<effectiveTime>` — and
+    no `34109-9` section anywhere. Red on main: parse -> build -> parse gives
+    0 46240-8 entries, 0 34109-9 entries, 0 parsed encounters, because neither
+    gate ever saw this encounter. The fix routes it to Encounters alone and
+    the id survives the round trip.
+    """
+    source_doc = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_bare_encounter.xml"
+    )
+    record = parse_document(source_doc)
+    (source_enc,) = record.encounters
+
+    blob = build_ccd(record)
+    out = tmp_path / "bare.xml"
+    out.write_bytes(blob)
+    reingested = parse_document(out)
+
+    assert len(reingested.encounters) == 1
+    assert len(_entries_under(blob, "46240-8")) == 1
+    assert len(_entries_under(blob, "34109-9")) == 0
+    (reingested_enc,) = reingested.encounters
+    assert reingested_enc.id == source_enc.id
+
+
+@pytest.mark.parametrize(
+    ("shape", "encounter", "expected_encounters_entries", "expected_notes_entries"),
+    [
+        (
+            "type + note",
+            {
+                "encounter_type": "Office visit",
+                "note_type": "SOAP",
+                "sections": [NoteSection(kind=SectionKind.NARRATIVE, text="Reports a cough.")],
+            },
+            1,
+            1,
+        ),
+        (
+            "note, no type",
+            {
+                "note_type": "SOAP",
+                "sections": [NoteSection(kind=SectionKind.NARRATIVE, text="Reports a cough.")],
+            },
+            0,
+            1,
+        ),
+        ("type, no note", {"encounter_type": "Office visit"}, 1, 0),
+        ("neither", {}, 1, 0),
+    ],
+)
+def test_the_two_sections_partition_every_encounter(
+    shape: str,
+    encounter: dict[str, object],
+    expected_encounters_entries: int,
+    expected_notes_entries: int,
+) -> None:
+    """The four-cell table `#388`'s design derives by hand, on one
+    hand-built encounter per cell: two independent gates decide where an
+    encounter goes, and it can clear both, either, or neither. Only the
+    ``neither`` cell is red on main — 0/0 there instead of the fixed column's
+    1/0 — the other three already held.
+    """
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+                **encounter,  # type: ignore[arg-type]
+            )
+        ],
+    )
+    blob = build_ccd(record)
+    assert len(_entries_under(blob, "46240-8")) == expected_encounters_entries, shape
+    assert len(_entries_under(blob, "34109-9")) == expected_notes_entries, shape
+
+
+def test_a_typeless_encounter_entry_is_legal_where_it_stands() -> None:
+    """The typeless/noteless entry's shape — `templateId`, `id`,
+    `code@nullFlavor=NI`, `effectiveTime@nullFlavor=NI` — against the SAME
+    content-model table `test_every_element_it_emits_is_legal_where_it_stands`
+    holds the corpus to (a fresh `seen` set, so the table-completeness
+    assertion there does not apply here). Red on main only because the entry
+    does not exist there at all; the NI assertion is the one that stops
+    anyone reaching for OTH instead, per `_encounter_code`'s own docstring.
+    """
+    from test_ccda_corpus import _check_conformance
+
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+            )
+        ],
+    )
+    blob = build_ccd(record)
+    seen: set[str] = set()
+    _check_conformance(etree.fromstring(blob), "", seen)
+
+    (entry,) = _entries_under(blob, "46240-8")
+    (encounter_node,) = entry.findall(f"{{{V3}}}encounter")
+    (code,) = encounter_node.findall(f"{{{V3}}}code")
+    assert code.get("nullFlavor") == "NI"
+    assert code.get("code") is None
+
+
+def test_an_encounter_that_reaches_no_section_stops_the_export(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conservation surface's own error-path touch: revert the gate to the
+    predicate that caused #388 (typed encounters only) and watch `build_ccd`
+    refuse rather than ship a document that silently dropped one."""
+    import anastomosis.deliver.ccda_export.builder as builder_mod
+
+    def _typed_only(encounters: list[Encounter]) -> list[Encounter]:
+        return [e for e in encounters if e.encounter_type is not None]
+
+    monkeypatch.setattr(builder_mod, "_structured_encounters", _typed_only)
+
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+            )
+        ],
+    )
+    with pytest.raises(ConservationError) as excinfo:
+        build_ccd(record)
+    message = str(excinfo.value)
+    assert "canonical -> ccda" in message
+    assert "encounter" in message
+    assert "both_sections" in message
+    assert "encounters_section" in message
+    assert "notes_section" in message
+
+
+def test_a_record_from_no_ccda_source_exports_its_bare_encounter() -> None:
+    """A record with no C-CDA provenance anywhere — no `ccda:entries:*`
+    extension for `_Preserved.own` to pair against — still exports its
+    typeless, noteless encounter. The fix must not silently depend on #378's
+    verbatim-carry machinery to reach this case.
+    """
+    record = PatientRecord(
+        patient=Patient(id="feedface-0000-0000-0000-000000000001"),
+        encounters=[
+            Encounter(
+                id="feedface-0000-0000-0000-0000000000e1",
+                patient_id="feedface-0000-0000-0000-000000000001",
+            )
+        ],
+    )
+    assert record.patient.extensions == {}
+    blob = build_ccd(record)
+    assert len(_entries_under(blob, "46240-8")) == 1
+    assert len(_entries_under(blob, "34109-9")) == 0
 
 
 # --- how much of what a destination receives is preservation (#118) -----------
