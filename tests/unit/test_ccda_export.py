@@ -1167,6 +1167,55 @@ def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: P
     assert [o.code for o in record.observations] == ["2345-7"]
 
 
+def test_a_rebuilt_document_invents_no_start_for_a_sentinel_medication(tmp_path: Path) -> None:
+    """#385: parse -> build_ccd -> parse, three generations, on a fixture whose
+    only medication states its start as an all-zero TS. Red on main — the
+    FIRST parse already raised (`ValueError: unrecognized date/time format:
+    '0'`), so `build_ccd` never ran at all.
+
+    Fixed, the medication survives every generation with `start is None` —
+    never an invented date. The exporter is untouched by #385 (out of scope
+    per the issue's file list) and its pre-existing behavior for a record
+    whose provenance names a source id a preserved `<entry>` already states
+    is to deliver that entry's OWN bytes verbatim rather than rebuild one —
+    `_Preserved.own`, driven here rather than assumed: every generation's
+    `<low>` still reads the source's original "0" `@value`, unmodified, never
+    `_nullable`'s fresh-build `nullFlavor="NI"` (that path is for a start with
+    no preserved entry to match at all). Either way nothing is invented: the
+    "0" that comes back out is the exact "0" that went in.
+    """
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_zero_date_sentinel.xml"
+    )
+    record = parse_document(fixture)
+    out = tmp_path / "zero_sentinel_gen.xml"
+    counts: list[int] = []
+    starts: list[date | None] = []
+    sizes: list[int] = []
+    document = b""
+    for _ in range(3):
+        document = build_ccd(record)
+        out.write_bytes(document)
+        sizes.append(len(document))
+        record = parse_document(out)
+        counts.append(len(record.medications))
+        starts.append(record.medications[0].start if record.medications else None)
+        assert record.patient.extensions["ccda:timestamp_named_no_instant"] == {
+            "effectiveTime/low": 1
+        }
+    assert counts == [1, 1, 1], f"the medication did not survive every generation: {counts}"
+    assert starts == [None, None, None], f"a generation invented a start date: {starts}"
+    assert sizes[1] == sizes[2], f"the document is still growing: {sizes}"
+
+    root = etree.fromstring(document, _PARSER)
+    [low] = root.findall(f".//{{{V3}}}substanceAdministration/{{{V3}}}effectiveTime/{{{V3}}}low")
+    assert low.get("nullFlavor") is None
+    assert low.get("value") == "0"  # the source's own byte, carried forward — never invented
+
+
 # The two readings of an organizer/component id had to be genuinely one: before
 # `core.ccda_codes.first_rooted_id` existed, the parser read an `<id>` through
 # `_attr` (stripped, nullFlavor-aware) while the builder read one by raw
