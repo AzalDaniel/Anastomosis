@@ -248,6 +248,30 @@ def test_dependabot_groups_every_update_within_each_ecosystem() -> None:
         )
 
 
+def test_the_build_backend_does_not_ride_with_the_rest_of_the_pip_batch() -> None:
+    """hatchling is excluded from the `pip` group, and that is not a silencing.
+
+    The backend has no `ignore` — a bare one would stop its security updates
+    and a scoped one never fired against a two-sided bound — so every release
+    is proposed, and the bound guard below refuses the ones measured to emit
+    core-metadata 2.5. Inside the group that red is contagious: a single
+    Dependabot commit lands whole or not at all, so #389's ruff floor and
+    Nuitka pin sat behind a hatchling bump that could never merge. Excluding
+    the backend gives it its own pull request to close by hand and leaves the
+    batch mergeable, while the `*` pattern above still covers everything else
+    in one PR.
+    """
+    updates = _load(DEPENDABOT_YML).get("updates") or []
+    pip = next(u for u in updates if u.get("package-ecosystem") == "pip")
+    groups = pip.get("groups") or {}
+    excluded = {p for group in groups.values() for p in group.get("exclude-patterns", [])}
+    assert "hatchling" in excluded, (
+        "dependabot.yml's `pip` group no longer excludes hatchling, so a bump the "
+        "build-backend guard refuses would again block every other pip update in "
+        "the same batch."
+    )
+
+
 def _ignore_conditions(ecosystem: str) -> list[dict[str, Any]]:
     updates = _load(DEPENDABOT_YML).get("updates") or []
     block = next(u for u in updates if u.get("package-ecosystem") == ecosystem)
@@ -360,18 +384,24 @@ def test_no_workflow_runs_twice_for_one_commit() -> None:
 def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
     """`[build-system] requires` may not admit a hatchling that emits metadata 2.5.
 
-    This is the one failure in this repository that CI structurally cannot see.
-    That line decides which backend builds the wheel; the core-metadata version
-    a hatchling release emits oscillates; and the twine bundled in the pinned
-    publish action rejects 2.5 outright. So a bad backend does not fail a test,
-    it fails the UPLOAD — after a tag exists and a version number has been
-    spent. It already did, on 0.7.0.
+    That line decides which backend builds the wheel, and the core-metadata
+    version a hatchling release emits oscillates. The publish path refuses 2.5
+    — release.yml reads Metadata-Version out of the built wheel and admits 2.1
+    through 2.4 only — so a bad backend fails the release BUILD. That gate is
+    ours, and it exists because the failure used to land one step later, at
+    the irreversible upload: twine refused 2.5 outright on the real 0.7.0
+    publish, after a tag existed and a version number had been spent. The
+    twine inside the pinned publish action accepts 2.5 now; the gate stays,
+    because 2.4 is what every path accepts and it carries PEP 639
+    license-files identically. Either way the release workflow only runs on a
+    tag, so this test is what catches a bad bound BEFORE one is spent.
 
     Measured by reading DEFAULT_METADATA_VERSION out of each release, most
-    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`:
+    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`,
+    and checked against pypa/hatch's own release history on 2026-09-03:
 
-        1.27.0 -> 2.4    1.29.0 -> 2.4    1.31.0 -> 2.4
-        1.30.0 -> 2.5    1.32.0 -> 2.5    1.33.0 -> 2.5
+        1.27.0 -> 2.4    1.29.0 -> 2.4    1.30.1 -> 2.4    1.31.0 -> 2.4
+        1.30.0 -> 2.5    1.32.0 -> 2.5
 
     Asserted against the FILE rather than against an installed hatchling, and
     that is deliberate: PEP 517 builds the backend in an isolated environment,
@@ -387,7 +417,7 @@ def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
 
     requires = tomllib.loads(PYPROJECT.read_text())["build-system"]["requires"]
     backend = next(r for r in (Requirement(entry) for entry in requires) if r.name == "hatchling")
-    for bad in ("1.30.0", "1.32.0", "1.33.0"):
+    for bad in ("1.30.0", "1.32.0"):
         assert not backend.specifier.contains(Version(bad)), (
             f"[build-system] requires admits hatchling {bad}, which emits "
             "core-metadata 2.5 and fails the publish upload"

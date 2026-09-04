@@ -104,6 +104,109 @@ issue and fixed in its own pull request.
   capturing every section's entries makes the loss narrative grow by a
   generation on each round trip — and it belongs to that decision.
 
+- **A corpus that can see what the ledger argues about.** The 6,144-document
+  corpus wrote its cited narrative one way — a bare `<content>` sitting
+  directly under the section's `<text>` — and every entry that cited it was
+  one this adapter takes apart structurally. A parsed entry's evidence is its
+  own object, so it never asks the narrative for anything. Between those two
+  facts the whole narrative-credit rule was generated into 6,144 documents and
+  read by nobody: forcing every citation to fail, and forcing every one to
+  succeed, both left the reading byte-identical.
+
+  It now writes the arrangements a real document has — a row named above two
+  named cells, a name at more than one level over the same words, a name on
+  the arrangement itself (which must not be credited), a cell that renders an
+  image instead of words, and a citation that resolves to nothing — and the
+  entries doing the citing are the ones with no structured home of their own.
+  Thirteen mutations of the containment and claim rules were invisible to this
+  corpus before; eleven move it now, including the two the arithmetic rests
+  on: all-or-nothing against take-any, and refusing a citation that names a
+  cell the section does not define against crediting it for the half that
+  resolved. The row is the reason those two became visible — it is the one
+  arrangement where a single name leads to more than one claim, and until it
+  had two named cells under it every name in 6,144 documents stood over
+  exactly one word.
+
+  Six guards are still invisible from here, and are named rather than
+  implied away. That a cell wrapping another keeps no claim of its own — it
+  needs a wrapper with words outside the cell it wraps. That the settlement
+  gains anything from its widest-first end — on every shape here the narrow
+  end is never worse. That a `<text>` carrying an `ID` is the whole prose
+  and not a cell, and that a `<reference>` without a `#` is not a citation —
+  no document writes either. That a linked entry is not asked the narrative
+  — the corpus never makes one compete with an unlinked sibling for a cell.
+  And that an address is counted by the cells behind it rather than by its
+  names — no arrangement forces a different settlement order. A reviewer
+  measured the last four; the first two were known.
+
+  The reading moves accordingly, and toward credit: entries that really do
+  name a cell the record kept are counted as keeping it. It moves the other
+  way too, and honestly — a `<renderMultiMedia>` must name an
+  `<observationMedia>` the document declares, `referencedObject` being an
+  IDREFS, and that image is a coded entry this adapter has nowhere to put. So
+  1,514 entries a real chart carrying a scanned tracing would offer are now
+  offered, and counted lost. `58cbcf57…` becomes `71392fc9…` (71 lines, 3,702
+  bytes). Nothing about the ledger changed here; the instrument was pointed at
+  documents it could not see, and stopped writing one it could not have
+  produced.
+
+  The corpus's own legality test could not see that either: it stopped at the
+  section's `<text>` because narrative is StrucDoc rather than CDA. It reads
+  the narrative now, against StrucDoc's own models — membership only where the
+  schema states a choice, position where it states a sequence — and a second
+  test asks the question no content model can, that every name a document
+  points at is one it declares. Both fail on the shape that got past them.
+- **One loss ledger answers for one section.** A 51899-3 section this
+  exporter wrote is read back as prior losses rather than parked, and the
+  ledger asked whether the record held the `ccda:prior_loss_narrative` key at
+  all. The parser concatenates every stamped ledger it walks into that one
+  key — so a re-export carries a single deduplicated appendix instead of
+  nesting each generation inside the next — which means the key's existence
+  answers for the construct class and not for any one construct. A second
+  stamped section, buried where the walk does not reach it, read as preserved
+  on the strength of the first one's key while nothing of it was in the
+  record. A clean bill of health for a section that is entirely absent.
+
+  It claims its own entries now, all of them, out of a counted pool of what
+  was actually stored. Two ledgers a document legitimately carries are still
+  both credited, including when two exports dropped the same field and the
+  same line arrives twice; a ledger whose lines are only partly there is
+  credited by none of them.
+
+  Counting alone was not enough, because the pool cannot say who put a line
+  in it. A buried ledger repeating a line the reachable one had also written
+  emptied the pool first and was reported preserved, and the section that
+  really had delivered every line was reported lost — which of the two got the
+  credit came down to document order. So the question is asked at the store's
+  actual address: that store is filled from the parser's section walk, and a
+  section off the walk is asked nothing, because nothing of it is in the
+  record. The one walk both this and the parked-entry rule ask is now one
+  function, so the two cannot drift.
+
+  The last of it was the two sides reading the document in different states.
+  The parser resolves a `<reference value="#id"/>` in place before it stores a
+  section's narrative, so the record holds the words the pointer names; the
+  ledger re-read the file, saw the pointer, matched nothing, and reported a
+  section that arrived whole as lost.
+
+  The first fix for that was wrong in a way worth writing down. Capturing
+  BEFORE the parser resolves anything makes the two sides agree — and they
+  agree on less: a ledger line that is only a reference has no words of its
+  own, so it stored as nothing at all and the carried-forward appendix lost
+  it silently. That is a real deletion in the one mechanism this toolkit has
+  for keeping what it cannot model, bought to fix a reporting error. The test
+  covering it asserted the verdict and never the stored bytes, so it passed.
+
+  So the resolution happens on the ledger's side instead, on a copy of the
+  document made for that one question — the verbatim-entry mirror next door
+  genuinely needs the untouched tree, and hydrating the shared one breaks it.
+  Ordinary sections were reading the same document in the same wrong state and
+  are fixed with it: a section whose prose points into itself is no longer a
+  false loss. That one costs no reading change — no generated document puts a
+  resolving reference in an ordinary section's `<text>`, so the corpus is
+  byte-identical either way, and it is pinned by its own test rather than by
+  the pin.
+
 - **What rendered is what was reviewed, and it can be named.** A folder of
   charts could not say what produced it. `render_settings.json` recorded the
   layout's NAME, so a run into a folder whose layout had been edited since
@@ -297,6 +400,20 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **A build-backend bump nobody can accept blocked every other pip update.**
+  hatchling has no Dependabot `ignore` and never will — a bare one silences
+  its security updates, a scoped one never fired against a two-sided bound —
+  so every release is proposed and the supply-chain guard refuses the ones
+  measured to emit core-metadata 2.5. Inside the single `pip` group that
+  refusal was contagious: #389 carried a ruff floor and a Nuitka pin with
+  nothing wrong with them, behind a hatchling bump that could not merge, and
+  one Dependabot commit lands whole or not at all. The backend is excluded
+  from the group now, so it arrives in its own pull request to be closed by
+  hand while the batch stays mergeable. An exclusion decides which PR an
+  update lands in, never whether it is opened, so nothing is silenced. #389's
+  other two updates are taken here: Nuitka 4.2, which builds the frozen
+  Windows exes, and the ruff floor, which only records the version the lint
+  lane already resolves (#389).
 - **One patient was several charts, and only one of them arrived.** Every
   per-patient destination is keyed by `patient.id` — the C-CDA export writes
   `<patient-id>.xml`, the archive and the bundle each write one directory —

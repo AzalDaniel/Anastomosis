@@ -203,7 +203,22 @@ class Doc:
     #: The narrative anchor entries point at when the document links its coded
     #: statements to their words by reference (set per section).
     narrative_id: str | None = None
+    #: The other names this section's arrangement declares, inside or beside
+    #: :attr:`narrative_id`, so entries in one section can cite different
+    #: levels of one arrangement. Without them every entry names the same
+    #: level, and the question of which name over a word is a claim and which
+    #: is an address never arises. Entries take them in turn.
+    also_cited: tuple[str, ...] = ()
+    #: A name the section's entries cite and the section does NOT define, set
+    #: only by the arrangement that means to.
+    dangling_name: str | None = None
+    #: The ``observationMedia`` a wordless cell renders, when it has one. The
+    #: cell writes a ``<renderMultiMedia>`` naming it and the section has to
+    #: declare it: ``referencedObject`` is an IDREFS, and one naming nothing is
+    #: not a document any exporter could produce.
+    media_name: str | None = None
     _next: int = field(default=0, init=False)
+    _cited: int = field(default=0, init=False)
 
     def has(self, flag: str) -> bool:
         return flag in self.flags
@@ -526,7 +541,9 @@ def _original_text(parent: etree._Element, doc: Doc, text: str) -> None:
     narrative, several elements away, behind a ``value="#id"``.
     """
     if doc.narrative_id is not None:
-        _el(_el(parent, "originalText"), "reference", value=f"#{doc.narrative_id}")
+        names = (doc.narrative_id, *doc.also_cited)
+        _el(_el(parent, "originalText"), "reference", value=f"#{names[doc._cited % len(names)]}")
+        doc._cited += 1
     elif doc.has("original_text"):
         _text_el(parent, "originalText", text)
 
@@ -758,10 +775,24 @@ def _generic_entry(section: etree._Element, doc: Doc) -> None:
     Structurally an ordinary clinical statement — coded, dated, identified — and
     that is the point: nothing about it is malformed, and it still arrives
     nowhere.
+
+    Which makes it the only entry here that can exercise the narrative-citation
+    route. A PARSED entry's evidence is its object, so it never asks the
+    section's cells for anything; only an entry with nothing else to show does.
+    Until this one named its own words, every citation in the corpus landed on
+    an entry that did not need it, and the whole containment rule — which name
+    over a word is a claim and which is an address — was measured by nothing.
     """
     observation = _el(_el(section, "entry"), "observation", classCode="OBS", moodCode="EVN")
     _el(observation, "id", root=doc.id("genr"))
-    _el(observation, "code", code="75326-9", displayName="Problem", codeSystem=OID_LOINC)
+    code = _el(observation, "code", code="75326-9", displayName="Problem", codeSystem=OID_LOINC)
+    _original_text(code, doc, "Procedure performed as planned")
+    if doc.dangling_name is not None:
+        # An entry naming its words twice over is ordinary — a statement's
+        # <code><originalText> and its own <text> both point into the
+        # narrative — which is what makes this the natural place to write the
+        # name that resolves to nothing.
+        _el(_el(observation, "text"), "reference", value=f"#{doc.dangling_name}")
     _el(observation, "statusCode", code="completed")
     _el(observation, "effectiveTime", value="20230510")
     _typed(
@@ -977,23 +1008,176 @@ SECTIONS: dict[str, SectionSpec] = {
 # --- body --------------------------------------------------------------------
 
 
-def _narrative(section: etree._Element, spec: SectionSpec, doc: Doc) -> None:
-    """The section's human-readable text, in the two shapes that matter.
+def _cited_content(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """The cited words as a bare ``<content>``, directly under the text."""
+    _text_el(text, "content", spec.narrative, ID=doc.narrative_id)
 
-    Under ``text_reference`` the narrative is an ID'd ``<content>`` — the
-    standard C-CDA way for a coded entry to point at its own words — so a reader
-    that does not resolve references sees an entry with nothing in it and a
-    paragraph belonging to nobody.
+
+def _cited_row(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """One name over TWO cells: the row above a pair of named ``<td>``s.
+
+    The commonest arrangement a real C-CDA table has, and the only one here
+    where a single name leads to more than one claim. Every other shape puts
+    one name over one word, and against that corpus the arithmetic this ledger
+    is built on cannot be seen at all: all-or-nothing agrees with take-any,
+    the two-ended settlement agrees with either end alone, and "a cell that
+    wraps another keeps no claim of its own" is a rule about a case that never
+    arrives. Here the row's entry demands both cells and the cells' own
+    entries demand one each, so the three readings differ.
+    """
+    row = _el(_el(_el(text, "table"), "tbody"), "tr", ID=doc.narrative_id)
+    cells = tuple(doc.id("cell") for _ in range(2))
+    _text_el(row, "td", spec.narrative, ID=cells[0])
+    _text_el(row, "td", spec.display, ID=cells[1])
+    doc.also_cited = cells
+
+
+def _cited_nested(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """Three names over one set of words: row, cell, and the content inside.
+
+    Only the innermost is a claim and the outer two are addresses for it. At
+    two levels the nearest enclosing cell and the outermost one are the same
+    element, so a rule that keeps the wrong end of the chain reads correctly;
+    at three it does not.
+    """
+    row = _el(_el(_el(text, "table"), "tbody"), "tr", ID=doc.narrative_id)
+    # The <td> between them carries NO name, on purpose. With every level named
+    # each cell's nearest named ancestor is also its direct parent, and a rule
+    # that asks about direct children reads exactly like one that asks about
+    # ancestry — so a corpus of fully-named nesting measures neither.
+    paragraph = _el(_el(row, "td"), "paragraph")
+    word = doc.id("word")
+    _text_el(paragraph, "content", spec.narrative, ID=word)
+    doc.also_cited = (word,)
+
+
+def _cited_container(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """The cited name on the arrangement itself, over a caption and two rows.
+
+    A ``<list>`` names everything under it rather than one statement in it, so
+    an entry citing it is citing the section's whole prose by another route —
+    the credit this ledger stopped giving. The corpus has to contain the shape
+    for the refusal to be measurable rather than merely asserted.
+    """
+    listing = _el(text, "list", ID=doc.narrative_id)
+    _text_el(listing, "caption", spec.title)
+    _text_el(listing, "item", spec.narrative)
+    _text_el(listing, "item", spec.display)
+
+
+def _cited_wordless(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """A named cell holding a multimedia call and no words.
+
+    ``<renderMultiMedia>`` reaches the record as nothing at all, so an entry
+    credited to this cell would be credited to something the record does not
+    have. The corpus needs the shape for that refusal to be measured rather
+    than asserted.
+    """
+    cell = _el(text, "content", ID=doc.narrative_id)
+    doc.media_name = doc.id("mm")
+    _el(cell, "renderMultiMedia", referencedObject=doc.media_name)
+    _text_el(text, "paragraph", spec.narrative)
+
+
+def _cited_dangling(text: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """A citation naming a cell this section does not define, both ways.
+
+    On odd documents the narrative names a DIFFERENT cell, so every name the
+    entry writes is unknown: the whole citation resolves to nothing, and an
+    entry credited for it would be credited for a claim the document cannot
+    back at all.
+
+    On even ones the narrative does name the cited cell and the entry writes a
+    SECOND reference beside it that nothing declares. That is the arrangement
+    the all-or-nothing rule is about — filtering the unknown name out and
+    crediting the entry for the half that resolved reads the same as refusing
+    on every document where a citation is all one way or all the other, so
+    without a mixed one here the two are indistinguishable.
+    """
+    if doc.index % 2:
+        _text_el(text, "content", spec.narrative, ID=doc.id("elsewhere"))
+        return
+    _text_el(text, "content", spec.narrative, ID=doc.narrative_id)
+    doc.dangling_name = doc.id("elsewhere")
+
+
+#: The narrative arrangements a cited entry can point into, walked by document
+#: index so every one of them recurs across an enumeration without lengthening
+#: it. A corpus of one shape agrees with any containment rule at all, which is
+#: how a rule that credited a row twice for one word held a stable reading
+#: across 6,144 documents.
+_CITED_SHAPES = (
+    _cited_content,
+    _cited_row,
+    _cited_nested,
+    _cited_container,
+    _cited_wordless,
+    _cited_dangling,
+)
+
+
+def _narrative(section: etree._Element, spec: SectionSpec, doc: Doc) -> None:
+    """The section's human-readable text, cited or not.
+
+    Under ``text_reference`` the narrative carries the name a coded entry
+    points at — the standard C-CDA way for an entry to name its own words — so
+    a reader that does not resolve references sees an entry with nothing in it
+    and a paragraph belonging to nobody. WHERE that name sits varies by
+    document: on the words, on the row above them, on a cell between the two,
+    or on the whole arrangement.
     """
     text = _el(section, "text")
-    if doc.narrative_id is not None:
-        _text_el(text, "content", spec.narrative, ID=doc.narrative_id)
+    if doc.narrative_id is None:
+        _text_el(text, "paragraph", spec.narrative)
         return
-    _text_el(text, "paragraph", spec.narrative)
+    # Taken from the flag-combination counter, not from the raw index. There
+    # are as many document TYPES as arrangements, so under `index % 6` the
+    # shape index WAS the doc-type index: one arrangement fell forever to the
+    # unstructured type, which has no sections at all, and was generated into a
+    # corpus nothing read. Dividing first, each arrangement lands in between
+    # 700 and 754 sections that hold a citing entry, measured at 6,144.
+    shape = doc.index // len(DOC_TYPES) % len(_CITED_SHAPES)
+    _CITED_SHAPES[shape](text, spec, doc)
+
+
+def _rendered_media(section: etree._Element, doc: Doc) -> None:
+    """The ``observationMedia`` a wordless cell's ``<renderMultiMedia>`` names.
+
+    ``referencedObject`` is an ``xs:IDREFS``, so a value naming nothing in the
+    document is not merely unhelpful: it is invalid, and no exporter emits it.
+    The image itself is a clinical statement in an ``<entry>``, which is why it
+    is written here rather than inside the narrative — and why it costs the
+    section a coded entry that reaches nothing, exactly as it would in a real
+    chart carrying a scanned tracing.
+    """
+    if doc.media_name is None:
+        return
+    media = _el(
+        _el(section, "entry"),
+        "observationMedia",
+        classCode="OBS",
+        moodCode="EVN",
+        ID=doc.media_name,
+    )
+    _el(media, "id", root=doc.id("medi"))
+    value = _typed(_el(media, "value"), "ED")
+    value.set("mediaType", "image/png")
+    value.set("representation", "B64")
+    value.text = _MEDIA_BYTES
+
+
+#: A one-pixel PNG, so a document carrying an image carries real bytes without
+#: carrying a picture of anything.
+_MEDIA_BYTES = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNiAAAABgADNjd8qAAAAABJRU5ErkJggg=="
+)
 
 
 def _section(body: etree._Element, spec: SectionSpec, doc: Doc, *, entries: int) -> None:
     doc.narrative_id = doc.id("narr") if doc.has("text_reference") else None
+    doc.also_cited = ()
+    doc.dangling_name = None
+    doc.media_name = None
     section = _el(_el(body, "component"), "section")
     _template(section, spec.template)
     if doc.has("vendor_templates"):
@@ -1014,6 +1198,7 @@ def _section(body: etree._Element, spec: SectionSpec, doc: Doc, *, entries: int)
     _text_el(section, "title", spec.title)
     if not doc.has("entries_without_narrative"):
         _narrative(section, spec, doc)
+    _rendered_media(section, doc)
     if spec.entry is not None:
         for _ in range(entries):
             spec.entry(section, doc)

@@ -61,7 +61,16 @@ by side. Each was inference sounding like observation.
 - [ ] **Adversarial pass before "done".** Try to break the claim: the
       malformed input, the empty export, the second run into the same
       folder, the concurrent run. Record what was tried, whichever way it
-      went.
+      went. Breaking the CODE to prove a test bites happens in a disposable
+      copy — a scratch worktree or a copied tree on `PYTHONPATH` — and never
+      in the working branch. A mutation left behind is a defect this agent
+      introduced to make a point about one it found.
+- [ ] **The wound is shown, never the patient.** Evidence is the artifact's
+      SHAPE: counts, hashes, element names, codes, exit statuses, file sizes.
+      A touch that requires reading protected bytes — PHI, a credential, a
+      private sample's filename — is performed and then reported by
+      structure and digest, because publishing the bytes to prove they exist
+      is a worse failure than the one being checked.
 - [ ] **UNVERIFIED is a verdict.** When the artifact cannot be touched — no
       credentials, no network, an environment only the owner has — the claim
       is stated as UNVERIFIED with the missing touch named. The gap is never

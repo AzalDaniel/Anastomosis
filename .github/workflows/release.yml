@@ -116,13 +116,16 @@ jobs:
           unzip -p "$wheel" '*/licenses/THIRD_PARTY_LICENSES.md' | grep -q "Third-party material" \
             || { echo "wheel is missing THIRD_PARTY_LICENSES.md" >&2; exit 1; }
           echo "wheel carries the third-party license texts"
-          # The core-metadata version must be one the upload path accepts. The
-          # twine inside the pinned pypa/gh-action-pypi-publish image rejects
-          # Metadata-Version 2.5 ("not a valid metadata version"), and hatchling
-          # has flip-flopped between 2.4 and 2.5 across releases — so a backend
-          # resolved outside the pyproject bound would otherwise fail at the
-          # IRREVERSIBLE upload step instead of here. 2.4 carries PEP 639
-          # license-files identically.
+          # The core-metadata version is held to 2.4 here, by this repository's
+          # own decision. Hatchling has flip-flopped between 2.4 and 2.5 across
+          # releases, and the twine inside the pinned publish action once
+          # refused 2.5 ("not a valid metadata version") at the IRREVERSIBLE
+          # upload step — the real 0.7.0 publish failed there. That twine
+          # accepts 2.5 now; this gate stays because 2.4 is what every publish
+          # path accepts, it carries PEP 639 license-files identically, and a
+          # backend resolved outside the pyproject bound should fail here,
+          # before the upload, not after. The bound, its test, and this gate
+          # say the same thing on purpose: raise all three together.
           meta="$(unzip -p "$wheel" '*.dist-info/METADATA' | sed -n 's/^Metadata-Version: //p' | head -1)"
           case "$meta" in
             2.1|2.2|2.3|2.4) echo "wheel core metadata version $meta is publishable" ;;
