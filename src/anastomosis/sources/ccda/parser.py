@@ -263,17 +263,51 @@ def _identifiers(patient_role: _Element) -> list[Identifier]:
 
 
 def _patient_id(patient_role: _Element, source_file: str) -> str:
-    """Stable canonical patient id, mirroring :func:`_encounter_id` (re-parsing
-    the same document must yield the same id — nothing downstream may see it
-    change). A clean source GUID is used verbatim; any other source
-    identifier is hashed into a deterministic uuid5; absent any id, the file
-    name is.
+    """Stable canonical patient id: the identifier the SOURCE states.
+
+    A ``recordTarget/patientRole/<id>`` is not this tool's bookkeeping. C-CDA
+    requires it, the originating EHR writes it, and it is that EHR's own
+    statement of who this chart belongs to — so it takes precedence over
+    anything derived here, and the whole of it is honoured rather than half.
+
+    HL7 v3's ``II`` is the PAIR. A root names the assigning authority; an
+    extension names the instance within it. Patient ``MRN-000123`` at one
+    practice is a different person from ``MRN-000123`` at another, and an MRN
+    is exactly the identifier that collides, because two practices both
+    numbering their patients from 1 is the ordinary case. Hashing the
+    extension alone — what this did until #404 — merged them into one chart:
+    driven, two documents differing only in their ``<id root>`` produced one
+    canonical id, one bundle, one patient, exit 0, no warning. A physician
+    opens that chart and reads somebody else's problems.
+
+    So: an extension paired with a root is hashed as the pair, each half
+    ``quote``d (``safe=""``) for the reason :func:`_encounter_identity_from_pair`
+    and :func:`~anastomosis.core.ccda_codes.organizer_component_source_id`
+    already document — unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")``
+    hash to one string. A GUID root standing alone is already globally unique
+    and stays verbatim. A non-GUID root standing alone is the only identifier
+    the document gives for its one patient, so it remains that patient's
+    identity exactly as before — unlike an encounter, where a bare root
+    repeated across many visits is manifestly an authority (#393); a document
+    has one ``patientRole`` and cannot repeat it. Absent any id at all, the
+    file name stands in.
+
+    This MOVES the id of any patient whose document states a root and an
+    extension. That is the correction, not a regression: the old value was
+    derived by discarding half of what the source said. Re-parsing one
+    document still yields one id, and one patient named the same way in two
+    documents still folds to one chart.
     """
     for ident in _identifiers(patient_role):
-        if ident.kind == IdentifierKind.SOURCE_GUID:
-            if _GUID_RE.match(ident.value):
-                return ident.value
-            return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{ident.value}"))
+        if ident.kind != IdentifierKind.SOURCE_GUID:
+            continue
+        if ident.system:
+            root = quote(ident.system, safe="")
+            extension = quote(ident.value, safe="")
+            return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{root}:{extension}"))
+        if _GUID_RE.match(ident.value):
+            return ident.value
+        return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:patient:{ident.value}"))
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:patient"))
 
 

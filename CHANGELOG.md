@@ -38,6 +38,40 @@ issue and fixed in its own pull request.
   per-encounter grading and the whole-patient report the ccda-standard
   migration shares with it — so the fix does not reach one and miss the
   other. (#392)
+- **Two patients whose medical-record numbers collided were merged into one
+  chart.** A `recordTarget/patientRole/<id>` is not this tool's bookkeeping:
+  C-CDA requires it, the originating EHR writes it, and it is that EHR's own
+  statement of who a chart belongs to. HL7 v3's `II` is the pair — a root names
+  the assigning authority, an extension names the instance inside it — and the
+  patient id was derived from the extension alone, with the root recorded and
+  then dropped. Patient `MRN-000123` at one practice is a different person from
+  `MRN-000123` at another, and an MRN is exactly the identifier that collides,
+  because two practices both numbering their patients from 1 is the ordinary
+  case rather than the exotic one. Driven through the real CLI on two documents
+  differing only in their `<id root>`, with identical demographics so the
+  disagreement guard could not stand in: one canonical id, one bundle, `1
+  patients`, exit 0, nothing in the loss ledger. A physician opens that chart
+  and reads somebody else's problems.
+
+  The whole identifier is honoured now. An extension paired with a root is the
+  pair, each half quoted so a literal `:` in one cannot impersonate the other;
+  a GUID root standing alone is already globally unique and stays verbatim; a
+  bare non-GUID root remains that patient's identity, because a document has
+  one `patientRole` and a root on it is the only identifier the source gives —
+  unlike an encounter's, where a bare root repeated across many visits is an
+  authority (#393). Two clinics sharing an MRN are two charts; one clinic
+  naming one patient in two documents is still one chart.
+
+  This MOVES the canonical id of any patient whose document states a root and
+  an extension, and that is the correction rather than a regression: the old
+  value was derived by discarding half of what the source said. Two round-trip
+  tests now reach their fixed point at generation three instead of two, because
+  a re-derived patient id changes the document id derived from it once before
+  both settle. Driven to generation six: the ledger goes 10, 27, 28, 28, 28, 28
+  and the document 7,464, 9,100, 9,209, 9,209, 9,209, 9,209. The bound is what
+  those tests guard and it holds; the generation it lands on was never the
+  claim. (#404)
+
 - **A visit named by two documents was two charts, when the source stated one
   id.** `_encounter_id` trusted a source's `<id root>` as an encounter's own
   identity only when it looked like a GUID; a vendor OID root — the shape most
