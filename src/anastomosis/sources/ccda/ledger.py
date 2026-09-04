@@ -918,7 +918,7 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
 
     Keyed by the namespace's first segment. Both separators are cut because
     both are shapes the parser's own key-writing can produce — ``:`` for a key
-    it deepens, ``#`` for the number ``_free_key`` appends to a repeat — and
+    it deepens, ``#`` for the number ``free_key`` appends to a repeat — and
     neither is reached by any participation key it writes today: this side
     reads the shape rather than the current caller list, so a parked
     participation that later repeats is bucketed without an edit here.

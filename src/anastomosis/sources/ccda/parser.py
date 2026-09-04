@@ -379,12 +379,17 @@ def entry_verbatim(entry: _Element) -> str:
     return etree.tostring(entry, encoding="unicode", with_tail=False)
 
 
-def _free_key(extensions: dict[str, Any], key: str) -> str:
+def free_key(extensions: dict[str, Any], key: str) -> str:
     """``key``, or its first free ``#2``, ``#3``, … variant, in document order.
 
     Documents legitimately repeat a section code (Problems (Active) and Problems
     (Resolved) are both 11450-4) and may carry several code-less sections — one
     stored section must never silently replace another.
+
+    Public because the pipeline's fold (one patient's several source records
+    into one chart) parks a clashing extension the same way. Two spellings of
+    "keep both" would put a key somewhere the reader of the other one never
+    looks, so there is one.
     """
     if key not in extensions:
         return key
@@ -415,7 +420,7 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
     extensions = record.patient.extensions
     if title is None and text is None:
         return
-    key = _free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
+    key = free_key(extensions, f"ccda:section:{loinc}" if loinc else "ccda:section:unknown")
     extensions[key] = {"title": title, "text": text}
 
 
@@ -468,7 +473,7 @@ def _store_entries(
     entries = captured.get(section)
     if not entries:
         return
-    key = _free_key(
+    key = free_key(
         extensions, f"{EXT_SECTION_ENTRIES}:{loinc}" if loinc else f"{EXT_SECTION_ENTRIES}:unknown"
     )
     extensions[key] = entries
@@ -564,19 +569,72 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
     entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
         return
-    generation = _loss_generation(section)
-    prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
-    if isinstance(prior, dict):
-        prior["entries"] = [*prior["entries"], *entries]
+    merge_loss_narrative(record.patient.extensions, _loss_generation(section), entries)
+
+
+def is_loss_ledger(value: Any) -> bool:
+    """Whether ``value`` has the ``{generation, entries}`` shape this module
+    writes under :data:`EXT_PRIOR_LOSS_NARRATIVE`.
+
+    Public because two callers need to tell a real carried-forward ledger from
+    an ordinary dict that happens to sit under the same key — a hand-made FHIR
+    bundle may park any JSON at all there — before folding into it: this
+    module's own :func:`merge_loss_narrative`, checking what it is about to
+    fold INTO, and the pipeline's fold, checking what it is about to fold IN.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("entries"), list)
+        and isinstance(value.get("generation"), int | None)
+    )
+
+
+def merge_loss_narrative(
+    extensions: dict[str, Any], generation: int | None, entries: list[str]
+) -> None:
+    """Fold one stamped loss ledger into whatever ``extensions`` already holds.
+
+    Entries CONCATENATE in the order they were read and the highest generation
+    wins, so neither ledger is overwritten. That keeps one document's own
+    round trip — export, re-ingest, export again — down to a single
+    carry-forward appendix, because the exporter dedupes prior against current
+    (``_carried_forward``) before it writes the next generation. It does NOT
+    dedupe across the several source records one patient's chart can now be
+    merged from (:mod:`anastomosis.pipeline`'s fold): two documents that both
+    already carry an identical stamped entry merge into a ledger that states it
+    twice, on purpose — an entry string does not carry enough to tell "the same
+    fact stamped twice" from "two distinct objects that genuinely share a
+    value", so the accepted direction is to risk saying a true thing twice
+    rather than ever say it zero times. An absent generation on either side
+    does not reset the counter for the other.
+
+    The accumulator is checked with :func:`is_loss_ledger`, not merely
+    ``isinstance(prior, dict)``: a chart merged from several source records can
+    already hold a non-ledger dict at this key from one of them (an ordinary
+    extensions clash the pipeline's fold has not yet resolved), and folding
+    into it as though it were a ledger would raise on the shape it does not
+    have instead of leaving it for the pipeline's own clashing-key rule.
+
+    Public because two callers fold ledgers into one key: this module, walking
+    the several stamped sections of one document, and the pipeline's fold,
+    merging the several source records of one patient. The rule is the same on
+    both sides, so it is written once.
+    """
+    # Annotated (rather than left to inference): `dict[str, Any].get` without a
+    # default types as `Any | None`, and `is_loss_ledger` is an ordinary bool
+    # (not a TypeGuard), so mypy cannot narrow the `| None` away on its own —
+    # only the isinstance this function no longer needs at runtime did that.
+    prior: Any = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if is_loss_ledger(prior):
         prior_generation = prior["generation"]
-        prior["generation"] = (
-            generation if prior_generation is None else max(prior_generation, generation or 0)
-        )
+        extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
+            "generation": (
+                generation if prior_generation is None else max(prior_generation, generation or 0)
+            ),
+            "entries": [*prior["entries"], *entries],
+        }
         return
-    record.patient.extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
-        "generation": generation,
-        "entries": entries,
-    }
+    extensions[EXT_PRIOR_LOSS_NARRATIVE] = {"generation": generation, "entries": entries}
 
 
 # --- problems ----------------------------------------------------------------
@@ -929,7 +987,7 @@ def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
     return True
 
 
-def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
+def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
     """One ``<id root>`` is one visit when the halves agree.
 
     A C-CDA may describe the same encounter twice: once as an entry in the
@@ -943,6 +1001,17 @@ def _fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounte
     Complementary halves fold — first non-None wins per scalar, lists
     concatenate, order preserved. Contradictory ones do not: they stay separate
     so the collision still surfaces.
+
+    Public because the same two halves also arrive in two DOCUMENTS: an export
+    holding one patient's visit summary and its note names that visit twice
+    across two files, and the pipeline's fold unions their encounters. The rule
+    is a property of the canonical Encounter, not of one traversal, so both
+    callers run this one — but the reach across documents is only as wide as
+    :func:`_encounter_id` makes it: that function honours the source's
+    ``<id root>`` verbatim only when it looks like a GUID, and otherwise derives
+    an id from the source FILE name and position, so a vendor OID root (the
+    shape most vendors emit) still gets one id PER DOCUMENT and never folds
+    here, across two documents, no matter how it agrees with itself.
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []
@@ -2219,6 +2288,6 @@ def parse_document(path: Path) -> PatientRecord:
 
     record.practitioners = actors.practitioners
     record.facilities = list(actors.facilities.values())
-    record.encounters = _fold_encounters_sharing_an_id(record.encounters)
+    record.encounters = fold_encounters_sharing_an_id(record.encounters)
     _link_measurements_to_encounters(record)
     return record
