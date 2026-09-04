@@ -402,9 +402,9 @@ issue and fixed in its own pull request.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus
-  the installer smoke test takes about an hour of `windows-latest`, billed at
-  twice a Linux minute, out of the same runner pool every pull request's test
-  matrix draws on — and the lane watched `src/anastomosis/**`, so four merges
+  the installer smoke test took 63 minutes of `windows-latest` when it was
+  last measured, on the scarcest runner class and out of the same pool every
+  pull request's test matrix draws on — and the lane watched `src/anastomosis/**`, so four merges
   in one evening bought four builds of an artifact nobody downloaded. The path
   filter now watches only what decides the frozen layout (the packaging
   scripts, the workflow itself, the dependency set); a nightly build is the

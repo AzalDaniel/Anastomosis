@@ -54,11 +54,10 @@ on:
     # `src/anastomosis/**` is deliberately NOT here, and that is the whole
     # difference between this lane costing an hour a day and costing an hour
     # per merge. A Nuitka standalone build plus the installer smoke test takes
-    # ~63 minutes of windows-latest, billed at twice the rate of a Linux
-    # minute, and every ordinary source merge used to spend it: four merges in
-    # one evening bought four builds of an artifact nobody downloaded, while
-    # the runner minutes they consumed were the same pool every pull request's
-    # test matrix draws on.
+    # 63 minutes of windows-latest, measured on run 33798695980, and every
+    # ordinary source merge used to spend it: four merges in one evening bought
+    # four builds of an artifact nobody downloaded, on the scarcest runner
+    # class, out of the same pool every pull request's test matrix draws on.
     #
     # What is left is what actually decides the frozen layout — the packaging
     # scripts, this workflow, and the dependency set — plus the nightly build
