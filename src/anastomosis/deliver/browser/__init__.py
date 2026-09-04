@@ -12,8 +12,8 @@ hours-long batch), so the design is built around resumability:
 * :mod:`.tracking` — a WAL-mode SQLite ledger recording every item's state
   and an append-only audit trail, so a killed run resumes exactly where it
   stopped without double-filing any chart.
-* :mod:`.manifest` — build the upload manifest from rendered documents and
-  parse the operator skiplist.
+* :mod:`.manifest` — build the upload manifest from rendered documents and the
+  source documents the bundle carries, and parse the operator skiplist.
 * :mod:`.persist` — write/read the on-disk upload manifest (items, patient
   demographics, and what the L0-L6 ladder verifies against) that bridges a
   render run to a later ``anast upload``.
@@ -45,13 +45,21 @@ from .errors import (
 )
 from .fake import FakeDestination
 from .manager import ManagedDestination
-from .manifest import build_manifest, is_skiplisted, load_skiplist
+from .manifest import (
+    AttachmentNotDeliverable,
+    build_attachment_manifest,
+    build_manifest,
+    is_skiplisted,
+    load_skiplist,
+)
 from .persist import (
     MANIFEST_NAME,
     MANIFEST_VERSION,
+    POLICY_VERSION,
     SUPPORTED_MANIFEST_VERSIONS,
     ManifestError,
     UploadManifest,
+    WrittenManifest,
     load_upload_manifest,
     read_upload_manifest,
     write_upload_manifest,
@@ -72,9 +80,11 @@ __all__ = [
     "LEGAL_TRANSITIONS",
     "MANIFEST_NAME",
     "MANIFEST_VERSION",
+    "POLICY_VERSION",
     "SHARED_MACHINE_WARNING",
     "SUPPORTED_MANIFEST_VERSIONS",
     "TERMINAL_STATES",
+    "AttachmentNotDeliverable",
     "CdpEndpoint",
     "DeliveryError",
     "EngineResult",
@@ -90,7 +100,9 @@ __all__ = [
     "UploadManifest",
     "UploadState",
     "Verifier",
+    "WrittenManifest",
     "WrongPatientError",
+    "build_attachment_manifest",
     "build_manifest",
     "connect_over_cdp",
     "is_skiplisted",

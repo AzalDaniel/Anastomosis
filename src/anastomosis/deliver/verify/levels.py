@@ -40,6 +40,7 @@ from anastomosis.core.identity import normalize as _normalize
 from anastomosis.core.model import Encounter, Patient
 from anastomosis.core.timeutil import all_date_spellings
 from anastomosis.deliver.browser.errors import WrongPatientError
+from anastomosis.deliver.verify.types import VerifyPolicy
 from anastomosis.destinations.base import (
     DestinationPatient,
     DocumentReader,
@@ -343,8 +344,14 @@ class L1PageAndSize:
         *,
         expected_pages: int | None = None,
         snapshot: PdfSnapshot | None = None,
+        policy: VerifyPolicy = VerifyPolicy.RENDERED_CHART,
     ) -> LevelResult:
-        if item.size_bytes <= _MIN_PDF_BYTES:
+        # The sub-KiB floor is a fact about a Chromium PRINT, not about a PDF:
+        # a source document is whatever the practice's scanner wrote, and a
+        # small one is small. Skipping the floor for it costs nothing — L0 has
+        # already re-hashed those bytes against the manifest, which is a
+        # stronger statement about a source file than any size heuristic.
+        if policy is VerifyPolicy.RENDERED_CHART and item.size_bytes <= _MIN_PDF_BYTES:
             # Below the floor the file never gets opened — the size alone
             # condemns it, so the snapshot stays unparsed.
             return LevelResult(

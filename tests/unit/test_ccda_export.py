@@ -3012,8 +3012,10 @@ def test_deliverer_never_logs_output_path(caplog: pytest.LogCaptureFixture, tmp_
     # No os.sep-joined output-dir string (and no bare dir name) reaches the log.
     assert str(out) not in blob
     assert out.name not in blob
-    # The PHI-safe completion count IS logged.
-    assert "1 of 1 patient" in blob
+    # The PHI-safe completion count IS logged. One file per RECORD, not per
+    # patient (see ``_document_name``): a C-CDA export gives one patient
+    # several documents and each is a record of its own.
+    assert "1 of 1 record" in blob
 
 
 def test_deliverer_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
