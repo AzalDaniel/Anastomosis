@@ -302,8 +302,70 @@ class LayoutPaginationCheck:
         return CheckResult(self.name, Verdict.WARN if warn_only else Verdict.FAIL, findings)
 
 
+def _dangling_encounter_findings(record: PatientRecord, known: set[str]) -> list[str]:
+    """The second, worse arm of :class:`UnattributedVitalsCheck`: an
+    observation naming an encounter this record does not contain. No summary
+    can rescue this one — the defect is the dangling reference, not where the
+    value landed — so it is not this module's concern whether one rendered.
+    """
+    return [
+        f"{obs.display or obs.code or 'observation'} names an encounter this record does not have"
+        for obs in record.observations
+        if obs.encounter_id is not None and obs.encounter_id not in known
+    ]
+
+
+def _unattributed_vitals(record: PatientRecord) -> list[Observation]:
+    """Vital signs with no encounter at all — the first arm's candidates."""
+    return [
+        obs
+        for obs in record.observations
+        if obs.encounter_id is None and obs.category == ObservationCategory.VITAL_SIGNS
+    ]
+
+
+def _graded_against_summary(
+    unattributed: list[Observation], ctx: QAContext
+) -> tuple[list[str], int]:
+    """Split ``unattributed`` into (labels on no chart at all, count the
+    record summary carries) by reading the page, never inferring from the
+    record. Read once per call, only when there is something to check against
+    — a record with no unattributed vitals never pays for opening a second
+    PDF (the caller skips this entirely in that case).
+    """
+    summary_text = (
+        _document_text(ctx.record_summary_path, ctx)
+        if ctx.record_summary_path is not None
+        else None
+    )
+    no_chart: list[str] = []
+    carried = 0
+    for obs in unattributed:
+        label = obs.display or obs.code or "observation"
+        if summary_text is not None and _present(obs.value or "", summary_text):
+            carried += 1
+        else:
+            no_chart.append(label)
+    return no_chart, carried
+
+
+def _no_chart_findings(no_chart: list[str], *, summary_rendered: bool) -> list[str]:
+    """One finding per vital that reached no chart, worded for WHY: no summary
+    was rendered at all, or one was rendered and still does not carry it —
+    rendering a page is not the same as the value being on it.
+    """
+    if not no_chart:
+        return []
+    reason = (
+        "is on no encounter and not on the record summary either, so it is on no chart"
+        if summary_rendered
+        else "is on no encounter, so it is on no chart"
+    )
+    return [f"vital {label} {reason}" for label in no_chart]
+
+
 class UnattributedVitalsCheck:
-    """A measurement that survived ingest and will appear on no chart at all.
+    """A measurement that survived ingest and may appear on no chart at all.
 
     :class:`VitalsLoincCheck` asks whether the vitals FOR THIS ENCOUNTER
     reached the page. When nothing in the record names the encounter, that
@@ -316,10 +378,25 @@ class UnattributedVitalsCheck:
 
     * A vital sign attached to no encounter. A blood pressure is taken at a
       visit by definition, so one that names no visit has lost the link on
-      the way in, and no per-encounter section can render it.
+      the way in, and no per-encounter section can render it — but the bundle
+      also carries the whole-patient record summary (#239), and THAT page has
+      no encounter to key on at all, so it is the one place an orphaned value
+      can still land. Read from ``ctx.record_summary_path`` (never re-derived,
+      never inferred from the record) and graded by what is actually ON it:
+
+        - no summary was rendered for this patient (``record_summary_path`` is
+          ``None``) → FAIL. Nothing verified the value landed anywhere.
+        - a summary was rendered and the value is on it → WARN. The visit link
+          is genuinely missing and an operator should see that, but the fact
+          itself reached the bundle, so the run does not refuse it.
+        - a summary was rendered and the value is NOT on it → FAIL. Rendering
+          a page is not the same as the value being on it.
+
     * An observation of any kind pointing at an encounter this record does not
       contain. Worse than the first, because it looks attributed — the value
-      names a visit, and the visit is not there.
+      names a visit, and the visit is not there. No summary can rescue this
+      one: the defect is the dangling reference itself, not where the value
+      landed, so it stays FAIL unconditionally.
 
     Deliberately silent about the third case: a NON-vital observation with no
     encounter. A smoking status is a fact about the patient rather than
@@ -330,22 +407,32 @@ class UnattributedVitalsCheck:
 
     The finding belongs to the record, not to any one document, so it is
     repeated on each chart. That is the honest reporting: every chart really
-    is missing the value, and there is no one document to pin it to.
+    is missing the visit link, and there is no one document to pin it to.
     """
 
     name = "unattributed_vitals"
 
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
         known = {enc.id for enc in ctx.record.encounters}
-        findings: list[str] = []
-        for obs in ctx.record.observations:
-            label = obs.display or obs.code or "observation"
-            if obs.encounter_id is None:
-                if obs.category == ObservationCategory.VITAL_SIGNS:
-                    findings.append(f"vital {label} is on no encounter, so it is on no chart")
-            elif obs.encounter_id not in known:
-                findings.append(f"{label} names an encounter this record does not have")
-        return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
+        findings = _dangling_encounter_findings(ctx.record, known)
+
+        unattributed = _unattributed_vitals(ctx.record)
+        no_chart, carried_by_summary = (
+            _graded_against_summary(unattributed, ctx) if unattributed else ([], 0)
+        )
+        findings.extend(
+            _no_chart_findings(no_chart, summary_rendered=ctx.record_summary_path is not None)
+        )
+
+        verdict = Verdict.FAIL if findings else Verdict.PASS
+        if carried_by_summary:
+            findings.append(
+                f"{carried_by_summary} vital(s) are on no encounter, so no chart carries the "
+                "visit link, but the value is on the record summary"
+            )
+            if verdict is Verdict.PASS:
+                verdict = Verdict.WARN
+        return CheckResult(self.name, verdict, findings)
 
 
 #: Observation categories that are RESULTS — something measured and reported

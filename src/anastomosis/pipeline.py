@@ -1614,6 +1614,14 @@ def _run_qa_stage(
     no-op rather than failing the run — the only ``ImportError`` allowed to
     soften here, mirroring the original CLI behavior. A failing report raises
     :class:`PipelineError` (exit 1).
+
+    Each per-encounter document is graded knowing its OWN patient's rendered
+    record summary (``record_summary_paths``, keyed by ``by_path`` the same
+    way): a vital the linker could not attach to any dated encounter is not
+    automatically lost, because :class:`~anastomosis.qa.checks.
+    UnattributedVitalsCheck` can still find it on that page (#392) — it just
+    cannot find it on THIS one, which is the honest thing for a per-encounter
+    chart to say.
     """
     try:
         # The probe, not the whole surface: settle_qa imports what it needs
@@ -1632,6 +1640,11 @@ def _run_qa_stage(
         return None
 
     lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
+    # Keyed by patient id (not re-derived per encounter): `summaries.by_path`
+    # already resolved which record's render actually WROTE each summary
+    # (#383's round-two fix), and every per-encounter chart for that patient
+    # has to point at that SAME page, not one guessed from its own record.
+    record_summary_paths = {record.patient.id: path for path, record in summaries.by_path.items()}
     report = run_qa(
         ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
         section_flags=engine.section_flags,
@@ -1640,6 +1653,7 @@ def _run_qa_stage(
         render_day_stamps=engine.render_day_stamps,
         carries=engine.carries,
         omits=engine.omits,
+        record_summary_paths=record_summary_paths,
     )
     # ``documents`` is the report's only state — ``ok`` and ``not_carried`` are
     # derived from it — so extending it merges the two batches soundly.

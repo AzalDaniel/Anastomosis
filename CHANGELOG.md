@@ -15,6 +15,29 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **A vital carried by the rendered summary was graded as on no chart at
+  all.** Driven on a real export whose only encounter has no date of service:
+  the linker correctly declines to guess one, so its vitals stay unattached to
+  any visit — and `UnattributedVitalsCheck` read that as "on no chart",
+  full stop. It was wrong since #239: every bundle also carries the
+  whole-patient record summary, and that page has no encounter to key on
+  either, so it is exactly where an orphaned vital lands. The result was a
+  chart that could never pass QA no matter what the summary showed — two
+  documents FAIL, `gates.qa` never reads `pass`, `assert_deliverable` refuses
+  a bundle whose pages carry every value the record holds. The check now asks
+  what was RENDERED instead of inferring absence from the record it is meant
+  to audit: `QAContext` carries the patient's own rendered record summary
+  (`None` when none was rendered, which still FAILs — the original
+  vacuous-pass gap stays closed), and a vital's value is looked up on that
+  page with the same boundary-anchored matcher `VitalsLoincCheck` already
+  uses. On the summary, WARN — the visit link is genuinely missing and an
+  operator should see that, but the run does not refuse a bundle that carries
+  the value. Off the summary (rendered, but the value isn't on it), still
+  FAIL: rendering a page is not the same as the value being on it. Wired
+  through both surfaces that build a QA context — the pack pipeline's
+  per-encounter grading and the whole-patient report the ccda-standard
+  migration shares with it — so the fix does not reach one and miss the
+  other. (#392)
 - **A visit named by two documents was two charts, when the source stated one
   id.** `_encounter_id` trusted a source's `<id root>` as an encounter's own
   identity only when it looked like a GUID; a vendor OID root — the shape most

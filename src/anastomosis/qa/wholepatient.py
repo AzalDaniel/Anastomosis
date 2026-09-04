@@ -55,7 +55,10 @@ __all__ = [
 #: ``unattributed_vitals`` belongs here rather than below because it never reads
 #: ``ctx.encounter`` at all: it asks whether the RECORD's observations name
 #: encounters the record contains, which is as fair a question of a whole-patient
-#: document as of a per-encounter one.
+#: document as of a per-encounter one. It DOES read ``ctx.record_summary_path``
+#: — and for this population that path is the document being graded, so a
+#: vital orphaned from every encounter is checked against the very page in
+#: front of it, not a second one fetched on faith.
 #:
 #: ``record_coverage`` is the one that earns this document its place in the
 #: bundle. Paired with the ``carries`` below, it cannot pass while a fact family
@@ -150,19 +153,35 @@ def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAR
     the pack pipeline merges it into the per-encounter report so ONE report
     describes the whole bundle. Both get the same check set, the same skips, and
     the same ``carries``.
+
+    ``documents`` is materialized (not just iterated once) because it feeds two
+    things: the batch itself, and the patient-id -> path map that tells
+    ``unattributed_vitals`` where each patient's OWN summary is. For this
+    population the graded document IS the record summary — the same page a
+    per-encounter chart's context would point at — so a vital this page cannot
+    attribute to an encounter is graded against the very page being read.
     """
     from .base import CheckResult, Verdict, engine_checks
     from .runner import run_qa
 
+    docs = list(documents)
     by_name = {check.name: check for check in engine_checks()}
+    # Keyed by patient id, not zipped positionally: `_allocate` maps every
+    # record sharing a patient id to the SAME path, so this is injective in
+    # practice, and keying on the id (rather than the record object) means it
+    # agrees with `run_qa`'s own lookup no matter which record's identity
+    # `whole_patient_batch`'s `_anchor_record` copy carries by the time it gets
+    # there.
+    summary_paths = {record.patient.id: path for path, record in docs}
     report = run_qa(
-        whole_patient_batch(documents),
+        whole_patient_batch(docs),
         section_flags={},
         page_size=WHOLE_PATIENT_PAGE_SIZE,
         # HL7's own stylesheet over the whole record, so every chartable kind IS
         # on the page and an absence is a defect rather than a layout choice.
         carries=WHOLE_PATIENT_CARRIES,
         checks=[by_name[name] for name in DOC_GENERIC_CHECKS],
+        record_summary_paths=summary_paths,
     )
     for doc_qa in report.documents:
         for name, reason in ENCOUNTER_SCOPED_SKIPS.items():

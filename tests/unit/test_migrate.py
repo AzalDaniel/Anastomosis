@@ -644,6 +644,62 @@ def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
     assert len(report["documents"]) == 1  # one row, not one per record naming the file
 
 
+def test_migrate_ccda_standard_warns_instead_of_failing_when_the_summary_carries_the_vital(
+    tmp_path: Path,
+) -> None:
+    """#392, driven through the OTHER surface that builds a QA context: the
+    ccda-standard migration has no per-encounter documents at all, so the
+    graded document IS the record summary. A vital the linker could not
+    attach to any encounter is checked against the very page being read —
+    carried, so WARN, not the FAIL a record-only inference would have given.
+
+    Uses ``_FakeChromium`` (writes the FULL rendered text, spilling across
+    pages), not ``_ViewChromium`` (truncates to 80 lines) — the vitals section
+    of a standard C-CDA view is not necessarily in the first 80.
+    """
+    pytest.importorskip("pymupdf", reason="needs PyMuPDF")
+    from anastomosis.core.migrate import _run_ccda_standard_qa
+    from anastomosis.core.model import Encounter, Observation, ObservationCategory, Patient
+    from anastomosis.qa.runner import REPORT_NAME
+    from anastomosis.reconstruct.ccda_standard import render_ccda_standard
+
+    pid = "feedface-0000-0000-0000-000000000402"
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Wren", family_name="Ashgrove"),
+        encounters=[
+            Encounter(
+                id="feedface-e000-0000-0000-000000000402",
+                patient_id=pid,
+                date_of_service=None,
+            )
+        ],
+        observations=[
+            Observation(
+                patient_id=pid,
+                encounter_id=None,
+                category=ObservationCategory.VITAL_SIGNS,
+                code="8867-4",
+                display="Heart rate",
+                value="72",
+            )
+        ],
+    )
+    charts = tmp_path / "charts"
+    view = render_ccda_standard([record], charts, renderer_factory=lambda: _FakeChromium())
+
+    _run_ccda_standard_qa(view, charts, lambda _event: None)
+
+    report = json.loads((charts / REPORT_NAME).read_text(encoding="utf-8"))
+    assert report["summary"]["fail"] == 0
+    (doc,) = report["documents"]
+    by_check = {c["check"]: c for c in doc["checks"]}
+    assert by_check["unattributed_vitals"]["verdict"] == "warn"
+    assert by_check["unattributed_vitals"]["findings"] == [
+        "1 vital(s) are on no encounter, so no chart carries the visit link, "
+        "but the value is on the record summary"
+    ]
+
+
 def test_migrate_ccda_standard_no_qa_writes_no_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
