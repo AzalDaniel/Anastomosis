@@ -327,12 +327,13 @@ issue and fixed in its own pull request.
   parked at the `#2` variant the parser already uses for a repeated section.
   A SINGLE-VALUED demographic that disagrees is not reconciled: two documents
   stating two birth dates under one id are a source that cannot say who this
-  patient is, and the run refuses at exit 2 naming the field and the count,
+  patient is, and the run refuses at exit 2 naming the field and the count, and
+  the colliding records' positions, with the patient as a run-scoped surrogate,
   never the values. A demographic the model holds as a LIST cannot contradict
   itself, and unions like every other collection — one document listing the
-  home phone where the next lists the home phone and a mobile is a patient
-  with two numbers, and one repeating the social security number the other
-  omits is a gap rather than a disagreement. Reading those as two people would
+  home phone where the next lists the home phone and a mobile is a patient with
+  two numbers, and one repeating the social security number the other omits is
+  a gap rather than a disagreement. Reading those as two people would
   have refused the ordinary export instead of the ambiguous one, which is the
   opposite of what the refusal is for. Behind the fold, the three per-patient
   claims now put the record up as the witness their name is claimed against,

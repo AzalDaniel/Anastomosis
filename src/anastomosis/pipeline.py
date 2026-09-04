@@ -28,11 +28,12 @@ field values or rendered filenames — only counts of them.
 from __future__ import annotations
 
 import json
+import types
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_origin
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 from anastomosis.core.ccda_codes import EXT_PRIOR_LOSS_NARRATIVE
 from anastomosis.core.conservation import ConservationError
@@ -415,15 +416,31 @@ def _fold_records_sharing_a_patient(records: list[PatientRecord]) -> list[Patien
     built rather than rebuilt into an equal one — an adapter that already meets
     the contract (the FHIR source pools its resources and groups before it
     yields) takes exactly the path it always took.
+
+    Each record's 1-based position in ``records`` — this function's own load
+    order — travels alongside it into the group, so a demographic refusal
+    downstream (:func:`_refuse_disagreeing_demographics`) can name which
+    records to look at instead of only how many: a run-scoped surrogate
+    correlates log lines within one run, but says nothing about WHERE in a
+    batch export the colliding records are.
     """
-    groups: dict[str, list[PatientRecord]] = {}
-    for record in records:
-        groups.setdefault(record.patient.id, []).append(record)
-    return [group[0] if len(group) == 1 else _merged_record(group) for group in groups.values()]
+    groups: dict[str, list[tuple[int, PatientRecord]]] = {}
+    for position, record in enumerate(records, start=1):
+        groups.setdefault(record.patient.id, []).append((position, record))
+    total = len(records)
+    return [
+        entries[0][1] if len(entries) == 1 else _merged_record(entries, total)
+        for entries in groups.values()
+    ]
 
 
-def _merged_record(group: list[PatientRecord]) -> PatientRecord:
+def _merged_record(entries: list[tuple[int, PatientRecord]], total: int) -> PatientRecord:
     """The one chart several source records for one patient make.
+
+    ``entries`` pairs each record with its 1-based position in the whole
+    load (see :func:`_fold_records_sharing_a_patient`); ``total`` is how many
+    records the load had altogether. Neither affects the merge — only a
+    disagreement refusal downstream reads them.
 
     Every collection unions in the order the records were read. De-duplication
     happens only where the model already defines identity: two encounters under
@@ -448,12 +465,14 @@ def _merged_record(group: list[PatientRecord]) -> PatientRecord:
     from anastomosis.core.model import PatientRecord
     from anastomosis.sources.ccda.parser import fold_encounters_sharing_an_id
 
+    positions = tuple(position for position, _ in entries)
+    group = [record for _, record in entries]
     update: dict[str, Any] = {
         name: [item for record in group for item in getattr(record, name)]
         for name in _record_list_fields(PatientRecord)
     }
     update["encounters"] = fold_encounters_sharing_an_id(update["encounters"])
-    update["patient"] = _merged_patient([record.patient for record in group])
+    update["patient"] = _merged_patient([record.patient for record in group], positions, total)
     update["extensions"] = _merged_extensions(
         [*(record.extensions for record in group), {EXT_FOLDED_RECORDS: len(group)}]
     )
@@ -471,6 +490,35 @@ _MODEL_IDENTITY_FIELDS = frozenset({"id", "provenance", "extensions"})
 #: run rather than quietly leaving a new kind of field behind.
 _RECORD_NAMED_FIELDS = _MODEL_IDENTITY_FIELDS | {"patient"}
 
+#: Origins ``get_origin`` reports for an ``X | None`` annotation — the shape
+#: every optional field on the canonical models is written in
+#: (``birth_date: date | None``, and so on), so it is also the shape a new
+#: OPTIONAL collection demographic will actually take rather than a rare one.
+#: ``types.UnionType`` covers ``X | None``; ``typing.Union`` covers the
+#: ``Optional[X]`` spelling, which nothing here writes today but which
+#: ``get_origin`` reports differently, so both are named.
+_OPTIONAL_ORIGINS = (types.UnionType, Union)
+
+
+def _classified_origin(annotation: Any) -> Any:
+    """``get_origin(annotation)``, after peeling off an ``X | None`` down to
+    the ``X`` a collection guard actually needs to classify.
+
+    Un-peeled, ``get_origin(list[str] | None)`` is ``types.UnionType`` —
+    neither ``list`` nor one of the sequence-like origins either guard below
+    checks for — so an OPTIONAL collection field vanished from
+    classification entirely instead of being recognised as the collection it
+    is. Used by both :func:`_record_list_fields` and
+    :func:`_patient_list_fields`, so an ``X | None`` field is classified the
+    same way on either model.
+    """
+    origin = get_origin(annotation)
+    if origin in _OPTIONAL_ORIGINS:
+        members = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(members) == 1:
+            return get_origin(members[0])
+    return origin
+
 
 @cache
 def _record_list_fields(model: type[PatientRecord]) -> tuple[str, ...]:
@@ -479,12 +527,17 @@ def _record_list_fields(model: type[PatientRecord]) -> tuple[str, ...]:
     Derived rather than listed here, so a collection added to
     :class:`~anastomosis.core.model.PatientRecord` is unioned by default instead
     of being silently skipped by a hand-written tuple nobody remembered to
-    extend. A field that is neither a collection nor one of the four handled by
-    name stops the fold loudly: losslessness is not a property to discover
-    missing from a delivered chart.
+    extend. Classified through :func:`_classified_origin`, so a collection
+    written ``list[X] | None`` is recognised as one rather than falling out of
+    every check below and being caught only by the unhandled-field guard. A
+    field that is neither a collection nor one of the four handled by name
+    stops the fold loudly: losslessness is not a property to discover missing
+    from a delivered chart.
     """
     collections = tuple(
-        name for name, info in model.model_fields.items() if get_origin(info.annotation) is list
+        name
+        for name, info in model.model_fields.items()
+        if _classified_origin(info.annotation) is list
     )
     unhandled = sorted(set(model.model_fields) - set(collections) - _RECORD_NAMED_FIELDS)
     if unhandled:
@@ -495,7 +548,7 @@ def _record_list_fields(model: type[PatientRecord]) -> tuple[str, ...]:
     return collections
 
 
-def _merged_patient(patients: list[Patient]) -> Patient:
+def _merged_patient(patients: list[Patient], positions: tuple[int, ...], total: int) -> Patient:
     """One patient's demographics from the several records that state them.
 
     A field one record states and another leaves empty is taken from the record
@@ -512,6 +565,11 @@ def _merged_patient(patients: list[Patient]) -> Patient:
     under different assigning authorities states two identifiers for the same
     patient by design, not by disagreement. The lists are unioned in document
     order, keeping each distinct value once.
+
+    ``positions`` (this patient's records' 1-based places in the whole load,
+    from :func:`_fold_records_sharing_a_patient`) and ``total`` say nothing
+    about the merge itself — they exist only so a refusal below can say where
+    to look.
     """
     model = type(patients[0])
     update: dict[str, Any] = {}
@@ -520,7 +578,7 @@ def _merged_patient(patients: list[Patient]) -> Patient:
         for name in _patient_demographic_fields(model)
         if name not in _patient_list_fields(model)
     }
-    _refuse_disagreeing_demographics(patients[0].id, singles, len(patients))
+    _refuse_disagreeing_demographics(patients[0].id, singles, positions, total)
     update.update({name: values[0] for name, values in singles.items() if values})
     update.update(
         {
@@ -549,22 +607,30 @@ def _patient_list_fields(model: type[Patient]) -> frozenset[str]:
     A field neither this collects nor :data:`_MODEL_IDENTITY_FIELDS` names is
     read by :func:`_merged_patient` as single-valued by default — correct for
     an ordinary scalar demographic, wrong for a collection this function
-    failed to recognise. So a field whose origin still LOOKS like a collection
-    (:data:`_SEQUENCE_LIKE_ORIGINS`) stops the fold loudly instead, the same
-    way :func:`_record_list_fields` refuses to run rather than guess at a
-    record-level field it does not recognise.
+    failed to recognise. Classified through :func:`_classified_origin` first,
+    exactly as :func:`_record_list_fields` classifies its own fields, so an
+    ``X | None`` demographic is recognised on both models the same way — a
+    field written ``list[str] | None`` used to pass ``get_origin(...) is
+    list`` as False here (it is ``types.UnionType``, not ``list``) AND miss
+    :data:`_SEQUENCE_LIKE_ORIGINS` below, so it fell all the way through to
+    the single-valued bucket without either guard ever seeing it. What still
+    LOOKS like a collection after the unwrap stops the fold loudly instead of
+    guessing, the same way :func:`_record_list_fields` does for a
+    record-level field it does not recognise — a parity that is actually true
+    now, field kind by field kind, rather than only in the two functions'
+    prose.
     """
     collections = frozenset(
         name
         for name, info in model.model_fields.items()
-        if name not in _MODEL_IDENTITY_FIELDS and get_origin(info.annotation) is list
+        if name not in _MODEL_IDENTITY_FIELDS and _classified_origin(info.annotation) is list
     )
     unhandled = sorted(
         name
         for name, info in model.model_fields.items()
         if name not in _MODEL_IDENTITY_FIELDS
         and name not in collections
-        and get_origin(info.annotation) in _SEQUENCE_LIKE_ORIGINS
+        and _classified_origin(info.annotation) in _SEQUENCE_LIKE_ORIGINS
     )
     if unhandled:
         raise TypeError(
@@ -611,8 +677,20 @@ def _stated_values(patients: list[Patient], name: str) -> list[Any]:
     ]
 
 
+def _position_list(positions: tuple[int, ...]) -> str:
+    """Renders as "7 and 8" / "7, 8 and 9" — colliding records' 1-based
+    load-order positions, worded for a one-line refusal message. Never a
+    filename, never a value: a position is the one PHI-free way to point at a
+    record that :func:`_refuse_disagreeing_demographics` names.
+    """
+    ordered = [str(position) for position in sorted(positions)]
+    if len(ordered) == 1:
+        return ordered[0]
+    return f"{', '.join(ordered[:-1])} and {ordered[-1]}"
+
+
 def _refuse_disagreeing_demographics(
-    patient_id: str, stated: dict[str, list[Any]], records: int
+    patient_id: str, stated: dict[str, list[Any]], positions: tuple[int, ...], total: int
 ) -> None:
     """Stop the run when the records for one patient id describe two people.
 
@@ -621,13 +699,18 @@ def _refuse_disagreeing_demographics(
     said. The operator repairs the export by looking at the named fields; the
     values are on their screen already and have no business in ours.
 
-    It DOES carry the patient, as :func:`~anastomosis.core.logutil.safe_log_id`'s
+    It carries the patient, as :func:`~anastomosis.core.logutil.safe_log_id`'s
     run-scoped surrogate — the same one ``deliver._shared.claim_delivered_name``
-    already puts in a collision message. Without it, a refusal on a batch
-    export named a field and a count and nothing else, and bisecting the
-    export by hand to find which patient triggered it was the operator's only
-    recourse: the same failure ``sources/ccda/__init__.py`` already refused to
-    leave one with for a document it cannot parse.
+    already puts in a collision message — but the surrogate ALONE does not
+    locate anything: it is keyed per PROCESS, this run aborts here so nothing
+    else in it prints a correlating line, and it names one patient among N
+    without saying which record. What actually locates one is the device the
+    C-CDA adapter's own refusal already uses for the same reason
+    (``sources/ccda/__init__.py``'s document-not-read error): the colliding
+    records' POSITIONS, in load order — "7 and 8 of 12" — never a filename.
+    For the C-CDA source, load order is sorted-filename order, so
+    ``ls *.xml | sort`` finds the file a position names; this message stays
+    adapter-neutral by never learning that fact itself.
     """
     disagreed = sorted(
         name for name, values in stated.items() if any(value != values[0] for value in values)
@@ -635,10 +718,10 @@ def _refuse_disagreeing_demographics(
     if not disagreed:
         return
     raise PipelineError(
-        f"{records} records for patient {safe_log_id(patient_id)} share one patient id but "
-        f"disagree on {len(disagreed)} demographic field(s) ({', '.join(disagreed)}); "
-        "refusing to merge them into one chart — the source cannot say which of them is "
-        "the patient",
+        f"{len(positions)} records ({_position_list(positions)} of {total}, in load order) "
+        f"for patient {safe_log_id(patient_id)} share one patient id but disagree on "
+        f"{len(disagreed)} demographic field(s) ({', '.join(disagreed)}); refusing to merge "
+        "them into one chart — the source cannot say which of them is the patient",
         exit_code=2,
         kind="bad_input",
     )
@@ -658,7 +741,12 @@ def _merged_extensions(dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
       (:func:`~anastomosis.sources.ccda.parser.is_loss_ledger`): a hand-made
       FHIR bundle can park any JSON at all under this key, and an incoming
       ledger meeting a non-ledger occupant is a clash like any other — folding
-      into it would silently discard whatever the occupant held;
+      into it would silently discard whatever the occupant held. "The
+      accumulator has no ledger there yet" is tested as ``key not in
+      merged``, never ``existing is None`` — a record can state the key with
+      an actual ``None`` value, and treating that stored ``None`` as though
+      the key were absent let an incoming ledger overwrite it outright
+      instead of parking it as the clash it is;
     * a key only one record holds, or one they hold with EQUAL values, keeps its
       value at its own key;
     * a key two records hold with DIFFERENT values keeps BOTH: the later one is
@@ -677,7 +765,7 @@ def _merged_extensions(dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
             if (
                 key == EXT_PRIOR_LOSS_NARRATIVE
                 and is_loss_ledger(value)
-                and (existing is None or is_loss_ledger(existing))
+                and (key not in merged or is_loss_ledger(existing))
             ):
                 merge_loss_narrative(merged, value["generation"], value["entries"])
             elif key not in merged or merged[key] == value:

@@ -620,8 +620,12 @@ def merge_loss_narrative(
     merging the several source records of one patient. The rule is the same on
     both sides, so it is written once.
     """
-    prior = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
-    if isinstance(prior, dict) and is_loss_ledger(prior):
+    # Annotated (rather than left to inference): `dict[str, Any].get` without a
+    # default types as `Any | None`, and `is_loss_ledger` is an ordinary bool
+    # (not a TypeGuard), so mypy cannot narrow the `| None` away on its own —
+    # only the isinstance this function no longer needs at runtime did that.
+    prior: Any = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
+    if is_loss_ledger(prior):
         prior_generation = prior["generation"]
         extensions[EXT_PRIOR_LOSS_NARRATIVE] = {
             "generation": (

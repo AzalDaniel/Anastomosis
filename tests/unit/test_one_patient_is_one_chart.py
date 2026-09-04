@@ -435,7 +435,9 @@ def test_two_documents_carrying_one_appendix_are_read_as_two_declared_losses(
     not carry enough to say — so it keeps the multiset rather than deduping:
     the merged ledger states the entry twice, and a re-export writes the line
     twice. That is the conservative direction, chosen on purpose: a loss
-    ledger may say a thing twice, but it must never say it zero times.
+    ledger may say a thing twice, but it must never say it zero times. The
+    multiset behaviour itself held before this round of fixes too; this test
+    only pins it.
     """
     from anastomosis.deliver.ccda_export import deliver_ccda
     from anastomosis.pipeline import load_records
@@ -493,12 +495,39 @@ def test_merged_extensions_treats_a_non_ledger_occupant_as_a_clashing_key() -> N
     assert stray_first[f"{EXT_PRIOR_LOSS_NARRATIVE}#2"] == ledger[EXT_PRIOR_LOSS_NARRATIVE]
 
 
+def test_merged_extensions_keeps_a_none_occupant_in_either_arrival_order() -> None:
+    """``existing is None`` used to conflate "this key is absent" with "this
+    key is present and states ``None``" — a real shape, since an extensions
+    dict can hold an explicit null. ``[{K: None}, {K: ledger}]`` folded the
+    incoming ledger as though nothing occupied ``K`` yet, so the ``None``
+    value vanished instead of being parked as a clashing key the way any
+    other second value is; the reverse order happened to already work,
+    because the accumulator really does start empty there.
+    """
+    from anastomosis.pipeline import _merged_extensions
+
+    ledger = {"generation": 1, "entries": ["patient.notes = x"]}
+    none_first = _merged_extensions(
+        [{EXT_PRIOR_LOSS_NARRATIVE: None}, {EXT_PRIOR_LOSS_NARRATIVE: ledger}]
+    )
+    ledger_first = _merged_extensions(
+        [{EXT_PRIOR_LOSS_NARRATIVE: ledger}, {EXT_PRIOR_LOSS_NARRATIVE: None}]
+    )
+
+    assert None in none_first.values(), "the first document's null occupant survives"
+    assert ledger in none_first.values(), "the second document's ledger survives too"
+    assert None in ledger_first.values()
+    assert ledger in ledger_first.values()
+
+
 def test_record_fold_refuses_a_field_it_does_not_recognise() -> None:
     """``_record_list_fields`` raises loudly on any ``PatientRecord`` field
     that is neither one of the four fields the fold names nor a ``list[...]``
     collection: a new field kind is a code change the fold must not guess at.
     ``TypeError`` is the right shape — this is caught wiring up a new field,
     not from data a run produced, so it is never a pipeline-level refusal.
+    The guard itself existed before this round of fixes; this test only pins
+    it, it did not add it.
     """
     from anastomosis.core.model import PatientRecord
     from anastomosis.pipeline import _record_list_fields
@@ -526,6 +555,62 @@ def test_patient_fold_refuses_a_collection_shape_it_does_not_recognise() -> None
 
     with pytest.raises(TypeError, match="oddments"):
         _patient_list_fields(_PatientWithATuple)
+
+
+def test_patient_fold_classes_an_optional_list_as_a_collection() -> None:
+    """``list[str] | None`` is the shape a new list-valued demographic will
+    actually take — every optional field ``Patient`` already has is written
+    ``X | None``, never a bare default. Before this fix
+    ``get_origin(list[str] | None)`` was ``types.UnionType``, not ``list``, so
+    the field fell out of BOTH the collection set and the unhandled-shape
+    check (:data:`_SEQUENCE_LIKE_ORIGINS` does not name ``UnionType`` either)
+    and was silently classed single-valued — a chart with two documents
+    stating it in a different order would then refuse the fold as a
+    "disagreement" instead of unioning it, the one thing a list field exists
+    to allow.
+    """
+    from anastomosis.core.model import Patient
+    from anastomosis.pipeline import _patient_list_fields
+
+    class _PatientWithAnOptionalList(Patient):
+        oddments: list[str] | None = None
+
+    assert "oddments" in _patient_list_fields(_PatientWithAnOptionalList)
+
+
+def test_patient_fold_still_refuses_an_optional_tuple() -> None:
+    """Peeling ``| None`` off only reclassifies a shape that was already a
+    collection underneath it: ``tuple[str, ...] | None`` is sequence-like,
+    not ``list[...]``, so it is still unhandled after the peel and the guard
+    still stops the fold loudly instead of guessing.
+    """
+    from anastomosis.core.model import Patient
+    from anastomosis.pipeline import _patient_list_fields
+
+    class _PatientWithAnOptionalTuple(Patient):
+        oddments: tuple[str, ...] | None = None
+
+    with pytest.raises(TypeError, match="oddments"):
+        _patient_list_fields(_PatientWithAnOptionalTuple)
+
+
+def test_record_fold_classes_an_optional_list_as_a_collection_too() -> None:
+    """The record-level mirror of the two tests above, and the reason they
+    matter together: the module claims ``_record_list_fields`` and
+    ``_patient_list_fields`` treat an unrecognised shape "the same way".
+    Before this fix that was false for exactly this annotation — the record
+    guard raised ``TypeError`` on ``list[str] | None`` (unhandled, by
+    elimination) while the patient guard silently let it through as
+    single-valued. Both now class it as the collection it is, so the parity
+    claim holds.
+    """
+    from anastomosis.core.model import PatientRecord
+    from anastomosis.pipeline import _record_list_fields
+
+    class _RecordWithAnOptionalList(PatientRecord):
+        oddments: list[str] | None = None
+
+    assert "oddments" in _record_list_fields(_RecordWithAnOptionalList)
 
 
 def test_the_archive_and_bundle_bundles_are_byte_identical_and_the_ccd_reparses_both(
@@ -686,6 +771,70 @@ def test_disagreeing_demographics_under_one_id_refuse_the_run(tmp_path: Path) ->
         "one.xml",
         "two.xml",
         _PATIENT,
+    ):
+        assert value not in message, f"the refusal leaked {value!r}"
+
+
+def test_the_refusal_names_the_colliding_records_positions_and_the_total(
+    tmp_path: Path,
+) -> None:
+    """The surrogate above does not locate anything on a batch export: it is
+    keyed per PROCESS (``safe_log_id``), the run aborts inside
+    ``load_records`` so nothing else in that run prints a correlating line,
+    and it names one patient among N without saying which record. The device
+    that actually works is the one the C-CDA adapter's own document-not-read
+    refusal already uses (``sources/ccda/__init__.py``): a POSITION, in load
+    order — for this source, load order is sorted-filename order, so
+    ``ls *.xml | sort`` finds the file a position names, and the message
+    itself never learns a file name.
+
+    Six patients, two documents each, loaded in filename order (``p0-0.xml``,
+    ``p0-1.xml``, ``p1-0.xml``, ...): patient 4 (0-indexed 3) disagrees on
+    birth date, and its two documents are records 7 and 8 of 12.
+    """
+    from anastomosis.core.logutil import safe_log_id
+
+    export, out = tmp_path / "export", tmp_path / "charts"
+
+    def pid(patient: int) -> str:
+        return f"feedface-0000-0000-0000-0000000039{patient}"
+
+    def rid(kind: str, patient: int, doc: int) -> str:
+        return f"feedface-{kind}{patient}-0000-0000-00000000000{doc}"
+
+    disagreeing_patient = pid(3)
+    for patient in range(6):
+        for doc in range(2):
+            birth = "19911122" if (patient, doc) == (3, 1) else "19850314"
+            _write_structured(
+                export,
+                f"p{patient}-{doc}.xml",
+                patient=pid(patient),
+                given=f"Patient{patient}",
+                family="Fixture",
+                birth=birth,
+                document=rid("doc", patient, doc),
+                encounter=rid("enc", patient, doc),
+                condition=rid("cnd", patient, doc),
+            )
+
+    result = runner.invoke(
+        app,
+        ["pipeline", "run", str(export), "--source", "ccda", "--out", str(out), "--no-qa"],
+    )
+
+    assert result.exit_code == 2, result.output
+    message = " ".join(result.output.split())
+    assert "7 and 8 of 12, in load order" in message, message
+    assert safe_log_id(disagreeing_patient) in message
+    assert "birth_date" in message
+    for value in (
+        "19850314",
+        "19911122",
+        disagreeing_patient,
+        "p3-0.xml",
+        "p3-1.xml",
+        "Patient3",
     ):
         assert value not in message, f"the refusal leaked {value!r}"
 
