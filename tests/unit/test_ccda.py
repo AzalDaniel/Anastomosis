@@ -556,6 +556,49 @@ def test_encounter_ids_are_deterministic_across_reparses() -> None:
     assert [e.id for e in first.encounters] == [e.id for e in second.encounters]
 
 
+def test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer(
+    tmp_path: Path,
+) -> None:
+    # A component <observation> under a Results organizer whose own <id> is
+    # nullFlavor="NI" is still the organizer's statement, not one with no
+    # provenance at all (#378). The id has to be document-intrinsic — no
+    # source_file in the recipe, unlike _encounter_id's fallback — because it
+    # has to survive an export/re-ingest round trip that lands under a
+    # different name; proven here by reparsing the identical bytes under a
+    # file name that shares nothing with the fixture's own.
+    #
+    # `expected` is the LITERAL uuid5 string, not a call to
+    # organizer_component_source_id: computing it via the function under test
+    # let three mutations of the recipe itself survive the suite (the
+    # namespace word "organizer" -> "organiser", the extension dropped from
+    # the name, `{index}` pinned to 0) — the test and the code always agreed
+    # because they were the same code. A recipe change is a decision that
+    # rewrites every already-migrated chart's provenance and belongs behind
+    # a literal someone has to notice changed, not a helper call that moves
+    # with it silently.
+    from anastomosis.sources.ccda.parser import parse_document
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ccda_edge_cases"
+        / "feedface_ccd_idless_result_component.xml"
+    )
+    expected = "7029466a-7630-5f95-9072-85ca63f186dc"
+
+    parsed = parse_document(fixture)
+    [observation] = parsed.observations
+    assert observation.provenance is not None
+    assert observation.provenance.source_id == expected
+
+    renamed = tmp_path / "a_file_name_sharing_nothing_with_the_fixture.xml"
+    renamed.write_bytes(fixture.read_bytes())
+    reparsed = parse_document(renamed)
+    [reobservation] = reparsed.observations
+    assert reobservation.provenance is not None
+    assert reobservation.provenance.source_id == expected
+
+
 # --- cross-adapter FHIR round trip -------------------------------------------
 
 
