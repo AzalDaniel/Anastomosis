@@ -134,6 +134,7 @@ __all__ = [
     "assert_emittable",
     "document_ledger",
     "physician_reading",
+    "skipped_files_clause",
 ]
 
 #: The seam these books are kept at, named as a crossing (the vocabulary
@@ -1798,6 +1799,24 @@ def _unlinkable_line(corpus: CorpusLedger) -> str:
     )
 
 
+def skipped_files_clause(count: int) -> str:
+    """The PHI-safe clause naming files the sniff recognised as CDA content but
+    whose extension named none of the three this adapter reads.
+
+    Shared between two tellings of the same fact so they cannot drift apart
+    under one another's edits: the physician reading (:func:`_skip_lines`,
+    said when OTHER documents did load) and ``pipeline.load_records``'s
+    ``empty_export`` refusal (said when NOTHING else loaded — #384 round two,
+    finding 2). Never a filename, which a C-CDA export names after the
+    patient; a count and the three fixed extension strings are the whole of
+    what may leave.
+    """
+    return (
+        f"{_n(count, 'file', 'files')} in the export read like a C-CDA document but carried "
+        "no extension this adapter reads (.xml, .ccd, .ccda)"
+    )
+
+
 def _skip_lines(corpus: CorpusLedger) -> list[str]:
     """The one line this reading owes about files never opened at all.
 
@@ -1814,11 +1833,7 @@ def _skip_lines(corpus: CorpusLedger) -> list[str]:
     """
     if not corpus.skipped_files:
         return []
-    return [
-        f"{_n(corpus.skipped_files, 'file', 'files')} in the export read like a C-CDA "
-        "document but carried no extension this adapter reads (.xml, .ccd, .ccda) — "
-        "skipped, not read."
-    ]
+    return [f"{skipped_files_clause(corpus.skipped_files)} — skipped, not read."]
 
 
 def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:

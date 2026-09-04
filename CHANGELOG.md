@@ -311,13 +311,16 @@ issue and fixed in its own pull request.
   (case-insensitively, on a case-sensitive filesystem too), and `detect`
   recognises an export holding only `.ccd` documents rather than missing it
   for auto-detection. The same directory walk that finds the documents now
-  also counts every OTHER file whose head sniffs as a CDA document but whose
-  extension names none of the three — never its name, which a C-CDA export
-  gives after the patient — and that count rides the existing source-ledger
-  settlement into `loss_ledger.json` and the run's reading beside everything
-  that WAS opened, on the same reset-and-`getattr` contract the document
-  ledgers already use; a file that legitimately isn't CDA at all (a
-  `nonXMLBody`'s own referenced attachment, say) is not counted, because
+  also counts every OTHER file whose document element reads as CDA's
+  `ClinicalDocument` but whose extension names none of the three — decided
+  by the file's first start tag, not a byte window, so a leading comment,
+  BOM or DTD cannot hide a real document from either count — never its
+  name, which a C-CDA export gives after the patient — and that count rides
+  the existing source-ledger settlement into `loss_ledger.json` and the
+  run's reading beside everything that WAS opened, on the same
+  reset-and-`getattr` contract the document ledgers already use; a file
+  that legitimately isn't CDA at all (a `nonXMLBody`'s own referenced
+  attachment, say) is not counted, because
   burying the one loss that matters in files this adapter was never going to
   read regardless would be the same false accounting by another route. The
   6,144-document corpus pin is unmoved — `skipped_files` defaults to 0 and

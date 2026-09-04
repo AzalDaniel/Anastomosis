@@ -89,6 +89,9 @@ def test_zero_records_becomes_empty_export() -> None:
         load_records(_Empty(), Path("."))
     assert excinfo.value.kind == "empty_export"
     assert excinfo.value.exit_code == 2
+    # No `skipped_files` on this fake adapter (`getattr` defaults to 0), so the
+    # generic question is still the right one — the branch this test guards.
+    assert "is this a fake-src export?" in str(excinfo.value)
 
 
 def test_adapter_pipeline_error_passes_through() -> None:
@@ -216,6 +219,40 @@ def test_a_skipped_file_reaches_the_reading_and_the_ledger(tmp_path: Path) -> No
     report = json.loads((out / LOSS_LEDGER_FILENAME).read_text(encoding="utf-8"))
     assert report["skipped_files"] == 1
     assert report["documents"] == 1  # the one document that WAS opened still balances
+
+
+def test_an_export_of_only_wrongly_named_cda_documents_names_the_count(
+    tmp_path: Path,
+) -> None:
+    """#384 round two, finding 2: ``load_records`` raises ``empty_export``
+    before ``settle_source_ledger`` ever runs, so an export holding NOTHING
+    but wrongly-extensioned CDA documents used to report the count nowhere
+    and tell the operator "is this a ccda export?" — wrong in the one case
+    that matters, since the adapter's own sniff recognised them. The refusal
+    now carries the count and the three extensions instead, in the reading's
+    own wording, and names no filename."""
+    import shutil
+
+    from anastomosis.sources import get_source
+
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
+    export = tmp_path / "export"
+    export.mkdir()
+    shutil.copy(fixture / "feedface_ccd.xml", export / "chart.txt")
+    shutil.copy(fixture / "feedface_ccd.xml", export / "chart2.txt")
+
+    adapter = get_source("ccda")
+    with pytest.raises(PipelineError) as excinfo:
+        load_records(adapter, export)
+    assert excinfo.value.kind == "empty_export"
+    assert excinfo.value.exit_code == 2
+    message = str(excinfo.value)
+    assert "2 files" in message
+    assert ".xml" in message and ".ccd" in message and ".ccda" in message
+    assert "is this a ccda export?" not in message  # the sniff already answered yes
+    assert "chart" not in message  # never a filename
+    # No loss_ledger.json either: settle_source_ledger never runs on this path.
+    assert not (tmp_path / LOSS_LEDGER_FILENAME).exists()
 
 
 def test_a_source_without_a_ledger_settles_to_nothing(tmp_path: Path) -> None:
