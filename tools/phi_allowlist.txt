@@ -93,6 +93,20 @@ billingpatientrelationshipoption
 3da68fbe-0b08-2747-f0e4-d10398ebd4a7
 3da68fbe-0b08-2747-f7ef-2241eac48bfe
 
+# core.ccda_codes.organizer_component_source_id's output, pinned LITERALLY in
+# tests/unit/test_ccda.py and tests/unit/test_ccda_export.py (#378 round two)
+# rather than computed by calling the function under test — a test that
+# recomputes the value it is meant to pin cannot catch a change to the recipe
+# itself, which is exactly what let three mutations of it survive the suite
+# before these literals existed. Both are
+# uuid5(NAMESPACE_URL, "anastomosis:ccda:organizer:<root>:<extension>:
+# component:<index>") over the synthetic feedface-idls-* organizer id in
+# tests/fixtures/ccda_edge_cases/feedface_ccd_idless_result_component.xml and
+# feedface_ccd_two_idless_components.xml (index 0 and 1) — this repo's own
+# deterministic hash of synthetic input, not an identifier any system issued.
+7029466a-7630-5f95-9072-85ca63f186dc
+f244f1d6-d7d6-5bc0-ac55-fc41390a3c9b
+
 # The Microsoft Edge WebView2 Runtime's EdgeUpdate "Clients" GUID — a fixed,
 # PUBLIC Microsoft product identifier the Windows installer (packaging/
 # anastomosis.iss) reads to detect whether WebView2 is present

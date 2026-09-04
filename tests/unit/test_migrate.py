@@ -606,10 +606,20 @@ def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
     grading that one file on disk twice — two indistinguishable rows for a
     chart verified exactly once. Fixed by grading `view.by_path`
     (`render_ccda_standard`'s own writer resolution) instead of re-deriving a
-    second, easier-to-get-wrong path per record."""
+    second, easier-to-get-wrong path per record.
+
+    Two records under one patient id no longer survive a real load: #377 folds
+    them into one chart at `load_records`, which is why this reaches the stage
+    past it only with the load stubbed out. The C-CDA delivery then refuses the
+    pair outright rather than writing one over the other, and that refusal is
+    the correct end of this run — but it lands AFTER the QA stage has written
+    its report, so the row count is still on disk to be read, which is what
+    this asserts. Grading is what is under test here; the delivery's refusal
+    has its own tests in the #377 suite."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     import anastomosis.pipeline as pipeline_mod
     from anastomosis.core.model import Patient
+    from anastomosis.deliver._shared import DeliveredNameCollision
     from anastomosis.qa.runner import REPORT_NAME
 
     pid = "feedface-0000-0000-0000-000000000401"
@@ -621,7 +631,8 @@ def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
     _patch_ccda_renderer(monkeypatch, lambda: _ViewChromium())
     out = tmp_path / "out"
 
-    run_migration(_ccda_command(out))
+    with pytest.raises(DeliveredNameCollision):
+        run_migration(_ccda_command(out))
 
     report = json.loads((out / "charts" / REPORT_NAME).read_text(encoding="utf-8"))
     assert len(report["documents"]) == 1  # one row, not one per record naming the file

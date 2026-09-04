@@ -28,13 +28,16 @@ field values or rendered filenames — only counts of them.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import types
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
+from anastomosis.core.ccda_codes import EXT_PRIOR_LOSS_NARRATIVE
 from anastomosis.core.conservation import ConservationError
-from anastomosis.core.logutil import exc_tag
+from anastomosis.core.logutil import exc_tag, safe_log_id
 from anastomosis.sources import (
     SourceDataError,
     available_sources,
@@ -50,7 +53,7 @@ from anastomosis.sources.learned import register_learned_sources
 register_learned_sources()
 
 if TYPE_CHECKING:
-    from anastomosis.core.model import DocumentArtifact, PatientRecord
+    from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.ccda_standard import CCDARenderResult
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
@@ -58,6 +61,7 @@ if TYPE_CHECKING:
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
 __all__ = [
+    "EXT_FOLDED_RECORDS",
     "LOSS_LEDGER_FILENAME",
     "QUARANTINE_FILENAME",
     "RECORD_SUMMARY_DIRNAME",
@@ -340,6 +344,9 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
 
     A :class:`PipelineError` an adapter raises itself (e.g. the FHIR adapter's
     no-Patient guard) passes through unchanged.
+
+    What comes back is one record per PATIENT
+    (:func:`_fold_records_sharing_a_patient`), whatever the adapter yielded.
     """
     try:
         records = list(adapter.load(export_dir))
@@ -370,7 +377,403 @@ def load_records(adapter: SourceAdapter, export_dir: Path) -> list[PatientRecord
             exit_code=2,
             kind="empty_export",
         )
-    return records
+    return _fold_records_sharing_a_patient(records)
+
+
+#: How many source records were folded into one chart, written onto the merged
+#: record's own ``extensions`` and only when a fold actually happened.
+#:
+#: A COUNT, not the file names. The one place this codebase stores the name of a
+#: source document — ``provenance.source_file`` — the C-CDA exporter declares
+#: non-narrated for exactly this reason, and the C-CDA adapter names an
+#: unreadable document by POSITION because a C-CDA export names its files after
+#: the patient. There is no PHI-safe precedent for carrying those names into a
+#: delivered artifact, so the merged chart says how many source records it is
+#: and no more. It travels into ``bundle.json`` with the rest of the record's
+#: extensions, where someone reconciling "the run said N patients" against N
+#: charts can read it.
+#:
+#: Model-level ``anast:`` namespace rather than a source's, for the reason
+#: ``anast:inline_content`` is: the writer is the pipeline, which must not know
+#: which adapter filled the records in.
+EXT_FOLDED_RECORDS = "anast:folded_source_records"
+
+
+def _fold_records_sharing_a_patient(records: list[PatientRecord]) -> list[PatientRecord]:
+    """One patient is one chart, whatever the adapter yielded.
+
+    Every per-patient destination is keyed by ``patient.id``: the C-CDA export
+    writes ``<patient-id>.xml``, the archive and the bundle each write one
+    directory. Two records under one id therefore land in one slot, and every
+    writer there is exist_ok/overwrite — so the second silently replaced the
+    first while the run reported two. The source-adapter contract already says
+    ``load`` yields one record per patient; the C-CDA adapter yields one per
+    DOCUMENT, because a document is the unit its conservation ledger has to
+    measure, and a patient with three documents arrived as three records.
+
+    So the fold happens here, at the seam every adapter passes through, rather
+    than inside one adapter's parse. Records keep first-appearance order, and a
+    patient with a single record is passed through as the object the adapter
+    built rather than rebuilt into an equal one — an adapter that already meets
+    the contract (the FHIR source pools its resources and groups before it
+    yields) takes exactly the path it always took.
+
+    Each record's 1-based position in ``records`` — this function's own load
+    order — travels alongside it into the group, so a demographic refusal
+    downstream (:func:`_refuse_disagreeing_demographics`) can name which
+    records to look at instead of only how many: a run-scoped surrogate
+    correlates log lines within one run, but says nothing about WHERE in a
+    batch export the colliding records are.
+    """
+    groups: dict[str, list[tuple[int, PatientRecord]]] = {}
+    for position, record in enumerate(records, start=1):
+        groups.setdefault(record.patient.id, []).append((position, record))
+    total = len(records)
+    return [
+        entries[0][1] if len(entries) == 1 else _merged_record(entries, total)
+        for entries in groups.values()
+    ]
+
+
+def _merged_record(entries: list[tuple[int, PatientRecord]], total: int) -> PatientRecord:
+    """The one chart several source records for one patient make.
+
+    ``entries`` pairs each record with its 1-based position in the whole
+    load (see :func:`_fold_records_sharing_a_patient`); ``total`` is how many
+    records the load had altogether. Neither affects the merge — only a
+    disagreement refusal downstream reads them.
+
+    Every collection unions in the order the records were read. De-duplication
+    happens only where the model already defines identity: two encounters under
+    one GUID ``<id root>`` are one visit when the halves agree
+    (:func:`~anastomosis.sources.ccda.parser.fold_encounters_sharing_an_id` —
+    the same rule inside one document and across two). An encounter under a
+    vendor OID root does not reach this: the parser gives it one id PER
+    DOCUMENT (:func:`~anastomosis.sources.ccda.parser._encounter_id` honours
+    only a GUID-shaped root), so two documents naming the same visit under an
+    OID keep two encounter objects here. Nothing else is deduped,
+    because nothing else in the canonical model says when two objects are the
+    same object, and a rule invented here would delete a real repeat prescription
+    or a real second reading.
+
+    The first record's ``id`` and ``provenance`` stay: a merged chart is the
+    first document's record with the rest folded into it, and how many records
+    that was rides :data:`EXT_FOLDED_RECORDS` — merged in as one more extensions
+    dict rather than assigned, so that a source which has parked something under
+    that key itself keeps it under the same no-silent-drop rule as every other
+    key rather than losing it to this run's own bookkeeping.
+    """
+    from anastomosis.core.model import PatientRecord
+    from anastomosis.sources.ccda.parser import fold_encounters_sharing_an_id
+
+    positions = tuple(position for position, _ in entries)
+    group = [record for _, record in entries]
+    update: dict[str, Any] = {
+        name: [item for record in group for item in getattr(record, name)]
+        for name in _record_list_fields(PatientRecord)
+    }
+    update["encounters"] = fold_encounters_sharing_an_id(update["encounters"])
+    update["patient"] = _merged_patient([record.patient for record in group], positions, total)
+    update["extensions"] = _merged_extensions(
+        [*(record.extensions for record in group), {EXT_FOLDED_RECORDS: len(group)}]
+    )
+    return group[0].model_copy(update=update)
+
+
+#: What every canonical model carries besides its own content
+#: (:class:`~anastomosis.core.model.AnastBase`): who it is, where it came from,
+#: and what would not map. The fold handles all three by name rather than by
+#: kind, on the record and on the patient alike.
+_MODEL_IDENTITY_FIELDS = frozenset({"id", "provenance", "extensions"})
+
+#: The :class:`~anastomosis.core.model.PatientRecord` fields the fold handles by
+#: name. Everything else on that model is a collection, and the fold refuses to
+#: run rather than quietly leaving a new kind of field behind.
+_RECORD_NAMED_FIELDS = _MODEL_IDENTITY_FIELDS | {"patient"}
+
+#: Origins ``get_origin`` reports for an ``X | None`` annotation — the shape
+#: every optional field on the canonical models is written in
+#: (``birth_date: date | None``, and so on), so it is also the shape a new
+#: OPTIONAL collection demographic will actually take rather than a rare one.
+#: ``types.UnionType`` covers ``X | None``; ``typing.Union`` covers the
+#: ``Optional[X]`` spelling, which nothing here writes today but which
+#: ``get_origin`` reports differently, so both are named.
+_OPTIONAL_ORIGINS = (types.UnionType, Union)
+
+
+def _classified_origin(annotation: Any) -> Any:
+    """``get_origin(annotation)``, after peeling off an ``X | None`` down to
+    the ``X`` a collection guard actually needs to classify.
+
+    Un-peeled, ``get_origin(list[str] | None)`` is ``types.UnionType`` —
+    neither ``list`` nor one of the sequence-like origins either guard below
+    checks for — so an OPTIONAL collection field vanished from
+    classification entirely instead of being recognised as the collection it
+    is. Used by both :func:`_record_list_fields` and
+    :func:`_patient_list_fields`, so an ``X | None`` field is classified the
+    same way on either model.
+    """
+    origin = get_origin(annotation)
+    if origin in _OPTIONAL_ORIGINS:
+        members = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if len(members) == 1:
+            return get_origin(members[0])
+    return origin
+
+
+@cache
+def _record_list_fields(model: type[PatientRecord]) -> tuple[str, ...]:
+    """Every collection the fold unions, read off the model.
+
+    Derived rather than listed here, so a collection added to
+    :class:`~anastomosis.core.model.PatientRecord` is unioned by default instead
+    of being silently skipped by a hand-written tuple nobody remembered to
+    extend. Classified through :func:`_classified_origin`, so a collection
+    written ``list[X] | None`` is recognised as one rather than falling out of
+    every check below and being caught only by the unhandled-field guard. A
+    field that is neither a collection nor one of the four handled by name
+    stops the fold loudly: losslessness is not a property to discover missing
+    from a delivered chart.
+    """
+    collections = tuple(
+        name
+        for name, info in model.model_fields.items()
+        if _classified_origin(info.annotation) is list
+    )
+    unhandled = sorted(set(model.model_fields) - set(collections) - _RECORD_NAMED_FIELDS)
+    if unhandled:
+        raise TypeError(
+            f"PatientRecord field(s) {', '.join(unhandled)} are neither a collection nor "
+            "identity, so the fold that merges two records for one patient would drop them"
+        )
+    return collections
+
+
+def _merged_patient(patients: list[Patient], positions: tuple[int, ...], total: int) -> Patient:
+    """One patient's demographics from the several records that state them.
+
+    A field one record states and another leaves empty is taken from the record
+    that has it. A SINGLE-VALUED field two records state differently is a source
+    that cannot say who this patient is, and the run refuses: filling in one of
+    the two would put a birth date or a name on a chart that half the source
+    contradicts, which is the misfiling this toolkit exists to prevent.
+
+    A LIST-valued one is not that. Two documents naming different phone numbers
+    are not two people; a patient has two phone numbers, and the model holds a
+    list precisely so both fit. Refusing there would reject the ordinary export
+    — the identifiers alone make it certain, because the parser also derives an
+    identifier from the ``patientRole`` id, so any pair of documents filed
+    under different assigning authorities states two identifiers for the same
+    patient by design, not by disagreement. The lists are unioned in document
+    order, keeping each distinct value once.
+
+    ``positions`` (this patient's records' 1-based places in the whole load,
+    from :func:`_fold_records_sharing_a_patient`) and ``total`` say nothing
+    about the merge itself — they exist only so a refusal below can say where
+    to look.
+    """
+    model = type(patients[0])
+    update: dict[str, Any] = {}
+    singles = {
+        name: _stated_values(patients, name)
+        for name in _patient_demographic_fields(model)
+        if name not in _patient_list_fields(model)
+    }
+    _refuse_disagreeing_demographics(patients[0].id, singles, positions, total)
+    update.update({name: values[0] for name, values in singles.items() if values})
+    update.update(
+        {
+            name: _unioned([getattr(patient, name) for patient in patients])
+            for name in _patient_list_fields(model)
+        }
+    )
+    update["extensions"] = _merged_extensions([patient.extensions for patient in patients])
+    return patients[0].model_copy(update=update)
+
+
+#: Typing origins that state "several values at once" without being the
+#: ``list[...]`` shape :func:`_patient_list_fields` looks for. A demographic
+#: added to :class:`~anastomosis.core.model.Patient` in one of these shapes
+#: would otherwise pass ``get_origin(...) is list`` as False and fall silently
+#: into the SINGLE-valued bucket in :func:`_merged_patient` — where two
+#: documents stating it in a different order becomes a refused "disagreement"
+#: instead of the union it should be.
+_SEQUENCE_LIKE_ORIGINS = (tuple, frozenset, set, Sequence)
+
+
+@cache
+def _patient_list_fields(model: type[Patient]) -> frozenset[str]:
+    """The demographics that hold several values at once, read off the model.
+
+    A field neither this collects nor :data:`_MODEL_IDENTITY_FIELDS` names is
+    read by :func:`_merged_patient` as single-valued by default — correct for
+    an ordinary scalar demographic, wrong for a collection this function
+    failed to recognise. Classified through :func:`_classified_origin` first,
+    exactly as :func:`_record_list_fields` classifies its own fields, so an
+    ``X | None`` demographic is recognised on both models the same way — a
+    field written ``list[str] | None`` used to pass ``get_origin(...) is
+    list`` as False here (it is ``types.UnionType``, not ``list``) AND miss
+    :data:`_SEQUENCE_LIKE_ORIGINS` below, so it fell all the way through to
+    the single-valued bucket without either guard ever seeing it. What still
+    LOOKS like a collection after the unwrap stops the fold loudly instead of
+    guessing, the same way :func:`_record_list_fields` does for a
+    record-level field it does not recognise — a parity that is actually true
+    now, field kind by field kind, rather than only in the two functions'
+    prose.
+    """
+    collections = frozenset(
+        name
+        for name, info in model.model_fields.items()
+        if name not in _MODEL_IDENTITY_FIELDS and _classified_origin(info.annotation) is list
+    )
+    unhandled = sorted(
+        name
+        for name, info in model.model_fields.items()
+        if name not in _MODEL_IDENTITY_FIELDS
+        and name not in collections
+        and _classified_origin(info.annotation) in _SEQUENCE_LIKE_ORIGINS
+    )
+    if unhandled:
+        raise TypeError(
+            f"Patient field(s) {', '.join(unhandled)} look like a collection but are not "
+            "list[...], so the fold's single-valued/list split would misclassify them"
+        )
+    return collections
+
+
+def _unioned(lists: list[list[Any]]) -> list[Any]:
+    """Every distinct value the records state, in the order they first state it.
+
+    Distinct by VALUE — two records that both carry the same address carry one
+    address between them, and a chart listing it twice is a chart nobody wrote.
+    Models compare by value here; anything unhashable falls back to a scan,
+    which is fine at the length a person's demographics reach.
+    """
+    out: list[Any] = []
+    for value in (value for values in lists for value in values):
+        if value not in out:
+            out.append(value)
+    return out
+
+
+@cache
+def _patient_demographic_fields(model: type[Patient]) -> tuple[str, ...]:
+    """Every field of :class:`~anastomosis.core.model.Patient` that describes the
+    person rather than the record — read off the model for the reason
+    :func:`_record_list_fields` is."""
+    return tuple(name for name in model.model_fields if name not in _MODEL_IDENTITY_FIELDS)
+
+
+def _stated_values(patients: list[Patient], name: str) -> list[Any]:
+    """What the records actually say for one demographic field, gaps left out.
+
+    ``None`` and an empty list are both "this record did not say", which is not
+    a disagreement with a record that did. Everything else is a statement, and
+    two different statements are the disagreement above.
+    """
+    return [
+        value
+        for value in (getattr(patient, name) for patient in patients)
+        if value is not None and value != []
+    ]
+
+
+def _position_list(positions: tuple[int, ...]) -> str:
+    """Renders as "7 and 8" / "7, 8 and 9" — colliding records' 1-based
+    load-order positions, worded for a one-line refusal message. Never a
+    filename, never a value: a position is the one PHI-free way to point at a
+    record that :func:`_refuse_disagreeing_demographics` names.
+    """
+    ordered = [str(position) for position in sorted(positions)]
+    if len(ordered) == 1:
+        return ordered[0]
+    return f"{', '.join(ordered[:-1])} and {ordered[-1]}"
+
+
+def _refuse_disagreeing_demographics(
+    patient_id: str, stated: dict[str, list[Any]], positions: tuple[int, ...], total: int
+) -> None:
+    """Stop the run when the records for one patient id describe two people.
+
+    PHI: the refusal names the FIELDS and the counts — schema words and integers,
+    the same contract every adapter refusal keeps — and never what the fields
+    said. The operator repairs the export by looking at the named fields; the
+    values are on their screen already and have no business in ours.
+
+    It carries the patient, as :func:`~anastomosis.core.logutil.safe_log_id`'s
+    run-scoped surrogate — the same one ``deliver._shared.claim_delivered_name``
+    already puts in a collision message — but the surrogate ALONE does not
+    locate anything: it is keyed per PROCESS, this run aborts here so nothing
+    else in it prints a correlating line, and it names one patient among N
+    without saying which record. What actually locates one is the device the
+    C-CDA adapter's own refusal already uses for the same reason
+    (``sources/ccda/__init__.py``'s document-not-read error): the colliding
+    records' POSITIONS, in load order — "7 and 8 of 12" — never a filename.
+    For the C-CDA source, load order is sorted-filename order, so
+    ``ls *.xml | sort`` finds the file a position names; this message stays
+    adapter-neutral by never learning that fact itself.
+    """
+    disagreed = sorted(
+        name for name, values in stated.items() if any(value != values[0] for value in values)
+    )
+    if not disagreed:
+        return
+    raise PipelineError(
+        f"{len(positions)} records ({_position_list(positions)} of {total}, in load order) "
+        f"for patient {safe_log_id(patient_id)} share one patient id but disagree on "
+        f"{len(disagreed)} demographic field(s) ({', '.join(disagreed)}); refusing to merge "
+        "them into one chart — the source cannot say which of them is the patient",
+        exit_code=2,
+        kind="bad_input",
+    )
+
+
+def _merged_extensions(dicts: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """One ``extensions`` dict from several, keeping everything all of them hold.
+
+    Three rules, in the order a key meets them:
+
+    * a carried-forward loss ledger merges as one ledger — entries concatenate,
+      the highest generation wins — because that is what one document's own
+      round trip dedupes
+      (:func:`~anastomosis.sources.ccda.parser.merge_loss_narrative`, the same
+      rule that folds two stamped ledgers inside one document). This applies
+      only when BOTH sides already have the ledger shape
+      (:func:`~anastomosis.sources.ccda.parser.is_loss_ledger`): a hand-made
+      FHIR bundle can park any JSON at all under this key, and an incoming
+      ledger meeting a non-ledger occupant is a clash like any other — folding
+      into it would silently discard whatever the occupant held. "The
+      accumulator has no ledger there yet" is tested as ``key not in
+      merged``, never ``existing is None`` — a record can state the key with
+      an actual ``None`` value, and treating that stored ``None`` as though
+      the key were absent let an incoming ledger overwrite it outright
+      instead of parking it as the clash it is;
+    * a key only one record holds, or one they hold with EQUAL values, keeps its
+      value at its own key;
+    * a key two records hold with DIFFERENT values keeps BOTH: the later one is
+      parked at the first free ``#2``, ``#3``, … variant, the way the C-CDA
+      parser parks a repeated section
+      (:func:`~anastomosis.sources.ccda.parser.free_key`). Preserving unmapped
+      source data is the whole purpose of this dict, so a merge that dropped
+      half of it would defeat it at the one point it exists to hold.
+    """
+    from anastomosis.sources.ccda.parser import free_key, is_loss_ledger, merge_loss_narrative
+
+    merged: dict[str, Any] = {}
+    for extensions in dicts:
+        for key, value in extensions.items():
+            existing = merged.get(key)
+            if (
+                key == EXT_PRIOR_LOSS_NARRATIVE
+                and is_loss_ledger(value)
+                and (key not in merged or is_loss_ledger(existing))
+            ):
+                merge_loss_narrative(merged, value["generation"], value["entries"])
+            elif key not in merged or merged[key] == value:
+                merged[key] = value
+            else:
+                merged[free_key(merged, key)] = value
+    return merged
 
 
 #: Where a run keeps the source attachments it carried through, inside the same
