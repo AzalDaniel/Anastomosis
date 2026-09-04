@@ -15,6 +15,25 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **One HL7 `II` rule, in one place, instead of four hand-written copies.** An
+  `II` is the pair `(root, extension)`: the root names an assigning authority,
+  the extension names the instance inside it. This repository discovered that
+  three separate times — facilities in the PR #320 review, encounters in #393,
+  and patients in #404, where reading half the identifier put two people in one
+  chart. Each fix was correct and local; none propagated, so the next site paid
+  the bill again, and the three ended up with three different collision-proofing
+  recipes (percent-encoding twice, a length prefix once). All three now route
+  through one `identity_from_ii` in `ccda_codes`, beside the organizer helper
+  that already got it right, and the only thing that legitimately varies between
+  kinds is an argument: may a bare non-GUID root name the instance? Yes for a
+  patient (a document has one `recordTarget`) and for an organization (the
+  author's practice IS the custodian, so its namings must fold — and two clinics
+  reusing one root raise on conflicting fields rather than blending). No for an
+  encounter, which a document lists many distinct instances of with no such
+  guard. A test now fails if a fourth compound recipe is written anywhere
+  outside that module. No patient, encounter or organization changes identity.
+  (#412)
+
 - **A vital carried by the rendered summary was graded as on no chart at
   all.** Driven on a real export whose only encounter has no date of service:
   the linker correctly declines to guess one, so its vitals stay unattached to
