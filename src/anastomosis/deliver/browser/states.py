@@ -4,7 +4,7 @@ One :class:`UploadItem` walks this machine from :data:`UploadState.PENDING`
 to exactly one terminal state; :func:`validate_transition` is the loud
 guard the tracking ledger calls on every write (51). ``VERIFYING_PRE`` runs
 the wrong-patient banner check before the duplicate scan, which is trusted
-only once that identity is confirmed (see ``RULES_CANDIDATES.md``).
+only once that identity is confirmed.
 """
 
 from __future__ import annotations

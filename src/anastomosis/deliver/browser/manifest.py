@@ -35,7 +35,7 @@ __all__ = [
 ]
 
 #: Media types this toolkit can page-count; read from what the source
-#: declared, never sniffed from bytes (see RULES_CANDIDATES.md).
+#: declared, never sniffed from bytes.
 PAGED_MEDIA_TYPES = frozenset({"application/pdf"})
 
 

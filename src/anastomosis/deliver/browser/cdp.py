@@ -2,8 +2,8 @@
 
 The user logs into their own already-open browser; this module attaches to
 that session over CDP. Loopback only, explicit port, else ``ValueError``
-(52). :data:`SHARED_MACHINE_WARNING` is the CLI/GUI's pre-attach text
-(`RULES_CANDIDATES.md`). No Playwright import at module load (75).
+(52). :data:`SHARED_MACHINE_WARNING` is the exact text the CLI/GUI must
+show before attaching. No Playwright import at module load (75).
 """
 
 from __future__ import annotations
