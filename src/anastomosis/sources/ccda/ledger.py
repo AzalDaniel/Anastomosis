@@ -259,10 +259,9 @@ class DocumentLedger:
 @dataclass(frozen=True)
 class CorpusLedger:
     """Many documents' books, merged construct by construct. ``present_in``
-    counts DOCUMENTS offering a construct at all — the number separating "no
-    advance directives" from "this adapter drops them". ``skipped_files``
-    merges with no row: files the directory walk saw as CDA but never opened
-    (#384), carried here so an under-reported corpus still shows.
+    counts DOCUMENTS offering a construct at all. ``skipped_files`` merges
+    with no row: files seen as CDA but never opened (#384), carried here
+    so an under-reported corpus still shows.
     """
 
     documents: int
@@ -340,11 +339,10 @@ _Fact = tuple[str, str]
 
 @dataclass(frozen=True)
 class _Content:
-    """How one id-less construct class states itself, on both sides of the
-    seam. ``stated``/``recorded`` are hand-spelled, not derived from the
-    parser, so drift differs rather than silently mirrors (uncredited is
-    the safe direction). ``applies`` tests the construct node: id-lessness
-    is a role CDA played, not a participation's name.
+    """How one id-less construct class states itself. ``stated``/``recorded``
+    are hand-spelled, not derived from the parser, so drift differs rather
+    than silently mirrors. ``applies`` tests the construct node:
+    id-lessness is a role CDA played, not a participation's name.
     """
 
     applies: Callable[[_Element], bool]
@@ -523,10 +521,8 @@ class _KeyedPool(Generic[_Key]):
 
 class _MatchedPool:
     """A place whose members are claimed by a predicate, one claim each.
-
-    The rule, not the object, decides which facts count; one object is one
-    parse, so N id-less constructs against M matching objects credit
-    ``min``.
+    The rule, not the object, decides which facts count; one object is
+    one parse, so N constructs against M matching objects credit ``min``.
     """
 
     def __init__(self, items: Iterable[AnastBase]) -> None:
@@ -841,9 +837,8 @@ def _section_anchors(section: _Element) -> dict[str, frozenset[str]]:
 def _cited_anchors(entry: _Element) -> list[str]:
     """The narrative cell names this entry writes, in document order.
     Repeats are left in; collapsing happens at the claim in
-    :meth:`_Anchors.take`. Only a ``#``-prefixed value is a citation, per
-    :func:`~.parser._inline_narrative_references`; stripped the same way
-    that function strips before resolving.
+    :meth:`_Anchors.take`. Only a ``#``-prefixed value is a citation
+    (:func:`~.parser._inline_narrative_references`), stripped the same way.
     """
     return [
         value[1:]
@@ -1007,10 +1002,9 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 def _parks_its_entries(section: _Element) -> bool:
     """Whether this is a section :func:`~.parser._capture_entries` parks
-    for. Asked because stored copies are keyed by section CODE, which is
-    not unique (Problems Active/Resolved share 11450-4); asks the
-    parser's own walk rather than restating it, for the reason
-    :func:`_walked_index` gives.
+    for. Stored copies are keyed by section CODE, which is not unique
+    (Problems Active/Resolved share 11450-4), so this asks the parser's
+    own walk rather than restating it.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
@@ -1018,10 +1012,9 @@ def _parks_its_entries(section: _Element) -> bool:
 
 
 def _walked_index(section: _Element) -> int | None:
-    """Where this section sits in the parser's own anchored walk
-    (``component/structuredBody/component/section``), or ``None`` if it
-    is not on it. A position, not a yes/no: :func:`_hydrated_sections`
-    must find this same section in a second reading by position, since
+    """Where this section sits in the parser's own anchored walk, or
+    ``None`` if it is not on it. A position, not a yes/no:
+    :func:`_hydrated_sections` must find it again by position, since
     element identity does not survive across two parses.
     """
     for position, candidate in enumerate(_walk(section.getroottree().getroot())):
@@ -1116,8 +1109,7 @@ def _entry_dispositions(
     """Every entry's verdict, and how many the ledger could not reach at
     all. An entry can show a verbatim byte copy, or the document's own
     ``<reference>`` into kept narrative — never the section's shared
-    prose, since C-CDA makes no promise a section's text states what its
-    entries state.
+    prose (C-CDA makes no such promise).
     """
     verdicts = _entry_evidence(entries, evidence, code)
     narrated = _narrative_credits(_entries_asking_narrative(entries, verdicts), covers)
@@ -1170,20 +1162,17 @@ def _section_disposition(
     if entry_counts.get(Disposition.STRUCTURALLY_PARSED):
         return Disposition.STRUCTURALLY_PARSED
     if narrative_kept or entry_counts.get(Disposition.NARRATIVE_PRESERVED):
-        # A section with no prose IS its entries: when those were preserved,
-        # something of the section survived, by the same "any" convention the
-        # parsed branch above already uses.
+        # A section with no prose IS its entries: preserving them counts as
+        # preserved narrative too, by the same "any" convention above.
         return Disposition.NARRATIVE_PRESERVED
     return Disposition.UNSUPPORTED
 
 
 def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
     entries = _findall(section, "v3:entry")
-    # Read off the hydrated twin, for the reason `_hydrated_sections` gives: the
-    # parser stored this pair with its references resolved, and asking with the
-    # pointer instead reported a section that arrived whole as lost. A section
-    # off the walk has no twin and no stored narrative either, so the raw
-    # reading is the right one for it.
+    # Read off the hydrated twin (`_hydrated_sections`): the parser stored
+    # this pair with references resolved. An off-walk section has no twin,
+    # so the raw reading is right for it.
     read = (
         section
         if (at := _walked_index(section)) is None
@@ -1194,13 +1183,9 @@ def _section_row(section: _Element, evidence: _Evidence) -> LedgerRow:
         _text_content(_find(read, "v3:text")),
     )
     kept = _narrative_kept(section, evidence, pair)
-    # The cells inside the narrative the record demonstrably holds —
-    # `kept_narrative` has just claimed this exact pair — so an entry citing one
-    # is citing something that survived. Nothing when the narrative did not.
-    # And the cells off the same twin, for the same reason: a cell whose only
-    # content is a <reference> holds no words raw and holds them hydrated, and
-    # a row reporting its narrative preserved while an entry citing that cell
-    # reads lost is one reading contradicting itself.
+    # Cells from the same hydrated twin: a cell built only from a
+    # <reference> holds no words raw, so a row reporting its narrative
+    # preserved while a citing entry reads lost would contradict itself.
     covers = _section_anchors(read) if kept else {}
     code = (_section_code(section) or SECTION_CODE_UNKNOWN) if _parks_its_entries(section) else None
     entry_counts, unlinkable = _entry_dispositions(entries, evidence, code, covers)
@@ -1254,12 +1239,9 @@ def _participation_row(
 
 
 def _document_identity(root: _Element, evidence: _Evidence) -> str | None:
-    """The id root this document is identified BY, when it identifies only this.
-
-    Filtered through ``linkable_roots`` for the reason that set exists: a root
-    two constructs share cannot say which of them an object came from, and a
-    document whose own id is stamped on half its entries would credit its body
-    to any of them.
+    """The id root this document is identified BY, when it identifies
+    only this. Filtered through ``linkable_roots``: a shared root cannot
+    say which construct an object came from.
     """
     identifier = _find(root, "v3:id")
     if identifier is None:
@@ -1271,15 +1253,10 @@ def _document_identity(root: _Element, evidence: _Evidence) -> str | None:
 def _body_row(
     root: _Element, kind: str, name: str, paths: tuple[str, ...], evidence: _Evidence
 ) -> LedgerRow:
-    """One body form's books, asked at the document's id rather than its own.
-
-    Everything else here is measured by :meth:`_Evidence.links`, which reads the
-    ``<id root>`` values INSIDE a construct. ``nonXMLBody`` has none to read —
-    CDA R2 gives ``NonXMLBody`` no ``id`` element — so that question is
-    unanswerable for it by construction, and asking it anyway would report the
-    ledger's own blind spot as the adapter's loss forever. The question that can
-    be answered is :meth:`_Evidence.carried_as_document`, and it is answered out
-    of the record exactly like every other row.
+    """One body form's books, asked at the document's id rather than its
+    own — ``nonXMLBody`` has no ``<id>`` (CDA R2), so
+    :meth:`_Evidence.links` is unanswerable for it by construction;
+    :meth:`_Evidence.carried_as_document` is asked instead.
     """
     identity = _document_identity(root, evidence)
     counts: Counter[Disposition] = Counter({Disposition.SOURCE_EMPTY: 0})
@@ -1315,11 +1292,9 @@ def _named_rows(
 
 
 def _offered(root: _Element) -> int:
-    """The construct count, taken in its own pass before anything is classified.
-
-    Deliberately not derived from the rows: an offered figure computed FROM the
-    dispositions balances against them no matter what was dropped on the way,
-    which is the shape of every clean report this project has had to unlearn.
+    """The construct count, taken in its own pass before anything is
+    classified — never derived from the rows, or an offered figure would
+    balance against whatever was dropped on the way.
     """
     named = sum(
         len(_nodes(root, paths))
@@ -1349,17 +1324,9 @@ def _ledger(root: _Element, record: PatientRecord) -> DocumentLedger:
 
 def document_ledger(path: Path, record: PatientRecord | None = None) -> DocumentLedger:
     """Account for one C-CDA document against the record it produced.
-
-    ``record`` is accepted so a caller that has already parsed the document does
-    not parse it twice; omitted, the document is parsed here. Either way the
-    XML is re-read under the parser's own hardened posture — a ledger is not a
-    reason to relax an XXE defence.
-
-    Raises :exc:`~anastomosis.core.conservation.ConservationError` if the books
-    do not balance, and whatever :func:`~anastomosis.sources.ccda.parser.parse_document`
-    raises for a file that is not a C-CDA at all. Both are loud on purpose: an
-    instrument that shrugs is worse than no instrument, because the reading it
-    prints will still be believed.
+    ``record`` avoids a double parse; the XML is still re-read under the
+    parser's hardened posture. Raises :exc:`ConservationError` on
+    unbalanced books, loud on purpose.
     """
     if record is None:
         record = parse_document(path)
@@ -1368,18 +1335,10 @@ def document_ledger(path: Path, record: PatientRecord | None = None) -> Document
 
 
 def aggregate(ledgers: Iterable[DocumentLedger], skipped_files: int = 0) -> CorpusLedger:
-    """Merge document ledgers into one corpus reading.
-
-    Rows merge on construct AND template set, so the same section code declared
-    under a vendor's own templateId stays a separate line — that pairing is the
-    thing a corpus is read for, and averaging it away hides exactly the variant
-    that broke.
-
-    ``skipped_files`` rides straight onto the corpus rather than through any
-    row: it counts files the adapter never opened, so no document ledger in
-    ``ledgers`` can carry it. Defaulted to 0 so every existing caller — the
-    corpus generator included — reads exactly as it did before this parameter
-    existed.
+    """Merge document ledgers into one corpus reading. Rows merge on
+    construct AND template set, so a vendor's own templateId variant of a
+    section stays a separate line. ``skipped_files`` rides straight onto
+    the corpus, since no document ledger can carry files never opened.
     """
     merged: dict[tuple[str, tuple[str, ...]], LedgerRow] = {}
     present: Counter[str] = Counter()
@@ -1418,18 +1377,13 @@ def _merged_row(seen: LedgerRow | None, incoming: LedgerRow) -> LedgerRow:
 
 # --- the reading a physician gets --------------------------------------------
 
-#: What each disposition is called at the end of a run. Number-agnostic on
-#: purpose — "1 became data" and "43 empty in the source" both scan — because a
-#: verb that had to agree would need a plural rule per phrase, and the first
-#: mismatch to slip through would sit in the one report written to be read.
+#: What each disposition is called at the end of a run. Number-agnostic
+#: on purpose, so no verb needs a plural rule.
 #:
-#: ``UNSUPPORTED`` deliberately states an epistemic position, not a cause. An
-#: unlinkable instance lands in this column too — on the reference fixture the
-#: record CARRIES both authors while their shared id root forbids crediting
-#: either — so a phrase like "dropped, no place here" would assert, in the one
-#: sentence a physician reads, a loss the module's own docstring only claims as
-#: an upper bound. "Not credited" is what the ledger actually knows, and the
-#: closing blind-spot line says how much of it is "could not check".
+#: ``UNSUPPORTED`` states an epistemic position, not a cause: an
+#: unlinkable instance lands here too, and the record may actually carry
+#: it (a shared id root forbidding credit) — "not credited" is what the
+#: ledger knows; the blind-spot line says how much is "could not check".
 _SAID: Mapping[Disposition, str] = {
     Disposition.STRUCTURALLY_PARSED: "became data",
     Disposition.NARRATIVE_PRESERVED: "kept as text only",
@@ -1443,13 +1397,9 @@ def _n(count: int, one: str, many: str) -> str:
 
 
 def _account(counts: Mapping[Disposition, int], always: Iterable[Disposition]) -> str:
-    """Every disposition's column, spelled out.
-
-    ``always`` names the columns said even at zero — a zero is a statement here
-    for the reason :class:`LedgerRow` gives — and any OTHER nonzero column is
-    said too, so the sentence's numbers always add back up to the total it
-    opened with. A column dropped for reading smoothly is how a clean report
-    lies.
+    """Every disposition's column, spelled out. ``always`` names columns
+    said even at zero (:class:`LedgerRow`'s reason); any other nonzero
+    column is said too, so the sentence's numbers always add to the total.
     """
     spoken = set(always)
     said = [d for d in Disposition if d in spoken or counts.get(d, 0)]
@@ -1515,12 +1465,9 @@ def _body_lines(corpus: CorpusLedger) -> list[str]:
 
 
 def _unlinkable_line(corpus: CorpusLedger) -> str:
-    """The blind spot's own line, said whichever way it went.
-
-    An unlinkable construct already sits in a column above — it is never
-    CREDITED, so it lands on the loss side — and this line says how much of
-    that loss is really "could not check": the reading's one-sided bias,
-    stated in the direction it runs.
+    """The blind spot's own line: how much of the loss above is really
+    "could not check" — the reading's one-sided bias, stated in the
+    direction it runs.
     """
     unlinkable = sum(row.unlinkable for row in corpus.rows)
     if not unlinkable:
@@ -1533,16 +1480,10 @@ def _unlinkable_line(corpus: CorpusLedger) -> str:
 
 
 def skipped_files_clause(count: int) -> str:
-    """The PHI-safe clause naming files the sniff recognised as CDA content but
-    whose extension named none of the three this adapter reads.
-
-    Shared between two tellings of the same fact so they cannot drift apart
-    under one another's edits: the physician reading (:func:`_skip_lines`,
-    said when OTHER documents did load) and ``pipeline.load_records``'s
-    ``empty_export`` refusal (said when NOTHING else loaded — #384 round two,
-    finding 2). Never a filename, which a C-CDA export names after the
-    patient; a count and the three fixed extension strings are the whole of
-    what may leave.
+    """The PHI-safe clause naming files sniffed as CDA content under an
+    unread extension. Shared between two tellings of the same fact (#384)
+    so they cannot drift. Never a filename — a count and the three fixed
+    extensions only.
     """
     return (
         f"{_n(count, 'file', 'files')} in the export read like a C-CDA document but carried "
@@ -1551,18 +1492,10 @@ def skipped_files_clause(count: int) -> str:
 
 
 def _skip_lines(corpus: CorpusLedger) -> list[str]:
-    """The one line this reading owes about files never opened at all.
-
-    Every other line here accounts for what a document, once opened, offered
-    and kept. A file this adapter's own sniff recognised as a CDA document but
-    whose extension named none of the three it reads (.xml, .ccd, .ccda,
-    matched without regard to case) was never opened — #384's defect was
-    exactly this count going unreported, so an export with a document under
-    the wrong extension read as a complete, successful run. Said first, ahead
-    of the sections a physician might otherwise read as the whole account: a
-    reader who has already learned what the opened documents' SECTIONS held
-    has lost the chance to learn a whole sibling document existed and was not
-    one of them.
+    """The one line owed about files never opened at all (#384): a file
+    sniffed as CDA under an unread extension. Said first, ahead of the
+    sections, so a reader does not mistake the opened documents for the
+    whole export.
     """
     if not corpus.skipped_files:
         return []
@@ -1570,25 +1503,10 @@ def _skip_lines(corpus: CorpusLedger) -> list[str]:
 
 
 def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:
-    """The corpus reading in the vocabulary of the chart, one sentence per line.
-
-    This is the sentence a doctor can act on — "420 became data, 473 kept as
-    text only" — where ``unsupported: 17390`` is not. Deliberately aggregate:
-    no LOINC codes, no template OIDs, no per-section rows. The full account,
-    construct by construct, is :meth:`CorpusLedger.as_report`, written beside
-    the charts as ``loss_ledger.json`` for whoever needs the parser's
-    vocabulary after all.
-
-    The blind spot is published, not buried: ``unlinkable`` gets the closing
-    line whichever way it went, because a reading that only mentions its own
-    uncertainty when convenient is the kind of clean report this project keeps
-    having to unlearn. :func:`_skip_lines` is the same discipline applied one
-    level up the stack, before the construct rows below it even start — a
-    document never opened is a bigger loss than any row inside one that was.
-
-    PHI: every sentence is these templates' own words plus integers. Nothing a
-    document stated — no name, no id, no code — can reach a line, because
-    nothing here reads one.
+    """The corpus reading in the vocabulary of the chart, one sentence per
+    line — aggregate only; the full construct-by-construct account is
+    :meth:`CorpusLedger.as_report`. ``unlinkable`` always gets a closing
+    line. PHI: these templates' own words plus integers only.
     """
     return (
         *_skip_lines(corpus),
@@ -1603,12 +1521,9 @@ def physician_reading(corpus: CorpusLedger) -> tuple[str, ...]:
 
 
 def _construct_name(value: str) -> bool:
-    """Whether ``value`` is a construct name this module could have built.
-
-    Closed on both halves: the kind is one of three words we chose, and the name
-    is either a LOINC code, one of the participation element names, or one of the
-    two labels. ``section:Cora`` is refused — an NCName-shaped hole in this
-    check is exactly wide enough for a family name.
+    """Whether ``value`` is a construct name this module could have
+    built: kind is one of three words, name is a LOINC code, a
+    participation/body name, or one of the two labels.
     """
     kind, _, name = value.partition(":")
     if kind not in _KINDS:
@@ -1627,11 +1542,9 @@ def _emittable(value: object) -> bool:
 
 
 def assert_emittable(report: object, where: str = "report") -> None:
-    """Walk a finished report and refuse to hand over anything unvetted.
-
-    The report is the artifact that travels — into an issue, a PR body, a file
-    an operator mails back — so the check belongs at the point of handover
-    rather than in the reviewer's memory of how the rows were built.
+    """Walk a finished report and refuse to hand over anything unvetted —
+    checked at the point of handover, not left to the reviewer's memory
+    of how the rows were built.
     """
     if isinstance(report, dict):
         for key, value in report.items():
