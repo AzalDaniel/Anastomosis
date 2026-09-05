@@ -1,15 +1,10 @@
-"""C-CDA export tests — the round trip IS the deliverable.
+"""C-CDA export tests: ``parse(build_ccd(record)) ~= record`` through this
+repo's own ``sources/ccda`` parser. Where exact equality is impossible
+(vendor extension namespaces, the SOAP-section split), the test asserts
+the DOCUMENTED loss exactly.
 
-``parse(build_ccd(record)) ≈ record`` through this repo's OWN
-``sources/ccda`` parser: a rich synthetic record is exported to CCD XML,
-re-ingested, and asserted equivalent section by section on the canonical
-fields the parser produces. Where exact equality is impossible (vendor
-extension namespaces, the SOAP-section split), the test asserts the
-DOCUMENTED loss exactly — nothing undeclared may vanish.
-
-All data is synthetic: feedface- ids, 555-exchange phones, SSN area >= 900,
-example.com email.
-"""
+Synthetic throughout (``feedface-`` ids, 555-exchange, SSN >= 900,
+example.com)."""
 
 from __future__ import annotations
 
@@ -89,13 +84,9 @@ _AT = datetime(2023, 5, 10, 14, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
 
 
 def _loss_entries(record: PatientRecord) -> list[str]:
-    """The 51899-3 loss-ledger entries recovered from a re-ingest.
-
-    The exporter STAMPS its own loss section, so the parser hands its entries
-    back discretely under ``ccda:prior_loss_narrative`` — one per emitted
-    paragraph, no re-splitting heuristic needed. A third party's 51899-3 section
-    is not stamped and lands under ``ccda:section:51899-3`` instead.
-    """
+    """The 51899-3 loss-ledger entries recovered from a re-ingest -- the
+    exporter stamps its own loss section, so the parser returns entries
+    discretely under ``ccda:prior_loss_narrative``."""
     prior = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
     if prior is None:
         return []
@@ -122,13 +113,9 @@ def _loss_sections(document: bytes) -> list[etree._Element]:
 
 
 def _rich_record() -> PatientRecord:
-    """A synthetic record exercising every section the parser reads.
-
-    Built so that fields equal what the parser PRODUCES on re-ingest:
-    GUID-shaped ids (round-trip exactly), structured encounters with
-    note_type == encounter_type (the parser sets both from the encounter code),
-    and ``ccda:*`` extensions that survive natively.
-    """
+    """A synthetic record exercising every section the parser reads, built so
+    fields equal what the parser PRODUCES on re-ingest (GUID ids, encounter
+    note_type mirroring its code)."""
     pid = "feedface-pat0-0000-0000-000000000001"
     patient = Patient(
         given_name="Cora",
@@ -622,12 +609,9 @@ def test_populated_native_fields_land_in_loss_narrative(tmp_path: Path) -> None:
 
 def test_addenda_path_line_shape(tmp_path: Path) -> None:
     # The loss narrative uses deterministic path = value lines, e.g.
-    # encounters[0].addenda[0].text = ... — proves the path format is emitted.
-    #
-    # Positional at BOTH levels. The outer subscript used to be the object's own
-    # id, which for a model the adapter mints is a fresh uuid4 per load — so the
-    # document was not reproducible between two ingests of one export. The inner
-    # subscript was already positional; these now agree.
+    # encounters[0].addenda[0].text = ... Both subscripts are
+    # positional: an id-keyed subscript is not reproducible for a model
+    # the adapter mints a fresh id for on every load.
     pid = "feedface-pat0-0000-0000-00000000c002"
     enc_id = "feedface-0000-0000-0000-00000000c0e2"
     rec = PatientRecord(
@@ -745,16 +729,9 @@ def _parked(record: PatientRecord) -> dict[str, list[str]]:
 
 
 def _shape(entry: str) -> object:
-    """One entry as the element it is: tags, attributes and non-blank text.
-
-    Re-emitting an entry into a document that declares more namespaces than its
-    source did, and through a pretty-printer, can change the STRING without
-    changing anything the element says: it gains an unused ``xmlns:sdtc``, and a
-    closing tag written flush against its child gains the indentation the
-    printer would have given it. Whether the BYTES survive is asked separately,
-    of documents that already carry both — which every C-CDA this repository
-    ships does.
-    """
+    """One entry as the element it is: tags, attributes, non-blank text --
+    immune to re-emission noise (added namespace declarations, reformatted
+    indentation) that changes the STRING but not what the element says."""
 
     def shape(node: etree._Element) -> object:
         return (
@@ -795,14 +772,6 @@ _PROSE_AND_ENTRY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_an_entry_under_prose_leaves_as_an_entry_and_is_not_narrated(tmp_path: Path) -> None:
-    """The defect this closes, from the export side.
-
-    A coded procedure under a section this exporter has no emitter for used to
-    reach the document only as narrative — and only if its section rendered no
-    text. It leaves as the entry it arrived as now, and the loss ledger does not
-    restate it: a ledger line holding a whole XML entry is a line the next
-    generation parks and narrates again.
-    """
     source_doc = tmp_path / "prose_in.xml"
     source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
     ingested = parse_document(source_doc)
@@ -834,14 +803,6 @@ def test_an_entry_under_prose_leaves_as_an_entry_and_is_not_narrated(tmp_path: P
     ids=lambda path: path.name,
 )
 def test_a_preserved_entry_comes_back_as_the_same_bytes(fixture: Path, tmp_path: Path) -> None:
-    """What went in comes back out: the same strings, the same count.
-
-    Asked of every C-CDA this repository ships, because these are the documents
-    with a real header — an entry re-emitted into one carries exactly the
-    namespace declarations its source did, so the byte question is answerable at
-    all. An entry delivered twice would show here as two, and one reformatted on
-    the way through as a different string.
-    """
     source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
     ingested = parse_document(source_doc)
     assert _parked(ingested), "the parser parked nothing to deliver"
@@ -852,14 +813,8 @@ def test_a_preserved_entry_comes_back_as_the_same_bytes(fixture: Path, tmp_path:
 
 
 def test_a_re_emitted_entry_says_the_same_thing_and_then_stops_moving(tmp_path: Path) -> None:
-    """A source that declares fewer namespaces than this exporter writes.
-
-    Its entry says exactly what it said — same element, same attributes — but
-    the string gains the declarations the export root carries and the indent the
-    printer gives a flush closing tag. That is a one-generation settling, not a
-    drift: generation 2 and generation 3 are the same bytes, which is what keeps
-    the round trip a fixed point rather than a slow leak.
-    """
+    """Namespace/indent settling happens once: generation 2 and 3 are the same
+    bytes, so re-emission is a fixed point, not a slow drift."""
     source_doc = tmp_path / "settle_in.xml"
     source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
     ingested = parse_document(source_doc)
@@ -880,14 +835,9 @@ def test_a_re_emitted_entry_says_the_same_thing_and_then_stops_moving(tmp_path: 
 def test_a_code_the_builder_emits_no_section_for_still_delivers_its_entries(
     tmp_path: Path,
 ) -> None:
-    """47519-4 has no structured emitter here, and the entries arrive anyway.
-
-    The decision this pins: a carrier section, not a refusal. A code with no
-    emitter is the ordinary case, and an export that refused the chart would
-    refuse the common path. The carrier states the code and nothing the record
-    does not — no codeSystem, because a parked key preserves the section's code
-    and not the system it was drawn from.
-    """
+    """A code with no structured emitter gets a carrier section, never a
+    refusal; the carrier states only the code, not a codeSystem the record
+    never proved."""
     source_doc = tmp_path / "carrier_in.xml"
     source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
     document = build_ccd(parse_document(source_doc))
@@ -907,14 +857,8 @@ def test_a_code_the_builder_emits_no_section_for_still_delivers_its_entries(
 def test_a_foreign_loss_sections_entries_are_not_swallowed_by_our_ledger(
     tmp_path: Path,
 ) -> None:
-    """51899-3 is a public LOINC, and a re-ingest reads OUR 51899-3 section as
-    paragraphs and never looks at its entries.
-
-    So a third party's 51899-3 entries may not be appended to the stamped ledger
-    this tool writes: they would leave the document and never come back. They get
-    a carrier of their own, which is why the "exactly one" rule is about the
-    STAMPED section rather than about the code.
-    """
+    """A third-party 51899-3's entries get a carrier of their own; the
+    "exactly one" rule is about the STAMPED section, never about the code."""
     foreign = _FOREIGN_LOSS_CODE_CCD.replace(
         "</section></component>",
         """<entry><observation classCode="OBS" moodCode="EVN">
@@ -958,13 +902,6 @@ def test_a_code_less_sections_entries_are_delivered_too(tmp_path: Path) -> None:
 
 
 def test_the_object_and_the_entry_it_came_from_are_stated_once(tmp_path: Path) -> None:
-    """The compounding this avoids, measured on the repository's own fixture.
-
-    Every condition, medication and measurement in it was read out of an entry
-    the parser also parked. Emitting the derived entry beside the preserved one
-    would state each fact twice, a re-ingest would read two objects where the
-    chart has one, and the generation after that would read four.
-    """
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
     ingested = parse_document(fixture)
     out = tmp_path / "once.xml"
@@ -986,12 +923,6 @@ def test_the_object_and_the_entry_it_came_from_are_stated_once(tmp_path: Path) -
 
 
 def test_an_object_no_preserved_entry_states_keeps_its_structured_entry(tmp_path: Path) -> None:
-    """Only the object the preserved entries actually state is left to them.
-
-    A record can carry both — a C-CDA ingest's parked entries and an object from
-    somewhere else — and the one nothing preserved has to be emitted, or the
-    export drops it silently.
-    """
     source_doc = tmp_path / "mixed_in.xml"
     source_doc.write_text(_PROSE_AND_ENTRY_CCD, encoding="utf-8")
     ingested = parse_document(source_doc)
@@ -1019,13 +950,8 @@ def test_an_object_no_preserved_entry_states_keeps_its_structured_entry(tmp_path
 
 
 def test_an_entry_with_no_id_of_its_own_is_not_stated_twice(tmp_path: Path) -> None:
-    """The object an id-less entry produced is matched by the absence of an id.
-
-    An entry carrying no ``<id>`` gives its object no source id, so identity
-    cannot match them by one. It is the only kind of entry such an object can
-    have come from, and pairing them on that is what keeps a malformed document
-    — C-CDA requires the id — from doubling its entries on every export.
-    """
+    """An id-less entry's object is matched by the absence of an id -- the
+    only pairing a malformed (id-less) entry could ever have."""
     document = _PROSE_AND_ENTRY_CCD.replace(
         '<id root="feedface-proc-0000-0000-000000000905"/>', ""
     ).replace("47519-4", "11450-4")
@@ -1094,17 +1020,6 @@ def test_two_sections_sharing_a_code_deliver_into_the_one_section(tmp_path: Path
 def test_a_preserved_value_the_exporter_cannot_re_emit_is_narrated_instead(
     value: object, tmp_path: Path
 ) -> None:
-    """A key this exporter cannot deliver must not be BOTH skipped here and
-    exempted there — that is the silent drop.
-
-    Four shapes it cannot: bytes that will not parse, an element that is not an
-    ``<entry>`` (appending one to a section puts it somewhere the parser's own
-    entry walk never looks, which is a drop wearing a delivery's clothes), a
-    value that is not a list of them, and a member that is not a string. Each
-    narrates instead. The value is patient content, so an unparseable one is
-    answered with the narrative tier rather than with an exception quoting the
-    bytes.
-    """
     record = PatientRecord(
         patient=Patient(
             id="feedface-0000-0000-0000-000000000007",
@@ -1117,14 +1032,6 @@ def test_a_preserved_value_the_exporter_cannot_re_emit_is_narrated_instead(
 
 
 def test_the_loss_ledger_stops_growing_for_a_chart_ingested_from_ccda(tmp_path: Path) -> None:
-    """The constraint that made this change hard, pinned.
-
-    Narrating the parked entries instead of delivering them grew the 51899-3
-    section by ~15 KB per generation for as long as the loop ran. Delivered, the
-    chart reaches its fixed point at generation 2 — measured on this repository's
-    own C-CDA fixture — and the converged section is within ~100 bytes of what it
-    was before any entry under prose was preserved at all.
-    """
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
     record = parse_document(fixture)
     # One stable file name: the parser derives fallback ids from it, so a
@@ -1141,16 +1048,8 @@ def test_the_loss_ledger_stops_growing_for_a_chart_ingested_from_ccda(tmp_path: 
 
 
 def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: Path) -> None:
-    """A results organizer with an id, and a component with none, is one fact.
-
-    ``_stated_ids`` used to pair a preserved entry with its structured twin
-    only by a shared ``<id root>`` — so an id-less component observation
-    paired with nothing, and ``_Preserved.own`` kept re-emitting it beside
-    its own preserved bytes: 1 observation -> 2 -> 2, a stable duplicate
-    rather than a stable count. Red on the unpatched head (goes to 2 and
-    stays there); the fix pairs the component to its organizer instead of to
-    absence, so the count never leaves 1. See #378.
-    """
+    """A results organizer with an id and an id-less component is one fact:
+    the component pairs with its organizer, never with absence (#378)."""
     source_doc = (
         Path(__file__).resolve().parents[1]
         / "fixtures"
@@ -1169,22 +1068,9 @@ def test_an_organizer_component_with_no_id_of_its_own_is_stated_once(tmp_path: P
 
 
 def test_a_rebuilt_document_invents_no_start_for_a_sentinel_medication(tmp_path: Path) -> None:
-    """#385: parse -> build_ccd -> parse, three generations, on a fixture whose
-    only medication states its start as an all-zero TS. Red on main — the
-    FIRST parse already raised (`ValueError: unrecognized date/time format:
-    '0'`), so `build_ccd` never ran at all.
-
-    Fixed, the medication survives every generation with `start is None` —
-    never an invented date. The exporter is untouched by #385 (out of scope
-    per the issue's file list) and its pre-existing behavior for a record
-    whose provenance names a source id a preserved `<entry>` already states
-    is to deliver that entry's OWN bytes verbatim rather than rebuild one —
-    `_Preserved.own`, driven here rather than assumed: every generation's
-    `<low>` still reads the source's original "0" `@value`, unmodified, never
-    `_nullable`'s fresh-build `nullFlavor="NI"` (that path is for a start with
-    no preserved entry to match at all). Either way nothing is invented: the
-    "0" that comes back out is the exact "0" that went in.
-    """
+    """A medication whose only stated start is the all-zero TS sentinel keeps
+    ``start is None`` across every generation -- never an invented date --
+    and the preserved entry's own "0" byte is carried forward unmodified (#385)."""
     fixture = (
         Path(__file__).resolve().parents[1]
         / "fixtures"
@@ -1280,16 +1166,8 @@ _ORGANIZER_SECTION = """<section xmlns="urn:hl7-org:v3">
 def test_the_parsers_derived_id_is_always_one_the_builder_states(
     name: str, orgids: str, compids: str
 ) -> None:
-    """The parser's ``source_id`` is a member of the built entry's ``_stated_ids``.
-
-    Feeding the SAME organizer XML through both halves (mirrors the reviewer's
-    ``qaprobe/p1_divergence.py``): whatever id the parser derives or reads for
-    the component, the builder's ``_stated_ids`` walk over that same XML must
-    already contain it, or a re-export pairs the component with nothing and
-    the fact duplicates without bound. Red on the unpatched head for all four
-    of these (the two id-reading mismatches above); green once both sides
-    read through ``first_rooted_id``.
-    """
+    """The parser's derived ``source_id`` must be a member of the entry's own
+    ``_stated_ids`` walk, computed over the SAME XML."""
     section = etree.fromstring(
         _ORGANIZER_SECTION.format(orgids=orgids, compids=compids).encode(), _PARSER
     )
@@ -1317,16 +1195,9 @@ def test_the_parsers_derived_id_is_always_one_the_builder_states(
 def test_a_padded_or_partially_id_less_organizer_never_grows(
     fixture_name: str, tmp_path: Path
 ) -> None:
-    """Generation counts stay flat at 1 for each of the four mismatch shapes.
-
-    Copies of the reviewer's ``qaprobe/fx/{E_ws_extension,F_ws_root,
-    H_nullflavor_then_rooted,J_ws_root_component}.xml``. Red on the unpatched
-    head: each grows 1 -> 2 -> 3 -> 4 -> 5, because the parser's derived id
-    for the lab observation was never a member of what the builder's
-    ``_stated_ids`` states for that entry, so ``_Preserved.own`` paired it
-    with nothing and it duplicated once per generation, unbounded — a faster
-    growth than #378's own id-less-component defect, which stabilised at 2.
-    """
+    """Four id-mismatch shapes (padded root/extension, nullFlavor-then-rooted,
+    whitespace-only root) must not duplicate the lab observation across
+    generations -- the growth class #378 closed for one shape, here for four."""
     source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda_edge_cases" / fixture_name
     record = parse_document(source_doc)
     out = tmp_path / "gen.xml"
@@ -1341,16 +1212,8 @@ def test_a_padded_or_partially_id_less_organizer_never_grows(
 def test_two_id_less_components_under_one_organizer_derive_distinct_ids(
     tmp_path: Path,
 ) -> None:
-    """Two id-less analytes under one panel get two different derived ids.
-
-    ``index`` is what tells them apart once their own ids are gone — without
-    it both would hash to the same ``organizer_component_source_id`` and
-    collapse to one observation. Pinned against the LITERAL uuid5 strings (a
-    recipe change is a decision that rewrites every already-migrated chart's
-    provenance, and a test that recomputes the value under test proves
-    nothing about the value itself — see #378's own round two). Generations
-    stay flat at 2, not 4: each analyte pairs with its own preserved twin.
-    """
+    """``index`` distinguishes two id-less analytes under one panel; pinned
+    against the literal derived uuid5 strings, not recomputed (#378)."""
     root = "feedface-idls-0000-0000-000000000001"
     extension = "feedface-idls-panel-0001"
     expected_first = organizer_component_source_id(root, extension, 0)
@@ -1439,35 +1302,14 @@ def test_two_id_less_components_under_one_organizer_derive_distinct_ids(
 def test_first_rooted_id_reads_every_id_child_stripped_and_nullflavor_aware(
     xml: str, expected: tuple[str, str | None] | None
 ) -> None:
-    """Pins ``first_rooted_id`` against an INDEPENDENT expectation, never
-    against the other half merely agreeing with it.
-
-    The cross-check above (``test_the_parsers_derived_id_is_...``) proves the
-    parser and the builder read an id the SAME way, which a bug inside
-    ``first_rooted_id`` itself can never fail: both callers share the one
-    function, so a mistake shared by both sides is invisible to a
-    mutual-agreement check (driven: mutating away either ``.strip()`` call,
-    or narrowing the scan to only the first ``<id>`` child, survives the
-    whole suite without this test). This one pins the VALUE independently —
-    a padded root or extension strips to the unpadded string; a blank
-    extension normalizes to ``None``; a nullFlavor id is skipped even when it
-    also carries a root; and the scan continues past a blank or nullFlavor
-    id to the NEXT ``<id>`` rather than stopping at the first child, which is
-    what left #378 open for the nullFlavor-then-rooted shape the first time.
-    """
+    """Pins ``first_rooted_id`` against an independent expectation, not merely
+    parser/builder agreement: strips padding, blank extension -> ``None``,
+    nullFlavor skipped even with a root, scan continues past it (#378)."""
     element = etree.fromstring(xml.encode())
     assert first_rooted_id(element) == expected
 
 
 def test_a_nullflavor_id_is_skipped_even_when_it_also_carries_a_root() -> None:
-    """``<id nullFlavor="NI" root="X"/>`` states no id: nullFlavor wins.
-
-    A vendor id that carries both attributes at once is still an absent id —
-    reading the root anyway (mut.py's M4: drop the nullFlavor check) would
-    treat a null id as a real, if odd, stated one on one side without the
-    other agreeing, reopening exactly the mismatch this file's other new
-    tests close.
-    """
     organizer = etree.fromstring(
         '<organizer xmlns="urn:hl7-org:v3"><id nullFlavor="NI" root="X"/></organizer>',
         _PARSER,
@@ -1476,15 +1318,8 @@ def test_a_nullflavor_id_is_skipped_even_when_it_also_carries_a_root() -> None:
 
 
 def test_a_component_that_is_not_an_observation_is_never_derived_for() -> None:
-    """A ``<procedure>`` component does not count toward the derived index.
-
-    ``_measurements``/``_derived_component_ids`` both walk
-    ``component/observation`` only, so a non-observation component sibling
-    (a procedure, in template order before the observation) is invisible to
-    the derivation on both sides — an id-less component's index is its
-    position among the organizer's OBSERVATION components, never its
-    position among all of them.
-    """
+    """An id-less component's derived index counts only its OBSERVATION
+    siblings under the organizer, never a non-observation component beside it."""
     section = etree.fromstring(
         b"""<section xmlns="urn:hl7-org:v3">
   <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1524,22 +1359,10 @@ def test_a_component_that_is_not_an_observation_is_never_derived_for() -> None:
 
 
 def test_a_nested_organizers_own_idless_component_is_still_derived_for() -> None:
-    """An organizer inside an organizer: the INNER one's id-less component too.
-
-    ``_derived_component_ids`` finds an organizer at ANY depth
-    (``entry.iter``, not ``entry.findall`` — mut.py's M6), because a
-    preserved entry's structure is not this exporter's to assume flat. The
-    OUTER organizer's own id-less component is a direct child of ``entry``
-    either way, so a round-trip observation COUNT cannot tell the two walks
-    apart on this shape — ``_measurements`` reads only ONE organizer per
-    entry (its direct child), so the inner organizer's fact is never
-    structurally extracted at all, only preserved verbatim (see the flat
-    ``[1, 1, 1, 1]`` in the regression test below). What has to hold
-    independently of that is that ``_stated_ids``, read over the preserved
-    entry, still credits the INNER organizer's own analyte — or a future
-    structural reader that does walk nested organizers would duplicate it
-    the same way #378 duplicated an id-less component in the first place.
-    """
+    """``_stated_ids`` (which walks any depth) must credit a NESTED organizer's
+    own id-less analyte even though ``_measurements`` structurally reads only
+    the entry's direct-child organizer -- else a future nested reader would
+    duplicate it as #378 did for one level."""
     section = etree.fromstring(
         b"""<section xmlns="urn:hl7-org:v3">
   <code code="30954-2" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1581,12 +1404,6 @@ def test_a_nested_organizers_own_idless_component_is_still_derived_for() -> None
 
 
 def test_a_nested_organizer_never_duplicates_or_crashes(tmp_path: Path) -> None:
-    """Regression pin: a real (if unusual) organizer-inside-organizer document
-    round-trips without growth. The parser only structurally reads the
-    entry's direct-child organizer, so only the outer id-less analyte ever
-    becomes an ``Observation`` — the inner one rides the preserved entry's
-    bytes — and the count this fixture actually produces is 1, held flat.
-    """
     source_doc = (
         Path(__file__).resolve().parents[1]
         / "fixtures"
@@ -1604,13 +1421,6 @@ def test_a_nested_organizer_never_duplicates_or_crashes(tmp_path: Path) -> None:
 
 
 def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
-    """Regression guard, not an acceptance test for #378 — passes unpatched too.
-
-    The organizer-derived fallback in ``_stated_ids``/``_measurements`` must
-    never shadow a component's own stated id: the five vitals of
-    ``feedface_ccd.xml`` each carry one, and a build->parse must hand every
-    one of those five GUIDs back unchanged.
-    """
     source_doc = Path(__file__).resolve().parents[1] / "fixtures" / "ccda" / "feedface_ccd.xml"
     record = parse_document(source_doc)
     before = {
@@ -1663,20 +1473,9 @@ def test_a_component_that_carries_its_own_id_keeps_it(tmp_path: Path) -> None:
 def test_a_preserved_entry_states_more_than_it_did_and_never_less(
     fixture: Path, expected_added: frozenset[str]
 ) -> None:
-    """The new ``_stated_ids`` set is a strict superset of the old one — proven positively.
-
-    This test used to re-implement ``_stated_ids``'s OWN any-depth walk inline
-    and compare it against the real thing, so ``new >= old`` and ``(None in
-    new) == (None in old)`` held trivially even with the derived-id branch
-    deleted entirely (``new == old`` then, by construction of the comparison
-    itself) — a superset check that could not fail. It now asserts the actual
-    diff every entry contributes across a fixture: nothing for the two
-    fixtures with no id-less organizer component, and exactly the one
-    derived id — computed independently via
-    :func:`organizer_component_source_id`, not read back off ``_stated_ids``
-    — for the fixture that has one. Red on the unpatched head for the third
-    fixture (``total_added`` comes back empty where one id was expected).
-    """
+    """``_stated_ids``'s new set must be a strict superset of the old,
+    positively verified: the added ids equal exactly what
+    ``organizer_component_source_id`` computes independently."""
     source_doc = Path(__file__).resolve().parents[1] / "fixtures" / fixture
     root = etree.parse(str(source_doc), _PARSER).getroot()
     entries = list(root.iter(f"{{{V3}}}entry"))
@@ -1693,17 +1492,7 @@ def test_a_preserved_entry_states_more_than_it_did_and_never_less(
     assert total_added == set(expected_added), f"{fixture.name}: added {total_added}"
 
 
-# --- export → ingest generations ---------------------------------------------
-#
-# A migration legitimately runs export → ingest → export more than once. Before
-# the stamp existed, the parser read the exporter's OWN 51899-3 section back as
-# an ordinary `ccda:section:51899-3` narrative, so generation N re-narrated
-# generation N-1's ENTIRE ledger as one line inside its own — measured growth of
-# ~1.2 KB per generation, forever, with the real entries buried inside a blob
-# nobody can read. The exporter now stamps the section and the parser recovers
-# its entries discretely, so each generation carries its own entries plus the
-# prior ledger DEDUPLICATED: identical entries collapse, distinct ones all
-# survive, and the ledger stops growing.
+# --- export -> ingest generations (RULES.md 61) -------------------------------
 
 
 def _generation_record() -> PatientRecord:
@@ -1748,12 +1537,8 @@ def _generation_record() -> PatientRecord:
 
 
 def _generations(record: PatientRecord, count: int, tmp_path: Path) -> list[bytes]:
-    """``count`` rounds of export → ingest, returning each generation's document.
-
-    One stable file name per round: the deliverer names a document after the
-    patient id, and the parser's fallback ids are derived from the file name, so
-    re-exporting under a churning name would inject churn the real path lacks.
-    """
+    """``count`` rounds of export -> ingest, returning each generation's
+    document, under one stable file name (fallback ids derive from it)."""
     out = tmp_path / f"{record.patient.id}.xml"
     documents: list[bytes] = []
     for _ in range(count):
@@ -1799,24 +1584,9 @@ def test_three_generations_keep_every_distinct_loss_entry(tmp_path: Path) -> Non
 
 
 def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path) -> None:
-    """Identical entries must not multiply: once the chart has been through the
-    round trip the ledger stops growing. An unbounded ledger is the regression
-    this guards, and it is the only thing that would be a defect.
-
-    Settles at generation THREE, as the name says. It settled at two until
-    #404, when this record's patient id stopped surviving re-ingest verbatim:
-    its identifier states an assigning authority, and an extension is unique
-    only inside the root that issued it, so the id is now derived from the
-    pair. ``document_id`` is a uuid5 over the patient id, so a re-derived
-    patient id means a different document id on the second export, which
-    narrates one entry the first pass could not — one extra generation to the
-    fixed point, and then flat. Driven to generation six: 10, 27, 28, 28, 28,
-    28.
-
-    The bound is the claim; the generation it lands on is not, and moving it
-    was the accepted cost of never merging two patients who share a medical
-    record number.
-    """
+    """The ledger must stop growing by generation 3, not 2 (since #404: a
+    re-derived patient id shifts the fixed point one generation later) --
+    the bound is the claim, not which generation it lands on."""
     documents = _generations(_generation_record(), 4, tmp_path)
     counts = [len(_entries_of(document)) for document in documents]
     assert counts[2] == counts[3], f"loss ledger still growing across generations: {counts}"
@@ -1832,16 +1602,9 @@ def test_loss_narrative_reaches_a_fixed_point_by_generation_three(tmp_path: Path
 
 
 def test_ledger_is_bounded_for_a_record_whose_id_is_rederived(tmp_path: Path) -> None:
-    """The bound holds for a chart that needs an extra generation to reach it.
-
-    ``document_id`` defaults to a uuid5 over the patient id. A chart whose id
-    the parser re-derives on first ingest therefore gets a different derived
-    document id on its second export, which narrates one entry the first pass
-    could not — so the ledger settles a generation later than one whose ids
-    survive verbatim. Both settle; only the generation differs. The docs used to
-    promise generation 2 flatly, which is true only of the fast case, so the
-    growth this guards could have run a full generation unnoticed.
-    """
+    """A record whose id is re-derived on first ingest needs one extra
+    generation to reach the same bound -- both settle, only the generation
+    differs."""
     documents = _generations(_rich_record(), 5, tmp_path)
     counts = [len(_entries_of(document)) for document in documents]
     assert counts[2] == counts[3] == counts[4], f"ledger still growing: {counts}"
@@ -1870,15 +1633,8 @@ def _entries_of(document: bytes) -> list[str]:
 
 
 # --- a re-rendered ledger: mixed narrative content ---------------------------
-#
-# A document this tool wrote, passed through a system that re-rendered the
-# ledger as a table or a list, or hand-edited. The stamp survives; the shape of
-# the narrative does not. Only `<paragraph>` children used to be collected, with
-# the whole `<text>` kept as a single entry when there were NONE — so a section
-# holding one paragraph AND a table lost the table outright. It reached neither
-# the carried-forward ledger nor the ordinary foreign-narrative key, and did not
-# survive re-export: a silent content drop inside the mechanism whose entire job
-# is to prevent silent content drops.
+# The stamp survives a re-render as table/list/loose text; only <paragraph>
+# children may be collected, or a section holding both loses the rest.
 
 
 def _stamped_mixed_ledger(generation: str = "1") -> str:
@@ -1911,12 +1667,8 @@ def _stamped_mixed_ledger(generation: str = "1") -> str:
 
 
 def test_mixed_content_ledger_keeps_every_narrative_node(tmp_path: Path) -> None:
-    """Paragraph, table, list and loose text all come back, and all re-export.
-
-    Before the fix the table and the list were silently dropped on ingest: the
-    paragraph was found, so the whole-text fallback never fired, and nothing
-    else was ever looked at.
-    """
+    """Paragraph, loose text, table and list content all survive ingest and
+    re-export -- not just the first paragraph found."""
     source_doc = tmp_path / "mixed.xml"
     source_doc.write_text(_stamped_mixed_ledger(), encoding="utf-8")
     ingested = parse_document(source_doc)
@@ -1953,12 +1705,9 @@ def test_a_comment_inside_the_ledger_does_not_abort_the_parse(tmp_path: Path) ->
 
 
 def test_a_crafted_generation_stamp_does_not_abort_the_ingest(tmp_path: Path) -> None:
-    """``str.isdigit()`` is true for characters ``int()`` refuses — a superscript
-    among them — so guarding with one and converting with the other left a gap a
-    crafted document could fall through, raising out of ``parse_document`` and
-    taking the whole ingest with it. An unreadable counter is a missing counter,
-    not a failed document: the entries are what matter.
-    """
+    """``str.isdigit()`` accepts characters ``int()`` refuses (e.g. a
+    superscript); an unreadable generation counter reads as absent, never
+    aborts the ingest."""
     source_doc = tmp_path / "crafted.xml"
     source_doc.write_text(_stamped_mixed_ledger(generation="\u00b2"), encoding="utf-8")
 
@@ -2161,20 +1910,9 @@ def test_declared_losses_is_structured_and_minimal() -> None:
 
 
 def test_every_extensions_key_declared_losses_names_is_one_that_exists(tmp_path: Path) -> None:
-    """The ledger is the contract, so the keys it cites have to be real.
-
-    The narrative tier's whole promise is "not on its typed field, but here" —
-    it is only worth anything if "here" is somewhere you can look. The ledger
-    named ``patient.extensions['ccda:section:51899-3']``, which is where a
-    stamped ledger landed BEFORE the generation fix stopped re-ingesting it as
-    one undifferentiated blob. That key has not existed since; a reader who
-    followed the contract to recover a narrated field found nothing and had no
-    reason to doubt the document.
-
-    Rather than pin today's spelling, this reads whatever keys the ledger cites
-    and requires each to appear on a real round trip — so the two cannot drift
-    apart again in either direction.
-    """
+    """Every ``extensions`` key ``DECLARED_LOSSES`` cites must exist on a real
+    round trip -- read dynamically from the ledger's own text, so the two
+    cannot drift apart in either direction."""
     cited = {
         key
         for reason in DECLARED_LOSSES.values()
@@ -2518,10 +2256,9 @@ def _maximal_record() -> PatientRecord:
             diagnosis_ids=["feedface-0000-0000-0000-0000000000f5"],
         )
     ]
-    # Record-LEVEL extensions: the vendor namespaces a source hangs off the
-    # record itself (pf_tebra's unmapped tables, fhir_r4's note metadata). They
-    # have no typed home at all, so the 51899-3 narrative is their only route
-    # out — the loss class the collector used to skip entirely.
+    # Record-LEVEL extensions: vendor namespaces hanging off the record
+    # itself (pf_tebra's unmapped tables, fhir_r4's note metadata) have no
+    # typed home, so the 51899-3 narrative is their only route out.
     extensions = {
         "pf_tebra:unmapped:patient-procedures": [
             {"ProcedureName": "MaxRecordExtProcedure", "ProcedureCode": "MaxRecordExtCode"}
@@ -2585,12 +2322,9 @@ def _walk_leaves(value: object, path: tuple[str | int, ...] = ()) -> list[tuple[
 
 
 def _field_path(path: tuple[str | int, ...]) -> str:
-    """``path`` as a dotted FIELD path with list indices erased —
-    ``("coverages", 0, "payer")`` → ``coverages[].payer``.
-
-    Erasing the index (not the field) is what makes the oracle path-AWARE
-    without being order-brittle: a value must come back on the same field of the
-    same collection, but the collection may be re-ordered or re-keyed."""
+    """``path`` as a dotted field path with list indices erased (e.g.
+    ``coverages[].payer``), so the oracle is path-aware without being
+    order-brittle."""
     out = ""
     for segment in path:
         if isinstance(segment, int):
@@ -2620,14 +2354,9 @@ def _collapse(text: str) -> str:
 
 
 def _narrated_values(record: PatientRecord) -> dict[str, set[str]]:
-    """``field path -> values`` for every line of the recovered 51899-3 loss
-    narrative — the declared, path-carrying home for what CDA cannot structure.
-
-    The entries come back already split (one per emitted paragraph, recovered
-    under ``ccda:prior_loss_narrative``), so no re-splitting heuristic is needed.
-    The narrative roots the record's own dict attrs at a synthetic ``record.``
-    (there is no model to name); the dump paths root them at the attribute, so
-    that prefix is normalized away here."""
+    """``field path -> values`` for every recovered 51899-3 line, already
+    split one-per-paragraph; the ``record.`` prefix a dict-rooted line
+    carries is normalized away to match the dump's own paths."""
     out: dict[str, set[str]] = {}
     for line in _loss_entries(record):
         path, sep, value = line.partition(" = ")
@@ -2639,25 +2368,16 @@ def _narrated_values(record: PatientRecord) -> dict[str, set[str]]:
 
 
 def _survives(recovered: dict[str, set[str]], path: str, value: str) -> bool:
-    """Whether ``value`` comes back ON ``path``: equal to a recovered value
-    there, or contained in one.
-
-    Containment covers the declared ``*.NoteSection.kind`` loss — a note body
-    re-ingests LABELLED with its SOAP kind, so the body is a substring of the
-    recovered text on that same field. It stays scoped to the one field path, so
-    a cross-field collision or a misattribution to another model can never
-    satisfy it."""
+    """Whether ``value`` comes back on ``path``, exactly or as a substring --
+    scoped to that one field so a cross-field match can never satisfy it."""
     candidates = recovered.get(path, set())
     return value in candidates or any(value in candidate for candidate in candidates)
 
 
 def _undeclared_losses(original: PatientRecord, out: Path) -> list[str]:
-    """Populated leaves of ``original`` that survive re-ingest in no form.
-
-    A leaf passes if it comes back (a) on its own field path structurally,
-    (b) narrated under that path in the 51899-3 section, or (c) matched by a
-    DECLARED_LOSSES pattern. Anything else is a silent loss.
-    """
+    """Populated leaves of ``original`` that survive re-ingest in no form: not
+    on their own field path structurally, not narrated under that path, not
+    covered by ``DECLARED_LOSSES``."""
     out.write_bytes(build_ccd(original))
     reingested = parse_document(out)
     recovered = _structured_values(reingested)
@@ -2673,14 +2393,9 @@ def _undeclared_losses(original: PatientRecord, out: Path) -> list[str]:
 
 
 def test_no_undeclared_native_loss(tmp_path: Path) -> None:
-    """Every populated leaf of the source record must come back from re-ingest
-    ON ITS OWN FIELD PATH — structurally, or as a narrative line naming that
-    path — or be covered by a DECLARED_LOSSES pattern.
-
-    Path-aware on purpose: "the value appears somewhere in the document" would
-    pass a value that came back on the WRONG field (a cross-field collision) or
-    on another patient's model (a misattribution), which is corruption, not
-    preservation."""
+    """Every populated leaf must return on its OWN field path -- structurally
+    or narrated -- or be a declared loss; path-aware so a cross-field
+    collision or misattribution can never pass as preservation."""
     undeclared = _undeclared_losses(_maximal_record(), tmp_path / "max.xml")
     assert not undeclared, (
         "fields silently lost (not round-tripped onto their own field path, not "
@@ -2712,18 +2427,9 @@ def test_no_undeclared_native_loss(tmp_path: Path) -> None:
 def test_no_undeclared_loss_whichever_section_takes_the_encounter(
     tmp_path: Path, shape: str, encounter: dict[str, object]
 ) -> None:
-    """The oracle above, run over every gate combination rather than one.
-
-    Two gates decide where an encounter goes — ``encounter_type`` for the
-    Encounters section, note content for Notes — and an encounter can clear
-    neither. The consumed-field allowlist claimed all five fields regardless,
-    so an encounter no emitter wrote still had its fields suppressed from the
-    narrative. Two shapes lost a field outright: a typeless, noteless visit
-    lost ``date_of_service``, and a note header with no body lost ``note_type``.
-
-    Every encounter in ``_maximal_record`` carries a type, which is the only
-    reason the oracle never saw it.
-    """
+    """The same oracle over every encounter-routing gate combination: an
+    encounter that clears neither the Encounters nor the Notes gate must
+    still lose nothing."""
     record = PatientRecord(
         patient=Patient(id="feedface-0000-0000-0000-000000000001"),
         encounters=[
@@ -2749,21 +2455,10 @@ _PARTIALLY_RECOVERABLE = frozenset({"patient.identifiers[].kind"})
 
 
 def test_a_field_the_export_round_trips_is_not_also_narrated(tmp_path: Path) -> None:
-    """The bound the losslessness invariant does not have.
-
-    That invariant is one-directional: it forbids losing a field, and says
-    nothing about carrying one twice. So nothing anywhere checked that
-    ``_EXPORTED_FIELDS`` is load-bearing — emptying it entirely passes all 1815
-    tests, while every field that already round-trips structurally also gets
-    written into the ledger. Not a loss, so no oracle objects; just a document
-    that grows, and a ledger whose entries stop meaning "this did not survive".
-    That is the same growth the generation fix bounded from the other end.
-
-    Stated as a property rather than a count, so it survives new fields: a value
-    recovered on its own field path structurally must not ALSO come back as a
-    narrative line for that path, except where the field is only partly
-    recoverable and the narrative is what makes it whole.
-    """
+    """Losslessness is one-directional (forbids losing, not duplicating); this
+    is the other direction as a property: a value recovered structurally
+    must not ALSO appear as a narrative line for the same path, except
+    where the field is only partly recoverable and the narrative completes it."""
     original = _maximal_record()
     out = tmp_path / "max.xml"
     out.write_bytes(build_ccd(original))
@@ -2791,28 +2486,15 @@ def test_a_field_the_export_round_trips_is_not_also_narrated(tmp_path: Path) -> 
 
 
 def test_two_builds_are_byte_identical(source: PatientRecord) -> None:
-    """One record object, built twice.
-
-    Necessary and not sufficient: this holds even when the export is NOT
-    reproducible, because the ids were minted once when the object was made and
-    both builds see the same ones. The determinism the docs promise is about the
-    same RECORD, not the same object — see the two tests below.
-    """
+    """One record object, built twice: necessary but not sufficient, since
+    minted ids are shared by identity, not re-derived from the same record."""
     assert build_ccd(source) == build_ccd(source)
 
 
 def test_two_ingests_of_one_export_build_identical_documents(tmp_path: Path) -> None:
-    """The contract as `docs/CCDA_EXPORT.md` states it: same record in,
-    byte-identical bytes out.
-
-    It did not hold. Two `anast migrate` runs over the same fixture produced
-    documents differing in 168, 80 and 48 lines — 248 of them a runtime uuid,
-    48 a wall clock. Clinical content was unaffected, so nothing failed; what
-    broke was checksum dedup and every "re-run and diff to see what changed"
-    workflow, which is how a migration is audited.
-
-    Two independent ingests, because that is where fresh ids come from.
-    """
+    """Same record in, byte-identical bytes out -- the contract
+    ``docs/CCDA_EXPORT.md`` states (two independent ingests, since that is
+    where fresh ids come from)."""
     import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
     from anastomosis.sources import get_source
 
@@ -2826,14 +2508,6 @@ def test_two_ingests_of_one_export_build_identical_documents(tmp_path: Path) -> 
 
 
 def test_a_runtime_minted_id_does_not_reach_the_narrative(tmp_path: Path) -> None:
-    """A collection entry was subscripted by the object's own id.
-
-    `_model_index` returned it and called itself "a stable per-item index"; for
-    every model the adapter mints rather than reads, that id is a fresh uuid4
-    per load. The narrative is sorted by path, so both the ids and the line
-    ORDER moved every run. The subscript is positional now, as it already was
-    for every nested list in the same serializer.
-    """
     pid = "feedface-0000-0000-0000-0000000000b1"
     lines = _loss_entries_of(
         PatientRecord(
@@ -3078,14 +2752,9 @@ def test_deliverer_never_logs_output_path(caplog: pytest.LogCaptureFixture, tmp_
 
 
 def test_deliverer_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
-    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``.
-
-    ``write_bytes`` overwrites, so a silent collision would leave ONE
-    ``MRN_1234.xml`` carrying the second patient's chart over the first — a
-    C-CDA is the artifact most likely to travel, so a merged one is the worst
-    kind of wrong. The batch-continues handler deliberately does NOT swallow
-    this: a collision is not a survivable per-record failure.
-    """
+    """``MRN 1234`` and ``MRN/1234`` sanitize to the same filename; a silent
+    collision would overwrite one patient's chart with another's, so this
+    refuses rather than continuing the batch."""
     from anastomosis.deliver._shared import DeliveredNameCollision
 
     first = _rich_record()
@@ -3116,14 +2785,10 @@ def parse_document_bytes(data: bytes) -> PatientRecord:
 def test_the_real_gender_spellings_get_a_real_gender_code(
     source_sex: str, expect_code: str
 ) -> None:
-    """The lookup used to be exact-match over "Female"/"Male" (#242).
-
-    The real Practice Fusion Gender column holds "M"/"F" — the reference
-    generator translates {'M': 'Male', 'F': 'Female'} off it — so every one of
-    2,167 patients fell through to "UN", Undifferentiated. A receiving EHR reads
-    the normative @code; @displayName is decorative in CDA. Sex-keyed decision
-    support, screening reminders and reference ranges all mis-key on that.
-    """
+    """The real Practice Fusion Gender column holds "M"/"F"; a lookup keyed
+    only on "Female"/"Male" fell through to Undifferentiated for every real
+    patient (#242) -- the receiving EHR reads the normative @code, not the
+    decorative @displayName."""
     blob = build_ccd(
         PatientRecord(patient=Patient(id="feedface-0000-0000-0000-000000000001", sex=source_sex))
     )
@@ -3174,15 +2839,9 @@ def _encounter_ccd(tmp_path: Path, encounter_type: str | None) -> tuple[str, Pat
 
 
 def test_an_encounter_is_not_given_a_fabricated_cpt_code(tmp_path: Path) -> None:
-    """No source field carries a CPT code, so the export must not assert one.
-
-    Every encounter went out as ``code="99999" codeSystem="…6.12"`` — the CPT
-    OID — with the real type demoted to @displayName. 99999 is not an assigned
-    CPT code, but nothing downstream can tell that from a placeholder: a coded
-    <code> with a codeSystem is a claim, and a receiver reconciling code against
-    displayName resolves in the code's favour. Every migrated visit in the
-    practice lands under one invented procedure.
-    """
+    """No source field carries a CPT code, so the export must not assert one --
+    a placeholder code with a real codeSystem is a claim a receiver will
+    reconcile in the code's favour, over the true type in @displayName."""
     text, _ = _encounter_ccd(tmp_path, "Office outpatient visit 15 minutes")
     assert "99999" not in text
     assert "2.16.840.1.113883.6.12" not in text, "the CPT OID is not claimed at all"
@@ -3201,14 +2860,9 @@ def test_an_encounter_type_travels_as_text_and_survives_the_round_trip(
 
 
 def test_an_encounter_with_no_type_says_no_information() -> None:
-    """The helper directly, because no document reaches this branch.
-
-    ``_structured_encounters`` keeps only typed encounters, so a typeless one is
-    filtered out before the section is built and never gets a <code> at all.
-    The branch is still worth pinning: OTH is the wrong fallback if that filter
-    ever widens, since it asserts a real value outside CPT while showing none of
-    it. NI says what is true instead.
-    """
+    """Driven directly since no document reaches this branch: a typeless
+    encounter is filtered out before the section builds, so this pins the
+    fallback -- ``NI``, not ``OTH`` -- for if that filter ever widens."""
     from anastomosis.deliver.ccda_export.builder import _encounter_code
 
     node = etree.Element("encounter")
@@ -3220,24 +2874,13 @@ def test_an_encounter_with_no_type_says_no_information() -> None:
 
 
 # --- #388: an encounter with no type and no note is exported by nothing ------
-#
-# `_structured_encounters` kept only encounters carrying an `encounter_type`;
-# `_notes` keeps only those with note content. An encounter clearing NEITHER
-# gate reached neither section and vanished from the document, though the
-# record still held it. The fix: the Encounters section takes every encounter
-# the Notes section does not already stand for.
+# The Encounters section now takes every encounter the Notes section does
+# not already stand for.
 
 
 def test_an_encounter_with_no_type_and_no_note_reaches_the_encounters_section(
     tmp_path: Path,
 ) -> None:
-    """The defect, driven on a real document: a `46240-8` section whose one
-    entry carries only `<id root>` — no `<code>`, no `<effectiveTime>` — and
-    no `34109-9` section anywhere. Red on main: parse -> build -> parse gives
-    0 46240-8 entries, 0 34109-9 entries, 0 parsed encounters, because neither
-    gate ever saw this encounter. The fix routes it to Encounters alone and
-    the id survives the round trip.
-    """
     source_doc = (
         Path(__file__).resolve().parents[1]
         / "fixtures"
@@ -3291,12 +2934,6 @@ def test_the_two_sections_partition_every_encounter(
     expected_encounters_entries: int,
     expected_notes_entries: int,
 ) -> None:
-    """The four-cell table `#388`'s design derives by hand, on one
-    hand-built encounter per cell: two independent gates decide where an
-    encounter goes, and it can clear both, either, or neither. Only the
-    ``neither`` cell is red on main — 0/0 there instead of the fixed column's
-    1/0 — the other three already held.
-    """
     record = PatientRecord(
         patient=Patient(id="feedface-0000-0000-0000-000000000001"),
         encounters=[
@@ -3313,14 +2950,9 @@ def test_the_two_sections_partition_every_encounter(
 
 
 def test_a_typeless_encounter_entry_is_legal_where_it_stands() -> None:
-    """The typeless/noteless entry's shape — `templateId`, `id`,
-    `code@nullFlavor=NI`, `effectiveTime@nullFlavor=NI` — against the SAME
-    content-model table `test_every_element_it_emits_is_legal_where_it_stands`
-    holds the corpus to (a fresh `seen` set, so the table-completeness
-    assertion there does not apply here). Red on main only because the entry
-    does not exist there at all; the NI assertion is the one that stops
-    anyone reaching for OTH instead, per `_encounter_code`'s own docstring.
-    """
+    """Pins the typeless/noteless entry's shape against the corpus's own
+    content-model conformance checker (fresh ``seen`` set, so the
+    table-completeness assertion elsewhere does not apply here)."""
     from test_ccda_corpus import _check_conformance
 
     record = PatientRecord(
@@ -3459,14 +3091,9 @@ def test_the_export_reports_the_shape_of_what_it_wrote(tmp_path: Path) -> None:
 
 
 def _preservation_heavy_record() -> PatientRecord:
-    """A chart the way a real vendor export produces one: a little clinical
-    content and a lot of source fields C-CDA has no structured slot for.
-
-    The shipped synthetic fixtures are too small to show the ratio #118
-    measured, which is exactly why it went unseen until a real Practice Fusion
-    export was run. Sixty invented vendor keys reproduce the SHAPE without any
-    real data — the point is the proportion, not the values.
-    """
+    """A chart shaped like a real vendor export: a little clinical content
+    against a lot of source fields with no C-CDA slot -- the ratio #118
+    measured, reproduced with invented vendor keys, no real data."""
     record = _generation_record()
     record.patient.extensions.update(
         {f"pf_tebra:VendorField{n:02d}": f"synthetic value {n}" * 8 for n in range(60)}
@@ -3492,12 +3119,8 @@ def test_an_ordinary_export_does_not_cry(tmp_path: Path, caplog: pytest.LogCaptu
 def test_a_mostly_preservation_export_says_so_before_the_destination_does(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The 'found out the hard way' failure this closes.
-
-    The warning is about THIS tool's own output — what a given EHR will accept
-    is not something it can know — so it reports the share and points at the
-    destination's own limit rather than inventing one.
-    """
+    """Reports the preservation share and points at the destination's own
+    size limit -- this tool cannot know what a given EHR will accept."""
     from anastomosis.deliver.ccda_export import deliver_ccda
 
     with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.ccda_export.deliverer"):
