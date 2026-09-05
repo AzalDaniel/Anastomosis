@@ -1,35 +1,12 @@
 """Browser delivery: the resumable upload pipeline (M2 item 10).
 
-Migration mode's last-resort route — file reconstructed charts into a
-destination EHR through its web UI when no vendor API and no C-CDA import
-exist (the common case for the practices this tool serves). The work is
-inherently long-running and crash-prone (a browser, a flaky vendor UI, an
-hours-long batch), so the design is built around resumability:
+Migration mode's last-resort route: file reconstructed charts into a
+destination EHR through its web UI when no vendor API or C-CDA import
+exists. A state machine (:mod:`.states`), a SQLite ledger (:mod:`.tracking`)
+and an on-disk manifest (:mod:`.persist`) let a killed run resume without
+double-filing a chart.
 
-* :mod:`.states` — the 15-state upload machine and its legal-transition
-  graph; one item walks it to exactly one terminal state.
-* :mod:`.errors` — the delivery error taxonomy that drives retry/abort.
-* :mod:`.tracking` — a WAL-mode SQLite ledger recording every item's state
-  and an append-only audit trail, so a killed run resumes exactly where it
-  stopped without double-filing any chart.
-* :mod:`.manifest` — build the upload manifest from rendered documents and the
-  source documents the bundle carries, and parse the operator skiplist.
-* :mod:`.persist` — write/read the on-disk upload manifest (items, patient
-  demographics, and what the L0-L6 ladder verifies against) that bridges a
-  render run to a later ``anast upload``.
-* :mod:`.verify` — the pre/post verification seam for the L0-L6 ladder.
-* :mod:`.engine` — the sequential driver that walks each item through the
-  state machine.
-* :mod:`.fake` — the reference in-memory destination test double.
-* :mod:`.manager` — session-lifecycle management (recycling + crash relaunch)
-  decorating one destination.
-* :mod:`.cdp` — loopback-only CDP attach configuration (no Playwright at
-  import time).
-* :mod:`.reports` — the run report (deterministic JSON) and the console
-  summary line.
-
-No Playwright import lives at module load anywhere in this package: importing
-it must work on a machine without the ``deliver-browser`` extra.
+No Playwright import at module load anywhere in this package (75).
 """
 
 from __future__ import annotations
