@@ -1,22 +1,8 @@
-"""Logging with PHI redaction (security backlog: log redaction, from M1).
-
-The discipline is "never log patient names, DOBs, or identifiers" — but
-discipline fails, so this module is the defense-in-depth behind it:
-
-* :func:`redact` scrubs SSN/phone/email/date shapes from any string.
-* :class:`RedactionFilter` applies :func:`redact` to every record that
-  passes through a handler, including interpolated args and exception text.
-* :func:`exc_tag` is what error paths log instead of ``str(e)`` — exception
-  *messages* frequently embed the input that caused them (a patient name in
-  a parse error), while the exception *type* is always safe.
-* :func:`safe_log_id` is a run-scoped HMAC surrogate for a source-derived
-  identifier: loggable for within-run correlation, unlinkable across runs and
-  unconfirmable against the source export without this process's ephemeral key.
-
-Adapters and the pipeline must log **counts, field names, and safe_log_id
-surrogates** — never values, and never raw source identifiers. The filter
-exists for the day someone forgets.
-"""
+"""PHI redaction as a defense-in-depth behind the logging discipline (2):
+:func:`redact` scrubs SSN/phone/email/date shapes; :class:`RedactionFilter`
+applies it to every record a handler sees; :func:`exc_tag` is what error
+paths log instead of ``str(exc)`` (2); :func:`safe_log_id` is a run-scoped
+HMAC surrogate for a source-derived identifier."""
 
 from __future__ import annotations
 
@@ -63,16 +49,11 @@ _LOG_ID_KEY = secrets.token_bytes(32)
 
 
 def safe_log_id(value: object) -> str:
-    """A loggable, run-scoped surrogate for a source-derived identifier.
-
-    HMAC-SHA256 under a per-process ephemeral key: log lines about the same
-    record correlate within a run, but surrogates are unlinkable across runs
-    and cannot be confirmed against the source export without this run's key.
-    The 12-hex (48-bit) truncation trades collision headroom for log
-    readability — fine for correlation (collisions become likely only past
-    ~10^7 distinct ids in one process), and a collision costs correlation
-    quality, never data: real identifiers live in the ledger and reports.
-    """
+    """A loggable, run-scoped HMAC-SHA256 surrogate for a source-derived
+    identifier: correlates within a run, unlinkable across runs, unconfirmable
+    without this run's ephemeral key. The 12-hex truncation trades collision
+    headroom for readability; a collision costs correlation quality, never
+    data — real identifiers live only in the ledger and reports."""
     if value is None or value == "":
         return "id:unknown"
     digest = hmac.new(_LOG_ID_KEY, str(value).encode("utf-8"), "sha256").hexdigest()[:12]
@@ -80,12 +61,10 @@ def safe_log_id(value: object) -> str:
 
 
 class RedactionFilter(logging.Filter):
-    """Redact PHI shapes from every record this filter sees.
-
-    Interpolation happens here (``record.getMessage()``) so values passed as
-    args are scrubbed too; exception text is folded in and scrubbed rather
-    than letting the formatter render the raw traceback message.
-    """
+    """Redact PHI shapes from every record this filter sees. Interpolation
+    happens here (``record.getMessage()``) so args are scrubbed too;
+    exception text is folded in and scrubbed rather than left for the
+    formatter to render raw."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
@@ -106,23 +85,11 @@ def _has_redacting_handler(logger: logging.Logger) -> bool:
 
 
 def configure_logging(level: int = logging.WARNING) -> None:
-    """Set up root logging with redaction installed on EVERY root handler.
-
-    A host that configures logging before importing anastomosis (a
-    ``logging.basicConfig`` in an embedding application, a test harness's
-    caplog handler) leaves raw handlers on the root; appending our own safe
-    handler beside them is not enough — the pre-existing handler would still
-    emit every record unredacted. So the invariant this function restores is:
-    after it returns, every root-level handler carries the
-    :class:`RedactionFilter`. Pre-existing handlers are brought into the
-    redaction chain in place (their formatting and levels are untouched).
-
-    Idempotent: the two application entry points (the CLI callback and the
-    GUI launcher) both call this, and a single process can hit both — so if
-    the root logger already carries a redacting handler we only sweep late
-    arrivals into the chain and return without stacking a second handler of
-    our own (which would double-log every line).
-    """
+    """Contract: after this returns, every root-level handler carries
+    :class:`RedactionFilter` — a host's pre-existing handler (a
+    ``logging.basicConfig``, a test caplog) is joined in place, since a new
+    handler beside it would leave it emitting unredacted. Idempotent: a
+    second call sweeps late arrivals only, never stacks a second handler."""
     root = logging.getLogger()
     already_configured = _has_redacting_handler(root)
     for handler in root.handlers:
