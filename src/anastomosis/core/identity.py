@@ -1,51 +1,9 @@
-"""Boundary-anchored identity matching — the ONE wrong-match defense.
+"""Boundary-anchored identity matching, the one wrong-match defense (6);
+the sole implementation, so the QA check, the delivery verifier, and the
+browser destination pack cannot drift into a substring-loose variant.
 
-Raw substring matching is a proven false-PASS factory for patient identity: a
-missing heart rate of ``"98"`` hides inside a DOB ``"…1980"``, ``"4"`` inside
-``"Room 4B"``, a short name inside a longer one (``"Ann Li"`` inside
-``"Joann Liang"`` or ``"Mary-Ann Li-Wong"``), an unpadded date inside a
-different date (``"1/2/1990"`` inside ``"11/2/1990"``). Every place this
-toolkit asks "is this patient's name / DOB / value actually on the page" MUST
-anchor the match on word/number boundaries, or a wrong patient can pass.
-
-This module is that single home. It was extracted from the QA integrity check
-(:mod:`anastomosis.qa.checks`), whose ``_present`` had the correct lookaround
-shape, so the QA check, the L2/L3/L6 delivery verifier
-(:mod:`anastomosis.deliver.verify.levels`), and the browser destination pack
-(:mod:`anastomosis.destinations.browserpack`) all match through ONE predicate
-family and cannot drift into a substring-loose variant again.
-
-Two boundary definitions, deliberately distinct:
-
-* **Value boundaries** (:func:`token_present`) — a quantity or date must not
-  sit inside a word-character run, and not on either side of a ``.`` that
-  joins it to more word characters: ``"98"`` must not match inside ``"98.6"``
-  or ``"1980"``. A trailing bare period (``"1/2/1990."`` at sentence end) is
-  NOT an embedding — the value stands alone there.
-* **Name boundaries** (:func:`name_fragment_present`) — names additionally
-  treat the intra-name joiners (the whole Unicode hyphen/dash family and all
-  three apostrophes — see ``_NAME_HYPHENS`` / ``_NAME_APOSTROPHES``) as word
-  characters on the lookbehind side, so ``"Ann"`` does not stand alone in
-  ``"Mary-Ann"`` (any hyphen codepoint), nor ``"Brien"`` in ``"O'Brien"`` —
-  the punctuated-compound form of the short-name-inside-a-longer-name
-  collision. The trailing side is narrower: a hyphen rejects only when it
-  joins into a word character, a possessive (``"Ann Li's Chart"``) matches,
-  and truncation (``"Ann Li..."``) rejects — see ``_NAME_TRAILING``.
-
-Unseparated scripts (Han, kana, Hangul) write a full name flush — family and
-given concatenated with no space — so the record's separate name parts can
-never each "stand alone" the way spaced scripts do. For parts that are wholly
-ideographic, :func:`name_parts_present` therefore also accepts the JOINED
-name (both part orders) as one boundary-anchored fragment: ``"李" + "明"``
-matches ``"姓名: 李明"``. The boundaries themselves never loosen — ``"李明"``
-embedded in ``"李明华"`` (a longer name: a different patient) or flush inside
-running prose (``"患者李明的记录"``) still refuses, because an adjacent
-ideograph is indistinguishable from more-of-the-name. That residual refusal
-is the safe direction: the patient reads as not found and the run stops
-loudly; a chart is never filed on a boundary-free guess.
-
-PHI rule: these functions receive patient-derived values (names, DOBs) to do
-their job but never log — a caller logs the boolean/count, never the value.
+PHI (2): these functions receive patient-derived values to do their job
+but never log — a caller logs the boolean/count, never the value.
 """
 
 from __future__ import annotations
@@ -65,13 +23,9 @@ __all__ = [
 
 
 def normalize(text: str) -> str:
-    """Lowercase and collapse every whitespace run to a single space.
-
-    The one text-normalization the identity matchers share (PDF text extraction
-    yields irregular whitespace; case varies by pack). Kept here so the delivery
-    verifier's fuzzy windowing and these boundary matchers cannot disagree about
-    what "the same text" means.
-    """
+    """Lowercase and collapse whitespace runs: the one text-normalization
+    the identity matchers share, so the delivery verifier's fuzzy windowing
+    and these boundary matchers cannot disagree about "the same text"."""
     return " ".join(text.split()).lower()
 
 
@@ -83,21 +37,11 @@ _VALUE_TRAILING = r"(?!\w|\.\w|\.\.|\u2026)"
 
 
 def token_present(needle: str, haystack: str) -> bool:
-    """Boundary-anchored, case-sensitive presence: ``needle`` must stand alone.
-
-    The lookarounds reject a match embedded in adjacent word characters or
-    joined through a ``.`` to more word characters: ``(?<![\\w.])`` before, and
-    after the needle neither a word character nor a ``.`` that continues into
-    one — so ``"98"`` does not match inside ``"98.6"`` or ``"1980"``, and
-    ``"1/2/1990"`` does not match inside ``"11/2/1990"`` or ``"1/2/1990.pdf"``.
-    A trailing *bare* period (sentence end: ``"seen Ann Li."``,
-    ``"DOB: 1/2/1990."``) is not an embedding and matches — a cosmetic period
-    must not read as a different identity — but a two-dot run or an ellipsis
-    is TRUNCATION (``"DOB 1/2/1990..."``): the full value is unknown, so it
-    rejects. An empty needle matches nothing (fail closed). Callers that need
-    case-insensitivity normalize their inputs first (see
-    :func:`name_fragment_present`, :func:`date_token_present`).
-    """
+    """Boundary-anchored, case-sensitive presence (6): ``needle`` must stand
+    alone, not joined through word characters or a ``.`` (``"98"`` not
+    inside ``"98.6"``/``"1980"``). A trailing bare period matches; a
+    two-dot run or ellipsis (truncation) rejects. Empty needle fails
+    closed; callers needing case-insensitivity normalize first."""
     if not needle:
         return False
     return re.search(rf"(?<![\w.]){re.escape(needle)}{_VALUE_TRAILING}", haystack) is not None
@@ -126,18 +70,11 @@ _NAME_TRAILING = rf"(?!\w|\.\w|\.\.|\u2026|[{_NAME_HYPHENS}]\w)"
 
 
 def name_fragment_present(fragment: str, haystack: str) -> bool:
-    """One contiguous name fragment stands alone in ``haystack``.
-
-    Case-insensitive and whitespace-normalized on both sides, so a multi-word
-    fragment (a compound family name: ``"De La Cruz"``) must appear as that
-    contiguous phrase. Boundaries are the name-joiner-aware classes
-    (``_NAME_BOUNDARY`` behind, ``_NAME_TRAILING`` ahead): ``"Ann Li"``
-    matches in neither ``"Joann Liang"`` nor ``"Mary-Ann Li-Wong"`` (any
-    hyphen codepoint) nor ``"Ann-Marie Li"``, while the possessive
-    (``"Ann Li's Chart"``), a punctuation hyphen (``"Ann Li- DOB"``), and a
-    bare sentence period (``"Patient: Ann Li."``) all still match, and a
-    truncated cell (``"Ann Li..."``) rejects. Empty fragments match nothing.
-    """
+    """One contiguous name fragment stands alone in ``haystack`` (6):
+    case-insensitive, whitespace-normalized, a multi-word fragment matched
+    as one phrase. ``"Ann Li"`` does not match in ``"Joann Liang"`` or
+    ``"Mary-Ann Li-Wong"`` (any hyphen codepoint), but a possessive or a
+    bare sentence period still matches. Empty fragments match nothing."""
     cleaned = normalize(fragment)
     if not cleaned:
         return False
@@ -164,13 +101,10 @@ _UNSEPARATED_SCRIPT = re.compile(
 
 
 def _joined_name_candidates(parts: list[str]) -> list[str]:
-    """The flush-concatenated forms an unseparated-script name renders as.
-
-    Both part orders (family-given and given-family), because the record does
-    not say which order the destination renders. Only the two declared orders —
-    never every permutation, which would loosen the contiguity guarantee for
-    three-part names. Empty when any part carries a non-ideographic character.
-    """
+    """The flush-concatenated forms an unseparated-script name renders as:
+    both part orders (the record does not say which the destination uses),
+    never every permutation of 3+ parts, which would loosen contiguity.
+    Empty when any part carries a non-ideographic character."""
     stripped = [part.strip() for part in parts]
     if len(stripped) < 2 or not all(_UNSEPARATED_SCRIPT.match(part) for part in stripped):
         return []
@@ -180,23 +114,11 @@ def _joined_name_candidates(parts: list[str]) -> list[str]:
 
 
 def name_parts_present(parts: Iterable[str], haystack: str) -> bool:
-    """Every declared name part appears in ``haystack`` as a contiguous fragment.
-
-    ``parts`` are the record's own name fields (family name, given name), each
-    matched as ONE phrase via :func:`name_fragment_present` — a multi-word
-    family name must appear contiguously, never re-split and satisfied word-by-
-    word across the page (which would let a reordered compound surname pass).
-    Parts themselves are order-independent (``"Li, Ann"`` matches family
-    ``"Li"`` + given ``"Ann"``). No parts at all is a fail-closed ``False`` —
-    an identity check must not pass on the absence of a name.
-
-    Wholly-ideographic parts get one extra chance: the flush-joined name in
-    either part order, matched as ONE fragment under the same boundaries
-    (see :func:`_joined_name_candidates`) — ``["李", "明"]`` matches
-    ``"姓名: 李明"``, where neither part can stand alone because the other is
-    its immediate neighbour. ``"李明"`` inside ``"李明华"`` or flush inside
-    prose still refuses: an adjacent ideograph may be more of the name.
-    """
+    """Every declared name part appears in ``haystack`` as its own
+    contiguous fragment (6), never re-split word-by-word. No parts fails
+    closed. Wholly-ideographic parts get one extra chance: the flush-joined
+    name in either part order — ``["李", "明"]`` matches ``"姓名: 李明"`` —
+    but an adjacent ideograph (``"李明华"``) still refuses."""
     cleaned = [part for part in parts if part and part.strip()]
     if not cleaned:
         return False
@@ -208,32 +130,19 @@ def name_parts_present(parts: Iterable[str], haystack: str) -> bool:
 
 
 def name_present(expected_name: str, haystack: str) -> bool:
-    """Every whitespace-separated word of ``expected_name`` stands alone.
-
-    The single-string convenience over :func:`name_parts_present`: the name is
-    split on whitespace and each word must be a standalone fragment, so
-    ``"Ann Li"`` does NOT match ``"Joann Liang"`` (embedded), ``"Mary-Ann
-    Li-Wong"`` (joined through hyphens), or ``"O'Brien"``-style apostrophe
-    compounds. Callers that know the record's field structure should prefer
-    :func:`name_parts_present`, which keeps multi-word fields contiguous.
-    """
+    """The single-string convenience over :func:`name_parts_present`: each
+    whitespace-split word of ``expected_name`` must stand alone. Callers
+    that know the record's field structure should prefer
+    :func:`name_parts_present`, which keeps multi-word fields contiguous."""
     return name_parts_present(expected_name.split(), haystack)
 
 
 def date_token_spans(rendering: str, haystack: str) -> list[tuple[int, int]]:
-    """WHERE a rendered date stands alone in ``haystack``, not merely whether.
-
-    Same normalization and same boundaries as :func:`date_token_present` — it
-    is the counting form of that predicate, kept beside it so the two can never
-    disagree about what "the date is here" means. Spans index the NORMALIZED
-    haystack, so they are useful for counting and de-duplicating occurrences
-    across spellings, not for slicing the caller's original text.
-
-    A caller that needs "is it here at all" wants the predicate; a caller that
-    needs "is it here MORE times than the layout admits to" wants this. That
-    second question is what lets a pack stamp the render day on purpose without
-    the staleness check going blind to a template that stamps it by accident.
-    """
+    """WHERE a rendered date stands alone, not merely whether — the
+    counting form of :func:`date_token_present`, same boundaries, so the
+    two can never disagree. Spans index the NORMALIZED haystack, useful
+    for de-duplicating occurrences, never for slicing the caller's
+    original text."""
     needle = normalize(rendering)
     if not needle:
         return []
@@ -242,14 +151,9 @@ def date_token_spans(rendering: str, haystack: str) -> list[tuple[int, int]]:
 
 
 def date_token_present(rendering: str, haystack: str) -> bool:
-    """A single rendered date stands alone in ``haystack`` (boundary-anchored).
-
-    Case-insensitive and whitespace-normalized (month-name spellings carry
-    letters and spaces; numeric spellings do not). Digit-boundary anchored via
-    :func:`token_present`, so ``"1/2/1990"`` does not match inside
-    ``"11/2/1990"`` — the unpadded-DOB-inside-a-different-date collision — but
-    a sentence-final ``"1/2/1990."`` does match. Callers enumerate the accepted
-    spellings (see :func:`anastomosis.core.timeutil.all_date_spellings`) and
-    require at least one present.
-    """
+    """A single rendered date stands alone in ``haystack`` (6), case-
+    insensitive and whitespace-normalized, via :func:`token_present`:
+    ``"1/2/1990"`` does not match inside ``"11/2/1990"``. Callers enumerate
+    accepted spellings (:func:`anastomosis.core.timeutil.all_date_spellings`)
+    and require at least one present."""
     return token_present(normalize(rendering), normalize(haystack))

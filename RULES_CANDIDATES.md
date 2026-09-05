@@ -15,6 +15,10 @@ adjudicate into `RULES.md` or reject.
   `core/output.py`'s `typed_path` (never a bare `Path(arg)`), enforced by
   `tests/unit/test_gui_console_paths.py` walking each console's AST
   (`core/output.py:71`).
+- The L2/L3 delivery verifier and the QA `DataIntegrityCheck` share
+  `all_date_spellings` as the single source of accepted date spellings, so
+  they can never diverge on which chart rendering counts as present
+  (`core/timeutil.py:175`).
 
 ## Loose ends
 
