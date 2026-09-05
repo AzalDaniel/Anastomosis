@@ -15,6 +15,22 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **The rulebook and the safety net for the refactor toward the eighth alpha.**
+  Before any code moves, four things every later slice is measured against:
+  `docs/RULES.md` (87 settled rules, one sentence each, forty of them rescued
+  from docstrings so the prose can go without a requirement going with it),
+  `docs/AUDIT_LEDGER.md` (one row per file and function that earned a look,
+  a merge map per slice, the confirmed duplicate pairs, and fourteen findings
+  that are defects rather than refactor work), a short `CLAUDE.md`, and six
+  skills under `.claude/skills/`. The tools: `tools/snapshot.py` drives the
+  real `anast` CLI over the five committed fixtures and fails on any byte of
+  difference in what each run writes, `tools/prose_gate.py` ratchets comment
+  volume down (it may shrink, never grow), `tools/guard_count.py` pins the
+  floor on distinct `#NNN` regression references in `tests/` at 72, and
+  `tools/ast_equal.py` proves a change touched nothing but prose. `core/clock.py`
+  is the `SOURCE_DATE_EPOCH` seam that makes two runs byte-comparable; nine
+  stamping sites route through it. Nothing a user can see changes. (#415)
+
 - **A clinical fact keeps the id its source gave it, so a bundle is the same
   bundle twice.** Every `Condition`, `AllergyIntolerance`, `MedicationStatement`,
   `Immunization` and `Observation` took `AnastBase.id`'s `uuid4` default, which
