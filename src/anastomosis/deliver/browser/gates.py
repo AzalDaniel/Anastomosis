@@ -1,40 +1,11 @@
 """The route a bundle was prepared for, the gates it passed, and the refusal.
 
-``anast migrate`` PREPARES: it writes the artifacts, resolves the destination's
-transit map, and stops (:mod:`anastomosis.core.migration_status` holds that
-verdict). The route it chose was a fact about the run that lived only in the
-run's own output — the operator saw it once, on the terminal — while the upload
-manifest, which is the thing an executor actually reads hours later on another
-machine, carried no trace of it and no trace of whether the run's gates had
-passed. So the artifacts and the plan for them were reviewed in one place and
-executed from another, with nothing tying the two together.
-
-This module is that tie. :class:`RoutePlan` and :class:`RunGates` ride in the
-manifest from schema v3 (see ``docs/UPLOAD_MANIFEST.md``), and
-:func:`assert_deliverable` is the check every executor runs before it moves a
-single chart:
-
-* a gate the run RECORDED as failed, or as never run, refuses. Verification is
-  not optional decoration on a bundle that is about to be filed into somebody's
-  chart — an unverified upload is exactly the wrong-patient risk the ladder
-  exists for;
-* a recorded route that found no viable way in refuses. Executing a route the
-  run's own planner rejected means running something nobody reviewed;
-* an item whose bytes no longer hash to what the manifest recorded refuses the
-  whole run, not just that item. A file that changed after review is either a
-  re-render nobody re-reviewed or a corruption, and neither is a per-item
-  problem: the bundle is no longer the bundle that was checked.
-
-The one thing it does NOT refuse is a bundle with no gate record at all — a
-manifest from before v3. Operators have rendered trees on disk; stranding them
-would be a worse failure than the one being fixed, and it is the same posture
-the reader already takes with a v1 manifest. It warns, loudly, naming what could
-not be checked, and never silently.
-
-PHI: refusals carry counts, gate names, a destination name and a route kind.
-Never an item key, never a path, never a patient value — an executor's refusal
-is printed to a terminal and written to a log, and both are outside the hardened
-output directory.
+:class:`RoutePlan` and :class:`RunGates` ride in the manifest from schema v3
+(``docs/UPLOAD_MANIFEST.md``); :func:`assert_deliverable` refuses a bundle
+whose recorded gates failed or never ran, whose route found no viable way
+in, or whose bytes fail to match what was reviewed (46). A pre-v3 manifest
+warns instead of refusing. PHI: counts, gate names, a destination name and
+a route kind only — never an item key, a path, or a patient value (3).
 """
 
 from __future__ import annotations
@@ -46,11 +17,8 @@ from typing import TYPE_CHECKING, Any
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.logutil import exc_tag
 
-#: The upload-manifest version that introduced the reviewed route plan and the
-#: run's gate outcomes. It lives HERE, with the records it names, because the
-#: delivery decision needs it and `persist` already imports this module — the
-#: other direction would close a cycle. `persist` re-exports it, so every
-#: existing import site is unchanged.
+#: Manifest version that introduced the route plan and gate outcomes; lives
+#: here (not in `persist`, which imports this module) to avoid a cycle.
 GATE_VERSION = 3
 
 if TYPE_CHECKING:
@@ -74,9 +42,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: The three things a gate can say. ``not_run`` is deliberately distinct from
-#: ``fail``: they mean different things to a reader and they came about
-#: differently, but for an executor they land the same way — neither is a pass.
+#: The three things a gate can say. ``not_run`` differs semantically from
+#: ``fail``, but an executor treats both as not a pass.
 GATE_PASS = "pass"  # noqa: S105 — a gate verdict label, not a password
 GATE_FAIL = "fail"
 GATE_NOT_RUN = "not_run"
@@ -87,22 +54,16 @@ CONSERVATION_BALANCED = "balanced"
 
 
 class DeliveryRefused(Exception):
-    """An executor will not deliver this bundle, and the message says why.
-
-    Distinct from :class:`~anastomosis.deliver.browser.persist.ManifestError`:
-    that one means the file could not be read. This one means it read
-    perfectly and describes a bundle nobody should act on.
+    """The bundle read fine but should not be delivered; distinct from
+    :class:`~anastomosis.deliver.browser.persist.ManifestError` (unreadable).
     """
 
 
 @dataclass(frozen=True)
 class RoutePlan:
-    """The destination route a run resolved, as reviewed.
-
-    ``kind`` is a :class:`~anastomosis.deliver.router.RouteKind` value, or
-    ``None`` when the planner found no viable automated route at all — which is
-    a capability gap the artifacts survive (the C-CDA is still importable by
-    hand) and an executor must not paper over.
+    """The destination route a run resolved. ``kind`` is ``None`` when the
+    planner found no automated route — a capability gap the artifacts
+    survive (the C-CDA stays importable by hand).
     """
 
     destination: str
@@ -122,12 +83,9 @@ class RoutePlan:
 
 
 def route_plan_of(transit: TransitMap) -> RoutePlan:
-    """A :class:`~anastomosis.deliver.router.TransitMap` as the recordable plan.
-
-    The router is imported for typing only: this module is imported by the
-    manifest writer, which must keep loading on a machine with no browser extra,
-    and the router pulls the destination registry in behind it. The two fields
-    read here are the two the record carries.
+    """A :class:`~anastomosis.deliver.router.TransitMap` as the recordable
+    plan. ``transit`` is imported for typing only, so this module keeps
+    loading without the router pulling the destination registry in.
     """
     chosen = transit.chosen
     return RoutePlan(
@@ -137,20 +95,10 @@ def route_plan_of(transit: TransitMap) -> RoutePlan:
 
 @dataclass(frozen=True)
 class RunGates:
-    """What the render run checked before it wrote this bundle.
-
-    Three gates, because three different things can be wrong with a bundle and
-    an executor needs to be able to say which:
-
-    * :attr:`qa` — the semantic gate. Did every rendered document verify against
-      the record it came from?
-    * :attr:`conservation` — the accounting gate. Did every encounter the seam
-      was offered end in exactly one column, so the survivors are not being
-      reported as the whole set?
-    * :attr:`layout_hash` — the provenance gate. Which layout bytes produced
-      these pages (:mod:`anastomosis.reconstruct.provenance`)? ``None`` where no
-      Jinja layout was involved at all — the whole-patient standard C-CDA view
-      renders through HL7's own stylesheet — which is a real answer, not a gap.
+    """What the run checked: ``qa`` (documents verified), ``conservation``
+    (every encounter landed in one column), ``layout_hash`` (which layout
+    produced these pages — ``None`` for the HL7-stylesheet view is a real
+    answer, not a gap).
     """
 
     qa: str
@@ -159,17 +107,9 @@ class RunGates:
 
     @classmethod
     def from_run(cls, *, qa_ok: bool | None, layout_hash: str | None) -> RunGates:
-        """The gates of a run that has reached the point of writing a manifest.
-
-        ``qa_ok`` is ``None`` when QA did not run at all (``--no-qa``, or the
-        optional PyMuPDF dependency the checks read PDFs with is not installed).
-
-        Conservation is recorded as balanced because reaching here IS the
-        evidence: the render seam's
-        :meth:`~anastomosis.core.conservation.Conservation.check` raises on an
-        unbalanced batch, and a raised run never writes a manifest. The field
-        exists so a future stage that can settle it differently has somewhere to
-        say so, and so a reader is not left inferring it from silence.
+        """``qa_ok`` is ``None`` when QA did not run (``--no-qa`` or no
+        PyMuPDF). Conservation is always recorded balanced: an unbalanced
+        batch raises upstream before a manifest is ever written.
         """
         return cls(
             qa=GATE_NOT_RUN if qa_ok is None else (GATE_PASS if qa_ok else GATE_FAIL),
@@ -209,11 +149,8 @@ class RunGates:
 
 
 def _changed_items(items: list[UploadItem]) -> int:
-    """How many items no longer hash to what the manifest recorded.
-
-    Counts unreadable files too: a chart that cannot be re-measured cannot be
-    shown to be the chart that was reviewed, and "cannot show" and "does not
-    match" reach an executor as the same refusal.
+    """How many items fail to hash to what the manifest recorded, counting
+    an unreadable file as changed too (cannot show it is the reviewed one).
     """
     changed = 0
     for item in items:
@@ -229,24 +166,14 @@ def _changed_items(items: list[UploadItem]) -> int:
 
 
 def assert_deliverable(manifest: UploadManifest) -> None:
-    """Refuse a bundle no executor should act on. Returns ``None`` or raises.
-
-    Takes the loaded
-    :class:`~anastomosis.deliver.browser.persist.UploadManifest`, imported for
-    typing only — that module imports this one to (de)serialize the two records
-    below, so a runtime import back would close the circle.
-
-    Checked in cost order: the recorded verdicts first, then the route, then the
-    re-hash of every rendered file — so a bundle that was never going to be
-    delivered does not pay for a walk over its charts first.
+    """Contract: returns ``None`` or raises :class:`DeliveryRefused`.
+    Checked cost-order — recorded verdicts, then route, then a re-hash of
+    every rendered file — so a doomed bundle never pays for the file walk.
     """
     gates = manifest.gates
     if gates is None and manifest.version >= GATE_VERSION:
-        # NOT the grandfather clause. A manifest that declares the version at
-        # which gates exist and carries none was written incompletely or
-        # edited: every writer at this version records them, so reading this
-        # as "an old tree" would hand delivery the one branch it is allowed to
-        # walk past — the whole gate, undone by one token.
+        # Not the grandfather clause: every writer at this version records
+        # gates, so declaring none here is incomplete or edited data (46).
         raise DeliveryRefused(
             "refusing to deliver this bundle: its upload manifest declares version "
             f"{manifest.version} and records no gate outcomes, so nothing says whether these "
@@ -254,9 +181,7 @@ def assert_deliverable(manifest: UploadManifest) -> None:
             "them. Re-render rather than delivering past a record that is not there."
         )
     if gates is None:
-        # The grandfather clause, and only for a manifest old enough to predate
-        # the record. Loud, and never silent — see the module docstring for why
-        # this one is a warning.
+        # Grandfather clause: a manifest old enough to predate the record (46).
         logger.warning(
             "this bundle's upload manifest (v%d) records no gate outcomes: delivery cannot "
             "tell whether these charts were verified, whether the render seam balanced, or "
