@@ -1,28 +1,12 @@
 """Jinja2 templates for the offline archive.
 
-Three pages:
+Three pages: :data:`INDEX_HTML` (search + inline-JSON data, the only page
+with a script tag), :data:`PATIENT_HTML` and :data:`ENCOUNTER_HTML` (no
+JavaScript at all). Every template: strict CSP, relative asset paths only,
+static and openable from ``file://`` (RULES.md 38-39).
 
-* :data:`INDEX_HTML` — the archive root with a search box and the inline-JSON
-  data block; only page carrying JavaScript (one self-served script tag).
-* :data:`PATIENT_HTML` — per-patient summary (demographics, encounters,
-  download links). No JavaScript at all.
-* :data:`ENCOUNTER_HTML` — per-encounter page linking the rendered PDF.
-  No JavaScript at all.
-
-Hard rules baked into every template:
-
-* ``<!DOCTYPE html>`` + ``<meta charset="utf-8">`` first thing.
-* CSP meta tag pinning the page to local assets only — no inline executable
-  JS, no remote sources of any kind. The inline JSON block in the index is
-  ``type="application/json"``, which the browser treats as data and CSP
-  does not require ``'unsafe-inline'`` to allow.
-* Relative asset paths only; depth-aware via ``asset_prefix``.
-* Patient/encounter pages are static (zero JS) and openable in any browser
-  that survives the next 30 years of standards churn.
-
-All user-supplied strings autoescape; the only literal HTML emitted from
-templates is the structural markup itself.
-"""
+All user-supplied strings autoescape; the only literal HTML is the
+templates' own structural markup."""
 
 from __future__ import annotations
 
@@ -36,13 +20,8 @@ __all__ = [
     "build_env",
 ]
 
-# Locked-down CSP. Inline JSON via <script type="application/json"> is treated
-# as data and does not need 'unsafe-inline'; the only executable script must
-# be served from the archive's own assets directory. frame-ancestors is
-# deliberately absent: the CSP spec ignores it in a <meta> element, and these
-# pages are opened from file:// where no server can send it as a header —
-# declaring it here would claim an embedding protection the archive cannot
-# actually provide.
+# Locked-down CSP (RULES.md 38-39). frame-ancestors is deliberately absent:
+# <meta> CSP ignores it, and file:// pages have no server header to send it.
 CSP_META_CONTENT = (
     "default-src 'none'; "
     "script-src 'self'; "
@@ -229,11 +208,10 @@ itself is AGPL-3.0-or-later (https://github.com/AzalDaniel/Anastomosis).
 
 
 def build_env() -> Environment:
-    """Jinja2 environment used to render the archive's HTML pages.
+    """Jinja2 environment for rendering the archive's HTML pages.
 
-    Autoescape is on for every template extension we emit so any string-typed
-    value picked out of a record is HTML-escaped automatically.
-    """
+    Autoescape is on for every emitted template, so any string-typed value
+    picked out of a record is HTML-escaped automatically."""
     return Environment(
         autoescape=select_autoescape(default=True, default_for_string=True),
         keep_trailing_newline=True,
