@@ -17,4 +17,17 @@ prose at that site was cut to this sentence in place.
    different wording for a flag (`migrate`'s `--from`, the delivery pair's
    own `--out` phrasing) declares its own alias rather than reusing this one.
 
+4. `qa/checks.py:309 UnattributedVitalsCheck` — This check is deliberately
+   silent about a non-vital observation with no `encounter_id` (e.g.
+   smoking status): a fact about the patient rather than a visit is not a
+   defect, and flagging it would put a finding on every chart of every
+   patient ever asked about tobacco. A vital-with-no-encounter finding is
+   reported once per chart of the record, not once total, because no single
+   document owns the missing link.
+5. `qa/checks.py:421 RecordCoverageCheck` — Its findings name only kinds and
+   counts, never a diagnosis or drug value, because a coverage finding can
+   travel into a run-level summary outside the hardened QA-report directory
+   that RULES.md 4 exempts (unlike `DataIntegrityCheck`, whose findings stay
+   inside `qa_report.json` and may quote the value that failed to match).
+
 ## Loose ends

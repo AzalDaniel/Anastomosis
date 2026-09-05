@@ -72,15 +72,10 @@ def run_qa(
     record_summary_paths: dict[str, Path] | None = None,
 ) -> QAReport:
     """Contract: applies every check to every document; a check that raises
-    surfaces as a CRASH finding rather than aborting the batch. ``render_tz``
-    is the clock a render-day check must use instead of the operator's own.
-    ``render_day_stamps`` is how many render-day dates the layout prints on
-    purpose. ``carries``/``omits`` are the pack's own coverage declaration;
-    neither given means undeclared, and the coverage check verifies every
-    kind rather than assume a defect. ``record_summary_paths`` keys the
-    rendered whole-patient summary by ``patient.id`` so a document never gets
-    another patient's summary; a patient absent gets ``None`` (nothing
-    rendered, not "declined to check")."""
+    surfaces as a CRASH finding rather than aborting the batch.
+    ``record_summary_paths`` keys the rendered whole-patient summary by
+    ``patient.id``, so a document never gets another patient's summary; a
+    patient absent gets ``None`` (nothing rendered, not "declined to check")."""
     active = checks if checks is not None else engine_checks()
     report = QAReport()
     for pdf_path, encounter, record in documents:

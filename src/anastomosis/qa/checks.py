@@ -64,19 +64,12 @@ class PageInfo:
 
 
 def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
-    """Open the PDF once and capture per-page text + geometry.
-
-    Text extraction is the expensive part and every engine check reads the same
-    rendered document, so the runner primes a shared cache
-    (:func:`prime_snapshot_cache`) and the checks read from it instead of each
-    calling ``pymupdf.open``. A corrupt/unreadable PDF raises here — but this is
-    always called from inside a check, so it surfaces as that check's CHECK
-    CRASHED finding rather than aborting the batch.
-    """
-    # Imported here, not at module scope. `pymupdf` ships in the `render` extra,
-    # and this module is reached from `anastomosis.deliver.archive` — so a base
-    # install could not import the archive deliverer at all, and `anast doctor`
-    # reported its own bundled assets as missing on a correct install.
+    """Opens the PDF once and captures per-page text + geometry, shared via
+    :func:`prime_snapshot_cache` so no check calls ``pymupdf.open`` twice.
+    Called only from inside a check, so a corrupt PDF surfaces as that
+    check's CHECK CRASHED finding rather than aborting the batch."""
+    # Imported here, not at module scope: pymupdf is the `render` extra, and a
+    # base install must still be able to import this module (e.g. `anast doctor`).
     import pymupdf
 
     with pymupdf.open(pdf_path) as doc:  # type: ignore[no-untyped-call]
@@ -87,22 +80,10 @@ def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
 
 
 class _SnapshotCache:
-    """A lazily-populated page snapshot PER PDF PATH, shared across a run's
-    checks so each document is opened and text-extracted at most once.
-
-    This is one extraction per PDF per context — not a single-document store.
-    A context is created once per QA run and today's checks only ever ask it
-    about the one document they are grading, so keying by path costs one dict
-    and changes nothing observable yet. But a context is not contractually
-    one-document: the first version of this cache kept a single slot and
-    silently served it for every path asked after the first, so a check that
-    later opens a SECOND document against the same context (#392 asks the
-    per-encounter vitals against the whole-record summary page, not the
-    per-encounter chart) would have graded the first document's text under
-    the second document's name and reported a pass. Unbounded on purpose: a
-    context grades a handful of documents, not thousands, so eviction would
-    trade a real bug (the one above) for a fabricated ceiling.
-    """
+    """A lazily-populated page snapshot per PDF path, shared across a run's
+    checks. Keyed by path, not a single slot: a context can grade more than
+    one document (#392), and unbounded on purpose since a context grades a
+    handful, not thousands."""
 
     __slots__ = ("_pages",)
 
@@ -116,15 +97,9 @@ class _SnapshotCache:
 
 
 def prime_snapshot_cache(ctx: QAContext) -> None:
-    """Attach a lazy per-document snapshot cache to ``ctx`` so the run's checks
-    share one ``pymupdf.open`` instead of opening the PDF once per check.
-
-    ``QAContext`` is a frozen dataclass, so the cache slot is set through
-    ``object.__setattr__`` — the same escape hatch frozen dataclasses use
-    internally. The cache is lazy: a corrupt PDF still raises inside the first
-    check that touches it (surfacing as that check's CHECK CRASHED finding),
-    never here, so batch behavior is unchanged. Idempotent per document.
-    """
+    """Attaches a lazy per-document cache to ``ctx`` via
+    ``object.__setattr__`` (``QAContext`` is frozen). Lazy, so a corrupt PDF
+    still surfaces as the first check's CHECK CRASHED finding, never here."""
     object.__setattr__(ctx, _CACHE_ATTR, _SnapshotCache())
 
 
@@ -143,52 +118,29 @@ def _document_text(pdf_path: Path, ctx: QAContext) -> str:
 
 
 def _present(needle: str, text: str) -> bool:
-    """Boundary-anchored presence: the value must stand alone.
-
-    Raw substring matching is a proven false-PASS factory — a missing heart
-    rate of "98" hides inside a DOB "…1980", "4" inside "Room 4B", a name
-    inside a longer name, an unpadded date inside a different date. The
-    lookarounds reject matches embedded in adjacent word characters or
-    number runs.
-
-    For a VALUE. A name goes through :func:`_name_present` and a date through
-    :func:`_date_present` — see those. The identity module keeps three families
-    apart on purpose, and this check has to pick the right one per field rather
-    than treat every field as a value.
-    """
+    """Boundary-anchored presence for a VALUE: rejects a match embedded in
+    adjacent word/number characters (a "98" inside "1980", a "4" inside
+    "Room 4B"). Names go through :func:`_name_present`, dates through
+    :func:`_date_present` — the identity module keeps the three families
+    apart on purpose."""
     return token_present(needle, text)
 
 
 def _name_present(name: str, text: str) -> bool:
-    """Is this PATIENT'S name on the document, as their name?
-
-    The name-boundary predicate, which is what the L2/L3/L6 delivery verifier
-    and the browser pack both use — because intra-name joiners have to count as
-    embedding. This check used the VALUE predicate, so a chart for
-    "Mary-Ann Li-Wong" passed verification against a record for "Ann Li": a
-    different patient's chart, marked verified, by the one check whose entire
-    job is to catch that.
-    """
+    """Name-boundary presence, matching the delivery verifier's own
+    predicate — the wrong-match defense (RULES.md 6)."""
     return name_fragment_present(name, text)
 
 
 def _date_present(spelling: str, text: str) -> bool:
-    """Is this date on the document?
-
-    The date-boundary predicate, again matching the delivery verifier: a date
-    has its own run-of-digits rules, and an unpadded spelling must not match
-    inside a longer number.
-    """
+    """Date-boundary presence, matching the delivery verifier's own
+    predicate (RULES.md 6)."""
     return date_token_present(spelling, text)
 
 
 def _date_spellings(value: date) -> set[str]:
-    """The chart spellings the QA integrity check accepts for a date.
-
-    Delegates to the single canonical enumerator so the QA check and the L2/L3
-    delivery verifier can never diverge (they once did — the verifier accepted an
-    unpadded ``M-D-YYYY`` DOB the QA check rejected, blocking a correct chart).
-    """
+    """Delegates to the single canonical enumerator so this check and the
+    delivery verifier can never diverge on which spellings count."""
     return all_date_spellings(value)
 
 
@@ -223,16 +175,9 @@ def _chunks(body: str) -> list[str]:
 
 
 def _note_bodies(encounter: Encounter, flags: dict[str, bool]) -> list[tuple[str, str]]:
-    """Every piece of narrative the chart is supposed to carry, labelled.
-
-    Labels name the SECTION, never quote it: a finding travels into logs and
-    run reports, and the body is the patient's chart.
-
-    A section the operator switched off is absent on purpose and is not asked
-    about — ``addenda`` is a declared flag in the bundled packs, and a pack may
-    declare one named for any section kind. Only what the chart was asked to
-    carry is verified.
-    """
+    """Every piece of narrative the chart should carry, labelled by SECTION
+    name only — never the text, since findings travel into logs and reports.
+    A section switched off via ``flags`` is skipped, not asked about."""
     bodies = [
         (f"the {section.kind.value} section", section.text)
         for section in encounter.sections
@@ -306,10 +251,8 @@ class LayoutPaginationCheck:
 
 def _dangling_encounter_findings(record: PatientRecord, known: set[str]) -> list[str]:
     """The second, worse arm of :class:`UnattributedVitalsCheck`: an
-    observation naming an encounter this record does not contain. No summary
-    can rescue this one — the defect is the dangling reference, not where the
-    value landed — so it is not this module's concern whether one rendered.
-    """
+    observation naming an encounter this record does not contain — always a
+    defect, so it is not this module's concern whether one rendered."""
     return [
         f"{obs.display or obs.code or 'observation'} names an encounter this record does not have"
         for obs in record.observations
@@ -329,12 +272,9 @@ def _unattributed_vitals(record: PatientRecord) -> list[Observation]:
 def _graded_against_summary(
     unattributed: list[Observation], ctx: QAContext
 ) -> tuple[list[str], int]:
-    """Split ``unattributed`` into (labels on no chart at all, count the
-    record summary carries) by reading the page, never inferring from the
-    record. Read once per call, only when there is something to check against
-    — a record with no unattributed vitals never pays for opening a second
-    PDF (the caller skips this entirely in that case).
-    """
+    """Splits ``unattributed`` into (labels on no chart, count carried by
+    the summary) by reading the page, never inferring from the record; the
+    caller skips this entirely when there's nothing to check."""
     summary_text = (
         _document_text(ctx.record_summary_path, ctx)
         if ctx.record_summary_path is not None
@@ -367,50 +307,11 @@ def _no_chart_findings(no_chart: list[str], *, summary_rendered: bool) -> list[s
 
 
 class UnattributedVitalsCheck:
-    """A measurement that survived ingest and may appear on no chart at all.
-
-    :class:`VitalsLoincCheck` asks whether the vitals FOR THIS ENCOUNTER
-    reached the page. When nothing in the record names the encounter, that
-    list is empty and the question answers itself — five checks pass over a
-    record holding eight vitals and a chart showing none of them. That vacuous
-    pass is the gap this fills, and it is the one shape the other checks
-    cannot see, because they all start from what the encounter claims.
-
-    Two failures, and they are not the same one:
-
-    * A vital sign attached to no encounter. A blood pressure is taken at a
-      visit by definition, so one that names no visit has lost the link on
-      the way in, and no per-encounter section can render it — but the bundle
-      also carries the whole-patient record summary (#239), and THAT page has
-      no encounter to key on at all, so it is the one place an orphaned value
-      can still land. Read from ``ctx.record_summary_path`` (never re-derived,
-      never inferred from the record) and graded by what is actually ON it:
-
-        - no summary was rendered for this patient (``record_summary_path`` is
-          ``None``) → FAIL. Nothing verified the value landed anywhere.
-        - a summary was rendered and the value is on it → WARN. The visit link
-          is genuinely missing and an operator should see that, but the fact
-          itself reached the bundle, so the run does not refuse it.
-        - a summary was rendered and the value is NOT on it → FAIL. Rendering
-          a page is not the same as the value being on it.
-
-    * An observation of any kind pointing at an encounter this record does not
-      contain. Worse than the first, because it looks attributed — the value
-      names a visit, and the visit is not there. No summary can rescue this
-      one: the defect is the dangling reference itself, not where the value
-      landed, so it stays FAIL unconditionally.
-
-    Deliberately silent about the third case: a NON-vital observation with no
-    encounter. A smoking status is a fact about the patient rather than
-    something measured at an appointment, and the C-CDA linker declines to
-    place it on a visit on purpose. Flagging it would put a finding on every
-    chart of every patient who has ever been asked about tobacco, and a check
-    that cries on the normal case is a check operators learn to skip.
-
-    The finding belongs to the record, not to any one document, so it is
-    repeated on each chart. That is the honest reporting: every chart really
-    is missing the visit link, and there is no one document to pin it to.
-    """
+    """Contract: a vital with no ``encounter_id`` is graded against
+    ``ctx.record_summary_path``: no summary → FAIL; on the summary → WARN;
+    rendered but absent → FAIL. An observation naming an encounter the
+    record lacks is always FAIL — no summary can rescue that one
+    (`RULES_CANDIDATES.md` #4)."""
 
     name = "unattributed_vitals"
 
@@ -437,29 +338,22 @@ class UnattributedVitalsCheck:
         return CheckResult(self.name, verdict, findings)
 
 
-#: Observation categories that are RESULTS — something measured and reported
-#: back. Vital signs are excluded because they are encounter-scoped and have
-#: two checks of their own; social history and screening are excluded because
-#: each is somebody else's section on the chart, with its own empty state.
-#: "Other" is included deliberately: an uncategorised observation is a value a
-#: source handed us and we could not classify, which is the last thing that
-#: should quietly go unlooked-for.
+#: RESULTS categories: something measured and reported back. Vitals are
+#: excluded (encounter-scoped, checked elsewhere); social history and
+#: screening are excluded (their own sections). OTHER is included on
+#: purpose: an unclassified value is the last thing that should go unlooked.
 _RESULT_CATEGORIES = frozenset({ObservationCategory.LABORATORY, ObservationCategory.OTHER})
 
 
 def _first(*candidates: str | None) -> str | None:
-    """The first field with something in it, or None if a record item has no
-    name at all. The fallback order goes from what a person reads down to what
-    a machine reads — a chart printing the ICD-10 instead of the description
-    has still carried the diagnosis."""
+    """The first field with something in it: what a person reads before
+    what a machine reads, so a diagnosis printed as its ICD-10 still counts."""
     return next((value for value in candidates if value), None)
 
 
 #: Where each chartable kind lives in the record, and how one of its items
-#: would be named on a page. One entry per item INCLUDING the unnamed ones: a
-#: medication with no name is still a medication the record holds, and counting
-#: only the nameable ones would let a source that lost every label report full
-#: coverage.
+#: would be named on a page. One entry per item, including unnamed ones: a
+#: source that lost every label must not read as full coverage.
 _COVERAGE_LABELS: dict[str, Callable[[PatientRecord], list[str | None]]] = {
     "conditions": lambda r: [_first(c.display, c.icd10, c.snomed) for c in r.conditions],
     "allergies": lambda r: [a.substance for a in r.allergies],
@@ -474,26 +368,15 @@ _COVERAGE_LABELS: dict[str, Callable[[PatientRecord], list[str | None]]] = {
 
 
 def _coverage_labels(record: PatientRecord, kind: str) -> list[str | None]:
-    """How each item of ``kind`` would be named on a chart, in record order.
-
-    ``KeyError`` for an unknown kind rather than an empty list: callers iterate
-    :data:`CHARTABLE_KINDS`, so a miss means the vocabulary grew and this table
-    did not, and returning nothing would read as a record holding nothing.
-    """
+    """KeyError, not an empty list, for an unknown ``kind``: callers iterate
+    CHARTABLE_KINDS, so a miss means this table fell behind the vocabulary."""
     return _COVERAGE_LABELS[kind](record)
 
 
 def _label_present(label: str, normalized_text: str) -> bool:
-    """Is this clinical label on the page as its own phrase?
-
-    Both sides are already whitespace-collapsed and case-folded by
-    :func:`_normalize` — the renderer re-wraps and the extractor re-breaks, and
-    packs disagree about capitalisation. The word boundaries are what stop
-    "Fever" from being satisfied by "Fever blister": the same reasoning as the
-    identity predicates, one step down in stakes. Not those predicates
-    themselves, because a diagnosis is not a name and does not want the
-    hyphen-and-apostrophe rules that keep "Ann" out of "Mary-Ann".
-    """
+    """Word-boundary match on already-normalized text (the renderer
+    re-wraps, packs disagree on case). Not the identity predicates: a
+    diagnosis isn't a name and skips their hyphen/apostrophe rules."""
     needle = _normalize(label)
     if not needle:
         return False
@@ -527,53 +410,20 @@ def _unlookable(cov: _KindCoverage) -> list[str]:
 
 
 def _absent_from_page(cov: _KindCoverage) -> list[str]:
-    """The some/none boundary, which is the whole signal.
-
-    A chart printing eight of eleven results is abbreviating; one printing zero
-    has lost the section. Partial misses are deliberately not reported — that
-    is what keeps this quiet on ordinary charts.
-    """
+    """The some/none boundary is the whole signal: a partial miss is not
+    reported, only a total one — that's what keeps this quiet on ordinary
+    charts."""
     if not cov.named or cov.found:
         return []
     return [f"none of the {cov.named} {cov.kind} in the record are on this chart"]
 
 
 class RecordCoverageCheck:
-    """Did the chart carry the record, or only the parts the layout is good at?
-
-    Every other check reads the page and asks whether what is there is
-    well-formed. None of them asks whether what was in the record got there, so
-    a chart could drop almost all of it and still be graded clean: a real
-    Synthea patient rendered down to a header line and the words UNSIGNED NOTE,
-    with five green checks under it, because each check found nothing of its
-    kind to object to and nothing objects to finding nothing.
-
-    So this one compares the two sides QA has been holding all along. For each
-    kind of clinical fact the record carries, it asks whether ANY of them
-    reached the page. The interesting signal is entirely at the boundary
-    between some and none — a chart that prints eight of eleven results is
-    abbreviating, a chart that prints zero has lost the section — so a partial
-    miss is deliberately not a finding. That keeps the check quiet on the
-    normal case, which is the difference between a check operators read and a
-    check they learn to skip.
-
-    Absence alone does not say whether something broke, though. A SOAP visit
-    note has no problem list by design and a forensic chart replica very much
-    does, and the same empty page means opposite things in the two. So the pack
-    says which it is (``coverage`` in pack.yaml) and this check grades
-    accordingly:
-
-    * a kind the layout claims to carry, wholly absent — FAIL;
-    * a kind the layout says it has no place for — the count is reported and
-      carried up to the run summary, never graded green-with-nothing-said;
-    * a pack that declares neither — every kind is checked and an absence
-      WARNs, with the finding naming the field that would sharpen it. The
-      conservative direction on purpose: you opt into an exemption in a
-      reviewed file, you do not get one by leaving something out.
-
-    Findings name kinds and counts, never a diagnosis or a drug — a coverage
-    line travels into run reports, and the label it would quote is the chart.
-    """
+    """Contract: per :data:`CHARTABLE_KINDS` kind the record holds, FAILs
+    only a total absence — a partial miss is not reported. A kind the pack
+    claims but is wholly absent is FAIL; one excused via ``omits`` counts
+    toward ``not_carried`` instead; an undeclared pack WARNs. Findings name
+    kinds and counts only, never a value (`RULES_CANDIDATES.md` #5)."""
 
     name = "record_coverage"
 
@@ -631,10 +481,8 @@ class VitalsLoincCheck:
             return CheckResult(self.name, Verdict.PASS, ["vitals section disabled by flags"])
         charted = _charted_vitals(ctx)
         if not charted:
-            # Say so. A check that finds nothing to check and returns a bare
-            # pass lets absence of data read as presence of quality, and that
-            # is exactly how a chart with no vitals on it and eight in the
-            # record came back green.
+            # State it explicitly: a bare pass on "nothing to check" reads as
+            # quality, not absence of data.
             return CheckResult(
                 self.name, Verdict.PASS, ["no vital signs on this encounter to verify"]
             )
@@ -648,36 +496,19 @@ class VitalsLoincCheck:
 
 
 def _render_day(ctx: QAContext) -> date:
-    """The day it was where the chart was rendered.
-
-    Goes through the same ``to_local`` the packs stamp their dates with, so the
-    check and the page can never disagree about what "today" means — the
-    argument already made for ``_date_spellings`` above, applied to the clock
-    instead of the spelling. It was ``date.today()``, the HOST's day, and once
-    the packs moved off host-local a byte-identical chart bearing its own
-    render-day stamp warned on a UTC-12 machine and passed on an Eastern one.
-    Silently passing is the bad half of that: the check's sensitivity moved with
-    the operator.
-
-    No pack timezone means nobody rendered in a declared zone (the C-CDA path
-    builds its documents without a pack), and the host's day is all there is.
-    """
+    """The day it was where the chart was rendered, via the same
+    ``to_local`` the packs stamp dates with, so the check and the page can't
+    disagree about "today". No pack timezone (the C-CDA path) falls back to
+    the host's day."""
     if ctx.render_tz is None:
         return _clock_today()  # no pack clock to borrow; the host's day it is
     return to_local(_clock_now(), ctx.render_tz).date()
 
 
 def _render_day_occurrences(today: date, text: str) -> int:
-    """How many times today's date stands alone on this page.
-
-    Counted across every accepted spelling, unioned by POSITION rather than
-    summed, so one printed date is one stamp no matter how many spellings
-    reach it. With today's spelling set none of them overlap — the boundary
-    rule keeps "8/29/2026" out of "08/29/2026" — so the union is defensive
-    rather than load-bearing; it is what stops a spelling added later from
-    silently turning a pack that stamps once into a pack that appears to stamp
-    twice, which would be a false warning on the one layout this exists for.
-    """
+    """Counts today's date across every accepted spelling, unioned by
+    position so one printed date is never counted twice under two
+    spellings."""
     spans: set[tuple[int, int]] = set()
     for spelling in _date_spellings(today):
         spans.update(date_token_spans(spelling, text))
@@ -685,23 +516,10 @@ def _render_day_occurrences(today: date, text: str) -> int:
 
 
 class DateStalenessCheck:
-    """A render-day date on the chart usually means a template used now().
-
-    Usually, not always. The Practice Fusion replica stamps the render day into
-    the medication list's "as of" heading on purpose — a forensic rule carried
-    from the gold standard, which prints the day the chart was produced rather
-    than the day of the visit. So that pack warned on every document it ever
-    rendered, and a warning that is always on is one operators learn to skip:
-    the state the check flags became indistinguishable from the state the pack
-    is permanently in.
-
-    The layout says how many stamps it places (``render_day_stamps`` in
-    pack.yaml) and this counts against that number. A pack that declares one
-    and prints one is doing what it said; a pack that declares one and prints
-    four has a template calling now() somewhere it should not, and still warns.
-    Declaring an exemption would have traded a useless warning for a blind
-    check, which is the worse of the two.
-    """
+    """Contract: a render-day date usually means a template called now(),
+    but a layout may declare how many it prints on purpose
+    (``render_day_stamps``). WARNs only when the page shows more than
+    declared; under-declaring still warns rather than being exempted."""
 
     name = "date_staleness"
 
@@ -730,31 +548,11 @@ class DateStalenessCheck:
 
 
 class NoteBodyCheck:
-    """The clinical note reached the page.
-
-    Four checks verified the header, the geometry, the vitals and the date
-    stamp, and none of them read the note. A chart with its Subjective,
-    Objective, Assessment and Plan bodies removed — headings and vitals table
-    intact — passed all four. The note is the field family the README calls the
-    one that routinely fails to survive a migration, and it was the one nothing
-    looked at.
-
-    Matched in word chunks rather than whole, because a long section legitimately
-    straddles a page break and picks up a footer in the extracted text. A body
-    that is wholly absent is a FAIL; one that is partly absent is a WARN, since
-    that is the shape a page-boundary artifact takes and the shape truncation
-    takes, and telling those apart is a person's job.
-
-    ``NoteSection.text`` is the plain-text shadow the model already carries
-    "for search and QA" — this is the QA half finally reading it.
-
-    Known limit, stated rather than papered over: a body of only a few words
-    ("Deferred.", "Stable.") is one short passage, and a short passage can be
-    somewhere else on the chart by coincidence — so for those the check can
-    pass without the section having rendered. Ruling that out needs to know
-    where on the page the pack put the section, which a pack-independent check
-    does not. The absent-body case this exists for is caught either way.
-    """
+    """Contract: matches the note body in word chunks (a section can
+    straddle a page break). Wholly absent → FAIL; partly absent → WARN,
+    since that also matches a page-boundary artifact. A body of only a
+    few words can pass unrendered: one short passage may appear elsewhere
+    on the chart by coincidence."""
 
     name = "note_body"
 
