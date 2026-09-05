@@ -10,9 +10,11 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 
+from anastomosis.core.clock import now as _clock_now
+from anastomosis.core.clock import today as _clock_today
 from anastomosis.core.identity import (
     date_token_present,
     date_token_spans,
@@ -661,8 +663,8 @@ def _render_day(ctx: QAContext) -> date:
     builds its documents without a pack), and the host's day is all there is.
     """
     if ctx.render_tz is None:
-        return date.today()  # noqa: DTZ011 — no pack clock to borrow; the host's day it is
-    return to_local(datetime.now(UTC), ctx.render_tz).date()
+        return _clock_today()  # no pack clock to borrow; the host's day it is
+    return to_local(_clock_now(), ctx.render_tz).date()
 
 
 def _render_day_occurrences(today: date, text: str) -> int:

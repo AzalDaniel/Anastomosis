@@ -50,6 +50,8 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: python tools/complexity_gate.py
+      - run: python tools/prose_gate.py
+      - run: python tools/guard_count.py
 
   # mypy lane — tools/check.sh claims "exactly what CI runs" and lists mypy
   # as one of the gates; this lane closes the drift where mypy is a local

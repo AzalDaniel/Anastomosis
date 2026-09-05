@@ -33,6 +33,8 @@ _GATE_MARKERS: tuple[tuple[str, str], ...] = (
     ("python -m mypy", "mypy"),  # CI may use bare `mypy` or `python -m mypy`
     ("pytest", "pytest"),
     ("python tools/complexity_gate.py", "tools/complexity_gate.py"),
+    ("python tools/prose_gate.py", "tools/prose_gate.py"),
+    ("python tools/guard_count.py", "tools/guard_count.py"),
     ("python tools/phi_scan.py", "tools/phi_scan.py"),
 )
 

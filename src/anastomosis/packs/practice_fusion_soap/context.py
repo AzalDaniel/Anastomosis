@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.model import (
     Address,
     AllergyCategory,
@@ -655,7 +656,7 @@ def build_record_context(
     # chart as a template calling now() by mistake, so this pack warns on every
     # document it produces. That half of #194 changes what the chart SAYS and is
     # the maintainer's call; this half is machine-dependence and is not.
-    meds_as_of = to_local(_dt.datetime.now(_dt.UTC), tz).strftime("%m/%d/%Y")
+    meds_as_of = to_local(_clock_now(), tz).strftime("%m/%d/%Y")
 
     # --- past medical history --------------------------------------------------
     pmh_sections = [

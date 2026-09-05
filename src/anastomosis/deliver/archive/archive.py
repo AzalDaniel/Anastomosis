@@ -47,10 +47,10 @@ import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_text
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.conservation import Conservation
 from anastomosis.core.fhir import DeliveredAttachment
 from anastomosis.core.logutil import safe_log_id
@@ -235,7 +235,7 @@ class ArchiveDeliverer:
         pdf_count = 0
         attachment_count = 0
         missing_count = 0
-        generated_at = datetime.now(UTC).isoformat()
+        generated_at = _clock_now().isoformat()
 
         records_list = list(records)
         qa_lookup = _qa_lookup(qa_report)

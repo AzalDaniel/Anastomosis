@@ -42,8 +42,8 @@ from __future__ import annotations
 import base64
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
 
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.fhir import export
 from anastomosis.core.logutil import exc_tag
 from anastomosis.core.model import Identifier, IdentifierKind, Patient, PatientRecord
@@ -449,7 +449,7 @@ class FhirApiDestination:
                 ]
             },
             "subject": {"reference": f"Patient/{patient.destination_patient_id}"},
-            "date": datetime.now(UTC).isoformat(),
+            "date": _clock_now().isoformat(),
             "content": [
                 {
                     "attachment": {
