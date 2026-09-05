@@ -541,9 +541,8 @@ def source_init(
     from anastomosis import cli as _cli
     from anastomosis.core.source_init_command import SourceInitCommand, run_source_init_command
 
-    # Analyze step (confirmed=False): validate the name, resolve + analyze the
-    # example, and produce the PHI-safe proposal via the SHARED core (the same
-    # flow the GUI source wizard runs); this command presents it and confirms.
+    # Analyze step (confirmed=False), via the SHARED core the GUI source wizard
+    # also runs; this command only presents the proposal and confirms it.
     analysis = run_source_init_command(
         SourceInitCommand(
             example=example,
@@ -616,11 +615,8 @@ def source_init(
             f"  Taught for [cyan]{saved.destination}[/cyan]; migrating it to another "
             "destination will refuse."
         )
-    # Only a source in the DEFAULT directory is discoverable: `pipeline run` has
-    # no `--source-dir` to point at another one (unlike packs, which thread
-    # `--pack-dir` — see `pack init` above). Printing the run command for a
-    # custom `--out-dir` handed over a line that answers
-    # "unknown source 'name' (available: …)".
+    # Only a source in the DEFAULT directory is discoverable: unlike packs,
+    # `pipeline run` has no `--source-dir` for a custom `--out-dir`.
     from anastomosis.sources.learned import user_sources_dir
 
     if saved.mapping_dir.parent == user_sources_dir():
