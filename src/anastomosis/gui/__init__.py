@@ -1,11 +1,9 @@
-"""The desktop GUI (liquid-glass, pywebview) — M4.
+"""The desktop GUI (liquid-glass, pywebview).
 
-Headless-first by construction: every behavior lives in
-:mod:`anastomosis.gui.controller` as plain Python the tests drive against a
-fake event sink. pywebview appears only in :mod:`anastomosis.gui.shell`
-(lazy-imported, so importing this package never requires the ``gui`` extra),
-and the web assets in :mod:`anastomosis.gui.web` are bundled, offline, and
-network-free.
+Headless by construction: behavior lives in
+:mod:`anastomosis.gui.controller`, plain Python a fake event sink can drive;
+pywebview is lazy-imported only in :mod:`anastomosis.gui.shell`, so importing
+this package never requires the ``gui`` extra.
 """
 
 from .controller import EventSink, GuiController
