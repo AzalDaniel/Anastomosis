@@ -1,46 +1,10 @@
 """C-CDA R2.1 / CCD XML → canonical PatientRecord.
 
-The lossless rule, applied to a CDA document: every section the adapter knows
-how to take apart becomes discrete canonical models, and **every section** —
-structurally parsed or not — has its title and normalized narrative captured
-into ``patient.extensions["ccda:section:<loinc>"]`` and its ``<entry>``
-elements kept verbatim under ``patient.extensions["ccda:entries:<loinc>"]``, so
-nothing on the chart is ever silently dropped (a known section whose entries
-the parser cannot take apart would otherwise yield nothing at all, and its
-prose is under no obligation to say what those entries say). A document
-repeating a section code — split Problems (Active)/(Resolved) is ordinary
-C-CDA — keeps each occurrence at its own key (``…:<loinc>#2``, ``#3``, … in
-document order), so a second section can never overwrite the first. Document-level metadata rides
-``patient.extensions`` too.
-
-One section is captured differently: a 51899-3 section carrying this repo's own
-export stamp is the loss ledger ``deliver/ccda_export`` wrote, and its entries
-land discretely under ``patient.extensions["ccda:prior_loss_narrative"]`` so a
-re-export can carry them forward deduplicated. Captured as an ordinary narrative
-blob instead, generation N of an export → ingest → export loop swallowed
-generation N-1's whole ledger as a single line and the document grew without
-bound. An UNSTAMPED 51899-3 section is a third party's and keeps round-tripping
-as ordinary foreign narrative.
-
-The header is read as well as the body. A chart says who wrote it, who signed
-it, who holds it and which visit it belongs to in ``author``, ``custodian``,
-``legalAuthenticator`` and ``componentOf`` — and none of that was being read at
-all, so 2,103 audited documents parsed without error and produced not one
-practitioner and not one facility between them. Each participation keeps the
-role the document gave it (``extensions["ccda:participation"]``): a legal
-authenticator is not an informant, and a human author is not the
-``assignedAuthoringDevice`` that generated the summary. A note that arrives with
-no author has lost the answer to "who wrote this" while still looking complete.
-
-Parsing is defensive by design: a missing optional element maps to ``None``, a
-``nullFlavor`` on an element means "absent", but a file that is not a
-``ClinicalDocument`` at all raises :exc:`ValueError` — a loud failure, never a
-silent skip (the source-adapter contract). A role element naming nobody stays
-nobody: CDA requires the wrapper even when it is empty, and a practitioner
-invented from one would put a clinician on the chart that no document claims.
-
-Element names here are limited to the verified C-CDA R2.1 reference; nothing
-is invented. See ``tests/fixtures/ccda/README.md`` for the provenance ledger.
+Every section becomes discrete models where it can, and narrative
+verbatim otherwise (rules 55, 59); the header's participations keep
+their document role (rule 60); a stamped 51899-3 loss ledger merges by
+generation (rule 61). See ``tests/fixtures/ccda/README.md`` for the
+element provenance.
 """
 
 from __future__ import annotations
@@ -193,16 +157,9 @@ def _val_attr(node: _Element | None, path: str, name: str) -> str | None:
 
 def _ts(node: _Element | None, path: str) -> Any:
     """``@value`` of the element at ``path``, parsed as an aware datetime.
-
-    A run-of-zeros ``@value`` (:func:`~anastomosis.core.timeutil.
-    is_zero_sentinel`) reads as absent HERE, before ``parse_dt`` ever sees
-    it — not inside ``parse_dt`` itself. ``parse_dt`` is shared with every
-    row-based adapter (``sources/_rowutil.clean_dt``, read by pf_tebra and
-    oracle_ehi, and the learned adapter's own ``parse_datetime`` transform
-    verb): a bare "0" in a TSV cell is a value that states something, and
-    reading it as absent there would go unaccounted, in none of those
-    adapters' ledgers. This vendor's C-CDA-specific spelling for "no date"
-    is read only by this C-CDA-specific caller.
+    The zero-sentinel check (rule 67) happens HERE, before ``parse_dt``
+    sees it — ``parse_dt`` is shared with every row-based adapter, where a
+    bare "0" is a stated value, not absence.
     """
     raw = _val_attr(node, path, "value")
     return None if is_zero_sentinel(raw) else parse_dt(raw)
@@ -210,10 +167,8 @@ def _ts(node: _Element | None, path: str) -> Any:
 
 def _ts_date(node: _Element | None, path: str) -> Any:
     """``@value`` of the element at ``path``, parsed as a calendar date.
-
-    Same zero-sentinel guard as :func:`_ts`, for the same reason: `parse_date`
-    calls `parse_dt` under the hood and would raise on a zero run exactly as
-    loudly.
+    Same zero-sentinel guard as :func:`_ts`: ``parse_date`` calls
+    ``parse_dt`` and would raise on a zero run just as loudly.
     """
     raw = _val_attr(node, path, "value")
     return None if is_zero_sentinel(raw) else parse_date(raw)
