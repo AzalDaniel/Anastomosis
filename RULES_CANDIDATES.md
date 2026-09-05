@@ -24,6 +24,14 @@ file does not ship.
   document order — `tests/unit/test_ccda_ledger.py:1665` (and the
   citation-crediting tests through line 3034).
 
+- A refusal that must not log a patient value (RULES.md 2) but still needs to
+  correlate a claim across a batch export may name the record by POSITION in
+  load order ("record 7 and 8 of 12") or by a run-scoped surrogate id
+  (`safe_log_id`) — never a filename or a stated value — because a
+  field-and-count message alone leaves an operator nothing to bisect a
+  multi-document export by —
+  `tests/unit/test_one_patient_is_one_chart.py:899`.
+
 ## Loose ends
 
 (none found yet — updated as the sweep continues)
