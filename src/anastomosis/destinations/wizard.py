@@ -28,10 +28,11 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.destinations.browserpack import SelectorMap
 
 __all__ = [
@@ -118,7 +119,7 @@ def _render_selectors_yaml(
     slot is written as an empty string (the loader treats empty as "skip").
     ``now`` is injectable so tests get a deterministic header date.
     """
-    stamp = (now or datetime.now(UTC)).date().isoformat()
+    stamp = (now or _clock_now()).date().isoformat()
     lines = [
         f"# Anastomosis destination selectors for {name!r} — GENERATED, do not hand-edit.",
         f"# generated-by: {_WIZARD_CMD} {name}",

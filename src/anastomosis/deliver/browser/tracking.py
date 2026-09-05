@@ -136,7 +136,16 @@ CREATE TRIGGER IF NOT EXISTS transitions_no_update
 
 
 def _now() -> str:
-    """A timezone-aware UTC timestamp (DTZ rule: never a naive datetime)."""
+    """A timezone-aware UTC timestamp (DTZ rule: never a naive datetime).
+
+    Deliberately NOT routed through :mod:`anastomosis.core.clock`: this is the
+    resumable ledger's own ordering key (``latest_run_id`` sorts ``runs`` by
+    ``started_at DESC``, ``run_id`` — a random uuid4 — only as its tiebreak), so
+    two runs whose wall-clock froze to the same instant would make the wrong
+    one look latest. Every other stamp in this repo records a fact for later
+    reading; this one is also a comparison the ledger relies on staying
+    monotonic across process invocations.
+    """
     return datetime.now(tz=UTC).isoformat()
 
 

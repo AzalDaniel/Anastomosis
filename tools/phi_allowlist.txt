@@ -192,3 +192,23 @@ sha256:ce9884f02253419ca57d122a4d1395db61e8dd3845b7d67e721cab5aa589177c
 # Partner Center and embedded in every published package manifest — a public
 # platform identity, not a person's identifier.
 3768f7cb-832a-4a03-bd9a-56171527d9d4
+
+# tools/snapshot.py's committed baseline (tools/snapshot_baseline.json) names
+# every captured file by its own relative path, and the ccda-source patient
+# (core.ccda_codes.identity_from_ii, #404) and encounter (#393) identity
+# recipes are uuid5 over a document-stated (root, extension) pair — a
+# deterministic hash of synthetic input, same reasoning as the pair above,
+# whose OUTPUT does not carry the feedface-/00000000- prefix even though
+# every input does. Patient ids for tests/fixtures/ccda/feedface_ccd.xml and
+# tests/fixtures/synthea/synthea_ccda_sample.xml, and two of the former's
+# encounter ids, all appearing as directory/file names in the baseline.
+9a84356f-bca7-5c4a-800c-f68b1021da82
+0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35
+555c7156-31ec-5fdc-a9f7-5bbd15c3b054
+f86ca1d7-90a7-5481-b280-3b17b44272f7
+
+# tests/unit/test_snapshot_tool.py's example of a NON-fixture id: the test
+# proves the UUID-canonicalization rewrite fires on a GUID that does NOT
+# carry the fixture prefix (a rewrite that must NOT fire on one that does),
+# so the example is deliberately a plain made-up value, never a real one.
+3201335a-22c6-4bc7-a916-d47c4ccdb4c4

@@ -13,5 +13,7 @@ python -m mypy
 # importable and this script's first line stopped being true.
 pytest
 python tools/complexity_gate.py
+python tools/prose_gate.py
+python tools/guard_count.py
 python tools/phi_scan.py
 echo "ALL GATES GREEN"

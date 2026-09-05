@@ -12,11 +12,13 @@ Every Anastomosis model carries two things beyond its mapped fields:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from anastomosis.core.clock import now as _now
 
 
 class Provenance(BaseModel):
@@ -27,7 +29,7 @@ class Provenance(BaseModel):
     source_system: str
     source_file: str | None = None
     source_id: str | None = None
-    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    ingested_at: datetime = Field(default_factory=_now)
 
 
 class AnastBase(BaseModel):

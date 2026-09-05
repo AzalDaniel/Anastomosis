@@ -36,12 +36,13 @@ import re
 import stat
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError
 
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.core.textutil import clean_cell
 from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
@@ -585,7 +586,7 @@ def build_mapping(
         ]
         return MappingSpec(
             mapping_id=mapping_id,
-            created_at=now or datetime.now(UTC),
+            created_at=now or _clock_now(),
             human_reviewed=True,
             display=display,
             source_format=analysis.fmt,

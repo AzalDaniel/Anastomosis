@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_write_text
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 
@@ -133,7 +133,7 @@ def run_qa(
 
 def write_report(report: QAReport, out_dir: Path) -> Path:
     payload = {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": _clock_now().isoformat(),
         "summary": {
             **{v.value: report.count(v) for v in Verdict},
             "not_carried": report.not_carried,

@@ -24,10 +24,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_write_text
+from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.fhir import DeliveredAttachment
 from anastomosis.core.logutil import safe_log_id
 from anastomosis.core.model import Patient, PatientRecord
@@ -384,7 +384,7 @@ class BundleDeliverer:
             return None
         slice_docs = [doc for doc in qa_report.documents if self._is_this_patients(doc, record)]
         payload = {
-            "generated_at": datetime.now(UTC).isoformat(),
+            "generated_at": _clock_now().isoformat(),
             "patient_id": record.patient.id,
             "summary": {v.value: sum(1 for d in slice_docs if d.verdict is v) for v in Verdict},
             "documents": [
@@ -418,7 +418,7 @@ class BundleDeliverer:
             target,
             _README_TEMPLATE.format(
                 patient_id=patient_id,
-                generated_at=datetime.now(UTC).isoformat(),
+                generated_at=_clock_now().isoformat(),
                 generator=self.generator,
             ),
         )
