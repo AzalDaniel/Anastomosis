@@ -1,32 +1,10 @@
-"""GuiJobRunner owns the GUI's async-job choreography.
-
-Every long-running GUI action needs the same six steps: acquire the busy
-guard (or return ``Busy``), set up per-job state, emit a start event, spawn a
-daemon worker whose ``finally`` releases the guard, handle a
-``Thread.start()`` failure by cleaning up + releasing + returning the
-no-traceback error dict, and return ``{"ok": True, "started": True}``. This
-module is the one place that choreography lives.
-
-Contract highlights:
-
-* the busy guard is acquired SYNCHRONOUSLY before ``submit`` returns, so
-  two quick clicks cannot both get ``{"started": True}``;
-* a rejected submit is exactly ``{"ok": False, "error": "Busy"}``;
-* the worker's ``finally`` runs the job's ``cleanup`` and releases the
-  guard, whatever the body did;
-* ``Thread.start()`` failure (thread exhaustion) runs ``cleanup``,
-  releases the guard, emits the stage error event, and returns
-  ``{"ok": False, "error": <exc_tag>}`` — the busy flag can never leak;
-* the runner's catch around the worker is a safety net that emits an
-  error event instead of letting a stray exception die silently on the
-  daemon thread — job bodies that need outcome-specific terminal events
-  (packgen's ``ConfirmationRequired``-is-``done`` routing, upload's
-  ``OutputLocked``) keep their own internal handling and simply never
-  raise into the net.
-
-The runner also owns the busy flag itself, exposing ``acquire``/``release``
-for the synchronous busy-guarded paths (``run_pipeline``/``run_migration``
-sync variants) so async and sync entries contend on the SAME guard.
+"""Contract: ``GuiJobRunner`` runs one GUI action on a daemon thread behind
+a busy guard, acquired SYNCHRONOUSLY before :meth:`submit` returns so two
+quick clicks cannot both start. ``acquire``/``release`` are exposed
+separately so the sync ``run_pipeline``/``run_migration`` paths contend on
+the SAME guard. A stray worker exception becomes a PHI-safe error event
+instead of dying silently — job bodies with their own outcome-specific
+terminal events must never raise into this net.
 """
 
 from __future__ import annotations
@@ -48,17 +26,9 @@ logger = logging.getLogger(__name__)
 class GuiJob:
     """One long-running GUI action, described declaratively.
 
-    ``name`` is the daemon-thread suffix (``anast-{name}``); ``stage`` is
-    the event-stage label error events carry (defaults to ``name`` — the
-    pipeline/migration jobs use their method names, matching the events
-    the JS already routes). ``flow`` is the owning operation family the
-    runner stamps onto the error events IT raises (the safety net + the
-    spawn-failure path), so those events reach the same page as the job's
-    own events; it defaults to ``name`` for jobs whose family equals their
-    thread name. ``on_start`` runs after the busy guard is acquired and
-    before the worker spawns (emit the start event, stash per-run state);
-    ``cleanup`` runs in the worker's ``finally`` AND on a spawn failure
-    (clear per-run state), always before the guard releases.
+    ``stage``/``flow`` default to ``name``. ``on_start`` runs after the
+    guard acquires, before spawn; ``cleanup`` runs in the worker's
+    ``finally`` and on a spawn failure, always before release.
     """
 
     name: str
@@ -84,11 +54,8 @@ class GuiJobRunner:
         self._emit = emit
         self._lock = threading.Lock()
         self._busy = False
-        # A handle on the most recently spawned worker, kept so the shell's
-        # window-close barrier can tell a run is in flight (``busy``) and wait
-        # for its in-flight PDF/ledger writes to finish (``join``). The worker
-        # stays ``daemon=True`` — a wedged run must never make the process
-        # unkillable — so this handle is a graceful barrier, not a hard lock.
+        # Lets the shell's close barrier check `busy`/`join` an in-flight run;
+        # daemon=True so a wedged run can never make the process unkillable.
         self._worker: threading.Thread | None = None
 
     # --- the busy guard (shared by sync and async entries) -------------------
@@ -111,15 +78,11 @@ class GuiJobRunner:
             return self._busy
 
     def join(self, timeout: float | None = None) -> bool:
-        """Wait up to ``timeout`` seconds for the active worker to finish.
+        """Wait up to ``timeout`` seconds for the active worker; return whether it finished.
 
-        Returns ``True`` when no worker is active or the active one finished
-        within ``timeout``; ``False`` when a worker is still running after the
-        timeout. The shell's window-close barrier uses this so an in-flight
-        PDF/ledger write is given a chance to complete before the window goes.
-        The worker handle is read under the lock, but the join happens OUTSIDE
-        it — the worker's ``finally`` calls ``release`` (which takes the lock),
-        so holding it here would deadlock.
+        Reads the worker handle under the lock, but joins outside it — the
+        worker's ``finally`` calls ``release`` (takes the lock), so holding it
+        here would deadlock.
         """
         with self._lock:
             worker = self._worker
@@ -131,13 +94,10 @@ class GuiJobRunner:
     # --- the async choreography ----------------------------------------------
 
     def submit(self, job: GuiJob) -> dict[str, object]:
-        """Run ``job`` on a daemon thread behind the busy guard.
+        """Run ``job`` behind the busy guard; never raises.
 
-        Returns ``{"ok": True, "started": True}`` when the worker spawned,
-        ``{"ok": False, "error": "Busy"}`` when a run is already in flight,
-        or the no-traceback ``{"ok": False, "error": <exc_tag>}`` shape when
-        ``on_start`` or ``Thread.start()`` failed (guard released, cleanup
-        run, stage error event emitted). Never raises.
+        Returns ``{"ok": True, "started": True}``, ``{"ok": False, "error":
+        "Busy"}``, or the no-traceback error shape if ``on_start``/``Thread.start()`` failed.
         """
         if not self.acquire():
             return {"ok": False, "error": "Busy"}
@@ -154,25 +114,11 @@ class GuiJobRunner:
             try:
                 job.worker()
             except Exception as exc:
-                # Safety net: a stray exception on the daemon thread becomes
-                # a PHI-safe error event instead of dying silently. Job
-                # bodies with outcome-specific terminal events handle their
-                # own exceptions and never reach this. The event carries the
-                # job's own flow so it reaches the same page as its siblings.
+                # Safety net (module docstring); carries the job's own flow to its page.
                 self._emit(error_event(job.flow_name, job.stage_name, exc_tag(exc)))
             except BaseException as exc:
-                # And the same for a BaseException, which is not an over-broad
-                # catch here but the whole point of a net. The upload engine
-                # models process death as a BaseException on purpose — see
-                # FakeCrash — so that its "unknown exception, retry" handler
-                # cannot swallow a kill. That reasoning is right for the
-                # engine, and it left the GUI with a run that emitted `start`
-                # and then nothing at all, forever: the one state this product
-                # must never be in quietly (#117).
-                #
-                # Re-raised, unlike the branch above, because a shutdown
-                # request has to stay a shutdown request. Telling the operator
-                # is not the same as pretending it did not happen.
+                # BaseException is deliberate (upload's FakeCrash models process death
+                # this way); re-raised after emitting, so a shutdown stays a shutdown (#117).
                 self._emit(error_event(job.flow_name, job.stage_name, exc_tag(exc)))
                 raise
             finally:
@@ -183,10 +129,8 @@ class GuiJobRunner:
         try:
             worker.start()
         except Exception as exc:
-            # Thread.start() can raise (e.g. RuntimeError under thread
-            # exhaustion). The worker never runs, so its finally never fires —
-            # clean up and release HERE, then return the same no-traceback
-            # error shape every job's spawn-failure path used before.
+            # Thread.start() can raise (thread exhaustion); the worker never
+            # runs, so its `finally` never fires — clean up and release here.
             self._cleanup(job)
             self.release()
             return self._fail(job, exc)
