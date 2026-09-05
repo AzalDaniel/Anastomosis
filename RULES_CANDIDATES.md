@@ -11,6 +11,10 @@ One sentence each, with the `file:line` the sweep cut prose from.
   operator before attaching over CDP, because loopback is reachable by any
   other local user on a shared machine.
   `src/anastomosis/deliver/browser/cdp.py:17` (module docstring, pre-sweep).
+- A media type is read from what the source document declared, never
+  sniffed from the bytes (the pf_tebra page counter and the C-CDA parser's
+  `<nonXMLBody>` `@mediaType` handling follow the same rule).
+  `src/anastomosis/deliver/browser/manifest.py:55` (comment, pre-sweep).
 
 ## Loose ends
 
