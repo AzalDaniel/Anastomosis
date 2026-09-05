@@ -1,17 +1,8 @@
-"""The command options more than one command declares.
+"""Command options shared verbatim by more than one command module.
 
-Seven `Annotated[...]` blocks were written out in full in each of three command
-modules — forty-odd lines apiece, including a four-line ``--trust-pack`` help
-string repeated word for word. Identical text in three places is not a style
-problem, it is a drift problem: change one and the other two keep telling the
-operator something slightly different, and nothing fails.
-
-Typer reads an option's whole definition off its annotation, so a type alias IS
-the shareable unit. A command that needs a different word (``migrate`` reads
-``--from`` rather than ``--source``; the delivery pair says something different
-about ``--out``) declares its own — a shared alias is for options that are the
-same option, not for options that merely look alike.
-"""
+A shared `Annotated[...]` alias is for options that are the same option; a
+command needing different wording for a flag declares its own alias rather
+than reusing this one (`RULES_CANDIDATES.md` #3)."""
 
 from __future__ import annotations
 

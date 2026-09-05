@@ -1,19 +1,13 @@
-"""``anast archive`` / ``anast bundle`` — full pipeline + an offline deliverable.
+"""``anast archive`` / ``anast bundle``: one command, one delivery kind apart.
 
-See :mod:`anastomosis.cli_commands` for the split/registration rationale.
+:func:`_register` builds and registers both from three strings of wording, so
+the two ``--help`` screens cannot drift.
 
-Archive and bundle are the SAME command with one delivery kind apart: identical
-options, identical body, three strings of wording. :func:`_register` builds and
-registers the pair from those strings, so the two ``--help`` screens cannot
-drift and a new option lands once instead of twice.
-
-Deliberately NO ``from __future__ import annotations`` here (unlike its sibling
-command modules): Typer resolves a command's parameter annotations by
-``eval``-ing them against the module globals, and the per-kind ``help=`` texts
-below are closure variables of :func:`_register` — invisible to a PEP-563
-string annotation. Adding the future import makes this module raise
-``NameError`` at import time; keep the annotations eager.
-"""
+Deliberately no ``from __future__ import annotations``: Typer evaluates a
+command's annotations against module globals, and the per-kind ``help=``
+texts here are closures inside :func:`_register`, invisible to a PEP-563
+string annotation. Adding the future import raises ``NameError`` at import
+time."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -34,9 +28,7 @@ from anastomosis.cli_commands._paths import out_dir
 
 if TYPE_CHECKING:
     # Type-only: the runtime import stays inside the command body so `anast
-    # --help` never pays for the command core. Safe as a *quoted* annotation on
-    # a plain function — only the Typer-decorated command's annotations are
-    # evaluated at runtime.
+    # --help` skips it; safe since `command` is decorated at runtime, not here.
     from anastomosis.core.commands import DeliveryKind
 
 
@@ -49,9 +41,8 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
 
     def command(
         export_dir: ExportDir,
-        # Not the shared --out: the pair says something different about where
-        # its deliverable lands, and that wording is the only thing that
-        # differs between archive and bundle.
+        # Not the shared --out: the two commands differ only in where their
+        # deliverable lands, and this option's wording says that.
         out: Annotated[Path, typer.Option("--out", "-o", help=out_help, parser=out_dir)],
         source: Source = None,
         pack: Pack = "generic_soap",

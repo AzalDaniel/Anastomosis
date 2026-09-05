@@ -49,12 +49,9 @@ class QAReport:
 
     @property
     def not_carried(self) -> int:
-        """Record items this run's layout had no place for, across every chart.
-
-        Three green counts over a batch that dropped the problem list is an
-        accurate statement about the checks and a false one about the run, so
-        the number travels up to the stage rail beside them.
-        """
+        """Record items this run's layout had no place for, across every
+        chart — travels to the stage rail because an all-green check count
+        would otherwise read a dropped section as a pass."""
         return sum(r.not_carried for doc in self.documents for r in doc.results)
 
     @property
@@ -74,31 +71,16 @@ def run_qa(
     checks: list[QACheck] | None = None,
     record_summary_paths: dict[str, Path] | None = None,
 ) -> QAReport:
-    """Apply every check to every document; check crashes are check bugs and
-    surface as CRASH findings rather than aborting the batch.
-
-    ``render_tz`` is the timezone the pack rendered these documents in. Pass it
-    whenever one is known: a check that reasons about the render day has to read
-    the same clock the pack stamped the page with, or its verdict depends on
-    where the operator happens to be sitting.
-
+    """Contract: applies every check to every document; a check that raises
+    surfaces as a CRASH finding rather than aborting the batch. ``render_tz``
+    is the clock a render-day check must use instead of the operator's own.
     ``render_day_stamps`` is how many render-day dates the layout prints on
-    purpose (see the manifest field of that name); the staleness check counts
-    against it rather than treating the first one as a defect.
-
-    ``carries``/``omits`` are the layout's own statement about which record
-    kinds it renders (a pack's ``coverage`` block). Passing neither is allowed
-    and means undeclared, which the coverage check treats as conservatively as
-    it can — it verifies every kind and softens its verdict, because with no
-    statement it cannot tell a lost section from a layout that never had one.
-
-    ``record_summary_paths`` keys the rendered whole-patient record summary by
-    ``patient.id``, so each document's ``QAContext.record_summary_path`` is the
-    SAME patient's summary rather than whichever one happened to render last. A
-    patient absent from the mapping (or no mapping at all) gets ``None`` —
-    nothing was rendered for that whole record, not that this run declined to
-    check.
-    """
+    purpose. ``carries``/``omits`` are the pack's own coverage declaration;
+    neither given means undeclared, and the coverage check verifies every
+    kind rather than assume a defect. ``record_summary_paths`` keys the
+    rendered whole-patient summary by ``patient.id`` so a document never gets
+    another patient's summary; a patient absent gets ``None`` (nothing
+    rendered, not "declined to check")."""
     active = checks if checks is not None else engine_checks()
     report = QAReport()
     for pdf_path, encounter, record in documents:
@@ -115,9 +97,8 @@ def run_qa(
                 record_summary_paths.get(record.patient.id) if record_summary_paths else None
             ),
         )
-        # Extract the PDF's text + geometry once for this document; the engine
-        # checks share it instead of each re-opening the file (up to 4x per run).
-        # Lazy, so a corrupt PDF still fails per-check below, never here.
+        # Primes the shared per-document snapshot cache so checks don't each
+        # reopen the file; lazy, so a corrupt PDF fails per-check, never here.
         _checks.prime_snapshot_cache(ctx)
         doc_qa = DocumentQA(path=pdf_path, encounter_id=encounter.id)
         for check in active:
@@ -151,13 +132,9 @@ def write_report(report: QAReport, out_dir: Path) -> Path:
             for doc in report.documents
         ],
     }
-    # The report embeds DataIntegrityCheck findings, which can contain literal
-    # patient names ("patient name ... not found"). Harden the directory to
-    # 0o700 HERE rather than trusting every caller to have done so — the function
-    # that writes the PHI owns its boundary. Idempotent: in the normal pipeline
-    # the dir is already secured, so this is a no-op.
+    # Findings can embed literal patient text; the function that writes it
+    # owns hardening the directory, rather than trusting every caller.
     out_dir = secure_output_dir(out_dir)
     target = out_dir / REPORT_NAME
-    # Atomic write: a reader (or a concurrent run) never sees a half-written report.
     atomic_write_text(target, json.dumps(payload, indent=2))
     return target
