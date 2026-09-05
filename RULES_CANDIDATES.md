@@ -13,4 +13,7 @@ carry it at. The orchestrator adjudicates; this file does not ship.
 
 ## Loose ends
 
-(none found in `gui/**/*.py` so far)
+- `gui/shell.py`'s close-barrier veto assumes pywebview's `closing` handler
+  honors a `False` return; the deleted comment's noted fallback if a future
+  pywebview drops that is `controller.join_active_job(~5s)` in `_on_closing`
+  instead of returning `False` (was `gui/shell.py:242-248` before the sweep).
