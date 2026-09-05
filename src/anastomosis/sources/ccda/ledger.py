@@ -840,19 +840,10 @@ def _section_anchors(section: _Element) -> dict[str, frozenset[str]]:
 
 def _cited_anchors(entry: _Element) -> list[str]:
     """The narrative cell names this entry writes, in document order.
-
-    Repeats are left in. An entry routinely names one cell twice — a
-    procedure's ``<originalText>`` and its ``<text>`` both point at the row
-    that describes it — and that is one citation of one cell; the collapsing
-    happens where the claim is made, in :meth:`_Anchors.take`, which resolves
-    every address to the cells behind it and asks for the set. Doing it twice
-    would put the invariant in two places and pin it in neither.
-
-    Only a ``#``-prefixed value is a citation, because that is the only kind
-    :func:`~.parser._inline_narrative_references` resolves — anything else
-    reaches the record carrying nothing. ``strip`` because that function
-    strips before it resolves, and two sides of one mirror that disagree
-    about whitespace report the disagreement as loss.
+    Repeats are left in; collapsing happens at the claim in
+    :meth:`_Anchors.take`. Only a ``#``-prefixed value is a citation, per
+    :func:`~.parser._inline_narrative_references`; stripped the same way
+    that function strips before resolving.
     """
     return [
         value[1:]
@@ -862,18 +853,10 @@ def _cited_anchors(entry: _Element) -> list[str]:
 
 
 def _entry_pool(record: PatientRecord) -> Counter[tuple[str, str]]:
-    """Every verbatim entry the record stored, by the section that stored it.
-
-    Read from what the parser actually wrote under ``ccda:entries:<code>`` —
-    the stored shape, never a reconstruction of the storing rule — and counted,
-    because two identical entries in two text-less sections are two stored
-    copies and must answer for exactly two constructs.
-
-    Keyed by the section code as well as the bytes. Two byte-identical entries
-    in different sections are ordinary (an empty coded entry repeats), and with
-    the bytes alone the section that parked nothing could claim the copy parked
-    for the other, making the reading depend on document order. The parser
-    writes the code into the key, so this side reads it rather than guessing.
+    """Every verbatim entry the record stored, read from
+    ``ccda:entries:<code>`` as the parser wrote it. Keyed by section code
+    and bytes together, so two identical entries in different sections
+    cannot claim each other's copy.
     """
     pool: Counter[tuple[str, str]] = Counter()
     prefix = f"{EXT_SECTION_ENTRIES}:"
@@ -896,11 +879,9 @@ def _provenanced(record: PatientRecord) -> Iterator[AnastBase]:
 
 
 def _record_source_ids(record: PatientRecord) -> set[str]:
-    """Every source id the record's provenance points back at.
-
-    PHI: this set is COMPARED and never emitted. One of its members is the
-    patient's own source identifier, which is why it may not be logged, named
-    in a message, or written into a report — and why nothing here does.
+    """Every source id the record's provenance points back at. PHI:
+    compared and never emitted — one member is the patient's own source
+    identifier.
     """
     return _source_ids(_provenanced(record))
 
@@ -948,27 +929,10 @@ def _clinical_statements(node: _Element) -> list[_Element]:
 
 
 def _statement_kind(statement: _Element) -> str:
-    """What KIND of statement this is, in the document's own vocabulary.
-
-    Its element name and the template roots it declares, sorted — a Problem
-    Concern Act and the Problem Observation inside it are two kinds, which is
-    exactly the distinction :meth:`_Evidence.links` needs and the one an
-    element name alone is too coarse to make (a reaction and an allergy are
-    both ``observation``). A statement declaring no template is identified by
-    its element name, which is all the document offered.
-
-    The roots go in RAW, not through :func:`_vocabulary`, and the element name
-    is carried even when templates exist. Both are the same guard against the
-    same mistake: this string is an identity, and every kind it wrongly merges
-    becomes an obligation somebody else's success calibrated, which is the
-    false-alarm direction. Sanitising collapsed every non-OID root to one label,
-    so two unrelated vendor templates read as one kind; dropping the element
-    name let an ``<act>`` and an ``<observation>`` sharing a template do the
-    same.
-
-    PHI: compared, never emitted — like ``source_ids`` beside it. Template
-    roots and element names are structural vocabulary either way, and no id,
-    value, or narrative reaches this string.
+    """What KIND of statement this is: element name plus its template
+    roots, sorted, RAW (never through :func:`_vocabulary`) — merging two
+    unrelated kinds is the false-alarm direction :meth:`_Evidence.links`
+    must avoid. PHI: compared, never emitted, like ``source_ids``.
     """
     templates = sorted(
         root for child in statement if child.tag == _q("templateId") and (root := child.get("root"))
@@ -977,12 +941,10 @@ def _statement_kind(statement: _Element) -> str:
 
 
 def _linked_kinds(root: _Element, linkable: set[str], source_ids: set[str]) -> set[str]:
-    """The statement kinds this document is SHOWN to link, from its own record.
-
-    Calibration rather than a table: a mapping that starts recording problem
-    observations by their own id moves this set on the next run, with nothing
-    here to edit. Read from the whole document so one section's success can
-    speak for the same kind in another.
+    """The statement kinds this document is SHOWN to link, from its own
+    record — calibration, not a table, so a new mapping moves this set
+    automatically. Read from the whole document so one section can vouch
+    for the same kind elsewhere.
     """
     return {
         _statement_kind(statement)
@@ -992,12 +954,9 @@ def _linked_kinds(root: _Element, linkable: set[str], source_ids: set[str]) -> s
 
 
 def _linkable_roots(root: _Element) -> set[str]:
-    """Id roots that occur exactly once in the document.
-
-    A root two constructs share cannot say which of them an object came from —
-    and sharing is ordinary C-CDA, where one organization OID is stamped on the
-    author, the custodian and every entry beneath them. Crediting both would
-    turn one parsed entry into a whole header that "survived".
+    """Id roots that occur exactly once in the document. A shared root
+    cannot say which construct an object came from (ordinary C-CDA: one
+    org OID stamps the author, custodian and every entry beneath them).
     """
     counts = Counter(value for node in root.iter(_q("id")) if (value := node.get("root")))
     return {value for value, count in counts.items() if count == 1}
@@ -1005,11 +964,8 @@ def _linkable_roots(root: _Element) -> set[str]:
 
 def _narrative_pool(record: PatientRecord) -> Counter[tuple[str | None, str | None]]:
     """The (title, text) pairs the parser actually stored, as a multiset.
-
-    Matched by CONTENT rather than by reconstructing the parser's ``#2``/``#3``
-    key suffixes: the suffix rule is the parser's business and would have to be
-    mirrored here to stay right, and a mirror that drifts reports the drift as
-    data loss.
+    Matched by CONTENT, never by reconstructing the parser's ``#2``/``#3``
+    suffix rule — a mirror that drifts would report the drift as loss.
     """
     pool: Counter[tuple[str | None, str | None]] = Counter()
     for key, value in record.patient.extensions.items():
@@ -1022,12 +978,9 @@ def _narrative_pool(record: PatientRecord) -> Counter[tuple[str | None, str | No
 
 
 def _sections(root: _Element) -> list[_Element]:
-    """EVERY ``<section>`` in the document, at any depth.
-
-    Not the parser's own depth-one XPath. A C-CDA may nest subsections one
-    ``<component>`` deeper, and a ledger that inherited the parser's reach could
-    never report a section the parser cannot see — which is the single thing it
-    is here to do.
+    """EVERY ``<section>`` in the document, at any depth — not the
+    parser's own depth-one XPath, so a nested subsection is still visible
+    here.
     """
     return list(root.iter(_q("section")))
 
@@ -1053,29 +1006,11 @@ def _entry_disposition(entry: _Element, linked: bool | None, narrative_kept: boo
 
 
 def _parks_its_entries(section: _Element) -> bool:
-    """Whether this is a section :func:`~.parser._capture_entries` parks for.
-
-    Asked because the stored copies are keyed by section CODE, and a code is
-    not unique: Problems (Active) and Problems (Resolved) are both 11450-4, and
-    a nested subsection repeats its parent's. Without this, a section that
-    parked nothing could claim the copy parked for its namesake, and which one
-    got it depended on document order.
-
-    It ASKS the parser's own walk rather than restating it. The first attempt
-    restated it — "parent is a component under a structuredBody" — and the two
-    diverged in both directions, which is the whole reason this file reads the
-    record instead of a table of what the parser is believed to do. A document
-    nesting a second ``<structuredBody>`` inside a section has children whose
-    parent chain satisfies that test and which the parser's anchored path never
-    reaches; they parked nothing and took the copy earned by the section that
-    did. The loss-narrative section is the same mistake from the other side:
-    the parser skips it deliberately, so it parks nothing either.
-
-    What it no longer asks is whether the section renders prose. The parser
-    parked only text-less sections once, and the reading that justified it —
-    that a section's narrative stands in for the entries beneath it — is the
-    one this module took apart everywhere else. Both halves park every section
-    now, so both say the same thing about the same document.
+    """Whether this is a section :func:`~.parser._capture_entries` parks
+    for. Asked because stored copies are keyed by section CODE, which is
+    not unique (Problems Active/Resolved share 11450-4); asks the
+    parser's own walk rather than restating it, for the reason
+    :func:`_walked_index` gives.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
         return False
@@ -1083,21 +1018,11 @@ def _parks_its_entries(section: _Element) -> bool:
 
 
 def _walked_index(section: _Element) -> int | None:
-    """Where this section sits in the parser's own walk, or ``None`` if it does
-    not sit there at all.
-
-    The walk is an anchored path — ``component/structuredBody/component/
-    section`` — so a section nested inside another one, or sitting straight
-    under ``<structuredBody>`` without its ``<component>``, is not on it. The
-    parser visits neither, which means nothing of either is anywhere in the
-    record, and no store may be asked about them.
-
-    A position rather than a yes, because the one caller that needs the yes
-    also needs to find this same section in a second reading of the document
-    (:func:`_hydrated_sections`), and matching by position is the only way
-    that does not depend on element identity across two parses. It ASKS the
-    walk rather than restating it, for the reason :func:`_parks_its_entries`
-    gives.
+    """Where this section sits in the parser's own anchored walk
+    (``component/structuredBody/component/section``), or ``None`` if it
+    is not on it. A position, not a yes/no: :func:`_hydrated_sections`
+    must find this same section in a second reading by position, since
+    element identity does not survive across two parses.
     """
     for position, candidate in enumerate(_walk(section.getroottree().getroot())):
         if candidate is section:
@@ -1107,13 +1032,10 @@ def _walked_index(section: _Element) -> int | None:
 
 @lru_cache(maxsize=1)
 def _walk(root: _Element) -> list[_Element]:
-    """The parser's section walk over this document, taken once.
-
-    Three questions ask it for every section, and re-walking the tree for each
-    made the ledger quadratic in section count — four times slower at three
-    hundred sections, which a long Epic export reaches. One document is live
-    per reading, so a single slot is the whole cache; the key is the root
-    element, whose identity holds for as long as the entry does.
+    """The parser's section walk over this document, taken once —
+    re-walking per question was quadratic in section count (4x slower at
+    300 sections). One document is live per reading, so a single cache
+    slot suffices.
     """
     return list(_parser_sections(root))
 
@@ -1121,12 +1043,9 @@ def _walk(root: _Element) -> list[_Element]:
 def _entry_evidence(
     entries: list[_Element], evidence: _Evidence, code: str | None
 ) -> list[tuple[bool | None, bool]]:
-    """Per entry, in document order: its link verdict, and whether a stored
-    verbatim copy already answers for it.
-
-    One pass over both, because both questions SPEND: asking either of them
-    twice would take twice. The narrative is deliberately not asked here — it
-    is settled across the whole section afterwards, in
+    """Per entry, in document order: its link verdict, and whether a
+    stored verbatim copy already answers for it — one pass, since both
+    questions SPEND. Narrative is settled separately, in
     :func:`_narrative_credits`.
     """
     verdicts = []
@@ -1145,12 +1064,10 @@ def _entry_evidence(
 def _entries_asking_narrative(
     entries: list[_Element], verdicts: list[tuple[bool | None, bool]]
 ) -> list[_Element]:
-    """The entries with nothing else to show, in document order.
-
-    A parsed entry's evidence is its object, and spending a narrative cell for
-    it would starve an unparsed sibling that has nothing else. An entry with a
-    stored copy of its bytes is already answered for. An empty one is
-    SOURCE_EMPTY, which is not a preservation.
+    """The entries with nothing else to show, in document order. A parsed
+    entry's evidence is its object; one with a stored byte copy is
+    already answered for; an empty one is SOURCE_EMPTY, not a
+    preservation.
     """
     return [
         entry
@@ -1162,12 +1079,9 @@ def _entries_asking_narrative(
 def _settle(
     asking: list[_Element], covers: Mapping[str, frozenset[str]], widest_first: bool
 ) -> set[_Element]:
-    """One deterministic pass: which of these entries these cells can honour.
-
-    The order is decided by the CONTENT — how many cells an entry asks for,
-    then the names it asks by — and never by the position the section happened
-    to list it in. Two entries that tie on both are asking for the same thing,
-    so whichever of them wins, the count is the same.
+    """One deterministic pass: which of these entries these cells can
+    honour. Order is decided by CONTENT — demand, then names — never by
+    document position, so a tie always resolves the same way.
     """
     anchors = _Anchors(covers)
     order = sorted(
@@ -1181,27 +1095,10 @@ def _settle(
 def _narrative_credits(
     asking: list[_Element], covers: Mapping[str, frozenset[str]]
 ) -> set[_Element]:
-    """Which of these entries the section's cells can honour, settled together.
-
-    Served in the order the section lists them, an entry citing a whole row
-    takes every cell under it and starves the entries that cite those cells by
-    name — so the same three entries over the same two words read two
-    preserved or one, decided by nothing but which came first. A reading that
-    turns on that is the defect this module refuses everywhere else it counts.
-
-    Both ends are tried, narrowest claim first and widest first, and the one
-    that honours more entries is the reading. Neither alone is enough: serving
-    the narrow claims first lets one entry citing a cell from each of two rows
-    kill both row-citing entries; serving the wide ones first lets a row
-    swallow cells its own entries had named.
-
-    What this is NOT is a proof of the best possible assignment. Choosing the
-    most entries a set of cells can honour is set packing, and this is a
-    heuristic over it: measured against a brute-force maximum it never credits
-    MORE than an honest assignment could — no preservation is ever invented —
-    but on some arrangements it credits fewer, and reports loss an optimal
-    assignment would not. That is the safe direction for this instrument, and
-    it is stated here rather than implied to be exact.
+    """Which of these entries the section's cells can honour: tried both
+    narrowest-first and widest-first, keeping whichever honours more,
+    since either order alone can starve entries the other would credit.
+    Never over-credits relative to an optimal assignment (rule 57).
     """
     if not covers:
         return set()
@@ -1216,14 +1113,11 @@ def _entry_dispositions(
     code: str | None,
     covers: Mapping[str, frozenset[str]],
 ) -> tuple[dict[Disposition, int], int]:
-    """Every entry's verdict, and how many the ledger could not reach at all.
-
-    What an entry can show is either a verbatim copy of its bytes in the
-    record, or the document's own ``<reference>`` into narrative the record
-    kept. The section's prose used to answer instead — one boolean shared by
-    every entry beneath it — and a ``<text>`` is under no obligation to state
-    what its entries state, so generic prose counted an entry whose every fact
-    was absent from the record as preserved.
+    """Every entry's verdict, and how many the ledger could not reach at
+    all. An entry can show a verbatim byte copy, or the document's own
+    ``<reference>`` into kept narrative — never the section's shared
+    prose, since C-CDA makes no promise a section's text states what its
+    entries state.
     """
     verdicts = _entry_evidence(entries, evidence, code)
     narrated = _narrative_credits(_entries_asking_narrative(entries, verdicts), covers)
@@ -1237,29 +1131,10 @@ def _entry_dispositions(
 def _narrative_kept(
     section: _Element, evidence: _Evidence, pair: tuple[str | None, str | None]
 ) -> bool:
-    """Whether anything of this section's OWN narrative reached the record.
-
-    One answer, and it answers for the section rather than for anything under
-    it. It used to return a second — "and its ``<text>`` survived" — which the
-    entries were then graded against, on the assumption that a section's prose
-    states what its entries state. C-CDA makes no such promise, so the entries
-    are asked at their own address now (:func:`_entry_dispositions`) and this
-    is the section's own line again.
-
-    Our own exported loss ledger is the one section stored somewhere else —
-    entry by entry under ``ccda:prior_loss_narrative``, so a re-export cannot
-    nest generation N-1 inside generation N — so it is asked about at its own
-    address rather than reported as dropped.
-
-    That store is filled from the parser's section walk, which means its
-    address is "the lines the WALKED ledgers put there". A stamped section off
-    the walk contributed nothing to it, and its lines can still be in there
-    because another ledger wrote the same ones: an export that dropped the same
-    field twice says so twice. Asking the store about such a section is asking
-    the wrong address, and it answered yes — a section entirely absent from the
-    record read preserved, and the ledger that had really delivered the lines
-    was left holding an empty pool and reported lost. Which of the two got the
-    credit came down to document order.
+    """Whether anything of this section's OWN narrative reached the
+    record — never graded against its entries. Our own exported loss
+    ledger is asked at its OWN address (the WALKED twin's position),
+    since an off-walk section contributed nothing to that store.
     """
     if _is_own_loss_narrative(section, _section_code(section)):
         position = _walked_index(section)
@@ -1274,29 +1149,10 @@ def _narrative_kept(
 
 @lru_cache(maxsize=1)
 def _hydrated_sections(root: _Element) -> list[_Element]:
-    """The walked sections, read as the PARSER reads them.
-
-    The parser resolves ``<reference value="#id"/>`` in place before it captures
-    anything, so a ledger line that points into the narrative is stored carrying
-    the words it points at. This side re-reads the file and sees the pointer
-    instead, matches nothing, and reports a ledger that arrived whole as lost.
-
-    The fix has to be here rather than on the capture side. Capturing before
-    hydration makes the two sides agree, but they agree on LESS: a line that is
-    only a reference has no text of its own, so it is stored as nothing at all
-    and the carried-forward appendix quietly loses it. That is a real deletion
-    in the one mechanism this repo has for keeping what it cannot model, traded
-    for a reporting fix — the wrong way round.
-
-    So the document is hydrated on a COPY, and only for this question. The
-    verbatim-entry mirror next door depends on the untouched tree
-    (:func:`~.parser._capture_entries` is taken before hydration on purpose, and
-    a hydrated copy of an ``<entry>`` matches nothing the parser stored), which
-    is why this resolves a second reading rather than the shared one.
-
-    The caller reads the result by position in the walk, because element
-    identity does not survive into a second tree; the cache itself is keyed by
-    the root, one document at a time.
+    """The walked sections, read as the PARSER reads them: on a hydrated
+    COPY (rule 59), since the verbatim-entry mirror depends on the
+    untouched tree. Matched by position, since element identity does not
+    survive into a second tree; cached one document at a time.
     """
     twin = deepcopy(root)
     _inline_narrative_references(twin)
