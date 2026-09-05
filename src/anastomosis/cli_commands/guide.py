@@ -1,27 +1,13 @@
 """``anast`` with no arguments — the guided session.
 
-A physician who has never opened a manual types ``anast``, presses Enter, and is
-walked to a finished run: a short branded header, five numbered choices, then one
-prompt at a time, each stating what it will do. Every flow ends by running the
-SAME command ``anast`` would have run from a typed command line — this module
-gathers arguments and speaks plain English; it decides nothing a command decides
-and reimplements nothing a command does.
-
-Three rules hold this together:
-
-* **A script never sees a prompt.** The guide runs only when a person is at both
-  ends of the session (:func:`is_interactive_terminal`); every other caller gets
-  the help page ``anast`` has always printed. CI cannot hang here.
-* **One code path.** :func:`_dispatch` hands the assembled argument list to the
-  real Typer app, so every gate, every printed line and every exit code belongs
-  to the command, not to the guide. It is also the seam the tests patch.
-* **One register.** The copy obeys ``docs/design/DESIGN_LANGUAGE.md`` §10 and
-  ``docs/design/COPY_MAP.md``: no engineering vocabulary, no emoji, no
-  exclamation marks, sentence case, and every prompt says what happens next.
-  ``tests/unit/test_guide.py`` lints this file's prose for the banned words.
-
-Imports stay inside the functions that need them (the CLI's lazy cold-start
-rule); this module itself is imported only when ``anast`` is typed bare.
+Gathers arguments in plain English and runs the SAME command ``anast``
+would run from a typed command line (:func:`_dispatch`) — this module
+decides nothing a command decides. Runs only when a person is at both
+ends of the session (:func:`is_interactive_terminal`); every other caller
+gets the help page, so no script can hang on a prompt. Copy follows
+``docs/design/DESIGN_LANGUAGE.md`` §10 and ``docs/design/COPY_MAP.md``,
+linted by ``tests/unit/test_guide.py``. Imports stay inside the functions
+that need them, since this module loads only when ``anast`` is typed bare.
 """
 
 from __future__ import annotations
@@ -66,10 +52,8 @@ PURPOSE = "Turn an EHR export into complete, verified charts you can keep or mov
 class Plan:
     """One gathered flow: what will run, and how the guide talks about it.
 
-    ``argv`` is handed to the real ``anast`` app verbatim. The three sentences
-    around it are the guide's whole contribution: what is about to happen, what
-    happened, and what a person would sensibly do next.
-    """
+    ``argv`` is handed to the real ``anast`` app verbatim; the three
+    sentences around it are the guide's whole contribution."""
 
     argv: tuple[str, ...]
     confirmation: str
@@ -81,21 +65,10 @@ class Plan:
 
 
 def is_interactive_terminal(console: Console) -> bool:
-    """True only when a person is at BOTH ends of this session.
-
-    The guided session asks questions, so it may start only when the answers can
-    come from a keyboard and the questions can be seen: a real terminal on stdin
-    AND on the console's own output stream. A pipe, a redirect, a cron job or a
-    CI runner fails this test and is given the help page instead — which is why
-    no script can ever hang waiting for a prompt that nobody will answer.
-
-    Both ends are asked directly, of the streams themselves — see
-    :func:`~anastomosis.core.presentation.attached_to_a_terminal`, which the
-    greeting mark asks the same question of before it draws anything. Dropping
-    the output end would not do: stdin stays a keyboard when only stdout is
-    redirected, so ``anast > log`` would start the session and put its questions
-    somewhere the person answering cannot read them.
-    """
+    """True only when a person is at BOTH ends: a real terminal on stdin AND
+    on the console's own output stream. Dropping the output end would not
+    do: stdin stays a keyboard when only stdout is redirected, so
+    ``anast > log`` would start the session with nobody able to read it."""
     import sys
 
     return attached_to_a_terminal(getattr(sys, "stdin", None)) and attached_to_a_terminal(
@@ -104,12 +77,9 @@ def is_interactive_terminal(console: Console) -> bool:
 
 
 def run_guide(console: Console) -> int:
-    """Run the guided session on ``console`` and return the exit status.
-
-    Prints the header, takes one choice, gathers that flow's answers, confirms
-    in one sentence, then runs the real command and says what happened. An
-    interrupt before the command starts is honest about it and stops.
-    """
+    """Runs the guided session on ``console``: prints the header, takes one
+    choice, gathers that flow's answers, confirms in one sentence, then runs
+    the real command and reports what happened."""
     _print_header(console)
     try:
         plan = _choose_plan(console)
@@ -145,14 +115,10 @@ def run_guide(console: Console) -> int:
 
 
 def _dispatch(argv: Sequence[str]) -> int:
-    """Run one real ``anast`` command in this process; return its exit status.
-
-    The guide never shells out and never reimplements a command: it hands the
-    assembled arguments to the SAME Typer app the ``anast`` entry point runs, so
-    the event lines stream exactly as they always have and the exit code is the
-    command's own. Typer ends a command by raising ``SystemExit``; catching it
-    is what turns "the command ran" back into a value the guide can talk about.
-    """
+    """Runs one real ``anast`` command in this process via the SAME Typer
+    app the entry point runs, so event lines and the exit code are the
+    command's own. Typer ends a command via ``SystemExit``; catching it
+    turns that back into a value the guide can talk about."""
     from anastomosis.cli import app
     from anastomosis.core.outcome import take_declined
 
@@ -168,18 +134,10 @@ def _dispatch(argv: Sequence[str]) -> int:
 
 
 def _print_header(console: Console) -> None:
-    """The one identity moment: the mark, the name, the version, the purpose.
-
-    On a terminal wide enough to hold it, the mark is the product's own vessel
-    logo in dots, and the words sit beside it. Everywhere else — a redirect, a
-    narrow window — the header is the line it has always been, because the one
-    thing this moment may never do is cost somebody the answer to "what is
-    this and what version am I running".
-
-    The mark's module is imported here rather than at the top of the file:
-    ``anast --help`` and every named command reach neither, and startup cost
-    is the reason this whole module is imported late in the first place.
-    """
+    """The one identity moment: the mark, the name, the version, the
+    purpose. Falls back to the plain header line off a wide/greeting-
+    capable terminal. The mark's module is imported here, not at the top,
+    since startup cost is why this whole module loads late."""
     import anastomosis
     from anastomosis.core.vesselmark import show_greeting
 
@@ -520,20 +478,13 @@ def _wrapped(note: str, width: int = 76) -> list[str]:
 
 
 def _read(console: Console, label: str, *, default: str = "") -> str:
-    """Read one answer, showing the pre-filled default an empty Enter accepts.
-
-    The prompt is a :class:`~rich.text.Text`, never markup, so a pasted Windows
-    path or a default containing brackets is shown literally rather than being
-    eaten as a style tag.
-    """
-    # readline, where the platform has it, turns an arrow key into line
-    # editing instead of bytes — rich's own docs name a previously-loaded
-    # readline as how `input()` gains editing and history. Loaded here, at the
-    # last moment before the first prompt, so `anast --help` never pays for it.
-    # Windows has no readline and needs none: its console host edits the line
-    # itself. Belt and braces either way: whatever reaches the answer is still
-    # swept by `as_typed`, because a paste can carry the same escapes an arrow
-    # key does, on every platform, with readline or without.
+    """Reads one answer, showing the pre-filled default an empty Enter
+    accepts. Built as ``Text``, never markup, so a pasted path or a
+    bracketed default is shown literally rather than eaten as a style tag."""
+    # Loaded here, at the last moment, so `anast --help` never pays for the
+    # arrow-key line editing it gives on platforms that have it (Windows'
+    # console host edits the line itself either way). `as_typed` sweeps the
+    # answer regardless — a paste can carry the same escapes an arrow key does.
     try:
         import readline  # noqa: F401  (loading it IS the effect)
     except ImportError:
@@ -602,12 +553,9 @@ def _ask_choice(
 
 
 def _ask_export_dir(console: Console) -> Path:
-    """Ask for the EHR's export folder.
-
-    Two flows begin with this exact question and this exact reassurance, and the
-    reassurance is a promise about what the tool does to the operator's files.
-    One place to say it, so the two flows cannot come to say it differently.
-    """
+    """Asks for the EHR's export folder — the exact question and
+    reassurance two flows share, said once so they cannot come to say it
+    differently."""
     return _ask_existing_dir(
         console,
         "Where is the export folder?",
@@ -649,16 +597,10 @@ def _ask_existing_path(console: Console, question: str, note: str) -> Path:
 
 
 def _ask_output_dir(console: Console, question: str) -> Path:
-    """Ask where results should go — the one path that may not exist yet.
-
-    Checked as far as it can be checked here: a folder that is really a file, or
-    one whose parent is missing, is caught now rather than after a long run.
-
-    The question varies by flow ("the finished charts", "the results"); the
-    reassurance underneath it does not, and it is the half that has to stay the
-    same everywhere — an operator who reads "readable only by you" once should
-    not have to wonder whether it still holds on the next screen.
-    """
+    """Asks where results should go — the one path that may not exist yet.
+    Checked as far as possible here (a file where a folder should be, or a
+    missing parent) so that surfaces now rather than after a long run. The
+    reassurance text stays identical across every flow that asks this."""
     _print_question(
         console,
         question,
@@ -691,18 +633,11 @@ def _typed_path(console: Console, label: str) -> Path | None:
 
 
 def _report(console: Console, plan: Plan, exit_code: int) -> None:
-    """Close the session: one plain sentence about the run, then what is next.
-
-    A refusal keeps every word the command printed; all this adds is one
-    sentence framing it, so nobody has to guess whether anything was written.
-
-    Exit 0 alone cannot say which happened. A command that ends because the
-    operator answered "no" to its own confirmation has not failed, so it exits
-    0 too — and this used to read that as done and print "Filing has finished."
-    in the success style, immediately after the operator's own refusal. The
-    command records the refusal itself (`core.outcome`); anything else here
-    would be the guide guessing.
-    """
+    """Closes the session: one plain sentence about the run, then what is
+    next. A refusal keeps every word the command printed; this only adds a
+    framing sentence. Exit 0 alone can't distinguish a declined
+    confirmation from success, so the declined outcome (`core.outcome`) is
+    read first; anything else here would be the guide guessing."""
     from anastomosis.core.outcome import take_declined
 
     console.print()
