@@ -1,75 +1,12 @@
-"""What the XML offered, and what the record kept.
+"""What the XML offered, and what the record kept — the reading a document
+"parsed successfully" cannot itself say.
 
-An audit put 2,103 real C-CDA documents through this adapter. Every one of them
-parsed. No error was raised, no document was skipped, and the run reported
-success — while eleven canonical collections came back empty across all 2,103:
-not one practitioner, not one facility, not one coverage, not one document, and
-not one of the 12,277 encounters carried a note section or a chief complaint.
-
-"It parsed" had said nothing about whether the chart survived, and nothing could
-say otherwise, because nothing anywhere counted what the XML OFFERED. Only the
-survivors were ever counted, and a count of survivors is the one number that
-looks identical whether the loss was zero or total. This module is the other
-count.
-
-It walks the document independently of :mod:`~anastomosis.sources.ccda.parser`
-— deliberately, so it can see constructs the parser's own traversal never
-reaches (a subsection nested one component deeper is invisible to a depth-one
-XPath, and would otherwise be invisible here too) — and gives every clinically
-meaningful construct exactly one disposition:
-
-* ``structurally_parsed`` — it became a typed canonical object;
-* ``narrative_preserved`` — its words are in ``patient.extensions``, but no
-  typed object carries them, so nothing downstream can index, chart, reconcile
-  or migrate them as data;
-* ``unsupported`` — the adapter has no slot for it. Named, counted, and not
-  quietly folded into the success column;
-* ``source_empty`` — the document offered none. A different fact from losing
-  them, and recorded as one, because a report that cannot tell "there were no
-  allergies" from "the allergies did not survive" is not evidence of anything.
-
-**Evidence, never assumption.** A construct is credited as structurally parsed
-only when some canonical object's ``provenance.source_id`` names an ``<id
-root>`` that construct carries. Not because its section code is in a dispatch
-table, and not because the matching collection is non-empty — either would let
-this instrument certify a fix that never ran. The cost is a known, one-sided
-bias: a construct whose id root is shared with another construct in the same
-document (a root shared by two constructs cannot say which of them an object
-came from) can never be credited, and is counted in ``unlinkable`` so the
-reading stays honest about its own blind spot. The bias runs toward reporting
-loss that is not there, which is the direction a loss detector should err.
-
-**A second form of evidence, only where the first is impossible.** Some
-constructs cannot carry an id at all: CDA R2 gives ``Device`` and
-``RelatedEntity`` no ``<id>``, so an authoring device and an informant who is a
-relative were reported as lost in every document that had one, permanently and
-by schema rather than by anything the adapter did. For those classes — declared
-by name in :data:`ID_LESS_CONSTRUCTS`, never inferred — a parse is credited when
-the record holds an object STATING what the XML states for that construct: the
-same by-content argument :func:`_narrative_pool` makes, because reconstructing
-the parser's mapping rules here would make the instrument a mirror, and a mirror
-that drifts reports the drift as loss. The bias is the same one: content is
-matched exactly, a construct that states nothing is not matched at all, and N
-constructs against M matching objects credit ``min`` by multiset intersection —
-each object answers for one construct and then is spent, so two identical
-informants and one object credit one parse and leave the other in
-``unlinkable``. The id rule is untouched everywhere else, shared-root refusal
-included.
-
-The books balance or the ledger refuses: every construct the document offers
-ends in exactly one disposition, and so does every ``<entry>``, checked through
-:class:`~anastomosis.core.conservation.Conservation` — the same primitive the
-render, upload and delivery seams are held to, for the same reason.
-
-PHI: counts, element names, LOINC codes and template OIDs. Nothing else. Ids
-are compared and never emitted, narrative text is compared and never emitted,
-the name, telephone number and relationship an id-less construct states are
-compared and never emitted, and a code or template root the vocabulary does not
-recognise is reported as ``nonstandard`` rather than passed through — a
-document's ``@code`` is under its author's control, and a name is not a name
-because we assumed it was a code. :func:`assert_emittable` enforces that at the boundary rather than
-trusting it, exactly as ``tools/ccda_shape_report.py`` does with the report it
-sends home.
+Walks the document independently of the parser and gives every construct
+exactly one disposition (rule 57), credited only by evidence a canonical
+object actually carries, never by section-code dispatch (rule 58). An
+id-less construct (:data:`ID_LESS_CONSTRUCTS`) is credited by content
+match instead. :func:`assert_emittable` enforces the report's PHI
+boundary: counts, element names, LOINC codes and template OIDs only.
 """
 
 from __future__ import annotations
@@ -158,9 +95,8 @@ _Element = etree._Element
 class Disposition(StrEnum):
     """What became of one construct the document offered.
 
-    Exactly one applies to each, and the four together are exhaustive by
-    construction — an instrument whose classes overlap or leave a gap can
-    report a balanced ledger over a chart that lost half of itself.
+    The four are exhaustive by construction: overlap or a gap could report a
+    balanced ledger over a chart that lost half of itself.
     """
 
     STRUCTURALLY_PARSED = "structurally_parsed"
@@ -171,11 +107,9 @@ class Disposition(StrEnum):
 
 # --- the emission vocabulary -------------------------------------------------
 
-# Deliberately a whitelist, and deliberately narrow. Every string this ledger
-# can emit is either a word it chose itself or a document value that matched one
-# of these; anything else becomes NONSTANDARD. A patient's name is not a LOINC
-# code and not an OID, so the vocabulary itself is the control — the same
-# argument tools/ccda_shape_report.py makes about its own report.
+# A deliberate whitelist: anything not matching LOINC/OID becomes NONSTANDARD,
+# so a patient's name can never pass as a code (same control as
+# tools/ccda_shape_report.py's own report).
 _LOINC_RE = re.compile(r"^[0-9]{1,6}-[0-9]$")
 _OID_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
 
@@ -194,15 +128,10 @@ _BODY_KIND = "body"
 _KINDS = frozenset({_SECTION_KIND, _PARTICIPATION_KIND, _BODY_KIND})
 
 #: The participation elements, each with the ElementPath(s) it is counted at.
-#:
-#: Scope is per-element and argued, not uniform. ``author``, ``performer`` and
-#: ``informant`` are counted wherever they appear — the clinician who signed a
-#: note is as much a named provider as the one in the header, and the header
-#: scope alone would have reported the note's author as absent rather than as
-#: lost. ``participant`` is counted in the HEADER ONLY, because a nested
-#: ``<participant>`` inside an allergy entry is the allergen substance, which
-#: this adapter does parse; counting it here would report a fact that survived
-#: as a fact that vanished. The rest occur only in the header in CDA R2.
+#: Scope is per-element: ``author``/``performer``/``informant`` count
+#: everywhere (a note's author is a lost provider, not merely absent);
+#: ``participant`` counts HEADER ONLY — a nested one in an allergy entry is
+#: the allergen substance, already parsed elsewhere.
 PARTICIPATION_PATHS: Mapping[str, tuple[str, ...]] = {
     "author": (".//v3:author",),
     "assignedAuthoringDevice": (".//v3:assignedAuthoringDevice",),
@@ -218,20 +147,15 @@ PARTICIPATION_PATHS: Mapping[str, tuple[str, ...]] = {
     "encompassingEncounter": ("v3:componentOf/v3:encompassingEncounter",),
 }
 
-#: The document body forms. ``nonXMLBody`` is the whole clinical content of an
-#: Unstructured Document — a scanned referral, a faxed discharge summary — and
-#: it is a construct precisely because the adapter's section walk cannot see it:
-#: such a document parses cleanly and yields a patient with no chart at all.
+#: ``nonXMLBody`` is a whole Unstructured Document's clinical content (a
+#: scan, a fax) — invisible to the section walk, so it needs its own construct.
 BODY_PATHS: Mapping[str, tuple[str, ...]] = {
     "nonXMLBody": ("v3:component/v3:nonXMLBody",),
 }
 
 
-#: Every bare word a report may contain: the keys it is built from, the four
-#: disposition names, and the two labels a refused value collapses to. A new key
-#: has to be added here, in the open, rather than riding out inside a dict nobody
-#: re-read — the same bargain ``tools/ccda_shape_report.py`` strikes with its own
-#: report.
+#: Every bare word a report may contain. A new key is added here, in the
+#: open, never left implicit in a dict nobody re-reads.
 REPORT_WORDS: frozenset[str] = frozenset(
     {
         "version",
@@ -271,17 +195,10 @@ def _construct(kind: str, name: str) -> str:
 
 @dataclass(frozen=True)
 class LedgerRow:
-    """One construct's books: how many the document offered, and where they went.
-
-    ``instances`` is keyed by disposition rather than carrying a single verdict,
-    because a construct group is not uniform — three of a document's four
-    sections may be parsed and the fourth dropped, and a row that had to pick
-    one word for that would have to pick the flattering one or the alarming one.
-
-    A key present with a count of ZERO is a deliberate statement: the ledger
-    looked for this construct and the document had none. A key simply missing
-    would read as "the ledger did not look", and this report exists to be
-    believed about absences.
+    """One construct's books. ``instances`` is keyed by disposition, never a
+    single verdict, since a group need not be uniform. A key present at
+    zero means the ledger looked and found none; a missing key means it
+    never looked.
     """
 
     construct: str
@@ -341,20 +258,11 @@ class DocumentLedger:
 
 @dataclass(frozen=True)
 class CorpusLedger:
-    """Many documents' books, merged construct by construct.
-
-    ``present_in`` counts the DOCUMENTS that offered a construct at all, which
-    is the number that separates "this corpus has no advance directives" from
-    "this adapter drops advance directives". Without it a zero in the parsed
-    column is unreadable.
-
-    ``skipped_files`` is not a construct and merges with no row: it is how
-    many files in the export the adapter's own directory walk recognised as a
-    CDA document but did not open, because their extension named none it
-    accepts (see ``sources.ccda._scan``, #384). Carried here rather than on a
-    row so it survives into ``as_report()`` and :func:`physician_reading`
-    beside the count of everything that WAS opened — an export can under-report
-    its patients even when every document it did open balances perfectly.
+    """Many documents' books, merged construct by construct. ``present_in``
+    counts DOCUMENTS offering a construct at all — the number separating "no
+    advance directives" from "this adapter drops them". ``skipped_files``
+    merges with no row: files the directory walk saw as CDA but never opened
+    (#384), carried here so an under-reported corpus still shows.
     """
 
     documents: int
@@ -432,21 +340,11 @@ _Fact = tuple[str, str]
 
 @dataclass(frozen=True)
 class _Content:
-    """How one id-less construct class states itself, on both sides of the seam.
-
-    ``stated`` reads the XML and ``recorded`` reads a canonical object; a parse
-    is credited when the two produce the SAME facts. Both halves are spelled
-    here rather than derived from the parser, for the reason ``_narrative_pool``
-    gives: reconstructing the parser's mapping rules would make this instrument
-    a mirror, and a mirror that drifts reports the drift as loss. Where a
-    spelling IS shared with the parser it is shared knowingly — if the two ever
-    disagree the facts differ, differing means uncredited, and uncredited is the
-    direction this ledger is allowed to be wrong in.
-
-    ``applies`` is asked of the construct node, because id-lessness is a
-    property of the role CDA played, not of the participation's name: an
-    ``informant`` playing an ``assignedEntity`` carries an id and keeps the id
-    rule, shared-root refusal included.
+    """How one id-less construct class states itself, on both sides of the
+    seam. ``stated``/``recorded`` are hand-spelled, not derived from the
+    parser, so drift differs rather than silently mirrors (uncredited is
+    the safe direction). ``applies`` tests the construct node: id-lessness
+    is a role CDA played, not a participation's name.
     """
 
     applies: Callable[[_Element], bool]
@@ -489,13 +387,10 @@ def _device_recorded(obj: AnastBase) -> frozenset[_Fact]:
 
 
 def _name_facts(name: _Element) -> list[tuple[str, str | None]]:
-    """One ``<name>`` broken into the parts the document actually split it into.
-
-    The un-split fallback is the parser's own and is here for the same reason
-    the parser has it: a name written as element text still says who this is.
-    Every ``<given>`` is stated, not the first one — a document that spelled two
-    given names stated two, and a record holding one of them is not holding what
-    the document said.
+    """One ``<name>`` broken into the parts the document actually split it
+    into. The un-split fallback matches the parser's own. Every ``<given>``
+    is stated, not just the first — two given names stated is two facts, not
+    one.
     """
     given = [("given", _text_content(node)) for node in _findall(name, "v3:given")]
     family = _text_content(_find(name, "v3:family"))
@@ -506,15 +401,10 @@ def _name_facts(name: _Element) -> list[tuple[str, str | None]]:
 
 
 def _person_stated(node: _Element) -> frozenset[_Fact]:
-    """What a participation states about the person who took part.
-
-    Read over the whole participation subtree rather than at a fixed path: CDA
-    spells the role and the person element differently under every
-    participation, and a second copy of that table would be one more thing to
-    drift. An address is deliberately not read — normalizing one is the
-    parser's business and re-spelling it here is precisely the mirror this
-    avoids — so two actors alike but for their address state the same facts and
-    compete for one object, which can only lower the credited count.
+    """What a participation states about the person who took part. Reads
+    the whole subtree, since CDA spells the role differently per
+    participation; address is deliberately not read to avoid re-spelling
+    the parser's own normalization here.
     """
     facts: list[tuple[str, str | None]] = []
     for name in node.iter(_q("name")):
@@ -560,17 +450,15 @@ def _always(node: _Element) -> bool:
     return True
 
 
-#: The construct classes CDA itself leaves without an ``<id>``, listed by name
-#: rather than inferred, because "this one had no id in this document" is a
-#: property of one document and "this one can never have an id" is a property of
-#: the standard — and only the second may widen the evidence rule.
+#: Construct classes CDA itself leaves without an ``<id>``, listed by name
+#: (never inferred): "can never have an id" is a property of the standard,
+#: not of one document.
 #:
-#: * ``assignedAuthoringDevice`` — CDA R2's ``Device`` class has ``classCode``,
-#:   ``determinerCode``, ``code``, ``manufacturerModelName`` and
-#:   ``softwareName``. There is no ``id`` on it to link by, in any document.
-#: * ``informant`` — an informant plays either an ``assignedEntity``, which
-#:   carries ``id``, or a ``RelatedEntity``, which CDA R2 gives no ``id`` at
-#:   all. Only the second is admitted here; the first keeps the id rule.
+#: * ``assignedAuthoringDevice`` — CDA R2's ``Device`` has no ``id`` in any
+#:   document.
+#: * ``informant`` — plays ``assignedEntity`` (has ``id``, keeps the id
+#:   rule) or ``RelatedEntity`` (CDA R2 gives it none); only the second is
+#:   admitted.
 ID_LESS_CONSTRUCTS: Mapping[str, _Content] = {
     "assignedAuthoringDevice": _Content(_always, _device_stated, _device_recorded),
     "informant": _Content(_plays("relatedEntity"), _person_stated, _person_recorded),
@@ -578,27 +466,9 @@ ID_LESS_CONSTRUCTS: Mapping[str, _Content] = {
 
 
 # --- the places a record keeps evidence in -----------------------------------
-#
-# Every evidence question this module asks is the same shape: a construct
-# offers a HANDLE, and a PLACE in the record is asked whether it holds
-# something that handle can be shown to have produced. What separates the
-# questions is not the asking, it is whether asking COSTS anything.
-#
-# That distinction used to live inside two method bodies and was declared in
-# neither signature, which is what #329 was filed about. It is now the type of
-# the place. A ``_Facts`` has no method that mutates it and is frozen besides,
-# so an id can answer for any number of constructs and no future edit can
-# quietly make it answer once. A pool answers only by being spent, because its
-# members are obligations: two sections spelled identically are two
-# obligations, as are two identical informants, and a pool that answered yes
-# twice for one stored thing would credit a construct that was dropped.
-#
-# The two pools stay two types rather than one. A narrative is claimed by an
-# exact key; an object is claimed by a predicate the CALLER supplies, because
-# which facts count is a property of the asking rule and not of the object.
-# Forcing both through one interface would mean precomputing every object's
-# facts under a rule not yet known, and would leave a name that means two
-# things.
+# Two shapes of place: free to ask again (:class:`_Facts`) and spent by
+# asking (:class:`_KeyedPool`) — declared in the type, not a method body, so
+# a caller cannot get the distinction wrong (#329).
 
 _Key = TypeVar("_Key")
 
@@ -607,10 +477,8 @@ _Key = TypeVar("_Key")
 class _Facts:
     """A place that answers as often as it is asked, and is never spent.
 
-    Frozen, and holding a ``frozenset``, on purpose: there is no method here
-    that removes a member and no way to add one. "Asking this does not cost
-    anything" is therefore readable from the type, which is the whole point of
-    the exercise, rather than from remembering that nobody wrote a decrement.
+    Frozen and holding a ``frozenset``: nothing here removes or adds a
+    member, so "asking costs nothing" is readable from the type itself.
     """
 
     held: frozenset[str]
@@ -629,10 +497,8 @@ class _Facts:
 class _KeyedPool(Generic[_Key]):
     """A place whose members are claimed by an exact key, one claim each.
 
-    ``take`` is the only way in or out. There is deliberately no way to look
-    without taking: a caller that could ask without spending could write a
-    predicate that credits the same stored thing twice, which is the arithmetic
-    this ledger exists to refuse.
+    ``take`` is the only way in or out — no look-without-taking, so a
+    caller cannot credit the same stored thing twice.
     """
 
     def __init__(self, counts: Counter[_Key]) -> None:
@@ -645,11 +511,8 @@ class _KeyedPool(Generic[_Key]):
         return True
 
     def take_all(self, keys: Iterable[_Key]) -> bool:
-        """Claim every one of ``keys``, or claim none of them.
-
-        A caller needing several claims to answer one question must not spend
-        half of them and then fail: the ones it spent would be gone from the
-        next asker, which is a loss this ledger invented rather than found.
+        """Claim every one of ``keys``, or claim none of them — a partial
+        claim would spend some and leave the next asker short.
         """
         needed = Counter(keys)
         if any(self._counts[key] < count for key, count in needed.items()):
@@ -661,12 +524,9 @@ class _KeyedPool(Generic[_Key]):
 class _MatchedPool:
     """A place whose members are claimed by a predicate, one claim each.
 
-    Separate from :class:`_KeyedPool` because the question is not "is this key
-    present" but "does any object here record exactly what the asking rule says
-    this construct states" — and the rule, not the object, decides which facts
-    count. One object is one parse: an object that has already stood for a
-    construct cannot stand for a second, so N id-less constructs against M
-    matching objects credit ``min``.
+    The rule, not the object, decides which facts count; one object is one
+    parse, so N id-less constructs against M matching objects credit
+    ``min``.
     """
 
     def __init__(self, items: Iterable[AnastBase]) -> None:
@@ -685,11 +545,9 @@ class _MatchedPool:
 
 @dataclass(frozen=True)
 class _Evidence:
-    """Everything the parsed record can PROVE about a construct.
-
-    Built once per document. The five places below are the whole vocabulary,
-    and each one's type says whether asking it costs anything — see the note
-    above :class:`_Facts`.
+    """Everything the parsed record can PROVE about a construct, built once
+    per document. Each field's type says whether asking it costs anything
+    (see :class:`_Facts`).
     """
 
     #: Where an id is asked. A fact: one id answers for as many constructs as
@@ -708,54 +566,29 @@ class _Evidence:
     #: it that cost nothing: whether the prior-loss narrative is held, and
     #: whether a key exists at all.
     extension_keys: _Facts
-    #: The entries the record stored from OUR OWN exported loss ledgers, one
-    #: claim each. Counted, not merely present: the parser concatenates every
-    #: stamped ledger it walks into one key, so the key's existence says a
-    #: ledger arrived and says nothing about WHICH.
+    #: Entries stored from our own exported loss ledgers, one claim each.
+    #: Counted, not merely present, since the parser concatenates every
+    #: stamped ledger into one key.
     own_loss_entries: _KeyedPool[str]
-    #: Where a parked PAYLOAD is claimed, one claim per stored item. Counted
-    #: and spent rather than asked as a fact, because a key is not a payload:
-    #: `ccda:serviceEvent` holding `[]` is the adapter having written the
-    #: namespace and kept nothing, and two offered events against one stored
-    #: item are one preserved and one lost.
+    #: A parked PAYLOAD, one claim per stored item — spent, not asked as a
+    #: fact, since a key with an empty payload (``ccda:serviceEvent: []``)
+    #: is not the same as one that kept something.
     parked_items: _KeyedPool[str]
     #: Where a canonical object is claimed, one claim per object.
     objects: _MatchedPool
-    #: Where a text-less section's verbatim entries are claimed, one claim per
-    #: stored copy — the sixth place, added for #314, and an instance of an
-    #: existing type rather than a new kind of question.
+    #: A text-less section's verbatim entries, one claim per stored copy —
+    #: the sixth place (#314), an instance of an existing type.
     entries: _KeyedPool[tuple[str, str]]
-    #: The source ids the record's DOCUMENT artifacts name. Kept apart from
-    #: ``source_ids`` because the body constructs are asked a narrower question
-    #: than ``links`` asks (see :meth:`carried_as_document`), and answering it
-    #: out of the whole record would credit an unstructured body to the
-    #: document id every record's own provenance already carries.
+    #: Source ids the record's DOCUMENT artifacts name. Kept apart from
+    #: ``source_ids``: answering from the whole record would credit an
+    #: unstructured body to an id every record's own provenance already carries.
     document_source_ids: _Facts
 
     def links(self, node: _Element) -> bool | None:
-        """Whether every clinical statement in this construct reached the record.
-
-        ``None`` is not "no": it means the construct carries no id this ledger
-        could have linked by, so the question was never asked. Kept distinct
-        because collapsing it into "no" would report the ledger's blind spot as
-        the adapter's loss.
-
-        The question used to be "did ANY id under here reach the record", and
-        one id is a poor answer for a wrapper holding several statements: an
-        ``<organizer>`` of two results kept its verdict when one of the two was
-        dropped, because the survivor's id still matched. So the statements are
-        asked one at a time and the answer is ALL of them — but only of the
-        statements this document has shown the adapter linking, which is the
-        difference between a missing sibling and a shape the mapping folds in
-        on purpose. A Problem Concern Act is linked and its nested Problem
-        Observation never is; requiring the observation would report every
-        conforming problem as half lost. :attr:`linked_kinds` is that
-        calibration, read from this document's own successes.
-
-        With no calibrated statement to ask about, the old any-of answer stands
-        unchanged — so this can only ever turn a yes into a no or into a blind
-        spot, never a no into a yes, and a construct whose every statement was
-        dropped still reads as the loss it always did.
+        """Whether every clinical statement in ``node`` reached the record.
+        ``None`` means no id here could ever answer — never "no". Requires
+        ALL calibrated statements (rule 58): one surviving sibling must not
+        vouch for a dropped one.
         """
         roots = {root for root in _id_roots(node) if self.linkable_roots.holds(root)}
         if not roots:
@@ -770,15 +603,10 @@ class _Evidence:
         )
 
     def _obligations(self, node: _Element) -> tuple[list[_Element], bool]:
-        """``(the statements that must link, whether one could not be asked)``.
-
-        A statement of a kind this document links, carrying ids that are all
-        shared with something else, is one this reading cannot follow — and
-        dropping it from the obligation set would let its sibling's success
-        answer for it, which is the whole habit being broken here. It is a
-        blind spot instead: the caller reports the construct as impossible to
-        check rather than as parsed, so a lost statement behind a shared root
-        can still be counted as loss and never as a clean bill of health.
+        """Contract: (statements that must link, whether one could not be
+        asked). A statement whose ids are all shared with something else is
+        a blind spot, not a drop — it must never let a sibling's success
+        answer for it.
         """
         obligations: list[_Element] = []
         uncheckable = False
@@ -797,14 +625,10 @@ class _Evidence:
         return {root for root in _own_id_roots(statement) if self.linkable_roots.holds(root)}
 
     def states(self, name: str, node: _Element) -> bool | None:
-        """Whether the record holds an object stating what this construct states.
-
-        The second form of evidence, asked only after the first came back
-        ``None``, and only of the classes :data:`ID_LESS_CONSTRUCTS` names.
-        ``None`` again means the question could not be answered rather than
-        answered no — a construct that states nothing at all is one of those,
-        because absence of evidence is not evidence — so the construct stays
-        counted in the ledger's blind spot exactly as it was before.
+        """Whether the record holds an object stating what this construct
+        states — the second form of evidence, for :data:`ID_LESS_CONSTRUCTS`
+        classes only, after the first came back ``None``. A construct
+        stating nothing also answers ``None``: absence is not evidence.
         """
         rule = ID_LESS_CONSTRUCTS.get(name)
         if rule is None or not rule.applies(node):
@@ -812,12 +636,9 @@ class _Evidence:
         facts = rule.stated(node)
         if not facts:
             return None
-        # A miss here is None, not False, and the asymmetry with
-        # :meth:`kept_narrative` below is deliberate. Content matching mirrors
-        # what the parser chose to record, so failing to find a match says the
-        # mirror did not line up — this ledger's own blind spot rather than a
-        # loss it can attribute to the adapter. A narrative miss IS a no,
-        # because the narrative pool is what the record actually kept.
+        # A miss here is None (this ledger's own blind spot), never False —
+        # unlike :meth:`kept_narrative`, where a miss IS a no because the
+        # narrative pool is what the record actually kept.
         return True if self.objects.take(lambda obj: rule.recorded(obj) == facts) else None
 
     def kept_narrative(self, title: str | None, text: str | None) -> bool:
@@ -825,66 +646,35 @@ class _Evidence:
         return self.narrative.take((title, text))
 
     def entry_kept(self, code: str, entry: _Element) -> bool:
-        """Whether the record preserved this exact entry verbatim, spending it.
-
-        The handle is the entry's own serialisation, through the same function
-        the parser stored it with — so the question is byte-exact, and a miss
-        is a real no: either the record holds these bytes or it does not.
-
-        Asked of every unlinked entry, whatever its section rendered. The
-        parser parks every section its walk reaches, so the answer is no only
-        where it parked nothing at all — our own stamped loss ledger, and a
-        subsection nested deeper than that walk goes. Asking the record rather
-        than reconstructing the rule by which it was written is the point:
-        a future change to what the parser parks moves this number without
-        touching this file.
+        """Whether the record preserved this entry verbatim, spending it: a
+        byte-exact match via the parser's own serialisation, asked of the
+        record rather than reconstructed, so a parser change need not touch
+        this file.
         """
         return self.entries.take((code, entry_verbatim(entry)))
 
     def carried_as_document(self, identifier: str | None) -> bool | None:
         """Whether a document artifact in the record came from ``identifier``.
-
-        ``None`` has the same meaning it has in :meth:`links` — the question
-        could not be asked — and for the same reason: no id to ask it by.
-
-        A separate question from ``links`` because CDA gives ``NonXMLBody`` no
-        ``<id>`` element at all, so there is nothing inside the construct to
-        compare and every unstructured body would sit in ``unlinkable`` forever,
-        whatever the adapter learned to do with it. The DOCUMENT's own id is
-        what such a body is attributable by — an Unstructured Document IS its
-        artifact — and the evidence stays the record's word rather than a
-        table's: with no artifact carrying that id, the row reads unsupported.
+        ``None`` means the same as in :meth:`links`: no id to ask by.
+        ``NonXMLBody`` carries no ``<id>`` at all, so it is attributed by
+        the DOCUMENT's own id instead.
         """
         if identifier is None:
             return None
         return self.document_source_ids.holds(identifier)
 
     def parked_under(self, name: str) -> bool:
-        """Whether a payload parked under this construct answers for it, spending it.
-
-        The adapter parks what it cannot map under a ``ccda:`` key, so this is
-        how a construct preserved WITHOUT a typed object is recognised — and it
-        reads the record rather than a table of what the parser is believed to
-        do, so a future fix moves this number without touching this file.
-
-        What is read is the PAYLOAD, not the key. The key was the whole test
-        once, and a key is the cheapest thing in the record to be right about:
-        an adapter that wrote ``ccda:serviceEvent`` and then stored an empty
-        list under it scored the same as one that stored the event's facts, so
-        a regression that cleared the payload was reported as preservation. One
-        stored item answers for one offered construct and is then spent, so a
-        document offering two events with one item stored reads as one
-        preserved and one lost rather than as two preserved.
+        """Whether a payload parked under this construct answers for it,
+        spending it — a construct preserved WITHOUT a typed object. Reads
+        the PAYLOAD, not the key: an empty list under ``ccda:serviceEvent``
+        is not preservation. One stored item answers one offered construct.
         """
         return self.parked_items.take(name)
 
     def own_loss_kept(self, entries: list[str]) -> bool:
-        """Whether THIS stamped ledger's own entries are among the stored ones.
-
-        All of them, and spent — a claim, not a look. Which sections may make
-        the claim at all is the CALLER's question and is settled in
-        :func:`_narrative_kept`, because the store is filled from the parser's
-        walk and a section off that walk has no standing to ask.
+        """Whether THIS stamped ledger's own entries are among the stored
+        ones — all of them, and spent. Which sections may claim at all is
+        settled by the caller, :func:`_narrative_kept`.
         """
         return bool(entries) and self.own_loss_entries.take_all(entries)
 
@@ -908,14 +698,9 @@ def _evidence(root: _Element, record: PatientRecord) -> _Evidence:
 
 def _own_loss_pool(record: PatientRecord) -> Counter[str]:
     """The entries the record kept from this exporter's own loss ledgers.
-
-    ``ccda:prior_loss_narrative`` is ONE key however many stamped 51899-3
-    sections the parser walked — it concatenates their entries so a re-export
-    carries a single deduplicated appendix — so the key answers for the
-    construct class and not for any one construct. Counted here for the same
-    reason every other place in this module is counted: two ledgers offered
-    and one stored is one preserved and one lost, and asking whether the key
-    exists reads it as two.
+    ``ccda:prior_loss_narrative`` is ONE key across however many stamped
+    51899-3 sections were walked (concatenated into one deduplicated
+    appendix), so it answers for the construct class, not one construct.
     """
     stored = record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
     if not isinstance(stored, dict):
@@ -923,27 +708,16 @@ def _own_loss_pool(record: PatientRecord) -> Counter[str]:
     entries = stored.get("entries")
     if not isinstance(entries, list):
         return Counter()
-    # A list OF STRINGS is the rest of that key's contract, and the narrowing
-    # finishes here rather than half way: a record this module did not build is
-    # still an input, and an unhashable element would raise out of `Counter`
-    # and abort the whole reading instead of leaving one section uncredited.
+    # A list of strings is the rest of that key's contract; an unhashable
+    # element would otherwise abort the whole reading via `Counter`.
     return Counter(entry for entry in entries if isinstance(entry, str))
 
 
 def _parked_pool(record: PatientRecord) -> Counter[str]:
-    """How many facts the record parked under each ``ccda:`` namespace.
-
-    Keyed by the namespace's first segment. Both separators are cut because
-    both are shapes the parser's own key-writing can produce — ``:`` for a key
-    it deepens, ``#`` for the number ``free_key`` appends to a repeat — and
-    neither is reached by any participation key it writes today: this side
-    reads the shape rather than the current caller list, so a parked
-    participation that later repeats is bucketed without an edit here.
-
-    PHI: the values are COUNTED and never read. A list is as many facts as it
-    has members, a mapping or a scalar is one when it holds anything, and
-    anything empty is none — which is the whole point, since an empty payload
-    is a namespace with nothing in it.
+    """How many facts the record parked under each ``ccda:`` namespace,
+    keyed by its first segment (both ``:`` and ``#`` separators cut, since
+    both are shapes the parser's key-writing can produce). PHI: values are
+    counted, never read; an empty payload counts as none.
     """
     pool: Counter[str] = Counter()
     for key, value in record.patient.extensions.items():
@@ -955,33 +729,18 @@ def _parked_pool(record: PatientRecord) -> Counter[str]:
     return pool
 
 
-#: Narrative elements that GROUP every cell rather than being one, plus the
-#: caption that labels the group. An ID on any of these names the whole
-#: arrangement, and an entry citing it is citing the section's prose by another
-#: route — the credit this ledger stopped giving — so excluding the ``<text>``
-#: element by identity is not enough on its own.
-#:
-#: A ``<tr>`` is deliberately NOT here: one row is one statement, the same
-#: granularity as the ``<item>`` of a list or the ``<td>`` inside it, and
-#: excluding it reported loss for narrative the record demonstrably holds.
+#: Narrative elements that GROUP every cell rather than being one. An ID on
+#: any of these cites the whole arrangement, so excluding ``<text>`` alone
+#: is not enough. ``<tr>`` is deliberately NOT here: one row is one
+#: statement, the same granularity as an ``<item>`` or ``<td>``.
 _NARRATIVE_CONTAINERS = frozenset({"table", "thead", "tbody", "tfoot", "list", "caption"})
 
 
 def _is_narrative_cell(node: _Element, text: _Element) -> bool:
-    """Whether this node inside ``text`` is one citable cell of narrative.
-
-    Strictly inside, and not one of the things that merely hold cells: an entry
-    citing the ``<text>`` element, or the ``<table>`` filling it, is citing the
-    section's whole prose, which is the credit this ledger stopped giving.
-
-    It must carry a name, because an unnamed cell cannot be cited, and it must
-    render words. A ``<content>`` holding only a ``renderMultiMedia`` reaches
-    the record as nothing at all, so crediting an entry to it would be
-    crediting it to something the record does not have. A comment is not a
-    cell either, and lxml gives comments a callable tag rather than a string.
-
-    PHI: the text is read to ask whether there is any, and is neither stored
-    nor emitted.
+    """Whether this node inside ``text`` is one citable cell: strictly
+    inside, carrying an ID, and rendering words — a ``<content>`` holding
+    only ``renderMultiMedia`` reaches the record as nothing. PHI: text is
+    checked for presence only, never stored or emitted.
     """
     return (
         node is not text
@@ -994,11 +753,8 @@ def _is_narrative_cell(node: _Element, text: _Element) -> bool:
 
 def _enclosing_cells(named: list[_Element]) -> dict[_Element, _Element | None]:
     """Each cell mapped to the nearest cell that encloses it, or ``None``.
-
-    Asked upward, once per cell, because asking downward — "does any other
-    cell lie inside this one" — is a question about every pair and costs the
-    square of them: a results table of 4,800 rows spent 14 seconds answering
-    it. The walk up is bounded by how deeply narrative nests, which is small.
+    Asked upward, once per cell — asking downward costs the square of them
+    (a 4,800-row table took 14 seconds).
     """
     inside = set(named)
     return {
@@ -1026,23 +782,9 @@ def _cell_names_from(
 
 
 def _cell_cover(named: list[_Element]) -> dict[str, frozenset[str]]:
-    """Every cell's name mapped to the innermost cells it stands over.
-
-    One word is one statement, and it can be addressed by more than one name.
-    A table writes the row's name on the row and the cell's name on the cell
-    inside it, and an entry may reach that word by either — a procedure's
-    ``<originalText>`` names the row while its ``<text>`` names the content.
-    So the names are addresses and the innermost cells are the claims: two
-    addresses over one word spend the one claim, and the second entry to ask
-    gets nothing.
-
-    Dropping the outer name instead was tried, and it reported loss for a word
-    the record demonstrably holds — a single entry citing its own row, the
-    ordinary arrangement, came back unsupported.
-
-    A cell that wraps another keeps no claim of its own. Words of its own
-    outside the wrapped cell are not separately claimable, which is the
-    conservative reading: overlapping text is one statement, not two.
+    """Every cell's name mapped to the innermost cells it stands over —
+    two addresses over one word (a row's name, a nested cell's name) spend
+    the same claim. A wrapping cell keeps no claim outside the wrapped one.
     """
     enclosing = _enclosing_cells(named)
     cover: dict[str, set[str]] = {}
@@ -1054,12 +796,9 @@ def _cell_cover(named: list[_Element]) -> dict[str, frozenset[str]]:
 
 
 class _Anchors:
-    """One section's narrative cells, addressable by any name written over them.
-
-    A place, like the pools above, and spent the same way: :meth:`take` is the
-    only way in, and a yes costs a claim. What it adds is that several names
-    may lead to one claim, because C-CDA lets a document write a name at every
-    level of its table and an entry cite whichever it likes.
+    """One section's narrative cells, addressable by any name written over
+    them — a place spent like the pools above, but several names may lead
+    to one claim, since C-CDA lets a document name a table at every level.
     """
 
     def __init__(self, covers: Mapping[str, frozenset[str]]) -> None:
@@ -1069,24 +808,18 @@ class _Anchors:
         )
 
     def demand(self, cited: list[str]) -> int:
-        """How many cells this citation asks for; zero if it names one we lack.
-
-        A count over the ADDRESS map, never over the claims: it says how much
-        an entry is asking for, not whether the asking will succeed, and the
-        claims stay reachable only through :meth:`take`. It exists so a
-        section can settle its entries in an order it chooses rather than the
-        one the document happened to list them in.
+        """How many cells this citation asks for; zero if it names one we
+        lack. Counts the ADDRESS map, never the claims, so a section can
+        settle its entries in any order.
         """
         if any(name not in self._covers for name in cited):
             return 0
         return len({cell for name in cited for cell in self._covers[name]})
 
     def take(self, cited: list[str]) -> bool:
-        """Claim the cells ``cited`` addresses, all of them or none.
-
-        A name this section's narrative does not define is a citation the
-        document cannot back, and it fails the whole claim rather than being
-        quietly dropped — the entry named something that is not there.
+        """Claim the cells ``cited`` addresses, all of them or none. A name
+        this section's narrative does not define fails the whole claim
+        rather than being quietly dropped.
         """
         if not cited or any(name not in self._covers for name in cited):
             return False
@@ -1095,16 +828,9 @@ class _Anchors:
 
 def _section_anchors(section: _Element) -> dict[str, frozenset[str]]:
     """The narrative cells INSIDE this section's ``<text>``, by every name.
-
-    A cell in another section is not here — containment is decided by the tree
-    rather than by whether one string happens to occur inside another, so a
-    cell reading "No" cannot answer for an entry in a section whose prose
-    contains the word. Nor is the ``<text>`` element itself, or a ``<table>``
-    or ``<caption>``: those name the whole arrangement, and an entry citing
-    one is citing the section's prose by another route.
-
-    PHI: only the cells' NAMES are kept. The text is read to ask whether there
-    is any, and is neither stored nor emitted.
+    Containment is decided by the tree, not string matching, so a cell
+    reading "No" cannot answer for a citation elsewhere. PHI: only names
+    are kept; text is checked for presence, never stored.
     """
     text = _find(section, "v3:text")
     if text is None:
