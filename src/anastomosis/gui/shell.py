@@ -44,9 +44,8 @@ _JOB_RUNNING_NOTICE = "a job is still running — stop it before closing"
 class _WindowSink:
     """An :class:`~anastomosis.gui.controller.EventSink` backed by a window.
 
-    Attached after construction (until then ``emit`` is a no-op). Each event
-    is marshalled as ``anastEvent(<json>)`` — ``json.dumps`` keeps it a
-    literal the browser parses, never interpolated JS source.
+    Attached after construction (``emit`` is a no-op until then). Each
+    event is marshalled as ``anastEvent(<json>)``, a literal never interpolated.
     """
 
     def __init__(self) -> None:
@@ -65,9 +64,8 @@ class _WindowSink:
 def _warn_job_running(window: Any) -> None:  # pragma: no cover - needs window
     """Best-effort: surface the close-barrier notice on whatever page is up.
 
-    Routed through ``AnastShell.logEvent`` (safe no-op without a log strip),
-    bypassing the flow-guarded ``anastEvent`` channel. The real guarantee is
-    the ``closing`` handler's veto; a failure here is logged (type only) and swallowed.
+    Routed through ``AnastShell.logEvent`` (safe no-op without a log strip).
+    The real guarantee is the ``closing`` veto; failure here just logs and swallows.
     """
     notice = json.dumps(_JOB_RUNNING_NOTICE)  # a JS string literal, never interpolated source
     js = (
@@ -83,9 +81,8 @@ def _warn_job_running(window: Any) -> None:  # pragma: no cover - needs window
 def _claim_windows_taskbar_identity() -> None:
     """Set the process AppUserModelID before any window exists (Windows only).
 
-    Without it, Windows derives one from the host process path and the
-    taskbar groups the app under a generic Python identity. Must match the
-    id the installer stamps on the Start-menu shortcut. Cosmetic, never fatal.
+    Without it, the taskbar groups the app under a generic Python identity.
+    Must match the installer's Start-menu shortcut id. Cosmetic, never fatal.
     """
     import sys
 
@@ -99,16 +96,11 @@ def _claim_windows_taskbar_identity() -> None:
 
 
 def _webview2_user_data_folder() -> str | None:
-    """Contract: the WebView2 profile folder for ``webview.start``'s
-    ``storage_path`` (Windows only). pywebview assigns it to
-    ``CoreWebView2CreationProperties.UserDataFolder`` itself — WebView2's own
-    ``WEBVIEW2_USER_DATA_FOLDER`` env var is never consulted (RULES.md 73), so
-    this returns a value instead of exporting one.
-
-    Returns the operator's override if set, else ``%LOCALAPPDATA%\\Anastomosis\\
-    WebView2`` (created); ``None`` off Windows or on failure, so pywebview's
-    own default stands. Failure is warned (type name only), never fatal.
-    """
+    """Contract: WebView2's ``storage_path`` (Windows only). pywebview sets
+    it directly — ``WEBVIEW2_USER_DATA_FOLDER`` is never read (RULES.md
+    73) — so this returns a value. Override env var, else
+    ``%LOCALAPPDATA%\\Anastomosis\\WebView2`` (created); ``None`` off
+    Windows/on failure (warns), default stands."""
     import os
     import sys
 
@@ -132,17 +124,10 @@ def _webview2_user_data_folder() -> str | None:
 
 
 def _apply_remote_debugging_port(settings: MutableMapping[str, Any]) -> None:
-    """Contract: DIAGNOSTICS ONLY. Routes ``ANAST_GUI_REMOTE_DEBUGGING_PORT``
-    into pywebview's ``REMOTE_DEBUGGING_PORT`` setting for
-    ``packaging/smoke_windows.py``'s CDP attach; unset (default) is a no-op
-    and must stay that way in normal operation — an open port gives any
-    process on the machine control of the window.
-
-    pywebview overwrites ``AdditionalBrowserArguments`` on every launch, so
-    WebView2's own ``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`` is always
-    ignored; ``REMOTE_DEBUGGING_PORT`` is the one route that survives. Warn,
-    never fail, on an invalid value or a missing setting key.
-    """
+    """DIAGNOSTICS ONLY: routes ``ANAST_GUI_REMOTE_DEBUGGING_PORT`` into
+    pywebview's ``REMOTE_DEBUGGING_PORT`` (the one route that survives, since
+    pywebview overwrites ``AdditionalBrowserArguments`` itself); an open
+    port gives any process control of the window, so it stays unset. Warn, never fail."""
     import os
 
     raw = os.environ.get(_REMOTE_DEBUG_PORT_ENV)

@@ -43,8 +43,7 @@ def done_event(flow: str, summary_id: str | None = None, **counts: int) -> dict[
     """The run finished, with its final roll-up counts (integers) for ``flow``.
 
     ``summary_id``, when given, is a random non-PHI hex key the front end
-    passes to ``last_run_summary`` to fetch this run's detail without a
-    second run racing it for the slot.
+    passes to ``last_run_summary`` to fetch this run's detail race-free.
     """
     event: dict[str, object] = {"type": "done", "flow": flow, **counts}
     if summary_id is not None:

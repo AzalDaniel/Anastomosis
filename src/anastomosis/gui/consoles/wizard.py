@@ -26,8 +26,7 @@ class WizardConsole:
     """Base for the two teach-wizard console backends.
 
     Subclasses set :attr:`_FLOW`/:attr:`_STAGE`, then call
-    :meth:`_submit_step` with a callable that runs their core command and
-    returns the JSON-safe result dict.
+    :meth:`_submit_step` with a callable running their core command.
     """
 
     #: The operation family this console owns (the per-page flow guard).
@@ -46,8 +45,7 @@ class WizardConsole:
         """Run one wizard step on a daemon thread and close it with one event.
 
         Acquires the busy flag synchronously; returns ``{"started": True}``
-        or ``{"error": "Busy"}``. Never raises — a crash in ``run`` is
-        stashed and emitted as an error with its exception TYPE name only.
+        or ``{"error": "Busy"}``. Never raises: a crash emits an error TYPE name.
         """
 
         def _worker() -> None:

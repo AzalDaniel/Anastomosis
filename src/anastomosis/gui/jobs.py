@@ -26,9 +26,8 @@ logger = logging.getLogger(__name__)
 class GuiJob:
     """One long-running GUI action, described declaratively.
 
-    ``stage``/``flow`` default to ``name``. ``on_start`` runs after the
-    guard acquires, before spawn; ``cleanup`` runs in the worker's
-    ``finally`` and on a spawn failure, always before release.
+    ``stage``/``flow`` default to ``name``; ``on_start`` runs after the
+    guard acquires, ``cleanup`` in the worker's ``finally`` and on spawn failure.
     """
 
     name: str
@@ -80,9 +79,8 @@ class GuiJobRunner:
     def join(self, timeout: float | None = None) -> bool:
         """Wait up to ``timeout`` seconds for the active worker; return whether it finished.
 
-        Reads the worker handle under the lock, but joins outside it — the
-        worker's ``finally`` calls ``release`` (takes the lock), so holding it
-        here would deadlock.
+        Reads the handle under the lock but joins outside it — ``release``
+        (in the worker's ``finally``) takes the same lock, so holding it here would deadlock.
         """
         with self._lock:
             worker = self._worker
