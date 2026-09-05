@@ -42,3 +42,24 @@ def test_today_is_the_real_host_day_without_the_env_var(monkeypatch: pytest.Monk
 def test_now_is_timezone_aware(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOURCE_DATE_EPOCH", str(_EPOCH))
     assert clock.now().tzinfo is not None
+
+
+def test_an_empty_source_date_epoch_falls_back_to_real_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "")
+    before = datetime.now(UTC)
+    got = clock.now()
+    after = datetime.now(UTC)
+    assert before <= got <= after
+
+
+def test_a_non_integer_source_date_epoch_falls_back_to_real_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "not-a-number")
+    before = datetime.now(UTC)
+    got = clock.now()
+    after = datetime.now(UTC)
+    assert before <= got <= after
+    assert clock.today() == date.today()

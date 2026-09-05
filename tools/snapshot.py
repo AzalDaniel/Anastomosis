@@ -214,22 +214,17 @@ def json_digest(path: Path) -> str:
 # --- XML normalization --------------------------------------------------------
 
 
-def _local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
-
-
 def xml_digest(path: Path) -> str:
-    """Canonicalized digest of a C-CDA document, the document HEADER's
-    ``effectiveTime`` dropped first (a direct child of the root element only —
-    a clinical ``effectiveTime`` nested under ``component`` is untouched)."""
+    """Canonicalized (c14n) sha256 of a C-CDA document, EVERY element
+    included — the document header's own ``effectiveTime`` is derived from
+    the record deterministically (see ``deliver/ccda_export/builder.py``) and
+    stamped under the clock seam like everything else, so scrubbing it before
+    hashing would hide a real regression in that derivation instead of
+    tolerating a harmless one."""
     from lxml import etree
 
     tree = etree.parse(str(path))
-    root = tree.getroot()
-    for child in list(root):
-        if _local_name(child.tag) == "effectiveTime":
-            root.remove(child)
-    canonical = etree.tostring(root, method="c14n")
+    canonical = etree.tostring(tree.getroot(), method="c14n")
     return hashlib.sha256(canonical).hexdigest()
 
 
@@ -247,16 +242,27 @@ def html_digest(path: Path) -> str:
 
 
 def pdf_digest(path: Path) -> str:
-    """Structural digest of a rendered PDF: PyMuPDF page count/geometry/text
-    plus every page's word bounding boxes — reusing ``regen_goldens``'s own
-    extraction so this stays byte-for-byte the same definition of "changed"
-    the golden rendering tests already use. NEVER the raw file bytes; see the
-    module docstring."""
+    """Structural digest of a rendered PDF, NEVER the raw file bytes (see
+    :func:`_substitute_rendered_pdf_hashes`): page count/geometry/text and
+    every page's word boxes, reusing ``regen_goldens``'s own extraction —
+    plus, per page, a sha256 of its content stream(s) (``read_contents()``,
+    the drawing operators themselves: a CSS-only change with no visible text
+    move, e.g. a colour, changes nothing PyMuPDF's word-box/text layer
+    reports) and a sha256 of a low-DPI rendered pixmap (a second, independent
+    check the same colour change also fails)."""
+    import pymupdf
+
     import regen_goldens
 
     props = dict(regen_goldens.extract_pdf_props(path))
     boxes = regen_goldens.extract_word_boxes(path)
-    payload = json.dumps({"props": props, "boxes": boxes}, sort_keys=True)
+    with pymupdf.open(str(path)) as doc:
+        content_streams = [hashlib.sha256(page.read_contents()).hexdigest() for page in doc]
+        pixmaps = [hashlib.sha256(page.get_pixmap(dpi=36).samples).hexdigest() for page in doc]
+    payload = json.dumps(
+        {"props": props, "boxes": boxes, "content_streams": content_streams, "pixmaps": pixmaps},
+        sort_keys=True,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -318,20 +324,51 @@ def capture_json_deliverables(root: Path) -> dict[str, Any]:
 
 
 def _anast_env() -> dict[str, str]:
+    """The subprocess environment, PINNED to this checkout's own ``src/`` —
+    prepended ahead of any ambient ``PYTHONPATH`` so a stray one (a different
+    worktree's) can never shadow it. Without this, ``anast`` resolved off
+    ``PATH`` and an in-process ``import anastomosis`` (``--cli-surface``) can
+    silently measure two different trees at once."""
     env = dict(os.environ)
     env["SOURCE_DATE_EPOCH"] = SOURCE_DATE_EPOCH
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(_SRC_DIR) if not existing else f"{_SRC_DIR}{os.pathsep}{existing}"
     return env
 
 
 def _run_anast(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - fixed prefix, args are our own tempdir/fixture paths
-        ["anast", *args],  # noqa: S607 - the real installed CLI, resolved off PATH by design
+        [sys.executable, "-m", "anastomosis.cli", *args],
         cwd=REPO_ROOT,
         env=_anast_env(),
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def resolved_anastomosis_module() -> str:
+    """Where a subprocess run under :func:`_anast_env` actually resolves
+    ``anastomosis`` from — repo-relative when it is this checkout's own
+    ``src/``, absolute otherwise. Captured once per run and compared like any
+    other field, so a wrong-tree measurement (an ambient ``PYTHONPATH``
+    that won, a stale editable install) fails the baseline instead of
+    silently passing."""
+    proc = subprocess.run(
+        [sys.executable, "-c", "import anastomosis; print(anastomosis.__file__)"],
+        cwd=REPO_ROOT,
+        env=_anast_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SnapshotError(f"could not resolve anastomosis in the subprocess env:\n{proc.stderr}")
+    resolved = Path(proc.stdout.strip()).resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(resolved)
 
 
 def _renderer_unavailable_reason() -> str | None:
@@ -352,7 +389,32 @@ def _display_input_path(fixture_dir: Path) -> str:
         return "<extra-input>"
 
 
+def _raw_export_dir_id(out: Path) -> str | None:
+    """The UNBLANKED ``run.export_dir_id`` from ``out/run_manifest.json``, if
+    one was written — read before :func:`load_normalized_json` would blank
+    it, so :func:`capture_all` can check the ids across every captured run
+    are pairwise distinct without ever persisting a path-derived value."""
+    manifest = out / "run_manifest.json"
+    if not manifest.is_file():
+        return None
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    value = raw.get("run", {}).get("export_dir_id")
+    return str(value) if value is not None else None
+
+
 def run_pipeline_command(fixture_dir: Path, source: str, out: Path) -> dict[str, Any]:
+    # No --no-qa: a QA regression (every check silently downgraded to PASS)
+    # must be visible to this net, not hidden by skipping the stage that
+    # would catch it. KNOWN RESIDUAL GAP: every one of the five fixtures'
+    # generic_soap pipeline runs verifies clean (all pass) — generic_soap's
+    # pack.yaml declares `omits` for all five CHARTABLE_KINDS, so
+    # RecordCoverageCheck can never WARN/FAIL through it, and no `--section`
+    # override changes that (it reads pack.yaml, not runtime section flags);
+    # DateStalenessCheck never finds the frozen SOURCE_DATE_EPOCH day printed
+    # on a chart dated from a fixture's own (different) dates. No CLI-reachable
+    # route through the five committed fixtures was found that produces a
+    # non-pass verdict; tests/unit/test_qa.py's mutation tests remain the only
+    # guard on a verdict actually flipping, a known and accepted residual.
     cmd = [
         "pipeline",
         "run",
@@ -361,7 +423,6 @@ def run_pipeline_command(fixture_dir: Path, source: str, out: Path) -> dict[str,
         source,
         "--out",
         str(out),
-        "--no-qa",
         "--archive",
         str(out / "arch"),
         "--bundle",
@@ -385,7 +446,6 @@ def run_pipeline_command(fixture_dir: Path, source: str, out: Path) -> dict[str,
             source,
             "--out",
             "<out>",
-            "--no-qa",
             "--archive",
             "<out>/arch",
             "--bundle",
@@ -396,6 +456,7 @@ def run_pipeline_command(fixture_dir: Path, source: str, out: Path) -> dict[str,
         ],
         "files": capture_tree(out),
         "json": capture_json_deliverables(out),
+        "_export_dir_id": _raw_export_dir_id(out),
     }
 
 
@@ -433,6 +494,7 @@ def run_migrate_command(fixture_dir: Path, out: Path) -> dict[str, Any]:
         ],
         "files": capture_tree(out),
         "json": capture_json_deliverables(out),
+        "_export_dir_id": _raw_export_dir_id(out),
     }
 
 
@@ -481,7 +543,25 @@ def _parse_only(value: str | None) -> dict[str, set[str]] | None:
     return selection
 
 
-def capture_all(selection: dict[str, set[str]] | None) -> dict[str, Any]:
+def _pop_export_dir_ids(runs: dict[str, Any]) -> list[str]:
+    """Strip the transient ``_export_dir_id`` field every command result
+    carries, returning the raw (never-persisted) values collected — see
+    :func:`_raw_export_dir_id`."""
+    ids: list[str] = []
+    for fixture_result in runs.values():
+        for command_result in fixture_result.values():
+            found = command_result.pop("_export_dir_id", None)
+            if found is not None:
+                ids.append(found)
+    return ids
+
+
+def capture_all(selection: dict[str, set[str]] | None) -> tuple[dict[str, Any], bool]:
+    """``(runs, export_dir_ids_distinct)`` — the second element is whether
+    every captured run's ``export_dir_id`` (a hash of its export path, so
+    never comparable verbatim across checkouts) was pairwise DISTINCT from
+    every other one. A recipe that collapsed to a constant would flip this to
+    ``False`` without needing to persist a single path-derived value."""
     renderer_reason = _renderer_unavailable_reason()
     names = list(FIXTURES) if selection is None else [n for n in FIXTURES if n in selection]
     runs: dict[str, Any] = {}
@@ -490,7 +570,8 @@ def capture_all(selection: dict[str, set[str]] | None) -> dict[str, Any]:
         runs[name] = capture_fixture(
             name, FIXTURES[name], commands=commands, renderer_reason=renderer_reason
         )
-    return runs
+    ids = _pop_export_dir_ids(runs)
+    return runs, len(ids) == len(set(ids))
 
 
 def parse_extra_input(spec: str) -> tuple[str, Path, str]:
@@ -521,6 +602,7 @@ def capture_extra_input(name: str, directory: Path, source: str) -> dict[str, An
                 result[cmd] = run_pipeline_command(directory, source, Path(tmp))
             elif cmd == "migrate":
                 result[cmd] = run_migrate_command(directory, Path(tmp))
+        result[cmd].pop("_export_dir_id", None)
     return {"name": name, "source": source, **result}
 
 
@@ -657,8 +739,10 @@ def compare_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> list[
                     f"{name}:{command}", cur_fixture.get(command), base_fixture.get(command)
                 )
             )
-    if "cli_surface" in current and "cli_surface" in baseline:
-        if current["cli_surface"] != baseline["cli_surface"]:
+    if "cli_surface" in baseline:
+        if "cli_surface" not in current:
+            diffs.append("cli surface missing from this capture (baseline has one)")
+        elif current["cli_surface"] != baseline["cli_surface"]:
             diffs.append("cli surface changed:")
             diffs.extend(
                 f"  {line}"
@@ -666,6 +750,49 @@ def compare_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> list[
                     baseline["cli_surface"], current["cli_surface"], limit=60
                 )
             )
+    if "export_dir_ids_distinct" in baseline:
+        cur_distinct = current.get("export_dir_ids_distinct")
+        base_distinct = baseline["export_dir_ids_distinct"]
+        if cur_distinct != base_distinct:
+            diffs.append(
+                f"export_dir_ids_distinct flipped: baseline {base_distinct!r}, now {cur_distinct!r}"
+            )
+    if "anastomosis_module" in baseline:
+        cur_module = current.get("anastomosis_module")
+        if cur_module != baseline["anastomosis_module"]:
+            diffs.append(
+                f"anastomosis resolved from a different tree: baseline "
+                f"{baseline['anastomosis_module']!r}, now {cur_module!r}"
+            )
+    return diffs
+
+
+def _restrict_baseline(baseline: dict[str, Any], selection: dict[str, set[str]]) -> dict[str, Any]:
+    """The baseline narrowed to exactly what ``--only`` selected, so a
+    restricted capture is compared against what it actually captured rather
+    than scored against fixtures/commands it never touched."""
+    restricted = dict(baseline)
+    restricted_runs: dict[str, Any] = {}
+    for name, commands in selection.items():
+        fixture = baseline.get("runs", {}).get(name)
+        if fixture is not None:
+            restricted_runs[name] = {cmd: r for cmd, r in fixture.items() if cmd in commands}
+    restricted["runs"] = restricted_runs
+    return restricted
+
+
+def _compare_extra_input(current: dict[str, Any], prior: dict[str, Any]) -> list[str]:
+    """Diff two ``--extra-input`` side captures the same way a fixture's
+    commands are compared — this input has no committed baseline, only
+    whatever the previous run at this same ``--out`` path left behind."""
+    diffs: list[str] = []
+    for command in sorted(set(current) | set(prior)):
+        if command in ("name", "source"):
+            was, now = prior.get(command), current.get(command)
+            if now != was:
+                diffs.append(f"{command} changed: {was!r} -> {now!r}")
+            continue
+        diffs.extend(_compare_command(command, current.get(command), prior.get(command)))
     return diffs
 
 
@@ -687,7 +814,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--cli-surface",
         action="store_true",
-        help="Also capture every anast command/option/default/help text.",
+        help="No-op: the CLI surface is always captured now.",
     )
     parser.add_argument(
         "--only",
@@ -712,17 +839,36 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             out_dir = Path(args.out)
             out_dir.mkdir(parents=True, exist_ok=True)
+            any_drift = False
             for spec in args.extra_input:
                 name, directory, source = parse_extra_input(spec)
                 result = capture_extra_input(name, directory, source)
                 target = out_dir / f"{name}.snapshot.json"
+                if target.is_file():
+                    prior = json.loads(target.read_text(encoding="utf-8"))
+                    diffs = _compare_extra_input(result, prior)
+                    for diff in diffs:
+                        print(f"snapshot: {name}: {diff}")
+                    if diffs:
+                        any_drift = True
+                        print(f"snapshot: {name}: FAILED ({len(diffs)} difference(s))")
+                    else:
+                        print(f"snapshot: {name}: PASSED (matches the prior capture at {target})")
+                else:
+                    print(f"snapshot: {name}: baseline written, nothing compared")
                 target.write_text(
                     json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
                 )
-                print(f"snapshot: wrote extra input {name!r} capture to {target}")
-            return 0
+            return 1 if any_drift else 0
 
         selection = _parse_only(args.only)
+        if args.write_baseline and selection is not None and args.baseline_path == str(BASELINE):
+            print(
+                "snapshot: --write-baseline with --only requires --baseline-path "
+                "(refusing to overwrite the full baseline with a partial capture)",
+                file=sys.stderr,
+            )
+            return 2
     except SnapshotError as exc:
         print(f"snapshot: {exc}", file=sys.stderr)
         return 2
@@ -730,9 +876,13 @@ def main(argv: list[str] | None = None) -> int:
     baseline_path = Path(args.baseline_path)
 
     try:
-        current: dict[str, Any] = {"runs": capture_all(selection)}
-        if args.cli_surface:
-            current["cli_surface"] = dump_cli_surface()
+        runs, export_dir_ids_distinct = capture_all(selection)
+        current: dict[str, Any] = {
+            "runs": runs,
+            "export_dir_ids_distinct": export_dir_ids_distinct,
+            "cli_surface": dump_cli_surface(),
+            "anastomosis_module": resolved_anastomosis_module(),
+        }
     except SnapshotError as exc:
         print(f"snapshot: {exc}", file=sys.stderr)
         return 1
@@ -762,6 +912,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"snapshot: no baseline at {baseline_path} — run with --write-baseline first")
         return 1
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if selection is not None:
+        baseline = _restrict_baseline(baseline, selection)
     diffs = compare_baseline(current, baseline)
     for diff in diffs:
         print(f"snapshot: {diff}")

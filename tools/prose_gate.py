@@ -1,11 +1,14 @@
-"""The comment ratchet: prose may shrink, but never grow.
+"""The comment ratchet: known prose may shrink or hold, never grow.
 
-Same shape as ``complexity_gate.py``: a checked-in baseline
-(``tools/prose_baseline.json``), ``--write-baseline`` to regenerate. Measures
-prose ratio, over-long docstrings, history narration, and the tests-wide
-regression-guard count per ``.py`` file under ``src/``/``tests/`` — see each
-constant/function below for the exact rule. Exemptions:
-``tools/prose_allowlist.txt``, one path per line, a reason after a ``#``.
+A file already in the baseline may not raise its ratio; a docstring already
+over-long may not get longer; a history phrase or over-long docstring new to
+the tree fails outright; a file the baseline has never seen must already be
+lean (:data:`NEW_FILE_RATIO_LIMIT`, zero of either violation). Same shape as
+``complexity_gate.py`` otherwise: a checked-in baseline
+(``tools/prose_baseline.json``), ``--write-baseline`` to regenerate — refused
+if that would admit a new violation unless ``--allow-new-violations`` says
+so. Exemptions: ``tools/prose_allowlist.txt``, one path per line, a reason
+after a ``#``.
 """
 
 from __future__ import annotations
@@ -26,6 +29,10 @@ WALKED_DIRS = ("src", "tests")
 
 #: A docstring longer than this many physical lines is reported, per scope.
 OVER_LONG_LIMITS = {"module": 10, "class": 5, "function": 5}
+
+#: The absolute ceiling a file with NO baseline entry must already meet — a
+#: brand-new file gets no "nothing to compare against yet" grace period.
+NEW_FILE_RATIO_LIMIT = 0.15
 
 #: Narrating what code WAS instead of documenting what it IS.
 HISTORY_RE = re.compile(
@@ -272,6 +279,10 @@ def _locations(entries: list[dict[str, object]]) -> set[tuple[str, int]]:
     return {(str(e["file"]), int(e["line"])) for e in entries}
 
 
+def _lengths(entries: list[dict[str, object]]) -> dict[tuple[str, int], int]:
+    return {(str(e["file"]), int(e["line"])): int(e["length"]) for e in entries}
+
+
 def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[list[str], int]:
     """Every way ``current`` is worse than ``baseline``, plus how many FILES
     improved (a lower ratio, a resolved over-long docstring, a resolved
@@ -284,9 +295,18 @@ def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[li
     cur_files: dict[str, dict[str, object]] = current["files"]  # type: ignore[assignment]
     for relpath, cur in sorted(cur_files.items()):
         base = base_files.get(relpath)
+        cur_ratio = float(cur["ratio"])
         if base is None:
-            continue  # new file: nothing to have risen above yet
-        cur_ratio, base_ratio = float(cur["ratio"]), float(base["ratio"])
+            # No baseline entry to compare against — an absolute cap instead
+            # of a free pass, so a new file cannot simply arrive already
+            # over whatever it likes.
+            if cur_ratio > NEW_FILE_RATIO_LIMIT + _EPS:
+                failures.append(
+                    f"new file exceeds the absolute prose cap: {relpath} is "
+                    f"{cur_ratio:.4f} (limit {NEW_FILE_RATIO_LIMIT})"
+                )
+            continue
+        base_ratio = float(base["ratio"])
         if cur_ratio > base_ratio + _EPS:
             failures.append(f"file ratio rose: {relpath} was {base_ratio:.4f}, now {cur_ratio:.4f}")
         elif cur_ratio < base_ratio - _EPS:
@@ -300,14 +320,23 @@ def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[li
         )
 
     base_overlong = _locations(baseline["over_long_docstrings"])  # type: ignore[arg-type]
+    base_overlong_lengths = _lengths(baseline["over_long_docstrings"])  # type: ignore[arg-type]
     cur_overlong = current["over_long_docstrings"]
     for entry in cur_overlong:  # type: ignore[union-attr]
         loc = (str(entry["file"]), int(entry["line"]))
+        length = int(entry["length"])
         if loc not in base_overlong:
             failures.append(
                 f"NEW over-long docstring: {entry['file']}:{entry['line']} "
-                f"({entry['length']} lines, {entry['scope']} limit {entry['limit']})"
+                f"({length} lines, {entry['scope']} limit {entry['limit']})"
             )
+        elif length > base_overlong_lengths[loc]:
+            failures.append(
+                f"over-long docstring GREW: {entry['file']}:{entry['line']} was "
+                f"{base_overlong_lengths[loc]} lines, now {length}"
+            )
+        elif length < base_overlong_lengths[loc]:
+            improved_files.add(str(entry["file"]))
     for resolved_file, _line in base_overlong - _locations(cur_overlong):  # type: ignore[arg-type]
         improved_files.add(resolved_file)
 
@@ -336,11 +365,30 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Regenerate tools/prose_baseline.json from the working tree.",
     )
+    parser.add_argument(
+        "--allow-new-violations",
+        action="store_true",
+        help="Let --write-baseline admit a new/grown violation it would otherwise refuse.",
+    )
     args = parser.parse_args(argv)
 
-    current = measure()
+    current = measure(REPO_ROOT)
 
     if args.write_baseline:
+        if BASELINE.is_file():
+            old_baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+            new_violations, _ = compare(current, old_baseline)
+            if new_violations and not args.allow_new_violations:
+                print("prose gate: --write-baseline would admit new violations:")
+                for violation in new_violations:
+                    print(f"  {violation}")
+                print(
+                    "prose gate: refusing — fix the source, or pass --allow-new-violations "
+                    "to admit them deliberately."
+                )
+                return 1
+            for violation in new_violations:
+                print(f"prose gate: admitting: {violation}")
         payload = {
             "_comment": (
                 "Prose ratchet baseline - see tools/prose_gate.py. Regenerate ONLY in a commit "

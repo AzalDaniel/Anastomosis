@@ -1,5 +1,6 @@
 {
   "_comment": "Deliverable snapshot baseline - see tools/snapshot.py. Regenerate ONLY in a commit that intentionally changes rendered/exported output, and say what and why.",
+  "anastomosis_module": "src/anastomosis/__init__.py",
   "cli_surface": {
     "help": "Anastomosis command-line interface.\n\nInstalled as both ``anast`` (everyday) and ``anastomosis`` (formal).\n\n    anast pipeline run  an EHR export      ->  finished, double-checked charts\n    anast migrate       an EHR export      ->  what a move to another system needs\n    anast upload        finished charts    ->  filed into another system\n    anast archive       an EHR export      ->  a searchable offline copy\n    anast bundle        an EHR export      ->  one folder per patient, for requests\n    anast destination   which systems charts can go to, and how to set one up\n    anast pack init     some sample PDFs   ->  a draft chart layout\n    anast source init   one example export ->  Anastomosis learns that format\n    anast info          what this copy can do on this computer\n    anast doctor        check that nothing Anastomosis ships is missing\n    anast gui           open the desktop app",
     "subcommands": {
@@ -934,6 +935,7 @@
       }
     }
   },
+  "export_dir_ids_distinct": true,
   "runs": {
     "ccda": {
       "migrate": {
@@ -957,7 +959,7 @@
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
-            "digest": "bbc65cc41ae484b0d97e8a1daa2853f852f0ab23ccaefdd8a837019c16463f27",
+            "digest": "65d5a491b78e42a370ca368256a102d9bad0e7419b3564eff67df34497254097",
             "kind": "xml",
             "relpath": "ccda/9a84356f-bca7-5c4a-800c-f68b1021da82.xml"
           },
@@ -967,7 +969,7 @@
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "0e9f9d13fcf32ad9f8f17c817a7fb73e2b3a69ba99ab5b028f7c09a6469988ba",
+            "digest": "2060a0d400ea5615089469a50e9e00b10b5c7b6ecd678d23b7cb93daf4d31c1c",
             "kind": "pdf",
             "relpath": "charts/Specimen_Cora_67480a43775c_ccda.pdf"
           },
@@ -982,7 +984,7 @@
             "relpath": "charts/qa_report.json"
           },
           {
-            "digest": "64074f4901eca523eb1aa3285cf70587837cfd9275de4ddb09fcc12ca04a5e0b",
+            "digest": "c70f123af96af88e0ebe5a1b9773f0c0f50c85e34f55b37905a977e5c6341918",
             "kind": "json",
             "relpath": "charts/upload_manifest.json"
           },
@@ -1070,9 +1072,9 @@
                 "expected_pages": 4,
                 "file_path": "Specimen_Cora_67480a43775c_ccda.pdf",
                 "fingerprint": "Specimen_Cora_67480a43775c_ccda.pdf",
-                "item_key": "<id-0>:0e9f9d13fcf3",
+                "item_key": "<id-0>:2060a0d400ea",
                 "patient_id": "<id-0>",
-                "sha256": "0e9f9d13fcf32ad9f8f17c817a7fb73e2b3a69ba99ab5b028f7c09a6469988ba",
+                "sha256": "2060a0d400ea5615089469a50e9e00b10b5c7b6ecd678d23b7cb93daf4d31c1c",
                 "size_bytes": 38132
               }
             ],
@@ -1596,7 +1598,6 @@
           "ccda",
           "--out",
           "<out>",
-          "--no-qa",
           "--archive",
           "<out>/arch",
           "--bundle",
@@ -1607,12 +1608,12 @@
         ],
         "files": [
           {
-            "digest": "54254d3ad01c0338c3a86e5a4016d7b73a22095d02099bc747308e14eb50c972",
+            "digest": "23dbfd488c596640c750ec157a2fca6244c9a99103dd05172f267b3fd929ee5b",
             "kind": "pdf",
             "relpath": "Specimen_Cora_05-10-2023-f86ca1d7.pdf"
           },
           {
-            "digest": "700cab94cf249659960309bc66d9c36672baa2ae682d0124b2c71facd8c88b2f",
+            "digest": "d2a7fa06dec9550376c4701edba95204691b4d30355a8721136e5242bbfdfedb",
             "kind": "pdf",
             "relpath": "Specimen_Cora_05-10-2023.pdf"
           },
@@ -1677,12 +1678,12 @@
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/index.html"
           },
           {
-            "digest": "54254d3ad01c0338c3a86e5a4016d7b73a22095d02099bc747308e14eb50c972",
+            "digest": "23dbfd488c596640c750ec157a2fca6244c9a99103dd05172f267b3fd929ee5b",
             "kind": "pdf",
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/pdfs/Specimen_Cora_05-10-2023-f86ca1d7.pdf"
           },
           {
-            "digest": "700cab94cf249659960309bc66d9c36672baa2ae682d0124b2c71facd8c88b2f",
+            "digest": "d2a7fa06dec9550376c4701edba95204691b4d30355a8721136e5242bbfdfedb",
             "kind": "pdf",
             "relpath": "arch/patients/9a84356f-bca7-5c4a-800c-f68b1021da82/pdfs/Specimen_Cora_05-10-2023.pdf"
           },
@@ -1697,14 +1698,19 @@
             "relpath": "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/bundle.json"
           },
           {
-            "digest": "54254d3ad01c0338c3a86e5a4016d7b73a22095d02099bc747308e14eb50c972",
+            "digest": "23dbfd488c596640c750ec157a2fca6244c9a99103dd05172f267b3fd929ee5b",
             "kind": "pdf",
             "relpath": "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/pdfs/Specimen_Cora_05-10-2023-f86ca1d7.pdf"
           },
           {
-            "digest": "700cab94cf249659960309bc66d9c36672baa2ae682d0124b2c71facd8c88b2f",
+            "digest": "d2a7fa06dec9550376c4701edba95204691b4d30355a8721136e5242bbfdfedb",
             "kind": "pdf",
             "relpath": "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/pdfs/Specimen_Cora_05-10-2023.pdf"
+          },
+          {
+            "digest": "a1784dd3db96f27698c7e04bb1ab9fdb8aae7d07be58325343f5130be2e3c4bf",
+            "kind": "json",
+            "relpath": "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/qa_report.json"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
@@ -1712,7 +1718,7 @@
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "bbc65cc41ae484b0d97e8a1daa2853f852f0ab23ccaefdd8a837019c16463f27",
+            "digest": "65d5a491b78e42a370ca368256a102d9bad0e7419b3564eff67df34497254097",
             "kind": "xml",
             "relpath": "ccda/9a84356f-bca7-5c4a-800c-f68b1021da82.xml"
           },
@@ -1727,7 +1733,12 @@
             "relpath": "loss_ledger.json"
           },
           {
-            "digest": "0e9f9d13fcf32ad9f8f17c817a7fb73e2b3a69ba99ab5b028f7c09a6469988ba",
+            "digest": "3fb67f586899479e77a84db4976feb3935b59db757f0f82a5494127213677438",
+            "kind": "json",
+            "relpath": "qa_report.json"
+          },
+          {
+            "digest": "2060a0d400ea5615089469a50e9e00b10b5c7b6ecd678d23b7cb93daf4d31c1c",
             "kind": "pdf",
             "relpath": "record-summary/Specimen_Cora_67480a43775c_ccda.pdf"
           },
@@ -1757,12 +1768,171 @@
             "relpath": "selection_report.json"
           },
           {
-            "digest": "079599bde98019affbc828841da31e3ea7bfe48875953167d424b87f4233be61",
+            "digest": "5f9284cb8ce593f508648bdfb122bb5798e14c5160aa86f661d7945b8efa20c0",
             "kind": "json",
             "relpath": "upload_manifest.json"
           }
         ],
         "json": {
+          "bundle/9a84356f-bca7-5c4a-800c-f68b1021da82/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "2 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-1>",
+                "file": "Specimen_Cora_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "2 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-2>",
+                "file": "Specimen_Cora_05-10-2023-f86ca1d7.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-0>",
+                "file": "Specimen_Cora_67480a43775c_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "<id-0>",
+            "summary": {
+              "fail": 0,
+              "pass": 3,
+              "warn": 0
+            }
+          },
           "loss_ledger.json": {
             "constructs": [
               {
@@ -2065,11 +2235,170 @@
             "skipped_files": 0,
             "version": 1
           },
+          "qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "2 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-0>",
+                "file": "Specimen_Cora_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "2 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-1>",
+                "file": "Specimen_Cora_05-10-2023-f86ca1d7.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-2>",
+                "file": "Specimen_Cora_67480a43775c_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "summary": {
+              "fail": 0,
+              "not_carried": 20,
+              "pass": 3,
+              "warn": 0
+            }
+          },
           "upload_manifest.json": {
             "gates": {
               "conservation": "balanced",
               "layout_hash": "4331f33b3c8d9b9362284265b1d1352243f3c7532aae328de23e545f5f078001",
-              "qa": "not_run"
+              "qa": "pass"
             },
             "items": [
               {
@@ -2078,9 +2407,9 @@
                 "expected_pages": 1,
                 "file_path": "Specimen_Cora_05-10-2023.pdf",
                 "fingerprint": "Specimen_Cora_05-10-2023.pdf",
-                "item_key": "<id-0>:700cab94cf24",
+                "item_key": "<id-0>:d2a7fa06dec9",
                 "patient_id": "<id-1>",
-                "sha256": "700cab94cf249659960309bc66d9c36672baa2ae682d0124b2c71facd8c88b2f",
+                "sha256": "d2a7fa06dec9550376c4701edba95204691b4d30355a8721136e5242bbfdfedb",
                 "size_bytes": 40451
               },
               {
@@ -2089,9 +2418,9 @@
                 "expected_pages": 1,
                 "file_path": "Specimen_Cora_05-10-2023-f86ca1d7.pdf",
                 "fingerprint": "Specimen_Cora_05-10-2023-f86ca1d7.pdf",
-                "item_key": "<id-2>:54254d3ad01c",
+                "item_key": "<id-2>:23dbfd488c59",
                 "patient_id": "<id-1>",
-                "sha256": "54254d3ad01c0338c3a86e5a4016d7b73a22095d02099bc747308e14eb50c972",
+                "sha256": "23dbfd488c596640c750ec157a2fca6244c9a99103dd05172f267b3fd929ee5b",
                 "size_bytes": 39496
               }
             ],
@@ -2256,7 +2585,6 @@
           "fhir-r4",
           "--out",
           "<out>",
-          "--no-qa",
           "--archive",
           "<out>/arch",
           "--bundle",
@@ -2267,17 +2595,17 @@
         ],
         "files": [
           {
-            "digest": "99477da4fd2062bff26dff14d8a8d184d4fa17155e93f8df9a61c340fbcf0446",
+            "digest": "57f8e224d0d2ceefd770e7efbcdbd54ffa1e0ee7eaf4d3c789c9aed10cf37cd8",
             "kind": "pdf",
             "relpath": "Placeholder_Wendell_01-08-2024.pdf"
           },
           {
-            "digest": "98cc43d5e30db47766be1787a493e55b309ee1a3b95e5018af37ec89b072d012",
+            "digest": "164e2be9864e34b0e6dfeed77af7be2edd4273f97c214589331f141b825e9ac8",
             "kind": "pdf",
             "relpath": "Specimen_Dexter_05-10-2023.pdf"
           },
           {
-            "digest": "024556c3a0f9abbdf2eecc960b2a4ae06c77bd4dc1e8b34dff9dc43363c3cf79",
+            "digest": "55528a35618840d1d208ad971467e97c1652f16a409575be0295cafb89586b6c",
             "kind": "pdf",
             "relpath": "Specimen_Dexter_09-22-2023.pdf"
           },
@@ -2342,12 +2670,12 @@
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/index.html"
           },
           {
-            "digest": "98cc43d5e30db47766be1787a493e55b309ee1a3b95e5018af37ec89b072d012",
+            "digest": "164e2be9864e34b0e6dfeed77af7be2edd4273f97c214589331f141b825e9ac8",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/pdfs/Specimen_Dexter_05-10-2023.pdf"
           },
           {
-            "digest": "024556c3a0f9abbdf2eecc960b2a4ae06c77bd4dc1e8b34dff9dc43363c3cf79",
+            "digest": "55528a35618840d1d208ad971467e97c1652f16a409575be0295cafb89586b6c",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000001/pdfs/Specimen_Dexter_09-22-2023.pdf"
           },
@@ -2367,7 +2695,7 @@
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000002/index.html"
           },
           {
-            "digest": "99477da4fd2062bff26dff14d8a8d184d4fa17155e93f8df9a61c340fbcf0446",
+            "digest": "57f8e224d0d2ceefd770e7efbcdbd54ffa1e0ee7eaf4d3c789c9aed10cf37cd8",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0001-0000-0000-000000000002/pdfs/Placeholder_Wendell_01-08-2024.pdf"
           },
@@ -2387,14 +2715,19 @@
             "relpath": "bundle/feedface-0001-0000-0000-000000000001/bundle.json"
           },
           {
-            "digest": "98cc43d5e30db47766be1787a493e55b309ee1a3b95e5018af37ec89b072d012",
+            "digest": "164e2be9864e34b0e6dfeed77af7be2edd4273f97c214589331f141b825e9ac8",
             "kind": "pdf",
             "relpath": "bundle/feedface-0001-0000-0000-000000000001/pdfs/Specimen_Dexter_05-10-2023.pdf"
           },
           {
-            "digest": "024556c3a0f9abbdf2eecc960b2a4ae06c77bd4dc1e8b34dff9dc43363c3cf79",
+            "digest": "55528a35618840d1d208ad971467e97c1652f16a409575be0295cafb89586b6c",
             "kind": "pdf",
             "relpath": "bundle/feedface-0001-0000-0000-000000000001/pdfs/Specimen_Dexter_09-22-2023.pdf"
+          },
+          {
+            "digest": "4eea87572fa8816752b059dd7a55d5b1a964c3a3fc0141482fd96f82dc94ad00",
+            "kind": "json",
+            "relpath": "bundle/feedface-0001-0000-0000-000000000001/qa_report.json"
           },
           {
             "digest": "9bc80e4e4195d301e8ee8ac921f296724b02b8861e12139eb5bd2c7ee2cf2dba",
@@ -2407,9 +2740,14 @@
             "relpath": "bundle/feedface-0001-0000-0000-000000000002/bundle.json"
           },
           {
-            "digest": "99477da4fd2062bff26dff14d8a8d184d4fa17155e93f8df9a61c340fbcf0446",
+            "digest": "57f8e224d0d2ceefd770e7efbcdbd54ffa1e0ee7eaf4d3c789c9aed10cf37cd8",
             "kind": "pdf",
             "relpath": "bundle/feedface-0001-0000-0000-000000000002/pdfs/Placeholder_Wendell_01-08-2024.pdf"
+          },
+          {
+            "digest": "37c4d3b310b64ad87507228f6b425388afac177118a3093fcd986a1278db09d8",
+            "kind": "json",
+            "relpath": "bundle/feedface-0001-0000-0000-000000000002/qa_report.json"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
@@ -2417,22 +2755,27 @@
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "55035479116b26faa47a7a1b2f8a63e005297ce0f504fc659799bbce27c64be2",
+            "digest": "9d1d9952dd987b7545ceb1fbb98c7322a3ce216762a62e71d636cc898a357b7e",
             "kind": "xml",
             "relpath": "ccda/feedface-0001-0000-0000-000000000001.xml"
           },
           {
-            "digest": "551a3d255281794a79c732fb168d47f7a375e9faf82fada86e3f90ce295e6da1",
+            "digest": "e3ae85ba52374295d07e1cf6c944a2a68478b4f62e709d063db3b272b710a5df",
             "kind": "xml",
             "relpath": "ccda/feedface-0001-0000-0000-000000000002.xml"
           },
           {
-            "digest": "29f1eb7c8ff72d0630b2778c01f8d154c10c75b82cbec9b428b9855439343190",
+            "digest": "2c57d256efa31354cebd5cbd9150e88ffca0a6858c6f7d4a106f824bace17776",
+            "kind": "json",
+            "relpath": "qa_report.json"
+          },
+          {
+            "digest": "ed97d06571f5bb98869fc9bfe10441cf8fcb7c9befa65c0494d07298b07d3262",
             "kind": "pdf",
             "relpath": "record-summary/Placeholder_Wendell_9168254d3da6_ccda.pdf"
           },
           {
-            "digest": "cd3264956e735784aeb26585c1f29dc3335b96f368e1692bd61a9f2f6a39ce18",
+            "digest": "361c2b6d3ec2d204cef8be769f6e7bf7e3a98265a0fead7edc3731481847e0d9",
             "kind": "pdf",
             "relpath": "record-summary/Specimen_Dexter_812aea8e6adf_ccda.pdf"
           },
@@ -2462,17 +2805,530 @@
             "relpath": "selection_report.json"
           },
           {
-            "digest": "fab571bdea559762412a691edf151fb1bd22c391dea21b7a3b0be0b28912e79a",
+            "digest": "ac041b626f22ad56955b1ebf3dcd607ff5a9f05a36ecc72cdc6cb47ca2a52aa3",
             "kind": "json",
             "relpath": "upload_manifest.json"
           }
         ],
         "json": {
+          "bundle/feedface-0001-0000-0000-000000000001/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "1 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000001",
+                "file": "Specimen_Dexter_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "1 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000002",
+                "file": "Specimen_Dexter_09-22-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0001-0000-0000-000000000001",
+                "file": "Specimen_Dexter_812aea8e6adf_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "feedface-0001-0000-0000-000000000001",
+            "summary": {
+              "fail": 0,
+              "pass": 3,
+              "warn": 0
+            }
+          },
+          "bundle/feedface-0001-0000-0000-000000000002/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000003",
+                "file": "Placeholder_Wendell_01-08-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0001-0000-0000-000000000002",
+                "file": "Placeholder_Wendell_9168254d3da6_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "feedface-0001-0000-0000-000000000002",
+            "summary": {
+              "fail": 0,
+              "pass": 2,
+              "warn": 0
+            }
+          },
+          "qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "1 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000001",
+                "file": "Specimen_Dexter_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "1 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000002",
+                "file": "Specimen_Dexter_09-22-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0002-0000-0000-000000000003",
+                "file": "Placeholder_Wendell_01-08-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0001-0000-0000-000000000001",
+                "file": "Specimen_Dexter_812aea8e6adf_ccda.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0001-0000-0000-000000000002",
+                "file": "Placeholder_Wendell_9168254d3da6_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "summary": {
+              "fail": 0,
+              "not_carried": 13,
+              "pass": 5,
+              "warn": 0
+            }
+          },
           "upload_manifest.json": {
             "gates": {
               "conservation": "balanced",
               "layout_hash": "4331f33b3c8d9b9362284265b1d1352243f3c7532aae328de23e545f5f078001",
-              "qa": "not_run"
+              "qa": "pass"
             },
             "items": [
               {
@@ -2481,9 +3337,9 @@
                 "expected_pages": 1,
                 "file_path": "Specimen_Dexter_05-10-2023.pdf",
                 "fingerprint": "Specimen_Dexter_05-10-2023.pdf",
-                "item_key": "feedface-0002-0000-0000-000000000001:98cc43d5e30d",
+                "item_key": "feedface-0002-0000-0000-000000000001:164e2be9864e",
                 "patient_id": "feedface-0001-0000-0000-000000000001",
-                "sha256": "98cc43d5e30db47766be1787a493e55b309ee1a3b95e5018af37ec89b072d012",
+                "sha256": "164e2be9864e34b0e6dfeed77af7be2edd4273f97c214589331f141b825e9ac8",
                 "size_bytes": 48024
               },
               {
@@ -2492,9 +3348,9 @@
                 "expected_pages": 1,
                 "file_path": "Specimen_Dexter_09-22-2023.pdf",
                 "fingerprint": "Specimen_Dexter_09-22-2023.pdf",
-                "item_key": "feedface-0002-0000-0000-000000000002:024556c3a0f9",
+                "item_key": "feedface-0002-0000-0000-000000000002:55528a356188",
                 "patient_id": "feedface-0001-0000-0000-000000000001",
-                "sha256": "024556c3a0f9abbdf2eecc960b2a4ae06c77bd4dc1e8b34dff9dc43363c3cf79",
+                "sha256": "55528a35618840d1d208ad971467e97c1652f16a409575be0295cafb89586b6c",
                 "size_bytes": 42107
               },
               {
@@ -2503,9 +3359,9 @@
                 "expected_pages": 1,
                 "file_path": "Placeholder_Wendell_01-08-2024.pdf",
                 "fingerprint": "Placeholder_Wendell_01-08-2024.pdf",
-                "item_key": "feedface-0002-0000-0000-000000000003:99477da4fd20",
+                "item_key": "feedface-0002-0000-0000-000000000003:57f8e224d0d2",
                 "patient_id": "feedface-0001-0000-0000-000000000002",
-                "sha256": "99477da4fd2062bff26dff14d8a8d184d4fa17155e93f8df9a61c340fbcf0446",
+                "sha256": "57f8e224d0d2ceefd770e7efbcdbd54ffa1e0ee7eaf4d3c789c9aed10cf37cd8",
                 "size_bytes": 37629
               }
             ],
@@ -2667,7 +3523,6 @@
           "oracle-ehi",
           "--out",
           "<out>",
-          "--no-qa",
           "--archive",
           "<out>/arch",
           "--bundle",
@@ -2678,17 +3533,17 @@
         ],
         "files": [
           {
-            "digest": "91f57fedf02d5b4f7f6bc16053573420b4a60b29187010a6572208a3f3a2a7ed",
+            "digest": "988edb6df80430868cb876f215ce26f0134f187f7f08f91df3c9328636827045",
             "kind": "pdf",
             "relpath": "Sampleson_Beta_Unknown_03-20-2024.pdf"
           },
           {
-            "digest": "1e6d6c6beca83bfb78920f6319bcc10301dd5ba8f19946a5a5403d535c74818c",
+            "digest": "d810a327c255597011abbe205e1cffd804cb0225ceceab1719d9a7f44842e1bb",
             "kind": "pdf",
             "relpath": "Testpatient_Alpha_Q_Unknown_02-05-2024.pdf"
           },
           {
-            "digest": "815db1f66d66f5c8371b328f66f2aee385d4e481cd2313c9b1afba126100d154",
+            "digest": "79d779feb86fccc22af1624b8882d7e981d748f5f26e0b6f8d020e0085fc3e83",
             "kind": "pdf",
             "relpath": "Testpatient_Alpha_Q_Unknown_04-12-2024.pdf"
           },
@@ -2753,12 +3608,12 @@
             "relpath": "arch/patients/900000001/index.html"
           },
           {
-            "digest": "1e6d6c6beca83bfb78920f6319bcc10301dd5ba8f19946a5a5403d535c74818c",
+            "digest": "d810a327c255597011abbe205e1cffd804cb0225ceceab1719d9a7f44842e1bb",
             "kind": "pdf",
             "relpath": "arch/patients/900000001/pdfs/Testpatient_Alpha_Q_Unknown_02-05-2024.pdf"
           },
           {
-            "digest": "815db1f66d66f5c8371b328f66f2aee385d4e481cd2313c9b1afba126100d154",
+            "digest": "79d779feb86fccc22af1624b8882d7e981d748f5f26e0b6f8d020e0085fc3e83",
             "kind": "pdf",
             "relpath": "arch/patients/900000001/pdfs/Testpatient_Alpha_Q_Unknown_04-12-2024.pdf"
           },
@@ -2778,7 +3633,7 @@
             "relpath": "arch/patients/900000002/index.html"
           },
           {
-            "digest": "91f57fedf02d5b4f7f6bc16053573420b4a60b29187010a6572208a3f3a2a7ed",
+            "digest": "988edb6df80430868cb876f215ce26f0134f187f7f08f91df3c9328636827045",
             "kind": "pdf",
             "relpath": "arch/patients/900000002/pdfs/Sampleson_Beta_Unknown_03-20-2024.pdf"
           },
@@ -2793,14 +3648,19 @@
             "relpath": "bundle/900000001/bundle.json"
           },
           {
-            "digest": "1e6d6c6beca83bfb78920f6319bcc10301dd5ba8f19946a5a5403d535c74818c",
+            "digest": "d810a327c255597011abbe205e1cffd804cb0225ceceab1719d9a7f44842e1bb",
             "kind": "pdf",
             "relpath": "bundle/900000001/pdfs/Testpatient_Alpha_Q_Unknown_02-05-2024.pdf"
           },
           {
-            "digest": "815db1f66d66f5c8371b328f66f2aee385d4e481cd2313c9b1afba126100d154",
+            "digest": "79d779feb86fccc22af1624b8882d7e981d748f5f26e0b6f8d020e0085fc3e83",
             "kind": "pdf",
             "relpath": "bundle/900000001/pdfs/Testpatient_Alpha_Q_Unknown_04-12-2024.pdf"
+          },
+          {
+            "digest": "89b1ba52b333a6bad2b00dbf2f2491df5529a4219ef265e8a824d620faeed28b",
+            "kind": "json",
+            "relpath": "bundle/900000001/qa_report.json"
           },
           {
             "digest": "7ea6e0de6f987a647c70dab20be29fae84d695bbd2d1237ae872043cd84096a9",
@@ -2813,9 +3673,14 @@
             "relpath": "bundle/900000002/bundle.json"
           },
           {
-            "digest": "91f57fedf02d5b4f7f6bc16053573420b4a60b29187010a6572208a3f3a2a7ed",
+            "digest": "988edb6df80430868cb876f215ce26f0134f187f7f08f91df3c9328636827045",
             "kind": "pdf",
             "relpath": "bundle/900000002/pdfs/Sampleson_Beta_Unknown_03-20-2024.pdf"
+          },
+          {
+            "digest": "51eef68a1ef3602e2893ac4279d30b1371cbc2ca220b88e22531c39ffab967ce",
+            "kind": "json",
+            "relpath": "bundle/900000002/qa_report.json"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
@@ -2823,12 +3688,12 @@
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "392a2ea3093c08dd64d8c3dde2b4aa3fb9c162414bba350ec7bbc5d3398ed828",
+            "digest": "2164e71068fb709ebeb60a9eecf7962457689cd7817186bef7ea3942b8df3214",
             "kind": "xml",
             "relpath": "ccda/900000001.xml"
           },
           {
-            "digest": "38288e969015622eb0daeedecff3558cba8833cf25e1e0f66711d6fdc57f9fe1",
+            "digest": "73cb8b706c8e7268e80e612e473ada42e956b799f8ef1b6e4401b9343709930f",
             "kind": "xml",
             "relpath": "ccda/900000002.xml"
           },
@@ -2838,12 +3703,17 @@
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "9a0ad3822dbc4115c5a8ca28244e71ac28cdf6c95c6931761af5e05581d2df79",
+            "digest": "cd48c9262f6e7e0197cd9786cbb2ded03771f691dda2196dd780f0c0715a8df0",
+            "kind": "json",
+            "relpath": "qa_report.json"
+          },
+          {
+            "digest": "4ef736b1db47f611125966b0b89e5b708e64b44458b96588f0d99ab62ec91317",
             "kind": "pdf",
             "relpath": "record-summary/Sampleson_Beta_Unknown_d522ada2b7cb_ccda.pdf"
           },
           {
-            "digest": "b48d4196e4405e3f6d5124111a80791e7c521582e63d9eb4f14ebeef523fb652",
+            "digest": "44fdf3ebb91a5d3cb99b69ad7a29c40c96ad7a0bd089976c26122a6e9e53c884",
             "kind": "pdf",
             "relpath": "record-summary/Testpatient_Alpha_Q_Unknown_b4bfa48b2f72_ccda.pdf"
           },
@@ -2873,17 +3743,522 @@
             "relpath": "selection_report.json"
           },
           {
-            "digest": "70c48bb17aaff5a42fdf294b8f02274b09a456c4dfd7868d8e4370214dfdb17a",
+            "digest": "70984dd16ff3c0f49e381e8e5f4681f24c8349c28a572af046f1adabadf19332",
             "kind": "json",
             "relpath": "upload_manifest.json"
           }
         ],
         "json": {
+          "bundle/900000001/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100001",
+                "file": "Testpatient_Alpha_Q_Unknown_02-05-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100002",
+                "file": "Testpatient_Alpha_Q_Unknown_04-12-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900000001",
+                "file": "Testpatient_Alpha_Q_Unknown_b4bfa48b2f72_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "900000001",
+            "summary": {
+              "fail": 0,
+              "pass": 3,
+              "warn": 0
+            }
+          },
+          "bundle/900000002/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100003",
+                "file": "Sampleson_Beta_Unknown_03-20-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900000002",
+                "file": "Sampleson_Beta_Unknown_d522ada2b7cb_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "900000002",
+            "summary": {
+              "fail": 0,
+              "pass": 2,
+              "warn": 0
+            }
+          },
+          "qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100001",
+                "file": "Testpatient_Alpha_Q_Unknown_02-05-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100002",
+                "file": "Testpatient_Alpha_Q_Unknown_04-12-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900100003",
+                "file": "Sampleson_Beta_Unknown_03-20-2024.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900000001",
+                "file": "Testpatient_Alpha_Q_Unknown_b4bfa48b2f72_ccda.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "900000002",
+                "file": "Sampleson_Beta_Unknown_d522ada2b7cb_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "summary": {
+              "fail": 0,
+              "not_carried": 3,
+              "pass": 5,
+              "warn": 0
+            }
+          },
           "upload_manifest.json": {
             "gates": {
               "conservation": "balanced",
               "layout_hash": "4331f33b3c8d9b9362284265b1d1352243f3c7532aae328de23e545f5f078001",
-              "qa": "not_run"
+              "qa": "pass"
             },
             "items": [
               {
@@ -2892,9 +4267,9 @@
                 "expected_pages": 1,
                 "file_path": "Testpatient_Alpha_Q_Unknown_02-05-2024.pdf",
                 "fingerprint": "Testpatient_Alpha_Q_Unknown_02-05-2024.pdf",
-                "item_key": "900100001:1e6d6c6beca8",
+                "item_key": "900100001:d810a327c255",
                 "patient_id": "900000001",
-                "sha256": "1e6d6c6beca83bfb78920f6319bcc10301dd5ba8f19946a5a5403d535c74818c",
+                "sha256": "d810a327c255597011abbe205e1cffd804cb0225ceceab1719d9a7f44842e1bb",
                 "size_bytes": 43381
               },
               {
@@ -2903,9 +4278,9 @@
                 "expected_pages": 1,
                 "file_path": "Testpatient_Alpha_Q_Unknown_04-12-2024.pdf",
                 "fingerprint": "Testpatient_Alpha_Q_Unknown_04-12-2024.pdf",
-                "item_key": "900100002:815db1f66d66",
+                "item_key": "900100002:79d779feb86f",
                 "patient_id": "900000001",
-                "sha256": "815db1f66d66f5c8371b328f66f2aee385d4e481cd2313c9b1afba126100d154",
+                "sha256": "79d779feb86fccc22af1624b8882d7e981d748f5f26e0b6f8d020e0085fc3e83",
                 "size_bytes": 37952
               },
               {
@@ -2914,9 +4289,9 @@
                 "expected_pages": 1,
                 "file_path": "Sampleson_Beta_Unknown_03-20-2024.pdf",
                 "fingerprint": "Sampleson_Beta_Unknown_03-20-2024.pdf",
-                "item_key": "900100003:91f57fedf02d",
+                "item_key": "900100003:988edb6df804",
                 "patient_id": "900000002",
-                "sha256": "91f57fedf02d5b4f7f6bc16053573420b4a60b29187010a6572208a3f3a2a7ed",
+                "sha256": "988edb6df80430868cb876f215ce26f0134f187f7f08f91df3c9328636827045",
                 "size_bytes": 24369
               }
             ],
@@ -3108,7 +4483,6 @@
           "pf-tebra",
           "--out",
           "<out>",
-          "--no-qa",
           "--archive",
           "<out>/arch",
           "--bundle",
@@ -3119,32 +4493,32 @@
         ],
         "files": [
           {
-            "digest": "dfa8e0dfbca8c6dad1c1fab3da33b5a83b956b4a1e1e99b77d2ed302965ddc05",
+            "digest": "0126ca53a208b7c381d909afe9ac40e64d43cf5e0bd149e69b7d65ce3ed8d79c",
             "kind": "pdf",
             "relpath": "Fixture_Ada_05-10-2023-feedface.pdf"
           },
           {
-            "digest": "8f5ef3fc52509d13d85867562dd9b2d8b62d51101c693fb62a45302e8954e72c",
+            "digest": "44bdb20a8d6ae74c8595789de52d5dfed6c8d43ca9d77b97e29d9a030ea1fc4e",
             "kind": "pdf",
             "relpath": "Fixture_Ada_05-10-2023.pdf"
           },
           {
-            "digest": "48425276b9a96a0da101c4ef20696fb3f8b7e95d0e2347ff0195a98eaba33dc6",
+            "digest": "776295dfbfc7f015d5d8792f8952f1a1b53f6c279049b8f748b77fa646c4b753",
             "kind": "pdf",
             "relpath": "Fixture_Ada_08-22-2023.pdf"
           },
           {
-            "digest": "f21cd9f7ef3d76903369117dff9bb73172623c6c0068007164cbfb502840c5de",
+            "digest": "d52064044996aeed99ae8f2008187825dcd56af02928e4ce2d738622f03d3bee",
             "kind": "pdf",
             "relpath": "Placeholder_Cleo_04-18-2023.pdf"
           },
           {
-            "digest": "46057d4086afceced7b17a1705f68dd7df72fcdc702be9f9f473b559bb0ea9d4",
+            "digest": "f6f02de84af8d2fe726562a2ae8c962ef6cba9a125e611136bff3a778bf59661",
             "kind": "pdf",
             "relpath": "Sample_Boris_02-02-2023.pdf"
           },
           {
-            "digest": "fac888a2959582fbbd0e30842d6b69eb0cc6f51caf95165ea43110ffe24a37e5",
+            "digest": "ac9cbedbcadb4af93c2a5cbd28f8ed1855824959dcf2f33de21331660a822438",
             "kind": "pdf",
             "relpath": "Sample_Boris_09-15-2023.pdf"
           },
@@ -3189,7 +4563,7 @@
             "relpath": "arch/index.json"
           },
           {
-            "digest": "09bdd38f7a642d931b2c047e215229e31581f2777dd9c330c3cfe9295cb51f24",
+            "digest": "1353619ad1eadd1f0016b3326778e6b909e3db8d7bde42a5ea152ffcf2721309",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/attachments/feedface-d0c0-0000-0000-000000000001.pdf"
           },
@@ -3219,17 +4593,17 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/index.html"
           },
           {
-            "digest": "dfa8e0dfbca8c6dad1c1fab3da33b5a83b956b4a1e1e99b77d2ed302965ddc05",
+            "digest": "0126ca53a208b7c381d909afe9ac40e64d43cf5e0bd149e69b7d65ce3ed8d79c",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_05-10-2023-feedface.pdf"
           },
           {
-            "digest": "8f5ef3fc52509d13d85867562dd9b2d8b62d51101c693fb62a45302e8954e72c",
+            "digest": "44bdb20a8d6ae74c8595789de52d5dfed6c8d43ca9d77b97e29d9a030ea1fc4e",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_05-10-2023.pdf"
           },
           {
-            "digest": "48425276b9a96a0da101c4ef20696fb3f8b7e95d0e2347ff0195a98eaba33dc6",
+            "digest": "776295dfbfc7f015d5d8792f8952f1a1b53f6c279049b8f748b77fa646c4b753",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_08-22-2023.pdf"
           },
@@ -3254,12 +4628,12 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/index.html"
           },
           {
-            "digest": "46057d4086afceced7b17a1705f68dd7df72fcdc702be9f9f473b559bb0ea9d4",
+            "digest": "f6f02de84af8d2fe726562a2ae8c962ef6cba9a125e611136bff3a778bf59661",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/pdfs/Sample_Boris_02-02-2023.pdf"
           },
           {
-            "digest": "fac888a2959582fbbd0e30842d6b69eb0cc6f51caf95165ea43110ffe24a37e5",
+            "digest": "ac9cbedbcadb4af93c2a5cbd28f8ed1855824959dcf2f33de21331660a822438",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000002/pdfs/Sample_Boris_09-15-2023.pdf"
           },
@@ -3279,7 +4653,7 @@
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000003/index.html"
           },
           {
-            "digest": "f21cd9f7ef3d76903369117dff9bb73172623c6c0068007164cbfb502840c5de",
+            "digest": "d52064044996aeed99ae8f2008187825dcd56af02928e4ce2d738622f03d3bee",
             "kind": "pdf",
             "relpath": "arch/patients/feedface-0000-0000-0000-000000000003/pdfs/Placeholder_Cleo_04-18-2023.pdf"
           },
@@ -3289,7 +4663,7 @@
             "relpath": "attachments/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "09bdd38f7a642d931b2c047e215229e31581f2777dd9c330c3cfe9295cb51f24",
+            "digest": "1353619ad1eadd1f0016b3326778e6b909e3db8d7bde42a5ea152ffcf2721309",
             "kind": "pdf",
             "relpath": "attachments/feedface-d0c0-0000-0000-000000000001.pdf"
           },
@@ -3304,7 +4678,7 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/README.txt"
           },
           {
-            "digest": "09bdd38f7a642d931b2c047e215229e31581f2777dd9c330c3cfe9295cb51f24",
+            "digest": "1353619ad1eadd1f0016b3326778e6b909e3db8d7bde42a5ea152ffcf2721309",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/attachments/feedface-d0c0-0000-0000-000000000001.pdf"
           },
@@ -3314,19 +4688,24 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/bundle.json"
           },
           {
-            "digest": "dfa8e0dfbca8c6dad1c1fab3da33b5a83b956b4a1e1e99b77d2ed302965ddc05",
+            "digest": "0126ca53a208b7c381d909afe9ac40e64d43cf5e0bd149e69b7d65ce3ed8d79c",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_05-10-2023-feedface.pdf"
           },
           {
-            "digest": "8f5ef3fc52509d13d85867562dd9b2d8b62d51101c693fb62a45302e8954e72c",
+            "digest": "44bdb20a8d6ae74c8595789de52d5dfed6c8d43ca9d77b97e29d9a030ea1fc4e",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_05-10-2023.pdf"
           },
           {
-            "digest": "48425276b9a96a0da101c4ef20696fb3f8b7e95d0e2347ff0195a98eaba33dc6",
+            "digest": "776295dfbfc7f015d5d8792f8952f1a1b53f6c279049b8f748b77fa646c4b753",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000001/pdfs/Fixture_Ada_08-22-2023.pdf"
+          },
+          {
+            "digest": "59969446db1720f402cf7f7a51d8433ec50a2c835671d8197ffa94a01a633412",
+            "kind": "json",
+            "relpath": "bundle/feedface-0000-0000-0000-000000000001/qa_report.json"
           },
           {
             "digest": "983c35807d8de1a87bf743d16f8086e8701860b3d45e168522469b79e8d35996",
@@ -3339,14 +4718,19 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000002/bundle.json"
           },
           {
-            "digest": "46057d4086afceced7b17a1705f68dd7df72fcdc702be9f9f473b559bb0ea9d4",
+            "digest": "f6f02de84af8d2fe726562a2ae8c962ef6cba9a125e611136bff3a778bf59661",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000002/pdfs/Sample_Boris_02-02-2023.pdf"
           },
           {
-            "digest": "fac888a2959582fbbd0e30842d6b69eb0cc6f51caf95165ea43110ffe24a37e5",
+            "digest": "ac9cbedbcadb4af93c2a5cbd28f8ed1855824959dcf2f33de21331660a822438",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000002/pdfs/Sample_Boris_09-15-2023.pdf"
+          },
+          {
+            "digest": "b08ec450397c041c5b477fea0641b0244d75d25664cee75894489f7ba37caf51",
+            "kind": "json",
+            "relpath": "bundle/feedface-0000-0000-0000-000000000002/qa_report.json"
           },
           {
             "digest": "7dd77d51150297ab82ea892f6fff2528c3c05b16e9d556d9c858b47cd1050c4a",
@@ -3359,9 +4743,14 @@
             "relpath": "bundle/feedface-0000-0000-0000-000000000003/bundle.json"
           },
           {
-            "digest": "f21cd9f7ef3d76903369117dff9bb73172623c6c0068007164cbfb502840c5de",
+            "digest": "d52064044996aeed99ae8f2008187825dcd56af02928e4ce2d738622f03d3bee",
             "kind": "pdf",
             "relpath": "bundle/feedface-0000-0000-0000-000000000003/pdfs/Placeholder_Cleo_04-18-2023.pdf"
+          },
+          {
+            "digest": "65a46e732843d5a3379105048292e19b88cb61d2f30bfcc94fa7c68b248fcf80",
+            "kind": "json",
+            "relpath": "bundle/feedface-0000-0000-0000-000000000003/qa_report.json"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
@@ -3369,37 +4758,42 @@
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "2cb05be2850203a4fa05c7d8d568a0c8dc92415b2829bab45b931d3f02908e12",
+            "digest": "e2e152ad6a8fd343521a517a457b4f51db315add948672062c2c1ff4ca5a2217",
             "kind": "xml",
             "relpath": "ccda/feedface-0000-0000-0000-000000000001.xml"
           },
           {
-            "digest": "4cb81aaf79dfda50070a7179519c04c2d6e321cfc713e379e37a61548e891ecb",
+            "digest": "ba680a54967af008e12a355dc2bb7f1917d9dab57b8d04f7af53f9962989afd2",
             "kind": "xml",
             "relpath": "ccda/feedface-0000-0000-0000-000000000002.xml"
           },
           {
-            "digest": "ed7171dbf63da2a29411f50e0e20025c55d4d89e6da0d8d8727e0673e1cc2114",
+            "digest": "8296a3d326f4e59adc987c3d982c0f4aba99dd489c99430f55b48860391aa9d4",
             "kind": "xml",
             "relpath": "ccda/feedface-0000-0000-0000-000000000003.xml"
           },
           {
-            "digest": "09bdd38f7a642d931b2c047e215229e31581f2777dd9c330c3cfe9295cb51f24",
+            "digest": "1353619ad1eadd1f0016b3326778e6b909e3db8d7bde42a5ea152ffcf2721309",
             "kind": "pdf",
             "relpath": "ccda/feedface-d0c0-0000-0000-000000000001.pdf"
           },
           {
-            "digest": "ab282d94b032224fe3a0aedc362ead1c448397da00c8484599839ee42caf54a7",
+            "digest": "1acec60b3d048849f57d2464f44b0f618d190ed437194c6e7ece2c3b99fae0df",
+            "kind": "json",
+            "relpath": "qa_report.json"
+          },
+          {
+            "digest": "a485266effbc8e9e3b8dd0c0f544bd759a176951a301f696af21d91cce481eff",
             "kind": "pdf",
             "relpath": "record-summary/Fixture_Ada_3ceb2a3c2f6d_ccda.pdf"
           },
           {
-            "digest": "f2da6d918a5a62b66e63ed98e4be662e3a39300399c24df8d5f32aa38057aef4",
+            "digest": "2bb02a167c70c941bc04056740d61aa8e72d597d412f6ac74f244a7d469e383c",
             "kind": "pdf",
             "relpath": "record-summary/Placeholder_Cleo_cd01e63c89d3_ccda.pdf"
           },
           {
-            "digest": "c079931208bff96d5128693810132035608f685c7e07cfd4a93270104ac42f69",
+            "digest": "4158b6b2fc1f3a88e5daa847a7bd36084a15c903717dc21dcced7a6b5c61b469",
             "kind": "pdf",
             "relpath": "record-summary/Sample_Boris_18ed60980273_ccda.pdf"
           },
@@ -3429,17 +4823,911 @@
             "relpath": "selection_report.json"
           },
           {
-            "digest": "47465837fa17630d80fb4924e51d73125cd02fa4000094772ab7b58f606d025e",
+            "digest": "e73ab5f01f949d2c9affb401a39df3997161efec1755e4d952f05b22edd08cc6",
             "kind": "json",
             "relpath": "upload_manifest.json"
           }
         ],
         "json": {
+          "bundle/feedface-0000-0000-0000-000000000001/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000001",
+                "file": "Fixture_Ada_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000002",
+                "file": "Fixture_Ada_05-10-2023-feedface.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000003",
+                "file": "Fixture_Ada_08-22-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000001",
+                "file": "Fixture_Ada_3ceb2a3c2f6d_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "feedface-0000-0000-0000-000000000001",
+            "summary": {
+              "fail": 0,
+              "pass": 4,
+              "warn": 0
+            }
+          },
+          "bundle/feedface-0000-0000-0000-000000000002/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000004",
+                "file": "Sample_Boris_02-02-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000005",
+                "file": "Sample_Boris_09-15-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000002",
+                "file": "Sample_Boris_18ed60980273_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "feedface-0000-0000-0000-000000000002",
+            "summary": {
+              "fail": 0,
+              "pass": 3,
+              "warn": 0
+            }
+          },
+          "bundle/feedface-0000-0000-0000-000000000003/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000006",
+                "file": "Placeholder_Cleo_04-18-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000003",
+                "file": "Placeholder_Cleo_cd01e63c89d3_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "feedface-0000-0000-0000-000000000003",
+            "summary": {
+              "fail": 0,
+              "pass": 2,
+              "warn": 0
+            }
+          },
+          "qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000001",
+                "file": "Fixture_Ada_05-10-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000002",
+                "file": "Fixture_Ada_05-10-2023-feedface.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "2 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "1 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000003",
+                "file": "Fixture_Ada_08-22-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "no vital signs on this encounter to verify"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000004",
+                "file": "Sample_Boris_02-02-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 allergies not carried by this layout: no allergy block in a SOAP note layout \u2014 allergies are a chart-level list",
+                      "2 medications not carried by this layout: no medication list in a SOAP note layout; today's prescribing is prose in the Plan section"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000005",
+                "file": "Sample_Boris_09-15-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "2 immunizations not carried by this layout: no immunization table in a SOAP note layout"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-e000-0000-0000-000000000006",
+                "file": "Placeholder_Cleo_04-18-2023.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000001",
+                "file": "Fixture_Ada_3ceb2a3c2f6d_ccda.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000002",
+                "file": "Sample_Boris_18ed60980273_ccda.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "feedface-0000-0000-0000-000000000003",
+                "file": "Placeholder_Cleo_cd01e63c89d3_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "summary": {
+              "fail": 0,
+              "not_carried": 23,
+              "pass": 9,
+              "warn": 0
+            }
+          },
           "upload_manifest.json": {
             "gates": {
               "conservation": "balanced",
               "layout_hash": "4331f33b3c8d9b9362284265b1d1352243f3c7532aae328de23e545f5f078001",
-              "qa": "not_run"
+              "qa": "pass"
             },
             "items": [
               {
@@ -3448,9 +5736,9 @@
                 "expected_pages": 2,
                 "file_path": "attachments/feedface-d0c0-0000-0000-000000000001.pdf",
                 "fingerprint": "feedface-d0c0-0000-0000-000000000001.pdf",
-                "item_key": "feedface-0000-0000-0000-000000000001:09bdd38f7a64",
+                "item_key": "feedface-0000-0000-0000-000000000001:1353619ad1ea",
                 "patient_id": "feedface-0000-0000-0000-000000000001",
-                "sha256": "09bdd38f7a642d931b2c047e215229e31581f2777dd9c330c3cfe9295cb51f24",
+                "sha256": "1353619ad1eadd1f0016b3326778e6b909e3db8d7bde42a5ea152ffcf2721309",
                 "size_bytes": 1758,
                 "verify_policy": "source_paged"
               },
@@ -3460,9 +5748,9 @@
                 "expected_pages": 1,
                 "file_path": "Fixture_Ada_05-10-2023.pdf",
                 "fingerprint": "Fixture_Ada_05-10-2023.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000001:8f5ef3fc5250",
+                "item_key": "feedface-e000-0000-0000-000000000001:44bdb20a8d6a",
                 "patient_id": "feedface-0000-0000-0000-000000000001",
-                "sha256": "8f5ef3fc52509d13d85867562dd9b2d8b62d51101c693fb62a45302e8954e72c",
+                "sha256": "44bdb20a8d6ae74c8595789de52d5dfed6c8d43ca9d77b97e29d9a030ea1fc4e",
                 "size_bytes": 46238,
                 "verify_policy": "rendered_chart"
               },
@@ -3472,9 +5760,9 @@
                 "expected_pages": 1,
                 "file_path": "Fixture_Ada_05-10-2023-feedface.pdf",
                 "fingerprint": "Fixture_Ada_05-10-2023-feedface.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000002:dfa8e0dfbca8",
+                "item_key": "feedface-e000-0000-0000-000000000002:0126ca53a208",
                 "patient_id": "feedface-0000-0000-0000-000000000001",
-                "sha256": "dfa8e0dfbca8c6dad1c1fab3da33b5a83b956b4a1e1e99b77d2ed302965ddc05",
+                "sha256": "0126ca53a208b7c381d909afe9ac40e64d43cf5e0bd149e69b7d65ce3ed8d79c",
                 "size_bytes": 42818,
                 "verify_policy": "rendered_chart"
               },
@@ -3484,9 +5772,9 @@
                 "expected_pages": 1,
                 "file_path": "Fixture_Ada_08-22-2023.pdf",
                 "fingerprint": "Fixture_Ada_08-22-2023.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000003:48425276b9a9",
+                "item_key": "feedface-e000-0000-0000-000000000003:776295dfbfc7",
                 "patient_id": "feedface-0000-0000-0000-000000000001",
-                "sha256": "48425276b9a96a0da101c4ef20696fb3f8b7e95d0e2347ff0195a98eaba33dc6",
+                "sha256": "776295dfbfc7f015d5d8792f8952f1a1b53f6c279049b8f748b77fa646c4b753",
                 "size_bytes": 48618,
                 "verify_policy": "rendered_chart"
               },
@@ -3496,9 +5784,9 @@
                 "expected_pages": 1,
                 "file_path": "Sample_Boris_02-02-2023.pdf",
                 "fingerprint": "Sample_Boris_02-02-2023.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000004:46057d4086af",
+                "item_key": "feedface-e000-0000-0000-000000000004:f6f02de84af8",
                 "patient_id": "feedface-0000-0000-0000-000000000002",
-                "sha256": "46057d4086afceced7b17a1705f68dd7df72fcdc702be9f9f473b559bb0ea9d4",
+                "sha256": "f6f02de84af8d2fe726562a2ae8c962ef6cba9a125e611136bff3a778bf59661",
                 "size_bytes": 41091,
                 "verify_policy": "rendered_chart"
               },
@@ -3508,9 +5796,9 @@
                 "expected_pages": 1,
                 "file_path": "Sample_Boris_09-15-2023.pdf",
                 "fingerprint": "Sample_Boris_09-15-2023.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000005:fac888a29595",
+                "item_key": "feedface-e000-0000-0000-000000000005:ac9cbedbcadb",
                 "patient_id": "feedface-0000-0000-0000-000000000002",
-                "sha256": "fac888a2959582fbbd0e30842d6b69eb0cc6f51caf95165ea43110ffe24a37e5",
+                "sha256": "ac9cbedbcadb4af93c2a5cbd28f8ed1855824959dcf2f33de21331660a822438",
                 "size_bytes": 45667,
                 "verify_policy": "rendered_chart"
               },
@@ -3520,9 +5808,9 @@
                 "expected_pages": 1,
                 "file_path": "Placeholder_Cleo_04-18-2023.pdf",
                 "fingerprint": "Placeholder_Cleo_04-18-2023.pdf",
-                "item_key": "feedface-e000-0000-0000-000000000006:f21cd9f7ef3d",
+                "item_key": "feedface-e000-0000-0000-000000000006:d52064044996",
                 "patient_id": "feedface-0000-0000-0000-000000000003",
-                "sha256": "f21cd9f7ef3d76903369117dff9bb73172623c6c0068007164cbfb502840c5de",
+                "sha256": "d52064044996aeed99ae8f2008187825dcd56af02928e4ce2d738622f03d3bee",
                 "size_bytes": 49075,
                 "verify_policy": "rendered_chart"
               }
@@ -3777,7 +6065,7 @@
             "relpath": "_PHI_WARNING_README.txt"
           },
           {
-            "digest": "10a9894e9cda0f4acd9e9ab062b6df595a5ee1061aa484624ccc123a8f6b6e16",
+            "digest": "4ba3dfc902990549c0a9daf6774da0eebb19679a47181f668080331efbd54b65",
             "kind": "xml",
             "relpath": "ccda/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35.xml"
           },
@@ -3787,7 +6075,7 @@
             "relpath": "ccda/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "0416f75db8e8d6ac513d15af699a56f5b1d11ec9ab0c56b566141d8eea4d3ece",
+            "digest": "8bf65eeb5d9714719f3a35ae79fdf599434a7346590504634f9145aed1caca50",
             "kind": "pdf",
             "relpath": "charts/Gislason620_Darryl392_1c63546ce85d_ccda.pdf"
           },
@@ -3802,7 +6090,7 @@
             "relpath": "charts/qa_report.json"
           },
           {
-            "digest": "b4900d52780aa5b6a3e3183a4d598b8f5a043306e38cec5d5ff64356929d459e",
+            "digest": "d114b83fc0f587abbdf319f9f9fb9393318ac76041c6fd39f2b72f5c5e40327c",
             "kind": "json",
             "relpath": "charts/upload_manifest.json"
           },
@@ -3890,9 +6178,9 @@
                 "expected_pages": 4,
                 "file_path": "Gislason620_Darryl392_1c63546ce85d_ccda.pdf",
                 "fingerprint": "Gislason620_Darryl392_1c63546ce85d_ccda.pdf",
-                "item_key": "<id-0>:0416f75db8e8",
+                "item_key": "<id-0>:8bf65eeb5d97",
                 "patient_id": "<id-0>",
-                "sha256": "0416f75db8e8d6ac513d15af699a56f5b1d11ec9ab0c56b566141d8eea4d3ece",
+                "sha256": "8bf65eeb5d9714719f3a35ae79fdf599434a7346590504634f9145aed1caca50",
                 "size_bytes": 39956
               }
             ],
@@ -4382,7 +6670,6 @@
           "ccda",
           "--out",
           "<out>",
-          "--no-qa",
           "--archive",
           "<out>/arch",
           "--bundle",
@@ -4393,7 +6680,7 @@
         ],
         "files": [
           {
-            "digest": "715d4f88c5c4de5f871e59eee4dd4af1e62544133d810b548a50daeeb35e887c",
+            "digest": "4eec31071ef9f97161480c396d14410e05a059ecf1c634d9890f1d9b2359a253",
             "kind": "pdf",
             "relpath": "Gislason620_Darryl392_04-26-2026.pdf"
           },
@@ -4453,7 +6740,7 @@
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/index.html"
           },
           {
-            "digest": "715d4f88c5c4de5f871e59eee4dd4af1e62544133d810b548a50daeeb35e887c",
+            "digest": "4eec31071ef9f97161480c396d14410e05a059ecf1c634d9890f1d9b2359a253",
             "kind": "pdf",
             "relpath": "arch/patients/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/pdfs/Gislason620_Darryl392_04-26-2026.pdf"
           },
@@ -4468,9 +6755,14 @@
             "relpath": "bundle/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/bundle.json"
           },
           {
-            "digest": "715d4f88c5c4de5f871e59eee4dd4af1e62544133d810b548a50daeeb35e887c",
+            "digest": "4eec31071ef9f97161480c396d14410e05a059ecf1c634d9890f1d9b2359a253",
             "kind": "pdf",
             "relpath": "bundle/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/pdfs/Gislason620_Darryl392_04-26-2026.pdf"
+          },
+          {
+            "digest": "39cdc43287a4ca566ea19b8eeabb4a423ac5608be61e052adab6a9a19bce0eb3",
+            "kind": "json",
+            "relpath": "bundle/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/qa_report.json"
           },
           {
             "digest": "5309dae51bb8025f3a7b53f793faccd2b3fe935b773dbdd89a32a23cb2ec335f",
@@ -4478,7 +6770,7 @@
             "relpath": "bundle/_PHI_WARNING_README.txt"
           },
           {
-            "digest": "10a9894e9cda0f4acd9e9ab062b6df595a5ee1061aa484624ccc123a8f6b6e16",
+            "digest": "4ba3dfc902990549c0a9daf6774da0eebb19679a47181f668080331efbd54b65",
             "kind": "xml",
             "relpath": "ccda/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35.xml"
           },
@@ -4493,7 +6785,12 @@
             "relpath": "loss_ledger.json"
           },
           {
-            "digest": "0416f75db8e8d6ac513d15af699a56f5b1d11ec9ab0c56b566141d8eea4d3ece",
+            "digest": "9756e6e9dacff308c6b00a95aa2a36897a6f06d06ddf6c37da8db376f5f81659",
+            "kind": "json",
+            "relpath": "qa_report.json"
+          },
+          {
+            "digest": "8bf65eeb5d9714719f3a35ae79fdf599434a7346590504634f9145aed1caca50",
             "kind": "pdf",
             "relpath": "record-summary/Gislason620_Darryl392_1c63546ce85d_ccda.pdf"
           },
@@ -4523,12 +6820,119 @@
             "relpath": "selection_report.json"
           },
           {
-            "digest": "3e41ad8c81a1d221da1690e385588fb91d43031fa69df391c4056042344dc625",
+            "digest": "7dc0cdd5148cd9c6cc40dd02e5b9b8c5f5eec8bdcd2224aa93304a5b697e0571",
             "kind": "json",
             "relpath": "upload_manifest.json"
           }
         ],
         "json": {
+          "bundle/0bf2c9d0-bfdd-5286-89fb-6bc06eff4f35/qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "11 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-1>",
+                "file": "Gislason620_Darryl392_04-26-2026.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-0>",
+                "file": "Gislason620_Darryl392_1c63546ce85d_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "patient_id": "<id-0>",
+            "summary": {
+              "fail": 0,
+              "pass": 2,
+              "warn": 0
+            }
+          },
           "loss_ledger.json": {
             "constructs": [
               {
@@ -4818,11 +7222,118 @@
             "skipped_files": 0,
             "version": 1
           },
+          "qa_report.json": {
+            "documents": [
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "this encounter carries no narrative to verify"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [
+                      "1 conditions not carried by this layout: a visit note states this encounter's assessment in the note body; the standing problem list belongs to a chart summary this pack does not render",
+                      "1 immunizations not carried by this layout: no immunization table in a SOAP note layout",
+                      "11 results not carried by this layout: the vitals table carries what was measured at this visit; laboratory results are a separate report and this layout has no section for them"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-0>",
+                "file": "Gislason620_Darryl392_04-26-2026.pdf",
+                "verdict": "pass"
+              },
+              {
+                "checks": [
+                  {
+                    "check": "data_integrity",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "layout_pagination",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "record_coverage",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "unattributed_vitals",
+                    "findings": [],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "vitals_loinc",
+                    "findings": [
+                      "skipped: vitals are encounter-scoped; this is a whole-patient document with no single-encounter vitals context"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "date_staleness",
+                    "findings": [
+                      "skipped: date-staleness compares the chart against one encounter's date of service; this is a whole-patient document (no single DOS)"
+                    ],
+                    "verdict": "pass"
+                  },
+                  {
+                    "check": "note_body",
+                    "findings": [
+                      "skipped: note-body verifies one encounter's Subjective/Objective/Assessment/Plan bodies; this is a whole-patient document and carries no single encounter's note"
+                    ],
+                    "verdict": "pass"
+                  }
+                ],
+                "encounter_id": "<id-1>",
+                "file": "Gislason620_Darryl392_1c63546ce85d_ccda.pdf",
+                "verdict": "pass"
+              }
+            ],
+            "generated_at": "2023-11-14T22:13:20+00:00",
+            "summary": {
+              "fail": 0,
+              "not_carried": 13,
+              "pass": 2,
+              "warn": 0
+            }
+          },
           "upload_manifest.json": {
             "gates": {
               "conservation": "balanced",
               "layout_hash": "4331f33b3c8d9b9362284265b1d1352243f3c7532aae328de23e545f5f078001",
-              "qa": "not_run"
+              "qa": "pass"
             },
             "items": [
               {
@@ -4831,9 +7342,9 @@
                 "expected_pages": 1,
                 "file_path": "Gislason620_Darryl392_04-26-2026.pdf",
                 "fingerprint": "Gislason620_Darryl392_04-26-2026.pdf",
-                "item_key": "<id-0>:715d4f88c5c4",
+                "item_key": "<id-0>:4eec31071ef9",
                 "patient_id": "<id-1>",
-                "sha256": "715d4f88c5c4de5f871e59eee4dd4af1e62544133d810b548a50daeeb35e887c",
+                "sha256": "4eec31071ef9f97161480c396d14410e05a059ecf1c634d9890f1d9b2359a253",
                 "size_bytes": 43063
               }
             ],

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from tools.prose_gate import analyze_file, compare, measure
+import pytest
+from tools.prose_gate import NEW_FILE_RATIO_LIMIT, analyze_file, compare, main, measure
 
 # Exactly 12 physical lines: opening quote, 10 body lines, closing quote.
 _TWELVE_LINE_DOCSTRING = '"""\n' + "\n".join(f"Line {i}." for i in range(1, 11)) + '\n"""\n'
@@ -95,3 +97,78 @@ def test_gate_passes_and_counts_a_file_as_improved(tmp_path: Path) -> None:
     failures, improved = compare(current, baseline)
     assert failures == []
     assert improved == 0
+
+
+def test_a_new_file_over_the_absolute_ratio_cap_fails_with_no_baseline_entry(
+    tmp_path: Path,
+) -> None:
+    _write_tree(tmp_path)
+    baseline = measure(tmp_path)
+
+    # No over-long docstring, no history phrase — ratio alone is over the cap.
+    (tmp_path / "src" / "pkg" / "commenty.py").write_text(
+        "# one\n# two\n# three\n# four\nx = 1\n", encoding="utf-8"
+    )
+    current = measure(tmp_path)
+    assert current["files"]["src/pkg/commenty.py"]["ratio"] > NEW_FILE_RATIO_LIMIT
+    failures, _ = compare(current, baseline)
+    assert any(
+        "new file exceeds the absolute prose cap" in f and "commenty.py" in f for f in failures
+    )
+
+
+def test_a_new_file_within_the_cap_and_clean_passes(tmp_path: Path) -> None:
+    _write_tree(tmp_path)
+    baseline = measure(tmp_path)
+
+    (tmp_path / "src" / "pkg" / "lean.py").write_text(
+        "def g():\n    return 1\n\n\ndef h():\n    return 2\n", encoding="utf-8"
+    )
+    current = measure(tmp_path)
+    failures, _ = compare(current, baseline)
+    assert failures == []
+
+
+def test_gate_fails_when_an_existing_over_long_docstring_grows(tmp_path: Path) -> None:
+    _write_tree(tmp_path)
+    baseline = measure(tmp_path)
+
+    # Grow the SAME docstring (still starts at line 1) by two more lines —
+    # a location match with a bigger length, not a new location.
+    mod = tmp_path / "src" / "pkg" / "mod.py"
+    grown = mod.read_text(encoding="utf-8").replace(
+        "Line 10.\n", "Line 10.\nLine 11.\nLine 12.\n", 1
+    )
+    mod.write_text(grown, encoding="utf-8")
+    current = measure(tmp_path)
+    failures, _ = compare(current, baseline)
+    assert any("over-long docstring GREW" in f and "mod.py" in f for f in failures)
+
+
+def test_write_baseline_refuses_new_violations_without_the_escape_hatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_tree(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    import tools.prose_gate as prose_gate
+
+    monkeypatch.setattr(prose_gate, "BASELINE", baseline_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(prose_gate, "REPO_ROOT", tmp_path)
+
+    assert main(["--write-baseline"]) == 0
+    original = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    # Introduce a new history phrase without --allow-new-violations.
+    (tmp_path / "tests" / "test_mod.py").write_text(
+        '"""Guards regression #123. This was previously flaky."""\n\n'
+        "def test_add():\n    assert 1 + 1 == 2\n",
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+    assert main(["--write-baseline"]) == 1
+    assert "refusing" in capsys.readouterr().out
+    assert json.loads(baseline_path.read_text(encoding="utf-8")) == original
+
+    assert main(["--write-baseline", "--allow-new-violations"]) == 0
+    assert json.loads(baseline_path.read_text(encoding="utf-8")) != original
