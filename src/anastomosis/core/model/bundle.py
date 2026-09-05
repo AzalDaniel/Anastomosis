@@ -22,16 +22,8 @@ from .document import DocumentArtifact
 from .encounter import Encounter
 from .patient import Patient
 
-#: The record collections a rendered chart is expected to be able to show — and
-#: the vocabulary a pack uses to say which of them its own layout carries (see
-#: ``PackCoverage`` in :mod:`anastomosis.reconstruct.packs`). QA reads both
-#: sides so it can tell "this chart lost the problem list" from "this layout
-#: has no problem list".
-#:
-#: Vitals are deliberately not here. They are encounter-scoped rather than
-#: patient-scoped, and they already have two checks of their own — one for the
-#: values on this visit's chart, one for measurements attached to no visit at
-#: all.
+#: Record kinds a rendered chart should show. Vitals are excluded: they are
+#: encounter-scoped, not patient-scoped, and already covered by two checks.
 CHARTABLE_KINDS: tuple[str, ...] = (
     "conditions",
     "allergies",
@@ -42,11 +34,10 @@ CHARTABLE_KINDS: tuple[str, ...] = (
 
 
 class PatientRecord(AnastBase):
-    """The unit that flows through the pipeline: one patient, whole chart.
-
-    Maps to a FHIR Bundle (type=collection). Practitioners/facilities are
-    denormalized per record so a PatientRecord is always self-contained —
-    a record can be archived, bundled, or migrated alone.
+    """Contract: the unit that flows through the pipeline, one patient, whole
+    chart, mapped to a FHIR Bundle (type=collection). Practitioners and
+    facilities are denormalized per record so it is always self-contained —
+    archivable, bundled, or migrated alone.
     """
 
     patient: Patient
@@ -61,10 +52,8 @@ class PatientRecord(AnastBase):
     past_medical_history: list[PastMedicalHistory] = []
     advance_directives: list[AdvanceDirective] = []
     goals: list[Goal] = []
-    # A health concern carries the same four facts a goal does — whose it is,
-    # what it says, when it started, whether it is still live — so it reuses
-    # Goal rather than a second class spelled identically. (A HealthConcern
-    # model existed once and was deleted in 0.7.0 for never being populated.)
+    # A health concern shares a goal's four fields (who, what, onset,
+    # active), so it reuses Goal rather than a duplicate class.
     health_concerns: list[Goal] = []
     screening_events: list[ScreeningEvent] = []
     coverages: list[Coverage] = []
@@ -88,14 +77,10 @@ class PatientRecord(AnastBase):
         return [o for o in self.observations if o.encounter_id == encounter_id]
 
     def observations_by_encounter(self) -> dict[str | None, list[Observation]]:
-        """Group observations by encounter id in a single pass — the indexed
-        form of repeated :meth:`observations_for` calls (used by the render
-        contexts, which would otherwise re-scan all observations per encounter).
-
-        Order within each group matches ``observations``, so
-        ``observations_by_encounter().get(eid, [])`` equals
-        ``observations_for(eid)`` exactly (patient-level observations with no
-        encounter id group under ``None`` and are excluded from any real id).
+        """Contract: groups observations by encounter id in one pass. Order
+        within each group matches ``observations``, so this equals
+        ``observations_for(eid)`` per key; observations with no encounter id
+        group under ``None``.
         """
         grouped: dict[str | None, list[Observation]] = {}
         for observation in self.observations:
