@@ -1,17 +1,13 @@
 """TSV loading for PF/Tebra EHI exports.
 
-Kept dumb on purpose: read every TSV in the export into header-keyed rows and
-nothing else. All semantics (sentinels, joins, type parsing) live in the
-mapper, so a future column rename is a mapper diff, not a loader rewrite.
+Kept dumb on purpose: reads every TSV into header-keyed rows and nothing
+else — sentinels, joins and type parsing all live in the mapper.
 
-Losslessness boundary: the loader discovers EVERY ``*.tsv`` in the export — not
-only :data:`KNOWN_TABLES` — so the mapper can account for all of them. Tables the
-mapper does not map are preserved (patient-keyed rows into each patient's
-``extensions``) or, when they cannot be attributed to a patient, the run is
-refused (:class:`UnsupportedTablesError`) rather than the data being dropped.
-A row in a table the mapper DOES map is refused the same way when its foreign
-key names no record in the export (:class:`OrphanRowsError`).
-"""
+The loader discovers EVERY ``*.tsv``, not only :data:`KNOWN_TABLES` (rule
+63): an unmapped table is preserved into ``extensions`` or, with no path to
+a patient, refused (:class:`UnsupportedTablesError`); a mapped row whose
+foreign key names no record is refused the same way
+(:class:`OrphanRowsError`)."""
 
 from __future__ import annotations
 
@@ -47,16 +43,10 @@ _TABLE_SUFFIX = ".tsv"
 
 
 class UnsupportedTablesError(SourceDataError):
-    """An export carries tables the adapter can neither map nor losslessly keep.
-
-    Raised by the mapper when an unmapped table offers NO path to a patient:
-    no ``PatientPracticeGuid`` column, no declared indirect join, and no
-    practice-level identity of its own. Failing closed beats silently
-    discarding clinical data. A table that HAS a patient path never lands
-    here any more — its attributable rows are preserved and its dangling
-    ones quarantined — so this message no longer misdiagnoses a few blank
-    keys as a missing column. Schema names only, never row values.
-    """
+    """An unmapped table with no path to a patient — no ``PatientPracticeGuid``
+    column, no declared indirect join, no practice-level identity of its own.
+    Raised rather than silently discarding clinical data. Schema names only,
+    never row values."""
 
     def __init__(self, tables: list[str]) -> None:
         self.tables = tables
@@ -68,16 +58,10 @@ class UnsupportedTablesError(SourceDataError):
 
 
 class OrphanRowsError(SourceDataError):
-    """A KNOWN table carries rows whose foreign key names no record in the export.
-
-    The mapper reads these tables by slicing a per-key grouping with the owning
-    record's guid, so a row keyed to a patient (encounter, allergy,
-    prescription, relative) that is not in the export is grouped once and never
-    read again — it would vanish with no sentinel and no extension. Raised
-    instead, the same fail-closed stance :class:`UnsupportedTablesError` takes
-    for an orphan table. The message names the table(s) and the orphan row
-    COUNTS only — schema names and counts, never row values.
-    """
+    """A KNOWN table's foreign key names no record in the export. The mapper
+    groups rows once by the owning guid, so an orphan would otherwise vanish
+    with no sentinel and no extension; raised instead, fail-closed like
+    :class:`UnsupportedTablesError`. Table names and row COUNTS only."""
 
     def __init__(self, orphans: dict[str, int]) -> None:
         self.orphans = dict(sorted(orphans.items()))
@@ -89,9 +73,8 @@ class OrphanRowsError(SourceDataError):
         )
 
 
-# Tables the mapper consumes today. Everything else found in the export is still
-# READ (see read_export) and preserved by the mapper — a real v9 export has ~85
-# tables, of which these are the mapped subset.
+# Tables the mapper consumes today; everything else is still read (read_export)
+# and preserved by the mapper — a real v9 export has ~85 tables total.
 KNOWN_TABLES = (
     "patient-demographics",
     "patient-race",
@@ -130,21 +113,16 @@ KNOWN_TABLES = (
 )
 
 
-# csv.DictReader collects fields beyond the header count under this key. The name
-# is a deliberate non-column sentinel — v9 columns are PascalCase (PatientPractice
-# Guid), so it cannot collide with a real header.
+# csv.DictReader collects fields beyond the header count under this key; the
+# name can't collide with a real header (v9 columns are all PascalCase).
 _OVERFLOW_KEY = "__overflow__"
 
 
 @cache
 def v9_reference_columns() -> dict[str, tuple[str, ...]]:
-    """The vendor's own v9 column dictionary, shipped with the adapter.
-
-    One copy, used by the loader's vendor-defect recovery below and by the
-    schema-reference tests — extracted from the vendor documentation, names
-    only, nothing patient-derived. Cached because the loader may consult it
-    once per table read.
-    """
+    """The vendor's own v9 column dictionary, shipped with the adapter —
+    names only, nothing patient-derived. Cached: the loader may consult it
+    once per table read."""
     raw = resources.files("anastomosis.sources.pf_tebra").joinpath("pf_v9_columns.json")
     tables: dict[str, list[str]] = json.loads(raw.read_text(encoding="utf-8"))
     return {name: tuple(cols) for name, cols in tables.items()}
@@ -154,23 +132,13 @@ def v9_reference_columns() -> dict[str, tuple[str, ...]]:
 V9_REFERENCE_COLUMNS = v9_reference_columns
 
 
-#: Header defects the VENDOR ships, verified against real exports and repaired
-#: only when everything about the observed shape agrees with the repair.
-#:
-#: ``patient-contacts``: two independent real v9 exports carry this exact
-#: five-column header — it is another table's schema pasted over the contacts
-#: table, ending in the two modification columns in the wrong order — while
-#: every data row underneath has the 15 cells the vendor's own dictionary
-#: documents for the table. The header is the anomaly; the rows are not. An
-#: export with rows under that header is unloadable without this, and "fix
-#: the export before migrating" is not an instruction an operator can follow
-#: by hand against PHI they must not edit.
-#:
-#: The repair is deliberately narrow. It applies only when the table name AND
-#: the exact anomalous header AND a uniform row width equal to the reference
-#: column count all hold; any other surplus — mixed widths, one extra cell, a
-#: different header — still refuses as corruption. Recovery logs the table
-#: name and row count only, never a value.
+#: Header defects the VENDOR ships, verified against real exports: two
+#: independent v9 exports carry ``patient-contacts``'s exact five-column
+#: header — another table's schema pasted over it — while every data row
+#: still has the vendor-documented 15 cells. Repaired only when the table
+#: name, the exact anomalous header, and a uniform row width equal to the
+#: reference column count all hold; any other surplus still refuses as
+#: corruption. Recovery logs table name and row count only, never a value.
 _VENDOR_HEADER_DEFECTS: dict[tuple[str, tuple[str, ...]], str] = {
     (
         "patient-contacts",
@@ -218,13 +186,10 @@ def read_table(root: Path, name: str) -> list[Row]:
             return _read_with_repaired_header(name, path, v9_reference_columns()[reference])
         rows: list[Row] = []
         for row in reader:
-            # Raise only when a surplus cell carries DATA — an unquoted tab split a
-            # real cell and shifted every later column, so a NAMED column now holds
-            # the wrong value. A purely trailing-empty surplus (some exporters append
-            # a delimiter to each data row) carries nothing, misaligns no named
-            # column, and is dropped. (The learned-source reader in sources/learned/
-            # reader.py is intentionally more lenient and drops all surplus; pf_tebra
-            # knows v9 has no embedded tabs, so a data-bearing surplus is corruption.)
+            # Raise only when a surplus cell carries DATA (an unquoted tab shifted a
+            # named column); a purely trailing-empty surplus is dropped. The learned
+            # reader is intentionally more lenient (drops all surplus): only pf_tebra
+            # knows v9 has no embedded tabs.
             surplus = row.pop(_OVERFLOW_KEY, None)
             if surplus and any(v and v.strip() for v in surplus):
                 raise MalformedExportError(name, reader.line_num)
@@ -234,13 +199,9 @@ def read_table(root: Path, name: str) -> list[Row]:
 
 def _read_with_repaired_header(name: str, path: Path, columns: tuple[str, ...]) -> list[Row]:
     """Read a table whose header is a registered vendor defect, under the
-    reference schema instead.
-
-    Fail-closed at every step: EVERY data row must have exactly the reference
-    width. One row wider, narrower, or the header repeated mid-file, and the
-    whole table refuses as corruption — the repair never widens into a general
-    tolerance for misshapen rows.
-    """
+    reference schema instead. Fail-closed at every step: any row not exactly
+    the reference width, or the header repeated mid-file, refuses the whole
+    table as corruption rather than widening into a general tolerance."""
     with path.open(encoding="utf-8-sig", newline="") as fh:
         reader = csv.reader(fh, delimiter="\t")
         next(reader)  # the anomalous header, already matched exactly by the caller
@@ -273,14 +234,11 @@ def _anomalous_header_for(name: str) -> tuple[str, ...]:
 
 
 def read_export(root: Path) -> Export:
-    """Read EVERY ``*.tsv`` in the export, keyed by filename stem.
-
-    Every :data:`KNOWN_TABLES` key is always present (absent file → empty list, so
-    the mapper's ``export[...]`` lookups never KeyError), plus every other TSV
-    discovered on disk. Discovering all of them — not just the mapped subset — is
-    what lets the mapper preserve or refuse unmapped tables instead of silently
-    skipping them.
-    """
+    """Read EVERY ``*.tsv`` in the export, keyed by filename stem. Every
+    :data:`KNOWN_TABLES` key is always present (absent file → empty list, so
+    the mapper's lookups never KeyError), plus every other TSV on disk —
+    discovering all of them is what lets the mapper preserve or refuse
+    unmapped tables instead of silently skipping them."""
     discovered = sorted(p.stem for p in root.glob("*.tsv"))
     known = set(KNOWN_TABLES)
     names = list(KNOWN_TABLES) + [stem for stem in discovered if stem not in known]
@@ -289,15 +247,10 @@ def read_export(root: Path) -> Export:
 
 @dataclass(frozen=True)
 class Attachments:
-    """The files an export carries beside its tables, found by storage id.
-
-    Holds the export root as well as the index because a document row needs two
-    different answers about the same file: an absolute path to READ it (to hash
-    it, to count its pages) and a root-relative one to RECORD, so the chart says
-    ``binary-content/<id>.pdf`` and not the operator's home directory. An
-    exported bundle travels to another EHR; it has no business carrying the
-    layout of the machine that made it.
-    """
+    """Files an export carries beside its tables, indexed by storage id.
+    Keeps the export root too: a document row needs an absolute path to
+    READ a file and a root-relative one to RECORD it, so a chart says
+    ``binary-content/<id>.pdf``, never the machine's own layout."""
 
     root: Path
     by_id: dict[str, Path]
@@ -315,21 +268,11 @@ class Attachments:
 
 
 def find_attachments(root: Path) -> Attachments:
-    """Index every non-table file in the export, keyed by its filename stem.
-
-    A ``patient-documents`` row names its file by a storage GUID, and exports
-    disagree about where those files go — a ``binary-content/`` folder in one,
-    a flat directory beside the tables in another. Indexing by stem instead of
-    by an assumed path means the mapper finds the file wherever the export
-    happened to put it, without the adapter having to encode a layout it would
-    then be wrong about.
-
-    A stem naming more than one file is left OUT of the index rather than
-    resolved to whichever the walk reached first. Two candidates for one
-    document is an ambiguity, and choosing between them would be a guess about
-    which file belongs in a patient's chart. Unresolved is recoverable; wrong
-    is not.
-    """
+    """Index every non-table file in the export, keyed by filename stem —
+    exports disagree about where attachment files live, so this finds them
+    wherever they are rather than assuming a layout. A stem matching more
+    than one file is dropped from the index rather than guessed at:
+    unresolved is recoverable, wrong is not."""
     found: dict[str, Path] = {}
     ambiguous: set[str] = set()
     for path in sorted(root.rglob("*")):
