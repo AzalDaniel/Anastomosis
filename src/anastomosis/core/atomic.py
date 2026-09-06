@@ -80,33 +80,35 @@ def atomic_replace(target: Path) -> Iterator[Path]:
         raise
 
 
+def _claim(tmp: Path, mode: int | None) -> None:
+    """Create ``tmp`` with ``mode`` and chmod it too (POSIX; ``None`` no-ops):
+    the open's mode is umask-trimmed and ignored for an existing stale temp,
+    and a plain touch would leave an instant at the umask default."""
+    if mode is None or os.name != "posix":
+        return
+    os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode))
+    os.chmod(tmp, mode)
+
+
 def atomic_write_text(
     target: Path, text: str, *, encoding: str = "utf-8", mode: int | None = None
 ) -> None:
-    """Write ``text`` to ``target`` atomically. ``mode`` (POSIX only) sets
-    the temp file's permission bits up front, so it is never briefly
-    world-readable; ignored on non-POSIX or when ``None``."""
+    """Write ``text`` to ``target`` atomically; ``mode`` via :func:`_claim`."""
     with atomic_replace(target) as tmp:
-        if mode is not None and os.name == "posix":
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-            with os.fdopen(fd, "w", encoding=encoding) as handle:
-                handle.write(text)
-        else:
-            tmp.write_text(text, encoding=encoding)
+        _claim(tmp, mode)
+        tmp.write_text(text, encoding=encoding)
 
 
 def atomic_write_bytes(target: Path, data: bytes, *, mode: int | None = None) -> None:
     """Write ``data`` to ``target`` atomically. See :func:`atomic_write_text`."""
     with atomic_replace(target) as tmp:
-        if mode is not None and os.name == "posix":
-            tmp.touch(mode=mode)
+        _claim(tmp, mode)
         tmp.write_bytes(data)
 
 
 def atomic_copy(source: Path, target: Path) -> None:
     """Copy ``source`` onto ``target`` atomically: ``shutil.copyfile`` alone
-    truncates and streams in place, so a crash partway would leave a
-    half-written chart where a complete one was."""
+    truncates and streams in place, leaving a half-written chart on a crash."""
     import shutil
 
     with atomic_replace(target) as tmp:

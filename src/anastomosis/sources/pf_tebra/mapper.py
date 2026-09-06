@@ -8,7 +8,6 @@ table."""
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import mimetypes
 import re
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from anastomosis.core.codes import VITALS, bmi_metric, pain_display
+from anastomosis.core.hashutil import file_sha256
 from anastomosis.core.model import (
     Addendum,
     Address,
@@ -1404,25 +1404,16 @@ def _check_key_closure(export: Export, known: dict[str, frozenset[str]]) -> None
         raise OrphanRowsError(orphans)
 
 
-#: Read in blocks rather than whole: an export's scanned records run to tens of
-#: megabytes and there is no reason to hold one in memory to hash it.
-_HASH_BLOCK = 1 << 20
-
-
 def _sha256(path: Path) -> str | None:
     """The file's digest, or None if it cannot be read — an unreadable
     attachment leaves the artifact pointing at nothing rather than a digest
     of nothing, so the chart never claims to have verified a file it
     couldn't open."""
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as handle:
-            while block := handle.read(_HASH_BLOCK):
-                digest.update(block)
+        return file_sha256(path)
     except OSError as exc:
         logger.warning("attachment could not be read (%s)", type(exc).__name__)
         return None
-    return digest.hexdigest()
 
 
 def _page_count(path: Path, mime_type: str) -> int | None:

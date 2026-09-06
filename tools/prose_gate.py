@@ -296,6 +296,10 @@ def measure(root: Path = REPO_ROOT) -> dict[str, object]:
     }
 
 
+def _prose_lines(entry: dict[str, object]) -> int:
+    return int(str(entry["docstring"])) + int(str(entry["comment"]))
+
+
 def _docstring_key(entry: dict[str, object], by_name: bool) -> tuple[str, str]:
     """``(file, owner name)`` — line numbers move whenever prose above them
     shrinks, so the owner is the stable key; a baseline written before the
@@ -332,16 +336,23 @@ def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[li
                 )
             continue
         base_ratio = float(base["ratio"])
-        if cur_ratio > base_ratio + _EPS:
-            failures.append(f"file ratio rose: {relpath} was {base_ratio:.4f}, now {cur_ratio:.4f}")
-        elif cur_ratio < base_ratio - _EPS:
+        cur_prose, base_prose = _prose_lines(cur), _prose_lines(base)
+        # Deleting code raises a ratio without adding a word: only prose that
+        # GREW while the ratio rose is a regression.
+        if cur_ratio > base_ratio + _EPS and cur_prose > base_prose:
+            failures.append(
+                f"file prose grew: {relpath} was {base_prose} lines at {base_ratio:.4f}, "
+                f"now {cur_prose} at {cur_ratio:.4f}"
+            )
+        elif cur_ratio < base_ratio - _EPS or cur_prose < base_prose:
             improved_files.add(relpath)
 
-    cur_repo_ratio = float(current["repo"]["ratio"])  # type: ignore[index]
-    base_repo_ratio = float(baseline["repo"]["ratio"])  # type: ignore[index]
-    if cur_repo_ratio > base_repo_ratio + _EPS:
+    cur_repo, base_repo = current["repo"], baseline["repo"]
+    cur_repo_ratio = float(cur_repo["ratio"])  # type: ignore[index]
+    base_repo_ratio = float(base_repo["ratio"])  # type: ignore[index]
+    if cur_repo_ratio > base_repo_ratio + _EPS and _prose_lines(cur_repo) > _prose_lines(base_repo):  # type: ignore[arg-type]
         failures.append(
-            f"repo-wide prose ratio rose: was {base_repo_ratio:.4f}, now {cur_repo_ratio:.4f}"
+            f"repo-wide prose grew: was {base_repo_ratio:.4f}, now {cur_repo_ratio:.4f}"
         )
 
     base_entries = cast(list[dict[str, object]], baseline["over_long_docstrings"])

@@ -133,10 +133,10 @@ def test_pre_phase_parses_the_local_pdf_exactly_once(
     so a level that reverts to reading the path itself is caught. L0 is
     excluded on purpose — it re-reads bytes to hash them and never
     opens the PDF."""
-    from anastomosis.deliver.verify import levels
+    from anastomosis.core import pdfsnapshot
 
     item = _item(_make_pdf(tmp_path / "g.pdf", GOOD_LINES))
-    real = levels._import_pymupdf()
+    real = pdfsnapshot.import_pymupdf()
     opens = 0
 
     class _CountingPymupdf:
@@ -145,7 +145,7 @@ def test_pre_phase_parses_the_local_pdf_exactly_once(
             opens += 1
             return real.open(*args, **kwargs)
 
-    monkeypatch.setattr(levels, "_import_pymupdf", _CountingPymupdf)
+    monkeypatch.setattr(pdfsnapshot, "import_pymupdf", _CountingPymupdf)
     # A pack declaring header fields so L3 actually reads page-1 text too
     # (without one it skips before touching the file).
     pack = LoadedPack(
