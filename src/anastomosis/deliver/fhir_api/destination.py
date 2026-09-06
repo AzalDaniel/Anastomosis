@@ -204,7 +204,7 @@ class FhirApiDestination:
             )
         if len(ids) == 1:
             return DestinationPatient(destination_patient_id=ids[0], matched_on=matched_on)
-        # matched_on is a field NAME, never a value (SECURITY.md).
+        # PHI-BY-DESIGN: matched_on is a field NAME, never a value (SECURITY.md).
         # codeql[py/clear-text-logging-sensitive-data]
         logger.info("no destination patient matched on %s", matched_on)
         return None
