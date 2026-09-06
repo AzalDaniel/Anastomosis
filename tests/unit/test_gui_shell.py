@@ -1,29 +1,12 @@
 """GUI shell tests — the process-level Windows preparation, without a window.
 
-:mod:`anastomosis.gui.shell` is the thin pywebview adapter, so almost all of it
-needs a real window and is out of reach here. Its module-level *preparation*
-helpers are not: they only read process state and return a value, so the
-Windows-only branch is exercised on any platform by monkeypatching
-``sys.platform`` — the same guard style :mod:`anastomosis.core.locking` uses for
-its platform arms.
-
-Two properties are pinned:
-
-* :func:`~anastomosis.gui.shell._webview2_user_data_folder` returns the
-  per-user profile folder ``webview.start(storage_path=...)`` is given — the
-  ONLY route to WebView2's UserDataFolder in a pywebview app, since pywebview
-  assigns that property itself and the ``WEBVIEW2_USER_DATA_FOLDER``
-  environment variable is never consulted. It must create what it names,
-  respect an operator's override, return ``None`` off Windows (so ``launch``
-  omits the argument and pywebview's own default stands), and never raise — a
-  warn-only helper that could throw would take the whole GUI down with it.
-* :func:`~anastomosis.gui.shell._apply_remote_debugging_port` routes the
-  diagnostics-only ``ANAST_GUI_REMOTE_DEBUGGING_PORT`` into pywebview's
-  ``REMOTE_DEBUGGING_PORT`` setting (WebView2 ignores
-  ``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`` when the host app sets
-  AdditionalBrowserArguments, which pywebview always does). Unset must be a
-  no-op — an open CDP port on a PHI app is a disclosure surface, so it is
-  opt-in — and a bad value must never raise.
+:mod:`anastomosis.gui.shell`'s module-level *preparation* helpers only
+read process state, so the Windows-only branch is exercised on any
+platform by monkeypatching ``sys.platform``. Two properties, tied to rule
+73: `_webview2_user_data_folder` is the ONLY route to WebView2's
+UserDataFolder — creates what it names, respects an override, returns
+``None`` off Windows, never raises; `_apply_remote_debugging_port` is
+opt-in only (an open CDP port on a PHI app is a disclosure surface).
 """
 
 from __future__ import annotations
@@ -187,12 +170,10 @@ def test_remote_debugging_port_ignores_a_bad_value(
 def test_remote_debugging_port_survives_a_pywebview_without_the_key(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """pywebview's settings mapping refuses unknown keys — warn, never crash.
-
-    ``webview.settings`` is an ImmutableDict: assigning a key it does not carry
-    raises KeyError. A future pywebview that renamed the setting must degrade to
-    a GUI without a debugging port, not a GUI that will not start.
-    """
+    """pywebview's settings mapping refuses unknown keys — warn, never
+    crash: ``webview.settings`` is an ImmutableDict, so a future pywebview
+    that renamed the setting must degrade to a GUI without a debugging
+    port, never a GUI that will not start."""
     monkeypatch.setenv(_REMOTE_DEBUG_PORT_ENV, "9222")
 
     class _Refusing(dict[str, Any]):
