@@ -1,22 +1,12 @@
-"""PatientRecord → C-CDA R2.1 / CCD XML (the inverse of ``sources/ccda``).
+"""PatientRecord → C-CDA R2.1 / CCD XML (the inverse of ``sources/ccda``); the
+parser is the spec for every xpath, LOINC and template id here (RULES.md 55).
 
-The export side of the C-CDA round trip, with one hard contract:
-``parse(build_ccd(record)) ≈ record``, where ``parse`` is **this repository's
-own** ``sources/ccda/parser.py``. Every xpath, section code, template id and
-``xsi:type`` here matches what that parser traverses — the parser is the spec,
-never the other way around.
+**Not schema-valid C-CDA** — omits header participations the parser ignores
+and uses non-OID identifier roots, so it fails ``CDA.xsd``/Schematron.
 
-**This output is not schema-valid C-CDA** and does not try to be: it omits
-header participations the parser ignores and uses non-OID identifier roots, so
-it will not pass ``CDA.xsd`` or C-CDA Schematron. Do not represent it as valid
-to a destination that will validate it.
-
-Nothing is dropped silently. Anything no structured emitter consumes is
-serialized into a stamped loss-narrative section, and the handful of things
-that cannot even ride that are named in :data:`DECLARED_LOSSES`.
-
-See ``docs/CCDA_EXPORT.md`` for the scope table, the two loss tiers, why the
-ledger stops growing around the loop, and the determinism rules.
+Nothing drops silently: anything no structured emitter consumes serializes
+into the stamped loss-narrative section; the rest is :data:`DECLARED_LOSSES`.
+See ``docs/CCDA_EXPORT.md`` for the scope table.
 """
 
 from __future__ import annotations
@@ -93,9 +83,7 @@ logger = logging.getLogger(__name__)
 # --- the writer's own namespaces, OIDs and template ids ----------------------
 #
 # Not mirrored anywhere: the parser reads none of these. What both halves DO
-# have to agree on lives in core.ccda_codes, imported above, so it is one
-# definition rather than a promise each side keeps. This header used to claim
-# these must mirror the parser exactly; the parser has never had any of them.
+# have to agree on lives in core.ccda_codes, imported above.
 
 NSMAP = {None: V3, "sdtc": SDTC, "xsi": XSI}
 
@@ -375,11 +363,8 @@ def _text_el(parent: etree._Element, tag: str, text: str | None) -> etree._Eleme
 
 
 def _nullable(parent: etree._Element, tag: str, value: str | None, attr: str = "value") -> None:
-    """Emit ``<tag attr=value/>`` or ``<tag nullFlavor="NI"/>`` when absent.
-
-    This is the sentinel boundary on export: a missing optional becomes an
-    explicit nullFlavor, which the parser reads back as ``None`` (never "" or a
-    placeholder), preserving the round trip's None-stays-None guarantee.
+    """``<tag attr=value/>``, or ``<tag nullFlavor="NI"/>`` when absent — the
+    sentinel boundary the parser reads back as ``None``, never "".
     """
     if value is None:
         _el(parent, tag, nullFlavor="NI")
@@ -544,12 +529,9 @@ def _section(
     template_id: tuple[str, str] | None = None,
     section_id: tuple[str, str] | None = None,
 ) -> etree._Element:
-    """Open a ``<component><section>`` with the LOINC code the parser dispatches
-    on and a title, returning the ``<section>`` for entries to attach to.
-
-    ``template_id``/``section_id`` are ``(root, extension)`` pairs emitted BEFORE
-    ``<code>`` (CDA element order). Only the loss narrative uses them — that is
-    the one section this tool must be able to recognize as its own on re-ingest.
+    """Open a ``<component><section>`` on ``loinc``; return the ``<section>``
+    for entries. ``template_id``/``section_id`` are used only by the loss
+    narrative, the one section this tool must recognize as its own.
     """
     section = _el(_el(body, "component"), "section")
     if template_id is not None:
@@ -597,41 +579,19 @@ _Stated = TypeVar("_Stated", bound=AnastBase)
 
 @dataclass(frozen=True)
 class _Preserved:
-    """The source's own ``<entry>`` bytes, and the objects they already state.
-
-    ``sources/ccda`` parks every section's entries verbatim under
-    ``ccda:entries:<code>``; for an entry no structural parser could take
-    apart, those bytes are the only copy of what the document said. This
-    exporter DELIVERS them — re-emitted as real ``<entry>`` elements in the
-    section carrying that code — instead of narrating them. Narrating serialises
-    the XML into ``path = value`` lines that no structured emitter consumes, so
-    a re-ingest parks them again and the next export narrates them again:
-    measured at ~15 KB of loss narrative per generation, without bound.
-
-    A parked entry is the source's own statement of a clinical fact, and the
-    canonical object the parser read out of it states the same fact in this
-    exporter's words. Emitting both would say it twice, and a re-ingest would
-    read two objects where the chart has one — four the generation after, then
-    eight. So each emitter asks :meth:`own` which of its objects the preserved
-    entries do not already state, and emits structured entries for those alone.
-    Nothing is dropped either way: what the section preserved leaves as the
-    entry it arrived as, and what it did not still leaves as this exporter's own.
+    """The source's own ``<entry>`` bytes, and the objects they already
+    state. Delivered verbatim, never narrated (would regrow ~15 KB per
+    generation); :meth:`own` says which objects still need a structured
+    entry of their own.
     """
 
     entries: dict[str, list[etree._Element]]
     stated: dict[str, frozenset[str | None]]
 
     def own(self, loinc: str, objects: list[_Stated]) -> list[_Stated]:
-        """``objects`` minus the ones this section's preserved entries state.
-
-        An object is matched by the source id its provenance names — the ``<id
-        root>`` of the construct it was read from, which the preserved entry
-        carries because the entry IS that construct. An object the parser could
-        give no source id matches ``None``, and ``None`` is in the set exactly
-        when some preserved entry carries no id of its own: an entry with no id
-        is the only kind such an object can have been read from. An object from
-        anywhere else — another adapter, a record assembled by hand — carries a
-        source id no preserved entry states, so it keeps its structured entry.
+        """``objects`` minus the ones already stated, matched by
+        provenance source id (``None`` matches an id-less preserved
+        entry); an object from elsewhere keeps its entry.
         """
         stated = self.stated.get(loinc, frozenset())
         return [obj for obj in objects if _source_id(obj) not in stated]
@@ -643,20 +603,9 @@ def _source_id(obj: AnastBase) -> str | None:
 
 
 def _derived_component_ids(entry: etree._Element) -> set[str]:
-    """The organizer-derived id for each component observation this entry
-    carries that states no id of its own.
-
-    ``_stated_ids``'s any-depth walk finds an organizer's own id and any
-    component id that IS stated; it cannot see the one case
-    ``organizer_component_source_id`` exists for, a component under an
-    identified organizer whose only ``<id>`` is null. Both this walk and
-    ``sources/ccda/parser.py``'s derivation read an organizer's and a
-    component's id through the SAME function, :func:`first_rooted_id` — same
-    organizer path, same 0-based position, same nullFlavor/whitespace
-    handling — so the two sides land on the same string by construction, not
-    by two hand-written readings that were promised to agree and did not
-    (#378's own duplication, reintroduced by four fixture shapes before this
-    helper existed).
+    """The organizer-derived id for each component observation with no id
+    of its own, via the same :func:`first_rooted_id` the parser derives
+    from, so both sides land on the same string by construction (#378).
     """
     derived: set[str] = set()
     for organizer in entry.iter(f"{{{V3}}}organizer"):
@@ -672,17 +621,9 @@ def _derived_component_ids(entry: etree._Element) -> set[str]:
 
 
 def _stated_ids(entry: etree._Element) -> set[str | None]:
-    """Every ``<id root>`` this entry carries, at any depth, plus each id-less
-    component observation's organizer-derived id, or ``{None}`` when neither
-    finds one — the shape :meth:`_Preserved.own` compares against.
-
-    The any-depth walk is unchanged: the parser reads an entry's id at
-    whatever depth the template puts it — a problem's act, an allergy's inner
-    observation, a measurement's component. ``None`` is now the fallback
-    rather than the mechanism: a positive, id-to-id match is added for the one
-    construct (an id-less organizer component) the walk alone could only ever
-    pair by absence, which paired every such construct with every other one
-    that also stated no id.
+    """Every ``<id root>`` this entry carries at any depth, plus each id-less
+    component's organizer-derived id, or ``{None}`` when neither finds one —
+    the shape :meth:`_Preserved.own` compares against.
     """
     roots: set[str | None] = {
         root for node in entry.iter(f"{{{V3}}}id") if (root := node.get("root")) is not None
@@ -692,18 +633,10 @@ def _stated_ids(entry: etree._Element) -> set[str | None]:
 
 
 def _preserved_entries(value: Any) -> list[etree._Element] | None:
-    """The ``<entry>`` elements parked in ``value``, or ``None`` for a shape this
-    exporter cannot re-emit.
-
-    ``None`` is the honest answer for an unrecognized value, and it is the same
-    answer :func:`_prior_narrative` gives for one: the caller then leaves the key
-    to :func:`_walk_extensions`, which narrates it like any other vendor
-    extension. A key this exporter cannot re-emit must never be BOTH skipped
-    here and exempted there — that is the silent drop.
-
-    PHI: a value that will not parse is answered with ``None``. It is never
-    raised, and never named in a message — these are patient bytes, and an
-    XML parser's complaint quotes the text it choked on.
+    """The ``<entry>`` elements parked in ``value``, or ``None`` for a shape
+    this exporter cannot re-emit — the caller then narrates it instead
+    (:func:`_walk_extensions`), so a key is never skipped by both. PHI: a
+    parse failure answers ``None``, never a message quoting the bytes.
     """
     if not isinstance(value, list) or not value:
         return None
@@ -722,11 +655,8 @@ def _preserved_entries(value: Any) -> list[etree._Element] | None:
 
 
 def _preserved(record: PatientRecord) -> _Preserved:
-    """Every preserved entry the record carries, by the section code that parked it.
-
-    Repeated section codes (``…#2``, ``#3``) collapse into the one code: this
-    exporter writes one section per code, so that is where all of them are
-    delivered, and a re-ingest parks the merged list under the bare key again.
+    """Every preserved entry the record carries, by section code — repeated
+    codes (``#2``, ``#3``) collapse into the one this exporter writes.
     """
     entries: dict[str, list[etree._Element]] = {}
     stated: dict[str, set[str | None]] = {}
@@ -753,21 +683,10 @@ def _sections_by_code(body: etree._Element) -> dict[str, etree._Element]:
 
 
 def _carrier_section(body: etree._Element, code: str) -> etree._Element:
-    """A section that exists to carry preserved entries, for a code this exporter
-    emits no section of its own for.
-
-    Emitting one is the decision, over refusing the export: a code with no
-    structured emitter here is the ORDINARY case — Procedures, Plan of
-    Treatment, Payers — and a chart that cannot be exported because it carries a
-    section this tool does not model would be a refusal of the common path, not
-    a guard on a strange one. The entries would reach nobody at all.
-
-    It states the section's code and nothing the record does not: no
-    ``codeSystem``, because the parked key preserves the section's code and not
-    the system it was drawn from, and naming one would assert a vocabulary this
-    export cannot know it belongs to; no code at all for the bucket a section
-    with none parks under; and no narrative, because the section's own prose is a
-    separate extension key that narrates on its own.
+    """A section carrying preserved entries for a code this exporter emits
+    no section of its own for — the ordinary case, not a guard on a
+    strange one. States only the code (no ``codeSystem``) and the
+    preserved-entries title.
     """
     section = _el(_el(body, "component"), "section")
     if code != SECTION_CODE_UNKNOWN:
@@ -777,14 +696,10 @@ def _carrier_section(body: etree._Element, code: str) -> etree._Element:
 
 
 def _carry_preserved(body: etree._Element, preserved: _Preserved) -> None:
-    """Append every preserved entry to the section carrying its code.
-
-    Runs after the structured sections and BEFORE :func:`_extensions_section`,
-    which matters for one code only: entries preserved from a third party's
-    unstamped 51899-3 section must not land inside the stamped ledger this tool
-    writes, where a re-ingest reads the paragraphs and never looks at the
-    entries. Reaching that code before ours exists gives them a carrier of their
-    own instead.
+    """Append every preserved entry to the section carrying its code. Runs
+    before :func:`_extensions_section`, so a third party's unstamped
+    51899-3 entries land in a carrier of their own, never inside this
+    tool's stamped ledger.
     """
     sections = _sections_by_code(body)
     for code, entries in preserved.entries.items():
@@ -1032,16 +947,10 @@ def _measurement_line(obs: Observation) -> str:
 
 
 def _is_smoking_status(obs: Observation) -> bool:
-    """Whether ``obs`` IS the smoking-status concept the parser recovers.
-
-    The parser only structurally re-ingests social observations coded
-    ``72166-2`` and always stamps display ``"Tobacco use"`` on them. PF/Tebra
-    and the C-CDA parser both produce the tobacco observation as
-    ``code is None, display == "Tobacco use"``. So the smoking concept is keyed
-    on either the explicit LOINC code or that canonical display — and ONLY such
-    observations may be emitted under 72166-2. Stamping that code on a
-    non-tobacco observation (Occupation, Industry, …) would relabel a charted
-    value into a clinically false tobacco statement (BLOCKER 1)."""
+    """Whether ``obs`` is the 72166-2 (Tobacco use) concept the parser
+    structurally recovers, keyed on the explicit LOINC code or the
+    canonical display; stamping that code on any other social observation
+    would relabel a charted value as a false tobacco statement (BLOCKER 1)."""
     return obs.code == LOINC_SMOKING_STATUS or (
         obs.code is None and obs.display == _SMOKING_STATUS_DISPLAY
     )
@@ -1050,12 +959,9 @@ def _is_smoking_status(obs: Observation) -> bool:
 def _social_history(
     body: etree._Element, observations: list[Observation], preserved: _Preserved
 ) -> None:
-    """Emit the structured 72166-2 entry ONLY for smoking-status observations.
-
-    Every other social observation has no structured slot the parser reads and
-    is NOT emitted here — it rides the loss narrative (the 51899-3 section), so
-    it can never re-ingest under a tobacco label. The full set is still listed
-    in this section's human narrative for document readability."""
+    """Social History (LOINC_SOCIAL, template 2.16.840.1.113883.10.20.22.4.78):
+    only a smoking-status observation gets the structured 72166-2 entry;
+    every other social observation rides the loss narrative instead."""
     section = _section(body, LOINC_SOCIAL, "Social History", "Social History")
     _narrative(section, [_measurement_line(o) for o in observations])
     for obs in preserved.own(LOINC_SOCIAL, observations):
@@ -1081,27 +987,14 @@ def _social_history(
 
 
 def _encounter_code(node: etree._Element, encounter_type: str | None) -> None:
-    """The encounter's type, as text, without inventing a billing code for it.
-
-    This used to emit ``code="99999" codeSystem=<CPT>``. Nothing in the source
-    carries a CPT code — ``Encounter`` has no such field — so the 99999 was a
-    constant chosen to fill an attribute, and 99999 is not an assigned CPT code
-    at all. To the receiving system it did not read as a placeholder: a coded
-    ``<code>`` with a codeSystem is an assertion, and the encounter type went
-    into ``displayName`` where a mismatched pair like that is normally resolved
-    in the code's favour. An import that trusts it books every visit we migrate
-    under one fabricated procedure.
-
-    So: no code. ``nullFlavor="OTH"`` says the real value lies outside CPT, and
-    the type travels as ``originalText`` — the same shape the unmapped-sex case
-    settled on, and the one the parser reads back into ``encounter_type``. When
-    there is no type either, ``NI``: no information, which is the truth.
+    """The encounter's type as ``originalText`` under ``nullFlavor="OTH"`` —
+    never a coded value, since no source field supplies a real CPT code and
+    a coded assertion would be trusted over a mismatched type on import. No
+    type at all is ``nullFlavor="NI"``.
     """
     if encounter_type is None:
-        # Reached by an encounter with neither a type nor note content:
-        # _structured_encounters routes it here because the Notes section does
-        # not stand for it either. OTH is still the wrong fallback — it asserts
-        # a real value outside CPT while showing none of it.
+        # Reached only by an encounter with neither type nor note content
+        # (_structured_encounters); OTH would still assert a real value.
         _el(node, "code", nullFlavor="NI")
         return
     _text_el(_el(node, "code", nullFlavor="OTH"), "originalText", encounter_type)
@@ -1129,16 +1022,10 @@ def _encounters(body: etree._Element, encounters: list[Encounter], preserved: _P
 def _notes(
     body: etree._Element, encounters: list[Encounter], preserved: _Preserved
 ) -> etree._Element:
-    """Notes section: one act per encounter that carries narrative content.
-
-    The parser models each note act as a single narrative section. SOAP
-    sections are concatenated into one labelled body (declared loss: the
-    subjective/objective/assessment/plan split does not survive).
-
-    Returns the section so :func:`_delivered_documents` can hang the delivered
-    artifacts off the same one — a scanned chart IS the note for the visit it
-    documents, and giving them a second 34109-9 section would tell a receiving
-    EHR the document has two Notes sections when it has one.
+    """Notes (LOINC_NOTES, code 34109-9): one act per encounter with
+    narrative content; SOAP sections concatenate into one labelled body
+    (declared loss). Returns the section so :func:`_delivered_documents`
+    can hang artifacts off the same one, never a second Notes section.
     """
     section = _section(body, LOINC_NOTES, "Notes", "Note")
     with_notes = [e for e in encounters if e.has_note_content]
@@ -1162,19 +1049,10 @@ def _notes(
 
 @dataclass(frozen=True)
 class DeliveredArtifact:
-    """One source artifact a delivery has written beside the document it builds.
-
-    The deliverer owns the filesystem — it budgets the name against the output
-    directory, claims it against the run's collision ledger, writes the bytes
-    and re-reads their digest — and this is what it tells the builder about the
-    file it wrote. Two independent derivations of the same name would let the
-    deliverer write ``<id>.pdf`` while the document referenced ``<id>``: a
-    chart pointing at a file that is not there, which is #373 again from the
-    other side.
-
-    ``sha256`` is the digest of the bytes actually on disk, not the digest the
-    source claimed — the deliverer compares the two and refuses when they
-    disagree, so by the time this reaches the builder they are the same number.
+    """One source artifact a delivery wrote beside the document (the
+    deliverer owns the filesystem and names it — never derived here
+    independently, which is #373 from the other side). ``sha256`` is the
+    digest of what is actually on disk.
     """
 
     name: str
@@ -1184,33 +1062,10 @@ class DeliveredArtifact:
 def _delivered_documents(
     section: etree._Element, documents: list[DocumentArtifact], delivered: _Delivered
 ) -> None:
-    """Reference each delivered artifact from the Notes section, as CDA media.
-
-    #373: a C-CDA whose whole clinical content is ``nonXMLBody`` artifacts
-    parsed into ``DocumentArtifact``s and was preserved byte-for-byte in the
-    charts and the archive, while the ``--ccda`` deliverable — the directory an
-    operator hands to the receiving EHR — held neither the artifacts nor any
-    resolvable reference to them, and the run exited 0. A physician opening
-    that import saw a patient with a name, a date of birth and no chart.
-
-    ``<observationMedia>`` with an ED ``<value>`` is base CDA R2's own
-    mechanism for a non-XML artifact inside a structured body, and the ED's
-    ``<reference value="…"/>`` naming a file beside the document is the same
-    construct the reader already resolves for a referenced ``nonXMLBody``. The
-    C-CDA R2.1 Unstructured Document template is not the answer here: CDA gives
-    a ``ClinicalDocument`` exactly one ``<component>``, so a CCD carrying a
-    ``structuredBody`` cannot also carry a ``nonXMLBody``, and splitting each
-    artifact into its own document would deliver several documents per patient
-    into a directory whose filenames are one per patient.
-
-    Bytes stay OUT of the document: base64 in the CDA would grow it past what a
-    destination accepts, and the digest travels instead on the ED's own
-    ``@integrityCheck``, which is what makes a swapped or truncated sidecar a
-    loud failure on re-ingest rather than a silently different scan.
-
-    An artifact absent from ``delivered`` gets no entry: the caller wrote no
-    file for it, and a reference to a file nobody wrote is worse than none.
-    Its fields narrate instead (see :func:`_consumed_fields`).
+    """Reference each delivered artifact from the Notes section as
+    ``<observationMedia>``/ED (base CDA R2, #373): bytes stay off-document,
+    the digest travels on ``@integrityCheck``. An artifact absent from
+    ``delivered`` gets no entry — narrated instead (:func:`_consumed_fields`).
     """
     for index, doc in enumerate(documents, start=1):
         landed = delivered.get(doc.id)
@@ -1226,10 +1081,8 @@ def _delivered_documents(
             ID=anchor,
         )
         _el(media, "templateId", root=ARTIFACT_TEMPLATE_ROOT)
-        # The artifact's canonical id, as the id root the parser reads it back
-        # from. Not root+extension under one shared root: the ledger can only
-        # attribute a construct by an id root that occurs ONCE in the document,
-        # and two artifacts sharing a root would report both as unattributable.
+        # The id root, not root+extension: two artifacts sharing one root
+        # would both be unattributable to the ledger, which keys by root alone.
         _el(media, "id", root=doc.id)
         value = _el(
             media,
@@ -1243,14 +1096,9 @@ def _delivered_documents(
 
 
 def _render_multimedia(section: etree._Element, anchor: str, name: str) -> None:
-    """Link the section's human narrative to one media object.
-
-    ``<renderMultiMedia>`` is how a CDA renderer knows to show the artifact
-    where the prose mentions it; without it the entry is machine-readable and
-    invisible to a person reading the document. The prose names the delivered
-    FILE, which this tool named after the artifact's own pseudonymous id — the
-    source's own filename may carry a patient name and stays in the narrative
-    ledger with the rest of the source's fields.
+    """Link the narrative to one media object via ``<renderMultiMedia>`` —
+    the prose names the delivered file (this tool's pseudonymous name),
+    never the source's own filename, which stays in the loss narrative.
     """
     text = _find_or_add_text(section)
     paragraph = _el(text, "paragraph")
@@ -1265,12 +1113,9 @@ def _find_or_add_text(section: etree._Element) -> etree._Element:
 
 
 def _integrity_check(digest: str) -> str:
-    """A hex sha256 as the ED ``@integrityCheck`` BIN the datatype calls for.
-
-    The datatype's integrity check is the raw digest base64-encoded, not its
-    hex spelling, so the bytes go back through ``fromhex`` first. A digest this
-    tool did not compute would raise here rather than travel as a check nothing
-    can verify — the deliverer only ever passes one it just measured.
+    """A hex sha256 as the ED ``@integrityCheck`` BIN: base64 of the raw
+    digest bytes, not the hex spelling. Raises on a digest that will not
+    decode — the deliverer only ever passes one it just measured.
     """
     return base64.b64encode(bytes.fromhex(digest)).decode("ascii")
 
@@ -1299,25 +1144,10 @@ def _midnight_utc(value: date) -> datetime:
 
 
 def _extensions_section(body: etree._Element, record: PatientRecord, delivered: _Delivered) -> None:
-    """Emit the loss ledger as narrative on a single, stamped 51899-3 section.
-
-    This is the no-silent-drop mechanism, systematic rather than whack-a-mole:
-    every populated source field with no structured CDA slot — native canonical
-    fields, record-level lists the parser cannot produce, and vendor extension
-    namespaces alike — is serialized here as deterministic ``path = value``
-    lines, one per ``<paragraph>``. A re-ingest reads a stamped section's entries
-    back into patient.extensions["ccda:prior_loss_narrative"], so the data is
-    preserved in the document and recoverable on re-ingest, just not back on its
-    original typed models (a declared, audited loss).
-
-    Round trip N of the same chart appends that prior ledger here as a
-    deduplicated carry-forward (:func:`_carried_forward`) rather than as one
-    swallowed blob, and stamps the generation, so the section stays a readable
-    ledger instead of growing without bound. Exactly ONE STAMPED 51899-3 section
-    is ever emitted; a third party's 51899-3 entries, which a re-ingest preserved
-    verbatim, are carried in a section of their own (:func:`_carry_preserved`)
-    rather than inside this one, where a re-ingest reads the paragraphs and never
-    looks at the entries.
+    """The loss ledger as narrative on one stamped 51899-3 section
+    (LOINC_EXTENSIONS). Round trip N carries the prior ledger forward
+    deduplicated (:func:`_carried_forward`); a third party's own unstamped
+    51899-3 entries carry in a section of their own (:func:`_carry_preserved`).
     """
     current = _collect_lost_fields(record, delivered)
     prior = _prior_narrative(record.patient.extensions.get(EXT_PRIOR_LOSS_NARRATIVE))
@@ -1340,13 +1170,8 @@ def _extensions_section(body: etree._Element, record: PatientRecord, delivered: 
 
 def _prior_narrative(value: Any) -> tuple[int | None, list[str]] | None:
     """The ``(generation, entries)`` a re-ingest parked under
-    :data:`EXT_PRIOR_LOSS_NARRATIVE`, or ``None`` when ``value`` is not the shape
-    this exporter writes.
-
-    ``None`` is the honest answer for an unrecognized shape: the caller then
-    leaves the key to :func:`_walk_extensions`, which narrates it like any other
-    vendor extension. A key this exporter cannot re-emit must never be BOTH
-    skipped here and exempted there — that is the silent drop.
+    :data:`EXT_PRIOR_LOSS_NARRATIVE`, or ``None`` for a shape this exporter
+    did not write — the caller then narrates it like any other extension.
     """
     if not isinstance(value, dict):
         return None
@@ -1364,11 +1189,8 @@ _INDEX_RE = re.compile(r"\[[^\]]*\]")
 
 
 def _entry_key(line: str) -> str:
-    """A loss entry with the per-object indices erased from its PATH only.
-
-    The value is left untouched (it may legitimately contain brackets), and a
-    line with no ``" = "`` separator is its own key. Paths never contain
-    ``" = "``, so the first separator is the right split.
+    """A loss entry with its PATH's per-object indices erased; the value is
+    untouched. A line with no ``" = "`` separator is its own key.
     """
     path, sep, value = line.partition(" = ")
     if not sep:
@@ -1377,20 +1199,9 @@ def _entry_key(line: str) -> str:
 
 
 def _carried_forward(prior: list[str], current: list[str]) -> list[str]:
-    """The prior generation's entries this generation does not already state.
-
-    Dedupe is a MULTISET difference keyed on :func:`_entry_key` — the entry with
-    per-object indices erased. A canonical id is a DECLARED loss, regenerated on
-    every re-ingest, so ``medications[<old id>].patient_id = X`` and
-    ``medications[<new id>].patient_id = X`` are the same statement wearing two
-    dead ids; leaving both in would grow the ledger by one line per object per
-    generation. Multiset (not set) difference is what keeps that safe: two
-    distinct objects that genuinely share a field value contribute two entries
-    and only as many as the current narrative restates are dropped, so an entry
-    describing a REAL loss is never collapsed away — the ledger's per-entry count
-    is monotone across generations and settles at generation 2.
-
-    Prior document order is preserved, so output stays deterministic.
+    """The prior generation's entries not already restated — a multiset
+    difference keyed on :func:`_entry_key` (indices erased), so a
+    regenerated id never regrows the ledger. Prior order is preserved.
     """
     restated = Counter(_entry_key(line) for line in current)
     out: list[str] = []
@@ -1404,13 +1215,10 @@ def _carried_forward(prior: list[str], current: list[str]) -> list[str]:
 
 
 def _observation_consumed(item: dict[str, Any]) -> frozenset[str]:
-    """Leaf paths the structured emitters consume for ONE observation dump.
-
-    Vitals/labs round-trip through the measurements sections; the lone tobacco
-    social observation round-trips through 72166-2. Every other observation
-    (non-tobacco social, screening, other) is not structurally emitted at all,
-    so NOTHING is consumed and its whole field set flows to the narrative —
-    this is the BLOCKER-1-safe counterpart to :func:`_is_smoking_status`."""
+    """Leaf paths consumed for one observation: vitals/labs via the
+    measurements sections, the lone tobacco social observation via
+    72166-2 — every other observation is unconsumed and narrates in full
+    (the BLOCKER-1-safe counterpart to :func:`_is_smoking_status`)."""
     category = item.get("category")
     if category in (ObservationCategory.VITAL_SIGNS.value, ObservationCategory.LABORATORY.value):
         return _EXPORTED_FIELDS["observations"]
@@ -1423,24 +1231,10 @@ def _observation_consumed(item: dict[str, Any]) -> frozenset[str]:
 
 
 def _encounter_consumed(item: dict[str, Any]) -> frozenset[str]:
-    """Leaf paths the structured emitters consume for ONE encounter dump.
-
-    Two independent gates decide, and an encounter can clear neither. The
-    Encounters section takes only encounters that have an ``encounter_type``
-    (:func:`_structured_encounters`); the Notes section takes only those with
-    note content (:func:`_notes`, via ``Encounter.has_note_content``).
-
-    The allowlist used to be flat, so it claimed all five fields for every
-    encounter regardless. An encounter with a date but no type and no note —
-    a real visit, just a thin one — was written by no emitter at all, while the
-    claim still suppressed its fields from the loss narrative. Its
-    ``date_of_service`` therefore appeared nowhere in the document: not
-    structured, not narrated, and not a declared loss. The record's own
-    losslessness oracle catches exactly this, and would have caught it here,
-    but every encounter it tests carries a type.
-
-    Same shape as :func:`_observation_consumed`: consumption follows what the
-    emitters actually take, not what the collection could take in principle.
+    """Leaf paths consumed for one encounter: the Encounters section's
+    fields when it has a type (:func:`_structured_encounters`), the Notes
+    section's when it has note content (:func:`_notes`) — an encounter can
+    clear neither gate, same shape as :func:`_observation_consumed`.
     """
     consumed: set[str] = set()
     if item.get("encounter_type") is not None:
@@ -1461,11 +1255,8 @@ _CONSUMED["encounters"] = _encounter_consumed
 
 def _consumed_fields(attr: str, item: dict[str, Any], delivered: _Delivered) -> frozenset[str]:
     if attr == "documents":
-        # The documents emitter consumes nothing for an artifact this delivery
-        # wrote no file for: with no <observationMedia> entry to carry them,
-        # suppressing the media type and the digest from the narrative would
-        # drop two source fields to nowhere. Per artifact, not per collection —
-        # one delivered and one not is an ordinary batch.
+        # Consumes nothing for an artifact this delivery wrote no file for:
+        # with no <observationMedia> entry, its fields would drop to nowhere.
         return _EXPORTED_FIELDS[attr] if item.get("id") in delivered else frozenset()
     hook = _CONSUMED.get(attr)
     if hook is None:
@@ -1476,21 +1267,9 @@ def _consumed_fields(attr: str, item: dict[str, Any], delivered: _Delivered) -> 
 
 
 def _collect_lost_fields(record: PatientRecord, delivered: _Delivered) -> list[str]:
-    """Every populated source field with no native CDA round trip, as sorted
-    ``path = value`` text lines.
-
-    The collector walks the record's pydantic dump (None/empty pruned),
-    subtracts the per-emitter allowlist (:data:`_EXPORTED_FIELDS`) and the
-    structural plumbing (:data:`_STRUCTURAL_SKIP`), and serializes the remainder
-    — native fields, nested sub-fields, record-level unmappable lists, and
-    ``extensions`` alike, both the patient's and the RECORD's own (extensions
-    via :func:`_walk_extensions`, which exempts the natively round-tripped
-    ``ccda:*`` keys).
-
-    Determinism: ``mode="json"`` gives stable scalar forms (dates as ISO
-    strings); output lines are sorted. PHI: this builds the document body, not
-    log output — nothing here is logged. Values are clinical content already
-    destined for the document.
+    """Every populated field with no native CDA round trip, as sorted
+    ``path = value`` lines: the record's dump minus :data:`_EXPORTED_FIELDS`
+    and :data:`_STRUCTURAL_SKIP`. PHI: this builds the document, not a log.
     """
     dump = record.model_dump(mode="json")
     lines: list[str] = []
@@ -1505,32 +1284,19 @@ def _collect_lost_fields(record: PatientRecord, delivered: _Delivered) -> list[s
                 consumed = _consumed_fields(attr, item, delivered)
                 lines += _walk_model(f"{attr}[{index}]", item, consumed)
         elif isinstance(value, dict):
-            # The record's OWN dict attrs — `extensions` (vendor namespaces the
-            # sources hang off the record, e.g. pf_tebra:unmapped:<table>) and
-            # `provenance`. Walking them from a synthetic "record" root routes
-            # extensions through _walk_extensions exactly as the patient's are,
-            # and drops provenance via _STRUCTURAL_SKIP. Without this branch a
-            # record-level dict fell through the loop entirely and never reached
-            # the narrative.
+            # The record's OWN dict attrs (extensions, provenance) — walked
+            # from a synthetic "record" root so extensions still route
+            # through _walk_extensions and provenance still drops.
             lines += _walk_value("record", "", {attr: value}, frozenset())
-        # scalar top-level attrs (none exist today) would fall through silently;
-        # the record is a fixed set of model/list/dict fields, so there are none.
     return sorted(lines)
 
 
 def _walk_model(path: str, item: dict[str, Any], consumed: frozenset[str]) -> list[str]:
-    """Serialize one model dump's UNconsumed, populated leaves as path lines.
-
-    A leaf is emitted unless its **relative path** (dotted, with ``[]`` for list
-    indices, e.g. ``addresses[].line2`` or ``sections[].title``) is in
-    ``consumed`` — so an emitter that writes only part of a nested model leaks
-    nothing: the unconsumed sub-fields still narrate. ``id``/``provenance`` are
-    structural plumbing (:data:`_STRUCTURAL_SKIP`, declared losses).
-    ``extensions`` is walked with the native-key exemption (``ccda:*`` keys
-    round-trip on their models; header-metadata keys are re-derived), every
-    other vendor key narrates. This is the single, generic loss path: native
-    fields, nested sub-fields, and extensions all flow through here, so a new
-    model field, sub-field, or collection cannot silently vanish."""
+    """Serialize one model dump's unconsumed, populated leaves as path
+    lines — a leaf narrates unless its relative path (dotted, ``[]`` for
+    list indices) is in ``consumed``, so a partially-emitted nested model
+    still leaks nothing.
+    """
     return _walk_value(path, "", item, consumed)
 
 
@@ -1567,32 +1333,10 @@ def _walk_value(path: str, rel: str, value: Any, consumed: frozenset[str]) -> li
 
 
 def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
-    """Serialize an ``extensions`` dump, exempting ONLY the keys this exporter
-    provably re-emits into structured slots the parser reads back onto the same
-    model (:data:`_NATIVE_EXT_KEYS`).
-
-    The patient's ``ccda:prior_loss_narrative`` is exempt too, but only when
-    :func:`_prior_narrative` recognizes its shape — :func:`_extensions_section`
-    re-emits those entries one by one as the carry-forward appendix, and
-    narrating them here as well would restore the swallowed-blob growth this key
-    exists to end. The exemption is scoped to the patient (the only model a
-    re-ingest writes it onto) and to a shape the exporter can actually re-emit,
-    so an unrecognized value still narrates rather than vanishing.
-
-    The patient's ``ccda:entries:<code>`` keys are exempt on the same terms:
-    :func:`_carry_preserved` re-emits those bytes as the entries of the section
-    carrying that code, so they leave as entries rather than as ``path = value``
-    lines. Narrating them as well is what made capturing every section's entries
-    unaffordable — the lines are XML no emitter consumes, so a re-ingest parks
-    them and the next export narrates them again.
-
-    Every other key narrates — a vendor namespace, and equally the remaining
-    ``ccda:*`` keys an earlier ingest of a CDA document left behind. Those are
-    NOT re-derived: a captured section narrative (``ccda:section:<loinc>``) has
-    no emitter at all, and the header this exporter writes carries its own title,
-    its own deterministic document id and its own effectiveTime — so exempting
-    the ingest-side metadata keys would drop the source document's values.
-    Anything not re-emitted must ride the loss narrative."""
+    """Serialize an ``extensions`` dump, exempting only what this exporter
+    provably re-emits: :data:`_NATIVE_EXT_KEYS`, a recognized
+    ``ccda:prior_loss_narrative``, and a re-emittable ``ccda:entries:<code>``.
+    Every other key narrates, ingest-side metadata included."""
     lines: list[str] = []
     for key in sorted(extensions):
         if key in _NATIVE_EXT_KEYS or key in _DELIVERED_NOT_NARRATED:
@@ -1610,12 +1354,9 @@ def _walk_extensions(path: str, extensions: dict[str, Any]) -> list[str]:
 
 
 def _delivered_as_entries(key: str, value: Any) -> bool:
-    """Whether this extension key leaves the document as ``<entry>`` elements
-    rather than as narrative.
-
-    The narration side of the question :func:`_preserved` asks when it collects
-    them. Both go through :func:`_preserved_entries`, so a value one side cannot
-    re-emit is a value the other narrates, and no key is ever skipped by both.
+    """Whether this extension key leaves as ``<entry>`` elements rather
+    than narrative — the same test :func:`_preserved` uses to collect
+    them, so no key is ever skipped by both sides.
     """
     return key.startswith(f"{EXT_SECTION_ENTRIES}:") and _preserved_entries(value) is not None
 
@@ -1650,19 +1391,10 @@ def _serialize(path: str, value: Any) -> list[str]:
 
 @dataclass(frozen=True)
 class CcdMeasurement:
-    """How big this document is, and how much of it is preservation.
-
-    The C-CDA is the one artifact handed to somebody else's EHR, and on a real
-    Practice Fusion export the preserved-source-fields section was 97% of it —
-    1.6 MB of narrative accompanying 49 KB of clinical content, 33x the payload
-    it travels with. Nothing is wrong with the document; the losslessness
-    guarantee is working exactly as designed. What was missing was any way for
-    an operator to know the shape of what they are about to hand over, before
-    the destination is the one that tells them.
-
-    Bytes are of the serialized section as it sits in the document, so the two
-    numbers are directly comparable and the share is meaningful. Counts only —
-    nothing here is derived from a patient's values.
+    """How big this document is, and how much is preservation — on a real
+    export the 51899-3 section was 97% of it, 33x the clinical payload;
+    an operator should know that shape before the destination refuses it.
+    Counts only, of the serialized bytes as they sit in the document.
     """
 
     total_bytes: int
@@ -1675,16 +1407,10 @@ class CcdMeasurement:
 
 
 def measure_ccd(xml: bytes) -> CcdMeasurement:
-    """Measure a built CCD: total size, and the size of the 51899-3 section.
-
-    Reads the document back rather than instrumenting the builder, so the
-    number is of the bytes actually written — the thing the destination
-    receives — rather than of an intermediate the serializer might still
-    change. Every 51899-3 section is counted: this builder emits one stamped
-    ledger (see :func:`_extensions_section`) and, for a document that arrived
-    carrying a third party's own 51899-3 entries, the carrier holding those —
-    both are preservation, which is what this number is of. A document carrying
-    none measures zero, the honest answer for a record with nothing unmapped.
+    """Measure a built CCD: total size, and the size of every 51899-3
+    section (this tool's own ledger and any third party's carrier) — read
+    back from the emitted bytes, not an intermediate the serializer might
+    still change.
     """
     root = etree.fromstring(xml)
     preserved = 0
@@ -1701,28 +1427,10 @@ def build_ccd(
     document_id: str | None = None,
     delivered: _Delivered | None = None,
 ) -> bytes:
-    """Export a :class:`PatientRecord` to CCD XML bytes (UTF-8).
-
-    The document round-trips through :mod:`anastomosis.sources.ccda` back to the
-    same canonical clinical content. ``document_id`` defaults to a uuid5 over the
-    patient id, so output is deterministic and byte-identical for a given record.
-    See the module docstring for scope and the declared-loss list.
-
-    Each clinical fact is stated once. A record carrying entries a C-CDA ingest
-    preserved verbatim (``ccda:entries:<code>``) has those bytes re-emitted as
-    the entries of the section carrying that code, and the structured entry for
-    the object read out of one is not emitted beside it — see :class:`_Preserved`
-    for why both would compound. A code this exporter emits no section for gets a
-    carrier section rather than a refusal (:func:`_carrier_section`).
-
-    ``delivered`` names the artifact files the caller has already written beside
-    this document, by artifact id (:class:`DeliveredArtifact`). Each one gets an
-    ``<observationMedia>`` entry that references it and witnesses its digest, so
-    a re-ingest of the delivered directory recovers the artifact rather than a
-    patient with an empty chart (#373). This function writes no files, so it
-    cannot invent that mapping: with none, no artifact entry is emitted and
-    every artifact field narrates, which is honest but is NOT conservation —
-    :func:`~anastomosis.deliver.ccda_export.deliver_ccda` is what conserves.
+    """Export a :class:`PatientRecord` to CCD XML bytes (UTF-8), deterministic
+    for a given record. ``delivered`` names artifact files the caller
+    already wrote; with none, artifact fields narrate instead — honest, but
+    only :func:`~anastomosis.deliver.ccda_export.deliver_ccda` conserves (#373).
     """
     doc_id = document_id or str(uuid5(_DOC_NS, record.patient.id))
     carried: _Delivered = {} if delivered is None else delivered
@@ -1788,31 +1496,19 @@ def _document_effective(record: PatientRecord) -> datetime:
 
 
 def _structured_encounters(encounters: list[Encounter]) -> list[Encounter]:
-    """Encounters that belong in the structured Encounters section.
-
-    The Encounters section takes every encounter the Notes section does not
-    already stand for: one with an encounter_type, OR one with neither a type
-    nor note content — the partition's third case, and the one a plain
-    ``encounter_type is not None`` gate used to drop on the floor. An encounter
-    with only a note (no type) is represented solely by the Notes section, and
-    an encounter with both a type and note content reaches both sections at
-    once — the parser reads them from different sections, so nothing here is
-    a duplicate.
-
-    :func:`_assert_encounters_reach_a_section` is the check that this partition
-    actually holds, read back off the emitted tree rather than trusted from
-    this predicate alone."""
+    """Encounters belonging in the structured Encounters section: typed, or
+    neither typed nor noted — every encounter the Notes section does not
+    already stand for (an encounter with both reaches both sections; the
+    parser reads them separately, so that is not a duplicate).
+    :func:`_assert_encounters_reach_a_section` checks the partition holds."""
     return [e for e in encounters if e.encounter_type is not None or not e.has_note_content]
 
 
 def _section_id_roots(body: etree._Element, loinc: str) -> set[str]:
-    """Every ``<id root>`` under the first section carrying ``loinc``, at any
-    depth — empty when the document has no such section.
-
-    Reads the emitted tree the same way :func:`measure_ccd` reads emitted
-    bytes, and for the same stated reason: an artifact check cannot see a unit
-    that reached no artifact at all, so the count has to come from what is
-    actually in the document rather than from an emitter's own bookkeeping."""
+    """Every ``<id root>`` under the first section carrying ``loinc``, at
+    any depth — empty if no such section. Reads the emitted tree, like
+    :func:`measure_ccd`, since a unit that reached no artifact leaves
+    nothing for an emitter's own bookkeeping to see."""
     section = _sections_by_code(body).get(loinc)
     if section is None:
         return set()
@@ -1820,24 +1516,11 @@ def _section_id_roots(body: etree._Element, loinc: str) -> set[str]:
 
 
 def _assert_encounters_reach_a_section(body: etree._Element, record: PatientRecord) -> None:
-    """Every offered encounter must reach the Encounters section, the Notes
-    section, or both — the partition :func:`_structured_encounters` and
-    :func:`_notes` are supposed to hold between them.
-
-    An encounter is classified by whether EITHER key it can appear under turns
-    up in a section's id roots: ``enc.id``, what a freshly built entry writes,
-    or ``_source_id(enc)``, what a *preserved* entry re-emits instead when
-    :meth:`_Preserved.own` has suppressed the fresh one — the source's own
-    ``<id root>``, byte-verbatim, which is a different string from ``enc.id``
-    whenever the parser's GUID check sent that root through the deterministic
-    uuid5 fallback (:func:`_encounter_id` in ``sources/ccda/parser.py``) rather
-    than carrying it as the canonical id. Checking one key alone reads a
-    preserved encounter as unaccounted and raises on every ordinary chart.
-
-    One in neither column is in no disposition at all, so
-    :meth:`Conservation.check` raises: the loud failure this repo's own history
-    says an artifact-only check cannot produce, because an artifact that never
-    arrived has nothing on it to inspect."""
+    """Every encounter must reach the Encounters section, the Notes
+    section, or both, keyed on either ``enc.id`` or its preserved
+    ``_source_id`` (a preserved entry re-emits the latter, not the
+    former) — checking one key alone misreads a preserved encounter as
+    unaccounted. :class:`Conservation` raises on any encounter in neither."""
     encounters_ids = _section_id_roots(body, LOINC_ENCOUNTERS)
     notes_ids = _section_id_roots(body, LOINC_NOTES)
     both = encounters_only = notes_only = 0
