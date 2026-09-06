@@ -22,16 +22,12 @@ from anastomosis.reconstruct.packs import _load_pack_snapshot
 from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash, read_pack_snapshot
 
 # A minimal-but-valid external pack whose context.py sets a flag on its own
-# module at IMPORT time, so its execution is observable from outside.
-#
-# The sentinel used to be a file the module wrote next to itself. Restricted
-# pack execution (``reconstruct.packexec``) no longer hands non-built-in pack
-# code a filesystem, so that write is now refused BEFORE it could prove
-# anything about the trust gate — which is a different property than the one
-# these tests are about. A module-level assignment needs no capability at all,
-# and the loader registers each loaded pack module in ``sys.modules`` under a
-# per-pack ``anastomosis._pack_context_*`` name, which is where ``_executed``
-# looks for it.
+# module at IMPORT time, so its execution is observable from outside. A
+# file-based sentinel would be refused by restricted pack execution's
+# no-filesystem rule before proving anything about the trust gate; a
+# module-level assignment needs no capability. The loader registers each
+# loaded pack module in ``sys.modules`` under a per-pack
+# ``anastomosis._pack_context_*`` name, which is where ``_executed`` looks.
 _CONTEXT_PY = "EXECUTED = True\ndef build_context(encounter, record, cfg):\n    return {}\n"
 
 _CONTEXT_MODULE_PREFIX = "anastomosis._pack_context_"
