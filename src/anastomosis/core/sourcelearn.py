@@ -24,6 +24,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from anastomosis.core.atomic import atomic_write_bytes
 from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.model_paths import canonical_target_paths
 from anastomosis.core.textutil import clean_cell
@@ -636,23 +637,11 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
     return RoundTripReport(not dropped, len(records), sorted(dropped), None)
 
 
-def _atomic_write(path: Path, text: str, mode: int) -> None:
-    """Write ``text`` to ``path`` atomically and owner-only (14; a fork of
-    :mod:`anastomosis.core.atomic`). Written as BYTES, not text mode: the
-    trust record stores a sha256 of the exact string passed in, and text
-    mode's newline translation on Windows would hash a file that never
-    existed."""
-    tmp = path.with_name(f".{path.name}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(text.encode("utf-8"))
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    os.replace(tmp, path)
-    if os.name == "posix":
-        path.chmod(mode)
+def _write_owner_only(path: Path, text: str) -> None:
+    """``text`` to ``path`` atomically and owner-only (14). Encoded here and
+    written as BYTES: the trust record hashes the exact string passed in, and
+    text mode's newline translation would hash a file that never existed."""
+    atomic_write_bytes(path, text.encode("utf-8"), mode=0o600)
 
 
 def _mapping_markdown(spec: MappingSpec) -> str:
@@ -719,11 +708,11 @@ def save_mapping(spec: MappingSpec, base_dir: Path) -> Path:
     if os.name == "posix":
         target_dir.chmod(stat.S_IRWXU)  # 0700 — owner only, like the other user state
     mapping_json = mapping_json_text(spec)
-    _atomic_write(target_dir / "mapping.json", mapping_json, 0o600)
-    _atomic_write(target_dir / "MAPPING.md", _mapping_markdown(spec), 0o600)
+    _write_owner_only(target_dir / "mapping.json", mapping_json)
+    _write_owner_only(target_dir / "MAPPING.md", _mapping_markdown(spec))
     trust = (
         json.dumps({"mapping_sha256": mapping_content_hash(spec), "human_reviewed": True}, indent=2)
         + "\n"
     )
-    _atomic_write(target_dir / "source_trust.json", trust, 0o600)
+    _write_owner_only(target_dir / "source_trust.json", trust)
     return target_dir
