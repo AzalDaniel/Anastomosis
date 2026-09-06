@@ -126,21 +126,11 @@
       );
     }
 
-    // The filing assistant, when it is available but not the recommended route.
-    //
-    // This is the whole of what Anastomosis can do by itself, and the screen
-    // built to offer it never mentioned it. `tebra` is the only destination
-    // that ships a filing assistant, and it also declares `ccda_import:
-    // in_product`, which the router prefers — so the assistant was demoted to a
-    // plain "Available" card while the guidance talked only about exporting a
-    // document and importing it by hand. A physician following the
-    // recommendation never learned the tool could have done the filing (#127).
-    //
-    // The routing is NOT changed here. Preferring the destination's own
-    // supported import over driving somebody else's web UI is a defensible
-    // call for a tool whose promise is never to misfile, and reversing it is
-    // not this change's to make. What is fixed is that the choice was never
-    // offered.
+    // The filing assistant, when it is available but not the recommended
+    // route: `tebra` is the only destination that ships one, and it also
+    // declares `ccda_import: in_product`, which the router prefers — so the
+    // assistant is offered explicitly here alongside the recommended route,
+    // without changing which one is preferred (#127).
     const assistant = (transit.options || []).find((opt) => opt.kind === "browser");
     if (assistant && assistant.viable && chosen !== "browser") {
       lines.push(
@@ -194,9 +184,8 @@
       assistant: ASSISTANT ? ASSISTANT.name : "",
       outDir: FORM ? FORM.values().outDir : "",
     };
-    // The context IS the handoff. It used to be written to a shell-global as
-    // well, and Uploads read that global on every arrival — so the offer never
-    // expired and kept overwriting fields the operator had since retyped.
+    // The context IS the handoff — passed once, not read from a shell-global
+    // Uploads would otherwise consult on every arrival.
     Shell.showView("uploads", context);
   }
 
@@ -359,11 +348,9 @@
     // "neutral" renders through the generic layout; anything else IS a layout.
     const layout =
       renderValue === "ccda-standard" ? null : renderValue === "neutral" ? "generic_soap" : renderValue;
-    // The third argument is what makes a choice stick. Without it this view
-    // remembered nothing, so every change of the "Chart pages" picker put the
-    // layout's defaults back — and the run was submitted from the reinstated
-    // values, not the physician's. Charts got this in #129; Migrate calls the
-    // same form and needs the same key.
+    // The third argument is what makes a choice stick, so the run submits
+    // the physician's own picks rather than the layout's defaults (#129);
+    // Migrate calls the same form and needs the same key.
     FORM.setSections(
       (layout && SECTIONS_BY_PACK[layout]) || {},
       layout === null
