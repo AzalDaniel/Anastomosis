@@ -1,57 +1,12 @@
-"""Template-pack contract and defensive discovery.
+"""Template-pack contract and defensive discovery (RULES.md 21-22).
 
-A template pack is a directory:
+A pack is a directory: ``pack.yaml`` (manifest), ``template.html`` (Jinja2),
+``context.py`` (``build_context(encounter, record, cfg) -> dict``), optional
+``partials/``. A broken pack returns unavailable with a diagnosis; it never
+raises out of discovery or takes another pack down.
 
-    my_pack/
-      pack.yaml      — manifest (this module's schema)
-      template.html  — Jinja2 page template
-      context.py     — build_context(encounter, record, cfg) -> dict
-      partials/…     — optional includes, assets
-
-Discovery order (first definition of a name wins, so a user can shadow a
-built-in): explicit ``--pack-dir`` directories → the per-user pack directory
-(:func:`user_packs_dir`) → ``anastomosis.packs`` built-ins shipped under
-``anastomosis/packs/``.
-
-The per-user directory is where a layout taught from samples (``anast pack
-init`` / the GUI's Teach view) lands, so a learned layout is discoverable from
-any working directory and in any later process — the same per-user-home
-convention as :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path`
-and :func:`anastomosis.sources.learned.user_sources_dir`.
-
-Loading is **defensive** — the brain-like modularity invariant. A pack
-with a broken manifest, missing template, or crashing ``context.py`` is
-returned as unavailable *with a diagnosis*; it never raises out of
-discovery and never takes the other packs down. A vendor template rotting
-is a one-pack event.
-
-Trust model: packs from ``--pack-dir`` execute Python
-(``context.py``), so external packs load only when the caller passes
-``allow_external=True`` (the CLI flag is explicit consent); built-ins are
-implicitly trusted. On top of that, an optional content-hash pin
-(``trust=``/``trust_new=``, see :mod:`anastomosis.reconstruct.packtrust`)
-gates external code on a trust-on-first-use basis: an external pack whose
-code changed since it was trusted is returned unavailable and is NOT
-exec'd. Enforcement is opt-in — ``trust=None`` preserves the consent-only
-behavior for bare programmatic callers.
-
-Per-user packs sit deliberately between the two. They need no
-``allow_external`` — the operator put them in their own home directory, and
-requiring a second flag for one's own learned layout is what made a taught
-layout unselectable. They are NOT implicitly trusted either: their
-``context.py`` is executable Python, so it runs only when a ``trust`` store
-maps the pack root to its current content hash. Without a store, or with a
-hash that no longer matches, the pack is returned unavailable with a diagnosis
-and nothing is exec'd. The consent is granted where it is meaningful: writing
-the pack (the confirmed Teach) records the hash of the bytes it just wrote.
-
-What that admitted code is then HANDED is a separate decision, made in
-:mod:`anastomosis.reconstruct.packexec`: every non-built-in ``context.py`` runs
-against a restricted globals mapping (no ``open``, an import allowlist covering
-the pack API and pure-computation stdlib). Built-ins are exempt — they ship in
-this wheel and already hold the application's authority. Read that module for
-the reasoning and, in particular, for the guarantee it deliberately does not
-make.
+What admitted code is then HANDED (restricted globals, import allowlist) is
+:mod:`anastomosis.reconstruct.packexec`'s decision, not this module's.
 """
 
 from __future__ import annotations
@@ -112,17 +67,10 @@ def builtin_pack_names() -> frozenset[str]:
 
 
 def user_packs_dir() -> Path:
-    """The per-user directory learned template packs live in.
-
-    A plain ``~/.anastomosis/packs`` (NOT ``platformdirs`` — no new dependency),
-    matching :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path`,
-    :func:`anastomosis.core.migrate.user_migrations_path` and
-    :func:`anastomosis.sources.learned.user_sources_dir` so all Anastomosis user
-    state lives under one root. Each pack is ``<here>/<pack_name>/pack.yaml``.
-
-    Stable across working directories and processes, which is the whole point:
-    a layout taught in one session has to be selectable in the next one,
-    wherever the app happens to be launched from.
+    """``~/.anastomosis/packs`` — matches
+    :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path` and sibling
+    user-state paths, so a layout taught in one session stays selectable in
+    the next, wherever the app launches from.
     """
     return Path.home() / ".anastomosis" / "packs"
 
@@ -173,27 +121,13 @@ class FilenameRules(BaseModel):
 
 
 class PackCoverage(BaseModel):
-    """What this layout carries out of the record, and what it leaves out.
+    """Contract: what this layout carries from the record, what it omits, why.
 
-    QA holds both the record and the rendered page, so it can see when a
-    populated collection reached neither. What it cannot see on its own is
-    whether that is a defect or the layout: a SOAP visit note has no problem
-    list by design, and a forensic chart replica very much does. Without a
-    statement from the pack, the same evidence has to be read two ways, so the
-    suite read it the generous way and every omission graded clean.
-
-    Both halves are required of a shipped pack. ``carries`` names the kinds
-    whose absence from a page is a failure; ``omits`` maps each remaining kind
-    to the reason its layout has no place for it, and QA reports those as
-    counted-but-expected rather than green. A kind in neither is not excused —
-    it is undeclared, and the guard test in ``tests/unit/test_packs.py`` says
-    so, because an exemption you get by forgetting is the kind that outlives
-    the reason for it.
-
-    A pack that declares nothing at all (an external pack written before this
-    field existed) is treated as conservatively as it can be: every kind is
-    verified, and a total absence warns rather than fails, with the finding
-    naming this field as the fix.
+    ``carries`` names kinds whose absence from a page is a QA failure;
+    ``omits`` maps each remaining kind to a reason, reported as
+    counted-but-expected rather than a defect. A kind in neither is
+    undeclared (guarded in ``tests/unit/test_packs.py``), and an undeclared
+    pack is graded conservatively: every kind verified, absence warns.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -242,10 +176,9 @@ class PackManifest(BaseModel):
 
     name: str
     version: str
-    #: What a person should read instead of ``name``. Optional, so every
-    #: pack.yaml written before this field existed stays valid under
-    #: ``extra="forbid"``; empty means "derive one from the id", which is what
-    #: every surface used to do because there was nowhere to put a real one.
+    #: What a person should read instead of ``name``; empty derives one from
+    #: the id. Optional so pre-existing pack.yaml stays valid under
+    #: ``extra="forbid"``.
     display: str = ""
     description: str = ""
     locale: str = "en_US"
@@ -257,19 +190,10 @@ class PackManifest(BaseModel):
     tokens: dict[str, str] = Field(default_factory=dict)
     # Header fields the L3 delivery verification reads back off the PDF.
     verify_header_fields: list[str] = Field(default_factory=list)
-    #: How many places this layout stamps the RENDER DAY on purpose.
-    #:
-    #: ``DateStalenessCheck`` treats today's date on an old chart as the
-    #: signature of a template that called now() by mistake, which is usually
-    #: exactly what it is. The Practice Fusion replica stamps it deliberately,
-    #: once, in the medication list's "as of" heading — a forensic rule from
-    #: the gold standard, not a bug — so that pack warned on 100% of its
-    #: documents forever, and a signal that is always on is not a signal.
-    #:
-    #: A COUNT rather than a boolean, so the check stays alive on a pack that
-    #: declares one: more render-day dates on the page than the layout admits
-    #: to is still the accidental-now() defect, and still warns. Exempting the
-    #: pack outright would have traded a useless warning for a blind check.
+    #: How many places this layout stamps the RENDER DAY on purpose — a COUNT,
+    #: not a bool, so a pack that declares one still warns if MORE render-day
+    #: dates appear than it admits to. The PF replica stamps it once,
+    #: deliberately, in the medication list's "as of" heading.
     render_day_stamps: int = Field(default=0, ge=0)
     # Which record collections this layout renders, and why it skips the rest.
     # Optional so a pack written before the field stays loadable; QA treats an
@@ -306,12 +230,8 @@ class PackStatus:
 def _load_context_builder(path: Path, *, restricted: bool) -> ContextBuilder:
     """Import ``context.py`` off disk and return its ``build_context``.
 
-    ``restricted`` installs the pack-code globals
-    (:func:`anastomosis.reconstruct.packexec.restrict_module`) into the module
-    namespace BEFORE the body runs, which is the only moment that can still
-    decide what the body is handed. It is set for every origin but the
-    built-ins — see that module for the decision and, just as importantly, for
-    what it does not claim.
+    ``restricted`` installs :func:`anastomosis.reconstruct.packexec.restrict_module`
+    before the body runs, for every origin but built-ins.
     """
     # Unique module name: two packs both shipping context.py must not collide
     # in sys.modules.
@@ -339,21 +259,12 @@ def _load_context_builder_from_source(
 ) -> ContextBuilder:
     """Compile and exec pinned ``context.py`` bytes into a fresh module.
 
-    ``source`` is the exact snapshot bytes the trust hash covered, so the code
-    that runs is provably the code that was hashed — no writer can swap the file
-    between the check and ``exec`` (the TOCTOU the snapshot closes). ``__file__``
-    is set to the real on-disk ``path``, which is what a traceback and the
-    ``compile`` filename report; restricted pack code has no easy way to open it
-    (:mod:`anastomosis.reconstruct.packexec` withholds ``open`` and ``pathlib``),
-    so the pack-relative asset reads a built-in layout may do have no restricted
-    equivalent — an external layout embeds its assets in ``pack.yaml`` instead,
-    where the trust hash covers them. Only the CODE is pinned here, not any file
-    beside it. Mirrors :func:`_load_context_builder`: a
-    unique ``sys.modules`` name (two packs' ``context.py`` must not collide),
-    popped on failure. ``restricted`` is
-    :func:`anastomosis.reconstruct.packexec.restrict_module` — installed before
-    the body runs, so the pinned bytes and the restricted globals arrive
-    together.
+    Contract: ``source`` is the exact snapshot bytes the trust hash covered —
+    no writer can swap the file between the check and ``exec`` (TOCTOU).
+    ``__file__`` is set to the real on-disk ``path`` for tracebacks; only the
+    CODE is pinned, never a file beside it (an external layout embeds assets
+    in ``pack.yaml`` instead). Mirrors :func:`_load_context_builder`: a unique
+    ``sys.modules`` name, popped on failure.
     """
     module_name = f"anastomosis._pack_context_{uuid4().hex}"
     code = compile(source, str(path), "exec")
@@ -381,12 +292,9 @@ def _finish_load(
 ) -> PackStatus:
     """Run ``build()`` and turn it into a :class:`PackStatus`, diagnosing defensively.
 
-    Shared tail for :func:`_load_pack_dir` and :func:`_load_pack_snapshot`: only
-    how ``build`` reads the manifest/template/context (disk vs. pinned snapshot
-    bytes) differs between the two; the diagnosis shape does not. ``name_cell``
-    is a one-item mutable cell so ``build`` can update the reported name to
-    ``manifest.name`` as soon as the manifest parses — including on a LATER
-    failure (missing template, crashing ``context.py``).
+    Shared tail for :func:`_load_pack_dir` and :func:`_load_pack_snapshot`.
+    ``name_cell`` is a one-item mutable cell so ``build`` can update the
+    reported name once the manifest parses, including on a later failure.
     """
     try:
         manifest, template_path, builder = build()
@@ -447,16 +355,11 @@ def _load_pack_dir(root: Path, origin: str) -> PackStatus:
 def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
     """Load a pack from its hashed :class:`PackSnapshot` — the trusted-external path.
 
-    Parses ``pack.yaml`` and executes ``context.py`` from the snapshot's pinned
-    bytes rather than re-reading them, so the loaded/executed content is exactly
-    what the trust hash covered (the TOCTOU close for arbitrary-code execution).
-    Pinning boundary, precisely: ``context.py`` (executable Python) is pinned to
-    execution; ``pack.yaml`` is parsed from pinned bytes; ``template.html``
-    contributes to the hash and its presence is checked here, but the render
-    engine reads it from disk at render time — a Jinja template is a bounded,
-    non-importing surface, and execution-pinning it (render-from-snapshot) is
-    tracked on the backlog. Auxiliary assets (partials, images) are outside the
-    hash entirely. Diagnoses defensively, identically to :func:`_load_pack_dir`.
+    Contract: parses and execs from the snapshot's PINNED bytes, never
+    re-read, so what runs is exactly what the trust hash covered.
+    ``context.py`` is pinned to execution; ``template.html``'s presence is
+    checked here but read from disk at render time; other assets are outside
+    the hash. Diagnoses defensively like :func:`_load_pack_dir`.
     """
     root = snapshot.root
     name_cell = [root.name]
@@ -531,34 +434,14 @@ def discover_packs(
     trust_new: bool = False,
     include_user: bool = True,
 ) -> dict[str, PackStatus]:
-    """Discover every reachable pack, loading each defensively.
+    """Discover every reachable pack, loading each defensively (RULES.md 21-22).
 
-    External packs (``--pack-dir``) execute code at load time
-    and are skipped with a diagnosis unless ``allow_external`` is set.
-
-    Hash pinning is OPT-IN via ``trust``. When ``trust is None`` the behavior is
-    unchanged (consent-only). When a :class:`~anastomosis.reconstruct.packtrust.PackTrust`
-    is supplied, every external candidate that ``allow_external`` would otherwise
-    load is gated on its content hash BEFORE its ``context.py`` is exec'd:
-
-    * trusted at its current hash → load;
-    * else if ``trust_new`` → record the hash, then load (trust-on-first-use);
-    * else → returned unavailable with an untrusted diagnosis, never exec'd.
-
-    Built-ins are never hash-checked (implicitly trusted). For ``--pack-dir``
-    packs the ``allow_external`` refusal takes precedence — trust only matters
-    once external packs are allowed.
-
-    Per-user packs (:func:`user_packs_dir`) are discovered unconditionally —
-    ``allow_external`` does not gate a layout the operator taught into their own
-    home — but their ``context.py`` is executed only under the same hash gate:
-    with no ``trust`` store they are returned unavailable, never exec'd.
-
-    ``include_user=False`` leaves that directory out of the walk entirely. It
-    exists for the one caller whose question is about the SHIPPED files (the
-    install self-check): a user pack shadowing a built-in name is a legitimate
-    thing for an operator to do, and it must not be able to make a healthy
-    install report a missing asset.
+    Hash pinning is opt-in via ``trust``: ``None`` keeps consent-only behavior;
+    given a :class:`~anastomosis.reconstruct.packtrust.PackTrust`, an external
+    or per-user candidate is gated on its content hash before ``context.py``
+    execs — trusted loads, ``trust_new`` records-then-loads, else unavailable.
+    Built-ins are never hash-checked. ``include_user=False`` skips the
+    per-user directory, for the install self-check only.
     """
     results: dict[str, PackStatus] = {}
     for root, origin in _iter_candidate_dirs(pack_dirs or [], include_user=include_user):
@@ -567,12 +450,10 @@ def discover_packs(
         if seen is None:
             results[status.name] = status  # first definition wins
         elif origin == ORIGIN_BUILTIN and seen.pack is None and status.pack is not None:
-            # The claimed name refuses AND a shipped layout of the same name
-            # would have loaded. The refusal stands — silently running the
-            # built-in where the operator meant their own layout is exactly the
-            # fallback this walk forbids — but the diagnosis must say which
-            # directory is standing in front of what, or the operator reads
-            # "untrusted pack" with no idea their home has disabled a built-in.
+            # Refusal stands (falling back to the built-in would defeat the
+            # operator's own layout), but the diagnosis must name what it is
+            # standing in front of, or "untrusted pack" hides that a built-in
+            # of the same name was shadowed.
             results[status.name] = replace(
                 seen,
                 diagnosis=(
@@ -588,11 +469,9 @@ def _discover_one(
 ) -> PackStatus:
     """Apply the consent + hash gates for one candidate, then load it.
 
-    The three origins differ only here: a built-in loads outright, a
-    ``--pack-dir`` pack needs the caller's ``allow_external`` consent first, and
-    a per-user pack needs no such flag. Both non-built-in origins then need a
-    trust store that maps the root to its current content hash before any of its
-    code runs.
+    A built-in loads outright; a ``--pack-dir`` pack needs ``allow_external``;
+    a per-user pack needs neither flag but still needs a trust store mapping
+    its root to its current content hash.
     """
     if origin == ORIGIN_BUILTIN:
         return _load_pack_dir(root, origin)
@@ -605,9 +484,8 @@ def _discover_one(
             root=root,
         )
     if trust is None:
-        # Consent-only callers get the historic --pack-dir behavior; a per-user
-        # pack has no consent-only path at all, because nothing but the hash
-        # says the code is the code the operator confirmed.
+        # A per-user pack has no consent-only path: only the hash proves the
+        # code is what the operator confirmed.
         if origin == ORIGIN_PACK_DIR:
             return _load_pack_dir(root, origin)
         return PackStatus(
@@ -620,11 +498,9 @@ def _discover_one(
             origin=origin,
             root=root,
         )
-    # ``trust_new`` is --trust-pack's consent, and the flag's own help names
-    # what it is consent FOR: the --pack-dir directories the operator pointed
-    # this run at. A learned layout in the per-user dir is trusted by exactly
-    # one act — confirming a Teach — so an edited one must NOT be silently
-    # re-trusted because a vendor pack elsewhere needed the flag.
+    # trust_new is --trust-pack's consent for --pack-dir directories only; a
+    # per-user layout is trusted by exactly one act (confirming a Teach), so
+    # an edited one is never silently re-trusted because a vendor pack needed it.
     return _load_trusted_external(
         root, origin, trust, trust_new=trust_new and origin == ORIGIN_PACK_DIR
     )
@@ -635,11 +511,9 @@ def _load_trusted_external(
 ) -> PackStatus:
     """Gate one code-bearing candidate on its content hash, then load it if allowed.
 
-    The pack is read ONCE into a :class:`PackSnapshot`; the hash is computed from
-    the snapshot bytes and, when trusted, those SAME bytes are parsed/executed by
-    :func:`_load_pack_snapshot`. So an untrusted pack's ``context.py`` is never
-    run, and a trusted pack runs exactly the code that was hashed — there is no
-    swap-between-hash-and-exec window. ``trust_new`` records the current hash
+    Contract: the pack is read ONCE into a :class:`PackSnapshot`; a trusted
+    hash execs those SAME bytes via :func:`_load_pack_snapshot` — no
+    swap-between-hash-and-exec window. ``trust_new`` records the hash
     (trust-on-first-use) and proceeds.
     """
     snapshot = read_pack_snapshot(root)

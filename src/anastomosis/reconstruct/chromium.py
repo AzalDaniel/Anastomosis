@@ -12,12 +12,9 @@ from typing import Any
 
 __all__ = ["ChromiumRenderer", "RendererUnavailable"]
 
-#: What to do about it, in one sentence this repository owns.
-#:
-#: The remedy is OURS, never the underlying library's message: Playwright's own
-#: text is not under our control, and forwarding an uncontrolled string is how
-#: something unexpected reaches a console. The exception TYPE goes with it, for
-#: a support request.
+#: What to do about it, in one sentence this repository owns — never
+#: Playwright's own message, which is not under our control and could put
+#: something unexpected on a console. The exception TYPE goes with it.
 INSTALL_HINT = (
     "Install the render extra and fetch the browser: "
     "pip install 'anastomosis[render]' && playwright install chromium"
@@ -27,13 +24,9 @@ INSTALL_HINT = (
 class RendererUnavailable(RuntimeError):
     """Charts cannot be rendered on this computer at all.
 
-    A property of the MACHINE, not of any one chart — so it is raised once and
-    stops the run, rather than being tagged onto every encounter in turn. It
-    subclasses RuntimeError so anything that already caught the old error keeps
-    working.
-
-    The message is safe to print verbatim: a fixed string plus an exception type
-    name, with nothing interpolated from the input.
+    A property of the MACHINE, not one chart — raised once and stops the
+    run rather than tagged per encounter. The message is safe to print
+    verbatim: a fixed string plus an exception type name only.
     """
 
     def __init__(self, kind: str) -> None:
@@ -56,11 +49,9 @@ class ChromiumRenderer:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch()
         except Exception as exc:  # pragma: no cover - environment-dependent
-            # The extra is installed but the browser was never fetched, or a
-            # `pip install -U` moved it: `render = ["playwright>=1.46"]` is
-            # unbounded above, so an upgrade routinely invalidates the browser
-            # that was downloaded for the previous version. Same remedy, same
-            # once-per-run treatment.
+            # The extra is installed but the browser was never fetched, or an
+            # upgrade moved it (the render extra's playwright pin is
+            # unbounded above). Same remedy, same once-per-run treatment.
             raise RendererUnavailable(exc_tag(exc)) from exc
         self._page: Any = self._browser.new_page()
 

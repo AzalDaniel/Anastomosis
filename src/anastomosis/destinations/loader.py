@@ -1,36 +1,12 @@
-"""Defensive browser-pack discovery (mirrors :mod:`anastomosis.reconstruct.packs`).
+"""Defensive browser-pack discovery (mirrors :mod:`anastomosis.reconstruct.packs`, RULES.md 21).
 
-A browser destination pack is a directory shipped in the wheel:
+Selector slots ship at ``DISCOVER``; ``anast destination init <name>``
+writes a ``selectors.yaml`` overlay into the user directory, leaving the
+built-in ``pack.yaml`` pristine. A pack is "ready" only once that overlay
+exists. Discovery order: ``--pack-dir`` → user dir → built-in scaffold.
 
-    destinations/<name>/
-      __init__.py
-      pack.yaml      — display name, config knobs, and selector slots
-
-The selector slots ship at the ``DISCOVER`` placeholder (the no-hallucination
-rule: Anastomosis never invents a vendor's DOM). An operator fills them with
-``anast destination init <name>``, which writes a ``selectors.yaml`` into their
-*user directory* — the built-in ``pack.yaml`` stays pristine, and the user file
-OVERLAYS its selectors. So a pack is "ready" only once a discovered overlay
-exists.
-
-Discovery order (first hit wins), mirroring the template-pack loader:
-
-1. explicit ``--pack-dir`` directories (a pack dir, or a parent containing them);
-2. the user directory ``~/.anastomosis/destinations/<name>/`` (where the wizard
-   writes ``selectors.yaml`` — NO new dependency: a plain ``Path.home()`` join,
-   not ``platformdirs``, documented here);
-3. the built-in scaffolds shipped under ``anastomosis/destinations/``.
-
-Loading is defensive: a broken pack file is returned as
-:class:`LoadedBrowserPack` with the selectors unresolved and a *diagnosis that
-names the offending file*, never a crash that hides which file. An undiscovered
-(but otherwise valid) pack loads fine; its :attr:`LoadedBrowserPack.ready` is
-``False`` and resolving its selectors raises the actionable
-:class:`~anastomosis.destinations.browserpack.PackNotReadyError`.
-
-PHI rule: this layer carries pack names, file paths to PACK config (never PHI),
-and selector strings (the vendor's DOM — not patient data). Nothing
-patient-derived flows through it.
+Loading is defensive: a broken file returns a diagnosis naming it, never
+a crash. PHI: pack names, config paths, and selector strings (vendor DOM).
 """
 
 from __future__ import annotations
@@ -69,10 +45,8 @@ class BrowserPackError(Exception):
 def user_destinations_dir() -> Path:
     """The per-user directory the discovery wizard writes packs into.
 
-    Deliberately a plain ``~/.anastomosis/destinations`` (NOT ``platformdirs`` —
-    no new dependency). Documented so the wizard and the loader agree on one
-    location: the wizard writes ``<here>/<name>/selectors.yaml`` and the loader
-    reads it back as the selector overlay.
+    ``~/.anastomosis/destinations`` (NOT ``platformdirs``); the wizard
+    writes ``<here>/<name>/selectors.yaml`` and the loader reads it back.
     """
     return Path.home() / ".anastomosis" / "destinations"
 
@@ -81,14 +55,9 @@ def user_destinations_dir() -> Path:
 class LoadedBrowserPack:
     """One discovered browser pack: its config, its (maybe-undiscovered) selectors.
 
-    ``selectors`` is ``None`` when the pack's slots are still undiscovered (the
-    shipped scaffold before the wizard ran) — :attr:`ready` is ``False`` and
-    :meth:`require_selectors` raises the actionable
+    ``selectors`` is ``None`` when slots are still undiscovered — ``ready``
+    is ``False`` and :meth:`require_selectors` raises
     :class:`~anastomosis.destinations.browserpack.PackNotReadyError`.
-
-    ``source`` is the directory the manifest was read from; ``selectors_source``
-    is where the resolved selectors came from (the overlay file, or the built-in
-    ``pack.yaml`` itself); ``builtin`` flags a pack that shipped in the wheel.
     """
 
     name: str
@@ -107,9 +76,8 @@ class LoadedBrowserPack:
     def require_selectors(self) -> SelectorMap:
         """Return the selectors, or raise the actionable not-ready error.
 
-        Raises the :class:`~anastomosis.destinations.browserpack.PackNotReadyError`
-        captured at load time — it names the undiscovered slots and the wizard
-        command — rather than a generic "selectors is None".
+        Raises the :class:`PackNotReadyError` captured at load time — named
+        slots and the wizard command — rather than a generic ``None`` error.
         """
         if self.selectors is None:
             assert self.not_ready is not None  # ready==False implies a captured error
@@ -162,9 +130,8 @@ _ORIGIN_BUILTIN = "builtin"
 def _candidate_dirs(name: str, pack_dirs: list[Path]) -> list[tuple[Path, str]]:
     """The directories to look in, in precedence order, as (dir, origin).
 
-    Precedence ``--pack-dir`` > user dir > built-in. A ``--pack-dir`` may BE the
-    pack directory (its name matches) or CONTAIN a ``<name>/`` child — both are
-    honored, mirroring the template loader.
+    ``--pack-dir`` > user dir > built-in; a ``--pack-dir`` may BE the pack
+    directory or CONTAIN a ``<name>/`` child.
     """
     candidates: list[tuple[Path, str]] = []
     for parent in pack_dirs:
@@ -186,19 +153,11 @@ def _resolve_selectors(
 ) -> tuple[SelectorMap | None, PackNotReadyError | None, Path | None]:
     """Resolve the selector map, overlaying a discovered ``selectors.yaml`` if present.
 
-    The wizard writes discovered selectors into the USER directory's
-    ``selectors.yaml`` so the built-in ``pack.yaml`` stays pristine. The overlay
-    rule is precedence-aware so an explicit ``--pack-dir`` is authoritative:
-
-    * a BUILT-IN or USER-dir pack is overlaid by the user-dir ``selectors.yaml``
-      (the wizard's output for that pack name);
-    * a ``--pack-dir`` pack uses ONLY a ``selectors.yaml`` sitting beside it —
-      the operator who pointed at that directory meant it, so the user-dir
-      wizard overlay must not silently override their explicit choice.
-
-    Returns ``(selectors, None, source)`` when ready, or ``(None, error, None)``
-    when slots remain undiscovered (the error is the actionable
-    :class:`PackNotReadyError`).
+    Contract: a BUILT-IN or USER-dir pack is overlaid by the user-dir
+    ``selectors.yaml`` (the wizard's output); a ``--pack-dir`` pack uses
+    only a ``selectors.yaml`` beside it, so the wizard's overlay never
+    silently overrides an explicit operator choice. Returns
+    ``(selectors, None, source)`` when ready, or ``(None, error, None)``.
     """
     merged: dict[str, Any] = dict(pack_selectors)
     selectors_source: Path = pack_dir
@@ -228,13 +187,10 @@ def _resolve_selectors(
 def load_destination_pack(name: str, pack_dirs: list[Path] | None = None) -> LoadedBrowserPack:
     """Load one browser destination pack by name, defensively.
 
-    Discovery order: ``--pack-dir`` directories, then the user directory, then
-    the built-in scaffold. The first directory with a ``pack.yaml`` wins; its
-    selectors are overlaid by a user ``selectors.yaml`` (the wizard's output).
-
-    Raises :class:`BrowserPackError` (naming the file) when NO pack of that name
-    is found or a pack file is malformed. An undiscovered-but-valid pack loads
-    successfully with :attr:`LoadedBrowserPack.ready` ``False``.
+    Discovery order: ``--pack-dir`` → user directory → built-in scaffold;
+    the first ``pack.yaml`` wins, overlaid by a user ``selectors.yaml``.
+    Raises :class:`BrowserPackError` (naming the file) when none is found
+    or malformed. An undiscovered-but-valid pack loads with ``ready=False``.
     """
     for pack_dir, origin in _candidate_dirs(name, list(pack_dirs or [])):
         manifest_path = pack_dir / _PACK_FILE
