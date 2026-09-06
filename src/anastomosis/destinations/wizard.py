@@ -1,26 +1,12 @@
 """Selector-discovery wizard support (the ``anast destination init`` engine).
 
-Discovering a browser pack means an operator pasting the CSS selector for each
-UI slot, derived from THEIR logged-in EHR session — Anastomosis ships none (the
-no-hallucination rule). This module holds the PHI-free, browser-free machinery
-the CLI command drives:
+PHI-free, browser-free machinery the CLI drives: :data:`SLOT_GUIDANCE`
+(per-slot help); :class:`SelectorValidator`, a seam so ``--validate`` needs
+no Playwright in tests (:class:`CdpSelectorValidator` is the real one);
+``selectors.yaml`` rendering/writing; and :func:`registry_overlay_snippet`,
+the printed (never auto-applied) registry patch.
 
-* :data:`SLOT_GUIDANCE` — one generic line of help per selector slot.
-* :class:`SelectorValidator` — the SEAM the optional ``--validate`` path uses to
-  check a pasted selector against the operator's current page (>=1 match). It is
-  a small protocol so tests inject a fake validator and CI never needs
-  Playwright; the real CDP-backed validator (:class:`CdpSelectorValidator`)
-  imports Playwright lazily, like
-  :func:`anastomosis.deliver.browser.cdp.connect_over_cdp`.
-* ``_render_selectors_yaml`` — the ``selectors.yaml`` text (header comment +
-  slots) written into the user directory; and :func:`write_selectors` which
-  creates the ``0o700`` directory and writes the file.
-* :func:`registry_overlay_snippet` — the printed (never auto-applied) registry
-  overlay flipping the destination's ``browser`` capability to the pack.
-
-PHI rule: a CSS selector is vendor DOM, never patient data; this module carries
-selector strings, slot names, and dates only — nothing patient-derived, and it
-never writes credentials.
+PHI: selectors are vendor DOM, never patient data; never writes credentials.
 """
 
 from __future__ import annotations
@@ -58,11 +44,9 @@ SLOT_GUIDANCE: Mapping[str, str] = {
     "upload_success_marker": "an element that appears only after a successful upload",
     "documents_tab": "(optional) the tab/link that opens the Documents area",
     "upload_open_button": "(optional) the button that opens the upload dialog",
-    # The upload dialog's own fields. Vendor-neutral like the rest: each names
-    # the ROLE an operator looks for on their screen, and each is skippable —
-    # a dialog that never asks for a category has no category slot to point at.
-    # Where a dialog numbers its fields per queued document, ``{idx}`` written
-    # into the selector stands in for the row number.
+    # The upload dialog's own fields: each names the ROLE an operator looks
+    # for, each skippable. ``{idx}`` stands in for the row number where a
+    # dialog numbers fields per queued document.
     "upload_filename_input": "(optional) the box holding the document's display name",
     "upload_category_select": "(optional) the dropdown choosing the document's category",
     "upload_status_select": "(optional) the dropdown choosing the document's status",
@@ -80,10 +64,8 @@ _WIZARD_CMD = "anast destination init"
 class SelectorValidator(Protocol):
     """The seam the ``--validate`` path checks a pasted selector through.
 
-    ``count(selector)`` returns how many elements on the operator's CURRENT page
-    match — the wizard accepts a selector matching >=1. A protocol (not a
-    concrete class) so tests inject a fake and the validation path needs no
-    browser; the real implementation is :class:`CdpSelectorValidator`.
+    ``count(selector)`` matches on the operator's CURRENT page (>=1
+    accepted); a protocol so tests inject a fake with no browser.
     """
 
     def count(self, selector: str) -> int:
@@ -94,11 +76,9 @@ class SelectorValidator(Protocol):
 class CdpSelectorValidator:
     """A :class:`SelectorValidator` backed by a CDP-attached Playwright page.
 
-    Constructed with a live :class:`anastomosis.destinations.browserpack.PageLike`
-    (the CLI attaches over CDP and wraps the page in a
-    :class:`~anastomosis.destinations.browserpack.PlaywrightPageAdapter`). Kept
-    thin and Playwright-free at this layer — it only counts matches via the
-    page's ``query_selector_all_text`` seam — so it needs no browser to import.
+    Constructed with a live :class:`~anastomosis.destinations.browserpack.PageLike`;
+    counts matches via ``query_selector_all_text`` only, so this class needs
+    no browser to import.
     """
 
     def __init__(self, page: Any) -> None:
@@ -113,11 +93,8 @@ def _render_selectors_yaml(
 ) -> str:
     """Render the ``selectors.yaml`` overlay text (header comment + slots).
 
-    The header records that the file is generated, by what, when, for which pack,
-    and how to re-run discovery — so a file found later explains itself. Slots
-    are written in canonical order (required then optional); an unset optional
-    slot is written as an empty string (the loader treats empty as "skip").
-    ``now`` is injectable so tests get a deterministic header date.
+    The header records generator, date, pack and re-run command. Slots in
+    canonical order; an unset optional slot is empty (the loader skips it).
     """
     stamp = (now or _clock_now()).date().isoformat()
     lines = [
@@ -168,11 +145,9 @@ def write_selectors(
 def registry_overlay_snippet(name: str) -> str:
     """The printed registry-overlay snippet flipping ``name`` to the browser pack.
 
-    The packaged ``registry.yaml`` is the single routing truth and is NEVER
-    auto-modified; instead the wizard PRINTS this so the operator can paste it
-    into THEIR own ``--registry`` overlay file, declaring the now-discovered pack
-    as a viable browser route. ``detail`` carries the pack reference the router
-    surfaces in its transit map.
+    ``registry.yaml`` is the single routing truth and is NEVER
+    auto-modified; the operator pastes this into their own ``--registry``
+    overlay.
     """
     return (
         "entries:\n"
