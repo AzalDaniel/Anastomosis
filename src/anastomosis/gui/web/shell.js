@@ -1,11 +1,10 @@
 /*
  * Anastomosis GUI — the shell: router, bridge, event bus, shared components.
  *
- * ONE document, four views (DESIGN_LANGUAGE §7/§9). Everything that used to be
- * duplicated across five pages lives here exactly once: the pywebview bridge
- * bootstrap, the `window.anastEvent` dispatcher, the activity strip, the icon
- * set, the gooey segment toggle, the calendar, and the run form that Charts and
- * Migrate both instantiate.
+ * ONE document, four views (DESIGN_LANGUAGE §7/§9), holding: the pywebview
+ * bridge bootstrap, the `window.anastEvent` dispatcher, the activity strip,
+ * the icon set, the gooey segment toggle, the calendar, and the run form that
+ * Charts and Migrate both instantiate.
  *
  * Event routing: every controller event carries a `flow` naming the operation
  * family that raised it. The dispatcher paints the GLOBAL activity strip for
@@ -85,10 +84,8 @@
   let VERSION = "";
 
   // info() answers once for the whole app: the version for About, and the
-  // source/layout lists every run form needs — and again whenever the app
-  // itself adds to those lists, which is what `reloadInfo` is for. Teaching a
-  // layout used to leave the run forms holding the list from boot, so the app
-  // reported a written layout that its own choosers did not offer.
+  // source/layout lists every run form needs — refreshed via `reloadInfo`
+  // whenever the app itself adds to those lists.
   let INFO = null;
   const INFO_CBS = [];
   function onInfo(cb) {
@@ -150,10 +147,8 @@
     const outgoing = section(CURRENT);
     const leaving = VIEWS[CURRENT];
     CURRENT = name;
-    // A banner belongs to the screen that raised it. It used to be cleared only
-    // by the five run/analyze entry points — Uploads never cleared it and no
-    // view switch did — so an operator who read it, fixed the problem and moved
-    // on still had the red bar following them around.
+    // A banner belongs to the screen that raised it, so every view switch
+    // clears it before the swap — not just the five run/analyze entry points.
     hideBanner();
 
     // The pill owns the selected state. Told, not asked: a view can also be
@@ -330,16 +325,9 @@
 
   // ─── Disclosures (a button, and the thing it opens) ──────────
   //
-  // Three of these — About, the activity drawer, the error-kinds flyout — and
-  // each was written separately and forgot something different. About had
-  // Escape; the flyout had neither Escape nor `aria-expanded`, so nothing said
-  // it was open. The drawer was a `role="dialog"` that focus never entered and
-  // Escape never closed, which leaves a keyboard operator opening a panel they
-  // then have to Tab through the whole page to reach.
-  //
-  // This is the one implementation, and what it owns is exactly the part all
-  // three got wrong: the trigger says whether it is open, Escape closes it, a
-  // click elsewhere closes it, and focus goes in and comes back.
+  // One implementation for About, the activity drawer and the error-kinds
+  // flyout: the trigger says whether it is open, Escape closes it, a click
+  // elsewhere closes it, and focus goes in and comes back.
   //
   // Showing and hiding stay with the caller. The drawer scrolls its rows to
   // the bottom on the way in and the flyout slides on a class rather than
@@ -478,12 +466,6 @@
   }
 
   // ─── Saying it out loud ───────────────────────────────────────
-  //
-  // Every view narrates a run in one line on screen — "Reading records…",
-  // "Step 2 of 2", "Finished." — and until now that line was the ONLY feedback
-  // a click produced and none of it was announced. A screen-reader operator
-  // pressed the button and heard nothing at all, which is also why they pressed
-  // it again.
   //
   // One announcer for the whole document, not a `role="status"` on each of
   // those five lines. Two of them (`#migrate-result`, `#uploads-counters`) are
@@ -705,11 +687,8 @@
   // WAI-ARIA's select-only combobox — a button plus a listbox popup, DOM focus
   // never leaving the button, the active row named by aria-activedescendant.
   //
-  // This replaced the native <select>, which had one text slot per option. That
-  // slot is why operators read `generic_soap` instead of "Generic SOAP": the
-  // controller already sends a description alongside every name and the app had
-  // nowhere to put it. It is also the one control the browser tests could not
-  // see, because the popup an OS draws is not in the page.
+  // A custom control, not native <select>: one text slot cannot carry both
+  // a name and its description, and an OS-drawn popup is invisible to browser tests.
   //
   // The trigger keeps a `value` property and fires a bubbling `change`, so every
   // caller that read `pick("pack").value` off a <select> still works.
@@ -969,15 +948,11 @@
   const SHOUTED = new Set(["cda", "csv", "ehi", "fhir", "hl7", "pdf", "pf", "soap", "tsv", "xml"]);
 
   //: A readable name for a machine id: `generic_soap` -> "Generic SOAP",
-  //: `pf-tebra` -> "PF Tebra". Every place a person reads one of these ids used
-  //: to print it raw, because a <select> option had one text slot and the id
-  //: had to go in it. The id survives as the row's caption.
+  //: `pf-tebra` -> "PF Tebra". The id survives as the row's caption.
   //:
-  //: A guess, and only ever a guess — `ccda` will not become "C-CDA" here, and
-  //: it used to be a hard-coded exception for exactly that reason. Sources and
-  //: layouts now declare their own name, so this is the fallback for the ones
-  //: that do not: destinations, and third-party packs written before the field
-  //: existed. See `nameOf`.
+  //: A guess, and only ever a guess — `ccda` will not become "C-CDA" here.
+  //: Sources and layouts declare their own name; this is the fallback for
+  //: destinations and third-party packs that do not. See `nameOf`.
   function displayName(id) {
     return String(id)
       .split(/[-_\s]+/)
@@ -1068,10 +1043,8 @@
     if (!panel || !body) return;
     body.innerHTML = "";
     if (!patients.length) {
-      // Distinct from the panel's own "No run yet": a run HAS happened and it
-      // found nobody. `clearPatients` still resets to the default copy, so the
-      // three states — not run yet, found nobody, could not be read — no longer
-      // wear the same words.
+      // Distinct from the panel's own "No run yet": a run HAS happened and
+      // found nobody. Each of the three states carries its own wording.
       setEmpty(panel.id, true, {
         title: "No patients in this run.",
         detail: "The run finished and found no patient records to rebuild.",
@@ -1164,12 +1137,8 @@
   // failure never blocks the run roll-up.
   async function loadPatients(panel, body, summaryId) {
     if (!hasApi()) return;
-    // A failure here used to be swallowed whole, leaving the panel showing the
-    // copy it had before the run: "No run yet. Choose Rebuild charts above…"
-    // — under a status line reading "Finished." and a strip line counting the
-    // patients. It read identically to a run that genuinely found nobody, and
-    // those want different things from the operator: one is a reason to go and
-    // look at the output folder, the other is not.
+    // A failure here must read differently from "found nobody": one is a
+    // reason to check the output folder, the other is not.
     let reason = "";
     try {
       const res = await window.pywebview.api.last_run_summary(summaryId);
@@ -1580,11 +1549,8 @@
   // Generic chrome: every [role="tab"] in a .mode-tabs group shows the panel
   // named by its aria-controls and hides its siblings'.
   //
-  // The keyboard half was missing, so a screen reader announced "tab, 1 of 2"
-  // and then the arrow keys did nothing — and both tabs were separate stops on
-  // the way through the page. A tablist is ONE stop with the arrows moving
-  // inside it: that is the roving tabindex below, and it is the same contract
-  // the nav pill already keeps.
+  // The keyboard half: a tablist is ONE stop with the arrows moving inside
+  // it — the roving tabindex below, the same contract the nav pill already keeps.
   function initTabs(root) {
     for (const group of $$(".mode-tabs", root || document)) {
       const tabs = $$('[role="tab"]', group);
@@ -1729,17 +1695,14 @@
     initLogDrawer();
     const closeBtn = el("log-drawer-close");
     if (closeBtn) closeBtn.addEventListener("click", () => logDrawer && logDrawer.close(true));
-    // The strip advertises "L", so a bare letter it stays — but the guard was
-    // two tag names, and everything else on the page is neither. Pressing `l`
-    // on a chooser trigger, a checkbox, a button or a nav tab opened the
-    // activity drawer.
+    // The strip advertises "L", so a bare letter it stays; the guard covers
+    // choosers, checkboxes, buttons and nav tabs, not just <input>/<textarea>.
     document.addEventListener("keydown", (e) => {
       if (e.key !== "l" && e.key !== "L") return;
       // Ctrl+L, Cmd+L and Alt+L belong to the browser and the window manager.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      // Something nearer the key already claimed it. A chooser's type-ahead
-      // calls preventDefault() for every printable character — open or closed
-      // — and does not stop propagation, so both handlers used to run.
+      // Something nearer the key already claimed it: a chooser's type-ahead
+      // calls preventDefault() for every printable character, open or closed.
       if (e.defaultPrevented) return;
       if (takesTyping(document.activeElement)) return;
       e.preventDefault();
@@ -1749,12 +1712,6 @@
   }
 
   // ─── Required fields ──────────────────────────────────────────
-  //
-  // Uploads checked its inputs; Charts, Migrate and both Teach modes did not.
-  // Clicking "Rebuild charts" on a fresh page sent `run_pipeline_async("", "",
-  // …)`, locked the button to "Rebuilding…", and said nothing about what was
-  // missing — while also taking the process-wide busy guard, so the real run
-  // the operator started next was refused.
   //
   // `fields` is [[value, "what it is", elementId], …]. Returns true when
   // everything is filled; otherwise banners the blank ones BY NAME, opens any
@@ -1780,13 +1737,8 @@
 
   // ─── One button, one job at a time ────────────────────────────
   //
-  // `buildRunForm.setBusy` gave Charts and Migrate this, and nothing else had
-  // it: three rapid clicks on "Start filing" sent three `upload_start` calls.
-  // The Python side refuses the second and third, so the operator saw a red
-  // error banner for a run that was proceeding normally — and after the click
-  // that WORKED, the button was unchanged and the counters did not move for a
-  // full poll interval, so the screen's plainest reading was "nothing
-  // happened".
+  // Disables the button so rapid clicks cannot send duplicate calls the
+  // Python side would have to refuse.
   //
   // `finally`, not the success path: a button that stays disabled after a
   // failure is a dead screen, which is the worse of the two bugs.
