@@ -1768,15 +1768,10 @@ def _digest(content: bytes) -> str:
 
 
 def _artifact_name(document: Path, index: int) -> str:
-    """The artifact's id, and so the stem of an embedded one's delivered filename.
-
-    Derived the way every other id this parser mints is (:func:`_participant_id`,
-    :func:`_facility_id`): a uuid5 over the source file, the construct and the
-    position, so two runs over the same export deliver the same name and the
-    name itself carries nothing readable off the patient. The position is in it
-    for the same reason it is in a participant's: a document stating the
-    construct twice is two artifacts, and one id would deliver the second over
-    the first.
+    """The artifact's id, and so the stem of an embedded one's delivered
+    filename. A uuid5 over the source file, construct and position — the
+    same shape as :func:`_participant_id` — so a repeated construct
+    never delivers one artifact over another.
     """
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{document.name}:nonXMLBody:{index}"))
 
@@ -1784,22 +1779,10 @@ def _artifact_name(document: Path, index: int) -> str:
 def _unstructured_documents(
     root: _Element, document: Path, patient_id: str, doc_meta: dict[str, Any]
 ) -> list[DocumentArtifact]:
-    """The chart of an Unstructured Document, as the artifact it is.
-
-    A C-CDA Unstructured Document carries its whole clinical content as an
-    embedded or referenced file under ``<nonXMLBody>`` instead of coded
-    sections. The section walk cannot see it, so such a document parsed cleanly
-    and produced a patient with an empty chart, and nothing in the run said so:
-    1,024 of them in a 6,144-document ledger run, every one reported a success.
-
-    Carried rather than refused. Refusing loses the patient outright; carrying
-    preserves exactly what the source had. A record holding demographics plus
-    one attached artifact is not a degraded chart — for a practice whose records
-    were scanned, it is a faithful one.
-
-    Returns a list, so the caller needs no branch and a document that states the
-    construct more than once (CDA allows one body, an export is not obliged to
-    obey) carries every one rather than the first.
+    """The chart of an Unstructured Document, as the artifact it is —
+    content under ``<nonXMLBody>``, invisible to the section walk.
+    Carried, never refused: demographics plus one artifact is a faithful
+    chart. Returns a list: an export may state the body twice.
     """
     return [
         artifact
@@ -1811,11 +1794,9 @@ def _unstructured_documents(
 def _artifact(
     body: _Element, index: int, document: Path, patient_id: str, doc_meta: dict[str, Any]
 ) -> DocumentArtifact | None:
-    """One ``<nonXMLBody>`` as a :class:`DocumentArtifact`, or ``None``.
-
-    ``None`` for a body stating no ``<text>`` at all, which is the honest answer
-    for a construct that offered nothing — and the answer the ledger reads back
-    as ``source_empty`` rather than as a loss.
+    """One ``<nonXMLBody>`` as a :class:`DocumentArtifact`, or ``None``
+    for a body stating no ``<text>`` — the ledger reads that back as
+    ``source_empty``, never a loss.
     """
     text = _find(body, "v3:text")
     if text is None:
@@ -1846,14 +1827,9 @@ def _artifact(
 
 
 class DeliveredArtifactError(SourceDataError):
-    """A document this toolkit's own C-CDA export named is missing or is not it.
-
-    The export writes each of a record's source documents into the delivery
-    directory and names it from the CCD with its media type and its SHA-256
-    (#373). A stamped entry whose file is gone, or whose bytes hash to
-    something else, means the directory was split up, truncated or edited
-    between the export and here — so the chart in front of the operator refers
-    to a document nobody can produce. Refused rather than carried: a chart
+    """A document this toolkit's own C-CDA export named is missing or
+    is not it (#373): a stamped entry whose file is gone, or whose
+    bytes hash to something else. Refused rather than carried — a chart
     naming a scan that is not the scan is worse than one that stops.
     """
 
@@ -1861,18 +1837,11 @@ class DeliveredArtifactError(SourceDataError):
 def _delivered_artifacts(
     section: _Element, document: Path, patient_id: str
 ) -> list[DocumentArtifact]:
-    """The documents this toolkit delivered beside ``document``, as artifacts.
-
-    The inverse of ``deliver.ccda_export.builder._delivered_documents``. Only
-    an ``<observationMedia>`` stamped with :data:`ARTIFACT_TEMPLATE_ROOT` is
-    read this way: a third party's multimedia carries no such stamp and stays
-    what it has always been — narrative and entries preserved, nothing claimed
-    about it.
-
-    Reading it back is what makes the C-CDA deliverable a round trip rather
-    than a one-way door. Before #373 a re-ingest of the delivered directory
-    produced the patient with an empty chart, which is precisely the reading
-    that let the loss ship.
+    """The documents this toolkit delivered beside ``document``, as
+    artifacts — the inverse of
+    ``deliver.ccda_export.builder._delivered_documents``. Only an
+    ``<observationMedia>`` stamped with :data:`ARTIFACT_TEMPLATE_ROOT`
+    is read this way (#373); a third party's is preserved verbatim.
     """
     return [
         _delivered_artifact(media, document, patient_id)
@@ -1883,11 +1852,8 @@ def _delivered_artifacts(
 
 def _delivered_artifact(media: _Element, document: Path, patient_id: str) -> DocumentArtifact:
     """One stamped ``<observationMedia>`` as the artifact it names.
-
-    Every field this reads is one the exporter wrote, so anything missing is a
-    document that was edited after it was written, and that is a refusal rather
-    than a best guess: an artifact recovered under a made-up id would be filed
-    as a different document from the one the chart means.
+    Every field is one the exporter wrote, so anything missing means
+    the document was edited afterward — refused rather than guessed.
     """
     value = _find(media, "v3:value")
     artifact_id = _val_attr(media, "v3:id", "root")
