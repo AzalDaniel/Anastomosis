@@ -358,135 +358,519 @@
       "total": 307
     }
   },
-  "tool": "radon cc -j src",
-  "totals": {
-    "src/anastomosis/cli.py": 64,
-    "src/anastomosis/cli_commands/_paths.py": 6,
-    "src/anastomosis/cli_commands/delivery.py": 1,
-    "src/anastomosis/cli_commands/destination.py": 47,
-    "src/anastomosis/cli_commands/guide.py": 95,
-    "src/anastomosis/cli_commands/migrate.py": 30,
-    "src/anastomosis/cli_commands/packsrc.py": 50,
-    "src/anastomosis/cli_commands/pipeline.py": 5,
-    "src/anastomosis/cli_commands/upload.py": 25,
-    "src/anastomosis/core/atomic.py": 20,
-    "src/anastomosis/core/ccda_codes.py": 14,
-    "src/anastomosis/core/clock.py": 7,
-    "src/anastomosis/core/codes.py": 12,
-    "src/anastomosis/core/commands.py": 58,
-    "src/anastomosis/core/conservation.py": 13,
-    "src/anastomosis/core/fhir/export.py": 165,
-    "src/anastomosis/core/fhir/ingest.py": 127,
-    "src/anastomosis/core/hashutil.py": 10,
-    "src/anastomosis/core/identity.py": 24,
-    "src/anastomosis/core/locking.py": 11,
-    "src/anastomosis/core/logutil.py": 21,
-    "src/anastomosis/core/migrate.py": 62,
-    "src/anastomosis/core/migration_status.py": 9,
-    "src/anastomosis/core/model/actors.py": 10,
-    "src/anastomosis/core/model/base.py": 2,
-    "src/anastomosis/core/model/bundle.py": 15,
-    "src/anastomosis/core/model/clinical.py": 14,
-    "src/anastomosis/core/model/coverage.py": 1,
-    "src/anastomosis/core/model/document.py": 1,
-    "src/anastomosis/core/model/encounter.py": 16,
-    "src/anastomosis/core/model/patient.py": 17,
-    "src/anastomosis/core/model_paths.py": 16,
-    "src/anastomosis/core/outcome.py": 2,
-    "src/anastomosis/core/output.py": 54,
-    "src/anastomosis/core/packinit.py": 25,
-    "src/anastomosis/core/pdfsnapshot.py": 22,
-    "src/anastomosis/core/presentation.py": 13,
-    "src/anastomosis/core/profiles.py": 60,
-    "src/anastomosis/core/runmanifest.py": 47,
-    "src/anastomosis/core/selfcheck.py": 56,
-    "src/anastomosis/core/source_init_command.py": 45,
-    "src/anastomosis/core/sourcelearn.py": 151,
-    "src/anastomosis/core/textutil.py": 89,
-    "src/anastomosis/core/timeutil.py": 52,
-    "src/anastomosis/core/upload_command.py": 46,
-    "src/anastomosis/core/vesselmark.py": 77,
-    "src/anastomosis/deliver/_shared.py": 17,
-    "src/anastomosis/deliver/archive/archive.py": 98,
-    "src/anastomosis/deliver/archive/templates.py": 1,
-    "src/anastomosis/deliver/browser/attach.py": 2,
-    "src/anastomosis/deliver/browser/cdp.py": 13,
-    "src/anastomosis/deliver/browser/engine.py": 53,
-    "src/anastomosis/deliver/browser/errors.py": 5,
-    "src/anastomosis/deliver/browser/fake.py": 42,
-    "src/anastomosis/deliver/browser/gates.py": 36,
-    "src/anastomosis/deliver/browser/manager.py": 23,
-    "src/anastomosis/deliver/browser/manifest.py": 34,
-    "src/anastomosis/deliver/browser/persist.py": 76,
-    "src/anastomosis/deliver/browser/reports.py": 7,
-    "src/anastomosis/deliver/browser/states.py": 3,
-    "src/anastomosis/deliver/browser/tracking.py": 53,
-    "src/anastomosis/deliver/browser/verify.py": 8,
-    "src/anastomosis/deliver/bundle/bundle.py": 54,
-    "src/anastomosis/deliver/ccda_export/builder.py": 290,
-    "src/anastomosis/deliver/ccda_export/deliverer.py": 31,
-    "src/anastomosis/deliver/fhir_api/attach.py": 1,
-    "src/anastomosis/deliver/fhir_api/client.py": 62,
-    "src/anastomosis/deliver/fhir_api/destination.py": 115,
-    "src/anastomosis/deliver/render_index.py": 32,
-    "src/anastomosis/deliver/router.py": 26,
-    "src/anastomosis/deliver/verify/composite.py": 48,
-    "src/anastomosis/deliver/verify/levels.py": 123,
-    "src/anastomosis/deliver/verify/types.py": 4,
-    "src/anastomosis/destinations/base.py": 38,
-    "src/anastomosis/destinations/browserpack.py": 145,
-    "src/anastomosis/destinations/loader.py": 36,
-    "src/anastomosis/destinations/registry.py": 31,
-    "src/anastomosis/destinations/wizard.py": 14,
-    "src/anastomosis/gui/__main__.py": 9,
-    "src/anastomosis/gui/consoles/packgen.py": 15,
-    "src/anastomosis/gui/consoles/runs.py": 75,
-    "src/anastomosis/gui/consoles/source.py": 35,
-    "src/anastomosis/gui/consoles/upload.py": 41,
-    "src/anastomosis/gui/consoles/wizard.py": 7,
-    "src/anastomosis/gui/controller.py": 93,
-    "src/anastomosis/gui/events.py": 5,
-    "src/anastomosis/gui/jobs.py": 26,
-    "src/anastomosis/gui/shared.py": 7,
-    "src/anastomosis/gui/shell.py": 24,
-    "src/anastomosis/packgen/emit.py": 105,
-    "src/anastomosis/packgen/evidence.py": 95,
-    "src/anastomosis/packgen/extract.py": 46,
-    "src/anastomosis/packgen/infer.py": 146,
-    "src/anastomosis/packgen/ocr.py": 81,
-    "src/anastomosis/packs/generic_soap/context.py": 18,
-    "src/anastomosis/packs/practice_fusion_soap/context.py": 307,
-    "src/anastomosis/pipeline.py": 203,
-    "src/anastomosis/qa/base.py": 16,
-    "src/anastomosis/qa/checks.py": 194,
-    "src/anastomosis/qa/runner.py": 28,
-    "src/anastomosis/qa/wholepatient.py": 9,
-    "src/anastomosis/reconstruct/ccda_standard/renderer.py": 20,
-    "src/anastomosis/reconstruct/chromium.py": 12,
-    "src/anastomosis/reconstruct/engine.py": 46,
-    "src/anastomosis/reconstruct/packctx.py": 11,
-    "src/anastomosis/reconstruct/packexec.py": 8,
-    "src/anastomosis/reconstruct/packs.py": 79,
-    "src/anastomosis/reconstruct/packtrust.py": 23,
-    "src/anastomosis/reconstruct/provenance.py": 42,
-    "src/anastomosis/sources/_rowutil.py": 11,
-    "src/anastomosis/sources/base.py": 24,
-    "src/anastomosis/sources/ccda/__init__.py": 24,
-    "src/anastomosis/sources/ccda/ledger.py": 352,
-    "src/anastomosis/sources/ccda/parser.py": 463,
-    "src/anastomosis/sources/fhir_r4/__init__.py": 36,
-    "src/anastomosis/sources/fhir_r4/mapper.py": 389,
-    "src/anastomosis/sources/learned/__init__.py": 19,
-    "src/anastomosis/sources/learned/interpreter.py": 89,
-    "src/anastomosis/sources/learned/reader.py": 85,
-    "src/anastomosis/sources/learned/spec.py": 41,
-    "src/anastomosis/sources/learned/transforms.py": 20,
-    "src/anastomosis/sources/oracle_ehi/__init__.py": 10,
-    "src/anastomosis/sources/oracle_ehi/loader.py": 74,
-    "src/anastomosis/sources/oracle_ehi/mapper.py": 110,
-    "src/anastomosis/sources/pf_tebra/__init__.py": 7,
-    "src/anastomosis/sources/pf_tebra/escript.py": 30,
-    "src/anastomosis/sources/pf_tebra/loader.py": 47,
-    "src/anastomosis/sources/pf_tebra/mapper.py": 307
-  }
+  "reference": {
+    "src/anastomosis/cli.py": {
+      "avg": 3.3684,
+      "total": 64
+    },
+    "src/anastomosis/cli_commands/_paths.py": {
+      "avg": 1.5,
+      "total": 6
+    },
+    "src/anastomosis/cli_commands/delivery.py": {
+      "avg": 1.0,
+      "total": 1
+    },
+    "src/anastomosis/cli_commands/destination.py": {
+      "avg": 5.875,
+      "total": 47
+    },
+    "src/anastomosis/cli_commands/guide.py": {
+      "avg": 3.2759,
+      "total": 95
+    },
+    "src/anastomosis/cli_commands/migrate.py": {
+      "avg": 7.5,
+      "total": 30
+    },
+    "src/anastomosis/cli_commands/packsrc.py": {
+      "avg": 5.0,
+      "total": 50
+    },
+    "src/anastomosis/cli_commands/pipeline.py": {
+      "avg": 5.0,
+      "total": 5
+    },
+    "src/anastomosis/cli_commands/upload.py": {
+      "avg": 12.5,
+      "total": 25
+    },
+    "src/anastomosis/core/atomic.py": {
+      "avg": 2.8571,
+      "total": 20
+    },
+    "src/anastomosis/core/ccda_codes.py": {
+      "avg": 4.6667,
+      "total": 14
+    },
+    "src/anastomosis/core/clock.py": {
+      "avg": 2.3333,
+      "total": 7
+    },
+    "src/anastomosis/core/codes.py": {
+      "avg": 4.0,
+      "total": 12
+    },
+    "src/anastomosis/core/commands.py": {
+      "avg": 3.0526,
+      "total": 58
+    },
+    "src/anastomosis/core/conservation.py": {
+      "avg": 1.8571,
+      "total": 13
+    },
+    "src/anastomosis/core/fhir/export.py": {
+      "avg": 5.8929,
+      "total": 165
+    },
+    "src/anastomosis/core/fhir/ingest.py": {
+      "avg": 5.7727,
+      "total": 127
+    },
+    "src/anastomosis/core/hashutil.py": {
+      "avg": 1.6667,
+      "total": 10
+    },
+    "src/anastomosis/core/identity.py": {
+      "avg": 3.0,
+      "total": 24
+    },
+    "src/anastomosis/core/locking.py": {
+      "avg": 2.75,
+      "total": 11
+    },
+    "src/anastomosis/core/logutil.py": {
+      "avg": 3.0,
+      "total": 21
+    },
+    "src/anastomosis/core/migrate.py": {
+      "avg": 2.48,
+      "total": 62
+    },
+    "src/anastomosis/core/migration_status.py": {
+      "avg": 1.5,
+      "total": 9
+    },
+    "src/anastomosis/core/model/actors.py": {
+      "avg": 3.3333,
+      "total": 10
+    },
+    "src/anastomosis/core/model/base.py": {
+      "avg": 1.0,
+      "total": 2
+    },
+    "src/anastomosis/core/model/bundle.py": {
+      "avg": 3.0,
+      "total": 15
+    },
+    "src/anastomosis/core/model/clinical.py": {
+      "avg": 1.0,
+      "total": 14
+    },
+    "src/anastomosis/core/model/coverage.py": {
+      "avg": 1.0,
+      "total": 1
+    },
+    "src/anastomosis/core/model/document.py": {
+      "avg": 1.0,
+      "total": 1
+    },
+    "src/anastomosis/core/model/encounter.py": {
+      "avg": 2.2857,
+      "total": 16
+    },
+    "src/anastomosis/core/model/patient.py": {
+      "avg": 1.7,
+      "total": 17
+    },
+    "src/anastomosis/core/model_paths.py": {
+      "avg": 4.0,
+      "total": 16
+    },
+    "src/anastomosis/core/outcome.py": {
+      "avg": 1.0,
+      "total": 2
+    },
+    "src/anastomosis/core/output.py": {
+      "avg": 4.5,
+      "total": 54
+    },
+    "src/anastomosis/core/packinit.py": {
+      "avg": 4.1667,
+      "total": 25
+    },
+    "src/anastomosis/core/pdfsnapshot.py": {
+      "avg": 1.6923,
+      "total": 22
+    },
+    "src/anastomosis/core/presentation.py": {
+      "avg": 2.1667,
+      "total": 13
+    },
+    "src/anastomosis/core/profiles.py": {
+      "avg": 1.9355,
+      "total": 60
+    },
+    "src/anastomosis/core/runmanifest.py": {
+      "avg": 2.35,
+      "total": 47
+    },
+    "src/anastomosis/core/selfcheck.py": {
+      "avg": 3.7333,
+      "total": 56
+    },
+    "src/anastomosis/core/source_init_command.py": {
+      "avg": 4.0909,
+      "total": 45
+    },
+    "src/anastomosis/core/sourcelearn.py": {
+      "avg": 4.7188,
+      "total": 151
+    },
+    "src/anastomosis/core/textutil.py": {
+      "avg": 2.9667,
+      "total": 89
+    },
+    "src/anastomosis/core/timeutil.py": {
+      "avg": 4.0,
+      "total": 52
+    },
+    "src/anastomosis/core/upload_command.py": {
+      "avg": 3.5385,
+      "total": 46
+    },
+    "src/anastomosis/core/vesselmark.py": {
+      "avg": 3.2083,
+      "total": 77
+    },
+    "src/anastomosis/deliver/_shared.py": {
+      "avg": 1.7,
+      "total": 17
+    },
+    "src/anastomosis/deliver/archive/archive.py": {
+      "avg": 5.1579,
+      "total": 98
+    },
+    "src/anastomosis/deliver/archive/templates.py": {
+      "avg": 1.0,
+      "total": 1
+    },
+    "src/anastomosis/deliver/browser/attach.py": {
+      "avg": 2.0,
+      "total": 2
+    },
+    "src/anastomosis/deliver/browser/cdp.py": {
+      "avg": 4.3333,
+      "total": 13
+    },
+    "src/anastomosis/deliver/browser/engine.py": {
+      "avg": 3.5333,
+      "total": 53
+    },
+    "src/anastomosis/deliver/browser/errors.py": {
+      "avg": 1.0,
+      "total": 5
+    },
+    "src/anastomosis/deliver/browser/fake.py": {
+      "avg": 2.1,
+      "total": 42
+    },
+    "src/anastomosis/deliver/browser/gates.py": {
+      "avg": 2.5714,
+      "total": 36
+    },
+    "src/anastomosis/deliver/browser/manager.py": {
+      "avg": 1.5333,
+      "total": 23
+    },
+    "src/anastomosis/deliver/browser/manifest.py": {
+      "avg": 3.4,
+      "total": 34
+    },
+    "src/anastomosis/deliver/browser/persist.py": {
+      "avg": 3.619,
+      "total": 76
+    },
+    "src/anastomosis/deliver/browser/reports.py": {
+      "avg": 3.5,
+      "total": 7
+    },
+    "src/anastomosis/deliver/browser/states.py": {
+      "avg": 1.5,
+      "total": 3
+    },
+    "src/anastomosis/deliver/browser/tracking.py": {
+      "avg": 2.12,
+      "total": 53
+    },
+    "src/anastomosis/deliver/browser/verify.py": {
+      "avg": 1.3333,
+      "total": 8
+    },
+    "src/anastomosis/deliver/bundle/bundle.py": {
+      "avg": 4.9091,
+      "total": 54
+    },
+    "src/anastomosis/deliver/ccda_export/builder.py": {
+      "avg": 4.1429,
+      "total": 290
+    },
+    "src/anastomosis/deliver/ccda_export/deliverer.py": {
+      "avg": 2.8182,
+      "total": 31
+    },
+    "src/anastomosis/deliver/fhir_api/attach.py": {
+      "avg": 1.0,
+      "total": 1
+    },
+    "src/anastomosis/deliver/fhir_api/client.py": {
+      "avg": 2.9524,
+      "total": 62
+    },
+    "src/anastomosis/deliver/fhir_api/destination.py": {
+      "avg": 3.1944,
+      "total": 115
+    },
+    "src/anastomosis/deliver/render_index.py": {
+      "avg": 3.5556,
+      "total": 32
+    },
+    "src/anastomosis/deliver/router.py": {
+      "avg": 2.8889,
+      "total": 26
+    },
+    "src/anastomosis/deliver/verify/composite.py": {
+      "avg": 3.0,
+      "total": 48
+    },
+    "src/anastomosis/deliver/verify/levels.py": {
+      "avg": 5.8571,
+      "total": 123
+    },
+    "src/anastomosis/deliver/verify/types.py": {
+      "avg": 1.3333,
+      "total": 4
+    },
+    "src/anastomosis/destinations/base.py": {
+      "avg": 1.4074,
+      "total": 38
+    },
+    "src/anastomosis/destinations/browserpack.py": {
+      "avg": 2.2308,
+      "total": 145
+    },
+    "src/anastomosis/destinations/loader.py": {
+      "avg": 3.6,
+      "total": 36
+    },
+    "src/anastomosis/destinations/registry.py": {
+      "avg": 2.2143,
+      "total": 31
+    },
+    "src/anastomosis/destinations/wizard.py": {
+      "avg": 1.5556,
+      "total": 14
+    },
+    "src/anastomosis/gui/__main__.py": {
+      "avg": 4.5,
+      "total": 9
+    },
+    "src/anastomosis/gui/consoles/packgen.py": {
+      "avg": 3.0,
+      "total": 15
+    },
+    "src/anastomosis/gui/consoles/runs.py": {
+      "avg": 3.4091,
+      "total": 75
+    },
+    "src/anastomosis/gui/consoles/source.py": {
+      "avg": 4.375,
+      "total": 35
+    },
+    "src/anastomosis/gui/consoles/upload.py": {
+      "avg": 3.1538,
+      "total": 41
+    },
+    "src/anastomosis/gui/consoles/wizard.py": {
+      "avg": 1.4,
+      "total": 7
+    },
+    "src/anastomosis/gui/controller.py": {
+      "avg": 1.55,
+      "total": 93
+    },
+    "src/anastomosis/gui/events.py": {
+      "avg": 1.25,
+      "total": 5
+    },
+    "src/anastomosis/gui/jobs.py": {
+      "avg": 2.1667,
+      "total": 26
+    },
+    "src/anastomosis/gui/shared.py": {
+      "avg": 2.3333,
+      "total": 7
+    },
+    "src/anastomosis/gui/shell.py": {
+      "avg": 2.6667,
+      "total": 24
+    },
+    "src/anastomosis/packgen/emit.py": {
+      "avg": 3.0882,
+      "total": 105
+    },
+    "src/anastomosis/packgen/evidence.py": {
+      "avg": 2.8788,
+      "total": 95
+    },
+    "src/anastomosis/packgen/extract.py": {
+      "avg": 3.0667,
+      "total": 46
+    },
+    "src/anastomosis/packgen/infer.py": {
+      "avg": 4.4242,
+      "total": 146
+    },
+    "src/anastomosis/packgen/ocr.py": {
+      "avg": 3.0,
+      "total": 81
+    },
+    "src/anastomosis/packs/generic_soap/context.py": {
+      "avg": 9.0,
+      "total": 18
+    },
+    "src/anastomosis/packs/practice_fusion_soap/context.py": {
+      "avg": 8.7714,
+      "total": 307
+    },
+    "src/anastomosis/pipeline.py": {
+      "avg": 4.6136,
+      "total": 203
+    },
+    "src/anastomosis/qa/base.py": {
+      "avg": 1.7778,
+      "total": 16
+    },
+    "src/anastomosis/qa/checks.py": {
+      "avg": 5.7059,
+      "total": 194
+    },
+    "src/anastomosis/qa/runner.py": {
+      "avg": 3.5,
+      "total": 28
+    },
+    "src/anastomosis/qa/wholepatient.py": {
+      "avg": 3.0,
+      "total": 9
+    },
+    "src/anastomosis/reconstruct/ccda_standard/renderer.py": {
+      "avg": 2.2222,
+      "total": 20
+    },
+    "src/anastomosis/reconstruct/chromium.py": {
+      "avg": 2.0,
+      "total": 12
+    },
+    "src/anastomosis/reconstruct/engine.py": {
+      "avg": 2.3,
+      "total": 46
+    },
+    "src/anastomosis/reconstruct/packctx.py": {
+      "avg": 2.75,
+      "total": 11
+    },
+    "src/anastomosis/reconstruct/packexec.py": {
+      "avg": 2.0,
+      "total": 8
+    },
+    "src/anastomosis/reconstruct/packs.py": {
+      "avg": 3.16,
+      "total": 79
+    },
+    "src/anastomosis/reconstruct/packtrust.py": {
+      "avg": 1.9167,
+      "total": 23
+    },
+    "src/anastomosis/reconstruct/provenance.py": {
+      "avg": 3.0,
+      "total": 42
+    },
+    "src/anastomosis/sources/_rowutil.py": {
+      "avg": 2.2,
+      "total": 11
+    },
+    "src/anastomosis/sources/base.py": {
+      "avg": 1.8462,
+      "total": 24
+    },
+    "src/anastomosis/sources/ccda/__init__.py": {
+      "avg": 3.4286,
+      "total": 24
+    },
+    "src/anastomosis/sources/ccda/ledger.py": {
+      "avg": 2.958,
+      "total": 352
+    },
+    "src/anastomosis/sources/ccda/parser.py": {
+      "avg": 4.1712,
+      "total": 463
+    },
+    "src/anastomosis/sources/fhir_r4/__init__.py": {
+      "avg": 6.0,
+      "total": 36
+    },
+    "src/anastomosis/sources/fhir_r4/mapper.py": {
+      "avg": 8.1042,
+      "total": 389
+    },
+    "src/anastomosis/sources/learned/__init__.py": {
+      "avg": 4.75,
+      "total": 19
+    },
+    "src/anastomosis/sources/learned/interpreter.py": {
+      "avg": 4.6842,
+      "total": 89
+    },
+    "src/anastomosis/sources/learned/reader.py": {
+      "avg": 5.0,
+      "total": 85
+    },
+    "src/anastomosis/sources/learned/spec.py": {
+      "avg": 2.5625,
+      "total": 41
+    },
+    "src/anastomosis/sources/learned/transforms.py": {
+      "avg": 2.0,
+      "total": 20
+    },
+    "src/anastomosis/sources/oracle_ehi/__init__.py": {
+      "avg": 3.3333,
+      "total": 10
+    },
+    "src/anastomosis/sources/oracle_ehi/loader.py": {
+      "avg": 4.625,
+      "total": 74
+    },
+    "src/anastomosis/sources/oracle_ehi/mapper.py": {
+      "avg": 4.2308,
+      "total": 110
+    },
+    "src/anastomosis/sources/pf_tebra/__init__.py": {
+      "avg": 1.4,
+      "total": 7
+    },
+    "src/anastomosis/sources/pf_tebra/escript.py": {
+      "avg": 6.0,
+      "total": 30
+    },
+    "src/anastomosis/sources/pf_tebra/loader.py": {
+      "avg": 3.1333,
+      "total": 47
+    },
+    "src/anastomosis/sources/pf_tebra/mapper.py": {
+      "avg": 5.386,
+      "total": 307
+    }
+  },
+  "tool": "radon cc -j src"
 }

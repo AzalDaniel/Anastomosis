@@ -87,7 +87,7 @@ def test_gate_fails_when_a_files_ratio_rises_above_baseline(tmp_path: Path) -> N
     mod.write_text("# a\n# b\n# c\n# d\n# e\n" + mod.read_text(encoding="utf-8"), encoding="utf-8")
     current = measure(tmp_path)
     failures, _ = compare(current, baseline)
-    assert any("file ratio rose" in f and "mod.py" in f for f in failures)
+    assert any("file prose grew" in f and "mod.py" in f for f in failures)
 
 
 def test_gate_passes_and_counts_a_file_as_improved(tmp_path: Path) -> None:
@@ -228,4 +228,24 @@ def test_a_history_phrase_that_only_moved_is_not_new(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     failures, _ = compare(measure(tmp_path), baseline)
+    assert failures == []
+
+
+def test_deleting_code_from_a_file_never_fails_even_though_its_ratio_rises() -> None:
+    _write_tree(tmp := Path(__import__("tempfile").mkdtemp()))
+    baseline = measure(tmp)
+    mod = tmp / "src" / "pkg" / "mod.py"
+    mod.write_text(
+        mod.read_text(encoding="utf-8") + "\n\ndef sub(a, b):\n    return a - b\n", encoding="utf-8"
+    )
+    baseline = measure(tmp)
+    mod.write_text(
+        mod.read_text(encoding="utf-8").replace("\n\ndef sub(a, b):\n    return a - b\n", ""),
+        encoding="utf-8",
+    )
+    current = measure(tmp)
+    assert float(current["files"]["src/pkg/mod.py"]["ratio"]) > float(
+        baseline["files"]["src/pkg/mod.py"]["ratio"]
+    )  # type: ignore[index]
+    failures, _ = compare(current, baseline)
     assert failures == []

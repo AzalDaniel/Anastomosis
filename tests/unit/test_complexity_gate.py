@@ -122,9 +122,7 @@ def test_the_baseline_file_is_violations_only() -> None:
         assert entry["rank"] not in ("A", "B"), entry
     for entry in baseline["modules"].values():
         assert entry["rank"] != "A", entry
-    # ``totals`` is the reference a deletion is judged against, one int per
-    # module, never a violation.
-    assert all(isinstance(v, int) for v in baseline["totals"].values())
+    assert all(set(v) == {"avg", "total"} for v in baseline["reference"].values())
 
 
 def test_windows_paths_measure_to_the_same_keys_as_posix_paths() -> None:
@@ -169,9 +167,34 @@ def test_adding_a_block_to_a_module_over_the_line_fails() -> None:
     assert any("WORSENED module" in f and "12 to 18" in f for f in failures)
 
 
+def test_concentrating_the_same_complexity_into_fewer_blocks_fails() -> None:
+    # One block grows 6 -> 10 while four one-branch helpers go: total 20 both
+    # ways, average 3.3 (A) -> 10.0 (B). Nothing was paid down.
+    baseline = measure(
+        _report(
+            ("src/m.py", "a", None, 6),
+            ("src/m.py", "b", None, 10),
+            ("src/m.py", "h1", None, 1),
+            ("src/m.py", "h2", None, 1),
+            ("src/m.py", "h3", None, 1),
+            ("src/m.py", "h4", None, 1),
+        )
+    )
+    current = measure(_report(("src/m.py", "a", None, 10), ("src/m.py", "b", None, 10)))
+    failures, _ = compare(current, baseline)
+    assert any("concentrated complexity" in f for f in failures)
+    # The same move paid for by one real deletion of complexity passes.
+    current = measure(_report(("src/m.py", "a", None, 9), ("src/m.py", "b", None, 10)))
+    failures, improved = compare(current, baseline)
+    assert failures == []
+    assert improved == 1
+
+
 def test_a_baseline_without_totals_still_judges_a_known_module() -> None:
     baseline = measure(_report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 6)))
-    del baseline["totals"]  # type: ignore[union-attr]
+    del baseline["reference"]  # type: ignore[union-attr]
+    for entry in baseline["modules"].values():  # type: ignore[union-attr]
+        del entry["total"]
     current = measure(_report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 5)))
     failures, improved = compare(current, baseline)
     assert failures == []
