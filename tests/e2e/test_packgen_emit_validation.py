@@ -1,31 +1,13 @@
 """E2E validation of the packgen draft emitter — the item-15 proof (adapted).
 
-PLAN item 15 says: "regenerate the PF pack from synthetic PF-style samples and
-diff against the hand-built pack." The hand-built ``practice_fusion_soap`` pack
-is blocked (issue #4), so this test takes the HONEST adaptation, flagged in the
-PR: regenerate a pack from ``generic_soap``-RENDERED samples and diff against
-the hand-built ``generic_soap``.
-
-The chain, with REAL Chromium throughout (reusing the golden render path):
-
-    render N fixture encounters through generic_soap
-      -> analyze the PDFs            (the layout learner)
-      -> emit_draft_pack             (the draft writer under test)
-      -> assert the draft (a) loads through the real loader,
-                          (b) lists generic_soap's SOAP headings in order,
-                          (c) matches Letter page size,
-                          (d) recovers the #f1f1f1 heading-band fill token,
-                          (e) RENDERS a fixture record to a parseable PDF whose
-                              text layer carries the section headings,
-                          (f) re-analyzing the DRAFT's own output re-discovers
-                              the same section taxonomy (the FIXED-POINT
-                              property — the strongest honest claim: the learner
-                              is stable under its own emitter).
-
-PHI-safe: the fixture is the repo's synthetic ``feedface-`` PF/Tebra export, so
-every value seen here is synthetic.
-
-Marked ``e2e``; SKIPS cleanly when Playwright/Chromium is unavailable.
+PLAN item 15 wants the hand-built ``practice_fusion_soap`` pack
+regenerated and diffed, but that pack is blocked (issue #4); this instead
+regenerates from ``generic_soap``-RENDERED samples, with REAL Chromium
+throughout: render fixtures -> analyze -> ``emit_draft_pack`` -> assert
+the draft loads, lists SOAP headings in order, matches page geometry,
+RENDERS a parseable PDF, and re-analyzing its output is a FIXED POINT.
+PHI-safe: synthetic ``feedface-`` PF/Tebra fixture. Marked ``e2e``,
+skipping cleanly without Playwright/Chromium.
 """
 
 from __future__ import annotations
@@ -91,12 +73,9 @@ def _render_fixture_through(pack, records, out_dir: Path) -> list[Path]:  # type
 
 @pytest.fixture(scope="module")
 def draft(tmp_path_factory):  # type: ignore[no-untyped-def]
-    """Render fixtures through generic_soap, analyze, and emit a draft pack.
-
-    Module-scoped (one real render pass), returning everything the assertions
-    need: the source analysis, the rendered draft directory, and the loaded
-    draft pack.
-    """
+    """Render fixtures through generic_soap, analyze, and emit a draft
+    pack. Module-scoped (one real render pass), returning the source
+    analysis, the rendered draft directory, and the loaded draft pack."""
     _chromium_or_skip()
     import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
     from anastomosis.sources import get_source
@@ -211,14 +190,10 @@ def test_draft_renders_parseable_pdf_with_headings(draft, tmp_path) -> None:  # 
 
 
 def test_draft_is_a_fixed_point_of_the_learner(draft, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """Render fixtures through the DRAFT, re-analyze the result, and assert the
-    learner re-discovers the SAME section taxonomy it learned from generic_soap.
-
-    This is the strongest honest claim available without the PF pack: the
-    draft emitter is a FIXED POINT of the learner — emit(analyze(X)) renders to
-    something analyze re-discovers identically. A drift here means the emitter
-    silently changed the design it was handed.
-    """
+    """The draft emitter must be a FIXED POINT of the learner:
+    emit(analyze(X)) must render to something analyze re-discovers as the
+    SAME section taxonomy — a drift here means the emitter silently
+    changed the design it was handed."""
     pdfs = _render_fixture_through(draft["status"].pack, draft["records"], tmp_path / "fixedpoint")
     re_analysis = analyze(extract_samples(pdfs))
     re_headings = {c.text for c in re_analysis.sections if c.count >= 4}
