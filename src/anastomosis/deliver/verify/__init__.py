@@ -1,20 +1,12 @@
 """The L0-L6 delivery verification ladder (M2 item 11).
 
-The layered defense that proves a reconstructed chart landed in the right
-destination chart, intact and identifiable. It plugs into the browser upload
-engine through the existing
-:class:`~anastomosis.deliver.browser.verify.Verifier` seam — the engine,
-tracking ledger, and state machine are untouched — and is also usable
-standalone (a future ``anast verify``), because every level is self-contained.
-
-* :mod:`.levels` — one small class per level (L0-L6) with ``run(...)`` and the
-  shared :class:`LevelResult`/:class:`LevelStatus` and matching helpers.
-* :mod:`.composite` — :class:`LayeredVerifier`, the stack behind the Verifier
-  protocol: ``verify_pre`` runs L0-L4, ``verify_post`` runs L5-L6.
-
-A sibling package to :mod:`anastomosis.deliver.browser`, deliberately: the
-ladder depends on the browser package's error taxonomy and Verifier seam, never
-the reverse.
+Proves a reconstructed chart landed in the right destination chart, intact
+and identifiable, plugging into the browser upload engine through the
+existing :class:`~anastomosis.deliver.browser.verify.Verifier` seam
+(engine, ledger and state machine untouched); every level is
+self-contained, so it is also usable standalone. A sibling package to
+:mod:`anastomosis.deliver.browser`: the ladder depends on it, never the
+reverse (54).
 """
 
 from __future__ import annotations
