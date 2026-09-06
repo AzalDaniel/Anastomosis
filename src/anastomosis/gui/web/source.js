@@ -126,8 +126,7 @@
   ];
 
   //: What a key column is spoken for as. It is not unmatched — it is what the
-  //: grouping above is keyed on — and the table used to tell a physician
-  //: otherwise.
+  //: grouping above is keyed on.
   const ROLE_LABEL = { patient: "Patient ID", encounter: "Visit ID" };
 
   //: Acronyms a physician reads in capitals. The shell's own list is built from
@@ -701,8 +700,8 @@
     picks = new Map();
     for (const [column, pick] of proposedPicks) picks.set(column, Object.assign({}, pick));
 
-    // What the file is. How it is grouped is no longer prose: it is the three
-    // controls below, which stay true when the operator changes one.
+    // What the file is; how it is grouped is the three controls below, which
+    // stay true when the operator changes one.
     el("format-grouping").textContent =
       `${String(res.format).toUpperCase()} file · ${res.columns} columns.`;
 
