@@ -198,12 +198,11 @@ def test_duplicate_at_destination(tmp_path: Path) -> None:
 def test_wrong_patient_with_existing_fingerprint_aborts_before_duplicate_scan(
     tmp_path: Path,
 ) -> None:
-    """ID-003: a WRONG open chart that ALSO carries this item's fingerprint must
-    NOT resolve to a clean DUPLICATE_AT_DESTINATION with the banner never read.
-    The wrong-patient banner readback runs FIRST and aborts — a chart's
-    existing-docs list is untrusted until the open chart is confirmed to be the
-    right patient. Before the fix the duplicate scan ran first and returned a
-    clean duplicate with banner_calls=0."""
+    """ID-003: a WRONG open chart that ALSO carries this item's
+    fingerprint must NOT resolve to a clean DUPLICATE_AT_DESTINATION
+    with the banner never read — the wrong-patient banner readback
+    runs FIRST and aborts, since a chart's existing-docs list is
+    untrusted until confirmed to be the right patient."""
     items = _single_manifest(tmp_path)
 
     class _BannerCounter(FakeDestination):
