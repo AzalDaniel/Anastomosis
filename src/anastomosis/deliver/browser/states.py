@@ -1,39 +1,10 @@
 """The 15-state upload machine and its legal-transition graph.
 
 One :class:`UploadItem` walks this machine from :data:`UploadState.PENDING`
-to exactly one terminal state. The graph below is the single source of
-truth for what an item may do next; :func:`validate_transition` is the loud
-guard the tracking ledger calls on every write, so an illegal move is a
-raised error, never a silently corrupted ledger.
-
-States
-------
-Non-terminal (work still owed on the item):
-
-* ``PENDING`` — enqueued, not yet started.
-* ``RESOLVING_PATIENT`` — locating the patient in the destination system.
-* ``VERIFYING_PRE`` — pre-upload readback before any bytes are sent: the
-  wrong-patient banner check FIRST, then the duplicate scan (which is trusted
-  only once the open chart's identity is confirmed), then the L0-L4 ladder.
-* ``UPLOADING`` — the file is being pushed into the destination chart.
-* ``UPLOAD_INTERRUPTED`` — an upload was cut off (crash/disconnect) and may
-  or may not have landed; it must re-enter through the duplicate scan.
-* ``RETRY_WAIT`` — a transient failure; the item backs off and retries.
-* ``VERIFYING_POST`` — post-upload readback confirming the document filed.
-
-Terminal (no work owed; the item is done one way or another):
-
-* ``SKIPPED_SKIPLIST`` — excluded up front by the operator skiplist.
-* ``PREFLIGHT_FAILED`` — failed a pre-run sanity check (missing file, bad
-  hash) before any destination contact.
-* ``PATIENT_NOT_FOUND`` — the resolver returned no match (never a guess).
-* ``DUPLICATE_AT_DESTINATION`` — the document is already filed in the chart
-  (the duplicate scan caught it); re-filing would double the chart.
-* ``PRE_VERIFY_FAILED`` — pre-upload verification failed permanently.
-* ``FAILED`` — a permanent failure (retries exhausted or non-retryable).
-* ``POST_VERIFY_FAILED`` — the upload appeared to send but post-verify could
-  not confirm the document landed.
-* ``COMPLETED`` — uploaded and verified at the destination.
+to exactly one terminal state; :func:`validate_transition` is the loud
+guard the tracking ledger calls on every write (51). ``VERIFYING_PRE`` runs
+the wrong-patient banner check before the duplicate scan, which is trusted
+only once that identity is confirmed.
 """
 
 from __future__ import annotations
@@ -89,14 +60,8 @@ TERMINAL_STATES: frozenset[UploadState] = frozenset(
 )
 
 
-# The complete legal-transition graph. Every state is a key; terminal states
-# map to the empty set (no work owed). UPLOAD_INTERRUPTED is the resume
-# re-entry: it goes back through RESOLVING_PATIENT, and from there through
-# VERIFYING_PRE — where the wrong-patient banner check gates the duplicate scan
-# — so an upload that landed just before a crash is caught only after the open
-# chart's identity is confirmed. The duplicate terminal is reachable from
-# VERIFYING_PRE for that reason; the RESOLVING_PATIENT->DUPLICATE edge is kept
-# legal (a permissive graph) though the engine no longer scans there.
+# RESOLVING_PATIENT -> DUPLICATE_AT_DESTINATION stays legal though today the
+# engine only reaches DUPLICATE_AT_DESTINATION via VERIFYING_PRE.
 LEGAL_TRANSITIONS: Mapping[UploadState, frozenset[UploadState]] = {
     UploadState.PENDING: frozenset(
         {
@@ -153,15 +118,8 @@ LEGAL_TRANSITIONS: Mapping[UploadState, frozenset[UploadState]] = {
 }
 
 
-# Crash recovery: where an item in a mid-flight state lands when a killed run
-# is resumed. RESOLVING_PATIENT and VERIFYING_PRE rewind to PENDING — nothing
-# was sent, so starting over is free and correct. UPLOADING and VERIFYING_POST
-# recover to UPLOAD_INTERRUPTED, NOT PENDING: the file may already have landed
-# at the destination, and re-uploading without first re-running the duplicate
-# scan would double-file a patient chart. UPLOAD_INTERRUPTED forces re-entry
-# through RESOLVING_PATIENT, where the scan runs — so the bytes are checked
-# before any re-send. These recovery edges intentionally do not all appear in
-# LEGAL_TRANSITIONS (see TrackingDB.recover): recovery is a privileged path.
+# UPLOADING/VERIFYING_POST recover to UPLOAD_INTERRUPTED, not PENDING, so a
+# possibly-landed file re-enters through the duplicate scan before resend (51).
 CRASH_RECOVERY: Mapping[UploadState, UploadState] = {
     UploadState.RESOLVING_PATIENT: UploadState.PENDING,
     UploadState.VERIFYING_PRE: UploadState.PENDING,
@@ -171,11 +129,9 @@ CRASH_RECOVERY: Mapping[UploadState, UploadState] = {
 
 
 def validate_transition(current: UploadState, new: UploadState) -> None:
-    """Raise :class:`IllegalTransitionError` if ``current -> new`` is illegal.
-
-    Loud by design: the tracking ledger calls this before every state write,
-    so an illegal move (a skipped step, a move out of a terminal state) is a
-    raised error and never a silently corrupted ledger.
+    """Raise :class:`IllegalTransitionError` if ``current -> new`` is not in
+    :data:`LEGAL_TRANSITIONS` — called before every ledger write so a bad
+    move never corrupts state silently.
     """
     if new not in LEGAL_TRANSITIONS[current]:
         raise IllegalTransitionError(

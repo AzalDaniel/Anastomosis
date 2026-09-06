@@ -1,29 +1,9 @@
 """CDP attach configuration: connect to a browser the user already drives.
 
-The browser route's threat model is unusual and deliberate. Anastomosis NEVER
-stores EHR credentials and never logs the user into the destination itself.
-Instead the user opens their EHR in a Chromium they launched with a remote
-debugging port, logs in by hand, and Anastomosis attaches to that already
-authenticated session over the Chrome DevTools Protocol (CDP). The attachment
-lives only as long as the browser the user controls.
-
-That debug port is full remote control of the browser — and therefore of the
-logged-in EHR session behind it. Two guards make the attach safe:
-
-* **Loopback only.** :class:`CdpEndpoint` refuses any host that is not the
-  local loopback. A debug port bound to a routable address would expose the
-  user's authenticated EHR session to anyone on the network; rejecting it is a
-  hard ``ValueError``, never a warning.
-* **Shared-machine warning.** Even on loopback, any *local* user on a
-  multi-user machine can reach the port. :data:`SHARED_MACHINE_WARNING` is the
-  exact text the CLI and GUI must surface before attaching, so the user
-  understands the boundary they are accepting.
-
-No Playwright import lives at module load: this module is importable (and its
-validation testable) on a machine without the ``deliver-browser`` extra.
-:func:`connect_over_cdp` imports it lazily and is intentionally kept thin so
-the testable surface (validation, warning text, the missing-dependency error)
-needs no browser.
+The user logs into their own already-open browser; this module attaches to
+that session over CDP. Loopback only, explicit port, else ``ValueError``
+(52). :data:`SHARED_MACHINE_WARNING` is the exact text the CLI/GUI must
+show before attaching. No Playwright import at module load (75).
 """
 
 from __future__ import annotations
@@ -34,12 +14,10 @@ from urllib.parse import urlsplit
 
 __all__ = ["SHARED_MACHINE_WARNING", "CdpEndpoint", "connect_over_cdp"]
 
-# Schemes a CDP/DevTools endpoint may legitimately use.
 _ALLOWED_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 
-# The only hosts that are the local loopback. ``::1`` may arrive bracketed
-# (``[::1]``) inside a URL authority; urlsplit strips the brackets for us, so
-# the bare form is what we compare against.
+# ``::1`` may arrive bracketed (``[::1]``); urlsplit strips brackets, so the
+# bare form below is what we compare against.
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 SHARED_MACHINE_WARNING = (
@@ -55,14 +33,7 @@ SHARED_MACHINE_WARNING = (
 
 @dataclass(frozen=True)
 class CdpEndpoint:
-    """A validated, loopback-only CDP attach target.
-
-    ``url`` must use an http/https/ws/wss scheme, name a loopback host
-    (``127.0.0.1``, ``::1`` with or without brackets, or ``localhost``), and
-    carry an explicit port (the debug port is never assumed). Any other host
-    is a :class:`ValueError` naming the loopback rule — exposing a debug port
-    off-loopback would hand the network the user's logged-in EHR session.
-    """
+    """A validated, loopback-only CDP attach target (52)."""
 
     url: str
 
@@ -93,21 +64,10 @@ class CdpEndpoint:
 
 
 def connect_over_cdp(endpoint: CdpEndpoint) -> tuple[Any, Any]:  # pragma: no cover
-    """Attach over CDP; return ``(playwright, browser)`` — BOTH owned for teardown.
-
-    Returning the Playwright instance too (not just the browser) is what lets the
-    caller release OUR resources when the run ends: ``browser.close()`` disconnects
-    the CDP session (per Playwright's docs it does NOT close a browser obtained via
-    ``connect_over_cdp`` — the operator's Chrome keeps running) and
-    ``playwright.stop()`` ends the driver subprocess. Without the Playwright handle
-    the driver leaks. The operator's browser/context is NEVER closed.
-
-    Playwright is imported lazily here so the module (and its validation) work
-    without the ``deliver-browser`` extra; a missing install raises a
-    ``RuntimeError`` naming the extra, matching the optional-dependency error
-    style used elsewhere (see :mod:`anastomosis.reconstruct.chromium`). Kept
-    deliberately thin — all testable logic lives in :class:`CdpEndpoint` and
-    :data:`SHARED_MACHINE_WARNING`, not here.
+    """Contract: returns ``(playwright, browser)``, both owned for teardown —
+    ``browser.close()`` alone disconnects the CDP session, never the driver
+    subprocess or the operator's browser; the caller must also call
+    ``playwright.stop()``. Imports Playwright lazily (75).
     """
     try:
         from playwright.sync_api import sync_playwright
