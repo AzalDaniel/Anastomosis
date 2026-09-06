@@ -536,22 +536,10 @@ def merge_loss_narrative(
 
 
 def _fact_id(kind: str, element: _Element | None, source_file: str, position: str) -> str:
-    """A clinical fact's canonical id, on the one identifier rule (#412, #405).
-
-    Every clinical object used to take ``AnastBase.id``'s ``uuid4`` default,
-    which no adapter set — so two loads of one document produced two different
-    ids for the same problem, and the FHIR bundle they were written into could
-    not be byte-compared for drift (#405). A fact's identity is not this run's
-    bookkeeping any more than a patient's is: it is the ``<id>`` the source
-    stated, and where the source stated none, its position in the document.
-
-    ``bare_root_names_the_instance=False``, the encounter answer rather than
-    the patient one, and for the encounter reason: a section lists MANY
-    problems, allergies and results, so a bare vendor OID shared between them
-    is the assigning authority, not the fact. Unlike an organization there is
-    no conflict guard here that would catch a wrong fold, so the ambiguous
-    case takes the position it was written in rather than a merge nobody
-    would be told about.
+    """A clinical fact's canonical id, per rule 8 (#412, #405):
+    ``bare_root_names_the_instance=False`` here — unlike a patient, a
+    section lists MANY facts, so a bare vendor OID shared between them is
+    the assigning authority, not the fact.
     """
     return identity_from_ii(
         kind,
@@ -714,12 +702,9 @@ def _immunizations(section: _Element, patient_id: str, source_file: str) -> list
 
 
 def _observation_value(value: _Element | None) -> tuple[str | None, str | None]:
-    """``(value, unit)`` from any C-CDA result form, not just ``xsi:type="PQ"``.
-
-    Reading only the PQ shape (``@value``/``@unit``) left every qualitative
-    result empty while still producing an Observation carrying its LOINC code —
-    a finalized result that says nothing, which a receiver reads as "no result"
-    rather than as the Negative or Trace the document actually recorded.
+    """``(value, unit)`` from any C-CDA result form, not just
+    ``xsi:type="PQ"`` — the PQ shape alone left every qualitative result
+    empty while the Observation still carried its LOINC code.
     """
     if value is None:
         return None, None
@@ -735,12 +720,8 @@ def _observation_value(value: _Element | None) -> tuple[str | None, str | None]:
 
 def _interval_value(value: _Element) -> tuple[str | None, str | None] | None:
     """``(reading, unit)`` for an IVL_PQ, or ``None`` when it is not one.
-
-    A range with both ends reads ``low-high``; one open end reads as the end it
-    has, because "under 5" is still a result and dropping the number to avoid
-    picking a spelling for the missing half would lose it. ``None`` means the
-    element carried no bound at all, which is the caller's cue to keep looking
-    rather than to record an empty range.
+    A range with both ends reads ``low-high``; one open end reads as the
+    end it has ("under 5" is still a result).
     """
     low, high = _find(value, "v3:low"), _find(value, "v3:high")
     lo, hi = (_attr(end, "value") for end in (low, high))
@@ -768,12 +749,9 @@ def _measurements(
             code = _find(component, "v3:code")
             reading, unit = _observation_value(_find(component, "v3:value"))
             # A component with no id of its own is still the organizer's
-            # statement, not a statement with no provenance at all — see
-            # organizer_component_source_id. ``first_rooted_id`` reads every
-            # ``<id>`` child in document order, not only the first, so a
-            # component whose first ``<id>`` is nullFlavor and whose second
-            # is rooted is read as owning that second id — the same reading
-            # the builder's stated-id walk already gives it.
+            # statement, not one with no provenance (see
+            # organizer_component_source_id). `first_rooted_id` reads every
+            # `<id>` child, not only the first.
             component_id = first_rooted_id(component)
             source_id = component_id[0] if component_id is not None else None
             if source_id is None and organizer_id is not None:
