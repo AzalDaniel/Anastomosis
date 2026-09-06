@@ -1,36 +1,12 @@
 """The one generic adapter that executes any learned mapping.
 
-There is exactly ONE interpreter, not one-adapter-per-format: a
-:class:`LearnedSourceAdapter` is constructed from a validated
-:class:`~anastomosis.sources.learned.spec.MappingSpec` and reads that spec's
-file format into canonical :class:`PatientRecord`\\s. New formats are new *data*
-(a new ``mapping.json``), never new code — the anti-spaghetti rule.
-
-The flat-to-nested fold mirrors the built-in adapters (``pf_tebra._by`` /
-``fhir_r4.records_from_resources``): rows are grouped by the spec's
-``patient_key`` into patients, and — when the mapping has encounter fields —
-each encounter-grained row becomes an encounter. Runtime integrity checks
-refuse blank patient keys, duplicate patient-grained rows, conflicting
-patient-scoped values, and repeated non-blank encounter keys rather than
-silently inventing or collapsing identity. ``row_scope`` declares the grain
-and therefore where un-mapped columns attach (patient-grained vs
-encounter-grained); encounter-grained rows are each their own encounter so
-per-row values are never collapsed. The wizard's
-``round_trip`` proves, per value, that no column is dropped before a mapping is
-ever saved.
-
-The lossless guarantee is mechanical and identical to the built-ins: every
-source column the mapping did not consume, with a non-empty value, lands in the
-owning object's ``extensions`` under a ``learned:<id>:<column>`` namespace. A
-mapping can only ever write to the closed
-:func:`~anastomosis.core.model_paths.canonical_target_paths` set (the spec
-validated that); everything else is preserved verbatim.
-
-PHI: this module reads patient values to build records (its job) but never logs
-them — diagnostics are counts and column names only, and a per-record build
-failure raises a value-free :class:`~...spec.MappingError` naming the column set
-size, not the data.
-"""
+Exactly ONE interpreter, not one-per-format: a :class:`LearnedSourceAdapter`
+runs a validated :class:`~.spec.MappingSpec` — a new format is new *data*,
+never new code. Rows group by ``patient_key`` (mirroring ``pf_tebra._by``);
+``row_scope`` says whether each row is its own encounter, and runtime
+checks refuse blank/duplicate keys or conflicting values. Lossless like
+the built-ins: an unconsumed column lands in ``learned:<id>:<column>``
+extensions; a mapping writes only to the closed canonical target set."""
 
 from __future__ import annotations
 
@@ -142,9 +118,8 @@ class LearnedSourceAdapter:
 
     def __init__(self, spec: MappingSpec) -> None:
         self.name = spec.mapping_id
-        # The author typed this into `anast source init --display`. It went
-        # into the description sentence and nowhere else, so every picker
-        # re-cased the mapping id instead of showing it.
+        # Free text from `anast source init --display`, not derived from
+        # `name` — a re-cased mapping id is not a real title.
         self.display = spec.display
         self.description = f"learned: {spec.display}"
         self._spec = spec
@@ -159,12 +134,9 @@ class LearnedSourceAdapter:
         self._encounter_plan = [p for p in self._plan if p.scope == "encounter"]
         self._translations = {t.source_path: t.table for t in spec.value_translations}
         # A column read through a LOSSY verb is consumed only as a mapping,
-        # never as evidence: its raw value still rides extensions, because the
-        # mapped field cannot answer "what did the file say" — `const:` writes
-        # the same wording over every cell, `split` keeps one piece, case folds
-        # away. round_trip() holds these columns to the same verbatim-survival
-        # proof as unmapped ones, so this line and that proof stand or fall
-        # together.
+        # never as evidence: its raw value still rides extensions (`const`
+        # overwrites, `split` keeps one piece, case folds away). round_trip()
+        # holds these to the same verbatim-survival proof as unmapped columns.
         self._consumed = {
             m.source_path for m in spec.field_mappings if not is_lossy(m.transform)
         } | {self._patient_key}
@@ -174,13 +146,10 @@ class LearnedSourceAdapter:
     @property
     def spec(self) -> MappingSpec:
         """The mapping this adapter executes — read-only, for profiling it.
-
         :func:`anastomosis.core.profiles.capture_source_profile` needs the
-        mapping's id, spec version and destination binding to address the
-        adapter by content rather than by name. The spec is a frozen-by-
-        convention pydantic model the adapter never mutates, so handing it out
-        is a read, not a seam.
-        """
+        mapping's id, version and destination binding to address the
+        adapter by content; the spec is frozen by convention, so handing
+        it out is a read, not a seam."""
         return self._spec
 
     # --- SourceAdapter protocol ------------------------------------------------
@@ -243,10 +212,8 @@ class LearnedSourceAdapter:
         try:
             return plan.transform(raw)
         except (ValueError, TypeError):
-            # A transform that chokes on a cell (a date in the wrong format, say)
-            # must not crash the run with a traceback that prints the cell value.
-            # Re-raise value-free, naming only the column and target. ``from
-            # None`` drops the original (value-bearing) exception from the chain.
+            # A transform that chokes on a cell must not crash with a traceback
+            # that prints the value; re-raise value-free (`from None` drops it).
             raise MappingError(
                 f"learned mapping {self.name!r}: a value in column {plan.source_path!r} "
                 f"could not be read as {plan.transform_spec!r} for {plan.target_path!r}",
@@ -267,15 +234,11 @@ class LearnedSourceAdapter:
     def _patient_parts(
         self, base_row: Row, resolved_values: dict[str, object] | None
     ) -> tuple[dict[str, object], dict[str, str], list[ContactPoint], list[Identifier]]:
-        """Route each mapped patient value to the model shape that holds it.
-
-        Four destinations, because the canonical patient does not store these
-        alike: an address is one assembled object, phones and email are typed
-        contact points, SSN/MRN/PRN are typed identifiers, and everything else
-        is a plain field. ``resolved_values`` carries the first-nonblank values
-        agreed across an encounter-grained group; without it each value is read
-        from the one row.
-        """
+        """Route each mapped patient value to the model shape that holds
+        it: an address (one object), phones/email (typed contact points),
+        SSN/MRN/PRN (typed identifiers), or a plain field. With
+        ``resolved_values``, reads the first-nonblank value agreed across
+        an encounter-grained group instead of the one row."""
         scalars: dict[str, object] = {}
         address: dict[str, str] = {}
         telecom: list[ContactPoint] = []
@@ -313,9 +276,8 @@ class LearnedSourceAdapter:
         scalars, address, telecom, identifiers = self._patient_parts(base_row, resolved_values)
         patient_id = clean_cell(base_row.get(self._patient_key))
         if patient_id is not None:
-            # Front of the list so a reader sees the identity this mapping keyed
-            # on first. Nothing downstream depends on the position: the
-            # destination picks by kind (`_SEARCH_IDENTIFIER_ORDER`).
+            # Front of the list so a reader sees the identity this mapping
+            # keyed on first; the destination picks by kind, not position.
             identifiers.insert(
                 0, Identifier(kind=IdentifierKind.SOURCE_GUID, value=patient_id, system=self.name)
             )
@@ -335,14 +297,11 @@ class LearnedSourceAdapter:
         return self._construct(Patient, kwargs, "patient")
 
     def _encounter_parts(self, row: Row) -> tuple[dict[str, object], list[NoteSection]]:
-        """Route each mapped encounter value: narrative sections, or plain fields.
-
-        The mirror of :meth:`_patient_parts`, and split for the same reason —
-        the routing table is one concern and assembling the model is another.
-        A SOAP body arrives as source markup, so it is sanitised for render and
-        shadowed as text for search/QA; neither is allowed to be empty-string
-        where the model means absent.
-        """
+        """Route each mapped encounter value: narrative sections, or plain
+        fields — the mirror of :meth:`_patient_parts`. A SOAP body arrives
+        as source markup, so it is sanitised for render and shadowed as
+        text for search/QA; neither is empty-string where the model means
+        absent."""
         scalars: dict[str, object] = {}
         sections: list[NoteSection] = []
         for plan in self._encounter_plan:
@@ -384,9 +343,8 @@ class LearnedSourceAdapter:
         self, patient_id: str, group_rows: list[Row], file_name: str
     ) -> list[Encounter]:
         per_encounter = self._spec.grouping.row_scope == "encounter"
-        # In encounter-grained mode every row is its own encounter — even with no
-        # encounter field mapped — so per-row columns ride on per-row extensions
-        # and are never collapsed (last-value-wins) into the patient.
+        # In encounter-grained mode every row is its own encounter — even with
+        # no encounter field mapped — so per-row columns never collapse.
         if not self._encounter_plan and not per_encounter:
             return []
         encounters: list[Encounter] = []
@@ -409,13 +367,10 @@ class LearnedSourceAdapter:
         return encounters
 
     def _resolve_encounter_grained_patient_values(self, group_rows: list[Row]) -> dict[str, object]:
-        """Return first non-empty patient values, refusing conflicts across rows.
-
-        Encounter exports commonly repeat demographics, sometimes leaving a
-        repeated value blank. The first non-empty transformed value for each
-        field is deterministic; incompatible non-empty values would make that
-        choice lossy and are therefore rejected.
-        """
+        """First non-empty patient value per field, refusing conflicts
+        across rows. Encounter exports commonly repeat demographics,
+        sometimes leaving a repeat blank; incompatible non-empty values
+        would make the "first" choice lossy, so they're rejected."""
         values_by_target: dict[str, object] = {}
         for row in group_rows:
             for plan in self._patient_plan:
@@ -442,11 +397,9 @@ class LearnedSourceAdapter:
             if encounter_grained
             else None
         )
-        # Un-mapped columns attach where the grain says: to each encounter when
-        # the row is encounter-grained (handled in _build_encounter via
-        # with_extensions), else merged onto the patient. In patient-grained mode
-        # the canonical assumption is one row per patient, so the merge is
-        # lossless; round_trip proves this per value and refuses to save if not.
+        # Un-mapped columns attach where the grain says: per encounter when
+        # encounter-grained (via with_extensions), else merged onto the
+        # patient (one row per patient, so lossless; round_trip proves it).
         patient_extensions = {} if encounter_grained else self._row_extensions(group_rows)
         patient = self._build_patient(
             group_rows[0],
@@ -465,12 +418,9 @@ class LearnedSourceAdapter:
         )
 
     def _construct(self, model: type[_M], kwargs: dict[str, object], scope: str) -> _M:
-        """Build a model, turning a validation failure into a PHI-safe error.
-
-        A bad transform/target type (e.g. a raw date string into a date field)
-        surfaces here; the message names the scope and the field count, never a
-        value.
-        """
+        """Build a model, turning a validation failure into a PHI-safe
+        error: a bad transform/target type surfaces here, and the message
+        names the scope and the field count, never a value."""
         try:
             return model(**kwargs)
         except ValidationError as exc:
