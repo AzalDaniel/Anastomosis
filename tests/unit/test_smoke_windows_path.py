@@ -1,20 +1,13 @@
 r"""What the Windows installer is allowed to do to the machine PATH.
 
-The shipped installer appended the CLI directory to the machine PATH again on
-every upgrade and left one segment behind on uninstall (#281). Its idempotence
-Check compared the literal ``{app}\cli`` — Inno does not expand constants in a
-Check function's string parameter — against a PATH holding the expanded
-directory, so the check answered "not there yet" every single time.
-
-The fix is in ``packaging/anastomosis.iss`` and is proved end to end by the
-Windows smoke job, which installs the real installer four times and counts the
-real registry PATH after each step. What can be tested here is the half of that
-step written in Python: what counts as a segment the installer owns, what the
-count matrix accepts, and what the preservation check calls damage. Get the
-ownership test wrong in either direction and the smoke either misses the
-duplicate it exists to catch or accuses the installer of eating a directory
-that was never its to touch.
-"""
+The installer must not append the CLI directory to the machine PATH
+again on every upgrade, or leave one segment behind on uninstall (#281) —
+Inno does not expand constants in a Check function's string parameter, so
+a literal ``{app}\cli`` compared against an expanded PATH always answers
+"not there yet". The fix lives in ``packaging/anastomosis.iss``, proved
+by the Windows smoke job's real installer runs; tested here is the
+Python half: what counts as an owned segment, the count matrix, and
+preservation."""
 
 from __future__ import annotations
 
@@ -141,12 +134,11 @@ def test_the_matrix_names_every_step_the_shipped_installer_failed(smoke: ModuleT
 def test_each_defect_alone_still_fails_its_own_step(
     smoke: ModuleType, observed: list[int], step: str
 ) -> None:
-    """The three guards in anastomosis.iss are independent, so the matrix has to
-    catch each one on its own — a sequence that only measured the end state
-    would pass an installer that still cannot repair a machine it broke. The
-    FIRST problem reported is the step the defect lands on: an unexpanded Check
-    also spoils every step after it, and a reader chasing a cause needs the
-    earliest one first."""
+    """The three guards in anastomosis.iss are independent, so the matrix
+    must catch each one on its own: the FIRST problem reported is the
+    step the defect lands on, since an unexpanded Check also spoils every
+    step after it, and a reader chasing a cause needs the earliest one
+    first."""
     problems = smoke._matrix_problems(observed)
     assert problems
     assert step in problems[0]
@@ -197,15 +189,10 @@ def test_the_upgrades_select_the_add_to_path_task(
 
 
 class _FakeInstaller:
-    """An installer that edits a machine PATH the way anastomosis.iss does.
-
-    A MODEL of the .iss, deliberately not the .iss itself — Pascal needs a
-    Windows runner, and the real script is proved by the smoke job. What this
-    proves is the other half of the same gate: that the matrix and its two
-    injections actually reject an installer behaving the way the shipped one
-    did. Each flag switches off exactly one of the three guards the fix added,
-    so a matrix that stopped covering one of them fails here.
-    """
+    """A MODEL of anastomosis.iss, not the .iss itself — Pascal needs a
+    Windows runner, so the real script is proved by the smoke job
+    instead. Each flag switches off exactly one of the three PATH guards,
+    so a matrix that stopped covering one of them fails here."""
 
     def __init__(
         self,
@@ -304,15 +291,11 @@ def machine(smoke: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Callable[...,
 def test_the_cycle_passes_against_an_installer_that_behaves(
     smoke: ModuleType, machine: Callable[..., _FakeInstaller], capsys: Any
 ) -> None:
-    """Five steps in the order #281 requires, and the machine PATH handed back
-    exactly as it was found — seeds removed, nothing else moved.
-
-    And every step reports the ownership marker beside its count, on the
-    passing steps too. That is the whole story of the cycle in one column:
-    nothing owned, then claimed by the upgrade, then given back — and when a
-    step goes red, the reader can see which one lost it. The first red run
-    reported counts alone, and the marker turned out to be the answer.
-    """
+    """Five steps in the order #281 requires, and the machine PATH handed
+    back exactly as it was found — seeds removed, nothing else moved.
+    Every step reports the ownership marker beside its count, on the
+    passing steps too, so a red step's reader can see which one lost it:
+    nothing owned, then claimed by the upgrade, then given back."""
     fake = machine()
     smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))
     assert fake.actions == [
@@ -344,9 +327,9 @@ def test_the_cycle_passes_against_an_installer_that_behaves(
 def test_the_cycle_rejects_each_of_the_shipped_defects(
     smoke: ModuleType, machine: Callable[..., _FakeInstaller], guard: str, step: str
 ) -> None:
-    """One guard removed at a time, because the two repair steps only exist to
-    catch the two defects a clean install can no longer produce: drop either
-    injection and this installer passes a gate written for it."""
+    """One guard removed at a time: the repair steps exist only to catch
+    defects a clean install would otherwise reintroduce, so the matrix
+    must still reject an installer missing either one."""
     machine(**{guard: False})
     with pytest.raises(smoke.SmokeFailure) as excinfo:
         smoke.check_path_matrix(Path("Anastomosis-Setup-0.0.0.exe"))

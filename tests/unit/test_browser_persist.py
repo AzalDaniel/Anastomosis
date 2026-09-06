@@ -6,8 +6,8 @@ verifies against) and the v1 file older trees still hold, which must load with
 degraded verification and say so out loud rather than be refused.
 
 Synthetic data only — ``feedface-`` ids, neutral file names in ``tmp_path``.
-A name-shaped basename is deliberately used to prove the writer logs only an
-item COUNT and never the path/name.
+A name-shaped basename deliberately proves the writer logs only an item
+COUNT, never the path/name.
 """
 
 from __future__ import annotations
@@ -223,13 +223,10 @@ def test_v2_round_trip_carries_pack_expected_pages_and_dos(tmp_path: Path) -> No
 
 
 def test_the_item_carries_its_own_date_of_service(tmp_path: Path) -> None:
-    """The date reaches the upload DRIVER, not only the verifier.
-
-    A destination whose filing dialog asks for a document date has to be handed
-    the right one; before this the date reached the encounter map L3 checks
-    against and stopped there, so the driver had nothing to type. Read once,
-    handed out twice — no new field is written, so the file stays v2.
-    """
+    """The date reaches the upload DRIVER, not only the encounter map L3
+    checks against: a destination whose filing dialog asks for a document
+    date has to be handed the right one. Read once, handed out twice — no
+    new field is written, so the file stays v2."""
     docs, records = _pdf_fixture(tmp_path)
     out_dir = tmp_path / "out"
     write_upload_manifest(docs, records, out_dir, pack="generic_soap")
@@ -344,8 +341,9 @@ def _downgrade_to_v1(out_dir: Path) -> None:
 def test_v1_manifest_loads_with_degraded_verification_and_says_so(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An already-rendered v1 tree must still upload — never refused — but the
-    operator is told, in the run's own log, what is no longer checked."""
+    """An already-rendered v1 tree must still upload — never refused — but
+    the operator is told, in the run's own log, what the ladder cannot
+    check on it."""
     docs, records = _fixture(tmp_path)
     out_dir = tmp_path / "out"
     write_upload_manifest(docs, records, out_dir, pack="generic_soap")
