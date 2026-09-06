@@ -1,16 +1,12 @@
-"""The name a person typed, read back where a person reads it.
+"""The name a person typed, read back where a person reads it: the
+``--display`` field must be recoverable as a name, not just
+interpolated into a sentence — no re-casing of ``ccda`` produces
+"C-CDA".
 
-``anast pack init --display "Acme SOAP note"`` and ``anast source init
---display`` both asked an author what their thing should be called. The answer
-was interpolated into a sentence in the generated description and never
-recoverable as a name again, so every surface that lists a layout or a format
-had to invent one by re-casing the id — and no re-casing of ``ccda`` produces
-"C-CDA", which is why the front end carried that one as a hard-coded exception.
-
-These pin the round trip end to end: typed at the command, written as a field,
-loaded by the manifest, carried through the info surface, and different from
-the id. Plus the property that made it worth doing carefully — a registration
-without one still shows something.
+These pin the round trip end to end: typed at the command, written as
+a field, loaded by the manifest, carried through the info surface, and
+different from the id. A registration without one still shows
+something.
 """
 
 from __future__ import annotations
@@ -25,11 +21,9 @@ from anastomosis.reconstruct.packs import PackManifest
 
 
 def test_a_pack_can_declare_the_name_the_author_typed(tmp_path: Path) -> None:
-    """`anast pack init --display "Acme SOAP note"` reaches pack.yaml as a field.
-
-    It reached the file before this — inside the description sentence, where
-    nothing could read it back.
-    """
+    """`anast pack init --display "Acme SOAP note"` reaches pack.yaml
+    as a field, recoverable on its own — not merely interpolated into
+    the description sentence."""
     pytest.importorskip("pymupdf", reason="the emitter reads sample geometry")
     from test_packgen_emit import _make_samples  # type: ignore[import-not-found]
 

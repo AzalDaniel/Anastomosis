@@ -128,14 +128,11 @@ def test_verify_post_skips_without_readers(tmp_path: Path) -> None:
 def test_pre_phase_parses_the_local_pdf_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """L1 (page count), L2 and L3 (page-1 text) share ONE parse of the file.
-
-    They used to open and text-extract the same unchanging local PDF once each.
-    The shared per-item :class:`PdfSnapshot` collapses that to a single open;
-    this counts the opens so a level that goes back to reading the path itself
-    is caught. L0 is excluded from the count on purpose — it re-reads the bytes
-    to hash them, which is its whole job, and it never opens the PDF.
-    """
+    """L1 (page count), L2 and L3 (page-1 text) share ONE parse of the
+    file via a shared per-item :class:`PdfSnapshot`; this counts opens
+    so a level that reverts to reading the path itself is caught. L0 is
+    excluded on purpose — it re-reads bytes to hash them and never
+    opens the PDF."""
     from anastomosis.deliver.verify import levels
 
     item = _item(_make_pdf(tmp_path / "g.pdf", GOOD_LINES))
