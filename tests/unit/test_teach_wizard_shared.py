@@ -1,22 +1,12 @@
 """The two teach wizards run one choreography, not two copies of it.
 
-Both wizards — learn a template pack from sample PDFs, learn a new source format
-from one example export — stop halfway on purpose. They analyze, then refuse
-with `ConfirmationRequired` so a person can confirm what was found before
-anything is written, and the JS fetches the stashed result on the terminal event
-to render that summary.
-
-Which terminal event carries the checkpoint is the part that matters. It has to
-be `done`: send it as `error` and the wizard's ordinary middle step lands on the
-failure branch, so the operator never sees the summary they are meant to
-approve. Nothing crashes — the run just stops with a red banner where a
-confirmation prompt belonged.
-
-That rule used to be written out in both consoles. The 6-line-window duplication
-scan could not see it, because the two copies differ only in which stage name
-and which stash attribute they name, so one could have drifted with every test
-still green. The guard below reads syntax rather than behaviour for the same
-reason the C-CDA mirror guard does.
+Both wizards (learn a template pack from sample PDFs; learn a source
+format from one export) analyze, then refuse with `ConfirmationRequired`
+so a person can confirm before anything is written; the JS fetches the
+stashed result on the terminal event, which must be `done`, never
+`error` — sent as `error`, the operator never sees the summary. The
+routing rule is stated once, in the shared base; the guard below reads
+syntax to prove neither console re-states it.
 """
 
 from __future__ import annotations
@@ -58,12 +48,9 @@ def test_both_teach_wizards_run_the_shared_choreography() -> None:
 
 
 def test_neither_wizard_reaches_the_job_runner_on_its_own() -> None:
-    """The base is the only route to the runner, so there is one copy to drift.
-
-    A console that calls `self._jobs.submit` itself has re-grown its own worker,
-    its own terminal-event routing and its own stash — which is exactly the pair
-    of copies this replaced.
-    """
+    """The base is the only route to the runner, so there is one copy to
+    drift: a console calling `self._jobs.submit` itself has re-grown its
+    own worker, terminal-event routing and stash."""
     for name, path in _WIZARDS.items():
         assert "self._jobs.submit" not in _calls(path), (
             f"{name} submits its own job again — the choreography belongs to WizardConsole"
@@ -84,11 +71,8 @@ def test_neither_wizard_decides_its_own_terminal_event() -> None:
 
 def test_the_checkpoint_closes_the_run_as_done_not_as_failure() -> None:
     """Both wizards, driven through the shared base, agree on the rule.
-
-    Exercised through `_submit_step` with a canned step rather than a real
-    analyze: the point under test is the routing, and a real run would need
-    sample PDFs to reach the same two lines.
-    """
+    Exercised through `_submit_step` with a canned step, not a real
+    analyze, since the point under test is the routing."""
     for console_cls, stage in ((PackgenConsole, "packgen"), (SourceConsole, "source")):
         for result, expected in (
             ({"ok": False, "error": "ConfirmationRequired"}, "stage"),
