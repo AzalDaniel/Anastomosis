@@ -304,7 +304,7 @@
       "rank": "B"
     },
     "src/anastomosis/core/fhir/ingest.py": {
-      "avg": 5.8636,
+      "avg": 5.7727,
       "rank": "B"
     },
     "src/anastomosis/deliver/archive/archive.py": {
@@ -324,7 +324,7 @@
       "rank": "B"
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
-      "avg": 8.2292,
+      "avg": 8.1042,
       "rank": "B"
     },
     "src/anastomosis/sources/pf_tebra/escript.py": {
@@ -332,7 +332,7 @@
       "rank": "B"
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "avg": 5.4035,
+      "avg": 5.386,
       "rank": "B"
     }
   },

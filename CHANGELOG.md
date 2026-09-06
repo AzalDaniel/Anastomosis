@@ -579,6 +579,21 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The shared primitives have one implementation each.** Five streaming or
+  whole-file sha256 readers became `core/hashutil.file_sha256` and
+  `sha256_hex`, with `unreadable=` naming what an unreadable file answers
+  with; the two atomic-write forks in `core/migrate.py` and
+  `core/sourcelearn.py` became calls to `core/atomic`, which names the
+  mapping writer's temp file after its pid so a killed run's temp can be
+  swept; the FHIR readers' four ISO date converters became
+  `core/timeutil.iso_date` and `iso_datetime`, with `pad_partial=` naming the
+  one difference between a canonical bundle and whatever a server sends; and
+  the delivery ladder enumerates date spellings by calling `core/timeutil`
+  rather than through a wrapper of its own. `core/hashutil` has the direct
+  test it never had. Every deliverable of the five fixtures is byte-identical
+  (`tools/snapshot.py`), the corpus pin is unmoved, the guard count holds at
+  72, and three module complexity averages tightened.
+
 - **The prose sweep: the code says less and means the same.** Every docstring
   and comment under `src/` and `tests/` went through one decision: a rule
   goes to `docs/RULES.md`, a contract stays under five lines, a story goes.
