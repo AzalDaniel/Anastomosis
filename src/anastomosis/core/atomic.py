@@ -81,13 +81,11 @@ def atomic_replace(target: Path) -> Iterator[Path]:
 
 
 def _claim(tmp: Path, mode: int | None) -> None:
-    """Create ``tmp`` empty and STATE ``mode`` on it (POSIX; ``None`` no-ops).
-    A creation-time mode is umask-trimmed and ignored outright for a file that
-    already exists, so a stale same-pid temp would carry its own bits over."""
+    """Create ``tmp`` with ``mode`` and chmod it too (POSIX; ``None`` no-ops):
+    the open's mode is umask-trimmed and ignored for an existing stale temp,
+    and a plain touch would leave an instant at the umask default."""
     if mode is None or os.name != "posix":
         return
-    # Created WITH the mode, so there is no instant at the umask default;
-    # chmod afterwards covers a temp that already existed.
     os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode))
     os.chmod(tmp, mode)
 
