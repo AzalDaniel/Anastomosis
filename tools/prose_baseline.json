@@ -701,49 +701,49 @@
       "blank": 45,
       "code": 82,
       "comment": 6,
-      "docstring": 113,
-      "ratio": 0.59204,
-      "total": 246
+      "docstring": 77,
+      "ratio": 0.50303,
+      "total": 210
     },
     "src/anastomosis/destinations/browserpack.py": {
       "blank": 103,
       "code": 485,
-      "comment": 101,
-      "docstring": 342,
-      "ratio": 0.477371,
-      "total": 1031
+      "comment": 85,
+      "docstring": 196,
+      "ratio": 0.366841,
+      "total": 869
     },
     "src/anastomosis/destinations/loader.py": {
       "blank": 30,
       "code": 136,
       "comment": 7,
-      "docstring": 97,
-      "ratio": 0.433333,
-      "total": 270
+      "docstring": 53,
+      "ratio": 0.306122,
+      "total": 226
     },
     "src/anastomosis/destinations/registry.py": {
       "blank": 40,
       "code": 102,
       "comment": 15,
-      "docstring": 90,
-      "ratio": 0.507246,
-      "total": 247
+      "docstring": 60,
+      "ratio": 0.423729,
+      "total": 217
     },
     "src/anastomosis/destinations/tebra/__init__.py": {
       "blank": 1,
       "code": 1,
       "comment": 0,
-      "docstring": 18,
-      "ratio": 0.947368,
-      "total": 20
+      "docstring": 8,
+      "ratio": 0.888889,
+      "total": 10
     },
     "src/anastomosis/destinations/wizard.py": {
       "blank": 21,
       "code": 94,
-      "comment": 9,
-      "docstring": 63,
-      "ratio": 0.433735,
-      "total": 187
+      "comment": 7,
+      "docstring": 40,
+      "ratio": 0.333333,
+      "total": 162
     },
     "src/anastomosis/gui/__init__.py": {
       "blank": 2,
@@ -900,18 +900,18 @@
     "src/anastomosis/packs/generic_soap/context.py": {
       "blank": 9,
       "code": 55,
-      "comment": 5,
-      "docstring": 12,
-      "ratio": 0.236111,
-      "total": 81
+      "comment": 2,
+      "docstring": 8,
+      "ratio": 0.153846,
+      "total": 74
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py": {
       "blank": 116,
       "code": 691,
-      "comment": 129,
-      "docstring": 154,
-      "ratio": 0.290554,
-      "total": 1090
+      "comment": 117,
+      "docstring": 108,
+      "ratio": 0.245633,
+      "total": 1032
     },
     "src/anastomosis/pipeline.py": {
       "blank": 153,
@@ -965,9 +965,9 @@
       "blank": 2,
       "code": 21,
       "comment": 0,
-      "docstring": 6,
-      "ratio": 0.222222,
-      "total": 29
+      "docstring": 5,
+      "ratio": 0.192308,
+      "total": 28
     },
     "src/anastomosis/reconstruct/ccda_standard/__init__.py": {
       "blank": 3,
@@ -980,66 +980,66 @@
     "src/anastomosis/reconstruct/ccda_standard/renderer.py": {
       "blank": 29,
       "code": 99,
-      "comment": 11,
-      "docstring": 111,
-      "ratio": 0.552036,
-      "total": 250
+      "comment": 9,
+      "docstring": 57,
+      "ratio": 0.4,
+      "total": 194
     },
     "src/anastomosis/reconstruct/chromium.py": {
       "blank": 13,
       "code": 39,
-      "comment": 11,
-      "docstring": 17,
-      "ratio": 0.41791,
-      "total": 80
+      "comment": 6,
+      "docstring": 13,
+      "ratio": 0.327586,
+      "total": 71
     },
     "src/anastomosis/reconstruct/engine.py": {
       "blank": 39,
       "code": 222,
       "comment": 55,
-      "docstring": 61,
-      "ratio": 0.343195,
-      "total": 377
+      "docstring": 37,
+      "ratio": 0.292994,
+      "total": 353
     },
     "src/anastomosis/reconstruct/packctx.py": {
       "blank": 12,
       "code": 39,
       "comment": 0,
-      "docstring": 56,
-      "ratio": 0.589474,
-      "total": 107
+      "docstring": 40,
+      "ratio": 0.506329,
+      "total": 91
     },
     "src/anastomosis/reconstruct/packexec.py": {
       "blank": 16,
       "code": 139,
-      "comment": 45,
-      "docstring": 85,
-      "ratio": 0.483271,
-      "total": 285
+      "comment": 21,
+      "docstring": 24,
+      "ratio": 0.244565,
+      "total": 200
     },
     "src/anastomosis/reconstruct/packs.py": {
       "blank": 68,
       "code": 337,
-      "comment": 58,
-      "docstring": 200,
-      "ratio": 0.433613,
-      "total": 663
+      "comment": 43,
+      "docstring": 89,
+      "ratio": 0.28145,
+      "total": 537
     },
     "src/anastomosis/reconstruct/packtrust.py": {
       "blank": 26,
       "code": 72,
       "comment": 4,
-      "docstring": 96,
-      "ratio": 0.581395,
-      "total": 198
+      "docstring": 57,
+      "ratio": 0.458647,
+      "total": 159
     },
     "src/anastomosis/reconstruct/provenance.py": {
       "blank": 38,
       "code": 135,
       "comment": 20,
-      "docstring": 136,
-      "ratio": 0.536082,
-      "total": 329
+      "docstring": 76,
+      "ratio": 0.415584,
+      "total": 269
     },
     "src/anastomosis/sources/__init__.py": {
       "blank": 2,
@@ -2813,18 +2813,6 @@
       "text": "# a read-back that no longer parses as a PDF is a corruption FAIL, kept"
     },
     {
-      "file": "src/anastomosis/destinations/base.py",
-      "kind": "docstring",
-      "line": 16,
-      "text": "* ``fingerprint`` \u2014 a *destination-comparable* identity used to detect a"
-    },
-    {
-      "file": "src/anastomosis/destinations/base.py",
-      "kind": "docstring",
-      "line": 24,
-      "text": "*names* used to match a patient, never the values. ``UploadReceipt.extras``"
-    },
-    {
       "file": "src/anastomosis/gui/consoles/runs.py",
       "kind": "docstring",
       "line": 153,
@@ -2909,24 +2897,6 @@
       "text": "that used to decide this alone put the bar at two of three, so any value"
     },
     {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "docstring",
-      "line": 362,
-      "text": "``build_context`` previously re-scanned each collection several times"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "comment",
-      "line": 500,
-      "text": "#: Six sections used to print the vendor's own empty state \u2014 \"No implantable"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "kind": "comment",
-      "line": 616,
-      "text": "# \"-\". LOUD: the alternative spelling this used to fall back to (\"PRN\") is a"
-    },
-    {
       "file": "src/anastomosis/pipeline.py",
       "kind": "docstring",
       "line": 181,
@@ -3003,42 +2973,6 @@
       "kind": "comment",
       "line": 1663,
       "text": "# Both populations were empty. The gate above no longer screens for"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "kind": "comment",
-      "line": 139,
-      "text": "# with ``documents`` but no matching ``records`` used to fail far from"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/engine.py",
-      "kind": "docstring",
-      "line": 212,
-      "text": "The suffix used to be the id's first eight characters, applied once,"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "kind": "docstring",
-      "line": 44,
-      "text": "hash that no longer matches, the pack is returned unavailable with a diagnosis"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "kind": "docstring",
-      "line": 193,
-      "text": "A pack that declares nothing at all (an external pack written before this"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "kind": "comment",
-      "line": 246,
-      "text": "#: pack.yaml written before this field existed stays valid under"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "kind": "comment",
-      "line": 248,
-      "text": "#: every surface used to do because there was nowhere to put a real one."
     },
     {
       "file": "src/anastomosis/sources/base.py",
@@ -7502,422 +7436,254 @@
     },
     {
       "file": "src/anastomosis/destinations/base.py",
-      "length": 27,
+      "length": 11,
       "limit": 10,
       "line": 1,
       "scope": "module"
     },
     {
       "file": "src/anastomosis/destinations/base.py",
-      "length": 13,
+      "length": 7,
       "limit": 5,
-      "line": 56,
+      "line": 40,
       "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/base.py",
+      "length": 6,
+      "limit": 5,
+      "line": 111,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/base.py",
       "length": 7,
       "limit": 5,
-      "line": 92,
+      "line": 154,
       "scope": "class"
     },
     {
-      "file": "src/anastomosis/destinations/base.py",
+      "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 106,
+      "line": 115,
       "scope": "class"
     },
     {
-      "file": "src/anastomosis/destinations/base.py",
-      "length": 6,
-      "limit": 5,
-      "line": 119,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/base.py",
-      "length": 6,
-      "limit": 5,
-      "line": 137,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/base.py",
-      "length": 6,
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 7,
       "limit": 5,
       "line": 150,
       "scope": "function"
     },
     {
-      "file": "src/anastomosis/destinations/base.py",
+      "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 163,
+      "line": 177,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 6,
+      "limit": 5,
+      "line": 261,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 8,
+      "limit": 5,
+      "line": 301,
       "scope": "function"
     },
     {
-      "file": "src/anastomosis/destinations/base.py",
-      "length": 12,
-      "limit": 5,
-      "line": 182,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/base.py",
-      "length": 7,
-      "limit": 5,
-      "line": 208,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/base.py",
+      "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 223,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 45,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 164,
-      "scope": "class"
+      "line": 358,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 181,
+      "line": 371,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 9,
       "limit": 5,
-      "line": 202,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 214,
+      "line": 405,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 10,
       "limit": 5,
-      "line": 233,
+      "line": 419,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 6,
+      "limit": 5,
+      "line": 448,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 8,
+      "limit": 5,
+      "line": 458,
       "scope": "class"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 7,
       "limit": 5,
-      "line": 303,
-      "scope": "class"
+      "line": 532,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 9,
       "limit": 5,
-      "line": 323,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 22,
-      "limit": 5,
-      "line": 366,
+      "line": 552,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
       "length": 6,
       "limit": 5,
-      "line": 437,
+      "line": 616,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 10,
-      "limit": 5,
-      "line": 450,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 19,
-      "limit": 5,
-      "line": 488,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 22,
-      "limit": 5,
-      "line": 512,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 553,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 9,
-      "limit": 5,
-      "line": 564,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 10,
+      "length": 6,
       "limit": 5,
       "line": 642,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 20,
-      "limit": 5,
-      "line": 665,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 720,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 8,
-      "limit": 5,
-      "line": 742,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 770,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 16,
-      "limit": 5,
-      "line": 785,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 25,
-      "limit": 5,
-      "line": 837,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 8,
-      "limit": 5,
-      "line": 899,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 7,
-      "limit": 5,
-      "line": 929,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 11,
-      "limit": 5,
-      "line": 952,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 11,
-      "limit": 5,
-      "line": 1001,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/browserpack.py",
-      "length": 6,
-      "limit": 5,
-      "line": 1015,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 34,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 7,
-      "limit": 5,
-      "line": 70,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 11,
-      "limit": 5,
-      "line": 82,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 6,
-      "limit": 5,
-      "line": 108,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 6,
-      "limit": 5,
-      "line": 163,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
-      "length": 16,
-      "limit": 5,
-      "line": 187,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/loader.py",
       "length": 10,
       "limit": 5,
-      "line": 229,
+      "line": 656,
       "scope": "function"
     },
     {
-      "file": "src/anastomosis/destinations/registry.py",
-      "length": 27,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 10,
+      "limit": 5,
+      "line": 702,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 6,
+      "limit": 5,
+      "line": 749,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 6,
+      "limit": 5,
+      "line": 777,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 7,
+      "limit": 5,
+      "line": 799,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/browserpack.py",
+      "length": 7,
+      "limit": 5,
+      "line": 844,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/loader.py",
+      "length": 6,
+      "limit": 5,
+      "line": 56,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/loader.py",
+      "length": 8,
+      "limit": 5,
+      "line": 154,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/loader.py",
+      "length": 7,
+      "limit": 5,
+      "line": 188,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/registry.py",
       "length": 7,
       "limit": 5,
-      "line": 80,
+      "line": 98,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/registry.py",
+      "length": 7,
+      "limit": 5,
+      "line": 124,
       "scope": "class"
     },
     {
       "file": "src/anastomosis/destinations/registry.py",
       "length": 6,
       "limit": 5,
-      "line": 97,
+      "line": 145,
       "scope": "class"
     },
     {
       "file": "src/anastomosis/destinations/registry.py",
-      "length": 9,
+      "length": 7,
       "limit": 5,
-      "line": 118,
-      "scope": "class"
+      "line": 180,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/destinations/registry.py",
-      "length": 11,
+      "length": 6,
+      "limit": 5,
+      "line": 195,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/wizard.py",
+      "length": 6,
+      "limit": 5,
+      "line": 77,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/destinations/wizard.py",
+      "length": 6,
+      "limit": 5,
+      "line": 130,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/destinations/wizard.py",
+      "length": 6,
       "limit": 5,
       "line": 146,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/registry.py",
-      "length": 6,
-      "limit": 5,
-      "line": 171,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/registry.py",
-      "length": 9,
-      "limit": 5,
-      "line": 206,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/registry.py",
-      "length": 8,
-      "limit": 5,
-      "line": 223,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/tebra/__init__.py",
-      "length": 18,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 24,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 7,
-      "limit": 5,
-      "line": 81,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 8,
-      "limit": 5,
-      "line": 95,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 8,
-      "limit": 5,
-      "line": 114,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 6,
-      "limit": 5,
-      "line": 153,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/destinations/wizard.py",
-      "length": 8,
-      "limit": 5,
-      "line": 169,
       "scope": "function"
     },
     {
@@ -8965,93 +8731,72 @@
     },
     {
       "file": "src/anastomosis/packs/generic_soap/context.py",
-      "length": 11,
+      "length": 7,
       "limit": 5,
       "line": 20,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 21,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
+      "length": 6,
+      "limit": 5,
+      "line": 109,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
+      "length": 6,
+      "limit": 5,
+      "line": 302,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
+      "length": 6,
+      "limit": 5,
+      "line": 342,
+      "scope": "class"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
       "length": 7,
       "limit": 5,
-      "line": 121,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 11,
-      "limit": 5,
-      "line": 315,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 10,
-      "limit": 5,
-      "line": 360,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 6,
-      "limit": 5,
-      "line": 550,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 10,
-      "limit": 5,
-      "line": 584,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
-      "limit": 5,
-      "line": 921,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
-      "limit": 5,
-      "line": 937,
+      "line": 548,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
       "length": 6,
       "limit": 5,
-      "line": 950,
+      "line": 881,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 14,
+      "length": 6,
       "limit": 5,
-      "line": 966,
+      "line": 903,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 9,
+      "length": 7,
       "limit": 5,
-      "line": 1019,
+      "line": 919,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
-      "length": 8,
+      "length": 7,
       "limit": 5,
-      "line": 1050,
+      "line": 965,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/packs/practice_fusion_soap/context.py",
+      "length": 6,
+      "limit": 5,
+      "line": 994,
       "scope": "function"
     },
     {
@@ -9462,338 +9207,212 @@
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 25,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
+      "length": 7,
+      "limit": 5,
+      "line": 55,
+      "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 12,
+      "length": 6,
       "limit": 5,
       "line": 70,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 6,
+      "length": 9,
       "limit": 5,
-      "line": 90,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 28,
-      "limit": 5,
-      "line": 102,
+      "line": 82,
       "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 10,
-      "limit": 5,
-      "line": 157,
-      "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
       "length": 7,
       "limit": 5,
-      "line": 175,
+      "line": 116,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/ccda_standard/renderer.py",
-      "length": 22,
+      "length": 12,
       "limit": 5,
-      "line": 198,
+      "line": 152,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/chromium.py",
-      "length": 10,
-      "limit": 5,
-      "line": 28,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/engine.py",
-      "length": 19,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/engine.py",
-      "length": 14,
-      "limit": 5,
-      "line": 95,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/engine.py",
-      "length": 7,
-      "limit": 5,
-      "line": 161,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/engine.py",
-      "length": 14,
-      "limit": 5,
-      "line": 207,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
-      "length": 25,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
       "length": 6,
       "limit": 5,
-      "line": 52,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
-      "length": 8,
-      "limit": 5,
-      "line": 65,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packctx.py",
-      "length": 16,
-      "limit": 5,
-      "line": 84,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packexec.py",
-      "length": 58,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packexec.py",
-      "length": 7,
-      "limit": 5,
-      "line": 76,
+      "line": 25,
       "scope": "class"
     },
     {
-      "file": "src/anastomosis/reconstruct/packexec.py",
-      "length": 9,
-      "limit": 5,
-      "line": 250,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packexec.py",
-      "length": 10,
-      "limit": 5,
-      "line": 275,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 55,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 12,
-      "limit": 5,
-      "line": 115,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 22,
-      "limit": 5,
-      "line": 176,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 9,
-      "limit": 5,
-      "line": 307,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 18,
-      "limit": 5,
-      "line": 340,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 9,
-      "limit": 5,
-      "line": 382,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 13,
-      "limit": 5,
-      "line": 448,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 6,
-      "limit": 5,
-      "line": 487,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 29,
-      "limit": 5,
-      "line": 534,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 8,
-      "limit": 5,
-      "line": 589,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packs.py",
-      "length": 9,
-      "limit": 5,
-      "line": 636,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
-      "length": 28,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
-      "length": 14,
-      "limit": 5,
-      "line": 60,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
+      "file": "src/anastomosis/reconstruct/engine.py",
       "length": 8,
       "limit": 5,
       "line": 85,
       "scope": "function"
     },
     {
+      "file": "src/anastomosis/reconstruct/engine.py",
+      "length": 8,
+      "limit": 5,
+      "line": 189,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packctx.py",
+      "length": 6,
+      "limit": 5,
+      "line": 36,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packctx.py",
+      "length": 8,
+      "limit": 5,
+      "line": 49,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packctx.py",
+      "length": 16,
+      "limit": 5,
+      "line": 68,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 8,
+      "limit": 5,
+      "line": 124,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 9,
+      "limit": 5,
+      "line": 260,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 6,
+      "limit": 5,
+      "line": 293,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 8,
+      "limit": 5,
+      "line": 356,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 6,
+      "limit": 5,
+      "line": 390,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 9,
+      "limit": 5,
+      "line": 437,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 6,
+      "limit": 5,
+      "line": 470,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packs.py",
+      "length": 7,
+      "limit": 5,
+      "line": 512,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/packtrust.py",
+      "length": 7,
+      "limit": 5,
+      "line": 42,
+      "scope": "class"
+    },
+    {
       "file": "src/anastomosis/reconstruct/packtrust.py",
       "length": 6,
       "limit": 5,
-      "line": 104,
+      "line": 60,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/packtrust.py",
       "length": 7,
       "limit": 5,
-      "line": 129,
+      "line": 139,
       "scope": "function"
     },
     {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
-      "length": 7,
+      "file": "src/anastomosis/reconstruct/provenance.py",
+      "length": 6,
+      "limit": 5,
+      "line": 64,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/provenance.py",
+      "length": 10,
+      "limit": 5,
+      "line": 81,
+      "scope": "function"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/provenance.py",
+      "length": 6,
+      "limit": 5,
+      "line": 126,
+      "scope": "class"
+    },
+    {
+      "file": "src/anastomosis/reconstruct/provenance.py",
+      "length": 6,
       "limit": 5,
       "line": 140,
       "scope": "function"
     },
     {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
-      "length": 6,
-      "limit": 5,
-      "line": 157,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/packtrust.py",
-      "length": 12,
+      "file": "src/anastomosis/reconstruct/provenance.py",
+      "length": 8,
       "limit": 5,
       "line": 173,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 41,
-      "limit": 10,
-      "line": 1,
-      "scope": "module"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 8,
+      "length": 10,
       "limit": 5,
-      "line": 95,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 19,
-      "limit": 5,
-      "line": 114,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 7,
-      "limit": 5,
-      "line": 168,
+      "line": 192,
       "scope": "class"
     },
     {
       "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 7,
-      "limit": 5,
-      "line": 183,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 13,
+      "length": 6,
       "limit": 5,
       "line": 217,
       "scope": "function"
     },
     {
       "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 21,
-      "limit": 5,
-      "line": 241,
-      "scope": "class"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 6,
       "limit": 5,
-      "line": 277,
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 6,
-      "limit": 5,
-      "line": 307,
+      "line": 247,
       "scope": "function"
     },
     {
@@ -16514,10 +16133,10 @@
     "anastomosis": {
       "blank": 5642,
       "code": 27717,
-      "comment": 4495,
-      "docstring": 14278,
-      "ratio": 0.403807,
-      "total": 52132
+      "comment": 4416,
+      "docstring": 13569,
+      "ratio": 0.393528,
+      "total": 51344
     },
     "tests.e2e": {
       "blank": 186,
@@ -16555,10 +16174,10 @@
   "repo": {
     "blank": 16561,
     "code": 68243,
-    "comment": 7827,
-    "docstring": 24245,
-    "ratio": 0.319713,
-    "total": 116876
+    "comment": 7748,
+    "docstring": 23536,
+    "ratio": 0.314327,
+    "total": 116088
   },
   "tool": "tools/prose_gate.py"
 }
