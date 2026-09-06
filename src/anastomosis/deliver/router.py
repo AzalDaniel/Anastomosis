@@ -1,26 +1,13 @@
 """The shortest-path delivery router (pure logic, no I/O).
 
-Given a destination's declared capabilities (the
-:mod:`anastomosis.destinations.registry` data), pick the cheapest viable way to
-get a chart there. Route preference, cheapest first:
+Given a destination's declared capabilities, picks the cheapest viable
+route. Preference is fixed cheapest-first: vendor API > C-CDA import >
+browser automation. Returns all three routes in that order (viable or
+not) plus the first viable one, so the wizard can show the whole map.
 
-    vendor API  >  C-CDA import  >  browser automation
-
-A vendor write API is one HTTP call; a C-CDA import is a file the destination
-ingests; browser automation drives the UI a human would and is the route of
-last resort. The router returns ALL three options in preference order (viable
-or not) plus the chosen one (the first viable) so the discovery wizard can show
-the operator the full transit map, not just the winner.
-
-The ``unverified`` capability is deliberately **not viable** — an uncited claim
-must never silently route PHI. ``none`` is not viable. This module is the
-mechanical half of the no-hallucination rule: the registry refuses to *store* a
-claim without evidence; the router refuses to *act* on one that is unverified.
-
-PHI rule: this layer is pure capability logic. Every ``why`` string carries
-only capability kinds, pack names, and evidence dates — never anything
-patient-derived. There is no I/O here at all.
-"""
+No network calls (RULES.md 37); every ``why`` string is capability
+kinds, pack names, and evidence dates only, never patient-derived
+(RULES.md 3)."""
 
 from __future__ import annotations
 
@@ -46,9 +33,8 @@ class RouteKind(StrEnum):
     BROWSER = "browser"
 
 
-#: What each route is, in the words the Migrate screen and `destination list`
-#: use. The enum values stay the registry's own names — they are the data — and
-#: these are what a person reads.
+#: Display labels for the Migrate screen and `destination list`; the enum
+#: values stay the registry's own names.
 ROUTE_NAMES = {
     RouteKind.VENDOR_API: "Send directly",
     RouteKind.CCDA_IMPORT: "Import a transfer document",
@@ -58,13 +44,10 @@ ROUTE_NAMES = {
 
 @dataclass(frozen=True)
 class RouteOption:
-    """One candidate route and whether it is usable for this destination.
+    """One candidate route, viable or not.
 
-    ``why`` is a PHI-free explanation (capability kinds, pack names, evidence
-    dates). ``requires`` lists what an operator must supply or install to take
-    this route, e.g. ``("extra: deliver-browser", "pack: destinations/tebra")``
-    or ``("credentials: vendor API",)``.
-    """
+    ``why`` is PHI-free (capability kinds, pack names, dates). ``requires``
+    lists what taking this route needs, e.g. ``("credentials: vendor API",)``."""
 
     kind: RouteKind
     viable: bool
@@ -74,12 +57,9 @@ class RouteOption:
 
 @dataclass(frozen=True)
 class TransitMap:
-    """The full set of routes for one destination, with the chosen one.
+    """All routes for one destination, viable or not, and the chosen one.
 
-    ``options`` always holds all three :class:`RouteKind` values in preference
-    order (viable or not — the wizard shows the whole map). ``chosen`` is the
-    first viable option, or ``None`` when nothing is viable.
-    """
+    ``chosen`` is the first viable option in ``options``, or ``None``."""
 
     destination: str
     options: tuple[RouteOption, ...]
@@ -88,11 +68,9 @@ class TransitMap:
     def render(self, glyphs: Glyphs = UNICODE_GLYPHS) -> str:
         """The routes into this system, as the CLI prints them.
 
-        Deterministic: no timestamps, no ordering churn — the same registry
-        renders byte-identical output every time. ``glyphs`` selects the
-        viable/unviable markers; the CLI passes a stream-appropriate set so a
-        non-UTF-8 console gets ASCII rather than a :class:`UnicodeEncodeError`.
-        """
+        Deterministic: same registry renders identical output every time.
+        ``glyphs`` picks ASCII markers so a non-UTF-8 stream never raises
+        :class:`UnicodeEncodeError`."""
         lines = [f"Ways to file charts into {self.destination}:"]
         for opt in self.options:
             mark = glyphs.ok if opt.viable else glyphs.fail
@@ -114,14 +92,10 @@ def _capability_option(
     verified_label: str,
     requires: tuple[str, ...],
 ) -> RouteOption:
-    """One capability's viability — shared by the vendor-API and C-CDA checks
-    below, which differ only in the field name, the values that count as
-    viable, and what taking the route ``requires``. ``"unverified"`` is the
-    cross-capability sentinel (see destinations.registry._NO_EVIDENCE_KINDS):
-    deliberately not viable, distinct from an ordinary unviable value so its
-    ``why`` can point the operator at re-verification instead of just naming
-    the entry.
-    """
+    """Shared viability check for the vendor-API and C-CDA routes; they
+    differ only in field name, viable values, and what taking the route
+    ``requires``. ``"unverified"`` (RULES.md 69) gets its own why, pointing
+    at re-verification, distinct from an ordinary unviable value."""
     if entry in viable_values:
         return RouteOption(
             kind=kind,
@@ -161,10 +135,8 @@ def _ccda_option(entry_ccda_kind: str, verified_label: str) -> RouteOption:
 
 
 def _browser_option(entry_browser_kind: str, pack_name: str) -> RouteOption:
-    # Browser viability is a DECLARATION check, never an import: a destination
-    # declaring ``browser: {kind: pack}`` is routable, and the pack name rides
-    # in ``requires`` so the discovery wizard resolves and validates it there.
-    # Route planning must stay side-effect-free — it never executes pack code.
+    # Declaration check only — never imports or executes the pack; the pack
+    # name rides in ``requires`` for the wizard to resolve later.
     if entry_browser_kind == BrowserKind.PACK.value:
         pack_ref = pack_name or "(unnamed pack)"
         return RouteOption(
@@ -184,8 +156,7 @@ def plan_route(destination: str, registry: DestinationRegistry) -> TransitMap:
     """Select the shortest viable delivery route for ``destination``.
 
     Raises ``KeyError`` (from :meth:`DestinationRegistry.get`) when the
-    destination is unknown — loud, never a silent empty map.
-    """
+    destination is unknown — loud, never a silent empty map."""
     entry = registry.get(destination)  # KeyError lists known names
 
     doc = entry.doc_write_api
