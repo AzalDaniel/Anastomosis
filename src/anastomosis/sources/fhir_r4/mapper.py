@@ -1,15 +1,13 @@
 """US Core R4 resources → canonical :class:`PatientRecord` objects.
 
-Maps *standard* FHIR R4 / US Core resources (a Bulk-Data ``$export`` or
-``Patient/$everything``) — not the inverse of this project's own exporter
-(:func:`anastomosis.core.fhir.ingest.from_bundle`), which reads
-``urn:anastomosis:*`` round-trip extensions arbitrary vendors don't emit.
-
-Lossless: an unlifted field rides ``fhir_r4:``-namespaced ``extensions``
-(rule 63). Deterministic: no clocks or randomness; output order follows
-input order. Defensive: every accessor tolerates a missing or malformed
-field rather than raising, except two structural failures — no Patient at
-all, and dangling resources it cannot attribute (:class:`AmbiguousUnanchoredError`)."""
+Maps *standard* FHIR R4 / US Core resources — not the inverse of
+:func:`anastomosis.core.fhir.ingest.from_bundle`, which reads
+``urn:anastomosis:*`` extensions arbitrary vendors don't emit. Lossless:
+an unlifted field rides ``fhir_r4:``-namespaced ``extensions`` (rule 63).
+Deterministic: input order drives output order. Defensive: every accessor
+tolerates a missing/malformed field, except two structural failures — no
+Patient at all, and a dangling, unattributable resource
+(:class:`AmbiguousUnanchoredError`)."""
 
 from __future__ import annotations
 

@@ -1,14 +1,12 @@
 """The learned-mapping spec: a validated, declarative description of one format.
 
-``mapping.json`` is parsed and validated here — the whole contract between
-the wizard (which writes it) and the interpreter (which executes it),
-validated strictly: ``extra="forbid"`` everywhere; every ``target_path`` in
-the CLOSED :func:`~anastomosis.core.model_paths.canonical_target_paths`
-set; every ``transform`` resolves against the closed verb table;
-``human_reviewed`` is recorded but enforced only by the discovery layer.
-
-PHI: a spec carries column/field names, transform verbs, and an
-operator-authored code table — never patient data."""
+``mapping.json`` is parsed and validated here — the contract between the
+wizard (which writes it) and the interpreter (which executes it), strict:
+``extra="forbid"`` everywhere; every ``target_path`` in the CLOSED
+:func:`~anastomosis.core.model_paths.canonical_target_paths` set; every
+``transform`` resolves against the closed verb table; ``human_reviewed``
+is enforced only by the discovery layer, not here. PHI: a spec carries
+column/field names and transform verbs — never patient data."""
 
 from __future__ import annotations
 

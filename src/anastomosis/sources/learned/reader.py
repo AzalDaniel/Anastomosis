@@ -1,14 +1,12 @@
 """Reading a single-file structured export, and recognizing it again.
 
-A learned source targets flat, single-file exports (CSV/TSV/JSON/NDJSON);
-this is the dumb IO half (the :mod:`pf_tebra.loader` analogue) — read rows
-into mapping-authored header-keyed dicts, nothing semantic.
-
-:func:`header_fingerprint` gives a file's column *set* a stable identity so
-:func:`find_source_file` can tell "no candidate", "columns changed" (loud),
-and "matched" apart. JSON/NDJSON records flatten to dotted keys (a
-non-scalar becomes its JSON text; a path collision is malformed input).
-PHI: row VALUES are never logged — only paths, column names, and counts."""
+The dumb IO half (the :mod:`pf_tebra.loader` analogue) for a flat,
+single-file export (CSV/TSV/JSON/NDJSON) — read rows into mapping-authored
+header-keyed dicts, nothing semantic. :func:`header_fingerprint` gives a
+file's column *set* a stable identity so :func:`find_source_file` can tell
+"no candidate", "columns changed" (loud), and "matched" apart. JSON/NDJSON
+records flatten to dotted keys (a non-scalar becomes its JSON text; a path
+collision is malformed input). PHI: row VALUES are never logged."""
 
 from __future__ import annotations
 

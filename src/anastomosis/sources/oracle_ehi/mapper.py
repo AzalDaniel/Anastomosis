@@ -2,13 +2,12 @@
 
 Every table mapping declares the columns it consumes; every other valued
 column lands in ``extensions`` under an ``oracle_ehi:`` namespace (rule 63).
-Grounded in ``docs/vendor_refs/ORACLE_EHI_SCHEMA.md``, cited by section at
-each mapping; where the brief says "could not determine" (§8), this raises
-or routes to extensions rather than inventing vendor semantics (rule 64).
-``CLINICAL_EVENT`` is the spine for vitals, problems, allergies and
-documents alike (§3.2); classification keys on documented structural
-columns and ``EVENT_TITLE_TEXT``, never on an undocumented ``EVENT_CD``
-meaning."""
+Grounded in ``docs/vendor_refs/ORACLE_EHI_SCHEMA.md``, cited by section;
+where the brief says "could not determine" (§8), this raises or routes to
+extensions rather than inventing vendor semantics (rule 64). CLINICAL_EVENT
+is the spine for vitals, problems, allergies and documents alike (§3.2),
+classified by documented structure and ``EVENT_TITLE_TEXT``, never a
+guessed ``EVENT_CD`` meaning."""
 
 from __future__ import annotations
 
