@@ -1,16 +1,11 @@
 """Who wrote it, who did it, who signed it, and where.
 
-The C-CDA header is where a chart says all of that, and none of it was read:
-2,103 audited documents parsed without error and produced not one practitioner
-and not one facility between them (#312). A note that arrives with no author has
-lost the answer to "who wrote this" while still looking complete, which is the
-worst shape a surviving record can take.
-
-So every assertion here is about a DISTINCTION that has to survive: a human
-author against the system that generated the document, a legal authenticator
-against an informant, an emergency contact against a clinician, the allergen
-under an allergy against the participant in a header. Collapsing any of them
-would make the code smaller and the record wrong.
+The C-CDA header must say all of that (#312: 2,103 audited documents once
+parsed clean and produced not one practitioner or facility between them).
+Every assertion here is a DISTINCTION that has to survive: a human author
+against the generating system, a legal authenticator against an
+informant, an emergency contact against a clinician, an allergen against
+a header participant — collapsing any of them makes the record wrong.
 
 Synthetic throughout: ``feedface-`` ids, invented people, the 555 exchange.
 """
@@ -303,17 +298,11 @@ _VENDOR_RECIPIENT = """
 def test_a_recipient_spelled_the_vendor_way_is_read_and_says_which_way(
     tmp_path: Path,
 ) -> None:
-    """Stated tolerance, not accidental tolerance.
-
-    The conforming spelling is what the corpus generator emits and what
-    ``_HEADER`` above carries; this one is the divergence. Refusing it would
-    turn a recipient the adapter can plainly name into a document that parsed
-    clean and carried nobody, which is the #312 failure. Reading it silently
-    would be the other failure, so the element the document actually used lands
-    on the practitioner as ``ccda:entity``: the record says which spelling it
-    was built from, and a reader can tell a conforming source from a
-    non-conforming one after the fact.
-    """
+    """Stated tolerance, not accidental tolerance: refusing this
+    divergence would recreate the #312 failure, and reading it silently
+    would hide which spelling built the record — so the element the
+    document actually used lands on the practitioner as ``ccda:entity``,
+    and a reader can tell a conforming source from this one after the fact."""
     parsed = parse_document(_write(tmp_path, header=_VENDOR_RECIPIENT))
     recipient = _sole(parsed, "informationRecipient")
     assert recipient.family_name == "Vendor"
@@ -323,12 +312,10 @@ def test_a_recipient_spelled_the_vendor_way_is_read_and_says_which_way(
 def test_a_conforming_recipient_is_read_as_the_element_the_standard_names(
     record: PatientRecord,
 ) -> None:
-    """And the conforming document is not merely tolerated by the same path.
-
-    ``_HEADER`` spells the recipient the way C-CDA R2.1 does, and the record has
-    to say so — otherwise the tolerance above could be doing all the work and a
-    regression in the standard path would pass unnoticed.
-    """
+    """The conforming document is not merely tolerated by the same path:
+    ``_HEADER`` spells the recipient the way C-CDA R2.1 does, and the
+    record must say so, or the tolerance above could be doing all the
+    work and a regression in the standard path would pass unnoticed."""
     recipient = _sole(record, "informationRecipient")
     assert recipient.family_name == "Placeholder"
     assert recipient.extensions["ccda:entity"] == "informationRecipient"
@@ -351,14 +338,11 @@ def test_the_custodian_is_a_place_and_not_a_person(record: PatientRecord) -> Non
 
 
 def test_a_statement_that_names_who_told_us_is_read_where_it_stands(tmp_path: Path) -> None:
-    """An informant is read wherever it appears, and the others are not.
-
-    A clinical statement may name who supplied it, and the header's informant
-    does not answer for that one — so the informant walk is document-wide, which
-    is also the scope the ingest ledger counts it at. Every other participation
-    stays a direct child of ``ClinicalDocument``, because a walk that reached
-    into the entries would harvest an allergy's own participant.
-    """
+    """An informant is read wherever it appears, and the others are not: a
+    clinical statement may name who supplied it, so the informant walk is
+    document-wide (the scope the ingest ledger counts it at) while every
+    other participation stays a direct child of ``ClinicalDocument`` — a
+    wider walk would harvest an allergy's own participant."""
     body = """
       <component><section>
         <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -420,12 +404,10 @@ def test_the_visits_place_is_read_from_wherever_the_document_split_it(
 
 
 def test_a_service_event_is_not_charted_as_a_visit(record: PatientRecord) -> None:
-    """``documentationOf/serviceEvent`` carries the care-provision PERIOD —
-    eight years wide here — and charting its low bound as a date of service
-    would invent a visit on a day nothing happened. Its performer is the answer
-    worth keeping; its own facts ride `extensions` rather than a fabricated
-    encounter.
-    """
+    """``documentationOf/serviceEvent`` carries the care-provision PERIOD
+    (eight years wide here): charting its low bound as a date of service
+    would invent a visit on a day nothing happened, so its own facts ride
+    `extensions` rather than a fabricated encounter."""
     assert not any(e.date_of_service and e.date_of_service.year == 2015 for e in record.encounters)
     event = record.patient.extensions["ccda:serviceEvent"]
     assert event == [
@@ -698,16 +680,11 @@ def _resources(record: PatientRecord, resource_type: str) -> list[dict[str, obje
 def test_an_emergency_contact_is_not_exported_as_a_care_provider(
     record: PatientRecord,
 ) -> None:
-    """The patient's next of kin must not reach a receiving system as one of
-    their clinicians.
-
-    ``practitioners`` is this record's only collection of people, so the
-    emergency contact and the spouse who gave the history live there beside the
-    clinicians — but the CDA role class says which is which, and a bundle that
-    ignored it would show a family member on the care team. That is a silent
-    misattribution, which this project ranks as worse than the outright loss
-    that preceded it.
-    """
+    """The patient's next of kin must not reach a receiving system as one
+    of their clinicians: ``practitioners`` is this record's only
+    collection of people, so the emergency contact and the informant live
+    there beside the clinicians, and only the CDA role class says which
+    is which."""
     contact = _sole(record, "participant")
     practitioner_ids = {r["id"] for r in _resources(record, "Practitioner")}
     assert contact.id not in practitioner_ids
