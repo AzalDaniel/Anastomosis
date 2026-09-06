@@ -579,6 +579,20 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The prose sweep: the code says less and means the same.** Every docstring
+  and comment under `src/` and `tests/` went through one decision: a rule
+  goes to `docs/RULES.md`, a contract stays under five lines, a story goes.
+  Not one line of code moved (`tools/ast_equal.py` proves the code AST of
+  all 150 source files and 162 test files identical), every deliverable of
+  the five fixtures is byte-identical (`tools/snapshot.py`), the corpus pin
+  is unmoved and the guard count holds at 72. Source prose 18,773 → 9,693
+  lines (ratio 0.404 → 0.259), test prose 13,299 → 9,200, 1,749 over-cap
+  docstrings → 118, 294 history phrases → 5. Twenty-three rules the prose
+  alone carried are now rules 88 to 110; the two pack `context.py` files
+  keep their bytes because a pack's layout hash covers them. The prose
+  ratchet now follows a docstring by its owner's name instead of its line
+  number, and `tools/ast_equal.py` refuses to compare an empty tree.
+
 - **Third-party pack code no longer runs with the desktop user's authority.**
   An external or taught pack's `context.py` could read any file the operator
   could read, write one anywhere, open a socket, and spawn a process — at
