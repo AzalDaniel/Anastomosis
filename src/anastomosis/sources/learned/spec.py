@@ -1,33 +1,14 @@
 """The learned-mapping spec: a validated, declarative description of one format.
 
-A learned source is a directory ``~/.anastomosis/sources/<id>/`` whose
-``mapping.json`` is parsed and validated by :class:`MappingSpec` here. The spec
-is the whole contract between the wizard (which writes it) and the interpreter
-(which executes it), so the validation is deliberately strict — it is the
-safety boundary that makes "run a mapping a human wrote" trustworthy:
+``mapping.json`` is parsed and validated here — the whole contract between
+the wizard (which writes it) and the interpreter (which executes it),
+validated strictly: ``extra="forbid"`` everywhere; every ``target_path`` in
+the CLOSED :func:`~anastomosis.core.model_paths.canonical_target_paths`
+set; every ``transform`` resolves against the closed verb table;
+``human_reviewed`` is recorded but enforced only by the discovery layer.
 
-* ``model_config = extra="forbid"`` everywhere — an unknown key is a loud error,
-  never silently ignored (a typo'd field name can't quietly disable a check).
-* every ``field_mappings[*].target_path`` must be in the CLOSED
-  :func:`~anastomosis.core.model_paths.canonical_target_paths` set — a mapping
-  can only write to known canonical fields, never an arbitrary attribute;
-* every ``transform`` must resolve against the closed verb table
-  (:mod:`~anastomosis.sources.learned.transforms`) with correct arity;
-* the grouping/source columns must be internally consistent (keys and mapped
-  columns must be columns the format actually has);
-* ``human_reviewed`` is recorded but NOT trusted by the parser — the discovery
-  layer enforces it as a hard gate before ever building an adapter, so an
-  unreviewed mapping that lands in the directory is skipped, not executed.
-
-Parsed from JSON, never ``yaml.load`` — the format is data, and JSON has no code
-path. ``MappingError`` names the file at fault (paths to mapping config are not
-PHI) and is the single error type this package raises for a bad spec.
-
-PHI: a spec carries column names, canonical field names, transform verbs, and an
-optional value-translation table (code -> code, e.g. ``M`` -> ``male``). None of
-that is patient data. The value-translation table is operator-authored
-terminology, kept SEPARATE from the structural ``field_mappings`` by design.
-"""
+PHI: a spec carries column/field names, transform verbs, and an
+operator-authored code table — never patient data."""
 
 from __future__ import annotations
 
@@ -61,15 +42,10 @@ SPEC_FILENAME = "mapping.json"
 
 
 class MappingError(Exception):
-    """A learned mapping is missing, malformed, or invalid — names the file.
-
-    The three optional attributes are a pointer, not prose: a raise site that
-    knows which column, target or transform the refusal is about says so here,
-    and a frontend can route the operator to the exact control instead of
-    scraping an English sentence. Names only, never a value — the same
-    discipline the message itself already keeps. Every existing bare
-    ``raise MappingError("...")`` stays valid.
-    """
+    """A learned mapping is missing, malformed, or invalid — names the
+    file. The three optional attributes are a pointer, not prose: a raise
+    site names the column/target/transform at fault so a frontend can
+    route the operator to the exact control, never a value."""
 
     def __init__(
         self,
@@ -114,15 +90,10 @@ class SourceFormat(BaseModel):
 
 
 class Grouping(BaseModel):
-    """How flat rows fold into patients and encounters.
-
-    * ``row_scope == "patient"`` — one row is one patient (a demographics
-      export). ``patient_key`` still de-duplicates rows; ``encounter_key`` is
-      unused. A single encounter is built per row only if encounter fields map.
-    * ``row_scope == "encounter"`` — one row is one encounter (a visits/notes
-      export). ``patient_key`` groups rows into patients; ``encounter_key`` (if
-      given) identifies the encounter, else each row is its own encounter.
-    """
+    """How flat rows fold into patients and encounters. ``row_scope`` is
+    "patient" (one row is one patient; ``encounter_key`` unused) or
+    "encounter" (``patient_key`` groups rows; ``encounter_key``, if given,
+    identifies the encounter, else each row is its own)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -162,13 +133,11 @@ class FieldMapping(BaseModel):
 
 
 class ValueTranslation(BaseModel):
-    """An operator-authored code->code table for one source column.
-
-    Applied BEFORE the column's transform (e.g. normalize ``M``/``F`` to
-    ``male``/``female``). Kept separate from :class:`FieldMapping` so structural
-    mapping (which column, parsed how) stays independent of terminology. A value
-    not in the table passes through unchanged (lossless).
-    """
+    """An operator-authored code->code table for one source column,
+    applied BEFORE the column's transform (e.g. ``M``/``F`` → ``male``/
+    ``female``). Kept separate from :class:`FieldMapping` so structural
+    mapping stays independent of terminology. An unmapped value passes
+    through unchanged (lossless)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -177,21 +146,11 @@ class ValueTranslation(BaseModel):
 
 
 class DestinationBinding(BaseModel):
-    """The destination this mapping was taught FOR, pinned by profile hash.
-
-    A mapping decides which source column becomes which canonical field, and
-    that decision is made with a target system in mind — the operator picks the
-    destination first (``anast source init --to``), then teaches. Running that
-    mapping at a different destination is not a smaller version of the same
-    move; it is a different one, made silently. So the choice is recorded here
-    and the migration refuses when it disagrees.
-
-    ``profile_hash`` is
-    :attr:`anastomosis.core.profiles.DestinationProfile.profile_hash` at the
-    moment of teaching, so the refusal fires for a destination that CHANGED
-    (a version bump, a capability that appeared or vanished) as well as for one
-    that was swapped outright. Names, versions and hex only — no PHI.
-    """
+    """The destination this mapping was taught FOR, pinned by
+    ``profile_hash`` (:attr:`anastomosis.core.profiles.DestinationProfile.
+    profile_hash` at teaching time) — running it at a different
+    destination, or the same one changed, is a different move made
+    silently, so the migration refuses when it disagrees."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -206,12 +165,9 @@ class MappingSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mapping_id: str
-    # Additive since 1: `destination_binding` is optional and defaults to None,
-    # so every mapping written before it loads unchanged. The other direction
-    # is the rough edge — a mapping taught with `--to` on this build, read by an
-    # older one, fails validation as an invalid spec rather than as a version
-    # it does not know. A bump would have forced dual handling for a field that
-    # takes nothing away.
+    # Additive since 1: `destination_binding` defaults to None, so every
+    # mapping written before it loads unchanged; one taught on a newer build
+    # fails validation on an older one, rather than being read wrong.
     spec_version: Literal[1] = 1
     created_at: datetime
     #: Hard gate enforced by discovery, not here: an unreviewed mapping is never
@@ -226,9 +182,8 @@ class MappingSpec(BaseModel):
     #: Columns the operator reviewed and chose not to map (still preserved in
     #: ``extensions`` — this list is for transparency/round-trip accounting).
     unmapped_source_fields: list[str] = Field(default_factory=list)
-    #: The destination chosen BEFORE teaching, when one was. ``None`` for a
-    #: mapping taught without a destination in view (the pre-existing flow, and
-    #: still the default): unbound, so it runs anywhere and refuses nothing.
+    #: The destination chosen BEFORE teaching, if any. ``None`` (the default)
+    #: means unbound: the mapping runs anywhere and refuses nothing.
     destination_binding: DestinationBinding | None = None
 
     @field_validator("mapping_id")
@@ -279,12 +234,9 @@ class MappingSpec(BaseModel):
 
 
 def load_spec(path: Path) -> MappingSpec:
-    """Read and validate a ``mapping.json``, raising :class:`MappingError`.
-
-    The error names the file (mapping config paths are not PHI) for every
-    failure mode: unreadable file, non-JSON, JSON that is not an object, or a
-    spec that fails validation.
-    """
+    """Read and validate a ``mapping.json``, raising :class:`MappingError`
+    naming the file (mapping config paths are not PHI) for every failure
+    mode: unreadable, non-JSON, not an object, or failed validation."""
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -298,22 +250,17 @@ def load_spec(path: Path) -> MappingSpec:
     try:
         return MappingSpec.model_validate(data)
     except ValidationError as exc:
-        # error_count + the first message keep the diagnosis actionable without
-        # dumping a value-bearing payload (defensive: specs carry no PHI, but the
-        # habit holds everywhere).
+        # error_count keeps the diagnosis actionable without dumping a
+        # value-bearing payload.
         raise MappingError(f"mapping {path} is invalid: {exc.error_count()} error(s)") from exc
 
 
 def mapping_json_text(spec: MappingSpec) -> str:
-    """The exact ``mapping.json`` text a saved mapping holds.
-
-    One definition, because two things hash it: ``save_mapping`` writes these
-    bytes and records their digest in ``source_trust.json``, and
-    :func:`anastomosis.core.profiles.capture_source_profile` recomputes the
-    digest when no file is on disk. When those two disagree about indentation
-    or the trailing newline, every freshly-taught mapping reads as edited —
-    the failure mode ``_atomic_write``'s docstring already records once.
-    """
+    """The exact ``mapping.json`` text a saved mapping holds — one
+    definition, because ``save_mapping`` writes these bytes and
+    :func:`anastomosis.core.profiles.capture_source_profile` recomputes
+    the same digest with no file on disk; disagreeing on indentation or
+    the trailing newline would read every fresh mapping as edited."""
     return json.dumps(spec.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
 
 
