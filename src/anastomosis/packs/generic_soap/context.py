@@ -19,10 +19,14 @@ def _vitals_elsewhere(
 ) -> int:
     """How many vitals this visit did not claim, or zero if the section is off.
 
-    Zero when the operator switched the section off — a suppressed section
-    makes no claim to correct. See
-    :func:`~anastomosis.reconstruct.packctx.vitals_elsewhere_in_record` for
-    why the count exists.
+    The layout drops the whole section when a visit has none, and a dropped
+    section over a record that holds eight measurements reads as "this patient
+    has no vitals" — the same denial an empty-state sentence would make, in a
+    quieter voice.
+
+    Zero when the operator switched the section off: a suppressed section makes
+    no claim to correct, and disclosing a count there would put back exactly what
+    they asked to keep off the page.
     """
     if not sections.get("vitals", True):
         return 0
@@ -37,8 +41,11 @@ def build_context(
     patient = record.patient
 
     dos = encounter.date_of_service  # calendar date — never timezone-shifted
-    # Observations grouped by encounter once per record and memoized (see
-    # anastomosis.reconstruct.packctx for the record_cache contract).
+    # Observations grouped by encounter once per record and memoized in the
+    # engine's per-record cache (built once per record, not per encounter);
+    # .get(id, []) == observations_for(id) exactly. CONTRACT: record_cache is
+    # per-record (the engine allocates a fresh dict per record) — do not share
+    # one across DIFFERENT records. Falls back to a local build when absent.
     record_cache = record_cache_of(cfg)
     obs_by_encounter = observations_by_encounter(record, record_cache)
     vitals = [

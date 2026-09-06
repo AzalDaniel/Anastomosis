@@ -1,11 +1,23 @@
 """Context builder for the practice_fusion_soap pack.
 
 Maps a canonical :class:`PatientRecord` + :class:`Encounter` into the
-template's variables, reproducing GOLD_STANDARD.md's PF SOAP-note rules
-(RULES.md): drug display composition, the ESCRIPT line, insurance
-Active/Inactive split, 17 social-history sub-categories, vitals ordering,
-and the synthetic (never-vendor) logo. Where a variable has no canonical
-source yet, a ``# LOUD:`` comment marks it and falls back to PF's empty state.
+template's variables, reproducing the predecessor's PF SOAP-note rendering
+rules (GOLD_STANDARD.md, distilled in RULES.md). The canonical model and the
+``pf_tebra`` adapter already carry the data semantics (sentinels, escript
+status resolution, BMI auto-calc, the PlanType join); this module is the
+*presentation* layer the predecessor's single script also owned:
+
+* drug display-name composition ``Generic (Brand) Strength Route Form``
+  (GOLD §5#5), with the generic==trade paren-omission and brand-only fallback;
+* the ESCRIPT/SCRIPT prescription line, escript date in Eastern, MM/DD/YY;
+* insurance Active/Inactive split, OrderOfBenefits sort, the 4-col grid;
+* the 17 social-history sub-categories (empty-state strings live in template);
+* vitals ordering / BP combination / "as of" render-day date;
+* the synthetic logo data-URI (the vendor mark is NEVER shipped — RULES §logo).
+
+Where a template variable has no canonical source yet, a ``# LOUD:`` comment
+marks it and the value falls back to the documented PF empty state rather than
+inventing data.
 """
 
 from __future__ import annotations
@@ -108,9 +120,10 @@ def _ext(obj: Any, key: str) -> Any:
 def _med_display_name(med: MedicationStatement) -> str:
     """Compose ``Generic (Brand) Strength Route DoseForm`` (GOLD §5#5).
 
-    Uses a stored ``display_name`` when present (the source's own text);
-    else omits ``(Brand)`` when generic == trade, falling back to
-    brand-only when nothing else is present.
+    * If the adapter already stored a display_name, use it (lossless: it is the
+      source's MedicationName).
+    * Else build from components: omit the ``(Brand)`` parens when generic ==
+      trade; fall back to brand-only when nothing else is present.
     """
     if med.display_name:
         return med.display_name
@@ -301,9 +314,14 @@ def _logo_data_uri(cfg_tokens: dict[str, str], pack_root: Path) -> str:
 def _fold_blood_pressure(by_label: dict[str, str]) -> None:
     """Fold the two BP components into the one row the layout declares.
 
-    Systolic + Diastolic (LOINC 8480-6 / 8462-4) combine into one
-    ``Blood Pressure`` ``{sys}/{dia}`` row (RULES.md §Vitals) — otherwise
-    `_VITAL_ORDER` has no slot for either component alone.
+    RULES.md §Vitals: "Systolic + Diastolic combine into one `Blood Pressure`
+    `{sys}/{dia}` row." The observations arrive as separate LOINC codes
+    (8480-6 / 8462-4) and `_VITAL_ORDER` names only the combined row, so a path
+    that skips this fold renders neither — which is what the flowsheet did to
+    every prior-encounter blood pressure.
+
+    In place: both callers build a label -> value map and want the same single
+    key out of it.
     """
     systolic = by_label.pop("Systolic BP", None)
     diastolic = by_label.pop("Diastolic BP", None)
@@ -341,9 +359,13 @@ def _encounter_vital_rows(vitals: list[Observation]) -> list[dict[str, str]]:
 class _RecordViewIndex:
     """Record-level groupings, precomputed in one pass per collection.
 
-    Built per call (the flowsheet and per-encounter vitals stay
-    encounter-specific); splits preserve source collection order, then
-    coverages sort by benefit order.
+    ``build_context`` previously re-scanned each collection several times
+    (active/inactive splits, allergy-by-category, and — the only asymptotic
+    cost — a ``{id: rx}`` prescription map rebuilt inside the per-medication
+    loop, O(meds x prescriptions)). This computes each grouping once. Built per
+    call (the flowsheet and per-encounter vitals stay encounter-specific); the
+    splits preserve the source collection order, then coverages are sorted by
+    benefit order exactly as before.
     """
 
     active_coverages: list[Coverage]
@@ -475,14 +497,25 @@ def _demographics(patient: Patient) -> dict[str, Any]:
 
 #: What a section says when this pack cannot reconstruct it.
 #:
-#: Static because the ROW LAYOUT is unknown, not because v9 has no data
-#: path: `patient-healthcare-devices`, `patient-lab-orders`/`-items`, and
-#: `patient-encounter-observations` all carry the data, but the forensic
-#: gold standard preserves no populated example of these sections, so the
-#: pack does not invent a layout for what it has never seen rendered.
+#: Six sections used to print the vendor's own empty state — "No implantable
+#: devices recorded", "No orders attached to this encounter." — over exports
+#: that carry exactly that data. The note was not merely incomplete; it
+#: asserted a negative the source contradicts, which is the one thing this
+#: project promises not to do.
 #:
-#: No apostrophe on purpose: autoescape turns one into ``&#39;``, breaking
-#: string identity against the page.
+#: The reason those sections are static is NOT that v9 has no data path. It
+#: does: `patient-healthcare-devices` is a 31-column table, `patient-lab-orders`
+#: and `patient-lab-order-items` carry the orders (LabType separates diagnostic
+#: from imaging), and `patient-encounter-observations` carries the observations.
+#: What is missing is the ROW LAYOUT — the forensic gold standard preserves no
+#: populated example of these sections, so the pack does not invent one.
+#:
+#: So the notice claims nothing either way. It says the layout is unknown and
+#: points at where the data actually is, which is true whether the export
+#: carried anything or not.
+#:
+#: No apostrophe on purpose: autoescape turns one into ``&#39;``, and the
+#: string then stops matching itself anywhere it is compared to the page.
 UNRECONSTRUCTED = (
     "Not reconstructed — this layout has no verified format for this section. "
     "Whatever the export carries is preserved in the structured record for this patient."
@@ -514,9 +547,12 @@ def _section_flags(sections: dict[str, bool]) -> dict[str, bool]:
 
 
 def _social_history_context(patient: Patient, index: _RecordViewIndex) -> dict[str, Any]:
-    """Social-history block: smoking + free-text come from the record;
-    structured subcategories stay None (VERIFIED-ABSENT from the EHI
-    export — the source has no table for them, #7)."""
+    """Social-history block: smoking + the social free-text block come from the
+    record (`patient-smokingstatus` and the `social`-kind `patient-med-history`
+    block); the structured subcategories below stay None because they are
+    VERIFIED-ABSENT from the EHI export — the predecessor emitted alcohol, drug
+    use, physical activity, diet, sexual activity, stress, etc. as empty
+    placeholders with no source table (issue #7), so we invent nothing."""
     smoking = index.smoking
     return {
         "smoking_status": smoking.value if smoking else None,
@@ -545,12 +581,15 @@ def _social_history_context(patient: Patient, index: _RecordViewIndex) -> dict[s
 def build_record_context(
     record: PatientRecord, cfg: dict[str, Any], record_cache: dict[str, Any]
 ) -> dict[str, Any]:
-    """The RECORD-STATIC half of the context — everything depending only on
-    the record/patient/cfg, not the encounter.
+    """The RECORD-STATIC half of the context — everything that depends only on
+    the record / patient / cfg, NOT on the encounter.
 
-    Memoized in ``record_cache`` per record; ``build_context`` merges this
-    with the per-encounter half (disjoint key sets). ``meds_as_of`` is
-    render-day (GOLD §5#9) — identical across a record's encounters.
+    Built ONCE per record and memoized in ``record_cache`` (so a 30-encounter
+    chart assembles these views once, not 30 times). ``build_context`` merges
+    this with the per-encounter half; the two key sets are disjoint, so the
+    merge is order-independent and the rendered output is byte-identical to the
+    prior per-encounter assembly. ``meds_as_of`` is render-day (GOLD §5#9) —
+    identical across a record's encounters within one render run.
     """
     cached: dict[str, Any] | None = record_cache.get("pf_record_context")
     if cached is not None:
@@ -571,11 +610,12 @@ def build_record_context(
 
     # --- demographics (the unified 6-col table) --------------------------------
     demo = _demographics(patient)
-    # PatientContactCode is the one column in v9 that carries a patient's
-    # record number, and it lives on patient-superbills — a table the
-    # pf_tebra adapter does not map yet, so this reads None and the header
-    # prints "-". LOUD: never invent an alternative column name (#248); blank
-    # until the table is mapped.
+    # PatientContactCode is the one column in v9 that carries a patient's record
+    # number, and it lives on patient-superbills — a table the pf_tebra adapter
+    # does not map yet, so this reads None on a PF export and the header prints
+    # "-". LOUD: the alternative spelling this used to fall back to ("PRN") is a
+    # column no v9 table has, and a chain over invented names is how a wrong
+    # guess hides (#248). One real name, blank until the table is mapped.
     prn = _ext(patient, "PatientContactCode")
 
     # --- insurance / payment ---------------------------------------------------
@@ -880,9 +920,12 @@ def _allergy_views(items: list[Any]) -> dict[str, list[dict[str, str | None]]]:
 def _concern_view(obj: Any) -> dict[str, str | None]:
     """A concern or goal as the template renders it.
 
-    Both cells fall back to "-" rather than None: the template interpolates
-    these bare, so a missing description would print the literal token
-    ``None`` on a chart a clinician reads.
+    Both cells fall back to the pack's "-" rather than to nothing: a row whose
+    description is absent still says a concern EXISTS on this chart, and
+    dropping it would lose that. The template interpolates these straight, so
+    passing None through would print the literal token ``None`` where a
+    clinician reads a diagnosis — a Python repr on a medical record, which is
+    worse than an honest blank.
     """
     return {
         "description": obj.description or "-",
@@ -893,8 +936,12 @@ def _concern_view(obj: Any) -> dict[str, str | None]:
 def _elsewhere_count(by_encounter: dict[str | None, list[Any]], encounter_id: str) -> int:
     """How many items of an encounter-grouped family belong to some OTHER visit.
 
-    Items under ``None`` (no visit at all) count too. A count, never a
-    value: this number is rendered onto a chart.
+    The empty state of a section that finds nothing here is a claim, and it is
+    only true when the record holds nothing of that family either. Items under
+    ``None`` — belonging to no visit at all — count, because they are the ones
+    with nowhere on a visit note to land.
+
+    A count, never a value: this number is rendered onto a chart.
     """
     return sum(len(items) for eid, items in by_encounter.items() if eid != encounter_id)
 
@@ -918,10 +965,17 @@ def _screening_events(record: PatientRecord, cache: dict[str, Any]) -> dict[str 
 def _screening_view(event: Any) -> dict[str, Any]:
     """One Screenings/Interventions/Assessments row.
 
-    ``negated`` reaches the template unresolved, so a not-performed event
-    still reads as such rather than the opposite. ``name`` falls back to
-    "-" like :func:`_concern_view` — the template interpolates it bare, so
-    a missing name would otherwise print ``None`` on the chart.
+    ``negated`` reaches the template rather than being resolved into the text
+    here: the section prints name, result and comments, and an event the
+    clinician marked as not performed has to be readable as such or the row
+    claims the opposite of what the export says.
+
+    ``name`` falls back to the pack's "-" for the same reason ``_concern_view``
+    does. Result and comments are each wrapped in a template conditional and
+    simply vanish when absent, but the name is interpolated bare — an event
+    that reached us without one would otherwise print the token ``None`` as the
+    name of a screening. The row still has to appear: the export says something
+    happened at this visit, and that is the fact worth keeping.
     """
     return {
         "name": event.name or "-",
@@ -964,10 +1018,12 @@ def _flowsheet_record_index(
 ) -> tuple[dict[str, dict[str, str]], dict[str, _dt.date]]:
     """The vital-by-encounter grouping for the whole record (one pass, no DOS cut).
 
-    Memoized: the per-encounter flowsheet applies only the DOS cutoff to
-    this. Returns ``(cols, col_dates)`` — ``cols[eid]`` is
-    ``{label: str(value)}`` (last value wins); ``col_dates[eid]`` its date
-    of service.
+    Built ONCE per record and memoized in ``record_cache`` (the per-encounter
+    flowsheet only applies the DOS cutoff to this). Returns ``(cols, col_dates)``:
+    ``cols[encounter_id]`` is ``{vital label: str(value)}`` (last value wins, in
+    ``record.observations`` order) and ``col_dates[encounter_id]`` is that
+    encounter's date of service — for every encounter with at least one non-null
+    vital observation.
     """
     enc_by_id = {e.id: e for e in record.encounters}
     cols: dict[str, dict[str, str]] = {}
@@ -991,11 +1047,13 @@ def _flowsheet_record_index(
 def _build_flowsheet(
     record: PatientRecord, dos: _dt.date | None, record_cache: dict[str, Any]
 ) -> tuple[list[dict[str, str | None]], list[dict[str, Any]]]:
-    """Vitals flowsheet: prior encounters only (< current DOS), most recent
-    ``_FLOWSHEET_MAX_COLUMNS`` columns, all 11 vital rows shown (GOLD §8).
+    """Vitals flowsheet: prior encounters only (strictly < current DOS), most
+    recent ``_FLOWSHEET_MAX_COLUMNS`` columns, all 11 vital rows shown (GOLD §8).
 
-    The record-wide scan (:func:`_flowsheet_record_index`) is cached; only
-    the cutoff, ordering, and column cap run per encounter.
+    The record-wide vital-by-encounter scan is computed once
+    (:func:`_flowsheet_record_index`) and cached; only the DOS cutoff, ordering,
+    column cap, and row assembly run per encounter. Output is byte-identical to
+    the prior per-encounter scan (the cutoff merely moved out of the loop).
     """
     if dos is None:
         return [], []
