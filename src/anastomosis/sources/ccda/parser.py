@@ -1893,18 +1893,10 @@ def _delivered_artifact(media: _Element, document: Path, patient_id: str) -> Doc
 
 
 def _verify_integrity(value: _Element, digest: str) -> None:
-    """Check the delivered file against the digest the ED witnesses.
-
-    The HL7 v3 ED datatype carries ``@integrityCheck`` (the digest, base64) and
-    ``@integrityCheckAlgorithm``; the export writes SHA-256 into both. A file
-    that hashes to something else is not a slightly different file, it is a
-    different document, so it stops the run here rather than being carried as
-    the one the chart names.
-
-    An ED declaring no check at all is not refused — the datatype allows it,
-    and a document without one is simply unwitnessed. What is refused is a
-    check this reader cannot evaluate: an algorithm it does not implement would
-    otherwise pass silently by not being compared.
+    """Check the delivered file against the digest the ED's
+    ``@integrityCheck``/``@integrityCheckAlgorithm`` witnesses. Absent
+    is not refused (simply unwitnessed); an algorithm this reader does
+    not implement IS refused, so it never passes uncompared.
     """
     declared = value.get("integrityCheck")
     if declared is None:
@@ -1946,18 +1938,14 @@ class _HardenedXMLKwargs(TypedDict):
     huge_tree: bool
 
 
-# Hardened XML parser: third-party clinical documents must never resolve
-# external entities (XXE), fetch external DTDs over the network (SSRF), or
-# expand into unbounded trees (billion-laughs / quadratic blowup). These
-# flags are the OWASP-recommended posture for any XML ingest the
-# application does not author itself.
+# Hardened XML parser: no external entity resolution (XXE), no network DTD
+# fetch (SSRF), no unbounded tree (billion-laughs). OWASP-recommended
+# posture for third-party XML.
 #
-# Kept as a dict, not only as the ``_PARSER`` built from it, because
-# ``etree.iterparse`` — the cheap "does this look like CDA" sniff in
-# ``sources/ccda/__init__.py`` (#384 round two) — has no ``parser=`` argument
-# to hand a built ``XMLParser`` to; it takes these same flags directly. A
-# document sniffed under weaker settings than the one it is then read under
-# would defeat the point of hardening the read at all.
+# Kept as a dict, not only as the built ``_PARSER``, because
+# ``etree.iterparse`` (the CDA sniff in ``sources/ccda/__init__.py``,
+# #384) takes these same flags directly, with no ``parser=`` argument —
+# so the sniff and the real read share exactly the same hardening.
 _HARDENED_XML_KWARGS: _HardenedXMLKwargs = {
     "resolve_entities": False,
     "no_network": True,
@@ -1968,18 +1956,10 @@ _PARSER = etree.XMLParser(**_HARDENED_XML_KWARGS)
 
 
 def _inline_narrative_references(root: _Element) -> None:
-    """Give every ``<reference value="#id"/>`` the narrative text it points at.
-
-    Linking a coded entry to its human-readable narrative by reference is THE
-    standard C-CDA mechanism, and a ``<reference>`` element carries no text of
-    its own. So a problem whose ``<originalText>`` is a reference came through
-    unnamed, and a Note Activity whose ``<text>`` is a reference came through
-    empty — while the words sat a few elements away in the same document.
-
-    Resolved once per document by filling in each reference's own text, so every
-    reader downstream (originalText, entry text, note bodies) sees the words
-    without knowing references exist. A reference naming an id the document does
-    not define is left alone rather than guessed at.
+    """Give every ``<reference value="#id"/>`` the narrative text it
+    points at — the standard C-CDA mechanism links a coded entry to its
+    prose by reference, and a ``<reference>`` carries no text of its
+    own. An id the document does not define is left alone.
     """
     targets = {node.get("ID"): node for node in root.iter() if node.get("ID")}
     if not targets:
@@ -1994,26 +1974,18 @@ def _inline_narrative_references(root: _Element) -> None:
             reference.text = _text_content(targets.get(value[1:]))
 
 
-# Categories a visit may claim. A measurement is taken AT a moment, so a visit
-# on its date says something about where it belongs. Social history does not
-# work that way — smoking status is a standing fact about the patient, not a
-# reading from one afternoon — so it stays record-level, which is also where
-# the packs read it from.
+# Categories a visit may claim: a measurement is taken AT a moment, so a
+# visit on its date says where it belongs. Social history does not (smoking
+# status is a standing fact, not a one-afternoon reading), so it stays
+# record-level.
 _VISIT_MEASUREMENTS = frozenset({ObservationCategory.VITAL_SIGNS, ObservationCategory.LABORATORY})
 
 
 def _visit_candidates(record: PatientRecord) -> dict[date, list[Encounter]]:
-    """The visits a measurement may be charted at, indexed by calendar day.
-
-    Only an encounter carrying BOTH a date and a type is a candidate: a
-    note-only encounter documents a visit, it is not one, and counting it would
-    make every documented visit ambiguous with itself.
-
-    A ``componentOf/encompassingEncounter`` is the document's FRAME rather than
-    an entry inside it, so it supplies a candidate only for a day no entry
-    claims. When a document states the visit both ways — in its header and again
-    in the Encounters section — those are one visit stated twice, and admitting
-    both would make the day ambiguous and strand the measurements taken on it.
+    """The visits a measurement may be charted at, indexed by calendar
+    day. Only an encounter with BOTH a date and a type is a candidate —
+    a note-only encounter documents a visit, it is not one. The
+    document's own FRAME fills a day no entry already claims.
     """
     entries: dict[date, list[Encounter]] = {}
     frames: dict[date, list[Encounter]] = {}
