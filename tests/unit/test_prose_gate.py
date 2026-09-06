@@ -172,3 +172,60 @@ def test_write_baseline_refuses_new_violations_without_the_escape_hatch(
 
     assert main(["--write-baseline", "--allow-new-violations"]) == 0
     assert json.loads(baseline_path.read_text(encoding="utf-8")) != original
+
+
+def test_an_over_long_docstring_that_only_moved_is_not_new(tmp_path: Path) -> None:
+    _write_tree(tmp_path)
+    mod = tmp_path / "src" / "pkg" / "mod.py"
+    mod.write_text(
+        f"{_TWELVE_LINE_DOCSTRING}\n"
+        "def add(a, b):\n"
+        '    """Adds."""\n'
+        "    return a + b\n"
+        "\n"
+        "def sub(a, b):\n"
+        '    """One.\n    Two.\n    Three.\n    Four.\n    Five.\n    Six.\n    """\n'
+        "    return a - b\n",
+        encoding="utf-8",
+    )
+    baseline = measure(tmp_path)
+    # The module docstring shrinks to one line: ``sub``'s over-long docstring
+    # keeps its length but lands eleven lines earlier.
+    mod.write_text(
+        '"""Short."""\n\n'
+        "def add(a, b):\n"
+        '    """Adds."""\n'
+        "    return a + b\n"
+        "\n"
+        "def sub(a, b):\n"
+        '    """One.\n    Two.\n    Three.\n    Four.\n    Five.\n    Six.\n    """\n'
+        "    return a - b\n",
+        encoding="utf-8",
+    )
+    failures, improved = compare(measure(tmp_path), baseline)
+    assert failures == []
+    assert improved == 1
+
+
+def test_a_baseline_without_owner_names_still_matches_by_line(tmp_path: Path) -> None:
+    _write_tree(tmp_path)
+    baseline = measure(tmp_path)
+    for entry in baseline["over_long_docstrings"]:  # type: ignore[union-attr]
+        del entry["name"]
+    failures, _ = compare(measure(tmp_path), baseline)
+    assert failures == []
+
+
+def test_a_history_phrase_that_only_moved_is_not_new(tmp_path: Path) -> None:
+    _write_tree(tmp_path)
+    baseline = measure(tmp_path)
+    mod = tmp_path / "src" / "pkg" / "mod.py"
+    mod.write_text(
+        '"""Short."""\n\n'
+        "def add(a, b):\n"
+        '    """This was previously computed differently."""\n'
+        "    return a + b\n",
+        encoding="utf-8",
+    )
+    failures, _ = compare(measure(tmp_path), baseline)
+    assert failures == []
