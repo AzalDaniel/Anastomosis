@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -45,6 +46,14 @@ _KILLED_WRITER = textwrap.dedent(
         time.sleep(300)
     """
 )
+
+
+def _write_text(target: Path) -> None:
+    atomic_write_text(target, '{"trusted": true}', mode=0o600)
+
+
+def _write_bytes(target: Path) -> None:
+    atomic_write_bytes(target, b'{"trusted": true}', mode=0o600)
 
 
 def _tmp_files(directory: Path) -> list[Path]:
@@ -129,6 +138,24 @@ def test_atomic_write_text_mode_sets_owner_only_permissions(tmp_path: Path) -> N
     target = tmp_path / "trust.json"
     atomic_write_text(target, "{}", mode=0o600)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="owner-only mode is POSIX-only")
+@pytest.mark.parametrize("write", [_write_text, _write_bytes])
+def test_a_stale_same_pid_temp_does_not_carry_its_mode_onto_the_target(
+    tmp_path: Path, write: Callable[[Path], None]
+) -> None:
+    """A killed run leaves ``.NAME.<pid>.tmp`` behind, and a later run whose
+    pid the kernel recycled finds it alive and keeps it. Creation-time mode
+    bits are ignored for a file that already exists, so the trust store would
+    have landed at the stale temp's 0o644 without a chmod."""
+    target = tmp_path / "source_trust.json"
+    stale = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    stale.write_text("stale", encoding="utf-8")
+    stale.chmod(0o644)
+    write(target)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert _tmp_files(tmp_path) == []
 
 
 def test_atomic_write_bytes_puts_exactly_the_bytes_it_was_given_on_disk(tmp_path: Path) -> None:
