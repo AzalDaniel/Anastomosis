@@ -28,6 +28,7 @@ from anastomosis.core.model import (
     ObservationCategory,
     PatientRecord,
 )
+from anastomosis.core.pdfsnapshot import PdfSnapshot, PdfSnapshotCache
 from anastomosis.core.timeutil import all_date_spellings, to_local
 
 from .base import CheckResult, QAContext, Verdict, register_check
@@ -50,71 +51,23 @@ _PAGE_SIZES = {"Letter": (612.0, 792.0), "A4": (595.0, 842.0)}
 _CACHE_ATTR = "_qa_page_snapshot"
 
 
-@dataclass(frozen=True)
-class PageInfo:
-    """One rendered page captured in a single PDF open: its text and geometry.
-
-    LayoutPagination needs page geometry; the other checks only join the text.
-    Capturing both once lets every engine check share one ``pymupdf.open``.
-    """
-
-    text: str
-    width: float
-    height: float
-
-
-def _open_snapshot(pdf_path: Path) -> list[PageInfo]:
-    """Opens the PDF once and captures per-page text + geometry, shared via
-    :func:`prime_snapshot_cache` so no check calls ``pymupdf.open`` twice.
-    Called only from inside a check, so a corrupt PDF surfaces as that
-    check's CHECK CRASHED finding rather than aborting the batch."""
-    # Imported here, not at module scope: pymupdf is the `render` extra, and a
-    # base install must still be able to import this module (e.g. `anast doctor`).
-    import pymupdf
-
-    with pymupdf.open(pdf_path) as doc:  # type: ignore[no-untyped-call]
-        return [
-            PageInfo(text=page.get_text(), width=page.rect.width, height=page.rect.height)
-            for page in doc
-        ]
-
-
-class _SnapshotCache:
-    """A lazily-populated page snapshot per PDF path, shared across a run's
-    checks. Keyed by path, not a single slot: a context can grade more than
-    one document (#392), and unbounded on purpose since a context grades a
-    handful, not thousands."""
-
-    __slots__ = ("_pages",)
-
-    def __init__(self) -> None:
-        self._pages: dict[Path, list[PageInfo]] = {}
-
-    def get(self, pdf_path: Path) -> list[PageInfo]:
-        if pdf_path not in self._pages:
-            self._pages[pdf_path] = _open_snapshot(pdf_path)
-        return self._pages[pdf_path]
-
-
 def prime_snapshot_cache(ctx: QAContext) -> None:
     """Attaches a lazy per-document cache to ``ctx`` via
     ``object.__setattr__`` (``QAContext`` is frozen). Lazy, so a corrupt PDF
     still surfaces as the first check's CHECK CRASHED finding, never here."""
-    object.__setattr__(ctx, _CACHE_ATTR, _SnapshotCache())
+    object.__setattr__(ctx, _CACHE_ATTR, PdfSnapshotCache())
 
 
-def _snapshot(pdf_path: Path, ctx: QAContext) -> list[PageInfo]:
-    """The per-page snapshot for ``pdf_path``, from the shared cache when the
-    runner primed one, else opened directly (bare third-party ctx)."""
-    cache: _SnapshotCache | None = getattr(ctx, _CACHE_ATTR, None)
-    if cache is None:
-        return _open_snapshot(pdf_path)
-    return cache.get(pdf_path)
+def _snapshot(pdf_path: Path, ctx: QAContext) -> PdfSnapshot:
+    """The snapshot for ``pdf_path``, from the shared cache when the runner
+    primed one, else its own (a bare third-party ctx)."""
+    cache: PdfSnapshotCache | None = getattr(ctx, _CACHE_ATTR, None)
+    return PdfSnapshot(pdf_path) if cache is None else cache.get(pdf_path)
 
 
 def _document_text(pdf_path: Path, ctx: QAContext) -> str:
     """The whole document's text, joined from the shared per-document snapshot."""
-    return "\n".join(page.text for page in _snapshot(pdf_path, ctx))
+    return _snapshot(pdf_path, ctx).text
 
 
 #: Words per matched passage. Small enough that a page break costs one passage
@@ -202,13 +155,13 @@ class LayoutPaginationCheck:
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult:
         findings: list[str] = []
         warn_only = True
-        snapshot = _snapshot(pdf_path, ctx)
-        if not snapshot:
+        pages = _snapshot(pdf_path, ctx).pages
+        if not pages:
             return CheckResult(self.name, Verdict.FAIL, ["document has no pages"])
         expected = _PAGE_SIZES.get(ctx.page_size)
         if expected is None:
             findings.append(f"unrecognized page size {ctx.page_size!r}: geometry not verified")
-        for index, page in enumerate(snapshot, start=1):
+        for index, page in enumerate(pages, start=1):
             if not page.text.strip():
                 findings.append(f"page {index} is blank")
                 warn_only = False
