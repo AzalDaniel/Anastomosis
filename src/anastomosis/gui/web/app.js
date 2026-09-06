@@ -164,10 +164,7 @@
   let skippedStages = [];
 
   // --- the progress bar -----------------------------------------------------
-  // The bar measures stages settled out of stages planned. It used to sit at 0%
-  // for the whole run and then jump to full from the failure branch as well as
-  // the finish branch, so a run that stopped on stage two showed a complete,
-  // brand-coloured bar directly under the word "Stopped."
+  // The bar measures stages settled out of stages planned.
   let plannedStages = [];
   let settledStages = 0;
 
@@ -217,10 +214,9 @@
     pendingRun = null;
   }
 
-  // The first event of the run is what replaces the last one's results. Doing it
-  // here rather than at submit time also settles the order: an event that beat
-  // the bridge's answer back can no longer have its stage card wiped by a reset
-  // arriving after it.
+  // The first event of the run is what replaces the last one's results.
+  // Doing it here rather than at submit time settles the order, so a reset
+  // arriving late cannot wipe a stage card an earlier event already set.
   function beginRun() {
     if (!pendingRun) return;
     const config = pendingRun.config;
@@ -369,7 +365,7 @@
       if (!layout.available) continue;
       SECTIONS_BY_PACK[layout.name] = layout.sections || {};
       // The name a person reads, with the id they would quote to support
-      // underneath it — the two used to compete for one slot, and the id won.
+      // underneath it.
       entries.push({
         value: layout.name,
         label: Shell.nameOf(layout),
@@ -400,10 +396,9 @@
       if (!res || !res.ok || !Array.isArray(res.stale) || res.stale.length === 0) return;
       const names = res.stale.map((s) => s.destination).join(", ");
       // The controller's `advice` is a terminal command — never shown here.
-      // `pack_freshness` returns the exact command per destination in `advice`;
-      // it was being discarded in favour of "set it up again", which named no
-      // way to do it. One stale destination gets its command; several get the
-      // shape, since the toast is one line.
+      // `pack_freshness` returns the exact command per destination in `advice`.
+      // One stale destination gets its command; several get the shape, since
+      // the toast is one line.
       const advice =
         res.stale.length === 1 && res.stale[0].advice
           ? `Run: ${res.stale[0].advice}`
