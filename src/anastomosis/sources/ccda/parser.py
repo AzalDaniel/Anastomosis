@@ -1492,11 +1492,8 @@ def _named_participations(root: _Element, actors: _Actors) -> None:
 
 
 def _custodians(root: _Element, actors: _Actors) -> None:
-    """The organization holding the record.
-
-    A custodian names no person at all — the element under it is an
-    organization — so it becomes a facility and nothing pretends a human
-    custodied the chart.
+    """The organization holding the record — a custodian names no
+    person at all, so it becomes a facility.
     """
     for custodian in _findall(root, "v3:custodian"):
         organization = _find(custodian, "v3:assignedCustodian/v3:representedCustodianOrganization")
@@ -1506,14 +1503,9 @@ def _custodians(root: _Element, actors: _Actors) -> None:
 
 def _service_events(root: _Element, actors: _Actors, record: PatientRecord) -> None:
     """The episode of care the document is about, and who delivered it.
-
-    The performer becomes a Practitioner — that is the answer to "who provided
-    this care". The serviceEvent itself does NOT become an Encounter: its
-    ``effectiveTime`` is the care-provision PERIOD, routinely years wide on a
-    CCD, and charting its low bound as a date of service would invent a visit on
-    a day nothing happened. So its own facts are preserved under
-    ``patient.extensions`` instead, where they are recoverable without claiming
-    to be a visit.
+    The performer becomes a Practitioner; the serviceEvent itself does
+    NOT become an Encounter (its ``effectiveTime`` is a period, often
+    years wide) — its own facts go to ``patient.extensions`` instead.
     """
     events: list[dict[str, Any]] = []
     for event in _findall(root, "v3:documentationOf/v3:serviceEvent"):
@@ -1528,11 +1520,9 @@ def _service_events(root: _Element, actors: _Actors, record: PatientRecord) -> N
 
 
 def _service_event_facts(event: _Element) -> dict[str, Any]:
-    """What a service event states about itself, as plain data.
-
-    Only the values the document actually carried: an absent key and a key
-    holding ``None`` say different things, and this is the one copy of these
-    facts the record keeps.
+    """What a service event states about itself, as plain data — only
+    the values the document actually carried, since an absent key and a
+    ``None`` value say different things.
     """
     period = _find(event, "v3:effectiveTime")
     facts = {
@@ -1547,12 +1537,9 @@ def _service_event_facts(event: _Element) -> dict[str, Any]:
 
 
 def _encompassing_encounters(root: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
-    """The visit the document itself is about.
-
-    A Progress Note routinely says which encounter it documents HERE and nowhere
-    else — such a document has no Encounters section at all — so a reader that
-    looks only at 46240-8 sees a note attached to no visit, which is the shape
-    an unattributed chart arrives in.
+    """The visit the document itself is about. A Progress Note routinely
+    says which encounter it documents HERE and nowhere else, so a reader
+    of 46240-8 alone sees a note attached to no visit.
     """
     source_file = actors.source_file
     out: list[Encounter] = []
@@ -1615,14 +1602,9 @@ def _encounter_facility(enc: _Element, actors: _Actors) -> str | None:
 def _participations(
     root: _Element, patient_id: str, actors: _Actors, record: PatientRecord
 ) -> None:
-    """Everyone and everywhere the document names, into the record.
-
-    The C-CDA header is where a chart says who wrote it, who signed it, who
-    holds it and which visit it belongs to, and none of it was being read: 2,103
-    audited documents parsed without error and produced not one practitioner and
-    not one facility between them. A note that arrives with no author has lost
-    the answer to "who wrote this" while still looking complete, which is the
-    worst shape a surviving record can take.
+    """Everyone and everywhere the document names, into the record —
+    the C-CDA header (rule 60): who wrote it, who signed it, who holds
+    it, which visit it belongs to.
     """
     _authors(root, actors)
     _named_participations(root, actors)
@@ -1633,16 +1615,11 @@ def _participations(
 
 # --- the unstructured body ---------------------------------------------------
 
-#: The largest artifact this adapter carries out of one document, decoded.
-#:
-#: An Unstructured Document's body is a whole scanned chart, and a base64 one is
-#: resident twice on the way in — as the source's characters and as the bytes it
-#: decodes to. So the ceiling is DECLARED here rather than discovered at
-#: whatever size this machine happens to die at, which is a limit nobody can
-#: read, reproduce, or raise. 32 MiB admits the scans real exports carry (a few
-#: hundred colour pages) and refuses the pathological one loudly, because the
-#: alternative — carrying the first 32 MiB of a clinical document — is a chart
-#: that looks complete and is not.
+#: The largest artifact this adapter carries out of one document,
+#: decoded. A base64 body is resident twice on the way in (source chars
+#: + decoded bytes), so the ceiling is DECLARED here rather than
+#: discovered by an OOM. 32 MiB admits real scanned exports and refuses
+#: a pathological one loudly rather than silently truncating.
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 #: What a body that declares no ``@mediaType`` is recorded as: "some bytes, no
