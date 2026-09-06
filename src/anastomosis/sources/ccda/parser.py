@@ -361,10 +361,8 @@ def entry_verbatim(entry: _Element) -> str:
 
 def free_key(extensions: dict[str, Any], key: str) -> str:
     """``key``, or its first free ``#2``, ``#3``, … variant, in document
-    order — a document may repeat a section code or carry several
-    code-less sections, and one stored section must never replace
-    another. Public: the pipeline's record fold parks a clashing
-    extension the same way.
+    order — one stored section must never replace another. Public: the
+    pipeline's record fold parks a clashing extension the same way.
     """
     if key not in extensions:
         return key
@@ -422,11 +420,9 @@ def _store_entries(
 
 
 def _is_own_loss_narrative(section: _Element, loinc: str | None) -> bool:
-    """Whether ``section`` is a loss ledger THIS repo's C-CDA exporter wrote.
-
-    Matched on the section code plus the exporter's own stamp — never on the
-    code alone: 51899-3 is a public LOINC any vendor may use, and a third
-    party's section must keep round-tripping as ordinary foreign narrative.
+    """Whether ``section`` is a loss ledger THIS repo's C-CDA exporter
+    wrote. Matched on the code plus the exporter's own stamp — never the
+    code alone, since 51899-3 is a public LOINC any vendor may use.
     """
     if loinc != LOINC_EXTENSIONS:
         return False
@@ -484,11 +480,9 @@ def _narrative_entries(text_node: _Element | None) -> list[str]:
 
 
 def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
-    """Preserve OUR OWN loss ledger under
-    ``ccda:prior_loss_narrative``, as discrete per-paragraph entries so a
-    re-export can dedupe them (rule 61) rather than swallowing one
-    ever-growing blob. An unreadable (non-per-paragraph) ledger is kept
-    whole as one entry.
+    """Preserve OUR OWN loss ledger under ``ccda:prior_loss_narrative``,
+    as discrete per-paragraph entries so a re-export can dedupe them
+    (rule 61). An unreadable (non-per-paragraph) ledger is kept whole.
     """
     entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
@@ -1194,13 +1188,10 @@ def _npi(entity: _Element) -> str | None:
 
 
 def _role_source_id(entity: _Element) -> str | None:
-    """The id root a role is identified BY, or ``None`` when it carries none.
-
-    The NPI arc is a code system, not an instance identifier: every provider in
-    the country shares that root, so crediting a parse to it would attribute one
-    document's object by a value that says nothing about this document. A role
-    with only an NPI gets no source id — recorded as unattributable rather than
-    attributed to the wrong thing.
+    """The id root a role is identified BY, or ``None`` when it carries
+    none. The NPI arc is a code system, not an instance identifier —
+    every provider shares that root — so a role with only an NPI gets
+    no source id.
     """
     return next(
         (
@@ -1676,10 +1667,9 @@ def _within_ceiling(size: int, what: str) -> None:
 
 def _beside_document(reference: str, document: Path) -> Path | None:
     """The file ``reference`` names beside ``document``, or ``None`` for
-    none. Resolved then checked back against the directory it resolved
-    in, so a ``../`` cannot read a file the operator never pointed at.
-    Returns rather than raises: two constructs use this, and a missing
-    file means something different to each.
+    none — checked back against the resolved directory, so a ``../``
+    cannot escape it. Returns rather than raises: a missing file means
+    something different to each of its two callers.
     """
     directory = document.parent.resolve()
     resolved = (directory / reference).resolve()
@@ -1838,10 +1828,9 @@ def _delivered_artifacts(
     section: _Element, document: Path, patient_id: str
 ) -> list[DocumentArtifact]:
     """The documents this toolkit delivered beside ``document``, as
-    artifacts — the inverse of
-    ``deliver.ccda_export.builder._delivered_documents``. Only an
-    ``<observationMedia>`` stamped with :data:`ARTIFACT_TEMPLATE_ROOT`
-    is read this way (#373); a third party's is preserved verbatim.
+    artifacts — the inverse of ``ccda_export.builder._delivered_documents``.
+    Only an ``<observationMedia>`` stamped with
+    :data:`ARTIFACT_TEMPLATE_ROOT` is read this way (#373).
     """
     return [
         _delivered_artifact(media, document, patient_id)
@@ -2095,9 +2084,8 @@ def parse_document(path: Path) -> PatientRecord:
     )
     actors = _Actors(source_file=source_file)
     _participations(root, pid, actors, record)
-    # Before the section walk, and unconditionally: an Unstructured Document has
-    # no sections to walk, which is exactly why one used to leave here with a
-    # patient and an empty chart.
+    # Before the section walk, and unconditionally: an Unstructured
+    # Document has no sections to walk at all.
     record.documents += _unstructured_documents(root, path, pid, doc_meta)
 
     for section in _sections(root):
@@ -2129,12 +2117,11 @@ def parse_document(path: Path) -> PatientRecord:
             # them: a scanned chart IS the note for the visit it documents, and
             # a second 34109-9 section would tell a reader the document has two.
             record.documents += _delivered_artifacts(section, path, pid)
-        # Losslessness: the narrative and the entries are captured for every
-        # section, not only the unparsed ones. The structural parsers above `continue` past an entry
-        # whose shape they do not support, so a known section can yield nothing
-        # while its <text> still holds the clinical statement; the duplication
-        # for a fully-parsed section is the cheap side of that trade. Our own
-        # loss ledger is the one exception — captured entry-by-entry so a repeat
+        # Losslessness: narrative and entries are captured for EVERY
+        # section, not only unparsed ones — a structural parser `continue`s
+        # past an entry it does not support, so a known section can yield
+        # nothing while its <text> still holds the statement. Our own loss
+        # ledger is the exception: captured entry-by-entry so a repeat
         # export cannot nest it inside the next one.
         if _is_own_loss_narrative(section, loinc):
             _capture_loss_narrative(record, section)
