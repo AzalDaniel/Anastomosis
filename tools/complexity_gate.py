@@ -19,7 +19,10 @@ The rules, applied to radon's cyclomatic-complexity report over ``src``:
 * a baselined violation may not worsen, in letter rank or raw CC. Adding one
   branch to an E/38 function makes it E/39 and fails, which is the point: the
   burn-down cannot lose ground quietly;
-* the same rules for per-module averages, at rank A;
+* a module whose AVERAGE is over rank A may not gain TOTAL complexity: the
+  baseline records every module's total, so deleting simple code (which
+  raises an average while lowering the total) is never a regression, and
+  adding a block to a module already over the line is;
 * improvement never fails, and when the working tree is strictly better than
   the baseline the gate says so and asks for a regeneration, so the ratchet
   actually tightens instead of remembering debt that no longer exists.
@@ -93,14 +96,15 @@ def _rank(cc: float) -> str:
 def measure(report: dict[str, list[dict[str, object]]]) -> dict[str, object]:
     """Collapse a radon report into the ratchet's two violation tables.
 
-    Only blocks over rank ``B`` and modules over rank ``A`` are kept — the
-    gate governs debt, not health. Blocks are keyed ``path::Class.method``
-    (or ``path::function``). Two same-named blocks in one file — a nested
-    helper shadowing, say — collapse to the WORST of them, which can only
-    make the gate stricter, never blinder.
+    Only blocks over rank ``B`` and modules over rank ``A`` are kept as
+    violations — the gate governs debt, not health — plus every module's
+    total CC under ``totals``, the reference a deletion is judged against.
+    Blocks are keyed ``path::Class.method`` (or ``path::function``). Two
+    same-named blocks in one file collapse to the WORST of them.
     """
     blocks: dict[str, dict[str, object]] = {}
     modules: dict[str, dict[str, object]] = {}
+    totals: dict[str, int] = {}
     for raw_path, entries in sorted(report.items()):
         # Radon reports OS-native separators; the baseline is written once and
         # read on every platform, so keys are normalized to forward slashes —
@@ -126,10 +130,11 @@ def measure(report: dict[str, list[dict[str, object]]]) -> dict[str, object]:
             ):
                 blocks[key] = {"rank": _rank(cc), "cc": cc}
         if count:
+            totals[path] = total
             avg = total / count
             if _worse(_rank(avg), NEW_MODULE_LIMIT):
-                modules[path] = {"rank": _rank(avg), "avg": round(avg, 4)}
-    return {"blocks": blocks, "modules": modules}
+                modules[path] = {"rank": _rank(avg), "avg": round(avg, 4), "total": total}
+    return {"blocks": blocks, "modules": modules, "totals": totals}
 
 
 def _worse(rank: str, than: str) -> bool:
@@ -163,20 +168,31 @@ def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[li
             improved += 1
 
     base_modules: dict[str, dict[str, object]] = baseline["modules"]  # type: ignore[assignment]
+    base_totals: dict[str, int] = baseline.get("totals", {})  # type: ignore[assignment]
     for path, now in sorted(current["modules"].items()):  # type: ignore[union-attr]
+        rank, avg, total = str(now["rank"]), float(now["avg"]), int(now["total"])
         was = base_modules.get(path)
-        rank, avg = str(now["rank"]), float(now["avg"])
-        if was is None:
+        was_total = int(was["total"]) if was and "total" in was else base_totals.get(path)
+        if was_total is None and was is not None:
+            # A baseline written before totals existed: judge by average, as before.
+            was_rank, was_avg = str(was["rank"]), float(was["avg"])
+            if _worse(rank, was_rank) or (rank == was_rank and avg > was_avg + 1e-9):
+                failures.append(
+                    f"WORSENED module average: {path} was {was_rank}/{was_avg}, now {rank}/{avg}"
+                )
+            elif avg < was_avg - 1e-9:
+                improved += 1
+        elif was_total is None:
             failures.append(
                 f"NEW module over rank {NEW_MODULE_LIMIT}: {path} averages {rank}/{avg}"
             )
-            continue
-        was_rank, was_avg = str(was["rank"]), float(was["avg"])
-        if _worse(rank, was_rank) or (rank == was_rank and avg > was_avg + 1e-9):
+        elif total > was_total:
             failures.append(
-                f"WORSENED module average: {path} was {was_rank}/{was_avg}, now {rank}/{avg}"
+                f"WORSENED module: {path} averages {rank}/{avg} and its total CC grew "
+                f"from {was_total} to {total}. Deleting is always allowed; adding to a "
+                "module over the line is not."
             )
-        elif avg < was_avg - 1e-9:
+        elif total < was_total:
             improved += 1
 
     return failures, improved

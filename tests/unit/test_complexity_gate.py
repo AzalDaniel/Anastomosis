@@ -122,6 +122,9 @@ def test_the_baseline_file_is_violations_only() -> None:
         assert entry["rank"] not in ("A", "B"), entry
     for entry in baseline["modules"].values():
         assert entry["rank"] != "A", entry
+    # ``totals`` is the reference a deletion is judged against, one int per
+    # module, never a violation.
+    assert all(isinstance(v, int) for v in baseline["totals"].values())
 
 
 def test_windows_paths_measure_to_the_same_keys_as_posix_paths() -> None:
@@ -134,3 +137,42 @@ def test_windows_paths_measure_to_the_same_keys_as_posix_paths() -> None:
     assert windows == posix
     assert set(windows["blocks"]) == {"src/pkg/mod.py::Mapper.sprawl"}
     assert set(windows["modules"]) == {"src/pkg/mod.py"}
+
+
+def test_deleting_a_simple_block_never_fails_even_when_the_average_rises() -> None:
+    # Three blocks at 6 and one at 1: average 4.75, rank A, total 19. Delete
+    # the simple one: average 6.0, rank B, total 18. Less code, higher average.
+    baseline = measure(
+        _report(
+            ("src/m.py", "a", None, 6),
+            ("src/m.py", "b", None, 6),
+            ("src/m.py", "c", None, 6),
+            ("src/m.py", "d", None, 1),
+        )
+    )
+    assert "src/m.py" not in baseline["modules"]  # type: ignore[operator]
+    current = measure(
+        _report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 6), ("src/m.py", "c", None, 6))
+    )
+    assert "src/m.py" in current["modules"]  # type: ignore[operator]
+    failures, improved = compare(current, baseline)
+    assert failures == []
+    assert improved == 1
+
+
+def test_adding_a_block_to_a_module_over_the_line_fails() -> None:
+    baseline = measure(_report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 6)))
+    current = measure(
+        _report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 6), ("src/m.py", "c", None, 6))
+    )
+    failures, _ = compare(current, baseline)
+    assert any("WORSENED module" in f and "12 to 18" in f for f in failures)
+
+
+def test_a_baseline_without_totals_still_judges_a_known_module() -> None:
+    baseline = measure(_report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 6)))
+    del baseline["totals"]  # type: ignore[union-attr]
+    current = measure(_report(("src/m.py", "a", None, 6), ("src/m.py", "b", None, 5)))
+    failures, improved = compare(current, baseline)
+    assert failures == []
+    assert improved == 1
