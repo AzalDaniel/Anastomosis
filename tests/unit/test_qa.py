@@ -456,6 +456,28 @@ def test_record_without_identity_anchors_warns(tmp_path: Path) -> None:
     assert any("identity anchors" in f for f in result.findings)
 
 
+def test_the_integrity_check_fails_a_chart_naming_a_different_patient(tmp_path: Path) -> None:
+    """Driven through the check itself, not through its predicate: a chart
+    carrying this patient's first name, DOB and date of service but somebody
+    else's family name is a misfiled chart and must not pass."""
+    wrong = make_pdf(
+        tmp_path / "wrong_patient.pdf",
+        [
+            "Synthia Quarles",
+            "DOB 01/02/1980",
+            "Date of service: May 10, 2023",
+            "Blood pressure 118 / 76 mmHg",
+            "Heart rate 72 bpm",
+        ],
+    )
+    verdict, findings = _result(_qa(wrong), "data_integrity")
+    assert verdict is Verdict.FAIL
+    assert any("patient name" in finding for finding in findings), findings
+
+    right = make_pdf(tmp_path / "right_patient.pdf", GOOD_LINES)
+    assert _result(_qa(right), "data_integrity")[0] is Verdict.PASS
+
+
 def test_a_chart_for_a_different_patient_does_not_pass_the_wrong_chart_check() -> None:
     """The one check whose entire job is to catch a misfiled chart: matching
     a patient NAME must use the identity module's own boundary-anchored
