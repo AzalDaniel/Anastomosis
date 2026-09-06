@@ -69,12 +69,9 @@ def _rendered_page(draw, dpi: int = 216) -> tuple[bytes, PageImage]:  # type: ig
 
 @_NEEDS_ENGINE
 def test_the_real_engine_reads_a_synthetic_page_and_places_it() -> None:
-    """A genuine Tesseract run on genuine pixels: the words and the geometry.
-
-    The page is drawn at a known position, rendered, and recognized. Both
-    halves are asserted — the transcript, and that each word came back inside
-    the page and near where it was drawn.
-    """
+    """A genuine Tesseract run on genuine pixels: the words and the
+    geometry, both asserted — the transcript, and that each word came
+    back inside the page near where it was drawn."""
     assert _WORKER is not None
 
     def draw(page: pymupdf.Page) -> None:
@@ -104,13 +101,11 @@ def test_the_real_engine_reads_a_synthetic_page_and_places_it() -> None:
 
 @_NEEDS_ENGINE
 def test_every_result_carries_a_manifest_that_states_it_was_offline() -> None:
-    """The manifest is what a pack records; it must name the engine and say no.
-
-    ``allow_network`` is in the schema precisely so this can be asserted rather
-    than assumed, and the tessdata source says whether the language data was
-    operator-pinned or the engine's own default — never implying a pin it does
-    not have.
-    """
+    """The manifest is what a pack records: it must name the engine and
+    say no. ``allow_network`` is in the schema so this is asserted, not
+    assumed; the tessdata source says whether the language data was
+    operator-pinned or the engine's default, never implying a pin it
+    lacks."""
     assert _WORKER is not None
     manifest = _WORKER.manifest()
 
@@ -124,13 +119,10 @@ def test_every_result_carries_a_manifest_that_states_it_was_offline() -> None:
 
 @_NEEDS_ENGINE
 def test_nothing_the_worker_returns_carries_a_filesystem_path() -> None:
-    """hOCR embeds the input filename; none of it may survive into a result.
-
-    Tesseract writes the image path it was given into the hOCR page title. The
-    worker therefore renders to a fixed, non-descriptive name in a private
-    temporary directory, parses, and keeps none of it — so a sample named after
-    a patient can never reach a pack through this door.
-    """
+    """hOCR embeds the input filename; none of it may survive into a
+    result. The worker renders to a fixed, non-descriptive name in a
+    private temp directory, parses, and keeps none of it — so a sample
+    named after a patient can never reach a pack through this door."""
     assert _WORKER is not None
 
     def draw(page: pymupdf.Page) -> None:
@@ -175,13 +167,10 @@ def test_an_oversized_page_image_is_refused_rather_than_recognized() -> None:
 def test_no_engine_on_the_machine_is_a_refusal_not_a_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Make the executable genuinely unfindable and watch the door close.
-
-    PATH is pointed at an empty directory and the operator override is cleared,
-    so ``shutil.which`` really does fail. The answer is ``None`` — a refusal the
-    caller can turn into an actionable message — never an exception out of
-    discovery and never a silent skip.
-    """
+    """Make the executable genuinely unfindable: PATH points at an empty
+    directory and the operator override is cleared, so ``shutil.which``
+    really fails. The answer is ``None`` — never an exception out of
+    discovery and never a silent skip."""
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.delenv(ocr.TESSERACT_EXE_ENV, raising=False)
 
@@ -423,13 +412,9 @@ def test_the_provenance_vocabulary_is_closed() -> None:
 
 
 def _stand_in_engine(tmp_path: Path, name: str, body: str) -> Path:
-    """A real executable that answers ``--version`` and then misbehaves.
-
-    Built as a script rather than a mock because the handler under test wraps
-    an actual :mod:`subprocess` outcome: a patched ``_run`` would prove the
-    ``except`` clause reads correctly and nothing about whether the real call
-    ever lands in it.
-    """
+    """A real executable that answers ``--version`` and then misbehaves:
+    a script rather than a mock, so the wrapped :mod:`subprocess` call
+    is the real thing under test, not a patched ``except`` clause."""
     assert _WORKER is not None
     script = tmp_path / name
     script.write_text(
@@ -446,13 +431,10 @@ def _stand_in_engine(tmp_path: Path, name: str, body: str) -> Path:
 @_NEEDS_ENGINE
 @pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a POSIX shell script")
 def test_a_page_that_outruns_the_deadline_is_an_engine_fault(tmp_path: Path) -> None:
-    """The timeout is one of this class's own faults and must be raised as one.
-
-    ``TimeoutExpired`` used to escape untranslated, be rewrapped a layer up as
-    "sample #N unreadable (<path>)", and tell an operator their document was
-    bad when their engine had hung — with the sample's path in the message of
-    an exception that is only ever supposed to carry an index.
-    """
+    """The timeout is one of this class's own faults and must be raised
+    as one — never rewrapped a layer up as "sample #N unreadable
+    (<path>)", which would carry a document path in a message meant
+    only to carry an index."""
     slow = _stand_in_engine(tmp_path, "slow-engine", "sleep 30\n")
     worker = TesseractWorker(slow, OcrConfig(timeout_seconds=1))
     png, page_image = _rendered_page(
@@ -468,13 +450,11 @@ def test_a_page_that_outruns_the_deadline_is_an_engine_fault(tmp_path: Path) -> 
 @_NEEDS_ENGINE
 @pytest.mark.skipif(sys.platform == "win32", reason="the stand-in engine is a POSIX shell script")
 def test_an_engine_fault_keeps_its_own_type_through_a_batch(tmp_path: Path) -> None:
-    """A batch must not relabel an installation fault as an unreadable sample.
-
-    ``extract_samples`` re-raises the refusals that already carry a PHI-safe
-    index and wraps everything else with the sample's PATH. An engine that
-    exits non-zero belongs in the first group: the samples are innocent, and
-    the operator needs to hear that before they go looking at their files.
-    """
+    """A batch must not relabel an installation fault as an unreadable
+    sample: ``extract_samples`` re-raises refusals that already carry a
+    PHI-safe index, and wraps everything else with the sample's PATH.
+    An engine exiting non-zero belongs in the first group — the samples
+    are innocent."""
     from anastomosis.packgen.extract import extract_samples
 
     broken = _stand_in_engine(tmp_path, "broken-engine", "exit 3\n")
