@@ -212,10 +212,10 @@ def test_render_ccda_standard_by_path_names_the_writer(tmp_path: Path) -> None:
 
 
 def test_ccda_render_result_rejects_mismatched_documents_and_records() -> None:
-    """`CCDARenderResult` is public; a caller building one with `documents` but
-    no matching `records` used to fail far away, at whatever `zip(...,
-    strict=True)` call site paired them next. `__post_init__` names both
-    fields at the point of construction instead."""
+    """`CCDARenderResult` is public: a caller building one with `documents`
+    but no matching `records` must fail at `__post_init__`, naming both
+    fields at the point of construction, not far away at whatever
+    `zip(..., strict=True)` call site pairs them next."""
     with pytest.raises(ValueError, match="documents") as excinfo:
         CCDARenderResult(documents=[Path("a.pdf")])
     assert "records" in str(excinfo.value)
