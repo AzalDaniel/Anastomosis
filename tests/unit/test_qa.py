@@ -461,21 +461,25 @@ def test_a_chart_for_a_different_patient_does_not_pass_the_wrong_chart_check() -
     a patient NAME must use the identity module's own boundary-anchored
     name predicate, shared with every sibling verifier (rule 84) — never
     the looser VALUE predicate. Every name here is invented."""
-    from anastomosis.qa.checks import _date_present, _name_present, _present
+    from anastomosis.core.identity import (
+        date_token_present,
+        name_fragment_present,
+        token_present,
+    )
 
     other_patients_chart = "Chart for Mary-Ann Li-Wong. DOB 01-02-1980. Visit 05-10-2023."
-    assert not _name_present("Ann Li", other_patients_chart), (
+    assert not name_fragment_present("Ann Li", other_patients_chart), (
         "a chart bearing a different patient's name passed the wrong-chart check"
     )
-    assert _present("Ann Li", other_patients_chart), (
+    assert token_present("Ann Li", other_patients_chart), (
         "the VALUE predicate is what let it through — if this stops being true "
         "the test above no longer proves anything"
     )
 
     # The right chart still passes, on either spelling of the date.
     own_chart = "Chart for Ann Li. DOB 01-02-1980. Visit 5-10-2023."
-    assert _name_present("Ann Li", own_chart)
-    assert _date_present("01-02-1980", own_chart)
+    assert name_fragment_present("Ann Li", own_chart)
+    assert date_token_present("01-02-1980", own_chart)
 
 
 def test_qa_matches_a_name_the_same_way_every_other_verifier_does() -> None:

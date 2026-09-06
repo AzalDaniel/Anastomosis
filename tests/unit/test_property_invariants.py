@@ -12,7 +12,6 @@ from hypothesis import strategies as st
 
 from anastomosis.core.identity import date_token_present
 from anastomosis.core.timeutil import all_date_spellings, parse_date, parse_dt
-from anastomosis.qa.checks import _date_spellings
 
 # Clinical-plausible range, second precision (the export formats carry no sub-second).
 _DATETIMES = st.datetimes(min_value=datetime(1900, 1, 1), max_value=datetime(2100, 12, 31)).map(
@@ -65,9 +64,8 @@ def test_parse_dt_is_none_or_datetime_or_raises_cleanly(s: str) -> None:
 @given(_DATES)
 def test_date_spellings_are_findable_and_year_bearing(d: date) -> None:
     """The one enumerator the QA integrity check and the L2/L3 verifier both
-    reach: non-empty, every spelling year-bearing and findable by the predicate."""
+    call: non-empty, every spelling year-bearing and findable by the predicate."""
     spellings = all_date_spellings(d)
     assert spellings
     assert all(str(d.year) in s for s in spellings)
     assert all(date_token_present(s, f"seen on {s} in clinic") for s in spellings)
-    assert _date_spellings(d) == spellings

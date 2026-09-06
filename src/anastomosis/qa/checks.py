@@ -117,33 +117,6 @@ def _document_text(pdf_path: Path, ctx: QAContext) -> str:
     return "\n".join(page.text for page in _snapshot(pdf_path, ctx))
 
 
-def _present(needle: str, text: str) -> bool:
-    """Boundary-anchored presence for a VALUE: rejects a match embedded in
-    adjacent word/number characters (a "98" inside "1980", a "4" inside
-    "Room 4B"). Names go through :func:`_name_present`, dates through
-    :func:`_date_present` — the identity module keeps the three families
-    apart on purpose."""
-    return token_present(needle, text)
-
-
-def _name_present(name: str, text: str) -> bool:
-    """Name-boundary presence, matching the delivery verifier's own
-    predicate — the wrong-match defense (RULES.md 6)."""
-    return name_fragment_present(name, text)
-
-
-def _date_present(spelling: str, text: str) -> bool:
-    """Date-boundary presence, matching the delivery verifier's own
-    predicate (RULES.md 6)."""
-    return date_token_present(spelling, text)
-
-
-def _date_spellings(value: date) -> set[str]:
-    """Delegates to the single canonical enumerator so this check and the
-    delivery verifier can never diverge on which spellings count."""
-    return all_date_spellings(value)
-
-
 #: Words per matched passage. Small enough that a page break costs one passage
 #: rather than the section; large enough that a passage is a phrase, not a word
 #: that any chart might happen to contain.
@@ -204,15 +177,16 @@ class DataIntegrityCheck:
 
         patient = ctx.record.patient
         if patient.display_name:
-            if not _name_present(patient.display_name, text):
+            if not name_fragment_present(patient.display_name, text):
                 findings.append(f"patient name {patient.display_name!r} not found on document")
         if patient.birth_date:
-            if not any(_date_present(s, text) for s in _date_spellings(patient.birth_date)):
+            spellings = all_date_spellings(patient.birth_date)
+            if not any(date_token_present(s, text) for s in spellings):
                 findings.append("date of birth not found on document")
         if not patient.display_name and not patient.birth_date:
             warnings.append("record carries no identity anchors (name/DOB) to verify")
         dos = ctx.encounter.date_of_service
-        if dos and not any(_date_present(s, text) for s in _date_spellings(dos)):
+        if dos and not any(date_token_present(s, text) for s in all_date_spellings(dos)):
             findings.append("date of service not found on document")
 
         if findings:
@@ -284,7 +258,7 @@ def _graded_against_summary(
     carried = 0
     for obs in unattributed:
         label = obs.display or obs.code or "observation"
-        if summary_text is not None and _present(obs.value or "", summary_text):
+        if summary_text is not None and token_present(obs.value or "", summary_text):
             carried += 1
         else:
             no_chart.append(label)
@@ -489,7 +463,7 @@ class VitalsLoincCheck:
         findings = [
             f"vital {obs.display or obs.code} value {obs.value!r} not found"
             for obs in charted
-            if not _present(obs.value or "", text)
+            if not token_present(obs.value or "", text)
         ]
         return CheckResult(self.name, Verdict.FAIL if findings else Verdict.PASS, findings)
 
@@ -509,7 +483,7 @@ def _render_day_occurrences(today: date, text: str) -> int:
     position so one printed date is never counted twice under two
     spellings."""
     spans: set[tuple[int, int]] = set()
-    for spelling in _date_spellings(today):
+    for spelling in all_date_spellings(today):
         spans.update(date_token_spans(spelling, text))
     return len(spans)
 
