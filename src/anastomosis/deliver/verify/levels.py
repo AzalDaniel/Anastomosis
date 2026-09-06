@@ -16,13 +16,18 @@ from dataclasses import dataclass
 from datetime import date
 from difflib import SequenceMatcher
 from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from anastomosis.core.hashutil import hash_and_size
 from anastomosis.core.identity import date_token_present, name_fragment_present
 from anastomosis.core.identity import normalize as _normalize
 from anastomosis.core.model import Encounter, Patient
+from anastomosis.core.pdfsnapshot import (
+    PdfSnapshot,
+    first_page_text,
+    import_pymupdf,
+    pages_of,
+)
 from anastomosis.core.timeutil import all_date_spellings
 from anastomosis.deliver.browser.errors import WrongPatientError
 from anastomosis.deliver.verify.types import VerifyPolicy
@@ -130,63 +135,6 @@ def _date_present(value: date, text: str) -> bool:
 # --- the lazy PyMuPDF gate ---
 
 
-def _import_pymupdf() -> Any:
-    """Import PyMuPDF lazily, raising ``RuntimeError`` naming the
-    ``render`` extra if missing, so this module loads without it (75).
-    """
-    try:
-        import pymupdf
-    except ImportError as exc:  # pragma: no cover - environment-dependent
-        raise RuntimeError(
-            "PDF verification needs the render extra: pip install 'anastomosis[render]'"
-        ) from exc
-    return pymupdf
-
-
-def _first_page_text(doc: Any) -> str:
-    """Page-1 text of an open PyMuPDF document, or "" if it has no pages."""
-    for page in doc:
-        return str(page.get_text())
-    return ""
-
-
-class PdfSnapshot:
-    """One item's parsed PDF facts (page count + page-1 text), shared
-    across levels within one phase. Lazy: nothing is parsed until a
-    level asks, so L1's sub-KiB floor still rejects without opening the
-    file. A level given no snapshot builds its own."""
-
-    __slots__ = ("_page_count", "_page_one_text", "_parsed", "path")
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._parsed = False
-        self._page_count = 0
-        self._page_one_text = ""
-
-    def _parse(self) -> None:
-        if self._parsed:
-            return
-        with _import_pymupdf().open(self.path) as doc:
-            # Order matters: read text while the doc is open, so page_count
-            # and text describe ONE read of one file.
-            page_count = int(doc.page_count)
-            text = _first_page_text(doc)
-        self._page_count = page_count
-        self._page_one_text = text
-        self._parsed = True
-
-    @property
-    def page_count(self) -> int:
-        self._parse()
-        return self._page_count
-
-    @property
-    def page_one_text(self) -> str:
-        self._parse()
-        return self._page_one_text
-
-
 def _snapshot_for(item: UploadItem, snapshot: PdfSnapshot | None) -> PdfSnapshot:
     """The caller's shared snapshot, or a fresh one for a direct level call."""
     if snapshot is not None:
@@ -200,7 +148,8 @@ def _pages_and_text_of_bytes(pymupdf: Any, data: bytes) -> tuple[int, str]:
     extra before parsing.
     """
     with pymupdf.open(stream=data, filetype="pdf") as doc:
-        return int(doc.page_count), _first_page_text(doc)
+        pages = pages_of(doc)
+    return len(pages), first_page_text(pages)
 
 
 # --- L0: file integrity (pre, no PyMuPDF) ---
@@ -466,7 +415,7 @@ class L6RoundTrip:
             return LevelResult(self.level, LevelStatus.PASS, "byte-identical read-back")
         # Tier 2: gate the render extra first (its RuntimeError must
         # surface); an unparseable read-back is a clean L6 fail, not a crash.
-        pymupdf = _import_pymupdf()
+        pymupdf = import_pymupdf()
         try:
             back_pages, back_text = _pages_and_text_of_bytes(pymupdf, data)
         except Exception:  # any PyMuPDF parse failure is a corruption fail, not a crash
