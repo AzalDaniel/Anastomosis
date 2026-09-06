@@ -310,8 +310,7 @@ class UnattributedVitalsCheck:
     """Contract: a vital with no ``encounter_id`` is graded against
     ``ctx.record_summary_path``: no summary → FAIL; on the summary → WARN;
     rendered but absent → FAIL. An observation naming an encounter the
-    record lacks is always FAIL — no summary can rescue that one
-    (`RULES_CANDIDATES.md` #4)."""
+    record lacks is always FAIL — no summary can rescue that one."""
 
     name = "unattributed_vitals"
 
@@ -423,7 +422,7 @@ class RecordCoverageCheck:
     only a total absence — a partial miss is not reported. A kind the pack
     claims but is wholly absent is FAIL; one excused via ``omits`` counts
     toward ``not_carried`` instead; an undeclared pack WARNs. Findings name
-    kinds and counts only, never a value (`RULES_CANDIDATES.md` #5)."""
+    kinds and counts only, never a value."""
 
     name = "record_coverage"
 

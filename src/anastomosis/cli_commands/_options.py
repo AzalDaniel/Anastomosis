@@ -2,7 +2,7 @@
 
 A shared `Annotated[...]` alias is for options that are the same option; a
 command needing different wording for a flag declares its own alias rather
-than reusing this one (`RULES_CANDIDATES.md` #3)."""
+than reusing this one."""
 
 from __future__ import annotations
 
