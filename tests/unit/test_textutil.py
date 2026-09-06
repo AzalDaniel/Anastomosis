@@ -136,15 +136,10 @@ def test_budgeted_name_passes_through_when_the_path_fits(tmp_path: Path) -> None
 
 
 def _deep_parent(tmp_path: Path, target_len: int = 200) -> Path:
-    """A parent whose ABSOLUTE length lands near ``target_len`` on any host.
-
-    ``tmp_path`` itself varies wildly by platform (a Windows runner's temp
-    dir is ~90 characters before a test adds anything; Linux's is ~45), so a
-    fixed filler leaves a different amount of budget room per host — on
-    Windows it left less than a hash tag and the helper (correctly) refused
-    where these tests expected a shortened name. Computing the filler from
-    the real ``tmp_path`` pins the room the arithmetic under test gets.
-    """
+    """A parent whose ABSOLUTE length lands near ``target_len`` on any
+    host: ``tmp_path`` varies wildly by platform (~90 chars on Windows,
+    ~45 on Linux), so the filler must be computed from the real
+    ``tmp_path`` rather than fixed, or the budget room differs per host."""
     filler = max(1, target_len - len(str(tmp_path)) - 1)
     parent = tmp_path / ("d" * filler)
     # If a host's temp dir were ever deep enough to break the target, fail
