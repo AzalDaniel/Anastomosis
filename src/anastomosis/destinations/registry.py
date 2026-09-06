@@ -1,29 +1,12 @@
-"""Data-driven destination capability registry (the no-hallucination rule).
+"""Data-driven destination capability registry (RULES.md 69-70).
 
-What a destination can *receive* is a fact about the world that decays: a
-vendor ships a FHIR ``DocumentReference`` endpoint one quarter and deprecates
-it the next. So capabilities are **data, not code** — a YAML file
-(``registry.yaml``) carrying, for every destination, the three delivery
-classes the router cares about (vendor write API, C-CDA import, browser pack)
-and, crucially, the **evidence** behind each non-trivial claim: a source URL
-and the date it was verified.
+Capabilities are DATA (``registry.yaml``), not code: a source URL and
+verified date back every non-``none``/``unverified`` claim, enforced here.
+Loading is STRICT (unlike the template-pack registry): malformed YAML or a
+schema violation raises, since a half-loaded registry could route PHI to a
+destination that cannot receive it.
 
-The headline invariant, enforced in the model rather than left to reviewer
-discipline: **any capability that is not ``none``/``unverified`` REQUIRES
-evidence.** You cannot assert that Acme EHR accepts FHIR documents without
-citing where you read that and when. A claim without a citation fails
-validation loudly — this is the no-hallucination rule made mechanical.
-
-Loading is **strict** (unlike the defensive template-pack registry): this YAML
-is security-relevant routing data. A half-loaded registry could silently route
-PHI to a destination that cannot actually receive it, so malformed YAML or a
-schema violation raises rather than degrading. ``DestinationRegistry.get``
-raises ``KeyError`` listing the known names (names only — a destination name is
-a vendor identifier, never PHI).
-
-PHI rule: this layer never touches patient data. It carries vendor names,
-capability kinds, source URLs, and verification dates — nothing patient-derived
-ever flows through it, and it must stay that way.
+PHI: vendor names, capability kinds, source URLs, verification dates only.
 """
 
 from __future__ import annotations
@@ -79,10 +62,8 @@ class CcdaImportKind(StrEnum):
 class BrowserKind(StrEnum):
     """Whether a browser-automation destination pack drives this destination.
 
-    ``pack`` carries the destination-pack name in ``Capability.detail``. A
-    browser capability needs NO evidence URL: its evidence is the pack's own
-    canary fixtures (selectors re-validated against the live UI in preflight),
-    not a citable web page — so the evidence-required rule below exempts it.
+    ``pack`` carries the destination-pack name in ``Capability.detail`` and
+    needs no evidence URL — its evidence is the pack's own canary fixtures.
     """
 
     PACK = "pack"
@@ -96,9 +77,8 @@ _NO_EVIDENCE_KINDS = frozenset({"none", "unverified", BrowserKind.PACK.value})
 class Evidence(BaseModel):
     """The citation behind a capability claim: where it was read, and when.
 
-    ``source_url`` must be an http(s) URL (a vendor doc page, a developer
-    portal). ``verified`` is the date a human last confirmed the claim against
-    that source — the anchor of the quarterly re-verification ritual.
+    ``source_url`` must be http(s); ``verified`` anchors the quarterly
+    re-verification ritual.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -117,12 +97,10 @@ class Evidence(BaseModel):
 class Capability(BaseModel):
     """One delivery capability of a destination, with its evidence.
 
-    ``kind`` is drawn from a closed enum per capability class (see
-    :class:`DocWriteKind`, :class:`CcdaImportKind`, :class:`BrowserKind`).
-
-    The no-hallucination rule (enforced here, not in review): any ``kind`` that
-    is not ``none``/``unverified`` REQUIRES ``evidence`` — except a browser
-    ``pack``, whose evidence is the pack's canary fixtures rather than a URL.
+    ``kind`` is drawn from a closed enum per class (:class:`DocWriteKind`,
+    :class:`CcdaImportKind`, :class:`BrowserKind`). Any ``kind`` that is
+    not ``none``/``unverified`` REQUIRES ``evidence`` (RULES.md 69) — except
+    a browser ``pack``, whose evidence is its canary fixtures.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -145,14 +123,10 @@ class Capability(BaseModel):
 class DestinationEntry(BaseModel):
     """One destination's full capability declaration, at one declared version.
 
-    ``version`` names the destination PRODUCT version these capabilities were
-    declared for. It defaults to :data:`UNVERSIONED` — an explicit string, not a
-    missing field — because most vendors ship a continuously-updated hosted
-    product with no version an operator can read off a screen, and pretending
-    otherwise would be a claim about the world with no evidence behind it. An
-    entry for a product that DOES carry a version (a self-hosted release line, a
-    dated API surface) states it, and a run bound to that version refuses when
-    it changes underneath (:mod:`anastomosis.core.profiles`).
+    ``version`` defaults to :data:`UNVERSIONED` — an explicit value, not a
+    missing field, for a vendor with no readable product version. An entry
+    that DOES carry one refuses when it changes underneath
+    (:mod:`anastomosis.core.profiles`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -205,12 +179,10 @@ class DestinationRegistry(BaseModel):
     def load(cls, path: Path | None = None) -> DestinationRegistry:
         """Load the registry.
 
-        With no ``path``, loads the packaged ``destinations/registry.yaml`` via
-        ``importlib.resources`` (works from a wheel). An explicit ``path``
-        loads that file instead — a user's own overlay used standalone.
-
-        Malformed YAML or a schema violation raises (loud): the registry is
-        routing data, and a half-loaded one is a patient-safety hazard.
+        With no ``path``, loads the packaged registry via
+        ``importlib.resources``; an explicit ``path`` loads a user overlay
+        standalone. Malformed YAML or a schema violation raises — a
+        half-loaded registry is a patient-safety hazard.
         """
         if path is None:
             text = files(__package__).joinpath(_PACKAGED_REGISTRY).read_text(encoding="utf-8")
@@ -222,11 +194,9 @@ class DestinationRegistry(BaseModel):
     def merged(cls, overlay: Path) -> DestinationRegistry:
         """Load the packaged registry, then overlay a user's file on top.
 
-        Overlay entries **replace** same-named packaged entries wholesale (a
-        practice keeping its own re-verified registry shadows the shipped data
-        for those destinations); names only in the overlay are added. The
-        overlay is validated exactly like the packaged file — it raises on
-        malformed input.
+        Overlay entries REPLACE same-named packaged entries wholesale;
+        names only in the overlay are added. Validated exactly like the
+        packaged file.
         """
         base = cls.load()
         extra = cls.load(overlay)
