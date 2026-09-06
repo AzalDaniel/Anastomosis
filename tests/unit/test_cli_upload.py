@@ -1,17 +1,11 @@
 """`anast upload` CLI driver tests — exercisable with NO browser/Chromium.
 
-Both delivery routes are covered with their live seam monkeypatched, so nothing
-here launches a browser or reaches a FHIR server:
-
-* the BROWSER route's Playwright touch is the single ``cli._make_destination``
-  seam, monkeypatched to a :class:`FakeDestination`. The CDP loopback validation
-  runs for real on a loopback URL, and a fixture pack dir ships a ready
-  ``selectors.yaml`` so the ``.ready`` gate passes without the discovery wizard;
-* the API route's touch is ``cli._make_fhir_destination``, monkeypatched the same
-  way. The FhirEndpoint https-or-loopback gate runs for real, and the bearer
-  token is asserted to come from the ENVIRONMENT (never argv).
-
-Synthetic data only (``feedface-`` ids, neutral file names).
+Both delivery routes have their live seam monkeypatched: BROWSER's
+``cli._make_destination`` to :class:`FakeDestination` (the CDP loopback
+validation and ``.ready`` gate still run for real), and API's
+``cli._make_fhir_destination`` the same way (the https-or-loopback
+gate runs for real, and the bearer token comes from the ENVIRONMENT,
+never argv). Synthetic data only.
 """
 
 from __future__ import annotations
@@ -73,12 +67,10 @@ def _scaffold_pack_dir(tmp_path: Path) -> Path:
 
 
 def _write_manifest(tmp_path: Path, n: int = 3) -> Path:
-    """Write a manifest of ``n`` charts directly into ``out_dir``; return out_dir.
-
-    The chart PDFs are written INTO ``out_dir`` (where a real render lands them),
-    because the manifest stores basenames re-absolutized against the manifest
-    root — so the engine's preflight (existence + re-hash) resolves them there.
-    """
+    """Write a manifest of ``n`` charts directly into ``out_dir``;
+    return out_dir. The chart PDFs land INSIDE ``out_dir`` since the
+    manifest stores basenames re-absolutized against the manifest
+    root."""
     out_dir = tmp_path / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
     docs: list[RenderedDoc] = []
@@ -416,12 +408,10 @@ def test_malformed_manifest_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def _capture_cmd(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """Patch the shared run_upload_command to capture the UploadCommand it gets.
-
-    The CLI imports run_upload_command lazily FROM anastomosis.core.upload_command,
-    so the patch lives on that module (the source), not on cli's namespace — the
-    same lock-then-read patch discipline test_upload_command.py uses for persist.
-    """
+    """Patch the shared run_upload_command to capture the UploadCommand
+    it gets. The CLI imports it lazily FROM
+    anastomosis.core.upload_command, so the patch lives on that module,
+    not on cli's namespace."""
     import anastomosis.core.upload_command as upload_command
     from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
 
@@ -511,12 +501,10 @@ def _invoke_fhir(out_dir: Path, *extra: str) -> object:
 def _fhir_spy(
     monkeypatch: pytest.MonkeyPatch, dest: FakeDestination | None = None
 ) -> list[dict[str, object]]:
-    """Patch the API attach seam, recording the endpoint config it receives.
-
-    Mirrors the browser route's ``cli._make_destination`` monkeypatch: the seam
-    is resolved LATE through the ``cli`` module, so patching the attribute here
-    is what the command actually calls. Returns the (mutable) call log.
-    """
+    """Patch the API attach seam, recording the endpoint config it
+    receives. Mirrors the browser route's ``cli._make_destination``
+    monkeypatch: the seam is resolved LATE through ``cli``, so patching
+    the attribute here is what the command actually calls."""
     calls: list[dict[str, object]] = []
     made = dest if dest is not None else FakeDestination(_known())
 

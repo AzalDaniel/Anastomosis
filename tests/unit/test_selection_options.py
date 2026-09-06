@@ -1,18 +1,12 @@
-"""The render-selection rules are a run's choice, not the product's opinion.
+"""The render-selection rules are a run's choice, not the product's
+opinion: the pf-tebra adapter keeps two shapes of encounter out of the
+render (an all-empty SOAP note, an adult's growth-chart visit) and
+parks them losslessly in extensions.
 
-The pf-tebra adapter keeps two shapes of encounter out of the render — a SOAP
-note whose four sections are all empty, and a growth-chart visit for a patient
-who was an adult at the time — and parks them losslessly in
-``extensions["pf_tebra:skipped_encounters"]``. That was one practice's call.
-An archivist retaining everything wants the empty visit in the pile, and a
-paediatric practice whose patients grew up wants the growth chart.
-
-So each rule is now a per-run option, in the shape the section flags already
-have: a repeatable CLI flag, a strict parse shared with the GUI, validation
-against what the resolved end (there, the pack; here, the source) actually
-offers, and a record in the output of what was asked. Every rule is on by
-default, which is exactly what they were, so an existing run is unchanged —
-``test_a_default_run_selects_exactly_what_it_always_did`` is the pin.
+Each rule is a per-run option, in the shape the section flags already
+have: a repeatable CLI flag, a strict parse shared with the GUI, and
+validation against what the resolved end actually offers. Every rule
+is on by default, so an existing run is unchanged.
 """
 
 from __future__ import annotations
@@ -122,16 +116,10 @@ def test_including_growth_charts_renders_the_visit_the_rule_kept_out(
 def test_qa_counts_an_included_growth_chart_as_carried_not_as_a_fact_on_no_chart(
     rendered: None, tmp_path: Path
 ) -> None:
-    """The accounting has to follow the option, or the option is cosmetic.
-
-    A growth chart is a height and a weight, so this copy of the fixture puts a
-    body height on that visit — the shape the real thing has. Under the rule,
-    the visit is not in the record's encounters and the measurement names an
-    encounter that is not there: ``unattributed_vitals`` says so on every
-    chart, correctly, and the run FAILS, because the value reached no page at
-    all. With the rule switched off the same measurement is on a chart, and the
-    same check passes.
-    """
+    """The accounting must follow the option: with the rule ON, an
+    excluded growth chart's vital attaches to no rendered encounter, so
+    ``unattributed_vitals`` FAILS rather than passing a value that
+    reached no page; with the rule OFF, the same check passes."""
     export = tmp_path / "export"
     shutil.copytree(FIXTURE, export)
     observations = export / "patient-encounter-observations.tsv"

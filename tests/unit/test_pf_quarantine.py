@@ -1,18 +1,11 @@
-"""Orphan rows are held, never guessed and never a reason to stop the run.
+"""Orphan rows are held, never guessed and never a reason to stop the
+run (#280): a real export of five standard tables, 369,094 rows, had
+695 dangling (a blank patient key, a key naming nobody).
 
-The real export behind #280: five standard tables, 369,094 rows, and 695 of
-them dangling — a blank patient key here, a key naming nobody there. The old
-all-or-nothing rule refused every one of the 368,399 attributable rows over
-the broken 695, and the diagnostic blamed a column that was present all along.
-
-The repair is a partition with an audit trail. A row that names a known
-patient lands on that patient; a row that cannot is quarantined VERBATIM with
-a PHI-free reason; a table with no path to a patient at all still refuses the
-run. The quarantine reaches the operator as ``quarantine.json`` in the output
-directory, its count on the INGEST event, and a yellow CLI line — visibly
-non-green until someone has looked.
-
-Every fixture here is synthetic (``feedface-`` guids, invented values).
+The repair is a partition with an audit trail: a row naming a known
+patient lands on that patient, a row that cannot is quarantined
+VERBATIM with a PHI-free reason, and a table with no path to a patient
+at all still refuses the run. Synthetic throughout.
 """
 
 from __future__ import annotations
@@ -52,13 +45,10 @@ def _mapped(export: dict) -> tuple[dict[str, Any], list[QuarantinedRows]]:
 
 
 def test_a_mixed_table_keeps_the_attributable_row_and_holds_the_dangling_one() -> None:
-    """The issue's own minimal shape: one row that attributes, one that cannot.
-
-    Before #280 the dangling row took the whole table down with it. Now the
-    attributable row reaches its patient and the dangling one is held — with
-    the row intact, so nothing was dropped, and on no patient, so nothing was
-    guessed.
-    """
+    """The issue's own minimal shape: one row that attributes, one
+    that cannot (#280). The attributable row reaches its patient; the
+    dangling one is held with the row intact (nothing dropped) and on
+    no patient (nothing guessed)."""
     export = read_export(FIXTURE)
     good = {"PatientPracticeGuid": P1, "NoteText": "an attributable lab note"}
     bad = {"PatientPracticeGuid": "", "NoteText": "a note with a blank patient key"}
@@ -184,15 +174,11 @@ def test_a_blank_join_key_is_held() -> None:
 
 
 def test_an_insurance_row_with_a_blank_patient_key_cannot_vouch_for_an_owner() -> None:
-    """The join resolves through the parent row's OWN patient key. A parent
-    whose key is blank names nobody — resolving through it would be a guess
-    wearing a join's clothes.
-
-    Pinned at the unit level because map_export cannot reach it for THIS
-    parent: patient-insurances is a KNOWN table, so a blank patient key there
-    fails the foreign-key closure first (its own fail-closed pin). The guard
-    stays because _join_owners must hold for any future declared parent too.
-    """
+    """The join resolves through the parent's OWN patient key: a blank
+    key names nobody, so resolving through it would be a guess wearing
+    a join's clothes. Pinned at the unit level, since `map_export`
+    cannot reach it for THIS parent (a KNOWN table fails closure
+    first)."""
     from anastomosis.sources.pf_tebra.mapper import _join_owners, _partition_joined
 
     plan = "feedface-aaaa-0000-0000-00000000plan"

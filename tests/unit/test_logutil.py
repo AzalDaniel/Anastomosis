@@ -161,13 +161,10 @@ def test_configure_logging_is_idempotent() -> None:
 
 
 def test_configure_logging_brings_preexisting_handlers_into_the_chain() -> None:
-    """A raw handler installed BEFORE configure_logging must end up redacting.
-
-    A host that calls ``logging.basicConfig`` before importing anastomosis
-    seeds the root with a raw StreamHandler; every root handler must carry the
-    RedactionFilter after configure_logging returns, or that handler emits
-    patient-shaped values unredacted (the disclosure the filter exists for).
-    """
+    """A raw handler installed BEFORE configure_logging must end up
+    redacting: a host that calls ``logging.basicConfig`` first seeds
+    the root with a raw StreamHandler, and every root handler must
+    carry the RedactionFilter after configure_logging returns."""
     import io
 
     root = logging.getLogger()

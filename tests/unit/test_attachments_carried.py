@@ -1,20 +1,11 @@
-"""Attachments named by the records reach the run's output, or the run stops.
+"""Attachments named by the records reach the run's output, or the run
+stops (#175): a `DocumentArtifact`'s referenced file must be carried
+out of the export, never just found there. Copied rather than read at
+delivery time, since `deliver_outputs` hands each deliverer only
+`charts_dir`, never the export.
 
-A `DocumentArtifact` with a `path` names a real file in the export — a scanned
-referral, a lab report, the pages a chart is incomplete without. #175 taught the
-source adapter to find those files; nothing carried them out of the export, so
-they still reached the operator as nothing at all.
-
-Why they are copied rather than read at delivery time: `deliver_outputs` states
-its own contract — each deliverer reads out of `charts_dir` and is never handed
-the export — and `anast archive` can be run later against a charts directory
-alone, so a deliverer that needed the original export still sitting at the same
-path would work inside the pipeline and fail for anyone delivering after.
-
-The conservation check is the point. #110's failure was never a malformed
-artifact: every check passed because each artifact was fine, and the loss was in
-what never arrived. So a chart is not delivered without the documents it
-references — the run refuses instead.
+The conservation check is the point (#110): a chart is never delivered
+without the documents it references — the run refuses instead.
 """
 
 from __future__ import annotations
@@ -39,12 +30,9 @@ BLOB = "binary-content/feedface-d0c0-0000-0000-000000000001.pdf"
 
 
 class _FakeChromium:
-    """Writes a REAL pdf carrying the chart text (the test_gui_controller pattern).
-
-    The three tests below drive the whole pipeline, and the unit lane has no
-    browser: without this they fail with "6 encounter(s) failed to render"
-    wherever Chromium is absent, which is every CI runner.
-    """
+    """Writes a REAL pdf carrying the chart text: the three tests below
+    drive the whole pipeline, and the unit lane has no browser to
+    render with otherwise."""
 
     def __init__(self, **kwargs: object) -> None:
         pass
@@ -121,12 +109,10 @@ def test_an_attachment_the_records_name_reaches_the_output(
 def test_the_record_still_locates_it_without_any_extra_index(
     rendered: None, export: Path, tmp_path: Path
 ) -> None:
-    """A deliverer needs no sidecar: the document's own path is the lookup key.
-
-    That is deliberate — `render_index.json` exists for charts because a chart's
-    filename carries no patient id, and reverse-inferring one cross-attributed
-    two patients sharing a name. An attachment has no such gap.
-    """
+    """A deliverer needs no sidecar: the document's own path is the
+    lookup key. `render_index.json` exists for charts because a
+    chart's filename carries no patient id; an attachment has no such
+    gap."""
     out = tmp_path / "charts"
 
     result = _run(export, out)
@@ -140,15 +126,11 @@ def test_the_record_still_locates_it_without_any_extra_index(
 def test_a_run_refuses_rather_than_deliver_a_chart_without_its_documents(
     tmp_path: Path,
 ) -> None:
-    """The conservation check, driven at the carry step.
-
-    Exercised directly rather than through a whole run: the source adapter only
-    resolves a file it can SEE, so an export doctored to break the copy would
-    simply not produce a document with a path, and the run would sail past with
-    nothing to conserve. The case that matters is a record that names a file
-    which is not there by the time it is carried — an export whose blob moved
-    between reading the tables and copying the files.
-    """
+    """The conservation check, driven at the carry step: the case that
+    matters is a record naming a file that is gone by the time it is
+    carried (an export whose blob moved between reading the tables and
+    copying the files), since a doctored export would simply produce no
+    document with a path to conserve against."""
     record = PatientRecord(
         id="feedface-0000-4000-8000-0000000000ff",
         patient=Patient(id="feedface-0000-4000-8000-000000000001"),
@@ -172,11 +154,9 @@ def test_a_run_refuses_rather_than_deliver_a_chart_without_its_documents(
 
 def test_one_storage_id_naming_two_different_files_is_refused(tmp_path: Path) -> None:
     """The #121 shape, one layer down: two scans, one id, one slot.
-
-    Copying the second over the first would file one patient's scan under
-    another patient's document, silently. The delivery ledger already knows how
-    to refuse that; the carry step claims through it.
-    """
+    Copying the second over the first would silently file one
+    patient's scan under another's document; the carry step claims
+    through the same ledger refusal delivery already has."""
     export = tmp_path / "export"
     (export / "binary-content").mkdir(parents=True)
     (export / "binary-content" / "shared.pdf").write_bytes(b"%PDF-1.4 synthetic\n")
@@ -250,12 +230,10 @@ def test_an_export_with_no_attachments_runs_exactly_as_before(
 
 
 def test_a_path_pointing_outside_the_export_is_refused(tmp_path: Path) -> None:
-    """The path is the adapter's word, and a record can also arrive from a bundle.
-
-    `from_bundle` rebuilds a record from JSON someone else may have written, so
-    a `../..` in a hand-made bundle would otherwise copy a file from anywhere
-    this process can read into an output directory that gets delivered onward.
-    """
+    """The path is the adapter's word, but a record can also arrive
+    from a bundle: `from_bundle` rebuilds one from JSON someone else
+    may have written, so a `../..` there must not copy a file from
+    anywhere this process can read into a delivered output."""
     export = tmp_path / "export"
     export.mkdir()
     outside = tmp_path / "secret.pdf"

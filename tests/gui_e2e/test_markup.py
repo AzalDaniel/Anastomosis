@@ -25,12 +25,10 @@ _FLOW = PipelineConsole._FLOW
 
 
 def test_chart_sections_is_a_named_group_not_a_run_of_switches(gui) -> None:
-    """`<label for>` only reaches a labelable control, and a <div> is not one.
-
-    "Chart sections" pointed at the <div> holding the four checkboxes, so the
-    association was dropped on the floor: the group had no accessible name at
-    all and the switches were four unexplained toggles in the middle of a form.
-    """
+    """`<label for>` only reaches a labelable control, and a <div> is
+    not one: "Chart sections" points at the <div> holding the four
+    checkboxes, so the group needs an accessible name some other way,
+    or the switches read as four unexplained toggles."""
     app = gui()
 
     field = app.page.evaluate(
@@ -62,12 +60,10 @@ def test_chart_sections_is_a_named_group_not_a_run_of_switches(gui) -> None:
 
 
 def test_visits_to_skip_is_a_named_group_too(gui) -> None:
-    """The second matrix is the same control, so it earns the same name.
-
-    "Visits to skip" holds the source's own render-selection rules — the
-    ingest-side twin of the section flags — and a group of unexplained switches
-    is exactly what the fix above was about.
-    """
+    """The second matrix is the same control, so it earns the same
+    name: "Visits to skip" holds the source's own render-selection
+    rules, the ingest-side twin of the section flags, and needs the
+    same accessible-name fix as the sibling test above."""
     app = gui()
 
     field = app.page.evaluate(

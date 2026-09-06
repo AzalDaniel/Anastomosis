@@ -1,15 +1,12 @@
-"""An option that two commands share is declared once.
+"""An option that two commands share is declared once: three copies of
+the same `Annotated[...]` block is not a style problem but a drift
+problem — change one and the others go on telling the operator
+something slightly different, and nothing anywhere fails.
 
-Seven `Annotated[...]` blocks were written out in full in each of three command
-modules — including a four-line ``--trust-pack`` help string repeated word for
-word. Three copies of the same sentence is not a style problem, it is a drift
-problem: change one and the other two go on telling the operator something
-slightly different, and nothing anywhere fails.
-
-The alias itself is the fix; this is what stops the copies coming back. It
-reads the command modules' syntax rather than their behaviour, because the
-failure it guards against — a fourth command that re-types `--pack-dir` instead
-of importing it — produces perfectly working code.
+The alias itself is the fix; this is what stops the copies coming
+back. It reads the command modules' syntax rather than their
+behaviour, since a command that re-types an option instead of
+importing it produces perfectly working code.
 """
 
 from __future__ import annotations
@@ -83,12 +80,9 @@ def test_no_command_redeclares_a_shared_option(module: str) -> None:
 
 
 def test_every_alias_is_used_by_at_least_two_commands() -> None:
-    """An alias only one command uses is indirection, not sharing.
-
-    The point of the module is that two callers cannot drift apart. One caller
-    cannot drift from anything, and putting its option somewhere else only
-    makes it harder to read.
-    """
+    """An alias only one command uses is indirection, not sharing: the
+    point of the module is that two callers cannot drift apart, and one
+    caller cannot drift from anything."""
     modules = [p for p in _COMMANDS.glob("*.py") if not p.name.startswith("_")]
     users: dict[str, int] = dict.fromkeys(_options.__all__, 0)
     for path in modules:
