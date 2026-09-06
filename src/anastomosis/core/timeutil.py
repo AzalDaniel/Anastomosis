@@ -15,6 +15,8 @@ __all__ = [
     "age_display",
     "all_date_spellings",
     "is_zero_sentinel",
+    "iso_date",
+    "iso_datetime",
     "parse_date",
     "parse_dt",
     "to_local",
@@ -134,6 +136,40 @@ def parse_date(value: str | None) -> date | None:
     """
     parsed = parse_dt(value)
     return None if parsed is None else parsed.date()
+
+
+def _iso_day(value: object) -> str:
+    """An ISO value's calendar-date part, a partial one widened to its first day."""
+    parts = str(value).split("T", 1)[0].split("-")
+    if len(parts) == 1 and parts[0].isdigit():
+        return f"{parts[0]}-01-01"
+    if len(parts) == 2:
+        return f"{parts[0]}-{parts[1]}-01"
+    return "-".join(parts)
+
+
+def iso_date(value: object, *, pad_partial: bool = False) -> date | None:
+    """Contract: an ISO 8601 date as a :class:`date`; ``None`` for an empty
+    value; :exc:`ValueError` for anything unreadable. ``pad_partial`` accepts
+    the wider shapes a FHIR ``date``/``dateTime`` may take — a bare year, a
+    year and month, a time of day — and widens each to a calendar date."""
+    if not value:
+        return None
+    return date.fromisoformat(_iso_day(value) if pad_partial else str(value))
+
+
+def iso_datetime(value: object, *, pad_partial: bool = False) -> datetime | None:
+    """Contract: :func:`iso_date`'s rules for an ISO 8601 timestamp; an offset
+    the value carries is kept. ``pad_partial`` widens a value naming no time of
+    day, a partial date included, to midnight instead of failing."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        if not pad_partial:
+            raise
+        return datetime.fromisoformat(_iso_day(value))
 
 
 def all_date_spellings(value: date) -> set[str]:

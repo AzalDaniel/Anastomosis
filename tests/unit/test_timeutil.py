@@ -16,6 +16,8 @@ from anastomosis.core.timeutil import (
     age_at,
     age_display,
     is_zero_sentinel,
+    iso_date,
+    iso_datetime,
     parse_date,
     parse_dt,
     to_local,
@@ -240,3 +242,53 @@ def test_a_digit_run_we_cannot_place_still_raises() -> None:
     for bad in ("202305101", "2023051015060708", "20231510", "20230532"):
         with pytest.raises(ValueError, match=r"unrecognized|month|day"):
             parse_date(bad)
+
+
+# --- the FHIR ISO converters -----------------------------------------------
+
+
+@pytest.mark.parametrize("empty", [None, "", 0])
+def test_an_empty_iso_value_is_no_date_at_all(empty: object) -> None:
+    assert iso_date(empty) is None
+    assert iso_datetime(empty) is None
+
+
+def test_a_full_iso_value_reads_the_same_with_or_without_padding() -> None:
+    assert iso_date("2019-03-14") == date(2019, 3, 14)
+    assert iso_date("2019-03-14", pad_partial=True) == date(2019, 3, 14)
+    assert iso_datetime("2019-03-14T13:59:26Z") == datetime(2019, 3, 14, 13, 59, 26, tzinfo=UTC)
+    assert iso_datetime("2019-03-14T13:59:26+05:00") == datetime(
+        2019, 3, 14, 13, 59, 26, tzinfo=timezone(timedelta(hours=5))
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2019", date(2019, 1, 1)),
+        ("2019-03", date(2019, 3, 1)),
+        ("2019-03-14T13:59:26Z", date(2019, 3, 14)),
+    ],
+)
+def test_padding_widens_the_shapes_a_fhir_date_may_take(raw: str, expected: date) -> None:
+    assert iso_date(raw, pad_partial=True) == expected
+
+
+@pytest.mark.parametrize("raw", ["2019", "2019-03", "2019-03-14T13:59:26Z"])
+def test_without_padding_a_partial_date_raises_rather_than_guessing(raw: str) -> None:
+    with pytest.raises(ValueError):
+        iso_date(raw)
+
+
+def test_padding_widens_a_dateless_timestamp_to_midnight() -> None:
+    assert iso_datetime("2019", pad_partial=True) == datetime(2019, 1, 1)
+    assert iso_datetime("2019-03-14") == datetime(2019, 3, 14)
+
+
+@pytest.mark.parametrize("raw", ["nonsense", "2019-13-45", "14/03/2019"])
+def test_an_unreadable_iso_value_raises_in_both_modes(raw: str) -> None:
+    for pad in (False, True):
+        with pytest.raises(ValueError):
+            iso_date(raw, pad_partial=pad)
+        with pytest.raises(ValueError):
+            iso_datetime(raw, pad_partial=pad)

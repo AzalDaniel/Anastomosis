@@ -42,6 +42,7 @@ from anastomosis.core.model import (
     PrescriptionTransaction,
     SectionKind,
 )
+from anastomosis.core.timeutil import iso_date, iso_datetime
 
 from .export import EXT_NS, EXTRAS_NS, FIELD_NS, IDENTIFIER_SYSTEMS, TELECOM
 
@@ -86,11 +87,11 @@ def _pref(fields: dict[str, Any], key: str, fhir_value: Any, placeholder: str) -
 
 
 def _dt(value: Any) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    return iso_datetime(value)
 
 
 def _d(value: Any) -> date | None:
-    return date.fromisoformat(value) if value else None
+    return iso_date(value)
 
 
 def _by_type(bundle: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
