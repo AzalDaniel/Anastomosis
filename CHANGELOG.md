@@ -589,14 +589,18 @@ issue and fixed in its own pull request.
   `core/timeutil.iso_date` and `iso_datetime`, with `pad_partial=` naming the
   one difference between a canonical bundle and whatever a server sends; and
   the QA grader and the delivery ladder reach `core/identity` and
-  `core/timeutil` directly instead of through five same-shaped wrappers. The
+  `core/timeutil` directly instead of through five same-shaped wrappers, one
+  of which, `date_renderings`, leaves `deliver.verify.__all__` with them. The
   two page caches became one `core/pdfsnapshot.py`, a stdlib-only leaf both
-  may import: keeping it under `deliver/verify/` would have made
-  `import anastomosis.qa.checks` load 81 modules instead of 22, dragging the
-  whole upload engine into the grading stage. `core/hashutil` has the direct
-  test it never had, and so does the page reader. Every deliverable of the
-  five fixtures is byte-identical (`tools/snapshot.py`), the corpus pin is
-  unmoved, and the guard count holds at 72.
+  may import: `import anastomosis.qa.checks` loads 22 modules on this branch
+  against 21 before it, where housing the reader in the ladder's own module
+  would have cost 81, since `anastomosis.deliver.verify.levels` alone pulls
+  76 — the whole upload engine, dragged into the grading stage. A page-count
+  ask reads no page past the first, which is 2.3 ms rather than 118.0 ms on a
+  300-page chart. `core/hashutil` has the direct test it never had, and so do
+  the page reader and the atomic writer's permission bits. Every deliverable
+  of the five fixtures is byte-identical (`tools/snapshot.py`), the corpus pin
+  is unmoved, and the guard count holds at 72.
 
 - **The complexity ratchet no longer punishes a deletion.** Its module rule
   compared averages, so removing four one-branch delegates from a module near
