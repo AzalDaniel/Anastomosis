@@ -1,51 +1,15 @@
 """The draft: write a loadable template pack from a :class:`PackAnalysis`.
 
-This is the third packgen stage. :mod:`extract` harvested the spans and
-drawings, :mod:`infer` distilled them into a :class:`PackAnalysis`; this module
-turns that analysis into a pack directory the *real* reconstruction engine can
-load and render with **no engine changes**:
-
-    <out_dir>/<name>/
-      pack.yaml      — manifest (page geometry, sections, inferred tokens)
-      template.html  — generated Jinja2, mirroring generic_soap's block shape
-      context.py     — delegates to the generic_soap context builder
-      DRAFT.md       — provenance + the same-patient caveat + next steps
-      OCR_EVIDENCE.md— only when a page was recognized: what was observed,
-                       what disagreed, and what recognized text may not be used
-                       for
-
-A draft is a STARTING POINT, never a finished pack — perfect fidelity is
-explicitly *not* claimed (``DRAFT.md`` says so, and the wizard echoes it). The
-operator reviews the rendered preview side-by-side with a real sample, edits
-``template.html``, and re-renders.
-
-Design choices, grounded in the pack contracts read above:
-
-* The emitted ``context.py`` re-uses ``generic_soap``'s ``build_context`` rather
-  than generating a bespoke one. The generated ``template.html`` therefore
-  mirrors ``generic_soap``'s exact loop structure and variable names
-  (``note_sections``, ``vitals``, ``addenda``, ``coverages``, ``social_history``,
-  ``facility``, ``patient``…), so the engine renders it unchanged. Inferred
-  design tokens are inlined as CSS custom properties; what differs from the
-  built-in pack is the *look* (tokens), not the data contract.
-* **Sample-text quarantine**: every raw string inferred from samples is written
-  only to ``UNPLACED.txt``. The working pack files use fixed canonical labels,
-  numbered placeholders, counts, and role metadata only, so deleting that file
-  removes every raw sample-derived string the generator retained.
-* **PHI**: recurrence and fixed placement are useful inference signals, not
-  proof that a string belongs to the form. A shared fixed-cell value can still
-  look like a label, so raw sample text is quarantined even when an exact known
-  header token lets the generated template retain useful structure. A
-  single-sample run emits no sample-derived text at all.
-* **OCR provenance**: when a sample page was pixels, the draft says so in
-  every artifact a person opens — a marker in the manifest description, a
-  per-section provenance note, an ``[OCR]`` mark beside each quarantined string
-  that came from recognition, and ``OCR_EVIDENCE.md`` with the page classes,
-  the held conflicts and the engine manifest. A recognized heading is a layout
-  hypothesis and the pack has to read like one.
-* **Determinism**: the same :class:`PackAnalysis` produces byte-identical files
-  (sorted keys, fixed float formatting, deterministic section ordering).
-"""
+Writes ``pack.yaml``, ``template.html`` (mirrors ``generic_soap``'s block
+shape and variable names so the real engine renders it unchanged, with
+inferred design tokens as CSS custom properties), ``context.py``
+(delegates to ``generic_soap``'s builder), ``DRAFT.md``, and — only when
+a page was recognized — ``OCR_EVIDENCE.md``. A draft is a STARTING POINT,
+not a finished pack; the operator compares the rendered preview against
+a real sample and edits ``template.html``. Sample text is quarantined to
+``UNPLACED.txt`` only (RULES.md 5); OCR provenance is marked in every
+artifact a person opens. Deterministic: the same analysis produces
+byte-identical files."""
 
 from __future__ import annotations
 
@@ -233,13 +197,10 @@ _KNOWN_SIZES: tuple[tuple[str, float, float], ...] = (
 
 
 def _page_size_name(width_pt: float, height_pt: float) -> str:
-    """The named page format whose dimensions best match the inferred geometry.
-
-    Exact (within 3pt) when standard; otherwise the nearest standard size by
-    summed dimension distance — Playwright's PDF ``format`` takes named sizes
-    only, so a draft must never emit a non-renderable ``WxH`` token. The exact
-    inferred points are recorded in DRAFT.md instead.
-    """
+    """The named page format whose dimensions best match the inferred
+    geometry: exact (within 3pt) when standard, else the nearest standard
+    size by summed distance — Playwright's PDF ``format`` takes named
+    sizes only. The exact inferred points are recorded in DRAFT.md."""
     for name, kw, kh in _KNOWN_SIZES:
         if abs(width_pt - kw) <= 3.0 and abs(height_pt - kh) <= 3.0:
             return name
@@ -274,16 +235,11 @@ def _luminance(rgb: int) -> float:
 
 
 def _heading_fill(analysis: PackAnalysis) -> str:
-    """The dominant heading-band fill color as ``#rrggbb``.
-
-    The fill palette arrives most-used-first but carries counts only (no area),
-    so the heading band — a few wide, light rects — is out-counted by the many
-    thin table-border slivers. A heading band is by design a LIGHT tint, so we
-    first take the most-used fill inside the band-tint luminance window
-    (:data:`_BAND_LUM_MIN`..:data:`_BAND_LUM_MAX`); that recovers ``#f1f1f1``
-    over ``#bbbbbb``/``#1a1a1a``. With no band-tint fill we fall back to the
-    most-used merely-non-white fill, then to generic_soap's ``#f1f1f1``.
-    """
+    """The dominant heading-band fill color as ``#rrggbb``: the
+    most-used fill inside the band-tint luminance window
+    (:data:`_BAND_LUM_MIN`..:data:`_BAND_LUM_MAX`), since raw counts
+    alone would be out-voted by thin border slivers. Falls back to the
+    most-used non-white fill, then to generic_soap's default."""
     for usage in analysis.design_tokens.fill_colors:
         if _BAND_LUM_MIN <= _luminance(usage.rgb) <= _BAND_LUM_MAX:
             return usage.hex
@@ -295,21 +251,16 @@ def _heading_fill(analysis: PackAnalysis) -> str:
 
 
 def _body_font(analysis: PackAnalysis) -> str:
-    """The inferred body font family, with a CSS generic fallback appended.
-
-    PyMuPDF font names are PostScript-ish (``Georgia``, ``ABCDEF+Helvetica``);
-    we strip any subset prefix and append a generic family so the CSS is valid
-    even when the exact face is absent on the render host. Falls back wholesale
-    to generic_soap's stack when no body font was inferred.
-    """
+    """The inferred body font family, with a CSS generic fallback
+    appended. PyMuPDF font names are PostScript-ish
+    (``Georgia``, ``ABCDEF+Helvetica``); a subset prefix is stripped and a
+    generic family appended so the CSS is valid even without the exact
+    face on the render host."""
     raw = analysis.design_tokens.body_font or analysis.type_scale.body_font
     if not raw or raw == OCR_SPAN_FONT:
-        # A recognized page has no recoverable face: Tesseract writes its text
-        # layer glyphless and black, and the decision record is explicit that
-        # OCR does not recover the source's rendering system. Offering
-        # "OcrObservation" to a CSS stack would be asserting exactly that, so
-        # the draft falls back to the documented default and DRAFT.md says the
-        # body font was not inferred.
+        # OCR recovers no face (Tesseract's text layer is glyphless): offering
+        # "OcrObservation" to a CSS stack would assert otherwise, so fall back
+        # to the documented default and let DRAFT.md say the font was not inferred.
         return _DEFAULT_BODY_FONT
     # Drop a PDF subset prefix like "ABCDEF+".
     family = raw.split("+", 1)[-1].strip()
@@ -325,11 +276,9 @@ def _body_size_pt(analysis: PackAnalysis) -> float:
 
 
 def _heading_size_pt(analysis: PackAnalysis) -> float:
-    """The largest h-role type level's size — the section-band font size.
-
-    Levels are sorted size-descending, so the first h-role level is the
-    biggest. Falls back to generic_soap's 10.5pt band convention.
-    """
+    """The largest h-role type level's size — the section-band font
+    size. Levels are sorted size-descending, so the first h-role level
+    is the biggest; falls back to generic_soap's 10.5pt convention."""
     for level in analysis.type_scale.levels:
         if level.role.startswith("h"):
             return level.size
@@ -337,30 +286,22 @@ def _heading_size_pt(analysis: PackAnalysis) -> float:
 
 
 def _section_candidates(analysis: PackAnalysis) -> list[SectionCandidate]:
-    """High-confidence section candidates in median-y (top-to-bottom) order.
-
-    Confidence gate: recurs in >= 2 samples (``_MIN_SECTION_COUNT``). With a
-    single low-confidence sample nothing clears the gate, so the draft emits no
-    manifest sections rather than promoting per-patient text — the operator is
-    told (DRAFT.md) to add more samples. ``analysis.sections`` is already
-    median-y sorted, so the relative order is preserved.
-    """
+    """High-confidence section candidates in median-y (top-to-bottom)
+    order: recurs in >= 2 samples (``_MIN_SECTION_COUNT``). A single
+    low-confidence sample clears nothing, so the draft emits no manifest
+    sections rather than promote per-patient text (DRAFT.md tells the
+    operator to add more samples)."""
     if analysis.low_confidence:
         return []
     return [c for c in analysis.sections if c.count >= _MIN_SECTION_COUNT]
 
 
 def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]], list[str]]:
-    """Identify exact known header tokens without reproducing their text.
-
-    Returns ``(placed, unplaced)`` where ``placed`` is a list of
-    ``(canonical_label, slot, value_expr)`` for exact known patient-header
-    tokens. ``unplaced`` is retained for compatibility with the draft copy and
-    contains every other raw static string. All raw static strings, including
-    recognised tokens, are collected separately by :func:`_quarantined_text`.
-    Determinism: a token matches at most one slot (first entry wins), and each
-    slot is placed at most once.
-    """
+    """Identifies exact known header tokens without reproducing their
+    text. Returns ``(placed, unplaced)``: ``placed`` is
+    ``(canonical_label, slot, value_expr)`` for known header tokens;
+    ``unplaced`` is every other raw string. A token matches at most one
+    slot (first entry wins)."""
     placed: list[tuple[str, str, str]] = []
     unplaced: list[str] = []
     used_slots: set[str] = set()
@@ -387,22 +328,13 @@ def _classify_static(analysis: PackAnalysis) -> tuple[list[tuple[str, str, str]]
 
 #: Section headings that are PUBLISHED CLINICAL VOCABULARY, not sample content.
 #:
-#: The quarantine below exists because a string that recurs across samples can
-#: be a form's label OR a value every sample happened to share — a provider's
-#: name on every page reads exactly like template furniture (#200). But a
-#: heading that matches the standard vocabulary is neither: "Subjective" and
-#: "Allergies" are SOAP and C-CDA section names, published by HL7 and printed
-#: on every chart in the country. They are schema, in the same sense a table
-#: name is schema, and the pf_tebra loader has always said so.
-#:
-#: Withholding them costs the learner the one thing it exists to learn — a pack
-#: whose sections read "Inferred section 1" cannot reproduce a layout — while
-#: protecting nothing: no patient is identified by the word "Assessment".
-#: Everything NOT in this set keeps the numbered placeholder and the
-#: quarantine, so an unrecognised recurring string is still treated as
-#: potential PHI. The set is deliberately small and closed: matching is exact
-#: (after the same normalisation inference already applies), so a heading like
-#: "Assessment by Dr Fixture" is not in it and stays quarantined.
+#: A recurring heading can be a form's label OR a value every sample happened
+#: to share (#200), but "Subjective"/"Allergies" are HL7-published SOAP/C-CDA
+#: section names printed on every chart in the country — schema, not PHI.
+#: Withholding them would cost the learner its whole purpose while protecting
+#: nothing. Matching is exact (the same normalisation inference already
+#: applies) and the set is deliberately small and closed, so anything else
+#: (e.g. "Assessment by Dr Fixture") stays quarantined.
 _PUBLISHED_SECTION_HEADINGS = frozenset(
     {
         # SOAP, the note structure every ambulatory chart uses.
@@ -446,12 +378,9 @@ _PUBLISHED_SECTION_HEADINGS = frozenset(
 
 
 def _section_key(candidate: SectionCandidate, index: int) -> str:
-    """The pack.yaml key for one inferred section.
-
-    A published heading gets a readable key derived from its own words, so the
-    manifest reads as the chart does; anything else keeps the positional key,
-    which reveals nothing about the string it stands for.
-    """
+    """The pack.yaml key for one inferred section: a published heading
+    gets a readable key derived from its own words, so the manifest
+    reads as the chart does; anything else keeps the positional key."""
     known = published_heading(candidate.text)
     if known is None:
         return f"inferred_section_{index}"
@@ -459,24 +388,19 @@ def _section_key(candidate: SectionCandidate, index: int) -> str:
 
 
 def published_heading(text: str) -> str | None:
-    """The canonical spelling when ``text`` is published vocabulary, else None.
-
-    Case and surrounding punctuation vary by vendor ("SUBJECTIVE:", "Subjective"),
-    so the comparison folds both; the returned label is the sample's own
-    spelling, which is what the operator recognises on their chart.
-    """
+    """The canonical spelling when ``text`` is published vocabulary, else
+    ``None``. Case and punctuation vary by vendor ("SUBJECTIVE:",
+    "Subjective"), so the comparison folds both; the returned label is
+    the sample's own spelling, which is what the operator recognises."""
     folded = text.strip().strip(":").strip().casefold()
     return text.strip().strip(":").strip() if folded in _PUBLISHED_SECTION_HEADINGS else None
 
 
 def _quarantined_text(analysis: PackAnalysis) -> list[str]:
     """Every raw sample-derived string the generated pack retains.
-
-    Headings are not in ``static_text`` because inference separates the two
-    categories, but their text has the same provenance and must obey the same
-    boundary. The low-confidence gate remains fail-closed: one sample emits no
-    sample text, including into the quarantine file.
-    """
+    Headings aren't in ``static_text`` (inference separates the
+    categories) but share the same provenance and boundary. Fail-closed:
+    one sample emits no sample text, including into the quarantine file."""
     if analysis.low_confidence:
         return []
     seen: set[str] = set()
@@ -491,23 +415,17 @@ def _quarantined_text(analysis: PackAnalysis) -> list[str]:
 
 
 def _quarantine_line(text: str, evidence: LayoutEvidence) -> str:
-    """One quarantine entry, marked when recognition is where it came from.
-
-    The mark is per string, not per file: a batch can be part native and part
-    pixels, and an operator deciding whether a string belongs to the form needs
-    to know which of those they are reading.
-    """
+    """One quarantine entry, marked when recognition is where it came
+    from — per string, not per file, since a batch can be part native
+    and part pixels."""
     return f"[OCR] {text}" if evidence.is_ocr_derived(text) else text
 
 
 def _manifest_ocr_marker(evidence: LayoutEvidence) -> str:
-    """The one sentence pack.yaml's description carries when OCR was used.
-
-    Short on purpose: a picker shows this string, and the detail belongs in
-    ``OCR_EVIDENCE.md``. What it may never do is omit the fact — a manifest
-    that reads identically whether its layout was read or recognized is a
-    manifest that hides the difference.
-    """
+    """The one sentence pack.yaml's description carries when OCR was
+    used. Short on purpose (detail belongs in ``OCR_EVIDENCE.md``), but
+    never omits the fact — a manifest reading identically whether read
+    or recognized hides the difference."""
     if not evidence.review_required:
         return ""
     classes = evidence.class_counts
@@ -520,12 +438,9 @@ def _manifest_ocr_marker(evidence: LayoutEvidence) -> str:
 
 
 def _conflict_rows(evidence: LayoutEvidence) -> list[str]:
-    """One markdown row per held native/OCR overlap — geometry, never text.
-
-    A disagreement is a disagreement about a value, so the row gives a reviewer
-    the page, the region and the two boxes to look at, and the engine's own
-    score, and stops there.
-    """
+    """One markdown row per held native/OCR overlap — geometry, never
+    text: page, region, both boxes, and the engine's own score, nothing
+    else."""
     rows = [
         "| page | region | kind | OCR box (pt) | native box (pt) | OCR score |",
         "|---|---|---|---|---|---|",
@@ -544,12 +459,10 @@ def _box(bbox: tuple[float, float, float, float]) -> str:
 
 
 def _render_ocr_evidence_file(analysis: PackAnalysis, *, name: str) -> str:
-    """``OCR_EVIDENCE.md``: what was recognized, what clashed, what it means.
-
-    Written only when something was recognized. It carries counts, page
-    classes, geometry and the engine manifest — and no recognized text at all,
-    which lives (marked) in the quarantine file with every other raw string.
-    """
+    """``OCR_EVIDENCE.md``: what was recognized, what clashed, what it
+    means. Written only when something was recognized; carries counts,
+    page classes, geometry and the engine manifest — no recognized text,
+    which lives (marked) in the quarantine file."""
     evidence = analysis.evidence
     classes = "\n".join(
         f"- {label}: {count} page(s)" for label, count in evidence.class_counts.items() if count
@@ -632,9 +545,7 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
 
     lines: list[str] = [
         f"name: {name}",
-        # The author typed this at `--display`. It used to reach the file only
-        # inside the description sentence below, where nothing could read it
-        # back — so every picker re-cased the id instead (#164).
+        # Its own top-level key, readable back by a picker (#164).
         f"display: {_yaml_quote(display)}",
         'version: "0.1-draft"',
         "description: >",
@@ -675,21 +586,16 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
         ]
     )
     for index, candidate in enumerate(sections, start=1):
-        # Inferred headings are informational rows (the operator wires them into
-        # the template by hand); default off so a draft never asserts a section
-        # the engine cannot yet populate.  The raw heading remains only in the
-        # quarantine file; this stable placeholder preserves order and metadata.
+        # Informational row, default off, so a draft never asserts a section the
+        # engine cannot yet populate; the raw heading stays only in the quarantine file.
         known = published_heading(candidate.text)
         key = _section_key(candidate, index)
         lines.append(f"  {key}:")
         lines.append(f"    label: {_yaml_scalar(known or f'Inferred section {index}')}")
         lines.append("    default: false")
         named = f"{known!r} " if known else ""
-        # The evidence clause is said only when OCR was actually part of this
-        # harvest. On a native-text run there is one kind of evidence and
-        # naming it changes a line every existing pack carries — `--no-ocr` is
-        # documented as the behaviour every caller had before OCR existed, and
-        # a description that differs by a clause is not that.
+        # Said only when OCR was actually part of this harvest, so a native-text
+        # run's description carries no clause that mentions it at all.
         evidence_clause = (
             f"; evidence: {_PROVENANCE_LABELS.get(candidate.provenance, candidate.provenance)}"
             if analysis.evidence.ocr_attempted
@@ -712,11 +618,9 @@ def _render_pack_yaml(analysis: PackAnalysis, *, name: str, display: str) -> str
 
 
 def _oneline(value: str) -> str:
-    """Collapse an operator-supplied string to one safe plain-text line.
-
-    Newlines (or YAML-active leaders) in --display could otherwise corrupt the
-    folded description block and silently re-key the manifest.
-    """
+    """Collapse an operator-supplied string to one safe plain-text line:
+    a newline or YAML-active leader in --display could otherwise corrupt
+    the folded description block and silently re-key the manifest."""
     import re as _re
 
     return _re.sub(r"[\r\n:#>|&*?!%@`\"']+", " ", value).strip() or "draft pack"
@@ -733,13 +637,11 @@ def _yaml_scalar(value: str) -> str:
 
 
 def _render_template_html(analysis: PackAnalysis) -> str:
-    """Generate the Jinja2 template, mirroring generic_soap's block structure.
-
-    The loop structure, class names, and context variables are intentionally
-    identical to ``packs/generic_soap/template.html`` so the engine renders the
-    draft with no changes; only the inlined CSS custom properties (the inferred
-    tokens) and the patient-header label placement differ.
-    """
+    """Generates the Jinja2 template, mirroring generic_soap's block
+    structure. Loop structure, class names, and context variables are
+    intentionally identical to ``packs/generic_soap/template.html`` so
+    the engine renders the draft unchanged; only inlined CSS tokens and
+    the patient-header label placement differ."""
     placed, _unplaced = _classify_static(analysis)
     body_size = _body_size_pt(analysis)
     heading_size = _heading_size_pt(analysis)
@@ -889,12 +791,10 @@ def slot_guard(slot: str) -> str:
 
 
 def _escape_html(text: str) -> str:
-    """HTML-escape static label text emitted into markup.
-
-    Also entity-escapes brace pairs so Jinja never sees a delimiter: a static
-    string containing ``{{`` or ``{%`` must render as LITERAL text (it came
-    from a sample document), never execute against the render context.
-    """
+    """HTML-escape static label text emitted into markup. Also
+    entity-escapes brace pairs so Jinja never sees a delimiter: a static
+    string containing ``{{`` or ``{%`` must render as LITERAL text, never
+    execute against the render context."""
     return (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -908,21 +808,10 @@ def _escape_html(text: str) -> str:
 
 def _unplaced_comment(unplaced: list[str]) -> str:
     """A pointer to the quarantine file — never the strings themselves.
-
-    These strings used to be written into the template verbatim, and that was
-    the wrong file for them. ``template.html`` is the working artifact: it
-    renders every future patient's chart, it is what gets copied when someone
-    derives a second pack from this one, and it is what a colleague is handed
-    when they ask for "the pack". A previous patient's diagnosis sitting in an
-    HTML comment inside it travels everywhere the pack goes, forever, and
-    surviving as a comment is precisely what makes it easy to never notice.
-
-    So the strings live in ONE inert file instead, and this points at it. That
-    makes the operator's remedy a complete action rather than a diligent one:
-    deleting :data:`UNPLACED_NAME` purges every sample-derived string the
-    generator kept, with nothing of the kind left behind in a file they have to
-    remember to also check.
-    """
+    ``template.html`` renders every future chart and every derived pack
+    copies it, so a stray patient value surviving in an HTML comment
+    there travels forever. The strings live in ONE inert file instead,
+    so deleting :data:`UNPLACED_NAME` is a complete remedy."""
     if not unplaced:
         return ""
     return (
@@ -944,12 +833,9 @@ UNPLACED_NAME = "UNPLACED.txt"
 
 
 def _render_unplaced_file(quarantined: list[str], evidence: LayoutEvidence) -> str:
-    """The quarantine file: the strings, and why they need reading.
-
-    Plain text on purpose. It is not Jinja, not YAML and not Markdown, so
-    nothing renders it, nothing imports it, and no tool downstream picks it up
-    by accident — it exists to be read once by a person and then deleted.
-    """
+    """The quarantine file: the strings, and why they need reading. Plain
+    text on purpose — not Jinja, YAML or Markdown, so nothing renders or
+    imports it; it exists to be read once by a person and then deleted."""
     note = textwrap.fill(STATIC_LIST_NOTE, width=76)
     body = "\n".join(_quarantine_line(text, evidence) for text in quarantined)
     ocr_note = (
@@ -975,13 +861,10 @@ def _render_unplaced_file(quarantined: list[str], evidence: LayoutEvidence) -> s
 
 
 def _comment_safe(text: str) -> str:
-    """Neutralize text for the UNPLACED comment block.
-
-    Two hazards: ``-->`` would close the comment early, and brace delimiters
-    would be parsed by Jinja even INSIDE an HTML comment — sample-derived text
-    must render as literal characters, never evaluate against the render
-    context. Route through the same brace-entity escaping as placed labels.
-    """
+    """Neutralize text for the UNPLACED comment block: ``-->`` would
+    close the comment early, and brace delimiters would be parsed by
+    Jinja even inside an HTML comment. Routes through the same
+    brace-entity escaping as placed labels."""
     return _escape_html(text).replace("-->", "--&gt;")
 
 
@@ -989,12 +872,10 @@ def _comment_safe(text: str) -> str:
 # context.py
 # --------------------------------------------------------------------------- #
 
-# The emitted context.py re-uses generic_soap's build_context verbatim: the
-# generated template mirrors that pack's variable contract exactly, so there is
-# nothing pack-specific to compute. Keeping it a thin re-export (rather than a
-# copy) means a fix to the shared builder flows to drafts too, and the loader's
-# `build_context` callable requirement is satisfied. A triple-quoted literal,
-# not a copied file, honors the no-copy PHI rule (this is generated code).
+# Re-uses generic_soap's build_context verbatim (the generated template
+# mirrors that pack's variable contract), so a fix to the shared builder
+# flows to drafts too. A triple-quoted literal, not a copied file, since
+# this is generated code.
 _CONTEXT_PY = '''"""Context builder for a packgen DRAFT pack.
 
 Auto-generated by ``anast pack init --from-samples`` (packgen.emit). A draft
@@ -1038,13 +919,11 @@ def _evidence_one_liner(evidence: LayoutEvidence) -> str:
 
 
 def _draft_ocr_section(analysis: PackAnalysis) -> str:
-    """The DRAFT.md OCR block, or nothing at all for an all-native batch.
-
-    It sits directly under the same-patient caveat because it is the second
-    thing that decides whether this draft can be trusted, and it repeats the
-    governing sentence verbatim rather than pointing at another file: the
-    person reading DRAFT.md may read nothing else.
-    """
+    """The DRAFT.md OCR block, or nothing for an all-native batch. Sits
+    directly under the same-patient caveat (the second thing deciding
+    whether this draft can be trusted) and repeats the governing sentence
+    verbatim rather than pointing elsewhere: the reader may see nothing
+    else."""
     evidence = analysis.evidence
     if not evidence.review_required:
         return ""
@@ -1178,17 +1057,11 @@ output as a starting point.
 
 
 def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir: Path) -> Path:
-    """Write a loadable draft template pack and return its directory.
-
-    Creates ``<out_dir>/<name>/`` containing ``pack.yaml``, ``template.html``,
-    ``context.py``, and ``DRAFT.md``. The result loads through
-    ``discover_packs([pack_dir.parent], allow_external=True)`` and renders
-    through the real engine unchanged. Deterministic: the same ``analysis`` and
-    ``name``/``display`` produce byte-identical files.
-
-    ``name`` must be a manifest-safe identifier (the pack name and directory
-    name); the caller (CLI) validates it before reaching here.
-    """
+    """Writes a loadable draft template pack and returns its directory:
+    ``pack.yaml``, ``template.html``, ``context.py``, ``DRAFT.md`` under
+    ``<out_dir>/<name>/``, loadable via ``discover_packs``. Deterministic:
+    the same ``analysis``/``name``/``display`` produce byte-identical
+    files; ``name`` must be manifest-safe (the CLI validates it first)."""
     # Hardened like anything else that can hold PHI, because it can. This
     # module's own caveat says so: hand the tool three copies of ONE patient's
     # chart and that patient's values recur in 100% of samples and are
