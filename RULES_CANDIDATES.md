@@ -24,6 +24,11 @@ adjudicate into `RULES.md` or reject.
   so the caller can tell the two apart, and the read via `take_declined`
   is destructive so a stale outcome never frames the next run
   (`core/outcome.py:1`).
+- Whether a stream is attached to a real terminal must be asked via
+  `isatty()` directly, never Rich's `is_terminal`: `FORCE_COLOR`/
+  `TTY_COMPATIBLE` make `is_terminal` answer True for a plain piped file
+  and would hang an unattended run waiting on a prompt nobody can see
+  (`core/presentation.py:154`).
 
 ## Loose ends
 
