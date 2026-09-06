@@ -23,29 +23,70 @@ def _make_pdf(path: Path, pages: list[str]) -> Path:
     return path
 
 
-def test_a_snapshot_opens_the_file_once_and_only_when_asked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """One open per PDF is the whole point of the shared snapshot: the QA
-    checks and the L0-L6 ladder each ask several times per document."""
-    path = _make_pdf(tmp_path / "chart.pdf", ["page one text", "page two text"])
-    real = pdfsnapshot.import_pymupdf()
-    opens = 0
+def _count_opens(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    real, opens = pdfsnapshot.import_pymupdf(), [0]
 
     class _CountingPymupdf:
         def open(self, *args: object, **kwargs: object) -> object:
-            nonlocal opens
-            opens += 1
+            opens[0] += 1
             return real.open(*args, **kwargs)
 
     monkeypatch.setattr(pdfsnapshot, "import_pymupdf", _CountingPymupdf)
+    return opens
+
+
+def _count_text_extractions(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    real, calls = pymupdf.Page.get_text, [0]
+
+    def _counting(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls[0] += 1
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Page, "get_text", _counting)
+    return calls
+
+
+def test_the_ladders_count_and_page_one_share_one_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L1 asks the page count, L2 and L3 ask page one; the pair must describe
+    ONE read of one file, so the second ask is served from the first."""
+    path = _make_pdf(tmp_path / "chart.pdf", ["page one text", "page two text"])
+    opens = _count_opens(monkeypatch)
     snapshot = PdfSnapshot(path)
-    assert opens == 0, "constructing a snapshot must not open the file"
+    assert opens[0] == 0, "constructing a snapshot must not open the file"
     assert snapshot.page_count == 2
     assert "page one text" in snapshot.page_one_text
     assert "page two text" not in snapshot.page_one_text
+    assert opens[0] == 1, f"the ladder opened the PDF {opens[0]} times, expected 1"
+
+
+def test_the_graders_whole_document_ask_is_one_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _make_pdf(tmp_path / "chart.pdf", ["page one text", "page two text"])
+    opens = _count_opens(monkeypatch)
+    snapshot = PdfSnapshot(path)
     assert "page two text" in snapshot.text
-    assert opens == 1, f"the snapshot opened the PDF {opens} times, expected 1"
+    assert len(snapshot.pages) == 2
+    assert snapshot.page_count == 2
+    assert opens[0] == 1, f"the grader opened the PDF {opens[0]} times, expected 1"
+
+
+def test_a_page_count_ask_reads_no_page_past_the_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Answering "how many pages" by extracting every page's text cost 51x on
+    a 300-page chart. The count comes from the document; page one is the floor,
+    because the level that asks next wants it from the same open."""
+    path = _make_pdf(tmp_path / "long.pdf", [f"page {n} text" for n in range(12)])
+    calls = _count_text_extractions(monkeypatch)
+    assert PdfSnapshot(path).page_count == 12
+    assert calls[0] <= 1, f"a page-count ask extracted {calls[0]} pages, expected at most 1"
+
+    calls[0] = 0
+    assert len(PdfSnapshot(path).pages) == 12
+    assert calls[0] == 12, "the whole-document ask must still read every page"
 
 
 def test_a_snapshot_carries_each_pages_geometry(tmp_path: Path) -> None:
