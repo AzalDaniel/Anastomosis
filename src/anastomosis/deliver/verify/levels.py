@@ -48,7 +48,6 @@ __all__ = [
     "LevelResult",
     "LevelStatus",
     "PdfSnapshot",
-    "date_renderings",
     "fuzzy_contains",
 ]
 
@@ -121,20 +120,11 @@ def fuzzy_contains(needle: str, haystack: str, *, ratio: float = _NAME_RATIO) ->
     return best
 
 
-def date_renderings(value: date) -> set[str]:
-    """Every chart spelling ``value`` might render as (L2/L3 verify);
-    delegates to ``core.timeutil`` so this and QA's ``DataIntegrityCheck``
-    cannot drift apart.
-    """
-    return all_date_spellings(value)
-
-
 def _date_present(value: date, text: str) -> bool:
-    """Whether any candidate rendering of ``value`` appears in ``text``,
-    boundary-anchored per spelling (6) so an unpadded DOB does not match
-    inside a longer date run.
-    """
-    return any(date_token_present(s, text) for s in date_renderings(value))
+    """Whether any spelling a pack might render ``value`` as appears in
+    ``text``, boundary-anchored per spelling (6) so an unpadded DOB does not
+    match inside a longer date run."""
+    return any(date_token_present(s, text) for s in all_date_spellings(value))
 
 
 # --- the lazy PyMuPDF gate ---

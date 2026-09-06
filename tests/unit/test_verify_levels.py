@@ -16,6 +16,7 @@ import pytest
 pymupdf = pytest.importorskip("pymupdf", reason="verify tests need PyMuPDF (render extra)")
 
 from anastomosis.core.model import Encounter, Patient  # noqa: E402
+from anastomosis.core.timeutil import all_date_spellings  # noqa: E402
 from anastomosis.deliver.browser.errors import WrongPatientError  # noqa: E402
 from anastomosis.deliver.verify.levels import (  # noqa: E402
     L0FileIntegrity,
@@ -26,7 +27,6 @@ from anastomosis.deliver.verify.levels import (  # noqa: E402
     L5Metadata,
     L6RoundTrip,
     LevelStatus,
-    date_renderings,
     fuzzy_contains,
 )
 from anastomosis.destinations.base import DestinationPatient, UploadItem  # noqa: E402
@@ -104,30 +104,23 @@ def _pack(fields: list[str]) -> LoadedPack:
 # --- helper matchers ---
 
 
-def test_date_renderings_built_without_glibc_codes() -> None:
-    renders = date_renderings(DOB)
+def test_date_spellings_built_without_glibc_codes() -> None:
+    renders = all_date_spellings(DOB)
     assert "01/02/1990" in renders  # padded
     assert "1/2/1990" in renders  # unpadded, built by hand (no %-d)
     assert "January 2, 1990" in renders
 
 
 def test_qa_and_verify_date_spellings_are_unified() -> None:
-    """The QA DataIntegrityCheck and the L2/L3 verifier must enumerate the SAME
-    date spellings. They once diverged — the verifier accepted an unpadded
-    ``M-D-YYYY`` DOB that the QA check rejected, silently blocking a correct
-    chart (PipelineError qa_failed). Both now delegate to one canonical
-    enumerator, so the sets cannot drift apart."""
-    from anastomosis.core.timeutil import all_date_spellings
+    """The L2/L3 verifier now enumerates date spellings by calling
+    ``core.timeutil`` itself; QA's check reaches the same function. The set is
+    pinned element by element, including the unpadded-dash ``1-5-1990`` form
+    whose absence from the QA half once blocked a correct chart."""
     from anastomosis.qa.checks import _date_spellings
 
     for d in (date(1990, 1, 5), date(1990, 1, 2), date(2023, 12, 31), date(2024, 7, 4)):
-        canonical = all_date_spellings(d)
-        assert _date_spellings(d) == canonical == date_renderings(d)
+        assert _date_spellings(d) == all_date_spellings(d)
 
-    # Pin the canonical contents directly. The equality above is tautological
-    # (all three delegate to one function), so without this a dropped element
-    # would survive; this asserts the exact set, including the unpadded-dash
-    # `1-5-1990` form whose prior absence from the QA set was the bug.
     assert all_date_spellings(date(1990, 1, 5)) == {
         "01/05/1990",
         "1/5/1990",

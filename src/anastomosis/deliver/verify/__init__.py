@@ -2,8 +2,7 @@
 
 Proves a reconstructed chart landed in the right destination chart, intact
 and identifiable, plugging into the browser upload engine through the
-existing :class:`~anastomosis.deliver.browser.verify.Verifier` seam
-(engine, ledger and state machine untouched); every level is
+:class:`~anastomosis.deliver.browser.verify.Verifier` seam; every level is
 self-contained, so it is also usable standalone. A sibling package to
 :mod:`anastomosis.deliver.browser`: the ladder depends on it, never the
 reverse (54).
@@ -22,7 +21,6 @@ from .levels import (
     L6RoundTrip,
     LevelResult,
     LevelStatus,
-    date_renderings,
     fuzzy_contains,
 )
 
@@ -38,6 +36,5 @@ __all__ = [
     "LayeredVerifier",
     "LevelResult",
     "LevelStatus",
-    "date_renderings",
     "fuzzy_contains",
 ]
