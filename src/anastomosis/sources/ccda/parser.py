@@ -1253,19 +1253,10 @@ def _role_extensions(
     role: _Role,
     entity_name: str | None,
 ) -> dict[str, Any]:
-    """Everything a participation states that no Practitioner field holds.
-
-    Two of these are load-bearing rather than incidental. ``ccda:participation``
-    is the document's own word for what this actor did, and it is the difference
-    between "who signed this chart" and "who told us about it".
-    ``ccda:role`` is the CDA ROLE CLASS, and CDA draws a line with it that this
-    record has to keep: an ``assignedEntity`` is somebody in a healthcare-
-    provider role, a ``relatedEntity`` or ``associatedEntity`` is somebody in a
-    personal relationship with the patient. It is recorded separately from
-    ``ccda:entity`` — which names the person or device element played — because a
-    role routinely names an actor with no person element at all (an emergency
-    contact given as an id and a phone number), and a downstream reader that had
-    to fall back on the participation's NAME would be guessing.
+    """Everything a participation states that no Practitioner field
+    holds: ``ccda:participation`` (signer vs informant) and ``ccda:role``
+    (the CDA ROLE CLASS), kept apart from ``ccda:entity`` since a role
+    may name no person element at all.
     """
     out: dict[str, Any] = {
         "ccda:participation": participation_name,
@@ -1324,14 +1315,10 @@ def _person_practitioner(
 def _device_practitioner(
     author: _Element, entity: _Element, source_file: str, index: int
 ) -> Practitioner:
-    """The system that generated a document, kept apart from the people who write one.
-
-    A human author and an authoring device are different answers to "who wrote
-    this", and a record that cannot tell them apart is worse than one admitting
-    it does not know: an automated summary attributed to a clinician is a
-    statement nobody made. The device keeps ``ccda:entity`` naming the element
-    CDA gave it, so the distinction survives on the object rather than in the
-    reader's memory of where it came from.
+    """The system that generated a document, kept apart from the people
+    who write one — an automated summary attributed to a clinician is a
+    statement nobody made. Keeps ``ccda:entity`` naming the element CDA
+    gave it.
     """
     device = _find(entity, "v3:assignedAuthoringDevice")
     model = _text_content(_find(device, "v3:manufacturerModelName"))
