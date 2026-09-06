@@ -924,14 +924,10 @@ def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter
 
 
 def _folded_fields(seen: Encounter, incoming: Encounter) -> dict[str, object]:
-    """The fields to copy from ``incoming`` onto ``seen``, by kind.
-
-    Three rules, and which one applies is a property of the field rather than
-    of the visit: lists concatenate in the order the halves were read,
-    extensions merge with the later half winning a shared key, and every other
-    scalar is filled in only where the first half left a gap. Identity fields
-    are excluded — the halves already agree on those, which is what let them
-    fold at all.
+    """The fields to copy from ``incoming`` onto ``seen``, by kind: lists
+    concatenate, extensions merge (later wins a shared key), every other
+    scalar fills only where the first half left a gap. Identity fields
+    are excluded — the halves already agree on those.
     """
     update: dict[str, object] = {}
     for name in _ENCOUNTER_LIST_FIELDS:
@@ -947,11 +943,9 @@ def _folded_fields(seen: Encounter, incoming: Encounter) -> dict[str, object]:
 
 @cache
 def _folded_scalar_fields(model: type[Encounter]) -> tuple[str, ...]:
-    """Every field folded by the fill-a-gap rule: not identity, list or extensions.
-
-    Derived from the model rather than listed here, so a field added to
-    Encounter is folded by default instead of being silently skipped by a
-    hand-written tuple nobody remembered to extend.
+    """Every field folded by the fill-a-gap rule, derived from the model
+    so a new Encounter field is folded by default rather than silently
+    skipped by a hand-written tuple.
     """
     handled = {*_ENCOUNTER_IDENTITY_FIELDS, *_ENCOUNTER_LIST_FIELDS, "extensions"}
     return tuple(name for name in model.model_fields if name not in handled)
@@ -967,18 +961,10 @@ OID_NPI = "2.16.840.1.113883.4.6"
 
 @dataclass(frozen=True)
 class _Role:
-    """One CDA role element, and where it keeps the person and the organization.
-
-    CDA spells this differently under every participation — an
-    ``assignedEntity`` plays an ``assignedPerson`` and represents an
-    organization, an ``associatedEntity`` plays an ``associatedPerson`` and is
-    scoped by one — so the spellings are written out here rather than derived
-    from the participation's name. Deriving them would be a guess, and a guess
-    at this seam reads a document's spouse as its author.
-
-    ``person`` is a tuple because a document may play a person under another
-    role's spelling; the element actually found is recorded on the practitioner,
-    so the record says what the document said rather than what was expected.
+    """One CDA role element, and where it keeps the person and the
+    organization — spelled out per participation, never derived, since a
+    guess here reads a document's spouse as its author. ``person`` is a
+    tuple: the element actually found lands on the practitioner.
     """
 
     path: str
@@ -988,22 +974,11 @@ class _Role:
 
 _ASSIGNED_ENTITY = _Role("v3:assignedEntity", ("v3:assignedPerson",), "v3:representedOrganization")
 _RELATED_ENTITY = _Role("v3:relatedEntity", ("v3:relatedPerson",), None)
-#: ``informationRecipient`` is the conforming spelling and is tried first;
-#: ``assignedPerson`` is VENDOR TOLERANCE, kept deliberately. No C-CDA R2.1
-#: document may play a person under that name here — an ``intendedRecipient``
-#: plays an ``informationRecipient`` — but exporters that reuse their
-#: ``assignedEntity`` writer for this one participation do emit it, and the
-#: posture of this adapter is to read what exists and refuse only what it would
-#: lose. Reading it costs one path and loses nothing: ``_person_element``
-#: returns the element name the document actually used and it lands on the
-#: practitioner as ``ccda:entity``, so a record built from the non-standard form
-#: still says which form it was built from. Removing the path would turn a
-#: recipient this adapter can name into a document that parsed clean and carried
-#: nobody, which is the failure this whole module exists to close (#312).
-#: This is tolerance on the READ side only: the corpus generator emits the
-#: conforming shape (#327), so the ledger's numbers are evidence about documents
-#: that could exist, and the tolerant path is exercised by a fixture that says
-#: in its own name that it is vendor divergence.
+#: ``informationRecipient`` is the conforming spelling, tried first;
+#: ``assignedPerson`` is VENDOR TOLERANCE (#312) — no R2.1 document may
+#: play a person there, but some exporters reuse their ``assignedEntity``
+#: writer for it. Read-side only: the corpus generator emits the
+#: conforming shape (#327).
 _INTENDED_RECIPIENT = _Role(
     "v3:intendedRecipient",
     ("v3:informationRecipient", "v3:assignedPerson"),
@@ -1014,20 +989,13 @@ _ASSOCIATED_ENTITY = _Role(
 )
 _ASSIGNED_AUTHOR = _Role("v3:assignedAuthor", ("v3:assignedPerson",), "v3:representedOrganization")
 
-#: The participations besides ``author``: the ElementPath each is found at, and
-#: the role element(s) CDA allows beneath it. One row per participation NAME, and
-#: that name is what lands on the canonical object: a legalAuthenticator is not
-#: an authenticator and neither is an informant, so a record that folded them
-#: together could no longer say who signed the chart and who merely supplied the
-#: history.
-#:
-#: Scope is per-row and argued, not uniform — the same argument the ingest
-#: ledger's own table makes, so the two agree about what they are counting.
-#: ``informant`` is read wherever it appears, because a clinical statement may
-#: name who supplied it and the header's informant does not answer for that one.
-#: Everything else is a DIRECT child of ``ClinicalDocument``: a ``<participant>``
-#: nested inside an allergy entry is the allergen substance and is parsed as one
-#: already, and a walk that reached it would make a practitioner out of a drug.
+#: The participations besides ``author``: path plus the role element(s)
+#: CDA allows beneath it. One row per NAME — a legalAuthenticator is not
+#: an authenticator, so folding them would lose who signed vs who merely
+#: supplied history. ``informant`` is read wherever it appears (a
+#: statement's own informant, not just the header's); everything else is
+#: a DIRECT child of ``ClinicalDocument`` — a nested ``<participant>`` in
+#: an allergy entry is the allergen substance, already parsed.
 _PARTICIPATIONS: tuple[tuple[str, str, tuple[_Role, ...]], ...] = (
     ("dataEnterer", "v3:dataEnterer", (_ASSIGNED_ENTITY,)),
     ("informant", ".//v3:informant", (_ASSIGNED_ENTITY, _RELATED_ENTITY)),
@@ -1045,20 +1013,10 @@ EXT_ENCOMPASSING = "ccda:componentOf"
 
 @dataclass
 class _Actors:
-    """The people and places one document names, gathered as they are read.
-
-    Facilities are keyed and practitioners are not, and the asymmetry is the
-    point. One organization is routinely named by several participations — in
-    most exports the author's practice IS the custodian — and two Facility
-    objects under one id is the collision ``ArchiveDeliverer`` refuses a whole
-    patient for. One person is equally often named twice, but as two different
-    answers: the clinician who wrote the note and the one who legally signed it
-    are separate facts even when they are the same human, so each participation
-    keeps its own Practitioner carrying its own role.
-
-    ``authors`` maps each ``<author>`` element to the practitioner it produced,
-    so a Note Activity can point at the author already read out of it instead of
-    a second pass creating that person twice.
+    """The people and places one document names. Facilities are keyed
+    (one id, one object); practitioners are not, since the same human
+    may hold two separate roles. ``authors`` lets a Note Activity reuse
+    an already-read author.
     """
 
     source_file: str
@@ -1069,12 +1027,9 @@ class _Actors:
     def add_person(
         self, participation: _Element, participation_name: str, entity: _Element, role: _Role
     ) -> str | None:
-        """Record the person a participation names; return the practitioner id.
-
-        ``None`` when the role element names nobody. CDA requires the wrapper
-        even when it is empty — this repo's own exporter writes a bare
-        ``<assignedAuthor/>`` to satisfy the schema — and a Practitioner built
-        from one would be an actor no document ever named.
+        """Record the person a participation names; return the
+        practitioner id, or ``None`` when the role element names nobody
+        — CDA requires the wrapper even when empty.
         """
         if not _names_an_actor(entity, role):
             return None
