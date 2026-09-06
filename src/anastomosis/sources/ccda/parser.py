@@ -2000,30 +2000,10 @@ def _visit_candidates(record: PatientRecord) -> dict[date, list[Encounter]]:
 
 
 def _link_measurements_to_encounters(record: PatientRecord) -> None:
-    """Attach a measurement to the visit it was taken at, when exactly one visit
-    claims that calendar day.
-
-    C-CDA does not require a structural link from a Vital Signs or Results
-    observation back to an Encounter activity, and the documents we see carry
-    none — no ``componentOf/encompassingEncounter``, no ``entryRelationship``
-    naming one — so the document's own timestamps are the only evidence there
-    is. Every other source adapter fills ``encounter_id`` in; this one left it
-    empty, so every observation on a chart grouped under the patient-level
-    ``None`` key and both SOAP packs, which index strictly by encounter id,
-    rendered no vitals at all. The QA check written to catch precisely that
-    reads the same empty index, so it passed on an empty loop while the values
-    were missing from the page — a silent loss with its own guard blinded by
-    the same root cause.
-
-    ONE encounter on the observation's date is evidence; two are not, and the
-    measurement then stays record-level rather than being charted at a visit it
-    may not belong to. Note-only encounters are not candidates: a Note Activity
-    documents a visit, it is not one, and counting it would make every
-    documented visit ambiguous with itself. An ``encounter_id`` a source already
-    stated is never overwritten.
-
-    Runs after the id fold, so a visit described twice — once in Encounters,
-    again as the note documenting it — is one candidate here rather than two.
+    """Attach a measurement to the visit it was taken at, per rule 10:
+    only when it carries no source-stated ``encounter_id`` and exactly
+    one candidate encounter falls on its calendar date. Runs after the
+    id fold, so a visit described twice is one candidate, not two.
     """
     by_date = _visit_candidates(record)
     for observation in record.observations:
@@ -2041,32 +2021,22 @@ def _link_measurements_to_encounters(record: PatientRecord) -> None:
 
 # --- zero-sentinel timestamps -------------------------------------------
 
-# Every TS shape a _ts/_ts_date call in this module reads, named the way
-# _count_zero_sentinels walks it: a bare tag read straight off an entry
-# (birthTime, effectiveTime, author/time), or a two-level parent-then-child
-# for a TS read off an already-resolved parent — an IVL_TS's own low/high,
-# where the medications reader resolves the effectiveTime node once and then
-# reads its low and high children off that node, rather than re-stating the
-# whole path each time. The shape read is still effectiveTime/low, regardless
-# of which already-found node the call started from.
-# test_every_timestamp_path_the_parser_reads_is_named_in_TS_PATHS is the
-# anti-drift guard: a _ts/_ts_date call reading a path not named here (or a
-# name here nothing reads any more) fails it, so the two cannot separate
-# silently.
+# Every TS shape a _ts/_ts_date call reads: a bare tag off an entry
+# (birthTime, effectiveTime, author/time), or parent-then-child for a TS
+# read off an already-resolved parent (an IVL_TS's own low/high).
+# `test_every_timestamp_path_the_parser_reads_is_named_in_TS_PATHS` is the
+# anti-drift guard: a path read but not named here, or named but unread,
+# fails it.
 TS_PATHS = ("birthTime", "effectiveTime", "effectiveTime/low", "effectiveTime/high", "author/time")
 
 EXT_TS_NO_INSTANT = "ccda:timestamp_named_no_instant"
 
 
 def _count_zero_sentinels(root: _Element) -> dict[str, int]:
-    """How many TS elements the document itself names as a run of zeros, by shape.
-
-    Walked over the whole document independently of any `_ts`/`_ts_date` call
-    site — this is what the DOCUMENT states, not what one field extractor
-    happened to read, so the count does not depend on which caller's local
-    variable reached the node first. A node carrying `nullFlavor` is skipped:
-    that is an explicit "absent", not a zero run, and already reads as `None`
-    with no help from `is_zero_sentinel`.
+    """How many TS elements the document itself names as a run of
+    zeros, by shape — walked independently of any ``_ts``/``_ts_date``
+    call site, so the count is what the DOCUMENT states. A
+    ``nullFlavor`` node is skipped: that is absent, not a zero run.
     """
     counts: dict[str, int] = {}
     for shape in TS_PATHS:
@@ -2082,16 +2052,10 @@ def _count_zero_sentinels(root: _Element) -> dict[str, int]:
 
 
 def _record_zero_sentinels(record: PatientRecord, root: _Element) -> None:
-    """Credit a run-of-zeros TS the parser read as absent, on the record itself.
-
-    `_ts`/`_ts_date` treat a "0" (of any length) as absent rather than raising
-    `parse_dt`'s own ValueError, so the medication (or condition, encounter,
-    ...) it belongs to survives with no start instead of aborting the whole
-    document. That is a real loss — a start date the source named nothing
-    usable for — and losslessness means it rides the record rather than
-    vanishing at the parse boundary. Sets the key only when the count is
-    non-empty, so an ordinary document carries no trace of a check that found
-    nothing.
+    """Credit a run-of-zeros TS the parser read as absent, on the
+    record itself (:data:`EXT_TS_NO_INSTANT`) — a real loss, so it
+    rides the record rather than vanishing at the parse boundary. Sets
+    the key only when non-empty.
     """
     if counts := _count_zero_sentinels(root):
         record.patient.extensions[EXT_TS_NO_INSTANT] = counts
@@ -2108,12 +2072,9 @@ def parse_document(path: Path) -> PatientRecord:
     if etree.QName(root).localname != "ClinicalDocument" or root.tag != _q("ClinicalDocument"):
         raise ValueError(f"{path.name}: not a C-CDA ClinicalDocument (root <{root.tag}>)")
 
-    # Verbatim FIRST, hydration second. `_inline_narrative_references` fills a
-    # <reference> element's own text in place, so an entry serialised after it
-    # runs carries narrative this document does not spell at that position —
-    # which made the "verbatim" copy a copy of the parser's tree rather than of
-    # the file, and broke the byte-exact question the ledger asks of it. The
-    # copy is taken from the document as parsed, and nothing else touches it.
+    # Verbatim FIRST, hydration second: `_inline_narrative_references`
+    # fills a <reference>'s own text in place, so capturing after it would
+    # make the "verbatim" copy match the parser's tree, not the file.
     entries_by_section = _capture_entries(root)
 
     _inline_narrative_references(root)
