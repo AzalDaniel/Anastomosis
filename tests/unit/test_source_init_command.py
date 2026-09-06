@@ -127,19 +127,10 @@ def test_mapping_load_failure_is_distinct_from_dropped(tmp_path: Path) -> None:
 
 
 def test_a_builtin_id_is_refused_before_anything_is_written(tmp_path: Path) -> None:
-    """Saving a learned format as `ccda` must fail, and fail EARLY.
-
-    It used to succeed. The save reported ok, wrote the whole directory, and
-    registration then skipped the mapping to a log line because a learned source
-    may never shadow a built-in — correctly, since `get_source("ccda")` has to
-    stay the C-CDA adapter. The operator got a success message, a folder full of
-    their reviewed work, and a format they could never select: not then, and not
-    after a restart, because the skip is permanent by design.
-
-    Refused from the NAME, before the example is even analysed, because the
-    collision is knowable from the name alone and there is no reason to spend
-    somebody's attention on a proposal they will not be allowed to keep.
-    """
+    """Saving a learned format as `ccda` must fail, and fail EARLY: the
+    collision is knowable from the name alone (`get_source("ccda")`
+    must stay the C-CDA adapter), so nothing is analysed or written
+    before the refusal (#334, #333)."""
     result = run_source_init_command(
         SourceInitCommand(example=FIXTURE, name="ccda", out_dir=tmp_path, confirmed=True)
     )
@@ -150,18 +141,11 @@ def test_a_builtin_id_is_refused_before_anything_is_written(tmp_path: Path) -> N
 
 
 def test_an_already_learned_id_is_refused_rather_than_overwritten(tmp_path: Path) -> None:
-    """A second teach under the same name must not silently replace the first.
-
-    A mapping decides how a source file's columns become patient identity and
-    encounter data, and somebody reviewed the one already there. Overwriting it
-    on the strength of a matching string would discard that decision without
-    asking, and would leave the in-memory adapter answering for a mapping that
-    no longer exists on disk.
-
-    A distinct code from the built-in case because they are different situations
-    for the person reading them: one can never be used, the other is their own
-    earlier work.
-    """
+    """A second teach under the same name must not silently replace the
+    first: overwriting a reviewed mapping would discard that decision
+    without asking, and leave the adapter answering for a mapping
+    absent from disk. Distinct from `SourceIdReserved`: one name can
+    never be used, the other is the operator's own earlier work."""
     first = run_source_init_command(
         SourceInitCommand(example=FIXTURE, name="reteach_me", out_dir=tmp_path, confirmed=True)
     )
@@ -177,18 +161,11 @@ def test_an_already_learned_id_is_refused_rather_than_overwritten(tmp_path: Path
 
 
 def test_a_saved_format_is_selectable_without_a_restart(tmp_path: Path) -> None:
-    """Teach a format and Charts can offer it NOW.
-
-    `pipeline` registers learned sources once, at import. A format taught
-    mid-session was written, valid and loadable, and simply invisible: the
-    choosers are populated from the registry and nothing had told the registry
-    to look again. The GUI said the format was available; it was not, and no
-    message anywhere said a restart was needed, because nothing in the code
-    knew one was.
-
-    Asserted on the ADAPTER, not on a matching name — a source answering to the
-    right string is the check that passed while the behaviour was wrong.
-    """
+    """Teach a format and Charts can offer it NOW: the choosers populate
+    from the registry, so a format taught mid-session must be
+    registered immediately, not only at import. Asserted on the
+    ADAPTER, not a matching name — a source answering to the right
+    string could still be the wrong behaviour."""
     from anastomosis.sources import get_source
     from anastomosis.sources.learned import LearnedSourceAdapter
 
@@ -208,15 +185,11 @@ def test_a_saved_format_is_selectable_without_a_restart(tmp_path: Path) -> None:
 
 
 def test_the_whole_correction_arc_conserves_what_it_loads(tmp_path: Path) -> None:
-    """The acceptance walk from the issue, at the layer both frontends share.
-
-    A wrong review first: the visit id aimed at a date field, refused with the
-    structured pointer naming the column, the target AND the transform — and no
-    partial directory. Then the corrected review: saved, reloaded from disk the
-    way a restarted app would, and the loaded records measured for identity,
-    encounter and column conservation. Every assertion is against the loaded
-    artifact, not against the code that promised to produce it.
-    """
+    """The #335 acceptance walk, at the layer both frontends share: a
+    wrong review refuses with a structured pointer (column, target,
+    transform) and no partial directory; the corrected review saves,
+    reloads from disk, and every assertion runs against the loaded
+    artifact, not the code that promised to produce it."""
     example = tmp_path / "visits.csv"
     example.write_text(
         "MRN,VisitId,VisitDate,Complaint,Clinic\n"
@@ -309,13 +282,10 @@ def test_an_unreviewed_command_still_behaves_exactly_as_before(tmp_path: Path) -
 
 
 def test_an_override_does_not_inherit_the_scorers_stale_confidence(tmp_path: Path) -> None:
-    """A number that described a different decision does not follow the column.
-
-    The scorer's confidence describes the scorer's own pick. When a reviewer
-    aims the column somewhere else, writing that stale score beside the field a
-    person deliberately chose would be a false audit trail — a confirmed
-    override records 1.0.
-    """
+    """A number that described a different decision does not follow the
+    column: the scorer's confidence describes the scorer's own pick, so
+    a reviewer's override records 1.0 rather than carrying a stale
+    score beside a field they deliberately chose."""
     import json
 
     example = tmp_path / "visits.csv"
@@ -341,12 +311,10 @@ def test_an_override_does_not_inherit_the_scorers_stale_confidence(tmp_path: Pat
 
 
 def test_a_lossy_read_keeps_the_cell_it_cannot_reproduce(tmp_path: Path) -> None:
-    """`const:` writes the same wording over every cell — the wording is not
-    the chart. A column read through a verb that cannot reproduce its input
-    keeps its raw value in extensions, the round trip holds that survival to
-    the same proof as an unmapped column, and MAPPING.md says which columns
-    are covered this way instead of listing an empty section under a promise.
-    """
+    """`const:` writes the same wording over every cell — the wording is
+    not the chart. A lossy column keeps its raw value in extensions,
+    held to the same round-trip proof as an unmapped column, and
+    MAPPING.md names which columns are covered this way."""
     example = tmp_path / "visits.csv"
     example.write_text(
         "MRN,VisitDate,Complaint\n"
@@ -397,14 +365,9 @@ def test_a_lossy_read_keeps_the_cell_it_cannot_reproduce(tmp_path: Path) -> None
 
 
 def test_a_per_field_refusal_is_a_mapping_error_too(tmp_path: Path) -> None:
-    """The door 2edff22 guarded had a second leaf: the per-FIELD validators.
-
-    An unknown target or a verb with the wrong arity fired in the FieldMapping
-    comprehension, which stood OUTSIDE the try — so a review picking `const:`
-    before typing its wording escaped as raw ValidationError, whose default
-    rendering appends the whole input. Both leaves now refuse through the one
-    error type, and nothing echoes an input.
-    """
+    """Both leaves — the per-KEY validators and the per-FIELD ones —
+    refuse through the one error type, and nothing echoes the
+    operator's input."""
     example = tmp_path / "visits.csv"
     example.write_text("MRN,Notes\np1,fine\n", encoding="utf-8")
     for decisions in (
@@ -454,15 +417,9 @@ def test_a_grouping_refusal_points_at_the_grouping(tmp_path: Path) -> None:
 
 
 def test_a_malformed_review_is_a_failure_dict_on_both_console_doors() -> None:
-    """A stale page's garbage review never crosses the bridge as a traceback.
-
-    The sync door has always parsed inside its try; the async door parsed
-    BEFORE handing the step to the runner, so the same garbage raised across
-    the bridge, against its own "Never raises" docstring. Both doors are
-    driven here with the same malformed review — decisions mapping a column to
-    a bare string — and both must answer with this console's ordinary failure
-    dict, naming only the exception TYPE.
-    """
+    """Both console doors — sync and async — must answer a malformed
+    review with this console's ordinary failure dict, naming only the
+    exception TYPE, never a raw traceback across the bridge."""
     from anastomosis.gui.consoles.source import SourceConsole
     from anastomosis.gui.jobs import GuiJobRunner
 
