@@ -10,8 +10,8 @@ from datetime import date, datetime
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from anastomosis.core.identity import date_token_present
 from anastomosis.core.timeutil import all_date_spellings, parse_date, parse_dt
-from anastomosis.deliver.verify.levels import date_renderings
 from anastomosis.qa.checks import _date_spellings
 
 # Clinical-plausible range, second precision (the export formats carry no sub-second).
@@ -63,11 +63,11 @@ def test_parse_dt_is_none_or_datetime_or_raises_cleanly(s: str) -> None:
 
 @_STABLE
 @given(_DATES)
-def test_date_spellings_are_unified_and_year_bearing(d: date) -> None:
-    """The QA integrity check and the L2/L3 verifier enumerate the IDENTICAL set
-    (the unification holds for all dates), every spelling carries the 4-digit
-    year, and the set is non-empty."""
+def test_date_spellings_are_findable_and_year_bearing(d: date) -> None:
+    """The one enumerator the QA integrity check and the L2/L3 verifier both
+    reach: non-empty, every spelling year-bearing and findable by the predicate."""
     spellings = all_date_spellings(d)
     assert spellings
     assert all(str(d.year) in s for s in spellings)
-    assert _date_spellings(d) == spellings == date_renderings(d)
+    assert all(date_token_present(s, f"seen on {s} in clinic") for s in spellings)
+    assert _date_spellings(d) == spellings
