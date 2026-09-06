@@ -1068,12 +1068,9 @@ class _Actors:
         return facility.id
 
     def _link_organization(self, practitioner: Practitioner, entity: _Element, role: _Role) -> None:
-        """Register the organization a role is scoped by, and remember the link.
-
-        The link rides `extensions` as the ORGANIZATION'S OWN id root rather
-        than the canonical facility id: it is a fact the document stated, and it
-        stays resolvable through the facility's provenance without inventing a
-        field the model does not have.
+        """Register the organization a role is scoped by, and remember
+        the link. Rides `extensions` as the organization's OWN id root,
+        not the canonical facility id — a fact the document stated.
         """
         if role.organization is None:
             return
@@ -1085,10 +1082,10 @@ class _Actors:
         key = f"ccda:{role.organization.removeprefix('v3:')}"
         if (root := _attr(identifier, "root")) is not None:
             practitioner.extensions[key] = root
-        # CDA II identity is the pair: extension is unique only inside root.
-        # Keep the established root-valued key for compatibility and retain the
-        # other half explicitly so a downstream resolver cannot join the actor
-        # to a different organization under the same assigning authority.
+        # CDA II identity is the pair: extension is unique only inside
+        # root. The other half is kept explicitly so a downstream
+        # resolver cannot join the actor to a different organization
+        # sharing the root.
         if (extension := _attr(identifier, "extension")) is not None:
             practitioner.extensions[f"{key}Extension"] = extension
 
@@ -1100,12 +1097,9 @@ _ACTOR_EVIDENCE = ("v3:id", "v3:code", "v3:telecom", "v3:addr", "v3:assignedAuth
 
 
 def _names_an_actor(entity: _Element, role: _Role) -> bool:
-    """Whether a role element states anything at all about who took part.
-
-    Only a bare wrapper is nobody. CDA requires the wrapper even when it is
-    empty — this repo's own exporter writes a lone ``<assignedAuthor/>`` to
-    satisfy the schema — and a Practitioner built from one would be an actor no
-    document ever named.
+    """Whether a role element states anything at all about who took
+    part. Only a bare wrapper is nobody — CDA requires the wrapper even
+    when empty.
     """
     if _person_element(entity, role)[0] is not None:
         return True
@@ -1120,37 +1114,18 @@ def _describes_a_place(nodes: Sequence[_Element]) -> bool:
 
 
 def _participant_id(source_file: str, participation: str, index: int) -> str:
-    """Stable practitioner id, derived rather than taken from the source root.
-
-    One ``<id root>`` legitimately names two participations — the clinician who
-    wrote the note and then signed it carries the same ``assignedEntity`` id
-    twice — and those are two answers the record has to keep apart, so using the
-    root verbatim would put two objects under one id. ``provenance.source_id``
-    still names the root the document carried, which is what makes the parse
-    attributable back to the element it came from.
+    """Stable practitioner id, derived rather than taken from the source
+    root: one ``<id root>`` may legitimately name two participations (a
+    clinician who wrote and then signed), which must stay two objects.
     """
     return str(uuid5(NAMESPACE_URL, f"anastomosis:ccda:{source_file}:{participation}:{index}"))
 
 
 def _facility_id(root: str | None, extension: str | None, source_file: str, index: int) -> str:
-    """Stable facility id, on the one identifier rule (#412).
-
-    A bare root DOES name the organization here, as it does for a patient and
-    unlike an encounter — and the reason is worth stating, because the earlier
-    docstring's bare claim that this "mirrors ``_patient_id``" is what made the
-    rule look accidental. An organization is deliberately re-stated inside one
-    document: the author's practice IS the custodian in most exports, and the
-    same clinic reappears as a performer and a location. Those namings must
-    fold, or one clinic becomes several and each holds a fragment of the
-    address. An encounter is the opposite — a document lists many DISTINCT
-    visits, so folding them on a shared vendor root would merge the lot.
-
-    What makes folding safe here rather than a guess is that the ambiguous case
-    is caught rather than absorbed: two genuinely different organizations
-    reusing one root raise "organization identifier is reused with conflicting
-    facility fields" (below) instead of silently blending into one facility.
-    Identity folds; disagreement refuses. An encounter has no such guard, which
-    is exactly why it takes the positional fallback instead.
+    """Stable facility id per rule 20: a bare root names the
+    organization (re-stated across roles in most exports, so it must
+    fold); genuinely conflicting facility fields under one root raise,
+    never silently blend.
     """
     return identity_from_ii(
         "organization",
@@ -1175,11 +1150,9 @@ def _every(nodes: Sequence[_Element], path: str) -> list[_Element]:
 
 
 def _name_parts(name: _Element | None) -> tuple[str | None, str | None, str | None]:
-    """``(given, family, display)`` from a CDA ``<name>``.
-
-    ``display`` is filled only when the document did NOT split the name: a name
-    written as element text still says who this is, and dropping it for having
-    no parts would lose the answer the whole record is here to carry.
+    """``(given, family, display)`` from a CDA ``<name>``. ``display``
+    is filled only when the document did NOT split the name — its own
+    element text still says who this is.
     """
     given = next((g for node in _findall(name, "v3:given") if (g := _text_content(node))), None)
     family = _text_content(_find(name, "v3:family"))
@@ -1189,11 +1162,9 @@ def _name_parts(name: _Element | None) -> tuple[str | None, str | None, str | No
 
 
 def _name_residue(name: _Element | None) -> dict[str, Any]:
-    """Name parts Practitioner has no field for.
-
-    A credential is deliberately NOT derived from a suffix: "MD" is one and
-    "Jr." is not, and guessing which would print a credential the document never
-    claimed.
+    """Name parts Practitioner has no field for. A credential is
+    deliberately NOT derived from a suffix: "MD" is one and "Jr." is
+    not.
     """
     out: dict[str, Any] = {}
     for path, key in (("v3:prefix", "ccda:prefix"), ("v3:suffix", "ccda:suffix")):
