@@ -12,7 +12,7 @@ prose at that site was cut to this sentence in place.
    as _cli`, never at module import time, so `cli`'s monkeypatch seams still
    take effect.
 
-3. `cli_commands/_options.py:9` — A shared `Annotated[...]` option alias is
+3. `cli_commands/_options.py:3` — A shared `Annotated[...]` option alias is
    for options that are literally the same option; a command needing
    different wording for a flag (`migrate`'s `--from`, the delivery pair's
    own `--out` phrasing) declares its own alias rather than reusing this one.
@@ -24,7 +24,7 @@ prose at that site was cut to this sentence in place.
    patient ever asked about tobacco. A vital-with-no-encounter finding is
    reported once per chart of the record, not once total, because no single
    document owns the missing link.
-5. `qa/checks.py:421 RecordCoverageCheck` — Its findings name only kinds and
+5. `qa/checks.py:420 RecordCoverageCheck` — Its findings name only kinds and
    counts, never a diagnosis or drug value, because a coverage finding can
    travel into a run-level summary outside the hardened QA-report directory
    that RULES.md 4 exempts (unlike `DataIntegrityCheck`, whose findings stay
