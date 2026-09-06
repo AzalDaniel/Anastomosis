@@ -15,7 +15,7 @@ carry it at. The orchestrator adjudicates; this file does not ship.
    closes only its own ledger handle); `upload_stop` is cooperative and
    honored only at item boundaries, never mid-item; a re-start naturally
    resumes via the ledger (`recover` rewinds mid-flight items, terminal
-   items are not re-driven). (`gui/consoles/upload.py:220-346`, formerly a
+   items are not re-driven). (`gui/consoles/upload.py:204-310`, formerly a
    longer "Safety model" docstring)
 
 ## Loose ends
