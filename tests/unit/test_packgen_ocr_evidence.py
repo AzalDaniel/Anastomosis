@@ -1,14 +1,11 @@
 """Native and OCR evidence, kept apart all the way to the emitted pack.
 
-The measured fact behind this: all 53 sample PDFs the product has been shown —
-802 pages — carried zero natively extractable words, and 52 of the 53 were
-raster documents. The learner refused every one of them. These tests walk the
-capability half: what each page IS, what recognizing it produces, what happens
-where the two streams describe the same pixels, and what the draft pack says
-about all of it afterwards.
-
-Every PDF here is drawn by the test from invented content and rasterized in
-place. Nothing is checked in and nothing is patient-derived.
+Measured: of 53 sample PDFs (802 pages) shown to the product, 52 were
+raster with zero natively extractable words, and the learner refused every
+one. These tests walk what each page IS, what recognizing it produces,
+what happens where the two streams describe the same pixels, and what the
+draft pack says about it. Every PDF here is drawn from invented content
+and rasterized in place; nothing is checked in or patient-derived.
 """
 
 from __future__ import annotations
@@ -154,11 +151,9 @@ def test_a_page_with_neither_text_nor_raster_is_empty_and_still_refused(
 def test_a_page_that_is_entirely_pixels_is_image_only_and_gets_recognized(
     tmp_path: Path,
 ) -> None:
-    """The whole point: the page the learner used to refuse now yields signal.
-
-    Every span it yields is marked as an observation and carries the engine's
-    score, so nothing downstream can read it as text that was actually read.
-    """
+    """A page that is entirely pixels yields signal: every span is marked
+    as an observation and carries the engine's score, so nothing downstream
+    can read it as text that was actually read."""
     path = _raster_note(tmp_path / "raster.pdf", "Synthia Example", "Hypertension follow up")
 
     sample = extract_document(path, 0, ocr=_WORKER)
@@ -176,12 +171,9 @@ def test_a_page_that_is_entirely_pixels_is_image_only_and_gets_recognized(
 
 @_NEEDS_ENGINE
 def test_a_large_raster_with_a_small_native_overlay_is_mixed(tmp_path: Path) -> None:
-    """The case the decision record calls out by name.
-
-    The native header is BESIDE the scan, not on it, so the page is ``mixed``:
-    the header stays native evidence, the raster body becomes an observation,
-    and neither is rewritten as the other.
-    """
+    """The native header is BESIDE the scan, not on it, so the page is
+    ``mixed``: the header stays native evidence, the raster body becomes an
+    observation, and neither is rewritten as the other."""
     body = _pixmap_of(
         lambda page: (
             page.insert_text((60, 300), "ASSESSMENT AND PLAN", fontsize=13, fontname="hebo"),
@@ -268,13 +260,9 @@ def test_a_recognized_word_over_matching_native_text_is_a_counted_duplicate(
 
 
 def _scan_with_wrong_hidden_layer(path: Path) -> Path:
-    """A scan whose invisible text layer disagrees with its own pixels.
-
-    The decision record's fifth mixed-page fixture: a searchable PDF whose text
-    layer is somebody else's OCR, and wrong. The layer is drawn with
-    ``render_mode=3`` (invisible), so the pixels carry only ``ADDENDUM`` while
-    the extractable text says ``AMENDMENT``.
-    """
+    """A scan whose invisible text layer disagrees with its own pixels: the
+    layer is drawn with ``render_mode=3`` (invisible), so the pixels carry
+    only ``ADDENDUM`` while the extractable text says ``AMENDMENT``."""
     scan = _pixmap_of(
         lambda page: page.insert_text((60, 90), "ADDENDUM", fontsize=13, fontname="hebo")
     )
@@ -291,12 +279,9 @@ def _scan_with_wrong_hidden_layer(path: Path) -> Path:
 def test_a_recognized_word_over_different_native_text_keeps_both_and_holds(
     tmp_path: Path,
 ) -> None:
-    """Never silently choose one value when the two streams disagree.
-
-    Both survive as spans, the disagreement is counted, and the page is held
-    for review. Nothing here decides which one is right — that is a person's
-    job, against the original image.
-    """
+    """Never silently choose one value when the two streams disagree: both
+    survive as spans, the disagreement is counted, and the page is held for
+    a person to check against the original image."""
     sample = extract_document(_scan_with_wrong_hidden_layer(tmp_path / "clash.pdf"), 0, ocr=_WORKER)
 
     evidence = sample.evidence
@@ -475,12 +460,10 @@ def test_pack_init_can_be_told_to_stay_on_native_text_only(tmp_path: Path) -> No
 
 @_NEEDS_ENGINE
 def test_a_raster_only_sample_set_now_produces_a_reviewable_draft(tmp_path: Path) -> None:
-    """Where the learner refused 53 samples, it now emits a draft that says so.
-
-    Every artifact a person opens carries the provenance: the manifest
+    """A raster-only sample set (once refused outright) emits a draft, and
+    every artifact a person opens carries the provenance: the manifest
     description, DRAFT.md, the quarantine file's per-string marks, and a
-    dedicated OCR_EVIDENCE.md.
-    """
+    dedicated OCR_EVIDENCE.md."""
     samples = _raster_samples(tmp_path / "samples")
     output = tmp_path / "packs"
 
@@ -675,12 +658,10 @@ def test_the_cli_refusal_without_an_engine_names_what_to_install(
 
 @_NEEDS_ENGINE
 def test_a_batch_keeps_the_region_refusals_own_type(tmp_path: Path) -> None:
-    """A fail-closed geometry refusal survives the batch loop as itself.
-
-    The generic wrapper names the sample PATH, which is right for an unreadable
-    file and wrong here: this refusal already carries a page index and nothing
-    else, and the frontend reports the exception TYPE.
-    """
+    """A fail-closed geometry refusal survives the batch loop as itself,
+    not the generic wrapper that names the sample PATH — wrong here, since
+    the refusal already carries a page index and the frontend reports only
+    the exception TYPE."""
     from anastomosis.packgen import extract_samples
 
     scan = _pixmap_of(
@@ -704,17 +685,11 @@ def test_a_batch_keeps_the_region_refusals_own_type(tmp_path: Path) -> None:
 def test_a_truncated_reading_of_a_value_is_a_disagreement_not_a_duplicate(
     tmp_path: Path,
 ) -> None:
-    """The safety figure has to count the cases that matter.
-
-    Substring containment called a recognition a duplicate whenever it happened
-    to sit inside the native span — which is every truncated read of a clinical
-    value: ``100`` over a page whose text layer says ``1000``, ``8.6`` over
-    ``98.6``, ``12`` over ``128``. Those are the two streams genuinely
-    disagreeing about a number, and the disagreement count is what DRAFT.md and
-    OCR_EVIDENCE.md print to an operator as the measure of how much needs a
-    human eye. Here the pixels carry ``100`` and the invisible layer over them
-    claims ``1000``: both readings survive, and the page is held.
-    """
+    """A truncated numeric read (``100`` over a text layer's ``1000``, like
+    ``8.6``/``98.6`` or ``12``/``128``) is the two streams disagreeing, not
+    a duplicate — substring containment would call it one. The disagreement
+    count is what DRAFT.md and OCR_EVIDENCE.md print as the measure of how
+    much needs a human eye."""
     scan = _pixmap_of(lambda page: page.insert_text((60, 90), "100", fontsize=13, fontname="hebo"))
 
     def build(doc: pymupdf.Document) -> None:
@@ -737,13 +712,10 @@ def test_a_truncated_reading_of_a_value_is_a_disagreement_not_a_duplicate(
 def test_a_faulting_engine_reaches_the_operator_as_an_engine_fault(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The whole path, from a broken installation to the words on the terminal.
-
-    An engine that exits non-zero used to arrive as ``analysis failed
-    (ValueError)`` with nothing after it — an operator reading that goes and
-    looks at their samples, which are fine. Driven here through the shipped
-    ``anast pack init`` so the seam being proved is the one a person uses.
-    """
+    """An engine that exits non-zero must reach the operator as an engine
+    fault, not a bare ``analysis failed (ValueError)`` that sends them to
+    check their (fine) samples. Driven through the shipped
+    ``anast pack init``, the seam a person actually uses."""
     from typer.testing import CliRunner
 
     from anastomosis.cli import app

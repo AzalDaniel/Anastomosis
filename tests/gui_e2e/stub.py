@@ -1,26 +1,12 @@
 """The pywebview bridge stub the GUI lane injects, and its canned returns.
 
-The desktop GUI never talks to Python directly: pywebview exposes
-:class:`~anastomosis.gui.controller.GuiApi` to the page as
-``window.pywebview.api.<method>``, each call returning a Promise of a JSON-safe
-dict, and pushes events back the other way as ``window.anastEvent(<json>)``.
-This module rebuilds exactly that seam in a headless browser:
-
-* :func:`api_surface` reads the method list off the REAL ``GuiApi`` class, so
-  the stub can never expose a surface the app does not have (and
-  ``test_bridge_surface.py`` fails loudly the moment the two diverge);
-* :func:`canned_returns` supplies one return value per method. Where the real
-  controller is cheap and offline (``gui_config``, ``info``, ``routes``,
-  ``destination_status``, ``upload_safety_notice``) the value is produced by
-  CALLING it, so the shapes the JS parses are the shapes Python really emits;
-  the rest are hand-written minimal payloads matching each method's documented
-  contract;
-* :func:`init_script` bakes both into the ``page.add_init_script`` payload that
-  installs the stub BEFORE any page script runs.
-
-PHI: every hand-written value here is synthetic by construction — ``feedface-``
-patient ids, an obviously-fake display name, ISO dates, opaque item keys,
-counts, and exception TYPE names. Nothing patient-derived, nothing copied.
+Rebuilds the ``window.pywebview.api``/``window.anastEvent`` seam headless.
+:func:`api_surface` reads the method list off the REAL ``GuiApi`` class;
+:func:`canned_returns` supplies one value per method (real controller
+where cheap and offline, hand-written otherwise); :func:`init_script`
+bakes both into the init-script payload. PHI: every hand-written value is
+synthetic (``feedface-`` ids, fake names, ISO dates, opaque keys, counts,
+exception TYPE names).
 """
 
 from __future__ import annotations
@@ -147,28 +133,19 @@ class _NullSink:
 
 
 def api_surface() -> list[str]:
-    """The public ``GuiApi`` method names, sorted — the stub's whole surface.
-
-    Read off the class rather than hand-listed: the stub exposes exactly what
-    pywebview would bind as ``js_api``, so a renamed or removed API method
-    changes this list (and fails the drift test) instead of silently leaving a
-    page calling into nothing.
-    """
+    """The public ``GuiApi`` method names, sorted — the stub's whole
+    surface. Read off the class rather than hand-listed, so a renamed or
+    removed method changes this list (and fails the drift test) instead
+    of leaving a page calling into nothing."""
     return sorted(name for name in dir(GuiApi) if not name.startswith("_"))
 
 
 def canned_returns() -> dict[str, object]:
-    """One JSON-safe return value per ``GuiApi`` method.
-
-    The five cheap read-only queries are answered by the REAL controller (they
-    touch only packaged registries and constants — no browser, no network, no
-    filesystem writes), so the fixture cannot drift from the payload shape the
-    pages actually parse. Everything else is a minimal payload written to the
-    method's documented contract.
-
-    Raises loudly if a real query fails: a silently-degraded fixture would turn
-    a broken registry into a green lane.
-    """
+    """One JSON-safe return value per ``GuiApi`` method: the five cheap
+    read-only queries are answered by the REAL controller so the fixture
+    cannot drift from the shape pages parse; the rest are minimal payloads
+    matching the documented contract. Raises loudly on a real query
+    failure."""
     controller = GuiController(_NullSink())
     live = {
         "gui_config": controller.gui_config(),
@@ -313,12 +290,9 @@ _INIT_TEMPLATE = """
 
 
 def init_script(mode: str = BRIDGE_READY, canned: dict[str, Any] | None = None) -> str:
-    """The init script installing the bridge stub for ``mode``.
-
-    ``canned`` overrides (merges over) the default return values, so a test can
-    ask for the one payload it cares about — an empty ledger, a failed query —
-    without rebuilding the whole surface.
-    """
+    """The init script installing the bridge stub for ``mode``. ``canned``
+    merges over the default return values, so a test can ask for the one
+    payload it cares about without rebuilding the whole surface."""
     if mode not in (BRIDGE_READY, BRIDGE_LATE, BRIDGE_NONE):
         raise ValueError(f"unknown bridge mode {mode!r}")
     payload = canned_returns()

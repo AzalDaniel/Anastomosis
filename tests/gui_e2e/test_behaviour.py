@@ -25,12 +25,9 @@ def _drawer_open(app) -> bool:
 
 
 def test_a_chooser_keeps_the_letters_it_is_given(gui) -> None:
-    """A chooser trigger is a <button>, so the old two-tag guard let it through.
-
-    Every chooser answers a printable character with type-ahead — open or
-    closed — and calls preventDefault() without stopping propagation, so
-    pressing `l` on one ran the type-ahead AND opened the drawer.
-    """
+    """A chooser trigger is a <button>: a two-tag guard is not enough, so
+    every chooser must stop propagation on a printable character too, or
+    pressing `l` on one runs the type-ahead AND opens the drawer."""
     app = gui()
 
     app.page.focus("#charts-pack")
@@ -98,7 +95,7 @@ def _big_ledger(gui):
 
 
 def test_the_search_says_how_much_it_is_not_showing(gui) -> None:
-    """Fifty of two hundred of three thousand, and it used to say none of it."""
+    """Fifty of two hundred of three thousand must be said, not left silent."""
     app = _big_ledger(gui)
 
     rows = app.page.locator("#uploads-search-results .search-result")

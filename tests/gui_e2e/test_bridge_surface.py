@@ -1,14 +1,11 @@
-"""The bridge seam itself: surface drift, the late attach, the no-bridge preview.
+"""The bridge seam itself: surface drift, the late attach, the no-bridge
+preview (rule 74). If ``GuiApi`` gains, loses or renames a method, the
+stub's surface and canned fixtures must move with it, or every view test
+would keep passing against a stale api.
 
-These are the tests that keep the rest of the lane honest. If ``GuiApi`` gains,
-loses, or renames a method, the stub's surface and the canned fixtures must move
-with it — otherwise every view test would keep passing against an api the app no
-longer has. And the two lifecycle cases (the bridge landing late, the bridge
-never landing at all) are where the GUI has historically been wrong.
-
-The single document attaches the bridge ONCE, in shell.js, so the late-attach
-race is now run once instead of five times — and every view has to come alive
-off that one bootstrap.
+The single document attaches the bridge ONCE, in shell.js, so the
+late-attach race runs once, and every view has to come alive off that one
+bootstrap.
 """
 
 from __future__ import annotations
@@ -34,22 +31,17 @@ _SCRIPTS = ("shell.js", "app.js", "wizard.js", "console.js", "packgen.js", "sour
 
 
 def test_canned_fixture_covers_the_whole_api_surface() -> None:
-    """The stub answers exactly the real ``GuiApi`` methods — no more, no less.
-
-    A renamed or removed API method leaves a canned key with nothing behind it;
-    a NEW method arrives with no fixture and no test. Either way this fails
-    loudly here rather than letting the lane pass against a stale seam.
-    """
+    """The stub answers exactly the real ``GuiApi`` methods — no more, no
+    less: a renamed or removed method leaves a canned key with nothing
+    behind it, a new one arrives with no fixture, and either way this
+    fails loudly rather than the lane passing against a stale seam."""
     assert sorted(canned_returns()) == api_surface()
 
 
 def test_every_bridge_call_in_the_shipped_js_exists_on_the_api() -> None:
-    """No view calls a controller method the js_api facade does not expose.
-
-    ``window.pywebview.api.foo()`` against a missing ``foo`` is a TypeError in
-    the live app — a dead button with a console error. This catches the drift
-    statically, across every shipped script at once.
-    """
+    """No view calls a controller method the js_api facade does not expose:
+    ``window.pywebview.api.foo()`` against a missing ``foo`` is a
+    TypeError in the live app — a dead button with a console error."""
     surface = set(api_surface())
     unknown: dict[str, set[str]] = {}
     for script in _SCRIPTS:
@@ -68,15 +60,11 @@ def test_stub_installs_the_generated_surface_in_the_browser(gui) -> None:
 
 
 def test_the_app_recovers_when_the_bridge_attaches_late(gui) -> None:
-    """A pywebview attach that lands AFTER DOM ready must still wake the app.
-
-    pywebview installs ``window.pywebview.api`` asynchronously and announces it
-    with ``pywebviewready``, so an app that probes for the bridge only at
-    DOMContentLoaded can lose the race. It used to lose it permanently, on every
-    page: the "runs inside the desktop app" notice stayed up, the version stayed
-    at its placeholder, and the run button stayed dead — for the whole session.
-    One bootstrap now re-runs for the whole document.
-    """
+    """A pywebview attach that lands AFTER DOM ready must still wake the
+    app: pywebview installs ``window.pywebview.api`` asynchronously and
+    announces it with ``pywebviewready``, so a bridge probe that only fires
+    at DOMContentLoaded can lose the race. One bootstrap re-runs for the
+    whole document."""
     app = gui(bridge=BRIDGE_LATE)
     page = app.page
 
@@ -115,11 +103,8 @@ def test_every_view_degrades_cleanly_with_no_bridge_at_all(gui, view: str) -> No
 
 
 def test_offline_charts_does_not_claim_a_run_is_in_flight(gui) -> None:
-    """The api-less run button is disabled WITHOUT mislabelling itself.
-
-    The button used to be parked through the busy path, so a plain browser
-    showed "running…" for a run that did not exist and never could.
-    """
+    """The api-less run button must be disabled WITHOUT mislabelling
+    itself as "running…" for a run that does not exist and never could."""
     app = gui(bridge=BRIDGE_NONE)
 
     run_button = app.page.locator("#charts-run")

@@ -1,20 +1,12 @@
 """Two encounters carrying one id: the count and the files must agree.
 
-A C-CDA may list two `<encounter>` entries under one `<id root>`, and the
-parser keeps a GUID-shaped root verbatim so re-parsing the same document yields
-the same ids. Two visits then arrive as two `Encounter` objects with identical
-ids — different dates, different types, one id.
-
-The archive claimed each encounter page by encounter id, and the ledger let a
-re-claim by the same id through on purpose (a record legitimately delivered
-twice keeps its slot). So the second page landed on the first, nothing raised,
-and the run reported one more encounter than it had written. A physician
-clicking the May visit read the July one, with nothing anywhere saying so.
-
-Measured on the fixture below before the fix: **reported 3, wrote 2.**
-
-The invariant these pin is the one the count exists to state: the number of
-encounters reported equals the number of pages on disk, or the run refuses.
+A C-CDA may list two `<encounter>` entries under one `<id root>` (the
+parser keeps a GUID-shaped root verbatim, rule 7), so two visits arrive as
+two `Encounter` objects with identical ids — different dates, different
+types, one id. Since the archive's re-claim-by-id path also lets a
+legitimately re-delivered record keep its slot, a second page could land
+on the first silently. The invariant: encounters reported equals pages on
+disk, or the run refuses.
 """
 
 from __future__ import annotations
@@ -81,15 +73,10 @@ def test_an_ordinary_document_still_delivers(tmp_path: Path) -> None:
 
 
 def test_our_own_round_trip_no_longer_doubles_every_visit() -> None:
-    """A C-CDA describes one encounter twice on purpose: as an entry in the
-    46240-8 Encounters section and as the Note Activity documenting it in
-    34109-9. Both legitimately carry the same ``<id root>``.
-
-    The parser appended one Encounter per mention, so a record round-tripped
-    through our own exporter came back with every visit doubled and two objects
-    sharing an id — which ArchiveDeliverer then refused, blaming a source that
-    had done nothing wrong (#242).
-    """
+    """A C-CDA describes one encounter twice on purpose: an entry in the
+    46240-8 Encounters section and the Note Activity in 34109-9, both
+    legitimately sharing an ``<id root>``. The parser must fold these into
+    one Encounter, not append one per mention (#242)."""
     import tempfile
 
     from anastomosis.deliver.ccda_export.builder import build_ccd

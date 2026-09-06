@@ -1,15 +1,11 @@
 """Every path a person types reaches `Path` through the same cleaner.
 
-Windows Explorer's "Copy as path" wraps the path in double quotes, which is the
-ordinary way to get a path on Windows 11. `core.output.clean_typed_path` handles
-that, and #131 applied it — to the Charts and Migrate console only. Uploads and
-Teach kept building `Path(arg)` straight from the bridge argument, so the same
-paste worked on two screens and failed on the other two.
-
-Fixing the four sites is not enough on its own: the next field added to any
-console is one `Path(out_dir)` away from re-introducing it, and nothing would
-say so. So this walks each console's syntax tree and refuses a `Path()` built
-directly out of a parameter — the boundary where a typed string arrives.
+Windows Explorer's "Copy as path" wraps a path in double quotes;
+`core.output.clean_typed_path` handles that (#131), and every console
+must apply it — the next field added to any console is one
+`Path(out_dir)` away from re-introducing the bug, and nothing would say
+so. So this walks each console's syntax tree and refuses a `Path()` built
+directly out of a parameter, the boundary where a typed string arrives.
 """
 
 from __future__ import annotations

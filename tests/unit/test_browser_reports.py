@@ -177,10 +177,9 @@ def test_summary_line_has_no_paths_or_keys() -> None:
 
 
 def test_report_embeds_verification_coverage_when_supplied(tmp_path: Path) -> None:
-    """The report's new ``verification_coverage`` field tells the truth about
-    which L-levels actually ran for this run. The README/CLI no longer over-
-    claim a 'full L0-L6 ladder' — the report names every skipped level.
-    """
+    """``verification_coverage`` must tell the truth about which L-levels
+    actually ran for this run, naming every skipped level rather than
+    claiming a full L0-L6 ladder."""
     tracking, run_id = _mixed_run(tmp_path)
     out_dir = tmp_path / "report-out"
 

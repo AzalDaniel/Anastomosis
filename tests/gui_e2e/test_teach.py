@@ -1,19 +1,12 @@
-"""The Teach view: one workspace, two modes, the same two-step shape.
+"""The Teach view: one workspace, two modes (layout, format), the same gate —
+look (refuses to write, hands back a review), confirm, then write — required
+in each mode, and a fresh look must revoke it.
 
-Teaching a document layout and teaching an export format were two separate
-workspaces that mirrored each other function for function. They are now two
-modes of one view, and both walk the same gate: look (the controller refuses to
-write and hands back something to review), confirm, then write. These tests
-walk that gate in each mode — the confirmation must be REQUIRED, and a fresh
-look must revoke it.
-
-The format mode's proposal is also the EDIT surface, so the rest of this module
-walks the correction arc the way an operator does: observe the wrong proposal,
-fix it in place, save, and assert what crossed the bridge. It asserts the WIRE,
-not the world — that a corrected mapping actually conserves identity, visits and
-columns is proved against the real backend in
-``tests/unit/test_source_init_command.py``, and proving it twice against a
-stubbed bridge would only prove the stub.
+The format mode's proposal is also the edit surface: observe the wrong
+proposal, correct it in place, save, and assert what crossed the bridge —
+the WIRE, not the world. That a corrected mapping conserves identity, visits
+and columns is proved once, against the real backend, in
+``tests/unit/test_source_init_command.py``.
 """
 
 from __future__ import annotations
@@ -81,11 +74,8 @@ def _stash(app, result: dict[str, object]) -> None:
 
 def _refusal(**fields: object) -> dict[str, object]:
     """A post-analyze refusal: the proposal it still carries, plus the pointer.
-
-    Built from the SAME canned proposal the look step rendered, because that is
-    what the controller does — every outcome after a successful analysis rides
-    the proposal, so the page always has something to point at.
-    """
+    Built from the same canned proposal the look step rendered, since every
+    outcome after a successful analysis rides that proposal."""
     payload = dict(canned_returns()["last_source_result"])
     payload.update(fields)
     return payload
@@ -130,10 +120,7 @@ def test_layout_mode_requires_the_distinct_patients_confirmation(gui) -> None:
     assert not page.locator("#layout-proposal").is_hidden()
     assert "samples analyzed" in app.text("#layout-summary")
     assert "Before you confirm" in app.text("#layout-caveat")
-    # The panel WARNS about the labels rather than vouching for them. It used to
-    # say "No patient data is shown below." directly above a list that can
-    # contain it: the labels are the strings that recurred across the samples,
-    # and a value two patients share recurs (#200).
+    # Warns about the labels rather than vouching for them (rule 5, #200).
     proposal = (page.locator("#layout-proposal").text_content() or "").lower()
     assert "read the labels below before confirming" in proposal
     assert "two patients happen to share repeats too" in proposal
@@ -169,13 +156,9 @@ def test_layout_mode_revokes_the_confirmation_on_a_fresh_look(gui) -> None:
 
 
 def test_writing_a_layout_re_asks_for_the_layout_list(gui) -> None:
-    """A written layout is offered NOW, not after a restart.
-
-    The run forms populate from one ``info()`` answered at boot, so a layout
-    taught during the session was absent from both choosers until the app was
-    started again — the app reported writing something its own screens could not
-    then select. Writing one asks again.
-    """
+    """A written layout is offered immediately, not after a restart: the run
+    forms populate from one ``info()`` call at boot, so writing one mid-session
+    must ask again or it stays unselectable in both choosers."""
     written = {
         "ok": True,
         "pack": "acme_soap",
@@ -220,8 +203,8 @@ def test_format_mode_shows_the_match_up_before_saving(gui) -> None:
 
     assert app.called("last_source_result")
     assert not page.locator("#format-proposal").is_hidden()
-    # What the file IS. How it is grouped is no longer a sentence to skim past:
-    # it is three controls, which stay true when the operator changes one.
+    # Grouping is three controls that stay true as the operator changes one,
+    # not a sentence to skim past.
     grouping = app.text("#format-grouping")
     assert "CSV file" in grouping and "4 columns" in grouping
     assert "=" not in grouping
@@ -231,8 +214,6 @@ def test_format_mode_shows_the_match_up_before_saving(gui) -> None:
     # One header row plus one row per column, unmatched columns included.
     rows = page.locator("#format-mapping .mapping-row")
     assert rows.count() == 5
-    # A key column is spoken for, not unmatched — the table used to tell a
-    # physician the opposite about their own patient identifier.
     assert "Used as: Patient ID" in (rows.nth(1).text_content() or "")
     # An unmatched column is not a dead cell either: it is a chooser resting on
     # the entry that says nothing is dropped.
@@ -250,13 +231,10 @@ def test_format_mode_shows_the_match_up_before_saving(gui) -> None:
 
 
 def test_format_mode_refuses_loudly_when_a_column_would_be_lost(gui) -> None:
-    """The losslessness refusal keeps its teeth, in plain language.
-
-    And it points at the GROUPING, because that is what it is about: a column
-    loses values when the row grain collapses it, not because the column did
-    anything wrong. Marking one of those columns would send the operator to
-    change something that is already correct.
-    """
+    """The losslessness refusal points at the GROUPING, not the column: a
+    column loses values because the row grain collapses it, not because the
+    column is wrong, and marking the column would send the operator to fix
+    something that already is correct."""
     app = _open(gui, "format")
     _look(app)
 
@@ -274,14 +252,10 @@ def test_format_mode_refuses_loudly_when_a_column_would_be_lost(gui) -> None:
 
 
 def test_the_wrong_proposal_is_corrected_in_place_and_the_review_rides_the_save(gui) -> None:
-    """Observe the wrong proposal, correct it, save — and assert the wire.
-
-    The scorer has aimed a visit IDENTIFIER at the visit DATE and set it to be
-    read as a date, which cannot work. Before this, the operator's only move was
-    to press Look again and get the same answer forever. Now the proposal is the
-    edit surface, and what the corrections put on the bridge is a COMPLETE
-    review: all three grouping answers, and every column's current decision.
-    """
+    """The scorer aims a visit IDENTIFIER at the visit DATE, unreadable as
+    one. Correcting it in place and saving puts a COMPLETE review on the
+    bridge: all three grouping answers, and every column's current
+    decision."""
     app = _open(gui, "format")
     page = _look(app)
 
@@ -330,14 +304,11 @@ def test_the_wrong_proposal_is_corrected_in_place_and_the_review_rides_the_save(
 
 
 def test_a_load_refusal_marks_the_row_it_is_about_and_says_why(gui) -> None:
-    """The diagnosis stops being a sentence to read and becomes a place to look.
-
-    Every noun in the composed sentence is a column name, a target label, a
-    transform label or the profiler's mask — the same tables that filled the
-    choosers it points at, so the refusal cannot drift into different words than
-    the control that fixes it. The controller's own sentence is a pointer, and
-    must not reach the document at all.
-    """
+    """Every noun in the composed sentence is a column name, target label,
+    transform label or profiler mask — the same tables that filled the
+    choosers, so the refusal cannot drift into different words than the fix.
+    The controller's own sentence is a pointer only; it must never reach
+    the document."""
     app = _open(gui, "format")
     page = _look(app)
 
@@ -369,13 +340,10 @@ def test_a_load_refusal_marks_the_row_it_is_about_and_says_why(gui) -> None:
 
 
 def test_a_wording_on_a_column_nothing_reads_does_not_block_the_save(gui) -> None:
-    """The empty-wording guard is about a transform that reaches the loader.
-
-    `const:` with no wording cannot be parsed, so Save stops for it. But a
-    column kept as extra data sends no transform at all — the review omits the
-    column entirely — so there is nothing to parse, nothing at risk, and no
-    reason to stop somebody over a value nothing was ever going to read.
-    """
+    """The empty-wording guard only fires for a transform that reaches the
+    loader: `const:` with no wording cannot parse. A column kept as extra
+    data sends no transform at all, so there is nothing to parse and
+    nothing to stop."""
     app = _open(gui, "format")
     page = _look(app)
     # Complaint stays "Keep as extra data (not mapped)"; only the way-of-reading
@@ -403,15 +371,10 @@ def test_a_wording_on_a_column_nothing_reads_does_not_block_the_save(gui) -> Non
 
 
 def test_a_grouping_refusal_opens_the_grouping_controls_not_a_row(gui) -> None:
-    """A key that does not identify what it claims to is not a column's fault.
-
-    Five of the six load-refusal sites are about the keys or the row grain, and
-    they used to arrive with no pointer at all — so the page blamed a transform
-    that was never wrong and told the operator to look at the example again,
-    which re-runs the scorer and discards every correction they had just made.
-    The wire flags these `grouping` now, and they open the controls that are
-    actually at fault.
-    """
+    """A key that does not identify what it claims to is not a column's
+    fault: the wire flags load refusals about keys or row grain as
+    `grouping`, and they open the controls actually at fault, never a
+    column row."""
     app = _open(gui, "format")
     page = _look(app)
 
@@ -437,19 +400,16 @@ def test_a_grouping_refusal_opens_the_grouping_controls_not_a_row(gui) -> None:
         "the file is."
     )
     assert "the marked controls say why" in app.text("#banner")
-    # The advice #335 exists to remove: taking it costs every correction.
+    # Guards against re-adding the removed advice (#335).
     assert "look at the example again" not in (page.locator("body").text_content() or "")
     assert _LOAD_DETAIL not in (page.locator("body").text_content() or "")
 
 
 def test_a_build_refusal_is_composed_here_too(gui) -> None:
-    """The rule the load refusal keeps, kept by the build refusal as well.
-
-    The controller's sentence for an invalid spec is a validator's: it names
-    pydantic field paths and quotes its own ids. It was being printed into the
-    banner verbatim. The collision it is about is visible in the answers on
-    screen, so the page finds it there and says it in its own words.
-    """
+    """The build refusal follows the load refusal's rule: the controller's
+    sentence for an invalid spec is a validator's, naming pydantic field
+    paths and quoted ids, and must never reach the banner. The page composes
+    its own words from the collision visible on screen."""
     app = _open(gui, "format")
     page = _look(app)
     # Aim a second column at the field VisitId is already going to.
@@ -505,14 +465,11 @@ def _revoked(page, what: str) -> None:
 
 
 def test_every_editable_control_revokes_the_confirmation(gui) -> None:
-    """One control pinned is one control that stays right; six were unpinned.
-
-    Every control on this panel can change what Save sends, including the two
-    nested choosers a parametric transform reveals and the one free-text field —
-    so every one of them is driven here, arming the gate before each and finding
-    it shut after. The order runs the row controls before the grouping ones,
-    because changing a key rebuilds the table underneath.
-    """
+    """Every control on this panel can change what Save sends — including
+    the two nested choosers a parametric transform reveals and the
+    free-text field — so each is driven here, arming the gate before and
+    checking it shut after. Row controls run before grouping ones because
+    a key change rebuilds the table underneath."""
     app = _open(gui, "format")
     page = _look(app)
     complaint = _row("Complaint")
@@ -585,13 +542,11 @@ def test_renaming_the_format_revokes_the_confirmation_and_keeps_the_work(gui) ->
 
 
 def test_repointing_at_another_file_takes_the_proposal_with_it(gui) -> None:
-    """A review of file A must never ride a confirmed save of file B.
-
-    Revoking consent alone would not do it: the box can simply be ticked again,
-    and the panel would still be showing file A's columns, file A's evidence and
-    file A's corrections over a Save that now names file B. So the proposal goes
-    with the file it describes, and the only way forward is to look again.
-    """
+    """A review of file A must never ride a confirmed save of file B:
+    revoking consent alone is not enough, since the box can simply be
+    ticked again while the panel still shows file A's columns and
+    corrections. The proposal goes with the file it describes; the only
+    way forward is to look again."""
     app = _open(gui, "format")
     page = _look(app)
     app.choose(f'{_row("Complaint")} [data-pick="target"]', "encounter.chief_complaint")
@@ -614,14 +569,9 @@ def test_repointing_at_another_file_takes_the_proposal_with_it(gui) -> None:
 
 
 def test_teach_says_what_it_already_knows(gui) -> None:
-    """ "Teach it another" needs an "another than WHAT".
-
-    Teach was two forms over empty space: it asked for a layout it did not have
-    without ever showing the ones it did, so there was no way to tell whether
-    the format in front of you was already covered. The list is static rows —
-    no tint, because every row here has the same status and a tint that never
-    varies carries nothing (§4.10 rule 2).
-    """
+    """The list shows what Teach already knows, so "another" has a "than
+    what": static rows, no tint, because every row shares one status and a
+    tint that never varies carries nothing (§4.10 rule 2)."""
     app = gui()
     app.show("teach")
 
@@ -656,8 +606,8 @@ def test_teach_says_what_it_already_knows(gui) -> None:
 
 
 def test_a_blank_layout_form_says_what_is_missing(gui) -> None:
-    """`pack_init_async("", "", null, false)` used to go straight through, with
-    the "Step 1 of 2" line as the only sign anything had happened."""
+    """A blank form's click must never reach the controller, and the banner
+    must say what is missing."""
     app = gui()
     app.show("teach")
     page = app.page

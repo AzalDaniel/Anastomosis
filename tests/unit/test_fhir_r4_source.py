@@ -92,9 +92,9 @@ def test_detect_ndjson_export_dir(tmp_path: Path) -> None:
 
 
 def test_utf8_bom_bundle_loads(tmp_path: Path) -> None:
-    """A UTF-8 BOM (common from Windows export tools) is stripped on read, so a
-    BOM-prefixed Bundle JSON loads instead of crashing json.loads on line 1
-    (which previously surfaced as an opaque bad_input with no encoding hint)."""
+    """A UTF-8 BOM (common from Windows export tools) is stripped on read,
+    so a BOM-prefixed Bundle JSON loads instead of crashing json.loads on
+    line 1 with an opaque bad_input and no encoding hint."""
     text = BUNDLE.read_text(encoding="utf-8")
     (tmp_path / "bundle.json").write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
     records = list(_adapter().load(tmp_path))
@@ -558,12 +558,11 @@ def test_vendor_shaped_race_extension_the_lift_cannot_read_survives_whole() -> N
 
 
 def test_leading_placeholder_name_entry_does_not_blank_the_patient() -> None:
-    """``name: [{}, {...}]`` must migrate the REAL name into the typed slots —
-    selecting the placeholder loses nothing (it rides fhir_r4:name) but leaves
-    every typed name slot empty, which the wrong-patient defenses fail closed on.
-    The consumed-path bookkeeping follows the selected entry, so the entry's
-    unread sub-keys (prefix) still narrate and the lifted ones do not duplicate.
-    """
+    """``name: [{}, {...}]`` must migrate the REAL name into the typed
+    slots: the placeholder loses nothing (rides fhir_r4:name) but leaves
+    every typed slot empty, which wrong-patient defenses fail closed on.
+    Bookkeeping follows the selected entry, so unread sub-keys still
+    narrate and lifted ones do not duplicate."""
     resource = {
         "resourceType": "Patient",
         "id": PID,
