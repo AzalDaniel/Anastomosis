@@ -588,11 +588,21 @@ issue and fixed in its own pull request.
   swept; the FHIR readers' four ISO date converters became
   `core/timeutil.iso_date` and `iso_datetime`, with `pad_partial=` naming the
   one difference between a canonical bundle and whatever a server sends; and
-  the delivery ladder enumerates date spellings by calling `core/timeutil`
-  rather than through a wrapper of its own. `core/hashutil` has the direct
-  test it never had. Every deliverable of the five fixtures is byte-identical
-  (`tools/snapshot.py`), the corpus pin is unmoved, the guard count holds at
-  72, and three module complexity averages tightened.
+  the QA grader and the delivery ladder reach `core/identity` and
+  `core/timeutil` directly instead of through five same-shaped wrappers. The
+  two page caches became one `core/pdfsnapshot.py`, a stdlib-only leaf both
+  may import: keeping it under `deliver/verify/` would have made
+  `import anastomosis.qa.checks` load 81 modules instead of 22, dragging the
+  whole upload engine into the grading stage. `core/hashutil` has the direct
+  test it never had, and so does the page reader. Every deliverable of the
+  five fixtures is byte-identical (`tools/snapshot.py`), the corpus pin is
+  unmoved, and the guard count holds at 72.
+
+- **The complexity ratchet no longer punishes a deletion.** Its module rule
+  compared averages, so removing four one-branch delegates from a module near
+  the A/B line raised that average and read as a regression. A module over
+  rank A may now gain no TOTAL complexity: deleting always passes, adding to a
+  module already over the line still fails.
 
 - **The prose sweep: the code says less and means the same.** Every docstring
   and comment under `src/` and `tests/` went through one decision: a rule
