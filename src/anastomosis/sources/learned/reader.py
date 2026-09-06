@@ -1,29 +1,14 @@
 """Reading a single-file structured export, and recognizing it again.
 
-A learned source targets the long tail of *flat, single-file* exports — one
-CSV/TSV/JSON/NDJSON file of rows. This module is the dumb IO half (the
-:mod:`pf_tebra.loader` analogue): read rows into mapping-authored header-keyed
-dicts, and nothing semantic. All mapping meaning lives in the interpreter.
+A learned source targets flat, single-file exports (CSV/TSV/JSON/NDJSON);
+this is the dumb IO half (the :mod:`pf_tebra.loader` analogue) — read rows
+into mapping-authored header-keyed dicts, nothing semantic.
 
-Two ideas live here because both the reader and the authoring/matcher layer
-need them, and putting them at the lowest level avoids an import cycle:
-
-* :func:`normalize_column` / :func:`header_fingerprint` — a stable identity for
-  a file's *column set* (order-independent, case/spacing/camelCase-insensitive).
-  The fingerprint is how a learned mapping auto-recognizes its file (and detects
-  that the columns changed — "stale" — instead of mis-reading a different file).
-* :func:`find_source_file` — locate THE file in an export dir whose column set
-  matches a mapping's fingerprint, distinguishing "no candidate", "a candidate
-  whose columns changed" (loud), and "matched".
-
-JSON/NDJSON records are flattened to dotted keys (``name.first``); a nested list
-or object that can't be a scalar cell is preserved as its JSON text, so nothing
-is lost before the interpreter's ``extensions`` catch-all even sees it. A
-flattened-path collision is malformed input, never a last-write-wins choice.
-
-PHI: row VALUES are patient data — this module never logs them. It logs/raises
-with file paths, column names, and counts only.
-"""
+:func:`header_fingerprint` gives a file's column *set* a stable identity so
+:func:`find_source_file` can tell "no candidate", "columns changed" (loud),
+and "matched" apart. JSON/NDJSON records flatten to dotted keys (a
+non-scalar becomes its JSON text; a path collision is malformed input).
+PHI: row VALUES are never logged — only paths, column names, and counts."""
 
 from __future__ import annotations
 
@@ -78,12 +63,10 @@ _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
 def normalize_column(name: str) -> str:
-    """Canonicalize a column name for fingerprinting and fuzzy matching.
-
-    Splits camelCase, lowercases, and collapses any run of non-alphanumeric
-    characters to a single space, so ``"PatientFirstName"``, ``"first_name"``,
-    and ``"First Name"`` all normalize toward the same words.
-    """
+    """Canonicalize a column name for fingerprinting and fuzzy matching:
+    splits camelCase, lowercases, and collapses non-alphanumeric runs to a
+    single space, so ``"PatientFirstName"``, ``"first_name"``, and
+    ``"First Name"`` all normalize toward the same words."""
     spaced = _CAMEL_BOUNDARY.sub(" ", name)
     return _NON_ALNUM.sub(" ", spaced.lower()).strip()
 
@@ -102,19 +85,17 @@ def _delimiter(fmt: SourceFormat) -> str:
 
 
 def _flatten(value: Any, prefix: str, out: Row) -> None:
-    """Flatten one JSON value into dotted-key cells on ``out``.
-
-    Scalars become strings; ``None`` stays ``None``; nested objects recurse;
-    anything else (a list, say) is preserved as its JSON text so the
-    interpreter's ``extensions`` can still keep it.
-    """
+    """Flatten one JSON value into dotted-key cells on ``out``: scalars
+    become strings, ``None`` stays ``None``, nested objects recurse, and
+    anything else (a list) is preserved as its JSON text so ``extensions``
+    can still keep it."""
     if isinstance(value, dict):
         for key, child in value.items():
             _flatten(child, f"{prefix}.{key}" if prefix else str(key), out)
     else:
         if prefix in out:
-            # A literal ``a.b`` and ``a: {b: ...}`` address the same flattened
-            # cell. Keep the diagnostic structural: JSON values may be PHI.
+            # A literal ``a.b`` and ``a: {b: ...}`` address the same cell;
+            # keep the diagnostic structural since JSON values may be PHI.
             raise MappingError(f"flattened JSON path collision at {prefix!r}")
         if value is None:
             out[prefix] = None
@@ -235,13 +216,9 @@ def _ndjson_records(path: Path, encoding: str) -> list[dict[str, Any]]:
 
 def _clean_csv_row(row: dict[str | None, object], header: list[str], path: Path, line: int) -> Row:
     """One DictReader row as a plain str->str mapping, or a loud refusal.
-
-    ``DictReader`` files surplus cells under the ``None`` key and leaves a list
-    there, so a row wider than its header arrives looking like an ordinary row
-    with one odd entry. Reading that shape as data is how a shifted cell
-    becomes a patient's value under the wrong column name; both shapes refuse.
-    Counts only — never the cell.
-    """
+    ``DictReader`` puts surplus cells under the ``None`` key as a list, so a
+    row wider than its header looks ordinary with one odd entry — reading
+    that is how a shifted cell becomes a value under the wrong column."""
     if None in row:
         overflow = row[None]
         overflow_count = len(overflow) if isinstance(overflow, list) else 1
@@ -329,12 +306,10 @@ def read_columns(path: Path, fmt: SourceFormat) -> list[str]:
 
 
 def find_source_file(export_dir: Path, fmt: SourceFormat) -> Path:
-    """Locate the file in ``export_dir`` whose columns match ``fmt``'s fingerprint.
-
-    Raises :class:`MappingError` when no candidate of the right type exists, or
-    when a candidate exists but its columns no longer match the fingerprint the
-    mapping was learned against (the "stale" case — re-run ``source init``).
-    """
+    """Locate the file in ``export_dir`` whose columns match ``fmt``'s
+    fingerprint. Raises :class:`MappingError` when no candidate of the
+    right type exists, or when one exists but its columns don't match the
+    fingerprint (the "stale" case — re-run ``source init``)."""
     if export_dir.is_file():
         candidates = [export_dir]
     else:
@@ -348,9 +323,8 @@ def find_source_file(export_dir: Path, fmt: SourceFormat) -> Path:
         try:
             columns = read_columns(candidate, fmt)
             if header_fingerprint(columns) == fmt.header_fingerprint:
-                # A normalized fingerprint is only a coarse discovery key. A
-                # candidate is executable only when its runtime columns bind
-                # one-to-one to the reviewed authored names.
+                # A normalized fingerprint is only a coarse discovery key; a
+                # candidate is executable only when columns bind one-to-one.
                 _authored_aliases(columns, fmt, candidate)
                 return candidate
         except MappingError:
