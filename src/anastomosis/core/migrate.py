@@ -1,40 +1,12 @@
-"""The shared EHR-to-EHR migration core (one migration, two frontends).
-
-A migration is a general EHR→EHR move; the PF→Tebra path is just one instance
-of it. The honest output model this realizes:
-
-* **structured C-CDA is the primary cross-EHR payload** — the artifact the
-  target EHR imports and renders natively (``deliver.ccda_export.deliver_ccda``);
-* the **rendered PDF** is the human-readable archive/fallback, in an
-  operator-chosen *representation* (a neutral SOAP pack, the HL7 standard C-CDA
-  view, or a vendor Jinja skin).
-
-So every migration emits BOTH: a ``ccda`` payload directory and a ``charts``
-directory, plus a ``run_manifest.json`` naming the exact source/destination/
-layout profile hashes the run was prepared under
-(:mod:`anastomosis.core.runmanifest`) — a later step over the same folder
-recaptures those and refuses when any of them changed. The route the
-destination would take is resolved up front
-(:func:`anastomosis.deliver.router.plan_route`) and surfaced to the operator as
-a transit map — the same data the wizard draws.
-
-This module is frontend-free (no Typer, no Rich, no webview), mirroring
-:mod:`anastomosis.pipeline` / :mod:`anastomosis.core.commands`: it emits the
-SAME PHI-safe :class:`~anastomosis.pipeline.StageEvent`\\ s the pipeline emits
-(so each frontend's presenter works unchanged) and raises
-:class:`~anastomosis.pipeline.PipelineError` on loud failures.
-
-Three render modes resolve as:
-
-* ``"neutral"`` → the built-in ``generic_soap`` Jinja pack (the neutral default);
-* ``"ccda-standard"`` → the HL7-stylesheet standard C-CDA view, one PDF per
-  patient (:func:`anastomosis.reconstruct.ccda_standard.render_ccda_standard`),
-  with NO Jinja pack at all;
-* any other string → a Jinja pack name (e.g. ``"practice_fusion_soap"``).
-
-PHI rule: events/logs carry counts, stage names, ids, and exception type names
-only — never patient-derived values. :class:`MigrationProfiles` stores config
-(source/destination/render/sections/qa) only — never export paths, never PHI.
+"""The shared EHR-to-EHR migration core, frontend-free like
+:mod:`anastomosis.pipeline`/:mod:`anastomosis.core.commands`. Every
+migration emits BOTH the structured C-CDA the target EHR imports
+(``deliver.ccda_export.deliver_ccda``) and a rendered-PDF representation
+(neutral pack, HL7 standard view, or vendor Jinja skin), plus a
+``run_manifest.json`` binding it to profile hashes (53). The route is
+resolved up front (:func:`anastomosis.deliver.router.plan_route`) as a
+transit map. PHI (2): events carry counts/stage names/ids/exception types
+only; :class:`MigrationProfiles` stores config only, never a path.
 """
 
 from __future__ import annotations
@@ -81,15 +53,10 @@ _NEUTRAL_PACK = "generic_soap"
 
 @dataclass(frozen=True)
 class MigrationCommand:
-    """A fully-specified migration — the unit both frontends build.
-
-    ``source`` (the ``--from`` adapter name) is REQUIRED: a migration is
-    explicit, never auto-detected — the operator declares both ends.
-    ``destination`` is the ``--to`` registry name (resolved to a transit map).
-    ``render`` selects the human-readable representation: ``"neutral"``,
-    ``"ccda-standard"``, or a Jinja pack name. ``export_dir`` / ``out_dir`` are
-    per-run paths (NOT persisted to a profile).
-    """
+    """A fully-specified migration, the unit both frontends build.
+    ``source``/``destination`` are required — a migration is explicit,
+    never auto-detected. ``render`` selects ``"neutral"``,
+    ``"ccda-standard"``, or a Jinja pack name."""
 
     export_dir: Path
     out_dir: Path
@@ -101,24 +68,18 @@ class MigrationCommand:
     force: bool = False
     sections: Mapping[str, bool] = field(default_factory=dict)
     qa: bool = True
-    #: Re-bind an output folder whose recorded profile hashes no longer match
-    #: this machine. Off by default, and deliberately separate from ``force``
-    #: (which overwrites RENDERS): overwriting a chart is a housekeeping choice,
-    #: while replacing the profiles a folder's artifacts were made under is a
-    #: statement that the earlier artifacts no longer stand.
+    #: Re-bind an output folder whose recorded profile hashes disagree with
+    #: this machine. Off by default and separate from ``force`` (overwrites
+    #: RENDERS): replacing the profiles a folder's artifacts were made under
+    #: is a statement that those artifacts are stale.
     rebind: bool = False
 
 
 @dataclass
 class MigrationResult:
-    """What a migration run yields the caller (the CLI and GUI frontends).
-
-    ``ccda_export`` (the structured payload) is ALWAYS present — it is what the
-    target EHR imports. ``pipeline`` is the full pipeline result in neutral/pack
-    mode and ``None`` in ccda-standard mode; ``ccda_view`` is the standard-view
-    render result in ccda-standard mode and ``None`` otherwise. ``pack`` is the
-    resolved Jinja pack name, or ``None`` in ccda-standard mode.
-    """
+    """What a migration run yields the caller. ``ccda_export`` is ALWAYS
+    present; ``pipeline``/``ccda_view``/``pack`` are mutually exclusive
+    with ccda-standard mode, ``None`` on whichever side did not run."""
 
     transit: TransitMap
     pipeline: PipelineResult | None
@@ -146,32 +107,18 @@ def _ccda_dir(out_dir: Path) -> Path:
 
 # --- shared migration helpers -----------------------------------------------
 #
-# Previously ``_run_ccda_standard`` hand-rolled output validation, source
-# resolution + DETECT/INGEST event emission, and manifest writing — work
-# ``run_pipeline_command`` already does for pack mode. The three helpers
-# below own that work once so both modes share the same:
-#
-# * exit-code semantics for output validation (PipelineError, kind="bad_output");
-# * adapter resolution + DETECT/INGEST event ORDER and SHAPE (the stage
-#   contract a parity test pins);
-# * upload manifest writing + the MANIFEST event count payload.
-#
-# ``_run_pack_mode`` reaches these emissions through ``run_pipeline_command``
-# (which calls into ``pipeline.run_pipeline``); ``_run_ccda_standard`` reaches
-# them through these helpers. The parity test
-# ``test_migrate_pack_and_ccda_standard_share_stage_contract`` proves they
-# stay in sync.
+# The three helpers below own output validation, source resolution +
+# DETECT/INGEST emission, and manifest writing + the MANIFEST event once, so
+# ``_run_pack_mode`` (via ``run_pipeline_command``) and ``_run_ccda_standard``
+# (directly) share the same exit-code semantics and event order/shape. The
+# parity test ``test_migrate_pack_and_ccda_standard_share_stage_contract``
+# proves they stay in sync.
 
 
 def _validate_outputs(targets: tuple[Path, ...]) -> None:
-    """Pre-flight every output target, mapping path-collisions to exit 2.
-
-    Mirrors :func:`run_pipeline_command`'s pre-flight: a target path that is
-    actually a file (a stale leftover from a different run, an operator typo,
-    a name collision) fails closed with a clean
-    :class:`PipelineError` (``kind="bad_output"``) rather than a raw OSError
-    deep inside the renderer or deliverer.
-    """
+    """Pre-flight every output target, mapping a path-collision to a clean
+    exit-2 :class:`PipelineError` (``kind="bad_output"``) rather than a
+    raw OSError deep inside the renderer or deliverer."""
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.pipeline import PipelineError
 
@@ -185,16 +132,11 @@ def _validate_outputs(targets: tuple[Path, ...]) -> None:
 def _resolve_source_and_load(
     cmd: MigrationCommand, emit: Callable[[StageEvent], None]
 ) -> tuple[SourceAdapter, list[PatientRecord], tuple[str, ...]]:
-    """Resolve the adapter and load records, emitting DETECT + INGEST.
-
-    Mirrors the same two-step emission sequence ``pipeline.run_pipeline`` uses
-    so a migration that does NOT route through the pack pipeline still tells
-    the same CLI/GUI presenters the same story in the same order. The events'
-    PHI-safety contract is preserved: DETECT carries only the adapter name,
-    INGEST carries only a record count. The third element is the source
-    ledger's reading of the load, settled here for the reason the quarantine
-    is: both render modes must publish the same account of the same load.
-    """
+    """Resolve the adapter and load records, emitting DETECT + INGEST in
+    the same order ``pipeline.run_pipeline`` does (2): DETECT carries only
+    the adapter name, INGEST only a record count. The third element is
+    the source ledger's reading, settled here so both render modes
+    publish the same account of the same load."""
     from anastomosis.pipeline import (
         STAGE_DETECT,
         STAGE_INGEST,
@@ -231,31 +173,11 @@ def _write_manifest_with_event(
     route: RoutePlan | None = None,
     gates: RunGates | None = None,
 ) -> None:
-    """Persist the upload manifest next to the charts and emit MANIFEST.
-
-    A migration intends to deliver, so the upload manifest is written by
-    default (matching ``run_pipeline_command``'s ``write_manifest=True``
-    posture for migrations). The event count payload — ``items`` — is the
-    same shape ``run_pipeline_command`` emits, so a parity test on the stage
-    contract sees identical payloads from both render modes.
-
-    ``pack`` names the Jinja pack the charts were rendered through, so the later
-    ``anast upload`` can run L3 against the header fields it declares. It is
-    ``None`` in ccda-standard mode, where the HL7 stylesheet renders the view and
-    no pack declares anything for L3 to check.
-
-    ``route`` and ``gates`` are the bundle's reviewed context — the destination
-    route this migration resolved, and what the run checked before writing the
-    manifest. The pack-mode path reaches the same fields through
-    ``core.commands._write_pipeline_manifest``; both modes must record them or
-    an executor's refusal would depend on which representation was chosen.
-
-    The count comes from what the writer WROTE, for the reason the pack path's
-    does: a manifest can hold items nobody handed this function — a patient
-    whose whole chart is an attachment has no rendered document at all — and a
-    rail reporting the input while the file holds something else is how #374
-    read as a clean run.
-    """
+    """Persist the upload manifest and emit MANIFEST (2), written by
+    default since a migration intends to deliver. ``pack`` is ``None`` in
+    ccda-standard mode; ``route``/``gates`` are the reviewed context so an
+    executor's refusal never depends on the representation chosen. The
+    count comes from what the writer WROTE, not the input (#374)."""
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
 
@@ -264,30 +186,20 @@ def _write_manifest_with_event(
 
 
 def resolve_pack(render: str) -> str | None:
-    """The Jinja pack a render mode resolves to, or ``None`` for no pack at all.
-
-    One definition, because three callers need the same answer: the pack-mode
-    run, the layout profile that hashes it, and the run manifest that records
-    which layout the artifacts came from. ``ccda-standard`` renders through
-    HL7's own stylesheet and no Jinja pack — a truthful ``None``, not a gap.
-    """
+    """The Jinja pack a render mode resolves to, or ``None`` for no pack:
+    one definition shared by the pack-mode run, the layout profile, and
+    the run manifest. ``ccda-standard`` is a truthful ``None``, not a
+    gap."""
     if render == RENDER_CCDA_STANDARD:
         return None
     return _NEUTRAL_PACK if render == RENDER_NEUTRAL else render
 
 
 def _bind_run(cmd: MigrationCommand) -> RunBinding:
-    """Capture the three profiles this run is about to be prepared under.
-
-    Pack discovery mirrors ``run_pipeline``'s exactly — the same dirs, the same
-    ``allow_external``, the same trust store — so the layout this profiles is
-    the layout that will render. ``trust_new`` is deliberately NOT passed:
-    profiling reads what is on disk and records nothing, and trusting a pack is
-    an act that belongs to the run, not to the measurement of it.
-
-    An unknown source or destination becomes a clean exit-2
-    :class:`PipelineError`; both are operator input.
-    """
+    """Capture the three profiles this run is about to be prepared under
+    (53); pack discovery mirrors ``run_pipeline``'s exactly. ``trust_new``
+    is deliberately NOT passed: profiling records nothing. An unknown
+    source/destination is a clean exit-2 :class:`PipelineError`."""
     from anastomosis.core.profiles import ProfileError, capture_binding
     from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.packtrust import default_pack_trust
@@ -308,18 +220,10 @@ def _bind_run(cmd: MigrationCommand) -> RunBinding:
 
 
 def _refuse_destination_mismatch(binding: RunBinding) -> None:
-    """Refuse a mapping taught for one destination being run at another.
-
-    The destination is chosen BEFORE teaching (``anast source init --to``), and
-    that choice shapes which column becomes which canonical field. Running the
-    mapping somewhere else is a different migration made silently, so it stops
-    here — and the message names BOTH ends, because "wrong destination" without
-    saying which two is not actionable.
-
-    A mapping whose destination is right but whose destination profile CHANGED
-    (a version bump, a capability that appeared) is the second refusal: same
-    name, different system.
-    """
+    """Refuse a mapping taught for one destination being run at another
+    (32), naming both ends. The second refusal is the same destination
+    whose profile CHANGED since teaching (a version bump, a new
+    capability): same name, different system."""
     from anastomosis.pipeline import PipelineError
 
     source = binding.source
@@ -348,15 +252,10 @@ def _refuse_destination_mismatch(binding: RunBinding) -> None:
 
 
 def _refuse_stale_folder(cmd: MigrationCommand, binding: RunBinding) -> None:
-    """Refuse to re-run into a folder bound to profiles that have since changed.
-
-    The folder already holds charts, a C-CDA payload and an upload manifest made
-    under recorded hashes. Writing a second run's artifacts beside them under
-    DIFFERENT inputs leaves one tree that is two runs, with nothing on disk
-    saying which file came from which — the misattribution this whole binding
-    exists to prevent. ``--rebind`` is the explicit way to say the earlier
-    artifacts no longer stand.
-    """
+    """Refuse to re-run into a folder bound to profiles that have since
+    changed (53): writing a second run's artifacts under DIFFERENT inputs
+    would leave one tree that is two runs with nothing saying which file
+    came from which. ``--rebind`` is the explicit override."""
     from anastomosis.core.runmanifest import (
         BindingError,
         RunManifestError,
@@ -384,19 +283,11 @@ def _refuse_stale_folder(cmd: MigrationCommand, binding: RunBinding) -> None:
 
 
 def bind_migration(cmd: MigrationCommand) -> RunBinding:
-    """Capture this run's binding and make every refusal that precedes work.
-
-    Everything a migration can refuse for BEFORE it reads or writes anything: an
-    unknown source, a mapping taught for a different destination, an output
-    folder already bound to profiles that have since changed. It is public
-    because a frontend needs it before it prints — ``anast migrate`` shows the
-    transit map as the headline of a move, and a page of confident route
-    reporting about a move that was never going to start is the exact failure
-    the source-name check ahead of it already fixed once.
-
-    :func:`run_migration` calls this itself when the caller has not; a caller
-    that has passes the returned binding back in so the capture happens once.
-    """
+    """Capture this run's binding and make every refusal that precedes
+    work (53): an unknown source, a mismatched destination, a stale output
+    folder. Public so a frontend can refuse before printing the transit
+    map. :func:`run_migration` calls this itself unless a caller already
+    has, and passes the binding back to avoid a second capture."""
     binding = _bind_run(cmd)
     _refuse_destination_mismatch(binding)
     _refuse_stale_folder(cmd, binding)
@@ -405,12 +296,8 @@ def bind_migration(cmd: MigrationCommand) -> RunBinding:
 
 def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
     """Record what this run was prepared under, beside its artifacts.
-
-    ``prepared`` is the only state a migration writes: it resolves a route and
-    writes artifacts, and executes no delivery — the invariant
-    :mod:`anastomosis.core.migration_status` states. Advancing past it needs a
-    receipt (:func:`anastomosis.core.runmanifest.advance_state`).
-    """
+    ``prepared`` is the only state a migration writes (53); advancing
+    past it needs a receipt (:func:`anastomosis.core.runmanifest.advance_state`)."""
     from anastomosis import __version__
     from anastomosis.core.runmanifest import RunManifest, export_dir_id, write_run_manifest
 
@@ -433,20 +320,10 @@ def run_migration(
     *,
     binding: RunBinding | None = None,
 ) -> MigrationResult:
-    """Run a migration: resolve the route, render the charts, emit the C-CDA payload.
-
-    The structured C-CDA payload lands in ``<out>/ccda``, the human-readable
-    charts in ``<out>/charts``, and ``<out>/run_manifest.json`` names the exact
-    profile hashes the run was prepared under. Events and failures follow the
-    module contract.
-
-    Every binding refusal happens BEFORE anything is read or written
-    (:func:`bind_migration`): a mapping taught for another destination, and an
-    output folder already bound to profiles that have since changed. Nothing
-    renders on a stale binding. ``binding`` lets a frontend that already made
-    those refusals — so it could make them before printing anything — hand back
-    what it captured instead of capturing twice.
-    """
+    """Run a migration: resolve the route, render, emit the C-CDA payload
+    plus ``run_manifest.json`` (53). Every binding refusal happens BEFORE
+    anything is written (:func:`bind_migration`); ``binding`` lets a
+    frontend that already refused avoid capturing twice."""
     from anastomosis.deliver.router import plan_route
     from anastomosis.destinations.registry import DestinationRegistry
     from anastomosis.pipeline import PipelineError
@@ -473,20 +350,16 @@ def run_migration(
 def _run_pack_mode(
     cmd: MigrationCommand, transit: TransitMap, on_event: EventSink | None
 ) -> MigrationResult:
-    """Neutral / Jinja-pack mode: the full pipeline + a ccda delivery.
-
-    The chart representation is a Jinja pack (``generic_soap`` for ``"neutral"``,
-    else the named pack), and the structured payload rides the standard ``ccda``
-    deliverer — so this reuses :func:`run_pipeline_command` verbatim (locking,
-    output validation, QA, event emission) rather than re-implementing it.
-    """
+    """Neutral / Jinja-pack mode: the full pipeline plus a ccda delivery,
+    reusing :func:`run_pipeline_command` verbatim (locking, output
+    validation, QA, event emission) rather than re-implementing it."""
     from anastomosis.core.commands import DeliveryCommand, PipelineCommand, run_pipeline_command
     from anastomosis.deliver.browser.gates import route_plan_of
 
     pack = resolve_pack(cmd.render)
-    # ccda-standard is routed away before this function; every other mode
-    # resolves to a pack name. Asserted rather than defaulted: a silent
-    # fallback here would render through a layout nobody chose.
+    # Every mode reaching here resolves to a pack name (ccda-standard routes
+    # elsewhere). Asserted rather than defaulted: a silent fallback here would
+    # render through a layout nobody chose.
     assert pack is not None
     out = cmd.out_dir
     result = run_pipeline_command(
@@ -525,18 +398,12 @@ def _run_pack_mode(
 
 # --- standard-C-CDA-view QA -------------------------------------------------
 #
-# The neutral/pack path reaches QA through ``run_pipeline``'s ``_run_qa_stage``
-# (one document per encounter, PLUS the record summaries that path renders). The
-# standard-C-CDA-view path has no per-encounter documents — it renders ONE
-# whole-patient PDF each — so it needs its own QA stage.
-#
-# HOW a whole-patient document is graded is not this module's business, and used
-# to be: the check subset, the skip reasons, the DOB identity anchor and the
-# ``carries=CHARTABLE_KINDS`` posture lived here, and the pack pipeline now
-# renders the SAME view as its record summary. Two copies of that policy would
-# drift, and the direction they drift is a document graded more leniently in one
-# path than the other. It lives once in :mod:`anastomosis.qa.wholepatient`; this
-# stage only decides WHICH documents and WHERE the report lands.
+# The standard-C-CDA-view path renders ONE whole-patient PDF per patient, not
+# one per encounter, so it needs its own QA stage. HOW a whole-patient document
+# is graded is not this module's business: that policy lives once in
+# :mod:`anastomosis.qa.wholepatient`, shared with the pack pipeline's record
+# summaries, so the two paths cannot drift into grading one more leniently.
+# This stage only decides WHICH documents and WHERE the report lands.
 
 
 def _run_ccda_standard_qa(
@@ -544,34 +411,11 @@ def _run_ccda_standard_qa(
     charts: Path,
     emit: Callable[[StageEvent], None],
 ) -> bool | None:
-    """Verify each whole-patient standard-C-CDA-view PDF — the ccda-standard
-    counterpart of the pipeline's QA stage.
-
-    Returns ``True`` when the report was written and OK, and ``None`` when the
-    stage downgraded to a no-op — the same shape ``run_pipeline`` gives its
-    caller, so the run manifest's QA gate can record what QA DID rather than
-    what the operator asked for. A FAIL does not return: it raises.
-
-    Mirrors ``pipeline._run_qa_stage``: write ``qa_report.json`` next to the PDFs,
-    emit a ``STAGE_QA`` counts event, and raise :class:`PipelineError` (exit 1,
-    ``kind="qa_failed"``) when the report is not OK. A missing PyMuPDF (the
-    optional ``render`` extra) downgrades QA to a no-op with a skip event, exactly
-    as the neutral path does.
-
-    The grading itself — document-generic checks run, encounter-scoped checks
-    recorded as skipped-with-reason, every chartable kind declared carried — is
-    :func:`anastomosis.qa.whole_patient_report`, shared with the record summaries
-    the pack pipeline writes into every bundle.
-
-    ``view.by_path`` (not a per-record re-derivation of ``ccda_standard_doc_path``)
-    is what this grades: the same NIT the pipeline's own QA stage carried — two
-    ``PatientRecord``s sharing a patient id (``_allocate`` keys on it) render to
-    one file, and re-deriving the path per record graded that one file once per
-    record that named it, two indistinguishable rows for a chart verified
-    exactly once. ``render_ccda_standard`` already resolves path:writer
-    correctly (#383's round-two blocker); this reads that resolution rather
-    than re-deriving a second, easier-to-get-wrong one.
-    """
+    """Contract: verify each whole-patient standard-C-CDA-view PDF.
+    ``True`` when the report was OK, ``None`` when downgraded to a no-op
+    (missing PyMuPDF); a FAIL raises. Grades ``view.by_path`` directly
+    (#383), never a per-record re-derivation, since two records can share
+    one rendered file."""
     from anastomosis.pipeline import STAGE_QA, StageEvent, settle_qa
 
     try:
@@ -588,14 +432,10 @@ def _run_ccda_standard_qa(
 
 
 def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
-    """The C-CDA outcome an operator reads, including its shape.
-
-    Bytes ride beside the patient counts because this document is the one
-    artifact handed to somebody else's EHR: its size is that EHR's problem, and
-    the share of it that is preserved source fields rather than clinical
-    content decides what a physician sees when it opens. Both were invisible
-    until the destination refused a file (#118).
-    """
+    """The C-CDA outcome an operator reads, including its shape: bytes
+    ride beside patient counts (#118) because this document goes to
+    somebody else's EHR, and its size and preserved-vs-clinical-content
+    share are that EHR's problem before they refuse it."""
     return {
         "patients": len(result.paths),
         "missing": result.missing_count,
@@ -609,16 +449,11 @@ def _ccda_counts(result: CcdaExportResult) -> dict[str, int]:
 def _run_ccda_standard(
     cmd: MigrationCommand, transit: TransitMap, on_event: EventSink | None
 ) -> MigrationResult:
-    """Standard-C-CDA-view mode: no Jinja pack — render HL7's own view per patient.
-
-    Composes the three shared helpers: output pre-flight, source resolution +
-    DETECT/INGEST emission, and manifest writing + MANIFEST emission — the
-    same primitives :func:`run_pipeline_command` uses for pack mode. Only
-    the *render* (HL7 standard view, no Jinja) and the *delivery* (the
-    structured C-CDA payload) are mode-specific. The stage contract that
-    both modes emit is pinned by the parity test
-    ``test_migrate_pack_and_ccda_standard_share_stage_contract``.
-    """
+    """Standard-C-CDA-view mode: no Jinja pack, HL7's own view per
+    patient. Composes the same shared helpers pack mode uses (pre-flight,
+    DETECT/INGEST, manifest writing); only render and delivery are
+    mode-specific. The shared stage contract is pinned by
+    ``test_migrate_pack_and_ccda_standard_share_stage_contract``."""
     from contextlib import ExitStack
 
     from anastomosis.core.commands import DeliveryOutcome
@@ -672,13 +507,10 @@ def _run_ccda_standard(
             if cmd.qa and view.documents:
                 qa_ok = _run_ccda_standard_qa(view, charts, emit)
 
-            # Write the upload manifest by default (a migration intends to
-            # deliver). The whole-patient view has no RenderedDoc list, so the
-            # path:patient association is recovered from the records via the
-            # renderer's public allocator; the per-patient view has no encounter,
-            # so the patient id stands in for the item_key's encounter slot — and
-            # therefore no date of service, which is the truth about a
-            # whole-patient document rather than a lost field.
+            # Write the upload manifest by default. The whole-patient view has
+            # no RenderedDoc list, so path:patient is recovered from the
+            # records; the patient id stands in for the item_key's encounter
+            # slot, since a whole-patient document truthfully has no DOS.
             manifest_docs = [
                 RenderedDoc(
                     path=ccda_standard_doc_path(charts, record),
@@ -694,13 +526,9 @@ def _run_ccda_standard(
                 emit,
                 pack=None,
                 route=route_plan_of(transit),
-                # No Jinja layout produced these pages — HL7's own stylesheet
-                # did — so there is no layout hash to record, and saying so is
-                # the honest answer rather than a gap. The QA verdict comes
-                # from what QA DID, never from the flag that asked for it: the
-                # stage downgrades to a no-op when PyMuPDF is absent, and
-                # reading the flag recorded `pass` for whole-patient views
-                # nothing had graded — on the one machine least able to notice.
+                # No Jinja layout produced these pages, so no layout hash; the
+                # QA verdict comes from what QA actually did (qa_ok), never
+                # from the flag that asked for it.
                 gates=RunGates.from_run(qa_ok=qa_ok, layout_hash=None),
             )
 
@@ -745,14 +573,10 @@ def _run_ccda_standard(
 
 
 def user_migrations_path() -> Path:
-    """The per-user migration-profiles store path.
-
-    A plain ``~/.anastomosis/migrations.json`` (NOT ``platformdirs`` — no new
-    dependency), matching
-    :func:`anastomosis.destinations.loader.user_destinations_dir` and
-    :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path` so all
-    Anastomosis user state lives under one root.
-    """
+    """The per-user migration-profiles store path: a plain
+    ``~/.anastomosis/migrations.json``, matching
+    :func:`anastomosis.destinations.loader.user_destinations_dir` so all
+    Anastomosis user state lives under one root."""
     return Path.home() / ".anastomosis" / "migrations.json"
 
 
@@ -761,13 +585,9 @@ _PROFILE_KEYS: tuple[str, ...] = ("source", "destination", "render", "sections",
 
 
 class MigrationProfiles:
-    """A JSON store of named migration profiles (config only — no paths, no PHI).
-
-    The store is ``{"<name>": {"source", "destination", "render", "sections",
-    "qa"}}``. Mirrors :class:`anastomosis.reconstruct.packtrust.PackTrust`:
-    defensive load (a missing or garbage store starts empty), atomic write, and
-    owner-only (``0o600``) on POSIX.
-    """
+    """A JSON store of named migration profiles (2: config only, no
+    paths). Mirrors :class:`anastomosis.reconstruct.packtrust.PackTrust`:
+    defensive load, atomic write, owner-only (``0o600``) on POSIX."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -795,15 +615,11 @@ class MigrationProfiles:
         return sorted(self._store)
 
     def save(self, name: str, profile: dict[str, object]) -> None:
-        """Persist ``profile`` under ``name`` and write the store.
-
-        Only the config keys (:data:`_PROFILE_KEYS`) are stored — any stray
-        keys (e.g. a path) are dropped, keeping the store PHI-free by
-        construction. The write is atomic (a temp file is written then
-        ``os.replace``\\ d into place, so a crash mid-write never corrupts an
-        existing store) and owner-only from creation on POSIX (the temp is
-        opened ``0o600``, leaving no umask-mode window).
-        """
+        """Persist ``profile`` under ``name``: only the config keys
+        (:data:`_PROFILE_KEYS`) are stored, any stray key (e.g. a path)
+        dropped, keeping the store PHI-free by construction (2). Atomic
+        write, owner-only from creation on POSIX (14, a fork of
+        :mod:`anastomosis.core.atomic`)."""
         self._store[name] = {key: profile[key] for key in _PROFILE_KEYS if key in profile}
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(self._store, indent=2, sort_keys=True) + "\n"

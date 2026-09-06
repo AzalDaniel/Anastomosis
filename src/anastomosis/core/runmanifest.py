@@ -1,48 +1,11 @@
-"""The run manifest: what a run was prepared under, and what state it is in.
-
-A migration writes charts, a C-CDA payload and an upload manifest into an output
-folder, and then somebody comes back to that folder — to re-run it, to upload
-from it, to check it months later. Between those two moments the machine can
-change underneath: a learned mapping gets hand-edited, a template pack gets a
-new ``context.py``, a destination entry gets a version bump. Nothing on disk
-recorded which versions of those things the artifacts were made from, so nothing
-could refuse.
-
-``run_manifest.json`` records it. Beside the artifacts, it names:
-
-* the **three profile hashes** the run was bound to (:mod:`anastomosis.core.profiles`);
-* the run's **inputs** — the export directory the operator pointed at, by path
-  and by a path-derived id; never its contents;
-* the **pipeline version** that produced the artifacts;
-* the **state**: :attr:`RunState.PREPARED`, and later
-  :attr:`RunState.DELIVERED` / :attr:`RunState.VERIFIED`.
-
-That last one is the difference this module makes to
-:mod:`anastomosis.core.migration_status`. The classifier there derives a verdict
-from a finished run's transit map every time it is asked; this records the
-verdict as state that outlives the process, and advances it only through
-:func:`advance_state`, which refuses when the run is unbound or when any bound
-profile has drifted. ``migrate`` writes ``prepared`` and nothing else — it
-executes no delivery, and the invariant that a migration is never *reported*
-delivered is unchanged. What advances the state is a step that produced a
-receipt.
-
-**The refusal is the point.** :func:`verify_binding` recaptures the three
-profiles from the machine as it is now and compares hash to hash. Any
-difference raises :class:`BindingError` naming WHICH profile changed and both
-digests. There is no fallback, no ``--best-effort``, no partial continue: a run
-whose inputs changed is a different run, and continuing it into the same folder
-would mix two of them.
-
-**Determinism over a clock.** The file carries no timestamps. Two runs over the
-same inputs on the same pinned environment write byte-identical manifests, which
-is what makes "did anything change?" a comparison rather than a judgement — the
-same rule ``upload_manifest.json`` keeps. State history is an ordered list of
-state names; when a transition happened is the artifacts' own mtimes.
-
-PHI rule: profile hashes, adapter/destination/pack names, version strings,
-state names, a receipt identifier, and the operator-chosen export/output paths.
-Never a patient value, and never anything read out of the export.
+"""``run_manifest.json`` (53): the three profile hashes a run was bound to,
+its export dir path/id, the pipeline version, and a state that moves only
+prepared -> delivered -> verified through :func:`advance_state`, which
+refuses on any drift and names the profile and both digests (53).
+``migrate`` writes ``prepared`` only; a migration is never reported
+delivered (53). No timestamps: two runs over the same inputs write
+byte-identical manifests. PHI: hashes, names, version and state strings,
+a receipt id, and operator-chosen paths — never a patient value.
 """
 
 from __future__ import annotations
@@ -90,12 +53,9 @@ RUN_MANIFEST_VERSION = 1
 
 
 class RunState(StrEnum):
-    """Where a run has got to — recorded, not recomputed.
-
-    ``PREPARED`` — artifacts written and a route planned; nothing delivered.
-    ``DELIVERED`` — a step returned a durable receipt that the artifacts landed.
-    ``VERIFIED`` — that delivery was checked against the destination.
-    """
+    """Where a run has got to, recorded not recomputed (53): ``PREPARED``
+    (nothing delivered), ``DELIVERED`` (a step returned a receipt),
+    ``VERIFIED`` (that delivery was checked)."""
 
     PREPARED = "prepared"
     DELIVERED = "delivered"
@@ -123,7 +83,7 @@ class RunStateError(Exception):
 
 @dataclass(frozen=True)
 class ProfileDrift:
-    """One bound profile whose hash no longer matches what this machine holds."""
+    """One bound profile whose hash disagrees with what this machine holds now."""
 
     profile: str
     bound: str
@@ -147,26 +107,20 @@ class BindingError(Exception):
 
 
 def export_dir_id(export_dir: Path) -> str:
-    """A stable id for the run's input directory — its PATH, never its contents.
-
-    Hashing the resolved path (not the files under it) is deliberate on both
-    counts. It is what makes the id cheap and stable for a multi-gigabyte
-    export, and it keeps every byte of patient data out of the manifest: this
-    answers "was this run pointed at the same folder?", not "does that folder
-    still hold the same records", which is the conservation ledger's question.
-    """
+    """A stable id for the run's input directory: its resolved PATH, never
+    its contents — cheap for a multi-gigabyte export, and keeps patient
+    data out of the manifest. Answers "same folder?", not "same records?",
+    which is the conservation ledger's question."""
     return hashlib.sha256(str(export_dir.resolve()).encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
 class RunManifest:
-    """One run's immutable inputs plus its mutable state.
-
-    Everything above :attr:`state` is fixed at preparation: changing any of it
-    means a different run. :attr:`state`/:attr:`state_history`/:attr:`receipt`
-    are the only fields :func:`advance_state` rewrites, and it does so only
-    after :func:`verify_binding` passes.
-    """
+    """One run's immutable inputs plus its mutable state (53). Everything
+    above :attr:`state` is fixed at preparation; :attr:`state`/
+    :attr:`state_history`/:attr:`receipt` are the only fields
+    :func:`advance_state` rewrites, only after :func:`verify_binding`
+    passes."""
 
     pipeline_version: str
     source: str
@@ -245,20 +199,11 @@ class RunManifest:
 
 
 def _assert_recorded_hashes(binding: RunBinding, payload: Mapping[str, Any]) -> None:
-    """The digests the file carries must be the digests its own numbers produce.
-
-    Every hash in a manifest is recomputed from the payload beside it, so on
-    its own the recorded ``profile_hash``/``binding_hash`` lines would be
-    decoration: an editor who changed a content hash and left them alone would
-    be believed. Reading them back turns them into what they are written as —
-    a check that the file is internally whole, catching the hand edit and the
-    half-written file alike.
-
-    It is an integrity check against accident and casual tampering, NOT a
-    security boundary: anyone who can edit the file can also recompute these,
-    and nothing here is signed. The controls that carry weight are the trust
-    store and the profiles themselves.
-    """
+    """Every hash the file carries must equal the hash its own payload
+    produces, catching a hand-edit or a half-written file. An integrity
+    check against accident, NOT a security boundary — anyone who can edit
+    the file can recompute these too; the trust store and the profiles
+    carry the real weight."""
     recorded = {
         "source": payload.get("source", {}).get("profile_hash"),
         "destination": payload.get("destination", {}).get("profile_hash"),
@@ -281,22 +226,16 @@ def _assert_recorded_hashes(binding: RunBinding, payload: Mapping[str, Any]) -> 
 
 
 def run_manifest_path(out_dir: Path) -> Path:
-    """Where the run manifest lives: ``<out_dir>/run_manifest.json``.
-
-    The run's own root, beside ``charts/`` and ``ccda/`` rather than inside
-    either — it describes the whole run, not one artifact kind, and
-    ``anast upload`` is handed exactly this directory.
-    """
+    """Where the run manifest lives: ``<out_dir>/run_manifest.json``, the
+    run's own root beside ``charts/`` and ``ccda/`` rather than inside
+    either, since it describes the whole run, not one artifact kind."""
     return out_dir / RUN_MANIFEST_NAME
 
 
 def write_run_manifest(out_dir: Path, manifest: RunManifest) -> Path:
-    """Write ``manifest`` into ``out_dir`` atomically and owner-only.
-
-    Owner-only (``0o600``) and atomic for the reasons every other state file
-    here is: a half-written manifest would compare wrong, and a comparison that
-    is wrong in the permissive direction is a run that should have refused.
-    """
+    """Write ``manifest`` into ``out_dir`` atomically (14) and owner-only
+    (``0o600``): a half-written manifest would compare wrong, in the
+    permissive direction, for a run that should have refused."""
     from anastomosis.core.atomic import atomic_write_text
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -328,29 +267,20 @@ def read_run_manifest(out_dir: Path) -> RunManifest:
 
 
 def load_run_manifest(out_dir: Path) -> RunManifest | None:
-    """The run manifest in ``out_dir``, or ``None`` when the folder has none.
-
-    Distinct from :func:`read_run_manifest` on purpose. A folder with NO
-    manifest is an unbound run — every output tree rendered before this file
-    existed is one — and a caller that must tolerate that (``anast upload`` over
-    an older tree) asks this way. A folder whose manifest is PRESENT but
-    unreadable is a fault and still raises: the difference between "never bound"
-    and "bound, and we cannot tell to what" is exactly the difference between
-    proceeding and refusing.
-    """
+    """The run manifest in ``out_dir``, or ``None`` when the folder holds
+    none at all — an unbound run a caller must tolerate (``anast upload``
+    over an older tree). A manifest PRESENT but unreadable still raises via
+    :func:`read_run_manifest`: "never bound" and "bound, unreadable" are
+    different answers."""
     if not run_manifest_path(out_dir).is_file():
         return None
     return read_run_manifest(out_dir)
 
 
 def recapture_binding(manifest: RunManifest, *, pack_dirs: Sequence[Path] = ()) -> RunBinding:
-    """Capture the three profiles again, for the identities this manifest names.
-
-    The manifest supplies the IDENTITIES (which source, which destination, which
-    render mode and pack); the machine supplies the current CONTENT. That split
-    is what makes the comparison meaningful: the same three things are profiled,
-    and only their hashes can differ.
-    """
+    """Capture the three profiles again, for the identities this manifest
+    names: the manifest supplies WHICH source/destination/pack, the machine
+    supplies the current content, so only their hashes can differ."""
     from anastomosis.core.profiles import capture_binding, reprofile_layout
 
     return capture_binding(
@@ -364,12 +294,9 @@ def recapture_binding(manifest: RunManifest, *, pack_dirs: Sequence[Path] = ()) 
 
 
 def verify_binding(manifest: RunManifest, current: RunBinding) -> None:
-    """Refuse loudly when any profile the run was bound to has changed.
-
-    Raises :class:`BindingError` naming every drifted profile and both digests.
-    Returns ``None`` — and nothing else — when all three match: there is no
-    "matched with warnings" outcome to be tempted by.
-    """
+    """Contract (53): raises :class:`BindingError` naming every drifted
+    profile and both digests; returns ``None`` when all three match —
+    there is no "matched with warnings" outcome."""
     bound = manifest.binding.hashes
     found = current.hashes
     drifted = tuple(
@@ -395,24 +322,10 @@ def advance_state(
     receipt: str,
     pack_dirs: Sequence[Path] = (),
 ) -> RunManifest:
-    """Move the run in ``out_dir`` to ``to``, or refuse — and say why.
-
-    Three gates, in this order, and every one of them is a refusal rather than a
-    downgrade:
-
-    1. **Unbound** — no run manifest in the folder. A state cannot be recorded
-       against inputs nobody wrote down; :class:`BindingError` says so.
-    2. **Drifted** — a bound profile changed since preparation
-       (:func:`verify_binding`). Recording ``delivered`` against artifacts whose
-       inputs moved would attach a receipt to the wrong run.
-    3. **Illegal** — the move is not in :data:`_ALLOWED_TRANSITIONS`
-       (:class:`RunStateError`).
-
-    ``receipt`` is the PHI-free pointer to the evidence — an upload run report
-    name, a ledger run id. It is REQUIRED because that is the whole difference
-    between this and a computed verdict: a state past ``prepared`` is a claim
-    that something happened, and a claim needs its evidence named.
-    """
+    """Contract (53): move the run in ``out_dir`` to ``to``, refusing on
+    unbound (:class:`BindingError`), drifted (:func:`verify_binding`), or
+    illegal (:class:`RunStateError`, not in :data:`_ALLOWED_TRANSITIONS`).
+    ``receipt`` is the required PHI-free evidence pointer for the claim."""
     manifest = load_run_manifest(out_dir)
     if manifest is None:
         raise BindingError(
