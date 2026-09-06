@@ -1,20 +1,13 @@
 """The fixed-point honesty check for the practice_fusion_soap pack (M3.15).
 
-The original PF pack took five manual forensic sprints. This test closes the
-loop the predecessor never could: render the synthetic ``pf_tebra_v9``
-encounters through the hand-built ``practice_fusion_soap`` pack with REAL
-Chromium, then run the deterministic ``packgen`` layout learner over those
-PDFs and assert it RE-DISCOVERS the pack's own ground-truth design — the PF
-section-heading taxonomy, Letter page geometry, and the #f1f1f1 heading-band
-fill that the learner is meant to automate (the manual ``get_drawings()``
-discovery).
-
-If the learner can recover the pack's taxonomy and band fill from the pack's
-own output, the pack is self-consistent and the learner is honest about a real
-PF-shaped document — not just the simpler ``generic_soap`` note.
-
-PHI-safe: the fixture is the repo's synthetic ``feedface-`` export. Marked
-``e2e``; SKIPS cleanly when Playwright/Chromium is unavailable.
+Renders the synthetic ``pf_tebra_v9`` encounters through the hand-built
+``practice_fusion_soap`` pack with REAL Chromium, then runs the
+deterministic ``packgen`` layout learner over those PDFs and asserts it
+RE-DISCOVERS the pack's own ground-truth design: the PF section-heading
+taxonomy, Letter page geometry, and the #f1f1f1 heading-band fill — proof
+the learner is honest about a real PF-shaped document, not just the
+simpler ``generic_soap`` note. PHI-safe: synthetic ``feedface-`` fixture.
+Marked ``e2e``; SKIPS cleanly without Playwright/Chromium.
 """
 
 from __future__ import annotations
