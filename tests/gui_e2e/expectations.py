@@ -1,25 +1,12 @@
-"""What a live Anastomosis window must look like — asserted by BOTH lanes.
+"""What a live Anastomosis window must look like — asserted by BOTH
+lanes: ``tests/gui_e2e`` drives the bundled app in headless Chromium
+behind a stubbed bridge, and ``packaging/smoke_windows.py`` drives the
+INSTALLED Windows app in its real WebView2 window over CDP, both
+holding a Playwright ``Page`` so these expectations live here once.
 
-Lane 1 (``tests/gui_e2e``) drives the bundled app in headless Chromium behind a
-stubbed bridge; lane 2 (``packaging/smoke_windows.py``) drives the INSTALLED
-Windows app in its real WebView2 window over CDP. Both end up holding a
-Playwright ``Page``, so the DOM expectations live here once and are checked in
-both places: a selector this file names cannot rot in the installed app without
-lane 1 — which runs on every CI push — going red first.
-
-The GUI is ONE document with four views (DESIGN_LANGUAGE §7), so these are the
-expectations for the document as it first paints: the chrome, the nav, and the
-Charts view. :func:`check_dashboard` keeps its name and signature because lane 2
-loads this module by path and calls exactly that.
-
-Everything here must hold with the REAL controller behind the bridge, not just
-the stub, so the checks stay to (a) static markup the app ships and (b) the
-handful of live signals that prove the bridge round-tripped: the version filled
-in, the "not connected" notice cleared, the run button armed, the pickers
-populated.
-
-Deliberately dependency-free (stdlib + a duck-typed ``page``): lane 2 loads this
-module by path from a checkout, with no pytest and no package install.
+:func:`check_dashboard` keeps its name/signature since lane 2 loads
+this module by path and calls exactly that. Deliberately
+dependency-free: stdlib plus a duck-typed ``page``.
 """
 
 from __future__ import annotations

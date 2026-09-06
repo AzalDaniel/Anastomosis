@@ -62,16 +62,11 @@ _OTHER_ROW = "Otherperson, Sam  DOB 01/02/1990  MRN 555002"
 
 
 class FakePage:
-    """A scripted :class:`PageLike`. ``texts`` maps selector -> single text;
-    ``all_texts`` maps selector -> list (for query_selector_all_text).
-
-    The form half models a page that can push back, because that is the only
-    way the driver's refusals can be exercised: ``values`` seeds what a control
-    already holds (a prefilled patient name), ``options`` says which choices a
-    ``<select>`` actually offers (anything else raises, as Playwright does), and
-    ``ignores_fill`` names controls that record the fill and keep their old
-    value — a date widget that silently declined the text it was handed.
-    """
+    """A scripted :class:`PageLike`. ``texts``/``all_texts`` map selector to
+    a value or list of values; ``values`` seeds what a control holds;
+    ``options`` bounds what a ``<select>`` offers (else raises); and
+    ``ignores_fill`` models a control that silently declines a fill —
+    the only way to exercise the driver's refusals."""
 
     def __init__(
         self,
@@ -159,12 +154,9 @@ def test_fakepage_is_pagelike() -> None:
 
 
 class _PreFormPage:
-    """A page carrying exactly the verbs the seam had before the form slots.
-
-    It can navigate, type, click, read text, attach a file and wait — and that
-    is the whole vocabulary. Nothing here can choose an option in a dropdown or
-    read a control's value back.
-    """
+    """A page with only the pre-form-slot verbs: navigate, type, click,
+    read text, attach a file, wait. It cannot choose a dropdown option or
+    read a control's value back."""
 
     def goto(self, url: str) -> None: ...
 
@@ -184,14 +176,11 @@ class _PreFormPage:
 
 
 def test_a_page_without_the_form_verbs_is_not_pagelike() -> None:
-    """The seam has to be able to SAY what a filing dialog needs.
-
-    Category, status and provider are dropdowns; the date and the prefilled
-    patient are values read back off a control. Without ``select_option`` and
-    ``input_value`` a pack could name those fields in its selectors and the
-    driver would still have no way to drive or read one, so the slots would be
-    decoration. This pins the widening: the old vocabulary is no longer enough.
-    """
+    """The seam must be able to SAY what a filing dialog needs: category,
+    status and provider are dropdowns, the date and prefilled patient are
+    values read back off a control. Without ``select_option`` and
+    ``input_value`` a pack could name those fields and the driver would
+    still have no way to drive or read one."""
     assert not isinstance(_PreFormPage(), PageLike)
     assert isinstance(FakePage(), PageLike)
 
@@ -247,13 +236,10 @@ _FORM_SLOTS = (
 
 
 def test_the_upload_form_has_a_slot_for_every_field_it_asks_for() -> None:
-    """A pack can name the dialog's fields — and every one of them is optional.
-
-    Optional is not leniency here: ``from_yaml_dict``'s missing-key check
-    raises a bare ``KeyError``, not the actionable ``PackNotReadyError``, so a
-    newly-REQUIRED slot would hard-crash every ``selectors.yaml`` already
-    discovered in the field.
-    """
+    """Every form slot is optional, not lenient: ``from_yaml_dict``'s
+    missing-key check raises a bare ``KeyError``, not the actionable
+    ``PackNotReadyError``, so a newly-REQUIRED slot would hard-crash every
+    ``selectors.yaml`` already discovered in the field."""
     for slot in _FORM_SLOTS:
         assert slot in SelectorMap.optional_slots(), slot
         assert slot not in SelectorMap.required_slots(), slot
@@ -278,11 +264,9 @@ def test_a_selectors_file_written_before_the_form_slots_still_loads() -> None:
 
 
 def test_an_unknown_selector_slot_is_named_rather_than_dropped() -> None:
-    """The silent-drop hole: the loader reads a closed list of slot names, so a
-    selector written under any other key used to be read by nobody and reported
-    to nobody — while the pack still announced itself ready. An operator who
-    discovered a selector and watched the field stay empty had no way to find
-    out why."""
+    """The loader reads a closed list of slot names: a selector written
+    under any other key must be reported, not read by nobody while the
+    pack announces itself ready."""
     data = {slot: f"#{slot}" for slot in SelectorMap.required_slots()}
     data["upload_categories_select"] = "#a-plausible-typo"  # not a slot name
     with pytest.raises(ValueError, match="upload_categories_select"):
@@ -554,13 +538,9 @@ def test_driver_timeout_is_transient(tmp_path: Path) -> None:
 
 
 def test_driver_uses_no_form_verb_when_no_form_slot_is_discovered(tmp_path: Path) -> None:
-    """The backward-compatibility invariant, stated in verbs rather than order.
-
-    A pack discovered before the dialog slots existed must drive the page the
-    way it always did: attach the file, submit, wait. Not one fill, dropdown
-    choice or value readback may appear — every one of them would be a new
-    interaction with a form nobody said was there.
-    """
+    """A pack with no dialog slots discovered must drive the page with only
+    attach-submit-wait: not one fill, dropdown choice or value readback,
+    since each would be a new interaction with a form nobody named."""
     page = FakePage()
     _dest(page).driver.upload(_item(tmp_path), DestinationPatient(destination_patient_id="row:x"))
     assert page.call_names() == ["set_input_files", "click", "wait_for_selector"]
@@ -626,12 +606,9 @@ def _dialog_page(
 
 
 def _dialog_dest(page: FakePage, **cfg: object) -> BrowserPackDestination:
-    """A destination wired to the dialog, with the banner already confirmed.
-
-    The banner readback is run first because that is what the engine does
-    immediately before every upload — and the dialog's prefill check asks the
-    same question a second time, from inside the dialog.
-    """
+    """A destination wired to the dialog, with the banner already confirmed
+    — the engine's own order, run first here too, since the dialog's
+    prefill check asks the same question again from inside the dialog."""
     config = {**_DIALOG_CONFIG, **cfg}
     dest = _dest(page, _selectors(**_DIALOG_SLOTS), **config)
     assert dest.banner.current_patient_matches(_patient()) is True
@@ -648,14 +625,10 @@ def _submitted(page: FakePage) -> bool:
 
 
 def test_driver_fills_the_whole_dialog_then_submits(tmp_path: Path) -> None:
-    """The contract the working uploader proved a portal actually demands.
-
-    Attaching the file is not the job: the dialog wants a display name, a
-    category, a status, a document date, a provider and a note, and it shows
-    which patient it believes it is filing for. This pins the full sequence in
-    dialog-reading order, including the two readbacks, and that submit comes
-    last — after everything has been checked, never before.
-    """
+    """Attaching the file is not the job: the dialog wants a display name,
+    category, status, document date, provider and note, and shows which
+    patient it believes it is filing for. Pins the full sequence in
+    dialog-reading order, both readbacks included, submit last."""
     page = _dialog_page()
     dest = _dialog_dest(page)
     item = _item(tmp_path, dos=_DOS)
@@ -783,12 +756,10 @@ def test_driver_refuses_an_item_with_no_date_of_service(tmp_path: Path) -> None:
 
 
 def test_driver_aborts_when_the_dialog_prefilled_another_patient(tmp_path: Path) -> None:
-    """The last wrong-patient gate, and the only one that can see inside the
-    dialog. The banner readback happens before the dialog opens; a portal that
-    prefills from its own notion of "the current patient" can disagree with the
-    chart behind it, and this is where that shows. It raises the same
-    WrongPatientError a failed banner does, so the run aborts — not just the
-    item."""
+    """The only wrong-patient gate that can see inside the dialog: a portal
+    prefilling from its own notion of "the current patient" can disagree
+    with the banner's. Raises the same WrongPatientError a failed banner
+    does, so the run aborts, not just the item."""
     page = _dialog_page(values={_ROW0["upload_patient_prefill"]: "Otherperson, Sam"})
     dest = _dialog_dest(page)
     with pytest.raises(WrongPatientError):
@@ -839,10 +810,10 @@ def test_a_failed_banner_check_clears_the_confirmed_patient(tmp_path: Path) -> N
 
 
 def test_driver_refuses_a_choice_the_dropdown_does_not_offer(tmp_path: Path) -> None:
-    """A category list that no longer carries the configured choice is a
-    structural mismatch — the portal changed, or the pack points at the wrong
-    ``<select>``. Leaving the field at whatever it defaulted to and filing
-    anyway is how a chart lands uncategorised."""
+    """A category list missing the configured choice is a structural
+    mismatch — the portal changed, or the pack points at the wrong
+    ``<select>``. Filing at whatever it defaulted to is how a chart lands
+    uncategorised."""
     page = _dialog_page(options={_ROW0["upload_category_select"]: ["Lab Report"]})
     dest = _dialog_dest(page)
     with pytest.raises(PermanentDeliveryError, match="upload_category_select"):

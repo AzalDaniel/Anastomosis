@@ -1,18 +1,11 @@
-"""Typer-rendered help must survive a legacy Windows console (cp1252).
-
-A stock Windows console gives Python a ``cp1252`` stdout. Runtime output
-degrades through ``core.presentation``'s glyph fallback, but Typer renders
-COMMAND DOCSTRINGS and option ``help=`` strings itself — a character
-cp1252 cannot encode (e.g. the arrow U+2192 that used to live in
-``migrate_cmd``'s docstring) crashes ``anast --help`` with a
+"""Typer-rendered help must survive a legacy Windows console (cp1252):
+Typer renders COMMAND DOCSTRINGS and option ``help=`` strings itself,
+so a character cp1252 cannot encode crashes ``anast --help`` with a
 ``UnicodeEncodeError`` before any command runs. Two layers of defense:
 
-* a STATIC sweep over every Typer-visible string in the app tree — each
-  must be cp1252-encodable, so a new command or option can never
-  reintroduce the crash;
-* the exact end-to-end reproducer: render ``--help`` (and the previously
-  crashing ``migrate --help``) in a subprocess whose stdio is pinned to
-  ``cp1252:strict``.
+* a STATIC sweep over every Typer-visible string in the app tree;
+* an end-to-end reproducer: render ``--help`` and ``migrate --help``
+  in a subprocess whose stdio is pinned to ``cp1252:strict``.
 """
 
 from __future__ import annotations
@@ -29,13 +22,10 @@ from anastomosis.cli import app
 
 
 def _visible_strings() -> list[tuple[str, str]]:
-    """Every (where, text) pair Typer can render into help output.
-
-    Walks the Typer app natively (this Typer has no click layer): each
-    command's ``help``/docstring, each sub-app group's help, and every
-    ``typer.Option``/``typer.Argument`` ``help=`` string found in the
-    callbacks' ``Annotated`` metadata.
-    """
+    """Every (where, text) pair Typer can render into help output:
+    walks the Typer app natively (no click layer), collecting each
+    command's help/docstring, sub-app group help, and every
+    ``typer.Option``/``typer.Argument`` ``help=`` string."""
     pairs: list[tuple[str, str]] = []
 
     def _callback_strings(path: str, callback: object) -> None:
@@ -97,10 +87,9 @@ def test_every_typer_visible_string_is_cp1252_encodable() -> None:
 
 @pytest.mark.parametrize("args", [["--help"], ["migrate", "--help"]])
 def test_cli_help_survives_cp1252_console(args: list[str]) -> None:
-    """The end-to-end reproducer from the release review: rendering help with
-    stdio pinned to strict cp1252 must exit 0 with no traceback. ``migrate
-    --help`` is the historically crashing command (its docstring carried
-    U+2192)."""
+    """The end-to-end reproducer: rendering help with stdio pinned to
+    strict cp1252 must exit 0 with no traceback. ``migrate --help``'s
+    docstring carried the U+2192 arrow that cp1252 cannot encode."""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "cp1252:strict"
     proc = subprocess.run(

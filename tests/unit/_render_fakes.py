@@ -1,22 +1,12 @@
 """The stand-in renderer the pipeline unit tests share.
 
-Chromium is not available in the unit lane, so every pipeline test substitutes a
-fake renderer that writes a REAL PDF carrying the rendered text — QA then runs
-for real against what was "rendered". Each test module used to spell that fake
-out itself as one ``insert_textbox`` onto one Letter page, which was fine while
-the only documents were single-visit charts.
+Chromium is not available in the unit lane, so every pipeline test
+substitutes a fake renderer that writes a REAL PDF carrying the rendered
+text — QA then runs for real against it. ``insert_textbox`` writes
+NOTHING when the text does not fit, so this spills a large document onto
+as many pages as it needs rather than silently handing QA a blank one.
 
-It stopped being fine when a run began writing the whole-patient record summary
-into every bundle. That document is far larger than one page, and
-``insert_textbox`` does not clip when the text does not fit — it inserts
-NOTHING and returns a negative number. A fake that silently drops what it was
-handed would give QA a blank page and make the suite assert on a document the
-real renderer would never produce; a stand-in that loses the content it was
-given is the exact failure this project exists to prevent, so it lives here once
-and spills onto as many pages as the text needs.
-
-Synthetic by construction: the text comes from the repo's ``feedface-``
-fixtures.
+Synthetic by construction: text from the repo's ``feedface-`` fixtures.
 """
 
 from __future__ import annotations
@@ -36,12 +26,10 @@ _LINES_PER_PAGE = 88
 
 
 def _fits_on_one_page(doc: object, text: str) -> bool:
-    """Lay the whole text out in one text box, the way the original fakes did.
-
-    Returns False (leaving the page in place for the caller to drop) when the
-    box could not hold it — ``insert_textbox`` reports that as a negative
-    number and writes nothing at all.
-    """
+    """Lay the whole text out in one text box. Returns False (leaving the
+    page in place for the caller to drop) when the box could not hold it
+    — ``insert_textbox`` reports that as a negative number and writes
+    nothing at all."""
     import pymupdf
 
     page = doc.new_page(width=_LETTER[0], height=_LETTER[1])  # type: ignore[attr-defined]
@@ -51,10 +39,9 @@ def _fits_on_one_page(doc: object, text: str) -> bool:
 
 def _spill_across_pages(doc: object, text: str) -> None:
     """Place the text as wrapped lines over as many pages as it takes.
-
-    Blank chunks are skipped rather than emitted: a trailing page of whitespace
-    is a blank page, and QA fails blank pages — correctly, which is why the fake
-    must not manufacture one.
+    Blank chunks are skipped rather than emitted: a trailing page of
+    whitespace is a blank page, and QA correctly fails blank pages, so
+    the fake must not manufacture one.
     """
     lines = [
         wrapped

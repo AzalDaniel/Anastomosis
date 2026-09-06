@@ -1,21 +1,10 @@
-"""A folder of charts has to be able to name the bytes that produced it.
-
-``render_settings.json`` records which layout was NAMED. It cannot see the
-layout's contents, so this held before ``render_provenance.json`` existed:
-
-    run 1  ->  6 rendered, 0 skipped        exit 0
-    (someone edits the layout's template.html)
-    run 2  ->  0 rendered, 6 skipped        exit 0
-
-Six charts produced by bytes that no longer exist anywhere, a clean second run
-that says the folder is up to date, and nothing on disk that could tell the
-difference. The content-hash trust gate does not close it either: an asset is
-outside the hash entirely, and re-trusting an edited pack is what
-``--trust-pack`` is for.
-
-Synthetic throughout: the checked-in ``pf_tebra_v9`` export, a copy of the
-shipped neutral layout under ``tmp_path``, and the per-test temporary home the
-suite's conftest installs.
+"""A folder of charts has to be able to name the bytes that produced
+it. ``render_settings.json`` records which layout was NAMED, but
+cannot see its contents: an edited ``template.html`` between two runs
+leaves a clean second run saying the folder is up to date, with
+nothing on disk to tell the difference — the content-hash trust gate
+does not close it either, since an asset sits outside the hash
+entirely.
 """
 
 from __future__ import annotations
@@ -356,16 +345,11 @@ def test_the_difference_stops_naming_files_and_starts_counting() -> None:
 
 
 def test_a_crlf_template_agrees_with_its_own_bytes(tmp_path: Path) -> None:
-    """The digest the loader records is the digest of the file on disk.
-
-    Jinja opens templates in text mode, so universal newline translation turns
-    a CRLF file into LF before the loader sees the string. Digesting the
-    re-encoded string therefore disagreed with the binary digest of the same
-    file — for every CRLF template, which is every template a Teach writes on
-    Windows and every shipped template in a checkout with `core.autocrlf`. The
-    run rendered all its charts and then refused, saying the layout had changed
-    mid-batch, about a file nobody had touched.
-    """
+    """The digest the loader records is the digest of the file on
+    disk: Jinja opens templates in text mode, so universal newline
+    translation turns a CRLF file into LF before the loader sees the
+    string, which would otherwise disagree with the binary digest for
+    every CRLF template."""
     import hashlib
 
     import jinja2

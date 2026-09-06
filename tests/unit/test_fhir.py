@@ -174,13 +174,11 @@ def test_ingest_requires_a_patient() -> None:
 
 
 def test_round_trip_edge_cases_from_qa_review() -> None:
-    """Every shape the adversarial QA review proved lossy must round-trip.
-
-    Notably: real values that collide with FHIR required-field placeholders
-    ("Unknown" reactions/diagnoses/payers), None values that must NOT come
-    back as placeholders, sparse name/address slots, empty strings, and
-    record-level extensions.
-    """
+    """Every shape the adversarial QA review proved lossy must
+    round-trip: real values colliding with FHIR required-field
+    placeholders ("Unknown" reactions/diagnoses/payers), None values
+    that must NOT come back as placeholders, sparse name/address slots,
+    empty strings, and record-level extensions."""
     from datetime import date
 
     from anastomosis.core.model import (
@@ -256,25 +254,14 @@ def test_round_trip_edge_cases_from_qa_review() -> None:
 
 
 def test_the_records_own_runtime_id_does_not_reach_the_bundle(tmp_path: Path) -> None:
-    """A uuid4 minted at parse time is not part of a delivered artifact.
+    """Contract: `PatientRecord.id` (a uuid4 minted at parse time) must
+    not ride the delivered bundle. Two genuinely separate loads, since
+    a reused record would mint no second id and this would pass while
+    still carrying it.
 
-    `AnastBase.id` defaults to a fresh uuid4 and no adapter sets `PatientRecord.id`,
-    so it says nothing about the source; it is this run's bookkeeping. Carried in
-    the `__record__` extra it made two loads of one export differ in a file whose
-    writer's docstring calls byte-stability a contract, and which operators are
-    told to diff. The CCD side never carried it — which is exactly why
-    `test_ccda_export.py::test_two_ingests_of_one_export_build_identical_documents`
-    can exist there.
-
-    Two genuinely separate loads, because a reused record would mint no second
-    id and the test would pass while carrying it.
-
-    This does NOT yet make `bundle.json` byte-stable: every clinical object
-    (observations, conditions, allergies, medications, immunizations) still
-    takes an `AnastBase.id` uuid4 that becomes its FHIR resource id and
-    `fullUrl`. That is the same defect one layer down, measured at 16 resources
-    on this fixture, and it stays open on #405 rather than being claimed here.
-    """
+    Does NOT make `bundle.json` byte-stable: every clinical object
+    still takes its own uuid4 as its FHIR resource id/`fullUrl` — the
+    same defect one layer down, open on #405."""
     from anastomosis.core.fhir import to_bundle
     from anastomosis.sources import get_source
 
@@ -332,14 +319,10 @@ def test_non_json_serializable_extension_value_survives_export() -> None:
 
 
 def test_a_document_with_no_id_is_refused_by_name(records: list[PatientRecord]) -> None:
-    """The shape a real Practice Fusion export hit: document rows with no id.
-
-    The mapper built `DocumentArtifact`s that were empty shells, `_prune` tidied
-    the empty `id` away, and `to_bundle` then indexed `r["id"]` inside a
-    comprehension — so an unhandled `KeyError` surfaced three frames up, after
-    fourteen charts were already written and the output lock taken. The data
-    problem was real; the way it arrived was not usable by anyone.
-    """
+    """A `DocumentArtifact` with no id must be refused by name, not
+    surfaced as an unhandled `KeyError` from `to_bundle`'s own
+    comprehension — after other charts have already been written and
+    the output lock taken."""
     record = records[0].model_copy(deep=True)
     record.documents.append(
         DocumentArtifact(id="", patient_id=record.patient.id, mime_type="application/octet-stream")
@@ -478,13 +461,11 @@ def test_a_delivered_attachment_resolves_with_a_relative_forward_slash_url() -> 
 
 
 def test_a_named_document_the_delivery_did_not_carry_says_so_plainly() -> None:
-    """A ``DocumentArtifact`` whose ``path`` is set but has no entry in
-    ``attachments`` is one the deliverer tried to carry and could not — the
-    Attachment says so with FHIR's own data-absent-reason extension rather
-    than shipping url/size/hash all silently ``None``, the shape #382 found:
-    a DocumentReference asserting a document exists with nothing to find it
-    with, indistinguishable from "nobody checked".
-    """
+    """A ``DocumentArtifact`` with a ``path`` but no ``attachments``
+    entry is one the deliverer tried to carry and could not: the
+    Attachment says so with FHIR's data-absent-reason extension rather
+    than shipping url/size/hash all silently ``None`` (#382), which
+    would be indistinguishable from "nobody checked"."""
     pid = "feedface-0000-4000-8000-000000000382"
     doc_id = "feedface-doc0-0000-0000-000000000001"
     record = PatientRecord(
@@ -533,14 +514,8 @@ def test_a_document_with_no_path_makes_no_claim_even_with_attachments_given() ->
 
 
 def test_a_bundle_is_byte_identical_across_two_independent_loads(tmp_path: Path) -> None:
-    """The contract `to_bundle`'s docstring states, and the reason #405 was filed.
-
-    Every clinical object used to take `AnastBase.id`'s uuid4 default, which no
-    adapter set, so two loads of one document wrote two different bundles and an
-    operator told to diff for drift had nothing stable to diff. A fact's id is
-    now the `<id>` its source stated, or its position where the source stated
-    none — the same rule patients and encounters already follow (#412).
-    """
+    # #405, #412: a fact's id is the `<id>` its source stated, or its
+    # position where the source stated none.
     source = Path(__file__).parent.parent / "fixtures" / "ccda"
     documents = sorted(source.glob("*.xml"))
     assert documents, "the C-CDA fixture corpus is the input this pins"

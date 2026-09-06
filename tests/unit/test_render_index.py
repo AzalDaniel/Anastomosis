@@ -152,13 +152,11 @@ def test_render_index_write_is_atomic_and_deterministic(tmp_path: Path) -> None:
 
 
 def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -> None:
-    """The explicit filename-attribution negative: two patients with the SAME
-    display name, one prefix-matching PDF on disk, and NO sidecar — neither the
-    archive nor the bundle deliverer may attach the PDF to either patient.
-    The archive routes it to ``unattributed/``; the bundle delivers both
-    patients with zero PDFs. Filename-prefix guessing must never resurface
-    as a fallback path.
-    """
+    """Two patients with the SAME display name, one prefix-matching PDF on
+    disk, and NO sidecar — neither the archive nor the bundle deliverer may
+    attach the PDF to either patient. The archive routes it to
+    ``unattributed/``; the bundle delivers both patients with zero PDFs
+    (rule 11)."""
     from datetime import date
 
     from anastomosis.core.model import Patient, PatientRecord
@@ -242,11 +240,10 @@ def test_engine_writes_render_index_at_end_of_run(tmp_path: Path) -> None:
 
 # --- one file, one encounter ------------------------------------------------
 #
-# The index is the sidecar that exists so a chart is never misattributed, so it
-# has to be injective. It used to merge a name clash last-wins, reasoning in a
-# comment that the engine's collision suffix made the case impossible. The
-# suffix did not (it was applied once, unchecked), and last-wins turned an
-# overwritten chart into a clean index and a run that reported success.
+# The index is the sidecar that exists so a chart is never misattributed,
+# so it has to be injective: a name clash must not merge last-wins, since
+# that would turn an overwritten chart into a clean index and a run that
+# reports success.
 
 
 def _one_pdf_two_encounters() -> list[RenderEntry]:

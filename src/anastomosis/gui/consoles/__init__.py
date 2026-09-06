@@ -1,26 +1,11 @@
 """The GUI's focused consoles: the controller's five operator surfaces.
 
-Each surface is a small class the controller constructs once and delegates
-to, so the controller itself stays a thin facade. The async-job choreography
-lives separately in :mod:`anastomosis.gui.jobs`; this package holds the
-surfaces:
-
-* :class:`~anastomosis.gui.consoles.upload.UploadConsole` — browser-delivery
-  driving + read-only ledger views;
-* :class:`~anastomosis.gui.consoles.packgen.PackgenConsole` — the
-  pack-from-samples wizard backend;
-* :class:`~anastomosis.gui.consoles.source.SourceConsole` — the learn-a-source
-  wizard backend;
-* :class:`~anastomosis.gui.consoles.runs.PipelineConsole` /
-  :class:`~anastomosis.gui.consoles.runs.MigrationConsole` — the two long run
-  flows, sharing a :class:`~anastomosis.gui.consoles.runs.SummaryStore` for the
-  per-run per-patient roll-up.
-
-Every console takes the controller's ``emit`` callable and the shared
-:class:`~anastomosis.gui.jobs.GuiJobRunner`, so async and sync entries contend
-on the SAME busy guard. No console imports the controller at module load (the
-upload worker resolves the ``_attach_destination`` monkeypatch seam late, from
-inside its worker body), so the package stays cycle-free.
+Each is a small class the controller constructs once and delegates to, so
+the controller stays a thin facade; async choreography lives in
+:mod:`anastomosis.gui.jobs`. No console imports
+:mod:`anastomosis.gui.controller` at module load — the upload console
+resolves its ``_attach_destination`` monkeypatch seam late, from inside the
+worker body, to stay import-cycle-free.
 """
 
 from __future__ import annotations

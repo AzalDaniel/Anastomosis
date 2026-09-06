@@ -1,16 +1,11 @@
 """Guard: no two test files anywhere under ``tests/`` share a basename.
 
 pytest imports a test module by its basename unless the directory is a
-package, so two files called ``test_migrate.py`` are one module name. Collect
-both in a single run and the second one stops the run with an import-file
-mismatch — not a failing test, a refusal to start, whose message is about
-module identity and sends the reader looking for a packaging problem.
-
-The default lanes never collect both directories at once, so the trap is
-only for someone who types ``pytest tests/`` themselves. That is the obvious
-command, and the answer it deserves is either a clean run or an honest
-"needs a browser", not an error about `__file__`.
-"""
+package, so two files called ``test_migrate.py`` are one module name:
+collecting both in a single run stops with an import-file mismatch — not
+a failing test, a refusal to start. The default lanes never collect both
+directories at once, so this guards ``pytest tests/`` itself, typed by
+someone who deserves a clean run, not an error about `__file__`."""
 
 from __future__ import annotations
 
@@ -33,12 +28,9 @@ def test_no_two_test_files_share_a_basename() -> None:
 
 
 def test_the_whole_tests_tree_is_collectable() -> None:
-    """And the guard above is the reason, checked from the other side.
-
-    A basename is the collision this repo actually hit; it is not the only way
-    to make ``pytest tests/`` refuse to start. Asking pytest itself keeps the
-    guard honest about its purpose rather than about its mechanism.
-    """
+    """A basename collision is not the only way to make ``pytest tests/``
+    refuse to start, so this asks pytest itself: honest about the
+    purpose (the tree collects) rather than the one mechanism above."""
     import subprocess
     import sys
 

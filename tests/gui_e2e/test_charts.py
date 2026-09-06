@@ -42,9 +42,8 @@ def test_charts_populates_its_pickers_and_sections(gui) -> None:
     assert "generic_soap" not in layouts
     assert "generic_soap" in app.notes("#charts-pack")
 
-    # And the name comes from the registration, not from re-casing the id. The
-    # export formats are where that matters: no re-casing of "ccda" produces
-    # "C-CDA", which is why the front end used to carry that one by hand (#164).
+    # And the name comes from the registration, not from re-casing the id: no
+    # re-casing of "ccda" produces "C-CDA" (#164).
     formats = app.choices("#charts-source")
     assert "C-CDA" in formats, formats
     assert "Practice Fusion / Tebra" in formats, formats
@@ -160,17 +159,14 @@ def test_error_event_banners_the_failure_and_releases_the_button(gui) -> None:
 
 
 def test_charts_ignores_another_flow_terminal_event(gui) -> None:
-    """The per-flow guard: a migration `done` must not end the Charts run.
-
-    Both views now live in one document, so the dispatcher — not a page
-    boundary — is what keeps them apart: the event goes to the ONE view that
-    registered that flow, and the other one carries on untouched.
-    """
+    """The per-flow guard: a migration `done` must not end the Charts
+    run. The dispatcher — not a page boundary, since both views live in
+    one document — routes the event only to the view that registered
+    that flow."""
     app = gui()
     page = app.page
     # Filled because a run has to actually start for this test to have a
-    # subject. It used to click straight through on a blank form — which
-    # worked only because the view submitted without checking its inputs.
+    # subject.
     page.fill("#charts-export-dir", "/synthetic/export")
     page.fill("#charts-out-dir", "/synthetic/out")
     page.click("#charts-run")
@@ -189,14 +185,9 @@ def test_charts_ignores_another_flow_terminal_event(gui) -> None:
 
 
 def test_a_skipped_double_check_is_never_painted_as_done(gui) -> None:
-    """A verification that did not run must not close with a tick.
-
-    The pipeline downgrades QA to a no-op when PyMuPDF is missing. The bridge
-    used to close every stage as "done" regardless, so a physician who switched
-    the double-check ON saw a green tick over a check that never read a single
-    chart, and a plain "Finished." — the app asserting something untrue about
-    the safety control they had asked for.
-    """
+    """A verification that did not run must not close with a tick: when
+    PyMuPDF is missing, the pipeline downgrades QA to a no-op, and the
+    bridge must not assert a check ran when it never read a chart."""
     app = gui()
     page = app.page
     page.fill("#charts-export-dir", "/synthetic/export")
@@ -220,13 +211,9 @@ def test_a_skipped_double_check_is_never_painted_as_done(gui) -> None:
 
 
 def test_qa_rail_explains_a_nonzero_not_carried_count(gui) -> None:
-    """The count qa_report.json always had now reads the same on the rail (#297).
-
-    ``not_carried`` rides the QA progress event's counts like every other QA
-    number — the bug was never the wiring, it was that the generic key-dump
-    rendered the bare key as "not carried 13", which said nothing about what
-    13 counted. The rail now says what the CLI says.
-    """
+    """``not_carried`` rides the QA progress event's counts like every
+    other QA number; the rail must say what the CLI says, not a bare
+    key-dump like "not carried 13" (#297)."""
     app = gui()
     page = app.page
     page.fill("#charts-export-dir", "/synthetic/export")
@@ -331,14 +318,8 @@ def test_selection_choices_survive_a_format_round_trip(gui) -> None:
 
 
 def test_section_choices_survive_a_layout_round_trip(gui) -> None:
-    """A section the physician turned off must not come back on its own.
-
-    The section matrix was rebuilt from each layout's defaults on every change
-    of the layout picker, with no memory of what had been chosen. Turning a
-    section off, looking at another layout and coming back silently reinstated
-    it — and the reinstated value was what the run was built from, so a chart
-    could carry a section that had been deliberately excluded.
-    """
+    """A section the physician turned off must not come back on its own,
+    even after switching to another layout and back."""
     app = gui()
     page = app.page
     packs = app.choices("#charts-pack")
@@ -378,14 +359,9 @@ def test_section_choices_survive_a_layout_round_trip(gui) -> None:
 
 
 def test_the_rail_shows_only_the_stages_this_run_will_perform(gui) -> None:
-    """A stage that will not run must not sit grey under "Finished.".
-
-    On the shipped defaults no deliverer is on, so the pipeline emits no
-    `deliver` events at all — yet the rail advertised "Saving results" and left
-    it grey forever while the charts had in fact been written. With the
-    double-check off, "Double-checking" joined it. Two permanent grey ticks
-    under a finished run read as "these did not happen".
-    """
+    """A stage that will not run must not sit grey under "Finished.": on
+    the shipped defaults no deliverer runs, so the rail must not
+    advertise "Saving results" (or "Double-checking" with it off)."""
     app = gui()
     page = app.page
     page.fill("#charts-export-dir", "/synthetic/export")
@@ -420,14 +396,9 @@ def test_the_rail_shows_only_the_stages_this_run_will_perform(gui) -> None:
 
 
 def test_a_run_that_stopped_does_not_leave_a_full_progress_bar(gui) -> None:
-    """A failure used to finish the bar, in the colour that means "going fine".
-
-    Three signals describe a run: the headline, the rail and the bar. The bar was
-    driven from a single `finishRun()` called on BOTH the finish and the failure
-    branch, so a run that died on stage two showed "Stopped." and a red cross on
-    the rail above a full brand-coloured bar. Now the bar measures stages settled
-    out of stages planned, so where it stops IS how far the run got.
-    """
+    """The bar measures stages settled out of stages planned, so where a
+    stopped run stops IS how far it got — never a full brand-coloured
+    bar reading as "going fine"."""
     app = gui()
     page = app.page
     page.fill("#charts-export-dir", "/synthetic/export")
@@ -462,13 +433,9 @@ def test_a_run_that_stopped_does_not_leave_a_full_progress_bar(gui) -> None:
 
 
 def test_a_finished_run_survives_a_click_the_controller_refuses(gui) -> None:
-    """One busy guard covers every view, so this click is live but rejected.
-
-    It used to wipe the rail counts and the whole patient table before asking,
-    restore nothing, and report the refusal as the bare word `Busy` under a
-    status line reading "Ready." — while the work it was refused for was still
-    running somewhere else.
-    """
+    """One busy guard covers every view: a click on a finished view must
+    stay live but be rejected without wiping its own rail counts or
+    patient table, and the refusal must not read as "Ready."."""
     app = gui()
     page = app.page
     page.fill("#charts-export-dir", "/synthetic/export")
@@ -509,13 +476,9 @@ def test_a_finished_run_survives_a_click_the_controller_refuses(gui) -> None:
 
 
 def test_a_blank_form_says_what_is_missing_instead_of_running(gui) -> None:
-    """Uploads checked its inputs; Charts did not.
-
-    Clicking "Rebuild charts" on a fresh page sent `run_pipeline_async("", "",
-    …)`, locked the button to "Rebuilding…", and said nothing about what was
-    missing — while also taking the process-wide busy guard, so the real run
-    started next was refused.
-    """
+    """A blank form must refuse with a reason, not silently call
+    `run_pipeline_async("", "", …)`, lock the button, and take the
+    process-wide busy guard for nothing."""
     app = gui()
     page = app.page
 

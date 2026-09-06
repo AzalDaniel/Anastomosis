@@ -1,21 +1,9 @@
 """Run reports for a browser upload run (M2 item 10): JSON file + console line.
 
-Two outputs, two audiences, one shared rule — no patient-derived value leaves
-the ledger through a report:
-
-* :func:`write_run_report` writes a deterministic JSON file inside the hardened
-  (``0o700``) output directory, from the ledger's counts-and-types accessors
-  alone. A report is the kind of artifact that gets emailed or synced, so it
-  never copies a ``file_path`` out of the ledger — those embed patient-derived
-  filenames.
-* :func:`summary_line` builds a single console-safe line of counts only, in a
-  fixed state order with zero-count states omitted. No item keys, no paths,
-  no patient values — it is printed to a terminal that may be shoulder-surfed
-  or logged.
-
-Determinism: the JSON is written with ``sort_keys=True`` and stable ordering
-throughout, so a re-write over the same ledger is byte-identical (golden-style
-testing relies on it).
+:func:`write_run_report` and :func:`summary_line` both draw only from the
+ledger's counts-and-types accessors — no ``file_path``, no item key, no
+patient value (3, 49) — and both are deterministic (``sort_keys=True``,
+stable ordering), so a re-write over the same ledger is byte-identical.
 """
 
 from __future__ import annotations
@@ -27,11 +15,8 @@ from pathlib import Path
 from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.output import secure_output_dir
 
-# Imported from .verify.types (a leaf module with no project imports) rather
-# than .verify.composite — the latter pulls .browser.errors, and via
-# .browser/__init__.py back to this file, creating a circular import
-# (verify.composite -> browser.errors -> browser/__init__ -> browser.reports
-# -> verify.composite) that only surfaces in a fresh interpreter.
+# From .verify.types (no project imports, 54), not .verify.composite, which
+# would circle back here via browser.errors -> browser/__init__.
 from anastomosis.deliver.verify.types import LevelCoverage
 
 from .states import UploadState
@@ -39,9 +24,8 @@ from .tracking import TrackingDB
 
 __all__ = ["summary_line", "write_run_report"]
 
-# Fixed display order for the console summary: non-terminal work states first,
-# then terminals ending at COMPLETED. Mirrors the declaration order in
-# :class:`UploadState` so the line reads predictably across runs.
+# Fixed display order: non-terminal states first, then terminals ending at
+# COMPLETED, mirroring UploadState's declaration order.
 _SUMMARY_ORDER: tuple[UploadState, ...] = (
     UploadState.PENDING,
     UploadState.RESOLVING_PATIENT,
@@ -64,9 +48,8 @@ _SUMMARY_ORDER: tuple[UploadState, ...] = (
 def summary_line(counts: Mapping[str, int]) -> str:
     """One console-safe line of per-state counts (``"completed=5 failed=1"``).
 
-    States appear in the fixed :data:`_SUMMARY_ORDER`; zero-count (and unknown)
-    states are omitted. Counts only — never an item key, a path, or any
-    patient-derived value.
+    Fixed :data:`_SUMMARY_ORDER`; zero-count and unknown states omitted;
+    counts only, never an item key, path or patient-derived value (3).
     """
     parts = [
         f"{state.value}={counts[state.value]}"
@@ -83,24 +66,10 @@ def write_run_report(
     *,
     verification_coverage: Mapping[str, LevelCoverage] | None = None,
 ) -> Path:
-    """Write ``run-report-{run_id}.json`` into the hardened ``out_dir``.
-
-    The report carries the run row (destination, timestamps, abort reason),
-    per-state counts, an attempts histogram, and an error-type histogram from
-    the transitions audit. Every value is a count, a type name, a timestamp,
-    or a run/destination identifier - :attr:`UploadItem.file_path` values are
-    deliberately NOT copied (they can embed a patient-derived filename, and the
-    report is a sharable artifact). Written deterministically (``sort_keys``)
-    so a re-write over the same ledger is byte-identical.
-
-    When ``verification_coverage`` is supplied (an opt-in from the upload
-    command, materialized via
-    :meth:`anastomosis.deliver.verify.LayeredVerifier.coverage_summary`)
-    it is embedded under ``"verification_coverage"`` as an L0..L6 table of
-    :class:`LevelCoverage` rows. The same PHI-safety contract applies - the
-    verifier only ever produces aggregate counts and dedup'd level-shaped
-    reason strings, never patient values, so the report states the L-levels
-    that actually ran instead of a blanket claim.
+    """Write ``run-report-{run_id}.json``: counts, type names, timestamps
+    and ids only, never :attr:`UploadItem.file_path` or a patient value
+    (3, 49). ``verification_coverage``, when given, embeds an L0-L6
+    :class:`LevelCoverage` table under that key.
     """
     out = secure_output_dir(out_dir)
     run = tracking.run_info(run_id)

@@ -1,42 +1,12 @@
 """The layered verifier: stack L0-L6 behind the engine's Verifier seam.
 
-:class:`LayeredVerifier` implements the engine's
-:class:`~anastomosis.deliver.browser.verify.Verifier` protocol without touching
-the engine — it is a pure plug-in. ``verify_pre`` runs L0-L4 in order;
-``verify_post`` runs L5-L6. The engine routes a ``verify_pre`` failure to
-``PRE_VERIFY_FAILED`` and a ``verify_post`` failure to ``POST_VERIFY_FAILED``,
-and a :class:`WrongPatientError` to the run-level abort — so this class maps
-its outcomes onto exactly those signals:
-
-* first failing pre-level  -> raise :class:`PermanentDeliveryError`;
-* first failing post-level -> raise :class:`PermanentDeliveryError`;
-* an L4 banner wrong-patient -> let :class:`WrongPatientError` propagate
-  (run-level abort, not one item's failure).
-
-The L2 DOB hard-fail is a *document*-level wrong-chart catch and returns a
-``fail`` :class:`LevelResult` (routed to ``PRE_VERIFY_FAILED``, one item) — not
-a run abort. Only L4, the live-banner readback, aborts the whole run, because
-only it proves the *destination's open chart* is the wrong patient.
-
-Every raised message carries only level + field NAMES — never a patient value
-(the engine logs ``exc_tag`` type names, but a defensive message must be safe
-on its own). All levels run even after a failure (so a report can show the
-whole table) *except* a wrong-patient, which aborts immediately for safety.
-
-Stateful read-back resolution (documented carefully because it is subtle):
-the engine's ``verify_post(item, receipt)`` does not carry the
-:class:`Patient` or the :class:`DestinationPatient`, but L5/L6 need the
-destination patient to read a document back. So ``verify_pre`` remembers the
-destination patient keyed by ``item_key`` and ``verify_post`` looks it up. It
-gets that identity from the engine, which threads the ``DestinationPatient`` it
-ALREADY resolved into ``verify_pre`` — the verifier does NOT re-resolve, because
-a second resolve on a create-capable destination could POST a duplicate patient
-(the destination's own docstring requires verification to be side-effect-free).
-Only a standalone caller that threads nothing falls back to the destination's
-resolver. In standalone mode (no destination) the map is empty and L5/L6 skip.
-The state lives on the *instance* and is per patient-item, not shared across
-workers: the parallel runner builds one verifier per worker via
-``verifier_factory``, so no two workers share this map.
+:class:`LayeredVerifier` implements
+:class:`~anastomosis.deliver.browser.verify.Verifier` as a pure plug-in.
+``verify_pre`` runs L0-L4, ``verify_post`` runs L5-L6; the first failing
+level raises :class:`PermanentDeliveryError`, but only L4's live banner
+readback raises :class:`WrongPatientError` (a run abort, not one item) —
+L2's DOB hard-fail is a document-level ``fail``, not an abort (48). Every
+raised message carries level + field names only, never a patient value (49).
 """
 
 from __future__ import annotations
@@ -87,22 +57,8 @@ logger = logging.getLogger(__name__)
 ALL_LEVELS: frozenset[str] = frozenset({"L0", "L1", "L2", "L3", "L4", "L5", "L6"})
 
 
-#: What a source document's bytes cannot support, and the PHI-safe reason each
-#: skip carries into the run report.
-#:
-#: A scan is not a chart this toolkit printed. L2 and L3 read a name, a DOB and
-#: the pack's declared header fields off page one; a scanned referral has no
-#: rendered text layer and no pack ever touched it, so running them means
-#: failing every source document for the absence of something that was never
-#: going to be there. Worse, they parse the file to do it — over a TIFF or an
-#: undeclared blob that parse RAISES, and an exception out of ``verify_pre`` is
-#: not one item failing, it is the run.
-#:
-#: What still runs is what still means something: L0 re-hashes the bytes against
-#: the manifest (for a source document that digest is the SOURCE's own, so L0 is
-#: a stronger statement here than anywhere else), L1 checks the page count of
-#: anything the source declared pageable, L4 still refuses the wrong open chart,
-#: and L6's byte-identity read-back still proves what landed.
+#: What a scan cannot support (L2/L3 need rendered text) and the
+#: PHI-safe reason recorded when each is skipped (46).
 _POLICY_SKIPS: dict[VerifyPolicy, dict[str, str]] = {
     VerifyPolicy.SOURCE_PAGED: {
         "L2": "source document: no rendered page text to match a name against",
@@ -118,11 +74,8 @@ _POLICY_SKIPS: dict[VerifyPolicy, dict[str, str]] = {
 
 
 def _skip_step(level: str, reason: str) -> Callable[[], LevelResult]:
-    """A step that records why this level cannot run over these bytes.
-
-    A recorded SKIP rather than a dropped step: ``coverage_summary`` reports it,
-    so the run report says which levels did not run and why instead of quietly
-    claiming a narrower ladder was the whole one.
+    """A step recording why this level cannot run — so the run report
+    names a real skip instead of a quietly narrower ladder.
     """
     return lambda: LevelResult(level, LevelStatus.SKIP, reason)
 
@@ -167,16 +120,14 @@ class LayeredVerifier:
         self._destination = destination
         self._expected_pages = dict(expected_pages) if expected_pages else {}
         self._levels = levels if levels is not None else ALL_LEVELS
-        # item_key -> what kind of file this item is. Empty (and every lookup
-        # defaulting to a rendered chart) for a pre-v4 manifest, whose items all
-        # were one.
+        # item_key -> what kind of file this item is; empty (defaulting to
+        # a rendered chart) for a pre-v4 manifest.
         self._policies = dict(verify_policies) if verify_policies else {}
         # item_key -> DestinationPatient, captured in verify_pre so verify_post
         # (which the engine calls without a patient) can resolve a read-back.
         self._resolved: dict[str, DestinationPatient] = {}
-        # item_key -> canonical Patient, captured in verify_pre for L6's
-        # identity re-assertion (the Verifier protocol's verify_post does not
-        # carry the patient).
+        # item_key -> canonical Patient, for L6's identity re-assertion
+        # (verify_post's protocol signature carries no patient).
         self._patients: dict[str, Patient] = {}
         # item_key -> the level table from the most recent verify of that item,
         # for reports. ``last_results`` is the most recent overall.
@@ -196,27 +147,17 @@ class LayeredVerifier:
     def verify_pre(
         self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None = None
     ) -> None:
-        """Run L0-L4; raise on the first failure (after collecting all results).
-
-        A :class:`WrongPatientError` from L4's live-banner readback propagates
-        immediately — patient safety aborts the whole run rather than running
-        the rest of the table. Any *failing* level (including L2's DOB hard-fail)
-        is recorded, the rest still run, then the first failure is raised as a
-        PRE_VERIFY error (one item to ``PRE_VERIFY_FAILED``).
-
-        ``dest_patient`` is the identity the ENGINE already resolved for this
-        item; when present it is reused verbatim for the L5/L6 read-back rather
-        than re-resolving (see :meth:`_capture_dest_patient`).
+        """Contract: runs L0-L4, recording every result; raises the first
+        FAIL as a PRE_VERIFY error (48), except L4's banner mismatch,
+        which propagates as :class:`WrongPatientError` (run abort).
+        ``dest_patient``, when given, is reused verbatim for L5/L6.
         """
         # Capture the destination patient once (feeds L5/L6 read-back later).
         self._capture_dest_patient(item, patient, dest_patient)
         encounter = self._records.get(item.encounter_id)
         policy = self._policies.get(item.item_key, VerifyPolicy.RENDERED_CHART)
-        # One parse of the local PDF for the whole pre phase: L1 wants the page
-        # count, L2 and L3 want page-1 text. Lazy, so L1's sub-KiB size floor
-        # still rejects a file without opening it, and a corrupt PDF still
-        # raises from the level that reads it. L0 deliberately does NOT take it —
-        # its job is an independent re-read of the bytes.
+        # One parse for the whole pre phase (L1 wants page count, L2/L3 want
+        # page-1 text); lazy, so L1's size floor need not open the file.
         snapshot = PdfSnapshot(item.file_path)
 
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
@@ -240,30 +181,24 @@ class LayeredVerifier:
             ("L4", lambda: self._l4.run(patient, banner=self._banner())),
         )
         steps = _for_policy(steps, policy)
-        # An L4 banner wrong-patient escapes the loop as a WrongPatientError —
-        # the engine's abort handler owns it; the partial table recorded so far
-        # stays on the instance for a report to inspect.
+        # An L4 wrong-patient escapes as WrongPatientError; the partial
+        # table recorded so far stays on the instance for a report.
         first_failure = self._run_steps(item.item_key, steps)
         if first_failure is not None:
             raise _PreVerifyError(f"{first_failure.level}: {first_failure.detail}")
 
     def verify_post(self, item: UploadItem, receipt: UploadReceipt) -> None:
-        """Run L5-L6; raise on the first failure (after collecting all results).
-
-        Uses the :class:`DestinationPatient` captured in :meth:`verify_pre` and
-        the receipt's ``destination_doc_id``. In standalone mode (no
-        destination, nothing captured) L5/L6 skip.
+        """Contract: runs L5-L6 using the :class:`DestinationPatient`
+        captured in :meth:`verify_pre`; raises the first FAIL as a
+        POST_VERIFY error (48). Skips in standalone mode (nothing captured).
         """
         dest_patient = self._resolved.get(item.item_key)
         doc_id = receipt.destination_doc_id
-        # The canonical patient captured in verify_pre: L6's reprocessed tier
-        # re-asserts IDENTITY against the read-back (a whole-page similarity
-        # ratio false-passes a swapped chart — see L6RoundTrip's docstring).
+        # L6's reprocessed tier re-asserts IDENTITY against the read-back
+        # (a whole-page similarity ratio alone false-passes a swapped chart).
         patient = self._patients.get(item.item_key)
-        # A FRESH snapshot for the post phase, not the one verify_pre used: L5/L6
-        # run after bytes were sent, and their claim is about the local file as
-        # it is NOW. Within the phase they share it (L5 and L6 both want the
-        # local page count), so the file is parsed once here instead of twice.
+        # A FRESH snapshot: L5/L6 claim about the local file as it is NOW,
+        # after bytes were sent, not the pre-phase's.
         snapshot = PdfSnapshot(item.file_path)
 
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
@@ -297,25 +232,9 @@ class LayeredVerifier:
         return list(self._results.get(item_key, []))
 
     def coverage_summary(self) -> dict[str, LevelCoverage]:
-        """Aggregate verification coverage across every item that ran.
-
-        Returns one :class:`LevelCoverage` row per level (L0..L6) the
-        verifier ran: per-status counts plus a sorted, deduplicated list of
-        the level-shaped skip-reason strings. Counts and reason strings
-        only — no item keys, no paths, no patient-derived values — so the
-        result is safe to embed in the upload run report (the same PHI-
-        safety contract :func:`write_run_report` documents).
-
-        Skip reasons are deduplicated across items: a fleet of items that
-        all skip L3 with ``"no pack provided"`` aggregates to a single
-        reason string. The detail strings are level-shape descriptions
-        (``"no pack provided"``, ``"no banner (standalone mode)"``,
-        ``"destination has no MetadataReader"``); none of them embed
-        per-item identifiers (verified by the LevelResult docstring).
-
-        Used by :func:`upload_command.run_upload_command` to surface the
-        *actual* L-coverage of a run, rather than a blanket claim that
-        does not match what ran.
+        """One :class:`LevelCoverage` row per level that ran: per-status
+        counts plus deduplicated skip reasons, counts and reason strings
+        only (49) — the actual L-coverage for the upload run report.
         """
         passes: dict[str, int] = {}
         fails: dict[str, int] = {}
@@ -351,13 +270,9 @@ class LayeredVerifier:
         *,
         append: bool = False,
     ) -> LevelResult | None:
-        """Run the in-scope steps, recording every result; return first failure.
-
-        Every step runs even after a failure (so the recorded table is
-        complete). A step that *raises* (L4's :class:`WrongPatientError`)
-        records the results gathered so far before the exception escapes — the
-        partial table stays inspectable — then the exception propagates to the
-        engine's abort handler.
+        """Run every in-scope step, recording all results; return the
+        first FAIL. A raising step (L4's :class:`WrongPatientError`)
+        still records results gathered so far before it propagates.
         """
         results: list[LevelResult] = []
         first_failure: LevelResult | None = None
@@ -376,21 +291,10 @@ class LayeredVerifier:
     def _capture_dest_patient(
         self, item: UploadItem, patient: Patient, dest_patient: DestinationPatient | None
     ) -> None:
-        """Remember the destination patient (for post read-back) side-effect-free.
-
-        Verification MUST NOT mutate the state it verifies. The engine already
-        resolved this item's destination patient (that resolve is the one place
-        a create-missing-patients destination legitimately POSTs a Patient), so
-        when it threads that ``dest_patient`` in, it is remembered verbatim — no
-        second resolve, and therefore no risk of a create-capable re-resolve
-        POSTing a DUPLICATE Patient when the server's search index lags the
-        create.
-
-        Only when no ``dest_patient`` is threaded (a standalone caller that ran
-        no prior resolve) does this fall back to the destination's own resolver,
-        so direct/standalone use of the verifier is unchanged. The canonical
-        patient is remembered unconditionally — L6's identity re-assertion needs
-        it even when destination resolution is unavailable.
+        """Contract: remembers ``dest_patient`` verbatim (no re-resolve, so
+        a create-capable destination cannot POST a duplicate) for
+        verify_post's read-back; falls back to the destination's own
+        resolver only in standalone mode. Never mutates state (49).
         """
         self._patients[item.item_key] = patient
         if dest_patient is not None:

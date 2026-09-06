@@ -191,11 +191,11 @@ def test_a_ccda_load_settles_its_ledger_and_reading(tmp_path: Path) -> None:
 
 
 def test_a_skipped_file_reaches_the_reading_and_the_ledger(tmp_path: Path) -> None:
-    """#384: a document the adapter's own sniff recognises as a CDA but whose
-    extension it does not read (``.txt`` here) is never opened, but the LOSS
-    must not be silent the way ``.ccd`` itself used to be. The count rides the
-    same settlement as every other construct — into ``loss_ledger.json`` and
-    the physician reading — never a channel of its own."""
+    """#384: a document the adapter's own sniff recognises as a CDA but
+    whose extension it does not read (``.txt`` here) is never opened, but
+    the loss must not be silent: the count rides the same settlement as
+    every other construct, into ``loss_ledger.json`` and the physician
+    reading, never a channel of its own."""
     import json
     import shutil
 
@@ -224,13 +224,10 @@ def test_a_skipped_file_reaches_the_reading_and_the_ledger(tmp_path: Path) -> No
 def test_an_export_of_only_wrongly_named_cda_documents_names_the_count(
     tmp_path: Path,
 ) -> None:
-    """#384 round two, finding 2: ``load_records`` raises ``empty_export``
-    before ``settle_source_ledger`` ever runs, so an export holding NOTHING
-    but wrongly-extensioned CDA documents used to report the count nowhere
-    and tell the operator "is this a ccda export?" — wrong in the one case
-    that matters, since the adapter's own sniff recognised them. The refusal
-    now carries the count and the three extensions instead, in the reading's
-    own wording, and names no filename."""
+    """#384: ``load_records`` raises ``empty_export`` before the ledger
+    settles, so an export holding NOTHING but wrongly-extensioned CDA
+    documents must still carry the count and the three extensions in the
+    refusal, in the reading's own wording, naming no filename."""
     import shutil
 
     from anastomosis.sources import get_source

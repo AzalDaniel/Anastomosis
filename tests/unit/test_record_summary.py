@@ -1,24 +1,12 @@
 """The bundle carries the whole record, and QA grades it.
 
-Every layout selects by encounter, so a fact the record holds that no encounter
-claims — a laboratory result that arrived with no visit attached, a standing
-list a SOAP note has no section for — reached no page at all, and the run came
-back clean because each check found nothing of its kind to object to. That is
-issue #239: a suite that cannot tell "this patient has no vitals" from "this
-chart lost the vitals".
-
-So a pack-mode run also writes one whole-patient record summary per patient
-(``record-summary/``), and QA grades those documents in the SAME report as the
-charts, with every chartable kind declared carried. The two batches together are
-what makes the run unable to pass while a fact family reached nothing:
-
-* the charts are graded against the pack's own carries/omits — a visit note is
-  allowed to have no problem list;
-* the summary is graded as the record — a kind the record holds and this page
-  does not show is a FAIL.
-
-Synthetic by construction: the ``pf_tebra_v9`` fixture and hand-built
-``feedface-`` records with invented lab names.
+Every layout selects by encounter, so a fact reaching no encounter (a lab
+with no visit attached, a standing list a SOAP note has no section for)
+must not pass clean just because no check found its kind to object to
+(#239): the suite must tell "no vitals" apart from "lost the vitals". A
+pack-mode run also writes a whole-patient record summary per patient
+(``record-summary/``), graded in the SAME report as the charts — a kind
+the record holds and the summary omits is a FAIL.
 """
 
 from __future__ import annotations
@@ -278,14 +266,9 @@ def test_a_summary_that_carries_both_labs_passes_coverage() -> None:
 
 
 def test_carrying_only_the_attributed_lab_is_not_enough_to_hide_the_other() -> None:
-    """The some/none boundary is per KIND, so a page carrying one of the two
-    results passes coverage — which is why the unattributed one needs the
-    summary to exist at all, not a sharper coverage rule.
-
-    Pinned so the boundary is a decision rather than an accident: coverage
-    answers "did this family reach the page", and issue #239's answer for a
-    lab with no encounter is that the whole-patient page is where it lands.
-    """
+    """The some/none boundary is per KIND, not per result: a page carrying
+    one of two results passes coverage, so an unattributed lab (#239) needs
+    the summary to exist at all, not a sharper coverage rule."""
     pytest.importorskip("pymupdf", reason="QA reads the PDF back")
     import tempfile
 
@@ -297,12 +280,10 @@ def test_carrying_only_the_attributed_lab_is_not_enough_to_hide_the_other() -> N
 
 
 def test_the_summary_batch_declares_every_chartable_kind_carried() -> None:
-    """The declaration is what turns an absence into a FAIL instead of a WARN,
-    and a kind missing from it is invisible in the verdicts — ``record_coverage``
-    keys on "was coverage declared at all" plus the ``omits`` excuses, so a kind
-    quietly dropped from the set still fails today and stops failing the moment
-    anyone excuses it. The set is the promise; pin the set.
-    """
+    """The declaration turns an absence into a FAIL instead of a WARN; a
+    kind missing from it is invisible in the verdicts, since
+    ``record_coverage`` keys on "was coverage declared" plus ``omits``
+    excuses. The set is the promise; pin the set."""
     from anastomosis.core.model import CHARTABLE_KINDS
     from anastomosis.qa.wholepatient import WHOLE_PATIENT_CARRIES, whole_patient_batch
 

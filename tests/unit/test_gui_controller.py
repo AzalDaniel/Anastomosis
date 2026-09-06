@@ -128,13 +128,8 @@ def test_detect_unknown_dir_is_none(tmp_path: Path) -> None:
 
 
 def test_detect_a_file_path_never_raises(tmp_path: Path) -> None:
-    """#384 round two, finding 1: the ccda adapter's ``detect`` used to raise
-    ``NotADirectoryError`` on a file path (typed into the wizard's input, or
-    handed by ``anast pipeline run --source`` auto-detect), which escaped
-    ``detect_source``'s loop uncaught and turned the GUI's clean "no match"
-    result into a red banner (``{'ok': False, 'error': 'NotADirectoryError'}``
-    — driven and confirmed on the pre-fix code). A file path is simply not a
-    match, the same as any other unrecognised path."""
+    """#384: a file path is simply not a match, the same as any other
+    unrecognised path — never a raised ``NotADirectoryError``."""
     a_file = tmp_path / "export.ccd"
     a_file.write_text("not a directory\n", encoding="utf-8")
     controller = GuiController(_RecordingSink())
@@ -142,8 +137,7 @@ def test_detect_a_file_path_never_raises(tmp_path: Path) -> None:
 
 
 def test_detect_a_missing_path_never_raises(tmp_path: Path) -> None:
-    """Same seam, the other raise the pre-fix adapter let through
-    (``FileNotFoundError``)."""
+    """Same seam, the other raise (``FileNotFoundError``)."""
     controller = GuiController(_RecordingSink())
     assert controller.detect(str(tmp_path / "does-not-exist")) == {"ok": True, "source": None}
 
@@ -230,9 +224,7 @@ def test_the_gui_run_reports_the_same_qa_verdict_as_the_cli(
 ) -> None:
     """#383, driven through the GUI rather than read off the delegation chain:
     an export with zero encounters (two C-CDA Unstructured Documents for one
-    patient) still yields a verified bundle. FAILS on main — the roll-up
-    carries no `pass`/`warn`/`fail` key, the manifest gate reads `not_run`,
-    and `assert_deliverable` refuses."""
+    patient) still yields a verified bundle."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     export = tmp_path / "export"
@@ -395,8 +387,7 @@ def test_sections_flag_reaches_engine(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_force_and_pack_dirs_reach_the_pipeline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """force and pack_dirs are no longer hard-coded off — the GUI threads them
-    into the same command the CLI builds (review parity gap #1)."""
+    """force and pack_dirs thread through to the same command the CLI builds."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     import anastomosis.reconstruct.packtrust as packtrust
@@ -431,12 +422,9 @@ def test_force_and_pack_dirs_reach_the_pipeline(
 
 
 def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The async race fix: the busy flag is acquired SYNCHRONOUSLY, so of two
-    CONCURRENT starts exactly one wins — never two ``started``.
-
-    The two calls must contend (a barrier releases them together); a sequential
-    pair would pass even against the old TOCTOU bug, so it would not pin the fix.
-    """
+    """The busy flag is acquired SYNCHRONOUSLY: of two CONCURRENT starts
+    exactly one wins, never two ``started``. A barrier makes the two calls
+    truly contend — a sequential pair would not exercise this."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _SlowFakeChromium)
     sink = _RecordingSink()
@@ -472,13 +460,10 @@ def test_async_busy_rejects_a_second_start(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_gui_rejects_second_long_running_job_while_busy(tmp_path: Path) -> None:
-    """The deterministic busy test: while one long-running
-    job holds the guard (its worker parked on an event we control), EVERY
-    other long-running entry point is rejected with exactly
+    """While one long-running job holds the guard (parked on a controlled
+    event), every OTHER long-running entry point is rejected with exactly
     ``{"ok": False, "error": "Busy"}`` — across job kinds, not just a second
-    click of the same button. No sleeps, no races: the worker cannot finish
-    until the test releases it.
-    """
+    click of the same button."""
     sink = _RecordingSink()
     controller = GuiController(sink)
 
@@ -889,10 +874,8 @@ def test_destination_status_pack_readiness_both_states(
 ) -> None:
     """A destination with a viable browser pack reports ready vs needs-discovery.
 
-    The registry ships no browser-pack destination yet, so we drive the
-    readiness helper directly against a crafted loaded-pack double through a
-    monkeypatched loader — exercising both `ready` states.
-    """
+    The registry ships no browser-pack destination yet, so this drives the
+    readiness helper against a crafted loaded-pack double instead."""
     from types import SimpleNamespace
 
     import anastomosis.destinations.loader as loader_mod
@@ -968,10 +951,8 @@ def test_pack_freshness_fresh_when_selectors_recent(
 ) -> None:
     """A registry whose evidence is recent yields no stale entries.
 
-    We craft a registry with an evidence date of *today* so the gap is 0; the
-    selectors file's own mtime is irrelevant to staleness (the gap is measured
-    against the evidence date), so nothing should flag.
-    """
+    The gap is measured against the evidence date, not the selectors file's
+    own mtime; an evidence date of *today* makes the gap 0 regardless."""
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -1101,12 +1082,8 @@ def test_upload_item_keys_lists_keys_never_names(tmp_path: Path) -> None:
 
 
 def test_upload_item_keys_reports_what_it_left_out(tmp_path: Path) -> None:
-    """A capped list presented as the whole is how an id looks missing.
-
-    ``limit`` caps what comes back; ``total`` is what the ledger holds. Without
-    the second number the view could not tell a visit id that is absent from one
-    that is merely past the cut, and it said nothing either way.
-    """
+    """``limit`` caps what comes back; ``total`` is what the ledger holds —
+    the pair distinguishes an id truly absent from one merely past the cut."""
     from anastomosis.deliver.browser.states import UploadState
     from anastomosis.deliver.browser.tracking import TrackingDB
     from anastomosis.destinations.base import UploadItem
@@ -1376,9 +1353,9 @@ def test_new_methods_return_json_safe_dicts(tmp_path: Path) -> None:
 
 
 def test_broken_sink_never_raises_and_releases_busy(tmp_path: Path) -> None:
-    """Regression: the never-raise contract holds even when the sink itself
-    fails (a closed window's evaluate_js) — the run completes or fails
-    cleanly, nothing propagates, and the busy guard is released."""
+    """The never-raise contract holds even when the sink itself fails (a
+    closed window's evaluate_js) — the run completes or fails cleanly,
+    nothing propagates, and the busy guard is released."""
 
     class _BrokenSink:
         def emit(self, event: dict[str, object]) -> None:
@@ -1622,10 +1599,9 @@ def _upload_pack_dir(tmp_path: Path) -> Path:
 def _write_upload_manifest(tmp_path: Path, n: int = 3) -> Path:
     """Write a manifest of ``n`` charts into out_dir; return out_dir.
 
-    The chart PDFs land INTO out_dir (where a real render puts them) because the
-    manifest stores basenames re-absolutized against the manifest root, so the
-    engine's preflight (existence + re-hash) resolves them there.
-    """
+    The manifest stores basenames re-absolutized against the manifest root,
+    so the charts must land INTO out_dir for the engine's preflight
+    (existence + re-hash) to resolve them there."""
     import datetime
 
     from anastomosis.core.model import Patient, PatientRecord
@@ -1669,12 +1645,10 @@ def _ledger_counts(out_dir: Path) -> dict[str, int]:
 
 
 #: The longest a legitimate upload run over ``_write_upload_manifest``'s three
-#: charts can take, from the engine's own retry budget: each item may fail
-#: ``DEFAULT_MAX_ATTEMPTS - 1`` times, sleeping ``backoff_base_s * 2**(n-1)``
-#: before each retry with the REAL ``time.sleep`` (the engine's ``sleeper`` seam
-#: is not threaded through ``run_upload_command``). Three items x (2s + 4s) is
-#: eighteen seconds — which is why the flat ten-second deadline this replaced
-#: could fail a run that was behaving perfectly (#117).
+#: charts can take: each item may fail ``DEFAULT_MAX_ATTEMPTS - 1`` times,
+#: sleeping ``backoff_base_s * 2**(n-1)`` with the REAL ``time.sleep`` (the
+#: engine's ``sleeper`` seam is not threaded through ``run_upload_command``).
+#: A flat deadline shorter than this fails a perfectly behaving run (#117).
 _UPLOAD_WORST_CASE_S = 3 * 2.0 * (2 ** (DEFAULT_MAX_ATTEMPTS - 1) - 1)
 
 
@@ -1684,17 +1658,10 @@ def _wait_for_terminal_upload(
     *,
     deadline_s: float = _UPLOAD_WORST_CASE_S + 10.0,
 ) -> dict[str, object]:
-    """Wait for the upload worker to FINISH, then read its terminal event.
-
-    Joining the worker rather than polling the event list is what separates the
-    two answers #117 needed telling apart. A poll that times out cannot say
-    whether the run was still going or had already ended saying nothing; once
-    the worker's ``finally`` has run, the answer is final and no amount of
-    further waiting changes it.
-
-    A terminal event is a ``stage`` event with ``stage==upload`` and
-    ``state==done``, or an ``error`` event with ``stage==upload``.
-    """
+    """Wait for the upload worker to FINISH, then read its terminal event —
+    joining is the only way to tell "still going" from "already ended saying
+    nothing" (#117). Terminal: a ``stage`` event with ``stage==upload`` and
+    ``state==done``, or an ``error`` event with ``stage==upload``."""
 
     def _terminal(e: dict[str, object]) -> bool:
         if e.get("type") == "stage" and e.get("stage") == "upload" and e.get("state") == "done":
@@ -1757,11 +1724,11 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
 def test_upload_start_failed_items_emit_error_not_done(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Bug A fix: a run that FINISHES with items in a non-clean TERMINAL
-    state (here every item fails permanently, with NO abort) must emit a terminal
-    `error` event — never the `done` that JS renders as "upload complete". The
-    message names the offending state(s) with counts and carries no patient
-    value."""
+    """A run that FINISHES with items in a non-clean TERMINAL state (here
+    every item fails permanently, with NO abort) must emit a terminal
+    `error` event — never the `done` that JS renders as "upload complete".
+    The message names the offending state(s) with counts and carries no
+    patient value."""
     from anastomosis.core.upload_command import resolve_manifest_root
     from anastomosis.deliver.browser.fake import FakeDestination
     from anastomosis.deliver.browser.persist import read_upload_manifest
@@ -1787,7 +1754,6 @@ def test_upload_start_failed_items_emit_error_not_done(
     assert started == {"ok": True, "started": True}
 
     terminal = _wait_for_terminal_upload(controller, sink)
-    # The bug was a stage `done`; the fix is an `error` carrying the state summary.
     assert terminal["type"] == "error", f"expected an error, got {terminal!r}"
     assert terminal["stage"] == "upload"
     msg = str(terminal["error"])
@@ -1811,17 +1777,9 @@ def test_upload_start_failed_items_emit_error_not_done(
 
 
 def test_the_upload_wait_outlasts_the_engines_own_retry_budget() -> None:
-    """The deadline has to be derived from the code, not guessed at.
-
-    #117's second half: the helper waited ten seconds, and three charts each
-    retrying twice sleeps eighteen — with the REAL ``time.sleep``, because
-    ``UploadEngine``'s ``sleeper`` seam is not threaded through
-    ``run_upload_command``. The test was asserting something the code had never
-    promised, and Windows was simply slow enough to collect.
-
-    Reading both constants back means a future bump to the retry budget fails
-    here, where it is one line, rather than as an intermittent red build.
-    """
+    """The deadline is derived from ``UploadEngine``'s own backoff/attempts
+    constants, not guessed at (#117) — a future bump to the retry budget
+    fails here, in one line, rather than as an intermittent red build."""
     import inspect
 
     from anastomosis.deliver.browser.engine import UploadEngine
@@ -1838,18 +1796,11 @@ def test_the_upload_wait_outlasts_the_engines_own_retry_budget() -> None:
 def test_a_dying_upload_says_so_before_it_dies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#117, reproduced: a run that emitted `start` and then nothing at all.
+    """#117: a run must not emit `start` and then nothing at all.
 
-    ``FakeCrash`` is a BaseException by design — the engine models process death
-    as something its "unknown exception, retry" handler cannot swallow. That is
-    right for the engine, and it sailed through the worker's ``except
-    Exception`` AND the job runner's safety net, so the ledger was left
-    mid-flight and the GUI showed a filing run that had started and would never
-    finish. The busy guard released, so nothing looked broken; the operator was
-    simply never told.
-
-    The event carries the exception TYPE name, like every other failure here.
-    """
+    ``FakeCrash`` is a BaseException, passing through the worker's ``except
+    Exception`` and the job runner's safety net untouched — the terminal
+    event still has to fire, carrying the exception TYPE name."""
     from anastomosis.deliver.browser.fake import FakeDestination
 
     out_dir = _write_upload_manifest(tmp_path)
@@ -1963,10 +1914,8 @@ def test_upload_stop_without_run() -> None:
 def test_upload_start_busy_guard(tmp_path: Path) -> None:
     """A start while the busy flag is held is rejected Busy (deterministic).
 
-    Acquire the busy flag directly, then assert upload_start returns Busy. The
-    pre-flight is clean (real manifest + ready pack) so the only block is Busy;
-    release after.
-    """
+    The pre-flight is clean (real manifest + ready pack), so the busy flag,
+    acquired directly, is the only thing that can block it."""
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     controller = GuiController(_RecordingSink())
@@ -2109,11 +2058,8 @@ def test_async_spawn_failure_is_clean_error_and_releases_busy(
 def _capture_upload_command(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Patch the shared run_upload_command to capture the UploadCommand it gets.
 
-    The controller's worker imports run_upload_command lazily FROM
-    anastomosis.core.upload_command, so the patch lives on that module (the
-    source). The worker runs on a daemon thread, so the caller waits for a
-    terminal event before reading the capture.
-    """
+    The controller's worker imports it lazily FROM ``anastomosis.core.upload_
+    command``, so the patch lives on that module, not the controller's."""
     import anastomosis.core.upload_command as upload_command
     from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
 
@@ -2288,25 +2234,11 @@ def test_run_pipeline_threads_write_manifest(
 def test_every_pipeline_option_survives_the_async_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The async entry is the one the GUI actually calls, and it was untested.
+    """The async entry is the one a button press actually calls.
 
-    ``run_pipeline`` and ``run_pipeline_async`` each re-list the same thirteen
-    parameters and each forward all thirteen to the same locked body. Four of
-    them — force, pack_dirs, trust_new, write_manifest — had defaults on that
-    body, so DROPPING one from a forwarding call was legal Python and passed
-    mypy: the option would quietly revert to the default. The tests covered the
-    synchronous entry only, so on the path a button press takes, all four could
-    have stopped working and the run would still report success.
-
-    Measured by deleting each forwarded keyword in turn and running mypy and
-    the suite: 4 of 46 went unnoticed, all four on the async entry, all four on
-    the pipeline flow (the migration body has no defaults, so mypy caught
-    every one of its drops on both entries).
-
-    The body's four parameters are required now, which makes a drop a type
-    error. This test is the other half: it holds that the VALUES arrive, which
-    no signature can promise.
-    """
+    Both entries forward the same parameters to one locked body that
+    requires them (a drop is a type error) — only this test proves the
+    VALUES arrive through the async entry too."""
     import anastomosis.core.commands as commands
     from anastomosis.pipeline import PipelineError
 
@@ -2408,9 +2340,9 @@ def test_pipeline_and_migration_flows_are_distinct_so_a_page_guard_filters(
 ) -> None:
     """Per-flow scoping: a dashboard pipeline `done` and a wizard migration
     `done` carry DISTINCT flows, so the wizard's flow guard (``flow ===
-    "migration"``) early-returns on a pipeline done — it can no longer announce
-    "migration prepared" for a pipeline run — and the dashboard guard likewise
-    filters a migration done."""
+    "migration"``) early-returns on a pipeline done — never announcing
+    "migration prepared" for a pipeline run — and the dashboard guard
+    likewise filters a migration done."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
 
@@ -2526,9 +2458,8 @@ def test_a_downgraded_stage_reaches_the_page_as_skipped_not_done() -> None:
     """The bridge must not close a stage that never ran as "done".
 
     The pipeline downgrades QA to a no-op when PyMuPDF is missing and says so
-    on the StageEvent. The bridge forwarded only ``counts``, so the page saw
-    start → done and painted a verification tick over a check that read nothing.
-    """
+    on the StageEvent; the bridge must forward that skip, not just counts, or
+    the page paints a verification tick over a check that read nothing."""
     from anastomosis.gui.consoles.runs import PipelineConsole, SummaryStore
     from anastomosis.pipeline import STAGE_QA, StageEvent
 

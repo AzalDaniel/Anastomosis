@@ -1,20 +1,12 @@
-"""The reader and the writer share their vocabulary; they do not copy it.
+"""The reader and the writer share their vocabulary; they do not copy
+it. `sources/ccda/parser.py` and `deliver/ccda_export/builder.py` are
+two halves of one round trip, and the builder must emit exactly what
+the parser traverses — a value that must agree across a boundary
+should not be a hand-mirrored comment a reader keeps current.
 
-`sources/ccda/parser.py` and `deliver/ccda_export/builder.py` are the two halves
-of one round trip, and the builder's contract is to emit exactly what the parser
-traverses. Twenty-one constants carried that obligation and were mirrored by
-hand, with a comment on each side telling the reader so.
-
-The comment was wrong in two ways at once. It said "these four must mirror
-sources/ccda/parser.py exactly" over a block of FIVE, one of which the parser
-has never had — and sixteen more constants mirrored silently a few lines above
-with nothing saying they had to. A value that must agree across a boundary
-should not be a promise a reader keeps.
-
-This is what stops the copies coming back. It reads syntax, not behaviour,
-because a drifted section code does not crash: the parser simply stops
-recognising that section and captures it as foreign narrative instead. The
-round trip goes quietly lossy, and every test still passes.
+This reads syntax, not behaviour, because a drifted section code does
+not crash: the parser simply stops recognising it and captures it as
+foreign narrative instead, quietly lossy, every test still passing.
 """
 
 from __future__ import annotations
@@ -106,18 +98,11 @@ def _string_literals(path: Path) -> set[str]:
 
 
 def test_no_oid_is_shared_between_the_halves_as_a_bare_literal() -> None:
-    """The named-constant check has a blind spot: a value spelled out inline.
-
-    `TPL_SEVERITY` sat in it. The builder stamped the allergy Severity
-    Observation from a named constant; the parser matched the same OID as a
-    string typed into an `elif`. Both tests above compare `NAME = literal`
-    assignments, so neither could see the reader's side at all — and the drift
-    it protects against is silent by nature. A severity code that stopped
-    matching would not raise: severity would simply stop coming back, and every
-    test would still pass.
-
-    An OID in both halves is a shared value whether or not it has a name.
-    """
+    """The named-constant check has a blind spot: a value spelled out
+    inline in both halves is a shared value whether or not it has a
+    name, and its drift is silent by nature — a check that only
+    compares `NAME = literal` assignments cannot see a bare literal
+    typed into an `elif` on the reader's side."""
     shared = _string_literals(_HALVES["parser"]) & _string_literals(_HALVES["builder"])
     owned = {value for value in vars(ccda_codes).values() if isinstance(value, str)}
     stray = sorted(oid for oid in shared if _OID_RE.match(oid) and oid not in owned)

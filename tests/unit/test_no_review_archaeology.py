@@ -1,15 +1,9 @@
-"""Guard: source comments state invariants, never review history.
+"""Guard: source comments state invariants, never review history (rule 83).
 
-A comment must pin the PROPERTY the code or test enforces, never the
-review, reviewer, or audit round that once requested it. History lives in
-CHANGELOG.md — not scattered through the tree, where it goes stale and turns
-every file into an excavation site.
-
-This test walks the shipped source (``src/``, ``tests/``, ``tools/``,
-``.github/``) and fails if any line carries one of the review-archaeology
-tokens. Each banned pattern is assembled from concatenated fragments so
-this guard file cannot match itself; if the tokens ever creep back in, add
-the invariant to the comment and move the history to the changelog.
+Walks the shipped source (``src/``, ``tests/``, ``tools/``, ``.github/``)
+and fails if any line carries a review-archaeology token (a reviewer name,
+an audit round, a worklog PR tag). Each banned pattern is assembled from
+concatenated fragments so this guard file cannot match itself.
 """
 
 from __future__ import annotations

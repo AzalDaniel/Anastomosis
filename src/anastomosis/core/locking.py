@@ -1,18 +1,8 @@
-"""A cross-platform advisory lock over an output directory.
-
-Two ``anast`` runs writing into the same output directory at once would
-interleave renders, QA, and delivery — one run's QA could read another's
-half-written charts. This guards the directory with a kernel advisory lock so
-the second run fails fast with a clean message instead of corrupting the first.
-
-The lock is an OS advisory lock held on an open file descriptor to
-``.anast.lock`` — ``fcntl.flock`` on POSIX, ``msvcrt.locking`` on Windows. The
-kernel guarantees exclusion (across processes AND threads, since each acquirer
-opens its own descriptor) and, crucially, releases the lock automatically when
-the holder exits or crashes. That sidesteps the stale-lockfile problem
-entirely: there is no PID bookkeeping, no liveness probing, and no
-reclaim/unlink race — the marker file is left in place on disk (harmless) and
-the *lock* lives only as long as a holder's descriptor.
+"""A second ``anast`` against the same output directory fails fast on a
+kernel advisory lock, ``.anast.lock`` (19): ``fcntl.flock`` on POSIX,
+``msvcrt.locking`` on Windows. Release on crash is the kernel's, not
+ours (19) — no PID bookkeeping, no liveness probing, no reclaim race; the
+marker file itself is harmless, only the descriptor holds the lock.
 """
 
 from __future__ import annotations
@@ -76,12 +66,9 @@ def _unlock(fd: int) -> None:
 
 @contextmanager
 def output_lock(directory: str | Path) -> Iterator[Path]:
-    """Hold an exclusive lock on ``directory`` for the duration of the block.
-
-    Raises :class:`OutputLockedError` if another live run already holds it. The
-    directory is created if needed (parents included). The lock releases when
-    the block exits — or automatically if the process dies.
-    """
+    """Hold an exclusive lock on ``directory`` (created if needed) for the
+    block's duration (19). Raises :class:`OutputLockedError` if another
+    live run already holds it; releases on exit or on crash."""
     root = Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     lock_path = root / _LOCK_NAME

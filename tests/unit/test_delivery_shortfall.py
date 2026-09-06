@@ -1,21 +1,11 @@
-"""What a delivery could not file has to reach the person who ran it (#225).
+"""What a delivery could not file has to reach the person who ran it
+(#225). Two things go wrong: **missing** (this run's index names a
+chart and the file is not there) and **unattributed** (a chart is
+there but belongs to no patient in this run, so the archive files it
+under ``unattributed/`` rather than guessing).
 
-Both deliverers already knew, at the moment they discovered it, which charts
-they could not put in front of a patient. The knowledge went into a log line
-and no further: it was absent from the returned result, so the CLI summary and
-the GUI rail could not have shown it even if they had wanted to.
-
-Two things go wrong, and they are not the same thing:
-
-* **missing** — this run's index names a chart and the file is not there. That
-  is a chart nobody will see.
-* **unattributed** — a chart is there and belongs to no patient in this run, so
-  the archive files it under ``unattributed/`` rather than guessing. Not lost,
-  but nobody opens a directory they were not told about.
-
-Synthetic pf_tebra fixture data throughout; the assertions are on counts and on
-wording, never on a chart filename (which carries a patient's name and their
-date of service).
+Synthetic pf_tebra fixture data; assertions are on counts and wording,
+never a chart filename.
 """
 
 from __future__ import annotations
@@ -96,12 +86,10 @@ def test_the_archive_counts_a_chart_no_patient_in_this_run_claimed(
 def test_the_encounter_page_says_its_chart_is_missing(
     records: list[PatientRecord], tmp_path: Path
 ) -> None:
-    """The page a clinician reads, not just the summary the operator reads.
-
-    The chart link is emitted behind ``{% if pdf_name %}``, so a chart that did
-    not arrive used to leave a page that looked complete — the word "chart"
-    never appeared on it at all.
-    """
+    """The page a clinician reads, not just the summary the operator
+    reads. The chart link is emitted behind ``{% if pdf_name %}``, so a
+    missing chart must say so explicitly — the word "chart" must appear
+    on the page."""
     charts = tmp_path / "charts"
     entries = _charts(records, charts)
     (charts / entries[0].pdf).unlink()
@@ -120,12 +108,10 @@ def test_the_encounter_page_says_its_chart_is_missing(
 def test_the_archive_counts_a_chart_whose_copy_failed(
     records: list[PatientRecord], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The other way a chart fails to arrive: it is there, and the copy fails.
-
-    A full disk or a revoked permission mid-run. The deliverer already warned
-    and carried on, which is right — the other several hundred charts still
-    have to be filed — but the chart is just as absent as a deleted one.
-    """
+    """The other way a chart fails to arrive: it is there, and the copy
+    fails (a full disk, a revoked permission mid-run). The deliverer
+    warns and carries on — right, since other charts still need
+    filing — but the chart is just as absent as a deleted one."""
     import anastomosis.deliver._shared as shared
 
     charts = tmp_path / "charts"
@@ -151,14 +137,10 @@ def test_the_archive_counts_a_chart_whose_copy_failed(
 def test_a_chart_the_sweep_rescues_is_not_also_called_missing(
     records: list[PatientRecord], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One chart, one count.
-
-    A failed attributed copy leaves the chart unclaimed, so the unattributed
-    sweep picks it up — and usually succeeds, because the failure was
-    transient. The chart is then IN the archive, in ``unattributed/``. Counting
-    it at both places said "1 missing, 1 unattributed" about a single chart
-    that was not lost at all.
-    """
+    """One chart, one count: a failed attributed copy leaves the chart
+    unclaimed, so the unattributed sweep picks it up (usually succeeds,
+    since the failure was transient). The chart ends up IN the archive,
+    under ``unattributed/`` — never also counted missing."""
     import anastomosis.deliver._shared as shared
 
     charts = tmp_path / "charts"
@@ -185,13 +167,11 @@ def test_a_chart_the_sweep_rescues_is_not_also_called_missing(
 def test_an_encounter_that_was_never_rendered_says_nothing(
     records: list[PatientRecord], tmp_path: Path
 ) -> None:
-    """The negative half, and the reason the page needs the encounter id.
-
-    "No chart link" means two different things. A visit a selection rule kept
-    out of the render has no chart and never had one; telling its reader that a
-    chart is missing would be a false alarm on every excluded encounter, which
-    is how a real alarm stops being read.
-    """
+    """The negative half, and the reason the page needs the encounter
+    id: "no chart link" means two things. A visit a selection rule
+    excluded never had a chart, so calling it missing would be a false
+    alarm on every excluded encounter — which is how a real alarm stops
+    being read."""
     charts = tmp_path / "charts"
     entries = _charts(records, charts)
     # Not rendered at all: no file AND no index row, which is what an excluded
@@ -276,13 +256,10 @@ def test_the_cli_says_nothing_when_the_delivery_lost_nothing() -> None:
 
 
 def test_the_cli_says_a_patient_has_no_ccda_document() -> None:
-    """The C-CDA export's shortfall is a different one from the archive's.
-
-    Nothing was misfiled and there is no charts folder to check — a patient
-    simply has no document, and the export the operator is about to hand to
-    another EHR is short by that patient. Saying "1 chart is missing from it"
-    would send them looking in the wrong place for a file that was never built.
-    """
+    """The C-CDA export's shortfall differs from the archive's: nothing
+    was misfiled and there is no charts folder to check, a patient
+    simply has no document. Saying "1 chart is missing" would send the
+    operator looking in the wrong place for a file never built."""
     (line,) = _cli_lines("ccda", patients=2, missing=1)[1:]
     assert "1 patient has no C-CDA document" in line
     assert "the export is incomplete" in line

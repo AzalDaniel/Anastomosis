@@ -1,21 +1,13 @@
 """What the keyboard can reach, and what it can get back out of.
 
-Three panels open in this app — About, the activity drawer, the error-kinds
-flyout — and each was wired by hand, so each forgot something different. About
-had Escape. The flyout had neither Escape nor an `aria-expanded`, so nothing
-said it was open and nothing closed it. The drawer was a `role="dialog"` that
-focus never entered and Escape never closed: open it from the keyboard and you
-were left Tabbing through the whole page to reach a panel that was already on
-screen.
+Three panels — About, the activity drawer, the error-kinds flyout — must
+each support Escape, `aria-expanded`, and focus entering/leaving on
+open/close. Teach's mode tabs must be a single tab stop with working
+arrow-key navigation, not `role="tab"` with only a click handler.
 
-Teach's mode tabs had the same shape of gap: `role="tab"` with a click handler
-and nothing else, so a screen reader announced "tab, 1 of 2" and the arrows did
-nothing, while both tabs sat in the page's tab order as separate stops.
-
-These tests press keys. Nothing here reads an attribute back that the markup
-just set — where the point is that focus MOVED, the assertion is on
-``document.activeElement``.
-"""
+These tests press keys. Where the point is that focus MOVED, the
+assertion is on ``document.activeElement``, not an attribute the markup
+just set."""
 
 from __future__ import annotations
 
@@ -55,7 +47,8 @@ def test_opening_the_drawer_puts_you_in_it(gui) -> None:
 
 
 def test_escape_closes_the_drawer_and_hands_focus_back(gui) -> None:
-    """The only Escape handler in the app used to be the About popover's."""
+    """Every dismissable panel needs its own Escape handler, not just the
+    About popover's."""
     app = gui()
     app.page.click("#log-strip")
     app.page.wait_for_timeout(120)
@@ -83,15 +76,11 @@ def test_the_l_key_still_works_and_now_lands_somewhere(gui) -> None:
 
 
 def test_a_click_elsewhere_closes_it_without_dragging_focus_back(gui) -> None:
-    """The click decides where focus goes, and focus never stays in the panel.
-
-    What this does NOT try to pin is the `restore` argument the outside-click
-    path passes: the browser focuses the click target (or the body) after the
-    listener returns, so a close that wrongly asked for the trigger looks
-    identical from here. That branch is intent, not mechanism, and it is
-    written down as such in shell.js rather than asserted here as if it were
-    observable.
-    """
+    """The click decides where focus goes, and focus never stays in the
+    panel. Not pinned here: the outside-click path's `restore` argument —
+    the browser focuses the click target (or the body) regardless, so a
+    wrong `restore` value looks identical from outside; that branch is
+    intent, documented in shell.js, not asserted here as observable."""
     app = gui()
 
     app.page.click("#log-strip")

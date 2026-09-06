@@ -1,29 +1,13 @@
 """Destination-pack contract: what the browser upload engine drives.
 
-A destination pack teaches Anastomosis how to put one reconstructed chart
-into one foreign EHR through its web UI (the route taken when no vendor API
-and no C-CDA import exist — the common case for the practices this tool
-serves). The engine (later PR) never touches a browser directly; it speaks
-only to the small set of :class:`typing.Protocol` interfaces below, so a
-vendor rotating their UI is a one-pack event and the engine, the tracking
-ledger, and the tests are all driven against a fake destination.
+A destination pack files one chart into one foreign EHR via its web UI,
+through the :class:`typing.Protocol` interfaces below only — a vendor UI
+change is a one-pack event. ``item_key`` is our resumable identity
+(``f"{encounter_id}:{sha256[:12]}"``); ``fingerprint`` is
+destination-comparable, for the duplicate scan.
 
-Two identity concepts, kept deliberately distinct:
-
-* ``item_key`` — *our* stable identity for a unit of upload work,
-  ``f"{encounter_id}:{sha256[:12]}"``. It survives across runs so the
-  crash-resumable ledger can find the same row again.
-* ``fingerprint`` — a *destination-comparable* identity used to detect a
-  document already filed in the foreign chart (the duplicate defense on
-  resume). It defaults to the file name; a pack may override it with
-  whatever the destination actually exposes (an uploaded filename, a size,
-  a hash echoed back).
-
-PHI rule (non-negotiable, enforced here by shape): nothing in these types
-carries a patient name, DOB, or address. ``matched_on`` records the field
-*names* used to match a patient, never the values. ``UploadReceipt.extras``
-carries destination-generated ids and counts only — documented as never
-patient-derived, because receipts are logged and persisted.
+PHI: nothing here carries a name, DOB, or address; ``matched_on`` records
+field names only, ``UploadReceipt.extras`` destination ids/counts only.
 """
 
 from __future__ import annotations
@@ -55,16 +39,10 @@ __all__ = [
 class UploadItem:
     """One unit of upload work: a single reconstructed file for one encounter.
 
-    ``item_key`` is the stable identity used by the tracking ledger; build it
-    as ``f"{encounter_id}:{sha256[:12]}"`` so the same source file resolves
-    to the same row across runs (the resumability anchor).
-
-    PHI note on ``date_of_service``: it is the one patient-derived value on
-    this type, carried because a destination whose filing dialog asks for a
-    document date has to be given the right one. It is never logged (the
-    engine logs ``item_key`` through ``safe_log_id`` and nothing else), and it
-    reaches disk only in the upload manifest, which already carries it and
-    already lives inside the hardened output directory.
+    ``item_key`` is the ledger's stable identity
+    (``f"{encounter_id}:{sha256[:12]}"``). PHI: ``date_of_service`` is the
+    one patient-derived value here — never logged, reaching disk only in
+    the upload manifest inside the hardened output directory.
     """
 
     item_key: str
@@ -91,10 +69,8 @@ class UploadItem:
 class DestinationPatient:
     """A patient located in the destination system.
 
-    ``matched_on`` lists the field *names* that the resolver matched on
-    (e.g. ``("family_name", "birth_date")``) — never the values. The names
-    are safe to log and let a reviewer judge match strength without exposing
-    PHI.
+    ``matched_on`` lists field NAMES the resolver matched on (e.g.
+    ``("family_name", "birth_date")``), never values — safe to log.
     """
 
     destination_patient_id: str
@@ -105,9 +81,8 @@ class DestinationPatient:
 class UploadReceipt:
     """What the destination handed back after one upload.
 
-    ``extras`` values must be destination-generated ids or counts (a queue
-    position, a document-class id) — never patient-derived. Receipts are
-    persisted and logged, so an honest receipt cannot leak PHI.
+    ``extras`` values are destination-generated ids or counts only, never
+    patient-derived — receipts are persisted and logged.
     """
 
     destination_doc_id: str | None = None
@@ -118,9 +93,8 @@ class UploadReceipt:
 class Session(Protocol):
     """The destination's authenticated browser session lifecycle.
 
-    ``open`` establishes it, ``close`` tears it down, ``is_alive`` reports
-    whether it is still usable (the engine relaunches a dead session rather
-    than failing the run).
+    ``is_alive`` lets the engine relaunch a dead session rather than
+    failing the run.
     """
 
     def open(self) -> None: ...
@@ -149,9 +123,8 @@ class BannerCheck(Protocol):
     def current_patient_matches(self, expected: Patient) -> bool:
         """Return whether the destination's open chart is ``expected``.
 
-        A readback against the on-screen patient banner. ``False`` is a
-        patient-safety event — the engine aborts the entire run rather than
-        risk filing into the wrong chart.
+        ``False`` is a patient-safety event: the engine aborts the whole
+        run rather than risk filing into the wrong chart.
         """
         ...
 
@@ -162,9 +135,8 @@ class ExistingDocsScanner(Protocol):
     def existing_fingerprints(self, patient: DestinationPatient) -> set[str]:
         """Return the fingerprints already present in this patient's chart.
 
-        Compared against :attr:`UploadItem.fingerprint` to skip a document
-        that a previous (possibly crashed) run already uploaded — re-filing
-        would double a patient's chart.
+        Compared against :attr:`UploadItem.fingerprint` so a document a
+        prior (possibly crashed) run already filed is not filed twice.
         """
         ...
 
@@ -181,15 +153,10 @@ class UploadDriver(Protocol):
 class MetadataReader(Protocol):
     """Optional capability: read a destination's own metadata for a filed doc.
 
-    A destination MAY implement this in addition to the core protocols. The
-    L5 verification layer (``deliver/verify``) uses it to cross-check the
-    destination's reported size and page count against the local PDF. When a
-    destination does NOT implement it, L5 is reported ``skip`` with an explicit
-    detail — never silently passed.
-
-    PHI rule: the returned values are destination-*generated* facts (byte
-    size, page count, an internal title id) — never patient-derived free
-    text. They are persisted and logged, so an honest reader cannot leak PHI.
+    ``deliver/verify``'s L5 uses it to cross-check reported size/page count
+    against the local PDF; unimplemented, L5 reports ``skip`` explicitly.
+    PHI: values are destination-generated facts only (size, page count, an
+    internal id), never patient-derived text.
     """
 
     def read_metadata(
@@ -207,10 +174,8 @@ class MetadataReader(Protocol):
 class DocumentReader(Protocol):
     """Optional capability: read an uploaded document's bytes back.
 
-    A destination MAY implement this. The L6 round-trip verification reads the
-    stored bytes back and re-hashes them (with a reprocessed-PDF fallback).
-    When a destination does NOT implement it, L6 is reported ``skip`` with an
-    explicit detail — never silently passed.
+    L6 round-trip verification re-hashes them (reprocessed-PDF fallback);
+    unimplemented, L6 reports ``skip`` explicitly.
     """
 
     def read_back(self, patient: DestinationPatient, destination_doc_id: str) -> bytes:
@@ -222,9 +187,8 @@ class DocumentReader(Protocol):
 class Destination(Protocol):
     """A complete destination pack: the engine's whole view of one vendor.
 
-    Aggregates the role protocols so the engine holds a single object. Each
-    property returns a long-lived collaborator; ``name`` is a stable,
-    log-safe identifier for the destination (e.g. ``"tebra"``).
+    Aggregates the role protocols into one object; ``name`` is a stable,
+    log-safe identifier (e.g. ``"tebra"``).
     """
 
     @property

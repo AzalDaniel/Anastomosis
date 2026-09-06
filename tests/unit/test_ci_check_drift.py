@@ -1,15 +1,12 @@
 """Pins ``tools/check.sh`` <-> ``.github/workflows/ci.yml`` parity.
 
-``tools/check.sh`` claims at the top of its file that it is "exactly what
-CI runs." That parity must hold for every gate, mypy included: a gate that
-lives only in check.sh with no CI lane lets a typing regression slip into
-main while every author's local gate stays green. This test keeps the parity
-live by parsing check.sh and ci.yml and asserting every gate command in
-check.sh appears in some CI job's ``run:`` block.
+``tools/check.sh`` claims to be "exactly what CI runs" — a gate that
+lives only in check.sh, with no CI lane, lets a regression slip into main
+while every local gate stays green. This parses both files and asserts
+every gate command in check.sh appears in some CI job's ``run:`` block.
 
-When the gate roster legitimately changes (a new check.sh command, or a
-deliberate retirement), update both files in the same PR and the test
-keeps passing.
+When the gate roster legitimately changes, update both files in the same
+PR and the test keeps passing.
 """
 
 from __future__ import annotations
@@ -57,13 +54,10 @@ def _check_sh_commands() -> set[str]:
 
 
 def _ci_yml_run_blob() -> str:
-    """All CI ``run:`` step bodies concatenated into one blob.
-
-    We don't need to parse YAML structure for the parity check: any gate
-    command appearing as a substring of any ``run:`` line is by definition
-    a CI invocation of that gate. Keeping it string-based avoids a PyYAML
-    dependency in the test suite.
-    """
+    """All CI ``run:`` step bodies concatenated into one blob: any gate
+    command appearing as a substring of a ``run:`` line is by definition
+    a CI invocation of that gate, and staying string-based avoids a
+    PyYAML dependency in the test suite."""
     text = CI_YML.read_text(encoding="utf-8")
     runs: list[str] = []
     for line in text.splitlines():
@@ -100,16 +94,11 @@ def test_every_check_sh_gate_has_a_ci_lane() -> None:
 
 
 def test_pytest_is_invoked_the_same_way_in_both() -> None:
-    """Same gate, same form — because the two forms do not import the same things.
-
-    The marker match above proves a gate EXISTS in CI, not that it is invoked
-    identically, and for pytest that difference is a real one: `python -m
-    pytest` puts the working directory on `sys.path` and a bare `pytest` does
-    not. check.sh ran the `-m` form while CI ran the bare one, so a test
-    importing `tools.sbom` passed every local gate and failed five CI jobs on
-    `ModuleNotFoundError` (#142). `pythonpath` in pyproject settles what is
-    importable; this settles that both callers ask the same question.
-    """
+    """Same gate, same form: `python -m pytest` puts the working
+    directory on `sys.path` while a bare `pytest` does not, so check.sh
+    and CI must agree on which form they use, or a test importing
+    `tools.sbom` can pass every local gate and fail CI on
+    `ModuleNotFoundError` (#142)."""
     # The COMMANDS, not the file text: the line above check.sh's pytest call
     # explains this very trap and names the form it avoids, and a grep over the
     # raw file cannot tell an explanation from an invocation.

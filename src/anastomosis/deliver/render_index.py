@@ -1,32 +1,12 @@
-"""Persisted index of (pdf_filename → patient_id, encounter_id).
+"""Persisted index of (pdf_filename -> patient_id, encounter_id).
 
-The reconstruction engine names each chart ``{family}_{given}_{dos}_{type}.pdf``
-and a patient id never appears IN the filename. Previously the archive and
-bundle deliverers reverse-inferred ownership from the leading
-``{family}_{given}_`` prefix; that quietly cross-attributes any two patients
-sharing both names (a synthetic-fixture collision today, a real-world hazard
-the moment two Smith Johns enter the same export). The producer — the
-engine — already knows the truth: every ``RenderedDoc`` carries
-``patient_id`` and ``encounter_id``. The deliverers just never received it.
+Attribution is index-only, never filename-prefix inference (RULES.md 11).
+The engine writes ``render_index.json`` beside the PDFs; archive/bundle
+load it before attributing. An unindexed PDF is kept but filed under
+``unattributed/``, never guessed onto a patient.
 
-This module is the sidecar that closes that gap. The engine writes
-``render_index.json`` into the same directory as the PDFs at the end of a
-run; the archive and bundle deliverers ``load`` it before doing any
-attribution. PDFs without an index entry are kept (never silently dropped)
-but placed into an ``unattributed/`` slot — never guessed onto a patient.
-
-JSON shape (sorted for deterministic byte output)::
-
-    {
-      "version": 1,
-      "entries": [
-        {"pdf": "Smith_John_05-10-2023_SOAP.pdf",
-         "patient_id": "feedface-…-0001",
-         "encounter_id": "feedface-e000-…"},
-        …
-      ]
-    }
-"""
+JSON: ``{"version": 1, "entries": [{"pdf", "patient_id", "encounter_id"}]}``
+(sorted for deterministic byte output)."""
 
 from __future__ import annotations
 
@@ -74,10 +54,8 @@ class RenderEntry:
 class RenderIndex:
     """The deliverer-facing view of the engine's render-time truth.
 
-    Lookups are O(1) — ``_by_name`` and ``_by_patient`` are built once at
-    construction and frozen with the dataclass. The class is a plain,
-    immutable container.
-    """
+    ``_by_name``/``_by_patient`` are built once at construction; lookups
+    are O(1)."""
 
     entries: tuple[RenderEntry, ...]
     _by_name: dict[str, RenderEntry]
@@ -89,13 +67,8 @@ class RenderIndex:
         by_name: dict[str, RenderEntry] = {}
         by_patient: dict[str, list[str]] = {}
         for entry in items:
-            # One file, two encounters means a chart was overwritten before it
-            # ever reached here. This used to keep the last entry and say so in
-            # a comment, reasoning that the engine's collision suffix made the
-            # case impossible; the suffix did not, and last-wins turned a lost
-            # chart into a clean index and a successful run. The index is the
-            # only place the loss is still visible, so it is the place to
-            # refuse.
+            # One file, two encounters means a chart was overwritten before
+            # this ran; refuse here, the index is the only place it's visible.
             claimed = by_name.get(entry.pdf)
             if claimed is not None and claimed != entry:
                 raise RenderIndexConflict(entry.pdf)
@@ -112,10 +85,8 @@ class RenderIndex:
     def write(self, pdfs_dir: Path) -> Path:
         """Atomically write ``render_index.json`` into the PDF directory.
 
-        Writes to a temp file then ``os.replace``s so a crash mid-write
-        never leaves a partial index — same atomicity discipline the
-        engine uses for the PDFs themselves (engine.py:210-226).
-        """
+        Temp file + ``os.replace`` (RULES.md 14) — a crash mid-write never
+        leaves a partial index."""
 
         target = pdfs_dir / INDEX_FILENAME
         payload: dict[str, Any] = {
@@ -137,12 +108,8 @@ class RenderIndex:
     def load(cls, pdfs_dir: Path | None) -> RenderIndex | None:
         """Load the index from ``pdfs_dir/render_index.json``.
 
-        Returns ``None`` when the directory is missing, the file is
-        missing, or the file is unreadable/malformed — the deliverers
-        treat that as "no index → fail closed", never as "guess from
-        names". A WARNING is logged on a malformed file so a corrupted
-        index is never silent.
-        """
+        Returns ``None`` on any missing/unreadable/malformed file — fail
+        closed, never guess from names. Logs a WARNING on malformed input."""
         if pdfs_dir is None or not pdfs_dir.is_dir():
             return None
         path = pdfs_dir / INDEX_FILENAME
@@ -151,8 +118,7 @@ class RenderIndex:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            # Name the file by its basename only — the full path sits under the
-            # output tree, which the log discipline keeps out of log lines.
+            # Basename only; the full output-tree path stays out of logs (RULES.md 2).
             logger.warning("render index unreadable at %s (%s)", INDEX_FILENAME, exc_tag(exc))
             return None
         if not isinstance(raw, dict) or raw.get("version") != _SCHEMA_VERSION:
@@ -186,10 +152,8 @@ class RenderIndex:
         try:
             return cls.from_entries(entries)
         except RenderIndexConflict as exc:
-            # An index written by a version that could overwrite a chart. It is
-            # not trustworthy for attribution, so it is treated exactly like a
-            # corrupt one: the deliverers fail closed to `unattributed/` rather
-            # than file a chart onto whichever patient happened to sort last.
+            # A self-conflicting index is untrustworthy for attribution; treat
+            # it like a corrupt one and fail closed to unattributed/.
             logger.warning("render index self-conflicts at %s (%s)", INDEX_FILENAME, exc_tag(exc))
             return None
 

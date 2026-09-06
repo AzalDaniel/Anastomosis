@@ -1,21 +1,11 @@
 """Pins EVERY build version to one source of truth, not just Playwright.
 
-Invariant: ``packaging/constraints.txt`` carries the build pins, and every
-build surface resolves through it. The rendering goldens
-(tests/e2e/goldens/*.json) and the Chromium bundled into the Windows installer
-are only reproducible if the CI test lane, golden regeneration, and the Windows
-package build all install the SAME Playwright — one pin to rule the builds. The
-library floor in pyproject.toml stays open for users, but it must never float
-ABOVE the build pin, or a build would resolve something the floor already
-forbids.
-
-This file used to check that for Playwright alone, while the same workflows
-carried literal pins for two other things the constraints file says belong to
-it (#142): ``nuitka==`` in the Windows build, and ``cyclonedx-bom==`` written
-out TWICE — once per release workflow, free to disagree with itself. A guard
-over one of the pins is a guard that reports the state of one of the pins, so
-:func:`test_no_workflow_pins_a_constrained_package` now covers whatever the
-file governs, including whatever is added to it next.
+``packaging/constraints.txt`` carries the build pins, and every build
+surface resolves through it: the rendering goldens and the Chromium
+bundled into the Windows installer are only reproducible if CI, golden
+regeneration and the Windows build all install the SAME Playwright. The
+library floor in pyproject.toml stays open for users, but must never
+float ABOVE the build pin (#142) — nor may anything the file pins next.
 """
 
 from __future__ import annotations
@@ -32,12 +22,9 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Parse a dotted version into an int tuple for ordering.
-
-    Deliberately avoids importing ``packaging`` — the pins here are plain
-    dotted numerics (``1.56.0``, ``1.46``), so split-on-dots-compare-ints is
-    enough, and Python's tuple ordering handles differing lengths correctly.
-    """
+    """Parse a dotted version into an int tuple for ordering. Deliberately
+    avoids importing ``packaging``: the pins here are plain dotted numerics
+    (``1.56.0``, ``1.46``), so split-on-dots-compare-ints is enough."""
     return tuple(int(part) for part in version.split("."))
 
 
@@ -112,12 +99,10 @@ _MUST_BE_PINNED = {
 
 
 def test_the_pins_that_decide_what_ships_are_all_governed() -> None:
-    """Moving a pin out of the file is how it starts floating unnoticed.
-
-    The workflows install these through `-c packaging/constraints.txt`, which
-    constrains and does not pin: delete the line here and the build resolves
-    whatever is newest, with the `-c` still in place looking like a guarantee.
-    """
+    """Moving a pin out of the file is how it starts floating unnoticed:
+    `-c packaging/constraints.txt` constrains, it does not pin, so a
+    deleted line here resolves whatever is newest while the `-c` still
+    looks like a guarantee."""
     pinned = _constrained_packages()
     for package, why in _MUST_BE_PINNED.items():
         assert package in pinned, (
@@ -128,13 +113,10 @@ def test_the_pins_that_decide_what_ships_are_all_governed() -> None:
 
 
 def test_no_workflow_pins_a_constrained_package() -> None:
-    """A second copy of a pin is a pin that can disagree with the first.
-
-    `cyclonedx-bom==7.3.1` was written into both release workflows and into
-    neither constraints file; bumping one and forgetting the other would have
-    shipped a wheel SBOM and an installer SBOM built by different tools, with
-    nothing to notice (#142).
-    """
+    """A second copy of a pin is a pin that can disagree with the first
+    (#142): a package pinned literally in two workflows can have one
+    bumped and the other forgotten, shipping artifacts built by different
+    tool versions with nothing to notice."""
     for path in (CI_YML, WINDOWS_YML, RELEASE_YML):
         text = path.read_text(encoding="utf-8")
         for package in _constrained_packages():

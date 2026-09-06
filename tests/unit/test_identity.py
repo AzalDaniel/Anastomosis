@@ -1,13 +1,11 @@
-"""Tests for the shared boundary-anchored identity predicate.
+"""Tests for the shared boundary-anchored identity predicate (rule 6).
 
-The wrong-match defense lives in ONE place (:mod:`anastomosis.core.identity`)
-and is reused by the QA integrity check, the L2/L3/L6 delivery verifier, and the
-browser destination pack. These tests pin the boundary-anchored behavior the
-whole cluster depends on: a short name embedded in a longer one (space-joined
-OR hyphen/apostrophe-joined), an unpadded date embedded in a longer date, a
-"Last, First" reorder, and a hyphen/space swap must all be rejected — while a
-cosmetic sentence period after a legitimate value must NOT read as a different
-identity. Synthetic values only.
+The wrong-match defense lives in ONE place
+(:mod:`anastomosis.core.identity`), reused by the QA integrity check, the
+L2/L3/L6 delivery verifier, and the browser destination pack. Pins the
+boundary-anchored behavior the cluster depends on: a short name or date
+embedded in a longer one, a "Last, First" reorder, and a hyphen/space swap
+must all be rejected, while a cosmetic sentence period must not.
 """
 
 from __future__ import annotations

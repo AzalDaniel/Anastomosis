@@ -1,25 +1,12 @@
 """C-CDA deliverer — write one CCD XML per record, with its documents beside it.
 
-Mirrors the shape of :mod:`anastomosis.deliver.bundle`: it takes canonical
-records and an output directory, hardens that directory via
-:func:`anastomosis.core.output.secure_output_dir` (0700 + PHI README), and
-writes one file per record. The difference is the artifact: a single
-``<patient-id>.xml`` CCD instead of a bundle subdirectory — plus, since #373,
-every source document that record carries, written into the same directory and
-referenced from the CCD by name, media type and SHA-256.
+Mirrors :mod:`anastomosis.deliver.bundle`'s shape; the artifact is a single
+``<patient-id>.xml`` plus, since #373, every source document, referenced
+from the CCD by name, media type and SHA-256.
 
-Filename discipline (STRICTER than the PDF/bundle directories): files are named
-by **patient id** and, for a document artifact, by **artifact id** — never by
-patient name, and never by the name the source gave the file. PF/Tebra and
-bundle outputs name PDFs ``Family_Given_...`` because those land in a
-per-patient subtree the operator already controls; C-CDA documents, by
-contrast, are the import-into-another-EHR artifact most likely to *travel*
-(emailed to a vendor, dropped on a transfer share, imported by a third party).
-A name in the filename would put a patient name in the clear at exactly the
-moment the file is least under our control — and a C-CDA export names its own
-attachments after the patient, so carrying a source filename through would do
-it by the back door. Ids here are pseudonymous, so id-only naming keeps the
-directory listing PHI-free.
+Filenames are patient id / artifact id only, never a patient name or the
+source's own filename — stricter than PDF/bundle, because a C-CDA export
+travels and names its own attachments after the patient.
 """
 
 from __future__ import annotations
@@ -53,52 +40,31 @@ _PRESERVATION_SHARE_WARN = 0.5
 
 
 class ArtifactNotDelivered(Exception):
-    """A source document could not be written beside the CCD that names it.
-
-    Not one of the survivable per-record failures below. #373: a C-CDA whose
-    whole clinical content was ``nonXMLBody`` artifacts delivered a directory
-    with neither the artifacts nor any resolvable reference to them, and the
-    run exited 0 — a physician opening that import got a patient with a name
-    and nothing on their chart. The rule now is that the deliverable carries
-    every artifact or the run stops, so a delivery that cannot conserve one
-    fails before anything reports success.
-
-    PHI: raised with counts, ids as run-scoped surrogates and exception TYPE
-    names only — never a filename (a source names its attachments after the
-    patient) and never a patient value.
+    """A source document could not be written beside the CCD that names it
+    (#373): the deliverable carries every artifact or the run stops before
+    anything reports success. PHI: counts, run-scoped surrogate ids and
+    exception TYPE names only — never a filename or a patient value.
     """
 
 
 @dataclass(frozen=True)
 class CcdaExportResult:
-    """What the C-CDA export wrote, and what it could not.
-
-    ``missing_count`` is the point: a build that fails leaves a patient with no
-    document, and the archive and bundle deliverers already report that shape
-    so ``_print_shortfall`` can say it out loud. This one returned only the
-    paths it wrote, so a lost patient read as a smaller batch under a green
-    success line.
+    """What the C-CDA export wrote, and what it could not: ``missing_count``
+    is the point, so ``_print_shortfall`` can report a lost patient rather
+    than a merely smaller batch.
     """
 
     paths: list[Path]
     missing_count: int
-    #: Bytes across every document written, and how many of them are the
-    #: preserved-source-fields section. The C-CDA is the one artifact handed to
-    #: somebody else's EHR, and on a real export the preservation block was 97%
-    #: of it — a well-formed document doing exactly what the losslessness
-    #: guarantee promises, and 33x the size of the clinical payload it travels
-    #: with. Nothing measured it, so the operator found out when the
-    #: destination refused the file.
+    #: Bytes across every document written, and how many are the
+    #: preserved-source-fields section — often the majority of the file.
     total_bytes: int = 0
     preserved_bytes: int = 0
-    #: The single largest document. A destination's size limit applies per
-    #: document, not per batch, so the total is the wrong number to compare
-    #: against one.
+    #: The single largest document: a destination's size limit applies per
+    #: document, not per batch.
     largest_bytes: int = 0
-    #: Source documents written beside the CCDs — scans, faxes, lab reports.
-    #: Counted because an operator comparing the delivery against the charts
-    #: needs a number, and because zero here beside a chart that HAS artifacts
-    #: is what #373 looked like from the outside.
+    #: Source documents written beside the CCDs. Zero here beside a chart
+    #: that has artifacts is the #373 shape.
     artifact_count: int = 0
 
     @property
@@ -109,34 +75,10 @@ class CcdaExportResult:
 def deliver_ccda(
     records: list[PatientRecord], out_dir: str | Path, *, artifacts_dir: Path | None = None
 ) -> CcdaExportResult:
-    """Write one CCD per record into ``out_dir``, with its documents, and return
-    what landed.
-
-    The directory is created (or hardened) 0700 with a PHI warning README.
-    Filenames are ``<patient-id>.xml`` (id only — see the module docstring on
-    why this is stricter than the PDF directory). A record that fails to build
-    is logged by exception type only (never its values) and skipped, so one bad
-    record never sinks a batch.
-
-    ``artifacts_dir`` is where this run already put the source's own document
-    files — the pipeline's ``charts/attachments`` directory, or the export
-    directory a migration read. An artifact is looked for there under the path
-    the source gave it and under that path's filename, because the run flattens
-    them into the attachments directory under their basename. An artifact that
-    came inline with its record (a C-CDA Unstructured Document's scan lives
-    inside the XML) needs no directory at all: its bytes ride on the record.
-
-    Two failures are NOT survivable and stop the run before anything reports
-    success (:class:`ArtifactNotDelivered`): an artifact whose file is not
-    where the run put it, and one whose delivered bytes do not hash to what the
-    record witnesses. Both mean the receiving EHR would get a chart referring
-    to a document that is missing or is not the one the source held.
-
-    A name COLLISION is likewise a hard stop: ``write_bytes`` overwrites, so two
-    patient ids that sanitize to one filename — or two records arriving under one
-    patient id — would deliver one CCD carrying the second over the first. The
-    per-run claimed-name ledger — shared by the documents and the artifacts, since
-    they land in one directory — makes that a loud failure instead of a merge.
+    """Write one CCD per record into ``out_dir`` with its documents; return
+    what landed. A missing or hash-mismatched artifact, or a filename
+    collision across documents and artifacts, is an unsurvivable
+    :class:`ArtifactNotDelivered`.
     """
     out = secure_output_dir(out_dir)
     written: list[Path] = []
@@ -148,15 +90,10 @@ def deliver_ccda(
     artifacts = 0
     for index, record in enumerate(records):
         # Budgeted against ``out``: an over-long path would otherwise raise
-        # OSError inside the write below, and the batch-continues handler would
-        # record that record as merely "failed" — a silently dropped export.
+        # OSError below and read as a silently dropped export, not a failure.
         pid = budgeted_name(record.patient.id, f"patient_{index}", parent=out, suffix=".xml")
-        # The record goes in as the claim's witness because a patient id is not
-        # guaranteed unique either: an adapter that yields one record per source
-        # DOCUMENT hands two records for a patient with two of them, and without
-        # the witness the second document's CCD lands on the first while the run
-        # reports two patients. The pipeline folds those into one record before
-        # delivery; this is what makes a future regression loud.
+        # Witnessed because a patient id is not guaranteed unique: an adapter
+        # yielding one record per source document hands two for one patient.
         claim_delivered_name(
             claimed,
             pid,
@@ -165,10 +102,8 @@ def deliver_ccda(
             content=record_witness(record),
         )
         target = out / f"{pid}.xml"
-        # Before the build, and outside the batch-continues handler: the CCD is
-        # what NAMES these files, so a build that could not have its artifacts
-        # must not be written at all, and this refusal must not be swallowed as
-        # one record's bad luck.
+        # Outside the batch-continues handler: a build missing its artifacts
+        # must not be written, and that refusal must not read as bad luck.
         delivered = _deliver_artifacts(record, out, artifacts_dir, claimed)
         artifacts += len(delivered)
         try:
@@ -180,10 +115,7 @@ def deliver_ccda(
             largest_bytes = max(largest_bytes, measured.total_bytes)
         except Exception as exc:
             # One malformed record must not sink the batch; log the exception
-            # TYPE only (its message may embed PHI) and move on. But "move on"
-            # used to end there: the count returned was the count WRITTEN, so a
-            # patient with no document at all was indistinguishable from a
-            # smaller batch and the operator saw an unqualified green line.
+            # TYPE only, since its message may embed PHI.
             logger.warning("ccda export failed for patient %s (%s)", safe_log_id(pid), exc_tag(exc))
             missing += 1
             continue
@@ -209,16 +141,9 @@ def deliver_ccda(
 
 
 def _warn_on_preservation_share(result: CcdaExportResult) -> None:
-    """Say it before the destination says it, when most of the export is not
-    clinical content.
-
-    This is a line THIS tool draws about its own output, not a vendor limit:
-    what a given EHR will accept is not something this tool can know, and the
-    destination registry's no-hallucination rule forbids inventing one. What is
-    knowable is the shape of the document, and most of it not being clinical
-    content is worth an operator's attention — an importer that renders
-    unrecognised sections will show a physician a wall of preserved key/value
-    narrative beside their actual chart.
+    """Warn when most of the export is not clinical content — a line this
+    tool draws about its own shape, never a vendor size limit (the registry's
+    no-hallucination rule forbids inventing one).
     """
     if result.preserved_share < _PRESERVATION_SHARE_WARN:
         return
@@ -236,14 +161,10 @@ def _warn_on_preservation_share(result: CcdaExportResult) -> None:
 def _deliver_artifacts(
     record: PatientRecord, out: Path, artifacts_dir: Path | None, claimed: dict[str, str]
 ) -> dict[str, DeliveredArtifact]:
-    """Write this record's source documents into ``out``; what the CCD may name.
-
-    An artifact with neither bytes on the record nor a file this run put in
-    ``artifacts_dir`` is not delivered and is not an error: a source that
-    recorded a document REFERENCE it never resolved (Oracle EHI's blob rows are
-    the case) has no bytes for anyone to carry, and its fields narrate in the
-    loss ledger exactly as they did before. What is an error is an artifact the
-    run DID resolve and this deliverer then could not carry — that one raises.
+    """Write this record's source documents into ``out``; what the CCD may
+    name. An artifact with no bytes anywhere (an unresolved reference, e.g.
+    Oracle EHI's blob rows) is not delivered and not an error; one the run
+    DID resolve but this deliverer could not carry raises.
     """
     landed: dict[str, DeliveredArtifact] = {}
     for doc in record.documents:
@@ -255,13 +176,9 @@ def _deliver_artifacts(
 
 
 def _artifact_bytes(doc: DocumentArtifact, artifacts_dir: Path | None) -> bytes | Path | None:
-    """The artifact's bytes, or the file holding them, or ``None`` for neither.
-
-    Two kinds arrive and both leave this directory as one file. A source whose
-    export holds the file names it and it is COPIED; a source whose artifact
-    came inside the record it was read from carries its own bytes and they are
-    WRITTEN. Nothing downstream is told which — the delivered directory holds
-    one thing, a document beside the CCD that references it.
+    """The artifact's bytes, or the file holding them, or ``None`` for
+    neither: a source-held file is copied, an inline one is written, and
+    nothing downstream is told which.
     """
     inline = doc.extensions.get(EXT_INLINE_CONTENT)
     if inline is not None:
@@ -285,22 +202,9 @@ def _decoded(content: str, doc: DocumentArtifact) -> bytes:
 
 
 def _artifact_file(path: str, artifacts_dir: Path) -> Path:
-    """The file in ``artifacts_dir`` this artifact names, or a refusal.
-
-    Two spellings, one rule: the run puts a source's documents either under the
-    path the source gave them (a migration reading them out of the export) or
-    under that path's filename (the pipeline, which flattens them into
-    ``charts/attachments``), so both are looked for here.
-
-    The path is the source adapter's word, and a record can also arrive from a
-    FHIR bundle someone else wrote, so each candidate is resolved and checked
-    back against the directory: a ``../..`` in a hand-made bundle must not make
-    this deliverer read a file from anywhere the process can reach into a
-    directory that then gets handed to another EHR.
-
-    PHI: the refusal names no filename. A C-CDA export names its attachments
-    after the patient, so the path is a patient-derived string and the message
-    says the SHAPE of what is missing instead.
+    """The file in ``artifacts_dir`` this artifact names, or a refusal. Tries
+    the source's own path and its flattened basename, each checked back
+    against the directory (no escaping via ``../..``). PHI: names no file.
     """
     root = artifacts_dir.resolve()
     for candidate in (root / path, root / Path(path).name):
@@ -318,23 +222,10 @@ def _artifact_file(path: str, artifacts_dir: Path) -> Path:
 def _write_artifact(
     doc: DocumentArtifact, content: bytes | Path, out: Path, claimed: dict[str, str]
 ) -> DeliveredArtifact:
-    """Land one artifact beside the CCDs and witness what landed.
-
-    Named after the artifact's own id, never after the source's filename: this
-    directory travels (see the module docstring), and a source's attachment
-    filename is patient-derived. The name is claimed in the same per-run ledger
-    the CCDs use, so an artifact and a document that would land on one name is a
-    loud collision rather than one written over the other.
-
-    The claim's witness is the digest of the bytes about to be written, not the
-    one the record happens to carry: an artifact whose ``sha256`` is unset would
-    otherwise be owned by its id alone, and a source that gave two different
-    scans one id would pass the ledger and file the second over the first —
-    inside one patient, which is the wrong-document shape the ledger exists to
-    stop. Measured first, claimed second, written third, then read back and
-    compared against what the record witnesses: a truncated copy or a swapped
-    source file is a refusal here rather than a scan that opens in the
-    destination and is not the one the chart means.
+    """Land one artifact beside the CCDs, named after its own id (never the
+    source's filename), claimed in the same ledger. Witnessed by the digest
+    about to be written, not the record's own (possibly unset) ``sha256`` —
+    so two scans sharing one id collide loudly, never overwrite.
     """
     suffix = media_type_suffix(doc.mime_type)
     stem = budgeted_name(doc.id, "document", parent=out, suffix=suffix)
@@ -363,11 +254,8 @@ def _landed(
     doc: DocumentArtifact,
     name: str,
 ) -> str:
-    """Claim the slot on the incoming bytes, write them, and return their digest.
-
-    The digest returned is re-read from the file, so it answers what is on disk
-    rather than what was handed in — a short write is then caught here and not
-    by the destination.
+    """Claim the slot, write the bytes, and return the digest re-read from
+    disk (not the one handed in), so a short write is caught here.
     """
     incoming = (
         hash_and_size(content)[0]

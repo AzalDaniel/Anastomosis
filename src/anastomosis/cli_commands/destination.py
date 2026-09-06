@@ -325,10 +325,8 @@ def destination_init(
         discovered[slot] = _prompt_slot(
             slot, required=True, guidance=SLOT_GUIDANCE.get(slot, ""), validator=validator
         )
-    # The optional block is the longer of the two, and most of it is the upload
-    # dialog's own fields — which plenty of systems simply do not show. Saying
-    # so once, up front, is what keeps a run of blank answers from reading as
-    # something having gone wrong.
+    # Said once, up front, so a run of blank answers (plenty of systems don't
+    # show the upload dialog's own fields) doesn't read as something wrong.
     _cli.console.print("[bold]Optional[/bold] — press Enter to skip any you do not see:")
     for slot in SelectorMap.optional_slots():
         discovered[slot] = _prompt_slot(

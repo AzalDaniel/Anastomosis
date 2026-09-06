@@ -1,44 +1,13 @@
 """Oracle Health (Cerner Millennium) V500 join graph → canonical records.
 
-The lossless rule is enforced exactly as in the PF/Tebra mapper: every table
-mapping declares the columns it consumes, and **every other valued column**
-lands in the target model's ``extensions`` under an ``oracle_ehi:`` namespace.
-A column the mapper has never heard of survives by construction.
-
-Everything here is grounded in ``docs/vendor_refs/ORACLE_EHI_SCHEMA.md`` — the
-section number is cited at each mapping. Where the brief marks a fact
-"could not determine" (§8), this adapter raises loudly or routes to extensions
-rather than inventing vendor semantics (the no-hallucination rule applied to
-code). Notable consequences:
-
-* **Note bodies are a multi-source resolver, not a column read** (§4).
-  ``CE_BLOB`` holds local document text; ``CE_BLOB_RESULT`` holds *handles* to
-  remotely stored documents (DICOM, Document Imaging) — represented here as
-  :class:`DocumentArtifact` references, never fetched.
-* **Each non-document clinical event becomes its OWN canonical record**, keyed
-  by ``EVENT_ID``, so discrete results never collide. ``CLINICAL_EVENT`` is the
-  spine for "vitals, problems, allergies, and documents" alike (§3.2: ``EVENT_CD``
-  is "the basic unit ... i.e. RBC, discharge summary, image"). The brief
-  enumerates **no** ``EVENT_CD``/``EVENT_CLASS_CD`` value list, so classification
-  cannot key on numeric codes without guessing (no-hallucination rule); it keys
-  on the documented structural columns — ``RESULT_VAL`` + ``RESULT_UNITS_CD``
-  (§3.2) — and on the event's own ``EVENT_TITLE_TEXT`` ("the title for document
-  results", §3.2), never on a fabricated code meaning. An event whose shape is
-  unclassifiable becomes an :class:`Observation` carrying its own title verbatim
-  — never dropped, never forced into a wrong clinical category. See
-  :func:`_event_observation`, :func:`_event_condition`, :func:`_event_allergy`,
-  and :func:`_title_has_prefix`.
-* **``CE_BLOB`` compression is undetermined** (§8): the brief documents only
-  that ``COMPRESSION_CD`` exists, not its code set or algorithm. Uncompressed
-  blobs decode as latin1 text (§5.1); a compressed blob hits a loud
-  :exc:`NotImplementedError` that cites §8.
-* **Current-version filter** (§3.2): clinical-event rows are versioned; the
-  current version has an *open* ``VALID_UNTIL_DT_TM``. Closed rows ride to
-  extensions on their event so nothing is dropped.
-* **Coded values resolve through ``CODE_VALUE``** (§3.2), keyed on
-  ``CODE_SET`` + ``CDF_MEANING`` for storage-location logic (§4.2), never on
-  display strings.
-"""
+Every table mapping declares the columns it consumes; every other valued
+column lands in ``extensions`` under an ``oracle_ehi:`` namespace (rule 63).
+Grounded in ``docs/vendor_refs/ORACLE_EHI_SCHEMA.md``, cited by section;
+where the brief says "could not determine" (§8), this raises or routes to
+extensions rather than inventing vendor semantics (rule 64). CLINICAL_EVENT
+is the spine for vitals, problems, allergies and documents alike (§3.2),
+classified by documented structure and ``EVENT_TITLE_TEXT``, never a
+guessed ``EVENT_CD`` meaning."""
 
 from __future__ import annotations
 
@@ -98,14 +67,10 @@ def _prov(table: str, source_id: str | None) -> Provenance:
 
 
 def _is_current(row: Row) -> bool:
-    """A versioned activity row is current when ``VALID_UNTIL_DT_TM`` is open.
-
-    Per §3.2 the current version of a result "has an open 'Until Dt Tm'
-    value". The brief documents the convention but not the literal far-future
-    sentinel Cerner writes for an open value, so the only grounded test is
-    "absent / not a real instant" — handled by :func:`parse_dt` returning
-    ``None`` for empty and year-1 sentinels.
-    """
+    """A versioned activity row is current when ``VALID_UNTIL_DT_TM`` is
+    open (§3.2). The brief doesn't document Cerner's literal open-value
+    sentinel, so "absent / not a real instant" is the only grounded test
+    (:func:`parse_dt` already returns ``None`` for that)."""
     return _dt(row, "VALID_UNTIL_DT_TM") is None
 
 
@@ -113,12 +78,10 @@ def _is_current(row: Row) -> bool:
 
 
 class _CodeBook:
-    """Resolves ``*_CD`` numeric keys against ``CODE_VALUE`` (§3.2).
-
-    Keyed by ``CODE_VALUE`` (the numeric key column). ``DISPLAY`` is the
-    human label; ``CODE_SET`` + ``CDF_MEANING`` drive storage-location logic
-    (§4.2). Unknown keys resolve to ``None`` display — never a guessed string.
-    """
+    """Resolves ``*_CD`` numeric keys against ``CODE_VALUE`` (§3.2), keyed
+    by ``CODE_VALUE``. ``DISPLAY`` is the human label; ``CODE_SET`` +
+    ``CDF_MEANING`` drive storage-location logic (§4.2). Unknown keys
+    resolve to ``None`` — never a guessed string."""
 
     def __init__(self, rows: list[Row]) -> None:
         self._by_key: dict[str, Row] = {}
@@ -151,23 +114,17 @@ _PERSON_MAPPED = frozenset(
         "DECEASED_DT_TM",
     }
 )
-# PERSON_ALIAS column spellings are NOT enumerated in the brief (§3.2 cites
-# PERSON/ENCOUNTER columns but no PERSON_ALIAS dictionary). Per the
-# no-hallucination rule the adapter must not invent an MRN column name, so it
-# surfaces alias rows losslessly as identifiers carrying whatever string-shaped
-# columns exist, and routes the full row to extensions. The MRN-typing of a
-# specific alias column is left to a future schema fact (reported gap).
+# PERSON_ALIAS columns are not enumerated in the brief (§3.2 covers only
+# PERSON/ENCOUNTER); per rule 64 the adapter surfaces every alias value as
+# an OTHER identifier plus the raw row, rather than guessing which is the MRN.
 _PERSON_ALIAS_JOIN = "PERSON_ID"
 
 
 def _alias_identifiers(rows: list[Row]) -> tuple[list[Identifier], list[dict[str, Any]]]:
-    """Turn PERSON_ALIAS rows into OTHER identifiers + their lossless payloads.
-
-    Without a documented MRN column (§gap) every alias value is preserved as
-    an :class:`IdentifierKind.OTHER` identifier whose ``system`` records the
-    source column it came from, and the whole row also rides to the patient's
-    extensions so nothing is lost or mis-typed.
-    """
+    """PERSON_ALIAS rows → OTHER identifiers + their lossless payloads.
+    Without a documented MRN column, every value is kept as an
+    :class:`IdentifierKind.OTHER` identifier naming its source column, and
+    the whole row also rides to the patient's extensions."""
     identifiers: list[Identifier] = []
     payloads: list[dict[str, Any]] = []
     for row in rows:
@@ -201,10 +158,8 @@ def _map_patient(row: Row, aliases: list[Row], codes: _CodeBook) -> Patient:
 
     return Patient(
         id=person_id,
-        # NAME_FULL_FORMATTED is the single formatted-name column the brief
-        # documents (§3.2); structured given/family columns are not cited, so
-        # the formatted string is the name and any structured columns ride to
-        # extensions untouched.
+        # NAME_FULL_FORMATTED is the only formatted-name column the brief
+        # documents (§3.2); structured given/family columns are not cited.
         given_name=None,
         family_name=_s(row, "NAME_FULL_FORMATTED"),
         birth_date=_d(row, "BIRTH_DT_TM"),
@@ -244,7 +199,7 @@ def _map_encounter(row: Row, codes: _CodeBook) -> Encounter:
         id=encntr_id,
         patient_id=person_id,
         # REG_DT_TM is the registration instant; the calendar date is the
-        # date of service (DateField semantics — no tz shift, §model note).
+        # date of service (DateField semantics — no tz shift).
         date_of_service=reg.date() if reg is not None else None,
         chief_complaint=_s(row, "REASON_FOR_VISIT"),  # §3.2 free-text visit reason
         encounter_type=codes.display(_s(row, "ENCNTR_TYPE_CD")),
@@ -273,15 +228,8 @@ _CE_MAPPED = frozenset(
 
 # --- discrete clinical events → their own canonical records (§3.2) ------------
 #
-# CLINICAL_EVENT is the spine for vitals, problems, allergies, and documents
-# alike (§3.2). The brief enumerates the *columns* — ``EVENT_TITLE_TEXT``,
-# ``RESULT_VAL`` VARCHAR(255), ``RESULT_UNITS_CD`` — but **no** value list for
-# ``EVENT_CD``/``EVENT_CLASS_CD``, so the classifier may not assert "code 6101
-# means a blood pressure". It keys instead on the documented structural shape
-# and on the event's own title text (§3.2: ``EVENT_TITLE_TEXT`` is "the title
-# for document results"). The fixture's ``RESULT_UNITS_CD`` keys (9001/9002)
-# likewise do not resolve in CODE_VALUE, so a unit's human label is not
-# available; the units code rides to extensions losslessly.
+# The fixture's RESULT_UNITS_CD keys (9001/9002) don't resolve in
+# CODE_VALUE, so the raw unit code rides to extensions, not a resolved label.
 
 # Columns every discrete-event record consumes; all others ride to that
 # record's OWN ``extensions`` (the lossless catch-all, per-event — not shared).
@@ -300,17 +248,14 @@ _EVENT_MAPPED = frozenset(
     }
 )
 
-# Title-text prefixes the export uses to name problem / allergy events. These
-# are read off ``EVENT_TITLE_TEXT`` (the only documented free-text classifier,
-# §3.2) — never off an EVENT_CD meaning the brief does not enumerate.
+# Title-text prefixes classifying problem/allergy events — read off
+# EVENT_TITLE_TEXT, the only documented free-text classifier (§3.2).
 _PROBLEM_TITLE_PREFIXES = ("problem:", "problem ", "diagnosis:")
 _ALLERGY_TITLE_PREFIXES = ("allergy:", "allergy ", "allergen:")
 
-# Known vital-sign display labels (core.codes.VITALS), matched case-insensitively
-# against ``EVENT_TITLE_TEXT`` so a measured event whose title IS a vital can
-# carry the standard LOINC + VITAL_SIGNS category. No title match → the value is
-# still a measured result, but its category stays LABORATORY (a measured datum)
-# and the display is the event's own title verbatim (never guessed).
+# Vital display labels (core.codes.VITALS), matched case-insensitively
+# against EVENT_TITLE_TEXT: a match carries LOINC + VITAL_SIGNS; no match
+# still measures (category LABORATORY) with the title as display.
 _VITAL_BY_DISPLAY = {v.display.casefold(): v for v in VITALS.values()}
 
 
@@ -319,32 +264,18 @@ def _event_title(row: Row) -> str | None:
 
 
 def _has_measured_result(row: Row) -> bool:
-    """A vitals-/lab-shaped event: a non-sentinel ``RESULT_VAL`` plus units (§3.2).
-
-    Both the value and a ``RESULT_UNITS_CD`` must be present — that pairing is
-    what the brief documents for a measured result, and it is what distinguishes
-    a quantity (BP, weight) from a coded problem value like an ICD-10 string.
-    """
+    """A vitals-/lab-shaped event: a non-sentinel ``RESULT_VAL`` plus units
+    (§3.2) — the pairing the brief documents for a measured result,
+    distinguishing a quantity (BP, weight) from a coded problem value."""
     return _s(row, "RESULT_VAL") is not None and _s(row, "RESULT_UNITS_CD") is not None
 
 
 def decode_ce_blob(blob_contents: str | None, compression_cd: str | None) -> str | None:
-    """Decode a locally stored ``CE_BLOB.BLOB_CONTENTS`` payload (§4.1).
-
-    The brief documents ``BLOB_CONTENTS`` as "Text of the blob" and
-    ``COMPRESSION_CD`` as "type of compression applied to the blob", but §8
-    lists the ``COMPRESSION_CD`` code set and the actual compression algorithm
-    as **could not determine**. So:
-
-    * No compression code → the contents are text; returned as-is (the loader
-      already decoded the dump bytes as latin1 per §5.1).
-    * A compression code present → the algorithm is undocumented. Decoding it
-      would mean guessing; instead this raises :exc:`NotImplementedError`
-      citing §8 so the gap is loud, never a silently corrupted note.
-
-    PHI-safe: the error message names the schema gap and the citation only,
-    never blob content.
-    """
+    """Decode a locally stored ``CE_BLOB.BLOB_CONTENTS`` payload. No
+    compression code: text, returned as-is (already latin1-decoded, §5.1).
+    A compression code present: the algorithm is undocumented (§8), so this
+    raises :exc:`NotImplementedError` citing §8 rather than guess. PHI-safe:
+    the message names the schema gap only, never blob content."""
     text = clean_cell(blob_contents)
     if compression_cd is not None and clean_cell(compression_cd) is not None:
         raise NotImplementedError(
@@ -359,13 +290,11 @@ def decode_ce_blob(blob_contents: str | None, compression_cd: str | None) -> str
 def _local_note_sections(
     event_id: str, ce_blobs: list[Row]
 ) -> tuple[list[NoteSection], dict[str, Any]]:
-    """Assemble local document text for one event from its CE_BLOB rows (§4.1).
-
-    Multi-blob documents (``BLOB_SEQ_NUM``) are concatenated in sequence
-    order. A compressed blob trips :func:`decode_ce_blob`'s loud path; the
-    failure is caught here, logged PHI-safely (event id + exception type), and
-    the raw blob reference is preserved in extensions so nothing vanishes.
-    """
+    """Assemble local document text for one event from its CE_BLOB rows
+    (§4.1), concatenated in ``BLOB_SEQ_NUM`` order. A compressed blob trips
+    :func:`decode_ce_blob`'s loud path; caught here, logged PHI-safely
+    (event id + exception type), with the raw blob preserved in
+    extensions."""
     ordered = sorted(ce_blobs, key=lambda r: _seq(r.get("BLOB_SEQ_NUM")))
     parts: list[str] = []
     undecoded: list[dict[str, Any]] = []
@@ -376,9 +305,8 @@ def _local_note_sections(
             logger.warning(
                 "CE_BLOB for event %s not decoded (%s)", safe_log_id(event_id), exc_tag(exc)
             )
-            # Losslessness: the UNDECODABLE payload itself must ride along —
-            # excluding BLOB_CONTENTS here would silently drop the note body.
-            # Empty exclusion set = every column, raw bytes included.
+            # Losslessness: the UNDECODABLE payload rides along too — an empty
+            # exclusion set here keeps every column, raw bytes included.
             undecoded.append(_ext(blob, frozenset()))
             continue
         if text:
@@ -404,14 +332,10 @@ def _seq(value: str | None) -> float:
 def _remote_document(
     row: Row, person_id: str, encntr_id: str | None, codes: _CodeBook
 ) -> DocumentArtifact:
-    """A ``CE_BLOB_RESULT`` row → a DocumentArtifact *reference* (§4.2).
-
-    These are remotely stored documents; the brief is explicit that the row
-    carries a ``BLOB_HANDLE`` plus a ``STORAGE_CD`` whose ``CDF_MEANING`` in
-    code set 25 says where the handle points (DICOM study UID for
-    ``DICOM_SIUID``; Document Imaging document id for ``OTG``). We do NOT
-    fetch the body — we record the handle and its resolved storage class.
-    """
+    """A ``CE_BLOB_RESULT`` row → a DocumentArtifact *reference* (§4.2): the
+    row carries a ``BLOB_HANDLE`` plus a ``STORAGE_CD`` whose
+    ``CDF_MEANING`` (code set 25) says where it points (DICOM study UID, or
+    a Document Imaging document id). The body is never fetched."""
     handle = _s(row, "BLOB_HANDLE")
     storage_cd = _s(row, "STORAGE_CD")
     # STORAGE_CD meanings are only authoritative within code set 25 (§4.2).
@@ -446,12 +370,9 @@ def _remote_document(
 def _local_document(
     event_row: Row, person_id: str, local_sections: list[NoteSection]
 ) -> DocumentArtifact | None:
-    """Build a DocumentArtifact for a local-text clinical-event document (§4.1).
-
-    Local-text events (CE_BLOB) become a DocumentArtifact whose narrative is
-    on the encounter section; we still emit an artifact carrying the title so
-    the document is discoverable. Remote events are handled separately.
-    """
+    """A DocumentArtifact for a local-text clinical-event document (§4.1):
+    its narrative lives on the encounter section, but an artifact carrying
+    the title is still emitted so the document is discoverable."""
     if not local_sections:
         return None
     event_id = _s(event_row, "EVENT_ID")
@@ -471,16 +392,10 @@ def _local_document(
 
 
 def _event_observation(event_row: Row, person_id: str, encntr_id: str | None) -> Observation:
-    """A discrete (non-document) event → an :class:`Observation` (§3.2).
-
-    A measured event whose title matches a known vital (core.codes.VITALS)
-    carries that LOINC + ``VITAL_SIGNS``; another measured event is a
-    ``LABORATORY`` datum; a non-measured, unclassifiable event is an
-    ``OTHER`` observation carrying its own title verbatim. In every branch the
-    ``display`` is the event's own ``EVENT_TITLE_TEXT`` — the honest default,
-    never a guessed clinical name. Every unconsumed column rides this record's
-    OWN extensions.
-    """
+    """A discrete (non-document) event → an :class:`Observation` (§3.2). A
+    measured event matching a known vital gets that LOINC + VITAL_SIGNS;
+    another measured event is LABORATORY; else OTHER with the title
+    verbatim as ``display`` — never a guessed clinical name."""
     title = _event_title(event_row)
     vital = _VITAL_BY_DISPLAY.get((title or "").casefold())
     measured = _has_measured_result(event_row)
@@ -500,9 +415,8 @@ def _event_observation(event_row: Row, person_id: str, encntr_id: str | None) ->
         code=vital.loinc if vital else None,
         display=title,
         value=_s(event_row, "RESULT_VAL"),
-        # RESULT_UNITS_CD is a numeric code; the fixture's keys do not resolve in
-        # CODE_VALUE, so the raw code is the only honest unit and it also rides to
-        # extensions. We surface it as the unit string rather than invent a label.
+        # RESULT_UNITS_CD is numeric; the fixture's keys don't resolve in
+        # CODE_VALUE, so the raw code is the honest unit (and rides to extensions).
         unit=_s(event_row, "RESULT_UNITS_CD"),
         effective_at=_dt(event_row, "EVENT_END_DT_TM"),  # §3.2 clinically relevant time
         recorded_at=_dt(event_row, "VALID_FROM_DT_TM"),
@@ -512,18 +426,13 @@ def _event_observation(event_row: Row, person_id: str, encntr_id: str | None) ->
 
 
 def _event_condition(event_row: Row, person_id: str) -> Condition:
-    """A problem-shaped event → a :class:`Condition` (title prefix per §3.2).
-
-    ``RESULT_VAL`` carries the problem's coded/displayed value (e.g. an ICD-10
-    string); it is preserved as the display when no separate title remains.
-    Code typing (ICD-10 vs SNOMED) is not asserted — the brief documents no
-    coding column on the event — so the raw value rides to extensions and
-    ``display`` keeps the event's own title.
-    """
+    """A problem-shaped event → a :class:`Condition` (title prefix, §3.2).
+    ``RESULT_VAL`` (e.g. an ICD-10 string) is preserved as the display when
+    no title remains; code typing isn't asserted (no coding column in the
+    brief), so the raw value rides to extensions."""
     extensions = _ext(event_row, _EVENT_MAPPED)
-    # RESULT_VAL is consumed by _EVENT_MAPPED but a Condition has no value field
-    # to hold it; preserve the raw coded/displayed value explicitly so it is
-    # never dropped (the brief documents no ICD-10/SNOMED column to type it).
+    # RESULT_VAL is consumed by _EVENT_MAPPED but Condition has no value
+    # field for it; preserve it explicitly so it is never dropped.
     if result_val := _s(event_row, "RESULT_VAL"):
         extensions[f"{SOURCE}:RESULT_VAL"] = result_val
     return Condition(
@@ -538,13 +447,10 @@ def _event_condition(event_row: Row, person_id: str) -> Condition:
 
 
 def _event_allergy(event_row: Row, person_id: str) -> AllergyIntolerance:
-    """An allergy-shaped event → an :class:`AllergyIntolerance` (title per §3.2).
-
-    The substance is read from the title text after the documented ``Allergy:``
-    prefix; ``RESULT_VAL`` carries the reaction (e.g. "Hives") and is preserved
-    as a reaction string. The category stays ``OTHER`` because the brief gives
-    no allergen-category code to classify drug/food/environment.
-    """
+    """An allergy-shaped event → an :class:`AllergyIntolerance` (title
+    prefix, §3.2). Substance is read from the title after its ``Allergy:``
+    prefix; ``RESULT_VAL`` is preserved as the reaction. Category stays
+    OTHER — the brief gives no allergen-category code."""
     title = _event_title(event_row) or ""
     substance = title
     lowered = title.casefold()
@@ -610,9 +516,8 @@ def map_export(export: Export) -> Iterator[PatientRecord]:
             local_blobs = ce_blobs_by_event.get(event_id, [])
             remote_blobs = blob_results_by_event.get(event_id, [])
             if local_blobs or remote_blobs:
-                # A *document* event: its body is the encounter narrative and a
-                # DocumentArtifact, exactly as before. Document events do not
-                # also become discrete records.
+                # A *document* event: its body is the encounter narrative and
+                # a DocumentArtifact; it does not also become a discrete record.
                 local_sections, blob_ext = _local_note_sections(event_id, local_blobs)
                 if target is not None:
                     _attach_event(target, event_row, local_sections, blob_ext)
@@ -650,13 +555,10 @@ def _attach_event(
     local_sections: list[NoteSection],
     blob_ext: dict[str, Any],
 ) -> None:
-    """Fold a document event's note text + lossless payload onto its encounter.
-
-    Only *document* events (those with CE_BLOB / CE_BLOB_RESULT rows) reach
-    here; discrete result events become their own records, so the same-named
-    ``RESULT_*`` columns of distinct events can no longer collide in this one
-    shared dict.
-    """
+    """Fold a document event's note text + lossless payload onto its
+    encounter. Only document events (CE_BLOB/CE_BLOB_RESULT rows) reach
+    here; discrete events become their own records, so same-named
+    ``RESULT_*`` columns of distinct events never collide in this dict."""
     encounter.sections = [*encounter.sections, *local_sections]
     extensions = dict(encounter.extensions)
     extensions.update(_ext(event_row, _CE_MAPPED))
@@ -671,14 +573,10 @@ def _stash_superseded(
     encounters_by_id: dict[str, Encounter],
     ce_blobs_by_event: dict[str, list[Row]],
 ) -> None:
-    """Preserve a non-current clinical-event row AND its blob body (lossless).
-
-    The module docstring promises closed versions "ride to extensions on their
-    event so nothing is dropped." The row alone is not enough: a superseded
-    document's CE_BLOB body (e.g. an earlier draft of a note) lives in CE_BLOB,
-    not on the CLINICAL_EVENT row, so it is decoded here (where possible; raw
-    otherwise) and attached to the stashed payload.
-    """
+    """Preserve a non-current clinical-event row, and its CE_BLOB body,
+    losslessly. The row alone is not enough: a superseded document's blob
+    (e.g. an earlier draft) lives in CE_BLOB, not on the event row, so it
+    is decoded here (or kept raw) and attached to the stashed payload."""
     encntr_id = _s(event_row, "ENCNTR_ID")
     target = encounters_by_id.get(encntr_id or "")
     if target is None:
@@ -698,13 +596,10 @@ def _stash_superseded(
 
 
 def _superseded_blob_body(event_id: str, ce_blobs: list[Row]) -> tuple[str | None, dict[str, Any]]:
-    """Decode a superseded event's CE_BLOB text for the stashed payload (§4.1).
-
-    Reuses the local-note decode path so multi-blob concatenation, the ``''``
-    escape, and the compressed-blob loud-but-caught behaviour all match the
-    current-version pathway. Returns the joined body text (``None`` when the
-    event has no decodable local blob) plus any undecoded-blob extensions.
-    """
+    """Decode a superseded event's CE_BLOB text (§4.1), reusing the
+    local-note decode path so multi-blob order, escapes, and the
+    compressed-blob loud-but-caught behaviour all match the current-version
+    pathway. ``None`` body when nothing decodable."""
     sections, blob_ext = _local_note_sections(event_id, ce_blobs)
     body = "\n".join(s.html for s in sections if s.html) or None
     return body, blob_ext

@@ -205,12 +205,9 @@ def test_fuzzy_contains_pins_documented_probe_ratios(
 
 def test_fuzzy_contains_window_is_token_anchored_across_a_long_page() -> None:
     """The needle is found at any token boundary, and padding the page with
-    thousands of tokens neither changes the ratio nor bisects a word.
-
-    The window-slicing optimization is only sound because ``_normalize``
-    guarantees single-space separation; this pins the property on a page long
-    enough that a per-token page rebuild would be the dominant cost.
-    """
+    thousands of tokens neither changes the ratio nor bisects a word. The
+    window-slicing optimization is sound only because ``_normalize``
+    guarantees single-space separation."""
     name = "Synthia Testpatient"
     filler = " ".join(f"clinical note body line {i}" for i in range(2000))
     assert fuzzy_contains(name, f"{filler} {name} {filler}") == 1.0
@@ -339,11 +336,10 @@ def test_l2_skips_when_patient_has_no_name(tmp_path: Path) -> None:
 
 def test_l2_rejects_short_name_and_dob_collision(tmp_path: Path) -> None:
     """The wrong-chart collision, end to end at L2: expected "Ann Li" / DOB
-    1990-01-02 against a page that shows "Joann Liang … 11/2/1990". BOTH the
-    name (embedded substring) and the DOB (1/2/1990 inside 11/2/1990) collide
-    under raw substring matching and used to PASS; boundary-anchoring makes L2
-    FAIL. The DOB hard gate fires first (a wrong-patient DOB on the page is the
-    catastrophe), so the detail names birth_date."""
+    1990-01-02 against a page showing "Joann Liang … 11/2/1990". BOTH the
+    name (embedded substring) and the DOB (1/2/1990 inside 11/2/1990)
+    collide under raw substring matching, so boundary-anchoring must make
+    L2 FAIL (rule 6) — the DOB hard gate fires first, naming birth_date."""
     lines = ["Joann Liang reports well.", "DOB 11/2/1990", *_FILLER]
     item = _item(_make_pdf(tmp_path / "collision.pdf", lines))
     ann_li = Patient(id=PAT_ID, given_name="Ann", family_name="Li", birth_date=DOB)

@@ -1,37 +1,14 @@
 """Page provenance: what is native, what was recognized, and where they clash.
 
-A clinical PDF is rarely all one thing. A page can be a native note, a scan, a
-large clinical raster with a small native-text overlay, a scanned form somebody
-annotated, or a scan carrying a hidden text layer that is itself somebody
-else's OCR. This module answers "which of those is this page?" and — for the
-raster parts — collects an OCR observation without ever letting it overwrite
-the native stream.
-
-Three rules it exists to keep:
-
-* **Provenance stays separate.** A native span keeps :data:`~.ocr.NATIVE_TEXT`
-  (or :data:`~.ocr.NATIVE_OR_SYNTHETIC` when it floats over a scan); a
-  recognized word becomes a span carrying :data:`~.ocr.OCR_OBSERVATION` and a
-  confidence. Nothing merges the two streams into an undifferentiated pile of
-  words, because the pack has to be able to say which evidence came from where.
-* **Conflicts are held, not resolved.** An OCR token that overlaps a native
-  span carrying the same text is a DUPLICATE — dropped from the layout
-  candidates and counted, never silently preferred. One that overlaps a native
-  span saying something ELSE is a DISAGREEMENT: both are kept, the page is
-  marked for review, and nothing here picks a winner.
-* **Conflicts are counted, never quoted.** A disagreement between a native
-  value and a recognized one is, by construction, about a value — so
-  :class:`EvidenceConflict` carries geometry, ids and confidences and no text
-  at all.
-
-Fail-closed geometry: a raster region whose box is not finite, or lies outside
-the page it claims to be on, raises :class:`OcrRegionError` rather than being
-recognized against an unknown transform.
-
-PHI rule: everything this module returns to a logger or a summary is counts,
-ids and integers. Recognized text rides only on the spans, which are handled
-by the same quarantine rules as native sample text.
-"""
+Answers "which of :data:`PAGE_CLASSES` is this page?" and, for the raster
+parts, collects an OCR observation without overwriting the native stream.
+Provenance stays separate (:data:`~.ocr.NATIVE_TEXT`/``NATIVE_OR_SYNTHETIC``
+vs. :data:`~.ocr.OCR_OBSERVATION`); a conflict is held, not resolved — a
+duplicate is dropped and counted, a disagreement keeps both and marks the
+page for review; :class:`EvidenceConflict` carries geometry and
+confidence, never the disputed text. :class:`OcrRegionError` fails closed
+on non-finite or off-page geometry rather than guessing a transform. PHI:
+returns counts, ids and integers only."""
 
 from __future__ import annotations
 
@@ -76,7 +53,7 @@ __all__ = [
 # Page classes — the decision record's four, plus the honest fifth
 # --------------------------------------------------------------------------- #
 
-#: Real text objects, no raster. The only class the learner used to accept.
+#: Real text objects, no raster.
 NATIVE_ONLY = "native_only"
 #: Raster content and native text that does NOT sit on top of it — the native
 #: header over a scanned body, the small label beside a large clinical image.
@@ -123,23 +100,17 @@ _WHITESPACE_RE = re.compile(r"\s+")
 
 
 class OcrRegionError(ValueError):
-    """A raster region cannot be recognized against a known transform.
-
-    Raised when a region's box is not finite or falls outside its page. The
-    decision record's rule is that a page fails closed when its region
-    transform is outside the declared coordinate bounds — a recognition mapped
-    through a transform nobody can name is not evidence. The message carries
-    the batch-local page index and integers only.
-    """
+    """A raster region cannot be recognized against a known transform:
+    raised when a region's box is not finite or falls outside its page —
+    a recognition mapped through a transform nobody can name is not
+    evidence. The message carries the batch-local page index and
+    integers only."""
 
 
 def combined_provenance(provenances: Sequence[str]) -> str:
-    """The one provenance a candidate carries, or :data:`MIXED_EVIDENCE`.
-
-    Deliberately not a precedence rule: when native and recognized evidence
-    both back the same heading, the answer is "both", never the more flattering
-    of the two.
-    """
+    """The one provenance a candidate carries, or :data:`MIXED_EVIDENCE` —
+    deliberately not a precedence rule: when native and recognized
+    evidence both back the same heading, the answer is "both"."""
     distinct = set(provenances)
     if len(distinct) == 1:
         return distinct.pop()
@@ -147,12 +118,10 @@ def combined_provenance(provenances: Sequence[str]) -> str:
 
 
 def normalized_text(text: str) -> str:
-    """Collapse whitespace and strip — the canonical form text is compared in.
-
-    One definition, shared by the native/OCR duplicate test here and by the
-    recurrence counting in :mod:`anastomosis.packgen.infer`, so a string that
-    recurs does so identically no matter which stream produced it.
-    """
+    """Collapse whitespace and strip — the canonical form text is compared
+    in, shared by the duplicate test here and the recurrence counting in
+    :mod:`anastomosis.packgen.infer`, so a recurring string reads the same
+    regardless of which stream produced it."""
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 
@@ -163,14 +132,10 @@ def normalized_text(text: str) -> str:
 
 @dataclass(frozen=True)
 class EvidenceConflict:
-    """One place where the native and OCR streams describe the same pixels.
-
-    ``kind`` is :data:`CONFLICT_DUPLICATE` or :data:`CONFLICT_DISAGREEMENT`.
-    There is deliberately NO text field: a disagreement is about a value, and a
-    value is exactly what may not be written into a review record that a
-    summary might echo. Geometry, ids and the engine's own score are enough to
-    put a reviewer's eye on the right part of the right page.
-    """
+    """One place the native and OCR streams describe the same pixels.
+    Deliberately NO text field: a disagreement is about a value, which
+    may not ride in a review record a summary might echo. Geometry, ids
+    and the engine's score are enough to point a reviewer at the page."""
 
     page_index: int
     region_id: str
@@ -200,12 +165,10 @@ class PageEvidence:
 
 @dataclass(frozen=True)
 class PageObservation:
-    """A page's evidence record plus the OCR tokens promoted to layout signal.
-
-    ``accepted`` excludes duplicates of native text; it keeps disagreements,
-    because "preserve both and hold the page" is the rule. The caller turns
-    these into spans carrying :data:`~.ocr.OCR_OBSERVATION`.
-    """
+    """A page's evidence record plus the OCR tokens promoted to layout
+    signal. ``accepted`` excludes duplicates of native text but keeps
+    disagreements ("preserve both and hold the page"); the caller turns
+    these into spans carrying :data:`~.ocr.OCR_OBSERVATION`."""
 
     evidence: PageEvidence
     accepted: tuple[OcrToken, ...]
@@ -214,18 +177,11 @@ class PageObservation:
 
 @dataclass(frozen=True)
 class LayoutEvidence:
-    """The whole batch's provenance ledger — what the pack is allowed to claim.
-
-    The default instance is what an all-native batch produces: no OCR was
-    attempted, no conflicts, nothing to review. ``ocr_texts`` holds the
-    normalized strings that came from recognition, so the emitter can mark
-    exactly which lines of a draft pack are OCR-derived rather than asserting
-    it about the pack as a whole.
-
-    ``review_required`` is the one bit that must never be inferred by a reader
-    from the other numbers: any recognized token at all sets it, because OCR is
-    layout evidence and a human still has to look at the page.
-    """
+    """The whole batch's provenance ledger — what the pack may claim. The
+    default is what an all-native batch produces: nothing to review.
+    ``ocr_texts`` lets the emitter mark exactly which lines are
+    OCR-derived; ``review_required`` must never be inferred from the
+    other numbers."""
 
     engine_available: bool = False
     ocr_manifest: tuple[tuple[str, str], ...] = ()
@@ -235,12 +191,10 @@ class LayoutEvidence:
 
     @property
     def ocr_attempted(self) -> bool:
-        """Whether any page in this batch was actually put to an engine.
-
-        The emitter asks this before it says a word about evidence: on a batch
-        that never called OCR there is one kind of provenance, and naming it
-        would change a line in every pack produced before OCR existed.
-        """
+        """Whether any page in this batch was actually put to an engine —
+        asked before the emitter says a word about evidence, since naming
+        it on a batch that never called OCR would change every pack
+        produced before OCR existed."""
         return any(page.ocr_attempted for page in self.pages)
 
     @property
@@ -282,13 +236,10 @@ class LayoutEvidence:
 
 
 def merge_evidence(parts: Sequence[LayoutEvidence]) -> LayoutEvidence:
-    """Fold every sample's ledger into the batch ledger the analysis carries.
-
-    The manifest is taken from the first part that has one: every sample in a
-    batch is recognized by the same worker with the same config, so a differing
-    manifest cannot arise here — and if one ever could, taking the first and
-    keeping every page record is still lossless about what happened.
-    """
+    """Folds every sample's ledger into the batch ledger the analysis
+    carries. The manifest is taken from the first part that has one: every
+    sample is recognized by the same worker with the same config, so a
+    differing manifest cannot arise here."""
     manifest: tuple[tuple[str, str], ...] = ()
     for part in parts:
         if part.ocr_manifest:
@@ -333,13 +284,9 @@ def _union_box(
 
 
 def _require_unrotated(page: Any, page_index: int) -> None:
-    """Refuse a rotated page: its region transform cannot be named.
-
-    A rotated page's image boxes and its rendered pixmap do not share one
-    obvious frame, and the decision record forbids recognizing against a
-    transform nobody can state. Failing closed here is a refusal an operator
-    can act on; guessing the frame would be a silently wrong geometry.
-    """
+    """Refuse a rotated page: its image boxes and rendered pixmap don't
+    share one obvious frame, and guessing it would be a silently wrong
+    geometry rather than a refusal an operator can act on."""
     if int(getattr(page, "rotation", 0) or 0) % 360 != 0:
         raise OcrRegionError(
             f"page #{page_index} is rotated; its region transform is outside declared bounds"
@@ -350,18 +297,10 @@ def raster_regions(
     page: Any, page_index: int, page_size: tuple[float, float]
 ) -> list[tuple[float, float, float, float]]:
     """Disjoint raster boxes on ``page``, in page points, top-to-bottom.
-
-    ``get_image_info`` reports the images actually PAINTED on this page (not
-    merely inherited resources) and exposes rendering metadata only, so a page
-    can be inventoried without reading anything it displays. Overlapping images
-    are merged into one region: two halves of a split scan are one thing to
-    recognize, and recognizing them twice would manufacture duplicates.
-
-    Raises :class:`OcrRegionError` when the page is rotated, or a box is not
-    finite, or a box is not inside the page — a region whose transform cannot
-    be named is not recognized. A page with no raster at all is exempt: its
-    rotation is the native reader's problem, not this module's.
-    """
+    Overlapping images merge into one region so a split scan's two
+    halves aren't recognized (and duplicated) twice. Raises
+    :class:`OcrRegionError` on a rotated page or a box that is
+    non-finite or off-page; a page with no raster is exempt."""
     infos = page.get_image_info()
     if not infos:
         return []
@@ -391,11 +330,9 @@ def raster_regions(
 def _absorb(
     merged: list[tuple[float, float, float, float]], box: tuple[float, float, float, float]
 ) -> list[tuple[float, float, float, float]]:
-    """Grow ``box`` by every region it touches, repeating until it touches none.
-
-    The repeat matters: absorbing one region enlarges the box, and the enlarged
-    box can reach a region an earlier pass had already cleared.
-    """
+    """Grows ``box`` by every region it touches, repeating until it
+    touches none — the repeat matters, since the enlarged box can reach a
+    region an earlier pass had already cleared."""
     current = box
     changed = True
     while changed:
@@ -426,14 +363,11 @@ def classify_page(
     regions: Sequence[tuple[float, float, float, float]],
     page_size: tuple[float, float],
 ) -> str:
-    """Which of :data:`PAGE_CLASSES` this page is.
-
-    The distinction that matters is between a native overlay ON a scan and a
-    native part BESIDE one. When the raster covers nearly the whole page and
-    every native box sits inside it, the text layer is a scan's layer —
-    ``ambiguous``, because extraction succeeding says nothing about the text
-    being right. Otherwise text plus raster is ``mixed``.
-    """
+    """Which of :data:`PAGE_CLASSES` this page is: the distinction that
+    matters is a native overlay ON a scan versus a native part BESIDE
+    one. When raster covers nearly the whole page and every native box
+    sits inside it, the text layer is the scan's own — ``ambiguous``;
+    otherwise text plus raster is ``mixed``."""
     if not regions:
         return NATIVE_ONLY if native_boxes else EMPTY
     if not native_boxes:
@@ -459,14 +393,11 @@ def _region_image(
     page_size: tuple[float, float],
     config: OcrConfig,
 ) -> tuple[bytes, PageImage]:
-    """Render one region to PNG bytes and describe the transform exactly.
-
-    The DPI is the configured one, reduced by :meth:`~.ocr.OcrConfig.dpi_for`
-    when the region would exceed the pixel cap — a recorded deterministic rule
-    rather than an implicit resample. PyMuPDF's clipped pixmap covers exactly
-    the clip box at ``dpi/72`` scale with its origin at the clip's origin,
-    which is the whole of the pixel-to-point transform.
-    """
+    """Renders one region to PNG bytes and describes the transform exactly.
+    DPI is reduced by :meth:`~.ocr.OcrConfig.dpi_for` when the region
+    would exceed the pixel cap. PyMuPDF's clipped pixmap covers exactly
+    the clip box at ``dpi/72`` scale with its origin at the clip's own —
+    the whole of the pixel-to-point transform."""
     dpi = config.dpi_for(region[2] - region[0], region[3] - region[1])
     pixmap = page.get_pixmap(clip=region, dpi=dpi)
     png = bytes(pixmap.tobytes("png"))
@@ -488,15 +419,10 @@ def _region_image(
 def _adjudicate(
     tokens: Sequence[OcrToken], native_spans: Sequence[Span]
 ) -> tuple[list[OcrToken], list[EvidenceConflict]]:
-    """Split recognized tokens against the native stream; never pick a winner.
-
-    A token sitting on a native span that already SAYS it is a duplicate: the
-    native object is the better evidence for the same pixels, so the token is
-    not promoted — but it is recorded, because a dropped observation with no
-    number beside it is exactly the silent loss this codebase refuses. A token
-    sitting on a native span that says something else is a disagreement: both
-    survive and the page is held.
-    """
+    """Splits recognized tokens against the native stream; never picks a
+    winner. A token whose native span already SAYS it: not promoted, but
+    recorded, never a silent drop. A token whose native span says
+    something else is a disagreement: both survive and the page is held."""
     accepted: list[OcrToken] = []
     conflicts: list[EvidenceConflict] = []
     for token in tokens:
@@ -504,15 +430,11 @@ def _adjudicate(
         if overlap is None:
             accepted.append(token)
             continue
-        # Word sets, not substring containment. `in` called a recognition a
-        # duplicate whenever it happened to be a substring of the native span,
-        # which is every truncated read of a clinical value: '100' over a page
-        # saying 'Glucose 1000 mg/dL', '8.6' over '98.6', '12' over '128' were
-        # all recorded as "the native object is better evidence for the same
-        # pixels" when the two streams genuinely disagree — and the
-        # disagreement count is printed to an operator as a safety figure. A
-        # recognition is the same reading only when every word in it is a word
-        # the native span has.
+        # Word sets, not substring containment: a substring test would call
+        # '100' a duplicate of 'Glucose 1000 mg/dL' and '8.6' of '98.6' — a
+        # genuine disagreement misreported as agreement. A recognition is
+        # the same reading only when every word in it is a word the native
+        # span has.
         recognized = set(normalized_text(token.text).casefold().split())
         native = set(normalized_text(overlap.text).casefold().split())
         duplicate = bool(recognized) and recognized <= native
@@ -552,12 +474,10 @@ def _isolation_regions(
     warnings: list[str],
 ) -> tuple[list[tuple[float, float, float, float]], bool]:
     """Per-region recognition, or the recorded full-page fallback.
-
-    Region-level is preferred — it is what keeps a native overlay out of the
-    recognized stream. Past :data:`_MAX_REGIONS` disjoint rasters the isolation
-    is not meaningful (a tiled scan), so the page is recognized whole and the
-    fallback is written down rather than inferred later from the numbers.
-    """
+    Region-level is preferred (keeps a native overlay out of the
+    recognized stream); past :data:`_MAX_REGIONS` disjoint rasters
+    isolation stops being meaningful (a tiled scan), so the page is
+    recognized whole and the fallback is written down."""
     if len(regions) <= _MAX_REGIONS:
         return regions, False
     warnings.append(
@@ -604,12 +524,10 @@ def observe_page(
     native_spans: Sequence[Span],
     worker: TesseractWorker | None,
 ) -> PageObservation:
-    """Classify one page and, where it is pixels, observe it.
-
-    With no ``worker`` the page is still classified and recorded — the ledger
-    then says an image-only page went un-recognized, which is what lets the
-    caller refuse instead of quietly emitting a pack with a hole in it.
-    """
+    """Classifies one page and, where it is pixels, observes it. With no
+    ``worker`` the page is still classified and recorded, so the ledger
+    says an image-only page went un-recognized — letting the caller
+    refuse rather than quietly emit a pack with a hole in it."""
     regions = raster_regions(page, page_index, page_size)
     base = PageEvidence(
         page_index=page_index,
@@ -648,16 +566,11 @@ def _recognize_regions(
     worker: TesseractWorker,
     warnings: list[str],
 ) -> tuple[list[OcrToken], int]:
-    """Recognize each region in turn, accumulating tokens and PHI-free warnings.
-
-    Every token the engine returned comes back here, low-scoring ones included,
-    together with how many of them fall under the configured selection
-    threshold. The caller promotes only the ones at or above it, and the
-    threshold and the excluded COUNT are both recorded in the pack — a filtered
-    token always has a stated reason and a number, never a silent deletion.
-    Sub-threshold token text itself is not carried further: it is the least
-    reliable observation on the page and the pack has no honest use for it.
-    """
+    """Recognizes each region in turn, accumulating tokens and PHI-free
+    warnings. Every token comes back here, low-scoring ones included,
+    with how many fall under the selection threshold — a filtered token
+    always has a stated reason and a number, never a silent deletion.
+    Sub-threshold token text itself is not carried further."""
     tokens: list[OcrToken] = []
     below = 0
     for region_index, region in enumerate(regions):

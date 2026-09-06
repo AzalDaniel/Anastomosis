@@ -1,16 +1,10 @@
-"""The corpus has to be reproducible, PHI-free, and actually varied.
-
-A generator is evidence infrastructure, so its failure modes are quiet ones: a
-corpus that drifts between runs makes every reading unarguable, a corpus that
-only spans one corner of the shape space reports a clean ledger by omission, and
-a corpus that grows a real-looking identifier puts PHI-shaped data in CI. Each
-of those is tested here, and the scale test at the bottom is the one that
-actually runs the instrument over a few hundred documents.
+"""The corpus has to be reproducible, PHI-free, and actually varied: a
+generator that drifts, spans one corner of the shape space, or leaks a
+real-looking identifier fails silently as evidence infrastructure.
 
 The full 6,144-document reading is a documented command, not a CI job:
 
-    python tools/ccda_corpus.py --ledger --count 6144 --seed 7
-"""
+    python tools/ccda_corpus.py --ledger --count 6144 --seed 7"""
 
 from __future__ import annotations
 
@@ -202,15 +196,9 @@ def test_the_corpus_books_balance(scale_report: dict[str, object]) -> None:
 def test_the_named_actors_now_reach_the_record_at_scale(
     scale_report: dict[str, object], construct: str
 ) -> None:
-    """The 2,103-document finding, closed on documents anyone can generate.
-
-    Every one of these was offered by the corpus and reached nothing; each now
-    becomes a canonical object the ledger can trace back to the ``<id root>``
-    the construct carried, with nothing left in the unsupported column. The two
-    constructs missing from this list are the subject of the next test — CDA
-    gives them no id, so they are credited on other evidence and are absent here
-    by name rather than by omission.
-    """
+    """Every one of these actors reaches a canonical object the ledger can
+    trace to its ``<id root>``, with nothing left unsupported. The two
+    id-less constructs missing from this list are the next test's subject."""
     totals = _row(scale_report, construct)
     assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
     assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
@@ -222,20 +210,10 @@ def test_the_named_actors_now_reach_the_record_at_scale(
 def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
     scale_report: dict[str, object], construct: str
 ) -> None:
-    """Both of these ARE extracted, and the ledger now says so.
-
-    CDA R2 gives ``Device`` and ``RelatedEntity`` no ``<id>`` at all, so for as
-    long as an id root was the only evidence admitted these two were reported
-    lost in every document that offered one — a permanent under-reading of the
-    adapter by the standard's shape rather than by anything the adapter did.
-    They are credited here on the second evidence form: the record states what
-    the document stated. Content that is absent, ambiguous or spelled
-    differently is still not evidence, which
-    ``test_an_actor_that_states_nothing_still_cannot_be_credited`` and
-    ``test_two_identical_actors_and_one_object_credit_one_parse`` hold in
-    ``tests/unit/test_ccda_ledger.py`` — this corpus offers no such document,
-    and a claim no test holds is one the next refactor drops.
-    """
+    """CDA gives ``Device``/``RelatedEntity`` no ``<id>`` at all, so they are
+    credited on content evidence instead (the record states what the
+    document stated) -- absent, ambiguous or differently-spelled content
+    is still not evidence (test_ccda_ledger.py holds that)."""
     totals = _row(scale_report, construct)
     assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
     assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
@@ -244,14 +222,9 @@ def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
 def test_the_generating_system_and_the_informant_still_reach_the_record(
     corpus: list[tuple[str, bytes]], tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """What the ledger credits, the record has to actually carry.
-
-    The authoring device arrives as its own practitioner rather than as a
-    clinician, and an informant who gave only a relationship keeps it. Asserted
-    on the record directly rather than through the reading above: the reading is
-    now content evidence for both of these, and an instrument that agreed with
-    itself about the objects it is grading would prove nothing about them.
-    """
+    """What the ledger credits must actually be on the record: the
+    authoring device arrives as its own practitioner, and an informant
+    with only a relationship keeps it."""
     directory = tmp_path_factory.mktemp("actors")
     entities: set[str] = set()
     informants: set[str] = set()
@@ -269,14 +242,9 @@ def test_the_generating_system_and_the_informant_still_reach_the_record(
 
 
 def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]) -> None:
-    """A scanned referral's whole clinical content is one embedded artifact, and
-    it arrives as one — attached, not folded into an empty chart.
-
-    Measured at corpus scale rather than on one document because the shape that
-    hid here was a whole document TYPE reporting success: every unstructured
-    document in the corpus offers this construct, so a carry that worked on the
-    fixture and not on the type would show up as a partial column, not a pass.
-    """
+    """Measured at corpus scale, not one document: a carry that worked on
+    the fixture but not on the whole document TYPE would show as a
+    partial column, not a pass."""
     totals = _row(scale_report, "body:nonXMLBody")
     assert totals[Disposition.STRUCTURALLY_PARSED.value] > 0
     assert totals.get(Disposition.UNSUPPORTED.value, 0) == 0
@@ -285,26 +253,10 @@ def test_an_unstructured_body_reaches_the_record(scale_report: dict[str, object]
 def test_all_four_dispositions_are_reachable(
     scale_report: dict[str, object], tmp_path: Path
 ) -> None:
-    """Three occur in vivo; the fourth is proved by taking.
-
-    ``unsupported`` no longer occurs anywhere in this corpus, and that is the
-    reading rather than a gap in it: the parser parks every section's entries
-    verbatim, so every construct these documents offer reaches the record as
-    data or as bytes, and a column for what reached neither is empty because
-    nothing did. It was not always: the entries under a section that HAS
-    narrative used to be credited to that narrative, on the assumption that a
-    section's prose says what its entries say. These documents disprove it — a
-    Plan of Treatment reading "Continue lisinopril and recheck blood pressure in
-    three months" carries an entry stating the coded value "No current problems"
-    — so they were counted as lost, honestly, until the parser started keeping
-    them.
-
-    Which is exactly why the stripped-practitioner probe below stays, and why
-    this test was written to anticipate it: loss arriving from an adapter that
-    dropped something is a different route to the same disposition, and a ledger
-    that learned to flatter a defective adapter is still caught by it now that
-    the corpus carries no natural loss at all.
-    """
+    """Three dispositions occur in vivo; ``unsupported`` is proved by taking
+    a document's practitioners away, since the parser now parks every
+    section's entries so nothing in this corpus reaches neither data nor
+    bytes."""
     constructs = scale_report["constructs"]
     assert isinstance(constructs, list)
     seen: set[str] = set()
@@ -336,27 +288,11 @@ def test_all_four_dispositions_are_reachable(
 def test_taking_the_parked_copies_away_can_only_worsen_the_reading(
     corpus: list[tuple[str, bytes]], tmp_path: Path
 ) -> None:
-    """An instrument that cannot report loss is not an instrument.
-
-    Strip the parked entries back out of each record and the reading has to
-    get WORSE or stay put — never better — and on at least one document the
-    ``unsupported`` column has to come back, because there the credit was
-    resting on those copies and on nothing else. If some later refactor
-    credits an entry for merely existing, the reading will not move and this
-    will.
-
-    It stops short of demanding the column come back on EVERY document that
-    parks, which is what it asked before the corpus learned to write cited
-    narrative. An entry can now be credited two ways — by the copy its
-    section parked, and by the narrative cell it cites — and where both hold,
-    removing one leaves the other standing. That is two mechanisms working,
-    not a credit resting on nothing, so the monotonic half is what holds
-    everywhere and the existence half is what proves the copies are load
-    bearing at all.
-
-    It is the same doubt the stripped-practitioner probe answers for
-    participations, asked of the construct this release actually changed.
-    """
+    """Contract: stripping parked entries can only make the reading WORSE or
+    equal, never better, and at least one document must actually lose
+    ``unsupported`` credit -- proving the copies are load-bearing, not
+    merely that removing them never helps (an entry credited both by its
+    parked copy and by a cited narrative cell may still hold on the other)."""
     depended = 0
     for name, xml in corpus[:32]:
         path = tmp_path / name
@@ -571,13 +507,10 @@ _NARRATIVE_SEQUENCE: dict[str, tuple[str, ...]] = {
 
 
 def _model_key(parent_name: str, name: str) -> str:
-    """The content model row an element is judged against.
-
-    Element name alone, except for the names CDA reuses for different content —
-    a ``component`` under ``ClinicalDocument`` holds a body and one under an
-    ``organizer`` holds an observation, and judging them by one row would let
-    either shape stand anywhere.
-    """
+    """The content-model row an element is judged against: qualified
+    ``parent/name`` for the names CDA reuses differently (e.g.
+    ``component`` under ``ClinicalDocument`` vs under ``organizer``),
+    else the bare name."""
     qualified = f"{parent_name}/{name}"
     return qualified if qualified in _CONTENT_MODEL else name
 
@@ -600,13 +533,8 @@ def _check_conformance(  # type: ignore[no-untyped-def]
 def _check_model(
     name: str, children: list[str], parent_name: str, seen: set[str], *, narrative: bool
 ) -> None:
-    """One element's children against the row that governs them.
-
-    Order is asserted only where the schema states a sequence. A StrucDoc
-    choice says which names may appear and nothing about their order, so
-    holding the corpus to one would be this test inventing a rule and then
-    reporting a legal rearrangement as a defect.
-    """
+    """One element's children against its governing row: order is asserted
+    only where the schema states a sequence, never for a StrucDoc choice."""
     if narrative:
         seen.add(f"text/{name}")
         if name in _NARRATIVE_CHOICE:
@@ -634,15 +562,9 @@ def _check_model(
 def test_every_element_it_emits_is_legal_where_it_stands(
     corpus: list[tuple[str, bytes]],
 ) -> None:
-    """The corpus has to be a corpus of documents that could exist.
-
-    Until #327 it wrote ``intendedRecipient/assignedPerson`` — a person under a
-    name C-CDA R2.1 gives that role no home for — and every ledger run's
-    informationRecipient count was a reading about a document no exporter could
-    have produced. The parser reads that shape on purpose and says so; a
-    generator that emits it is testing our tolerance instead of our conformance,
-    which is a different question answered by accident.
-    """
+    """The corpus must be documents that could exist: until #327 it wrote a
+    shape (``intendedRecipient/assignedPerson``) C-CDA gives no home for,
+    testing tolerance instead of conformance."""
     from lxml import etree
 
     seen: set[str] = set()
@@ -670,18 +592,10 @@ def _dangling_under(node, declared: set[str]):  # type: ignore[no-untyped-def]
 
 
 def _why_it_may_dangle(missing: str, has_text: bool, names_in_text: set[str]) -> str | None:
-    """The one reason a citation in THIS section is allowed to resolve to nothing.
-
-    Three arrangements dangle on purpose, and the reason is a property of the
-    section rather than of the name: an entry may cite the narrative in a
-    section written with no narrative at all; `_cited_dangling` on an odd
-    document names a different cell and lets the entry cite the absent one;
-    on an even document it names the cited cell and writes a second name
-    beside it that nothing declares. A `narr` dangling in a section whose
-    text DOES exist and declares nothing is the regression the first version
-    of this test forgave: every entry in every bare-content section citing a
-    name that had been dropped, and the suite green.
-    """
+    """The one reason a citation in a section is allowed to resolve to
+    nothing: no narrative in the section at all, the narrative names
+    another cell, or a second (non-resolving) name sits beside a
+    resolving one."""
     if "-narr-" in missing and not has_text:
         return "no narrative at all"
     if "-narr-" in missing and any("-elsewhere-" in n for n in names_in_text):
@@ -694,20 +608,10 @@ def _why_it_may_dangle(missing: str, has_text: bool, names_in_text: set[str]) ->
 def test_every_name_a_document_points_at_is_a_name_it_declares(
     corpus: list[tuple[str, bytes]],
 ) -> None:
-    """Except the one arrangement whose whole point is a name that is not.
-
-    ``renderMultiMedia/@referencedObject`` is an ``xs:IDREFS`` and a
-    ``<reference value="#x"/>`` resolves against the same ID space, so a value
-    naming nothing is invalid — not a shape a tolerant reader forgives, a
-    document no exporter could have written. The content-model test above
-    cannot see it, because an ID that resolves and one that does not are the
-    same element in the same place.
-
-    The exception is deliberate and bounded: ``_cited_dangling`` writes an
-    unresolvable citation on purpose, so the ledger's refusal to credit one has
-    something to measure. That is the ONE name allowed to dangle, and every
-    dangling name is checked to be it.
-    """
+    """Every ID reference must resolve to a declared ``ID`` -- an unresolved
+    one is a document no exporter could have written, except the one
+    deliberate, bounded exception ``_cited_dangling`` writes on purpose
+    so the ledger's refusal has something to measure."""
     from lxml import etree
 
     v3 = "urn:hl7-org:v3"
@@ -751,22 +655,11 @@ def test_every_name_a_document_points_at_is_a_name_it_declares(
 def test_it_writes_the_narrative_arrangements_the_ledger_argues_about(
     corpus: list[tuple[str, bytes]],
 ) -> None:
-    """A corpus of one narrative shape agrees with any containment rule at all.
-
-    Every cited entry used to point at a bare ``<content>`` sitting directly
-    under the section's ``<text>``, and every cited entry was one the adapter
-    takes apart structurally — so the whole question of which name over a word
-    is a claim and which is an address was never asked of these 6,144
-    documents. Three real defects in that rule came and went across four
-    rounds of review without moving the reading by a byte.
-
-    What has to be here: a row whose name sits above the words with an unnamed
-    cell in between; a name at more than one level over the same words, which
-    is the only shape that can tell a rule asking about direct children from
-    one asking about ancestry; a name on the arrangement itself, which must
-    NOT be credited; a cell that renders nothing; a citation that resolves to
-    nothing; and entries with no structured home of their own to do the citing.
-    """
+    """Contract: the corpus must write every containment shape the ledger's
+    crediting rule argues about -- an unnamed cell under a named row, a name
+    at two nesting levels over one set of words, a name on the arrangement
+    itself (must not be credited), a cell rendering nothing, and an
+    unresolvable citation -- or one shape would agree with any rule."""
     from lxml import etree
 
     v3 = "urn:hl7-org:v3"
@@ -818,14 +711,10 @@ def test_it_writes_the_narrative_arrangements_the_ledger_argues_about(
 def test_an_entry_with_no_structured_home_is_the_one_that_cites(
     corpus: list[tuple[str, bytes]],
 ) -> None:
-    """Only an entry with nothing else to show ever asks the narrative.
-
-    A parsed entry's evidence is its own object, so it never spends a cell. If
-    every citation in the corpus sits on an entry the adapter takes apart, the
-    narrative-credit rule is generated into documents and then read by nobody —
-    which is how forcing every citation to fail, and forcing every one to
-    succeed, both left the 6,144-document reading byte-identical.
-    """
+    """A parsed entry's evidence is its own object and never spends a cell:
+    at least one corpus citation must sit on an entry outside the
+    adapter's structured dispatch, or the narrative-credit rule is
+    generated and never exercised."""
     from lxml import etree
 
     v3 = "urn:hl7-org:v3"

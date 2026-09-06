@@ -1,46 +1,11 @@
 """Manifest persistence: the bridge from a render run to a later ``anast upload``.
 
-An upload happens after the charts are built, often on another machine, so the
-upload driver cannot re-run the pipeline — it reads this file instead.
-:func:`write_upload_manifest` writes it; :func:`load_upload_manifest` reads it
-back (:func:`read_upload_manifest` is the ``(items, patients)`` projection).
-
-Two invariants shape the file:
-
-* **Deterministic.** ``sort_keys=True``, items sorted by ``item_key``, patients
-  keyed by ``patient_id`` — two writes over the same inputs are byte-identical.
-  No clock, no random.
-* **Loud on malformed.** A missing file, an unsupported version, or a missing
-  key raises :class:`ManifestError`. A corrupt manifest is a defect to surface,
-  not a run to start with half the data.
-
-PHI rule, load-bearing: this file carries patient demographics (the resolver
-needs name + DOB) and, from v2, dates of service. It lives ONLY inside the
-hardened ``0o700`` output directory
-(:func:`anastomosis.core.output.secure_output_dir`) beside the chart PDFs those
-values are rendered into — so v2 opens no new exposure surface — is NEVER
-logged (every log line here is a count, a version number, or an exception
-TYPE), and is NEVER committed. ``file_path`` is stored relative to ``out_dir``
-— a basename for a chart, ``attachments/<name>`` for a source document — so the
-manifest is relocatable and never embeds an absolute path; it is re-absolutized
-against ``out_dir`` on read, and a stored path that would climb out of the
-bundle is refused there rather than followed.
-
-From v3 the file also carries the run's REVIEWED context: the destination route
-plan it was prepared for and the gate outcomes it passed
-(:mod:`anastomosis.deliver.browser.gates`). Those are what
-:func:`~anastomosis.deliver.browser.gates.assert_deliverable` refuses on, so the
-bundle an executor moves is the bundle somebody checked.
-
-From v4 it also carries the bundle's SOURCE DOCUMENTS — the scans and reports
-in ``charts/attachments`` — and, per item, the
-:class:`~anastomosis.deliver.verify.types.VerifyPolicy` that says which of the
-L0-L6 levels can honestly be run over those bytes. Before that, a patient whose
-whole chart is a scanned Unstructured Document produced a manifest with zero
-items and zero patients, and the run exited 0.
-
-See ``docs/UPLOAD_MANIFEST.md`` for what each schema version carries and why a
-v1 file still loads.
+:func:`write_upload_manifest` writes it; :func:`load_upload_manifest` reads
+it back. Deterministic (``sort_keys=True``, sorted keys, no clock or
+random); loud on malformed (44). Carries demographics and, from v2, dates
+of service — hardened-dir only, never logged, never committed (45). From
+v3 it also carries the reviewed route/gates (46); from v4, source
+documents and per-item :class:`~anastomosis.deliver.verify.types.VerifyPolicy`.
 """
 
 from __future__ import annotations
@@ -91,58 +56,34 @@ MANIFEST_VERSION = 4
 #: The version that introduced the L0-L6 ladder fields (``pack``,
 #: ``expected_pages``, ``date_of_service``).
 LADDER_VERSION = 2
-#: The version that introduced the reviewed route plan and the run's gate
-#: outcomes is defined by :mod:`anastomosis.deliver.browser.gates` — the
-#: delivery decision needs it too, and that module cannot import this one back
-#: — and re-exported here, where every caller already looks for it.
+#: The version that introduced the route plan/gate outcomes; defined in
+#: :mod:`.gates` (which this module cannot import back) and re-exported here.
 
-#: The version that introduced the bundle's source documents as items, and with
-#: them the per-item ``verify_policy`` they need: nothing before v4 could carry
-#: a file the ladder must not read as a rendered chart.
+#: The version that introduced source documents as items and their
+#: per-item ``verify_policy`` — nothing before v4 could carry a non-chart file.
 POLICY_VERSION = 4
 
-# Versions :func:`load_upload_manifest` accepts; anything else is a defect and
-# raises. Each field group is gated on the version that introduced it, not on
-# ``MANIFEST_VERSION`` — the reader used to do the latter, which was correct
-# only while 2 was the newest and would have silently dropped v2's ladder
-# fields out of a v2 file the moment 3 existed.
+# Versions load_upload_manifest accepts; anything else raises. Each field
+# group is gated on the version that introduced it, not on
+# MANIFEST_VERSION, so a v2 file never loses its ladder fields once v3+ exists.
 SUPPORTED_MANIFEST_VERSIONS: frozenset[int] = frozenset(
     {1, LADDER_VERSION, GATE_VERSION, POLICY_VERSION}
 )
 
 
 class ManifestError(Exception):
-    """The upload manifest is missing or malformed — loud, never a silent skip.
-
-    Raised by :func:`load_upload_manifest` for an absent file, an unsupported
-    version, or a missing/wrong-shaped key. The message names the file and the
-    fault (both PHI-safe — a path to the manifest and a structural reason, never
-    a patient value) so the caller can surface a clean error instead of a
-    ``KeyError``/``JSONDecodeError`` traceback.
+    """The upload manifest is missing or malformed (44); the message names
+    the file and a PHI-safe structural reason, never a patient value.
     """
 
 
 @dataclass(frozen=True)
 class UploadManifest:
-    """One manifest file read back: the items plus what the ladder checks against.
-
-    :attr:`pack`, :attr:`expected_pages` and :attr:`encounters` are the v2
-    additions and are empty for a v1 file — :attr:`degraded` says so, and the
-    reader has already logged it. Each map is keyed the way
-    :class:`~anastomosis.deliver.verify.LayeredVerifier` looks it up:
-    ``expected_pages`` by ``item_key``, ``encounters`` by ``encounter_id``.
-
-    :attr:`route` and :attr:`gates` are the v3 additions and are ``None`` for
-    anything older — and for a v3 file whose writer had nothing to record. They
-    are what :func:`~anastomosis.deliver.browser.gates.assert_deliverable`
-    decides on; ``None`` there means "this bundle never recorded its gates",
-    which is a warning rather than a refusal (see that module).
-
-    :attr:`verify_policies` is the v4 addition, keyed by ``item_key`` like
-    :attr:`expected_pages`. Every item of an older file is a rendered chart, so
-    a missing key reads as :attr:`~.VerifyPolicy.RENDERED_CHART` and nothing
-    about an existing tree changes.
-    """
+    """One manifest file read back. ``pack``, ``expected_pages`` and
+    ``encounters`` are v2 (empty + :attr:`degraded` for v1); ``route``
+    and ``gates`` are v3 (``None`` for older or an unrecorded v3+);
+    ``verify_policies`` is v4 (a missing key reads as
+    :attr:`~.VerifyPolicy.RENDERED_CHART`)."""
 
     version: int
     items: list[UploadItem]
@@ -156,23 +97,16 @@ class UploadManifest:
 
     @property
     def degraded(self) -> bool:
-        """Whether this file predates the ladder fields (a v1 manifest).
-
-        True means an upload over these items verifies LESS than a current one:
-        L3 has no pack and no dates of service, and L1 has no exact page count.
+        """Whether this is a pre-ladder (v1) file: L3 has no pack or dates
+        of service, and L1 has no exact page count.
         """
         return self.version < LADDER_VERSION
 
 
 @dataclass(frozen=True)
 class WrittenManifest:
-    """What one :func:`write_upload_manifest` call put on disk.
-
-    The counts are here because the run's own rail reads them. The MANIFEST
-    stage event used to count the RENDERED documents it had been handed, which
-    was the same number as the items only while charts were the only kind of
-    item — an attachment-only bundle then announced ``0 item(s)`` over a file
-    that had two. A writer that reports what it wrote cannot drift from it.
+    """What one :func:`write_upload_manifest` call put on disk: the run's
+    own rail reads these counts, so a writer cannot drift from what it wrote.
     """
 
     path: Path
@@ -187,18 +121,10 @@ class WrittenManifest:
 
 
 def _stored_path(item: UploadItem, out_dir: Path) -> str:
-    """The item's file as the manifest records it: relative to the bundle.
-
-    A relative path (not an absolute one) is stored so the manifest is
-    relocatable and never embeds the host directory layout; it is re-absolutized
-    against ``out_dir`` on read. A chart sits in the bundle's root and so keeps
-    the basename this has always written; a source document sits in
-    ``attachments/``, and storing ITS basename alone would re-absolutize to a
-    file that is not there — the item would resolve to nothing on a machine that
-    only has the manifest.
-
-    A file outside ``out_dir`` altogether has no relative form, so it keeps its
-    basename: the same answer, and the same limitation, as before.
+    """The item's file as the manifest records it: relative to ``out_dir``
+    so the manifest is relocatable — a chart's basename, or
+    ``attachments/<name>`` for a source document. Falls back to the
+    basename for a file outside ``out_dir`` altogether.
     """
     try:
         return item.file_path.relative_to(out_dir).as_posix()
@@ -215,18 +141,10 @@ def _item_to_json(
     date_of_service: date | None,
     version: int,
 ) -> dict[str, Any]:
-    """One item as a deterministic JSON object.
-
-    ``expected_pages`` and ``date_of_service`` are ``null`` when the render run
-    could not know them (a PDF that would not parse; an item with no encounter,
-    as the whole-patient ccda-standard view has). A ``null`` makes the level that
-    wants it skip or fail loudly on upload — it never lets a level pass on an
-    assumed value.
-
-    ``verify_policy`` appears only in a v4 file. A v2/v3 file's items are all
-    rendered charts by construction, so writing the field into one would state
-    at a version its reader does not know about the one thing every item there
-    already is.
+    """One item as a deterministic JSON object. ``expected_pages``/
+    ``date_of_service`` are ``null`` when the render run could not know
+    them, so a level fails loudly rather than assuming a value.
+    ``verify_policy`` is written only from v4 (46).
     """
     entry: dict[str, Any] = {
         "item_key": item.item_key,
@@ -245,13 +163,8 @@ def _item_to_json(
 
 
 def _pymupdf_or_none() -> Any:
-    """PyMuPDF if the ``render`` extra is installed, else ``None``.
-
-    Imported here rather than at module scope so this module keeps loading on a
-    machine without the extra (the whole ``deliver.browser`` package holds that
-    line for Playwright too). Returning ``None`` instead of raising is the point:
-    a missing optional dependency costs the manifest its page counts — announced
-    loudly by the caller — it does not cost the operator their manifest.
+    """PyMuPDF if the ``render`` extra is installed, else ``None`` — a
+    missing optional dependency costs page counts, never the manifest (75).
     """
     try:
         import pymupdf
@@ -261,23 +174,10 @@ def _pymupdf_or_none() -> Any:
 
 
 def _page_counts(items: list[UploadItem]) -> dict[str, int]:
-    """Measure each pageable PDF's page count: L1's ``expected_pages`` on upload.
-
-    The page count is a WRITE-TIME fact — what this run actually produced, or
-    carried — and recording it is what lets L1 assert "exactly N pages" hours
-    later, on another machine, against a file it re-opens itself. Deriving it at
-    upload time instead would prove only that the file agrees with itself.
-
-    Takes the items worth opening (:func:`_pageable`), not every item: a source
-    document under a media type nothing here pages has no count to take, and
-    asking for one anyway would report it below as unreadable.
-
-    Never silent: an item whose count cannot be read (no PyMuPDF, or a file that
-    will not parse) is simply absent from the result, and the miss is logged as a
-    COUNT plus the exception TYPE — never a path, a name, or a patient value.
-    Absent means L1 falls back to its page floor for that item; it never means an
-    invented count.
-    """
+    """Measure each pageable PDF's page count (L1's ``expected_pages``). An
+    unreadable item is simply absent from the result (a count and
+    exception type only are logged); absent means L1 falls back to its
+    page floor, never an invented count."""
     if not items:  # nothing to page: no counts to take, and nothing to warn about
         return {}
     pymupdf = _pymupdf_or_none()
@@ -310,13 +210,9 @@ def _page_counts(items: list[UploadItem]) -> dict[str, int]:
 
 
 def _pageable(items: list[UploadItem], policies: dict[str, VerifyPolicy]) -> list[UploadItem]:
-    """The items whose page count is worth measuring.
-
-    A rendered chart always is. A source document is only when the SOURCE said
-    it was a media type this toolkit pages: opening a TIFF scan (or a body that
-    declared no type) to ask how many pages it has would report every one of
-    them as an unreadable count, which is a warning about the toolkit dressed up
-    as a warning about the bundle.
+    """Items worth page-counting: a rendered chart always; a source
+    document only when it declared a pageable media type — opening an
+    undeclared scan would report an unreadable count, not a bundle fact.
     """
     opaque = VerifyPolicy.SOURCE_OPAQUE
     return [
@@ -327,20 +223,10 @@ def _pageable(items: list[UploadItem], policies: dict[str, VerifyPolicy]) -> lis
 
 
 def _assert_one_file_per_item_key(items: list[UploadItem]) -> None:
-    """Two items may not share an ``item_key``, because the ledger dedupes them.
-
-    ``item_key`` is the tracking ledger's PRIMARY KEY — that is what makes a
-    killed run resumable — so two items arriving under one key are enqueued as
-    one row and exactly one file is ever uploaded. The other is not refused and
-    not reported: it is simply never sent.
-
-    Reachable now that source documents are items: one patient's scan carried
-    twice under two names is two files, and both take the same key (no encounter
-    to tell them apart, so the patient id stands in, and identical bytes give an
-    identical digest). Refused rather than half-delivered.
-
-    PHI: counts only. An ``item_key`` embeds an encounter id, so it is not
-    printed even though those ids are pseudonymous.
+    """Two items may not share an ``item_key``: it is the tracking
+    ledger's primary key, so a collision enqueues one row and the other
+    item is silently never sent. Refused rather than half-delivered (44).
+    PHI: counts only.
     """
     keys = {item.item_key for item in items}
     if len(keys) != len(items):
@@ -352,18 +238,9 @@ def _assert_one_file_per_item_key(items: list[UploadItem]) -> None:
 
 
 def _file_version(carried: SourceDocuments, *, gates: RunGates | None) -> int:
-    """The schema version this file's CONTENT is, not the build that wrote it.
-
-    A writer given no gate record produces a manifest that carries none, which
-    is exactly a version-2 file — and stamping it 3 anyway was the ambiguity
-    underneath the whole grandfather clause: a reader could not tell "written
-    before gates existed" from "written now and edited since", so the branch
-    meant for old trees was reachable by deleting one value from a current one.
-
-    A file carrying source documents is a v4 file by the same rule, because a
-    v3 reader would take its ``attachments/`` items for rendered charts and run
-    the chart ladder over a scan. Nothing else moves: a bundle of charts with
-    gates is the same v3 file it was.
+    """The schema version this file's CONTENT is, not the build that
+    wrote it: no gate record is a v2 file regardless of build version
+    (46); any source document makes it v4, else v3/v2 by ``gates``.
     """
     if carried.items:
         return POLICY_VERSION
@@ -379,52 +256,18 @@ def write_upload_manifest(
     route: RoutePlan | None = None,
     gates: RunGates | None = None,
 ) -> WrittenManifest:
-    """Write ``<out_dir>/upload_manifest.json`` for a later ``anast upload``.
-
-    Builds the items via :func:`build_manifest` (so the same content hashing and
-    ``item_key`` rule the engine relies on is reused, not re-implemented), then
-    selects the :class:`Patient` each item refers to from ``records``. Only the
-    patients an item actually references are written. The file lands inside
-    :func:`secure_output_dir` (``0o700``).
-
-    The bundle's SOURCE DOCUMENTS are items too
-    (:func:`~anastomosis.deliver.browser.manifest.build_attachment_manifest`).
-    Serializing the rendered charts alone was the whole of issue #374: a C-CDA
-    Unstructured Document renders no encounter, so a patient whose entire chart
-    is a scan produced ``0 item(s)``, ``0 patients`` and exit 0 while both of
-    their documents sat in ``<out_dir>/attachments``. A patient reaches
-    ``patients`` because an ITEM names them, so an attachment-only patient now
-    arrives there by the same rule every other patient always has.
-
-    ``pack`` is the template pack that rendered ``documents`` — the name the
-    upload side reloads L3's ``verify_header_fields`` from. ``None`` says no
-    Jinja pack rendered these charts (the ccda-standard whole-patient view), and
-    the upload side reports L3 as skipped for that reason rather than checking
-    against a pack that never ran.
-
-    ``route`` is the destination route plan this bundle was PREPARED for and
-    ``gates`` is what the run checked before writing it — the reviewed context
-    an executor refuses on hours later
-    (:func:`~anastomosis.deliver.browser.gates.assert_deliverable`). A caller
-    that has neither writes ``null`` for both, which is honest: the bundle
-    records that nothing was checked rather than implying something was.
-
-    Deterministic: items are sorted by ``item_key``, patients keyed by
-    ``patient_id``, and the JSON is written with ``sort_keys=True`` — two writes
-    over the same inputs are byte-identical.
-
-    PHI rule: this file carries demographics and dates of service, so it stays
-    inside the hardened output dir and is never logged. The only log lines are
-    counts.
-    """
+    """Contract: writes ``<out_dir>/upload_manifest.json`` (0o700). Items
+    are rendered charts plus source documents (#374); only patients an
+    item references are written. ``route``/``gates`` are the reviewed
+    context, ``null`` when neither was checked. Deterministic; PHI stays
+    in-file, only counts are logged."""
     held = list(records)  # walked twice below; ``records`` may be a one-shot iterable
     charts = build_manifest(documents)
     carried = build_attachment_manifest(held, out_dir / ATTACHMENTS_DIRNAME)
     items = [*charts, *carried.items]
     _assert_one_file_per_item_key(items)
-    # One pass over ``records``: the canonical patient_id -> Patient for the
-    # items' lookups, and the encounter_id -> DOS that L3's ``dos`` field is
-    # verified against on upload.
+    # One pass: canonical patient_id -> Patient for item lookups, and
+    # encounter_id -> DOS for L3's verification.
     patients_by_id: dict[str, Patient] = {}
     dos_by_encounter: dict[str, date | None] = {}
     for record in held:
@@ -445,9 +288,8 @@ def write_upload_manifest(
         )
         for item in sorted(items, key=lambda it: it.item_key)
     ]
-    # Only patients referenced by an item are written (the upload step needs no
-    # demographics for a patient that produced no chart). A missing referenced
-    # patient is a defect — surface it loudly rather than write a half manifest.
+    # Only patients referenced by an item are written; a missing
+    # referenced patient is a defect, surfaced loudly.
     referenced = {item.patient_id for item in items}
     patients_json: dict[str, Any] = {}
     for patient_id in sorted(referenced):
@@ -468,18 +310,11 @@ def write_upload_manifest(
     }
     out = secure_output_dir(out_dir)
     path = out / MANIFEST_NAME
-    # PHI-BY-DESIGN: the upload manifest carries the demographics the later
-    # ``anast upload`` resolver needs (name + DOB) and the dates of service L3
-    # verifies, so it is written ONLY into this secure_output_dir-hardened
-    # directory (0700 owner-only on POSIX; on Windows NTFS, inheritance stripped
-    # and access limited to the current user, SYSTEM, and Administrators) with a
-    # PHI-warning README, never logged and never committed. See SECURITY.md,
-    # "Code scanning & suppression policy (auditable)".
+    # PHI-BY-DESIGN: demographics + DOS, written only into this hardened
+    # dir (45); see SECURITY.md "Code scanning & suppression policy".
     # codeql[py/clear-text-storage-sensitive-data]
     atomic_write_text(path, json.dumps(payload, sort_keys=True, indent=2) + "\n")
-    # PHI: log COUNTS only — never a name, a DOB, a date of service, or a path
-    # under out_dir. The page-count tally is the honest measure of how much of
-    # L1 an upload over this manifest can actually run.
+    # PHI: counts only — never a name, DOB, date of service, or path.
     written = WrittenManifest(
         path=path,
         charts=len(charts),
@@ -499,16 +334,8 @@ def write_upload_manifest(
 
 
 def _report_not_carried(written: WrittenManifest) -> None:
-    """Say out loud that this manifest leaves out documents the records name.
-
-    Not every caller assembles the bundle it writes a manifest for: the pack
-    pipeline carries every named attachment before it gets here (and refuses the
-    run when one did not land), while a ``migrate --render ccda-standard`` writes
-    its manifest beside charts it rendered and never carried an attachment to at
-    all. So an absent file cannot be a refusal here without stranding that mode
-    — but it must never be a silence either, because "this patient's scan is not
-    in the delivery" is precisely the fact #374 was about.
-
+    """Say out loud that this manifest leaves out documents the records
+    name — never silent, because that gap is what #374 was about.
     PHI: counts only.
     """
     if written.not_carried:
@@ -528,14 +355,9 @@ def _require(data: dict[str, Any], key: str, path: Path) -> Any:
 
 
 def _resolved_file(stored: str, out_dir: Path, path: Path) -> Path:
-    """Re-absolutize a stored item path against ``out_dir``, or refuse it.
-
-    The stored path is relative BY CONTRACT (a basename for a chart,
-    ``attachments/<name>`` for a source document), and it is read off a file. An
-    absolute path, or one that climbs out with ``..``, would make the manifest a
-    way to point an upload at any file the process can read — a bundle is copied
-    between machines, so what it names has to stay inside the bundle. Refused
-    loudly, never quietly re-based.
+    """Re-absolutize a stored relative path against ``out_dir``, refusing
+    one that climbs outside it — a bundle moves between machines, so
+    what it names must stay inside it (44).
     """
     resolved = (out_dir / stored).resolve()
     if not resolved.is_relative_to(out_dir.resolve()):
@@ -549,17 +371,10 @@ def _resolved_file(stored: str, out_dir: Path, path: Path) -> Path:
 def _item_from_json(
     entry: dict[str, Any], out_dir: Path, *, version: int, path: Path
 ) -> tuple[UploadItem, int | None, date | None]:
-    """One item entry as ``(item, expected_pages, date_of_service)``.
-
-    The ladder fields are REQUIRED keys in a current-version file: a ``null``
-    value is the render run saying it did not know the value, while an ABSENT
-    key means the file does not match the version it declares — a defect, so it
-    raises. A v1 entry carries neither and yields ``None`` for both.
-
-    The date of service is read ONCE and handed out twice: returned beside the
-    item for the encounter map L3 verifies against, and set on the item itself
-    for a destination whose filing dialog asks for a document date. No new
-    field is written, so this stays a v2 file — the value was already there.
+    """One item entry as ``(item, expected_pages, date_of_service)``. The
+    ladder fields are required keys from v2; an absent key at that
+    version is a defect, ``null`` is an honest "did not know". A v1
+    entry yields ``None`` for both.
     """
     pages: int | None = None
     dos: date | None = None
@@ -590,13 +405,9 @@ def _item_from_json(
 
 
 def _policy_from_json(entry: dict[str, Any], *, version: int, path: Path) -> VerifyPolicy:
-    """One item's verification policy: required at v4, a chart before it.
-
-    A pre-v4 file has only rendered charts in it, so the absent key is not a
-    missing value — it is the answer. At v4 the key is required and its value
-    must be one this build knows: a policy nothing here recognizes would
-    otherwise fall back to the chart ladder, which is exactly the wrong
-    direction to fail in for a scan.
+    """One item's verification policy: absent before v4 reads as
+    :attr:`VerifyPolicy.RENDERED_CHART`; required and validated at v4 —
+    an unrecognised value must not fall back to the chart ladder (46).
     """
     if version < POLICY_VERSION:
         return VerifyPolicy.RENDERED_CHART
@@ -612,26 +423,17 @@ def _policy_from_json(entry: dict[str, Any], *, version: int, path: Path) -> Ver
 def _reviewed_context(
     data: dict[str, Any], path: Path, *, version: int
 ) -> tuple[RoutePlan | None, RunGates | None]:
-    """The v3 route plan and gate outcomes, or ``(None, None)`` for an older file.
-
-    Both keys are REQUIRED in a v3 file and both may be ``null``: absent means
-    the file does not match the version it declares, which is a defect, while
-    ``null`` is the writer saying it had nothing to record. A malformed value
-    raises rather than degrading — a half-read gate record is exactly the thing
-    that must not quietly become "no gate record", because that is the case an
-    executor is allowed to proceed past.
+    """The v3 route plan and gate outcomes, or ``(None, None)`` before v3.
+    Both keys are required from v3 and may be ``null`` (nothing to
+    record); a malformed value raises rather than degrading to "no
+    record", which :func:`assert_deliverable` treats as passable (46).
     """
     if version < GATE_VERSION:
         return None, None
     raw_route = _require(data, "route", path)
     raw_gates = _require(data, "gates", path)
-    # Both keys must be PRESENT at this version (``_require`` above), and both
-    # may legitimately be null: a render that chose no destination has no route
-    # to record, and saying so is the honest answer. What a null gate record
-    # may not do is buy delivery — that decision belongs to
-    # :func:`~anastomosis.deliver.browser.gates.assert_deliverable`, which
-    # refuses it at this version rather than warning, and warns only for a
-    # manifest old enough to predate the record entirely.
+    # Both keys must be present (_require above); null is a legitimate
+    # "nothing to record" — assert_deliverable, not this reader, decides.
     try:
         route = None if raw_route is None else RoutePlan.from_json(raw_route)
         gates = None if raw_gates is None else RunGates.from_json(raw_gates)
@@ -643,27 +445,11 @@ def _reviewed_context(
 
 
 def load_upload_manifest(out_dir: Path) -> UploadManifest:
-    """Read the manifest back in full, as an :class:`UploadManifest`.
-
-    Re-absolutizes each item's relative ``file_path`` against ``out_dir`` (a
-    stored path that would climb out of the bundle is refused) and validates each
-    patient via :meth:`Patient.model_validate`. Loud on malformed: a missing
-    file, an unsupported version, or a missing/wrong-shaped key raises
-    :class:`ManifestError` rather than starting a run with partial data.
-
-    A v1 file (no pack, no expected pages, no dates of service) is accepted —
-    refusing it would strand every already-rendered tree — and logs ONE warning
-    naming the degraded coverage. The line carries a version and a count only.
-    A pre-v3 file likewise carries no route plan and no gate outcomes; what an
-    executor does about that is
-    :func:`~anastomosis.deliver.browser.gates.assert_deliverable`'s decision,
-    not this reader's.
-
-    The DOS-only :class:`Encounter` objects returned in ``encounters`` are built
-    for L3, which reads ``date_of_service`` and nothing else: they deliberately
-    carry no sections and no clinical content, because the manifest deliberately
-    stores none.
-    """
+    """Contract: reads the manifest, re-absolutizing each ``file_path``
+    and validating patients; raises :class:`ManifestError` on anything
+    missing or malformed (44). A v1 file is accepted, degraded, and
+    logged once; pre-v3 carries no route/gates (46). Returned
+    :class:`Encounter` objects carry only the DOS L3 needs."""
     path = out_dir / MANIFEST_NAME
     try:
         raw = path.read_text(encoding="utf-8")
@@ -701,15 +487,12 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
             raise ManifestError(f"upload manifest {path} item entry must be an object")
         item, pages, dos = _item_from_json(entry, out_dir, version=version, path=path)
         items.append(item)
-        # Recorded for every item at every version: a pre-v4 file's items are
-        # rendered charts, which is an answer, not a gap.
         policies[item.item_key] = _policy_from_json(entry, version=version, path=path)
         if pages is not None:
             expected_pages[item.item_key] = pages
         if version >= LADDER_VERSION:
-            # Recorded for every v2 item, DOS or not: "this encounter has no date
-            # of service" is itself the answer L3 needs, and it fails the ``dos``
-            # field loudly instead of looking like a missing record.
+            # Recorded for every v2 item, DOS or not: "no date of service"
+            # is itself the answer L3 needs.
             encounters[item.encounter_id] = Encounter(
                 id=item.encounter_id, patient_id=item.patient_id, date_of_service=dos
             )
@@ -736,8 +519,8 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
         verify_policies=policies,
     )
     if manifest.degraded:
-        # PHI-safe: versions and a count. Never silent — an operator uploading an
-        # older tree is told, in the run's own log, what is no longer checked.
+        # PHI-safe: versions and a count. Never silent — the log names
+        # what verification this version skips.
         logger.warning(
             "upload manifest is version %d (current is %d): verification is DEGRADED for "
             "all %d item(s) — L3 (pack header/DOS fields) SKIPS and L1 checks the page "
@@ -752,12 +535,8 @@ def load_upload_manifest(out_dir: Path) -> UploadManifest:
 
 
 def read_upload_manifest(out_dir: Path) -> tuple[list[UploadItem], dict[str, Patient]]:
-    """The ``(items, patients)`` projection of :func:`load_upload_manifest`.
-
-    What a caller needs when it only has to answer "does this manifest parse,
-    and over what?" — both frontends' cheap pre-attach validation, and the
-    engine's two positional inputs. The upload drive itself takes the full
-    :class:`UploadManifest`, because the ladder verifies against the rest of it.
+    """The ``(items, patients)`` projection of :func:`load_upload_manifest`
+    — cheap pre-attach validation and the engine's two positional inputs.
     """
     manifest = load_upload_manifest(out_dir)
     return manifest.items, manifest.patients

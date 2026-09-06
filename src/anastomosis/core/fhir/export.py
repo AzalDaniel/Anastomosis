@@ -63,23 +63,18 @@ _FHIR_SEVERITIES = {"mild", "moderate", "severe"}
 
 
 def _urn(resource_id: str) -> str:
-    """The bundle-internal URN for a resource id, used for BOTH each entry's
-    ``fullUrl`` and every reference to it (they must match to resolve).
-
-    A UUID id gets the standard ``urn:uuid:`` form — the one a receiving FHIR
-    server recognizes and resolves within a collection Bundle. Any other id shape
-    keeps ``urn:anastomosis:`` so the id is still recoverable on ingest (the
-    round-trip strips whichever prefix is present); ``urn:uuid:`` would be invalid
-    for a non-UUID id. PF/Tebra, C-CDA, and FHIR-R4 ids are UUIDs, so they take
-    the standard form; this only falls back for an odd non-UUID source id.
+    """Contract: the bundle-internal URN for a resource id, used for both its
+    entry ``fullUrl`` and every reference to it. A UUID id gets ``urn:uuid:``
+    (what a receiving FHIR server resolves); any other id shape keeps
+    ``urn:anastomosis:<id>`` so ingest can still recover it, since
+    ``urn:uuid:`` would be invalid for a non-UUID id.
     """
     try:
         parsed = uuid.UUID(resource_id)
     except (ValueError, AttributeError, TypeError):
         return f"urn:anastomosis:{resource_id}"
-    # uuid.UUID also accepts braced / urn-prefixed / dash-less forms; urn:uuid must
-    # carry a CANONICAL 8-4-4-4-12 uuid, so emit it only when the id already is one
-    # (else fall back, keeping the URN valid). The round-trip holds either way.
+    # uuid.UUID also accepts braced/urn-prefixed/dash-less forms, but urn:uuid
+    # needs a canonical 8-4-4-4-12 spelling; fall back otherwise (still round-trips).
     if str(parsed) != resource_id.lower():
         return f"urn:anastomosis:{resource_id}"
     return f"urn:uuid:{resource_id}"
@@ -93,10 +88,9 @@ def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
     """The lossless tail: source extensions + canonical fields FHIR can't hold."""
     out: list[dict[str, str]] = []
     if model.extensions:
-        # default=str: extensions is dict[str, Any]; a future adapter could stash
-        # a datetime/Decimal there, and without a fallback json.dumps would raise
-        # at bundle-export time and lose the whole record. The field serializer
-        # below already had this guard; the extensions blob did not.
+        # default=str: a future adapter could stash a datetime/Decimal in
+        # extensions, and json.dumps would otherwise raise and lose the whole
+        # record.
         blob = json.dumps(model.extensions, sort_keys=True, default=str)
         out.append({"url": EXT_NS, "valueString": blob})
     for name, value in fields.items():
@@ -112,27 +106,10 @@ class FhirExportError(Exception):
 
 @dataclass(frozen=True)
 class DeliveredAttachment:
-    """One :class:`~anastomosis.core.model.DocumentArtifact` a deliverer has
-    actually carried, as the FHIR ``Attachment`` fields describing it.
-
-    A ``PatientRecord`` cannot supply these itself: ``url`` is a path relative
-    to a ``bundle.json`` this module never writes, and the DELIVERER — the
-    archive's ``patients/<id>/attachments/``, the bundle's own
-    ``<id>/attachments/`` — is the one that budgets the destination name,
-    copies the bytes, and can measure what actually landed. Threading this in
-    from there, instead of :func:`to_bundle` re-deriving a name from
-    ``DocumentArtifact.path``, is what keeps the two from independently
-    drifting: two derivations of one filename is exactly how a JSON ends up
-    naming a file the deliverer never wrote (the failure
-    ``deliver.ccda_export.builder.DeliveredArtifact`` exists to prevent, on
-    the C-CDA side).
-
-    ``size`` and ``sha256`` (hex) are measured off the bytes the deliverer
-    actually wrote, never copied from ``DocumentArtifact.sha256`` — that field
-    is the SOURCE's claim, and a copy that silently truncated or a source that
-    lied would otherwise travel as a hash nobody re-checked. ``url`` is the
-    deliverer's own relative spelling (forward slashes, always) of where that
-    file sits next to the ``bundle.json`` referencing it.
+    """Contract: the FHIR ``Attachment`` fields for one
+    :class:`~anastomosis.core.model.DocumentArtifact` a deliverer actually
+    carried. ``size``/``sha256`` are measured off the delivered bytes, never
+    copied from ``DocumentArtifact.sha256``, the source's own unverified claim.
     """
 
     url: str
@@ -140,32 +117,23 @@ class DeliveredAttachment:
     sha256: str
 
 
-#: A FHIR-standard way to say "this element should have a value and does
-#: not, and here is why" (http://hl7.org/fhir/StructureDefinition/data-
-#: absent-reason). Used on an ``Attachment`` whose document a deliverer
-#: names but did not carry — a real receiving system's FHIR tooling already
-#: knows this extension, unlike a namespaced Anastomosis one, so a document
-#: with no url/size/hash reads as "known to be missing" rather than "nobody
-#: checked".
+#: FHIR-standard "should have a value and does not" extension, used on an
+#: Attachment a deliverer named but did not carry — a receiving system's own
+#: tooling already knows it, unlike a namespaced Anastomosis one.
 _DATA_ABSENT_REASON_EXT = "http://hl7.org/fhir/StructureDefinition/data-absent-reason"
 
 
-#: Fields a resource is structurally required to have, which :func:`_prune`
-#: leaves alone even when they are empty. A FHIR resource is ADDRESSED by its
-#: id — the bundle entry's ``fullUrl`` is built from it and every reference
-#: into the resource resolves through it — so an empty one is a problem to be
-#: refused by name, not a field to tidy away.
+#: Fields :func:`_prune` leaves alone even when empty: a FHIR resource is
+#: addressed by its id (every reference resolves through it), so an empty one
+#: is a problem to refuse by name, not tidy away.
 _STRUCTURAL = frozenset({"resourceType", "id"})
 
 
 def _prune(resource: dict[str, Any]) -> dict[str, Any]:
-    """Drop the fields FHIR reads as absent — and only the optional ones.
-
-    An empty optional field is noise a receiving system should not have to read
-    past. A structurally required one is not: an empty ``id`` pruned away left a
-    resource that looked well-formed until :func:`to_bundle` indexed it three
-    frames later and raised ``KeyError`` from inside a comprehension. Keeping it
-    means the emptiness survives to where it can be reported.
+    """Drop only the optional fields FHIR reads as absent. A required field
+    (:data:`_STRUCTURAL`) stays even when empty, so the emptiness surfaces
+    where it can be reported instead of vanishing into a resource that looks
+    well-formed until something tries to address it.
     """
     return {k: v for k, v in resource.items() if k in _STRUCTURAL or v not in (None, "", [], {})}
 
@@ -187,16 +155,7 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
         )
         if getattr(record, name)
     }
-    # The record's OWN id is deliberately absent. `AnastBase.id` defaults to a
-    # fresh uuid4 and no adapter sets it, so it is instance bookkeeping minted
-    # at parse time with no relationship to anything the source said — unlike
-    # `patient.id`, which the source states and this tool derives from it. A
-    # runtime-minted id in a delivered artifact makes two runs over one export
-    # differ in a file whose whole job is to be compared, and this writer's
-    # docstring calls that byte-stability a contract. The CCD side has never
-    # carried it (`build_ccd` serializes no record id at all), which is why
-    # `test_two_ingests_of_one_export_build_identical_documents` can exist
-    # there; this is that guarantee reaching the other rendition (#405).
+    # Record id omitted deliberately: never a parse-time-minted value (RULES.md 8, #405).
     extras["__record__"] = {"extensions": record.extensions}
     extension = _exts(
         p,
@@ -207,15 +166,11 @@ def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
             "race": p.race,
             "ethnicity": p.ethnicity,
             "mothers_maiden_name": p.mothers_maiden_name,
-            # `name.given` is one ordered list, so a patient whose only
-            # forename is a middle name reads back as GIVEN "Quimby" without
-            # this. The `not p.given_name` half is only to keep the ordinary
-            # patient's extension empty — stashing it always round-trips too.
+            # `name.given` is one ordered list: a middle-name-only patient
+            # would read back as GIVEN "Quimby" without stashing it here.
             "middle_name": p.middle_name if (p.middle_name and not p.given_name) else None,
-            # Same shape one field over: `address.line` is ordered too, so an
-            # address with only a second line reads back as line1 — "Suite 400"
-            # as the street. One such address stashes the whole list verbatim,
-            # since the positions are what carry the distinction.
+            # `address.line` is ordered too: a line2-only address would read
+            # back as street "Suite 400" without stashing the list verbatim.
             "addresses": (
                 [a.model_dump(mode="json") for a in p.addresses]
                 if any(a.line2 and not a.line1 for a in p.addresses)
@@ -626,29 +581,19 @@ def _coverage(c: Coverage) -> dict[str, Any]:
     )
 
 
-#: CDA role classes whose actor is somebody in a PERSONAL relationship with the
-#: patient rather than a clinician — a spouse who gave the history, an emergency
-#: contact. Read from the source's own classification (``ccda:role``) rather than
-#: from a list of participation names, because CDA already draws this line and a
-#: role it adds later lands on the safe side of it by default.
+#: CDA role classes for a personal relation (spouse, emergency contact) rather
+#: than a clinician. Read from the source's own ``ccda:role`` classification,
+#: so a role CDA adds later lands on the safe side by default.
 _PERSONAL_ROLES = frozenset({"relatedEntity", "associatedEntity"})
 #: The CDA entity class that is a machine rather than a person.
 _DEVICE_ENTITY = "assignedAuthoringDevice"
 
 
 def _actor(p: Practitioner, patient_id: str) -> dict[str, Any]:
-    """One canonical Practitioner as the FHIR resource it actually is.
-
-    ``PatientRecord`` has one collection of people, so the clinician who signed
-    a note, the spouse who supplied the history and the system that generated
-    the summary all arrive in it together. FHIR types them apart, and the
-    difference is not cosmetic: a bundle that exported the patient's next of kin
-    as a ``Practitioner`` would show a family member on the care team of a chart
-    they only appear beside — a silent misattribution, which this project ranks
-    below the outright loss it replaced.
-
-    A record from any other source carries no ``ccda:role`` and stays a
-    Practitioner, which is what it was.
+    """Contract: one canonical Practitioner as the FHIR resource it actually
+    is — a next of kin exported as ``Practitioner`` would misattribute them to
+    the care team, so ``ccda:entity``/``ccda:role`` route to ``Device`` or
+    ``RelatedPerson``; a record with neither stays a Practitioner.
     """
     if p.extensions.get("ccda:entity") == _DEVICE_ENTITY:
         return _device(p)
@@ -682,13 +627,10 @@ def _practitioner(p: Practitioner) -> dict[str, Any]:
 
 
 def _related_person(p: Practitioner, patient_id: str) -> dict[str, Any]:
-    """A person related to the patient. ``patient`` is required by FHIR and is
-    the whole point of the type — it says whose relative this is.
-
-    The relationship travels as the document's own words when it named them;
-    the code system behind it, and everything else the participation carried,
-    stays in the lossless tail rather than being translated into a FHIR
-    valueset this mapping cannot verify.
+    """A person related to the patient; ``patient`` says whose relative this
+    is. The relationship travels as the document's own words — the code
+    system behind it stays in the lossless tail rather than being guessed
+    into a FHIR valueset this mapping cannot verify.
     """
     relationship = p.extensions.get("ccda:code")
     return _prune(
@@ -705,12 +647,10 @@ def _related_person(p: Practitioner, patient_id: str) -> dict[str, Any]:
 
 
 def _device(p: Practitioner) -> dict[str, Any]:
-    """The system that generated a document.
-
-    ``type: other`` because FHIR's device-nametype list has no entry for a CDA
-    ``softwareName``, and picking the nearest-looking one would state something
-    the document did not. Both CDA element names survive verbatim in the
-    lossless tail.
+    """The system that generated a document. ``type: other``: FHIR's device-
+    nametype list has no entry for a CDA ``softwareName``, and guessing the
+    nearest one would state something the document did not. Both CDA element
+    names survive verbatim in the lossless tail.
     """
     return _prune(
         {
@@ -750,31 +690,18 @@ def _location(f: Facility) -> dict[str, Any]:
 def _artifact(
     d: DocumentArtifact, attachments: Mapping[str, DeliveredAttachment] | None
 ) -> dict[str, Any]:
-    # ``attachments`` is None for a bare export (no deliverer in the loop —
-    # round-trip and schema tests, an ad hoc `to_bundle(record)`): the
-    # Attachment carries only what the record itself knows, exactly as
-    # before this fix — no deliverer means no claim either way about what
-    # exists on disk.
-    #
-    # A deliverer that DOES pass a mapping is asserting it is complete. A
-    # document naming a file (``path`` set) with no entry in it is one the
-    # deliverer tried to carry and could not — that is reported, loudly, on
-    # the Attachment itself (see below) rather than shipped as silent nulls a
-    # receiving system cannot tell apart from "nobody checked". It is not
-    # refused outright: the archive and bundle deliverers are lower-level
-    # primitives an operator can run standalone over an older or partial
-    # charts directory (conservation of the FULL export belongs to the run —
-    # `pipeline._carry_attachments` — which already refuses there), so one
-    # patient's shortfall must not cost every OTHER patient's bundle in the
-    # same run.
+    # ``attachments=None``: no deliverer in the loop, so the Attachment
+    # carries only what the record knows. A mapping asserts completeness, so
+    # a missing entry gets a loud data-absent reason, not a silent null —
+    # refusal is the run's job (``pipeline._carry_attachments``), not this
+    # lower-level primitive's.
     landed = attachments.get(d.id) if attachments is not None else None
     attachment: dict[str, Any] = {"contentType": d.mime_type, "title": d.title}
     if landed is not None:
         attachment["url"] = landed.url
         attachment["size"] = landed.size
-        # R4's Attachment.hash is base64Binary, not the hex spelling every
-        # other digest in this toolkit carries — encoded here, at the one
-        # place a hex digest crosses into a FHIR field.
+        # R4's Attachment.hash is base64Binary, not the hex spelling this
+        # toolkit's other digests use — encoded here, the one FHIR crossing.
         attachment["hash"] = base64.b64encode(bytes.fromhex(landed.sha256)).decode("ascii")
     elif attachments is not None and d.path:
         attachment["extension"] = [{"url": _DATA_ABSENT_REASON_EXT, "valueCode": "error"}]
@@ -803,16 +730,9 @@ def _artifact(
 
 
 def _entries(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One bundle entry per resource, refusing any that cannot be addressed.
-
-    A resource with no id has nowhere to be pointed at: nothing in the bundle
-    can reference it and a receiving system has no handle for it, so it would
-    ride along attached to nothing. Refusing here says which resource types and
-    how many, rather than raising ``KeyError`` from a comprehension after a
-    partial delivery is already on disk.
-
-    The message carries resource TYPE names and counts only — never an id, a
-    title, or any other value off the record.
+    """One bundle entry per resource; refuses (naming type and count only,
+    never a value — RULES.md 2) any resource with no id, since nothing in
+    the bundle could reference it.
     """
     missing = Counter(
         str(r.get("resourceType") or "(untyped)") for r in resources if not r.get("id")
@@ -831,23 +751,10 @@ def _entries(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def to_bundle(
     record: PatientRecord, attachments: Mapping[str, DeliveredAttachment] | None = None
 ) -> dict[str, Any]:
-    """Export one PatientRecord as a FHIR R4 Bundle (type=collection).
-
-    ``attachments`` is what a DELIVERER measured off the files it carried
-    beside this bundle, keyed by :class:`~anastomosis.core.model.
-    DocumentArtifact` id (see :class:`DeliveredAttachment`). Left ``None`` —
-    every bare call this module's own tests make, and any other export with
-    no delivery in the loop — a document's Attachment carries only what the
-    record itself knows, same as always: this function has no filesystem to
-    measure against and makes no claim about one.
-
-    A caller that DOES pass a mapping is asserting it is complete: a document
-    naming a file (``path`` set) with no entry in it is one the deliverer
-    tried to carry and could not, and its Attachment says so explicitly (see
-    :func:`_artifact`) rather than shipping silent nulls a receiving system
-    is told to fetch and cannot — the same asserts-a-document-exists-and-
-    gives-nothing-to-find-it-with shape #373 closed on the C-CDA side.
-    """
+    """Contract: export one PatientRecord as a FHIR R4 Bundle (type=collection).
+    ``attachments`` is what a deliverer measured off the files it carried (see
+    :class:`DeliveredAttachment`); left ``None``, an Attachment carries only
+    what the record knows. A caller passing a mapping asserts completeness."""
     resources: list[dict[str, Any]] = [_patient(record.patient, record)]
     resources += [_actor(p, record.patient.id) for p in record.practitioners]
     resources += [_location(f) for f in record.facilities]

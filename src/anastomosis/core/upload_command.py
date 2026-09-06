@@ -1,35 +1,11 @@
-"""The shared browser-upload orchestration core (one engine drive, two frontends).
-
-``anast upload`` (CLI) and the GUI upload console must drive the resumable upload
-engine IDENTICALLY: the same ledger file, the same retry budget, the same
-recover -> run -> finish -> report, and — critically — the manifest is read
-INSIDE the output lock (lock-then-read). Reading it under the lock means the
-items the engine acts on are the ones present while the lock is held, never a
-copy read before a concurrent ``render``/``migrate`` could rewrite the manifest
-(the TOCTOU a read-before-lock would open). This module is that single orchestration;
-each frontend keeps only its own pre-flight (loopback gate, operator
-confirmation, pack readiness, skiplist source) and its own presentation.
-
-Before any of that, the run BINDING is checked: an output tree carries a
-``run_manifest.json`` naming the source, destination and layout profile hashes
-its charts were prepared under, and an upload whose machine no longer matches
-them refuses loudly (:func:`check_run_binding`) instead of filing charts against
-expectations that have changed. A clean landing then records the run's new state
-— ``delivered``, and ``verified`` when the ladder ran (:func:`record_upload_state`).
-
-PHI rule: this layer moves counts/ids/state-names through the ledger and report;
-it prints/logs nothing patient-derived, and the ledger + report stay inside the
-0700 output dir. The operator's browser is NEVER closed — only our own ledger
-handle is.
-
-Verification is ON by default and fails CLOSED: ``UploadCommand.verify`` (default
-``True``) runs the engine behind the L0-L6 :class:`LayeredVerifier` — the
-wrong-chart/wrong-patient defense. Filing a chart that does not match its patient
-is worse than not filing it, so an operator must EXPLICITLY pass ``--no-verify``
-to skip the ladder, and if the verification dependency (PyMuPDF, the ``render``
-extra) is missing the run is REFUSED (:class:`VerificationUnavailableError`)
-rather than silently filing unverified. The engine's banner wrong-patient abort
-runs regardless of this flag — it is the engine's own guard, not a verifier level.
+"""The shared browser-upload orchestration core: the CLI and the GUI drive
+the resumable upload engine identically, reading the manifest inside the
+output lock so the items acted on can never be a pre-lock copy a
+concurrent render/migrate rewrote. The run binding is checked first
+(:func:`check_run_binding`), and a clean landing records ``delivered``/
+``verified`` (:func:`record_upload_state`). Verify defaults on and fails
+closed (47). PHI: only counts/ids/state-names move through the ledger and
+report; the operator's browser is never closed, only our ledger handle.
 """
 
 from __future__ import annotations
@@ -66,17 +42,14 @@ __all__ = [
 
 
 class VerificationUnavailableError(RuntimeError):
-    """``verify=True`` was requested but the verification dependency is missing.
-
-    Fail closed: rather than file charts UNVERIFIED, the run refuses. Install the
-    render extra (``pip install 'anastomosis[render]'``), or pass ``--no-verify``
-    to explicitly accept an unverified upload (the engine's wrong-patient banner
-    check still runs).
-    """
+    """``verify=True`` but the verification dependency is missing (47):
+    fails closed rather than file charts unverified. Install the render
+    extra, or pass ``--no-verify`` to explicitly accept the risk (the
+    engine's wrong-patient banner check still runs)."""
 
 
-# The retry budget per item before it is marked FAILED — ONE default for BOTH
-# frontends (they previously diverged: the CLI used 3, the GUI 4).
+# The retry budget per item before it is marked FAILED — one default shared
+# by both frontends.
 DEFAULT_MAX_ATTEMPTS = 3
 
 # The upload ledger filename, inside the 0700 output dir. Both frontends share
@@ -114,15 +87,10 @@ _CLEAN_UPLOAD_STATES: frozenset[str] = frozenset(
 
 
 def _nonclean_terminal_states() -> frozenset[str]:
-    """The TERMINAL state values that are NOT a clean landing.
-
-    Derived from the upload machine's ``TERMINAL_STATES`` minus the clean set,
-    so a terminal state newly added to the machine is classified non-clean by
-    default (fail-loud: an unclassified terminal counts AGAINST a clean run,
-    never silently for it). Imported lazily to keep this module free of the
-    ``deliver.browser`` (browser-extra) dependency at import time — the whole
-    module follows that discipline so ``verify=False`` never pulls the extra.
-    """
+    """The TERMINAL states that are NOT a clean landing: the machine's
+    ``TERMINAL_STATES`` minus the clean set, so a state newly added there
+    counts against a clean run by default. Imported lazily so
+    ``verify=False`` never pulls in the browser extra."""
     from anastomosis.deliver.browser.states import TERMINAL_STATES
 
     return frozenset(s.value for s in TERMINAL_STATES) - _CLEAN_UPLOAD_STATES
@@ -130,13 +98,9 @@ def _nonclean_terminal_states() -> frozenset[str]:
 
 @dataclass
 class UploadCommandResult:
-    """What an upload run yields the caller: ledger counts, abort reason, report.
-
-    Carries the derived verdict both frontends branch on — :attr:`is_clean` (and
-    its :attr:`exit_code` projection) — so the CLI's process exit and the GUI's
-    done-vs-error terminal event are decided by ONE classifier here, not by two
-    that can drift.
-    """
+    """What an upload run yields: ledger counts, abort reason, report path,
+    and the derived verdict both frontends branch on (:attr:`is_clean`,
+    :attr:`exit_code`) so neither classifies it independently."""
 
     counts: dict[str, int]
     aborted_reason: str | None
@@ -144,42 +108,26 @@ class UploadCommandResult:
 
     @property
     def is_clean(self) -> bool:
-        """Whether the run landed cleanly: no abort, and no non-clean TERMINAL item.
-
-        Clean means every item reached a SAFE terminal end — ``completed``
-        (filed + verified), ``skipped_skiplist`` (excluded up front), or
-        ``duplicate_at_destination`` (already on file). It is NOT clean when
-        ``aborted_reason`` is set (the engine's wrong-patient/safety stop) OR any
-        item landed in a non-clean terminal state (``failed``,
-        ``pre_verify_failed``, ``post_verify_failed``, ``patient_not_found``,
-        ``preflight_failed``). Non-terminal leftovers (e.g. a cooperatively
-        stopped run's ``pending`` items) are NOT failures — they resume on the
-        next run — so they do not by themselves make a run non-clean.
-        """
+        """Contract: true when every item reached a safe terminal end
+        (``completed``, ``skipped_skiplist``, ``duplicate_at_destination``)
+        and ``aborted_reason`` is unset. Non-terminal leftovers (a
+        cooperatively stopped run's ``pending`` items) resume next run and
+        do not by themselves make a run non-clean."""
         if self.aborted_reason is not None:
             return False
         return not any(self.counts.get(state, 0) for state in _nonclean_terminal_states())
 
     @property
     def exit_code(self) -> int:
-        """The process exit code for the run: ``0`` when :attr:`is_clean`, else ``1``.
-
-        ``anast upload`` returns this so a script can branch on a non-clean run —
-        an abort, or any item left in a non-clean terminal state.
-        """
+        """``0`` when :attr:`is_clean`, else ``1`` — what ``anast upload``
+        returns so a script can branch on a non-clean run."""
         return 0 if self.is_clean else 1
 
     def nonclean_summary(self) -> str:
-        """A PHI-safe one-line summary of the non-clean TERMINAL counts.
-
-        State NAMES and integer counts only — e.g.
-        ``"3 item(s) in non-clean terminal states: failed=1, pre_verify_failed=2"``
-        — never an item key, a path, or any patient value. The GUI worker uses it
-        as the ``error`` event message when :attr:`is_clean` is False without an
-        abort, so the operator sees WHICH states blocked a clean landing instead
-        of a false ``done`` ("upload complete"). States are listed alphabetically
-        for a stable, testable string.
-        """
+        """A PHI-safe one-line summary of the non-clean terminal counts —
+        state names and integers only, alphabetical for a stable string —
+        so the GUI's error event says WHICH states blocked a clean landing
+        instead of a false "upload complete"."""
         offenders = sorted(
             (state, self.counts[state])
             for state in _nonclean_terminal_states()
@@ -192,14 +140,10 @@ class UploadCommandResult:
 
 def resolve_run_manifest_root(out_dir: Path) -> Path:
     """Where the RUN manifest lives for an upload pointed at ``out_dir``.
-
-    ``anast upload`` accepts either a migrate output dir or the ``charts``
-    folder inside it — :func:`resolve_manifest_root` says so about the upload
-    manifest, and an operator who learned that habit will point this at
-    ``charts`` too. The run manifest sits one level up, so without this the
-    binding check would find nothing there, log "not bound", and file every
-    chart unchecked: the whole feature bypassed by naming a subfolder.
-    """
+    An operator may point this at the ``charts`` subfolder, as
+    :func:`resolve_manifest_root` allows for the upload manifest; the run
+    manifest sits one level up, so without this check_run_binding would
+    find nothing and file every chart unchecked."""
     from anastomosis.core.runmanifest import run_manifest_path
 
     if run_manifest_path(out_dir).is_file():
@@ -211,23 +155,11 @@ def resolve_run_manifest_root(out_dir: Path) -> Path:
 
 
 def check_run_binding(out_dir: Path) -> RunManifest | None:
-    """Refuse to upload from a folder whose bound profiles have since changed.
-
-    The charts in this folder were rendered by a particular layout, from a
-    particular source mapping, for a particular destination — and the L0-L6
-    ladder verifies them against exactly those. If any of the three moved since
-    the run was prepared, filing these charts is filing them under expectations
-    that no longer describe them, so it stops here
-    (:class:`~anastomosis.core.runmanifest.BindingError`) naming which profile
-    moved.
-
-    Returns the manifest when the folder is bound and current, and ``None`` when
-    it holds no run manifest at all. That second case is an output tree rendered
-    before run manifests existed, or by a command that writes none; it uploads
-    exactly as it did before, with one PHI-free log line saying that nothing was
-    checked. A manifest that is PRESENT but unreadable is a fault and raises —
-    "never bound" and "bound, and we cannot tell to what" are different answers.
-    """
+    """Contract (53): raises :class:`~anastomosis.core.runmanifest.BindingError`
+    naming which profile moved if the folder's binding drifted since it was
+    prepared. Returns the manifest when bound and current, ``None`` when
+    none exists (logged, not a fault) — unreadable is a different, raised
+    case."""
     from anastomosis.core.runmanifest import load_run_manifest, recapture_binding, verify_binding
 
     manifest = load_run_manifest(resolve_run_manifest_root(out_dir))
@@ -243,20 +175,11 @@ def check_run_binding(out_dir: Path) -> RunManifest | None:
 
 
 def record_upload_state(out_dir: Path, result: UploadCommandResult, *, verified: bool) -> None:
-    """Record what the upload did, as run state, when the folder is bound.
-
-    A clean upload IS the receipt the ``prepared`` state was waiting for: every
-    item reached a safe terminal end and the run report on disk says so. So the
-    run advances to ``delivered``, and — when the L0-L6 ladder ran rather than
-    being skipped with ``--no-verify`` — on to ``verified``. A non-clean run
-    advances nothing: a partial landing is not a delivery, and a state past
-    ``prepared`` is a claim.
-
-    Best-effort by design, and only in this direction: the charts are filed
-    either way, and a bookkeeping failure must not turn a successful upload into
-    a reported failure. The refusals that MATTER already fired before the browser
-    was touched (:func:`check_run_binding`). Unbound folders record nothing.
-    """
+    """Advance the bound run's state (53): a clean upload moves it to
+    ``delivered``, and to ``verified`` too when the ladder ran; an unbound
+    folder records nothing. Best-effort only in this direction — the
+    charts are already filed, so a bookkeeping failure here logs rather
+    than turning success into a reported failure."""
     from anastomosis.core.runmanifest import (
         BindingError,
         RunManifestError,
@@ -287,39 +210,20 @@ def record_upload_state(out_dir: Path, result: UploadCommandResult, *, verified:
 
 
 def resolve_manifest_root(out_dir: Path) -> Path:
-    """Where the upload manifest lives: ``out_dir`` itself, else ``out_dir/charts``.
-
-    A ``render`` / ``pipeline run`` writes the manifest into the output dir; a
-    ``migrate`` writes it into ``<out>/charts`` alongside the chart PDFs. Both
-    frontends resolve it the same way through this one helper, so a migrate
-    output dir uploads from either.
-    """
+    """Where the upload manifest lives: ``out_dir`` itself (``render``/
+    ``pipeline run``), else ``out_dir/charts`` (``migrate``). Both
+    frontends resolve it through this one helper."""
     from anastomosis.deliver.browser.persist import MANIFEST_NAME
 
     return out_dir if (out_dir / MANIFEST_NAME).is_file() else out_dir / "charts"
 
 
 def _verification_pack(name: str | None) -> LoadedPack | None:
-    """The template pack L3 reads ``verify_header_fields`` from, by manifest name.
-
-    The manifest records WHICH pack rendered its charts; the pack itself is not
-    copied into the output tree, so it is re-discovered here by that name.
-    Built-ins and the operator's own learned layouts — an external
-    ``--pack-dir`` pack executes its own ``context.py`` and an upload run holds
-    no operator consent for that, so discovery stays at its default
-    (``allow_external=False``). A learned layout is different in exactly the way
-    that matters: consent for its code was recorded as a content hash when the
-    operator confirmed it, so the trust store is passed and the pack loads only
-    while it still matches. An edited one is refused here like anywhere else and
-    L3 skips with the reason logged.
-
-    Never a silent downgrade: a manifest naming no pack (a v1 file, or the
-    ccda-standard whole-patient view, which renders through no Jinja pack) and a
-    named pack that is not discoverable here BOTH log the reason, so an operator
-    reading a report where L3 skipped can see WHY instead of trusting a level
-    that checked nothing. Pack names are identifiers, never patient-derived, so
-    naming one in a log line is safe.
-    """
+    """The template pack L3 reads ``verify_header_fields`` from, re-discovered
+    by the manifest's recorded name (22): stays at ``allow_external=False``
+    (no operator consent at upload time), and an edited learned layout
+    refuses like anywhere else. Every refusal or missing name logs the
+    reason; pack names are identifiers, safe to log."""
     if name is None:
         logger.warning(
             "upload manifest names no template pack: L3 (pack header/DOS fields) SKIPS for this run"
@@ -346,44 +250,11 @@ def run_upload_command(
     *,
     stop: threading.Event | None = None,
 ) -> UploadCommandResult:
-    """Drive the resumable upload engine under the output lock; return the outcome.
-
-    Order (shared by both frontends, so they cannot drift):
-
-    1. harden the output dir to 0700 and take the cross-process output lock — a
-       CLI or GUI run already driving this dir is refused (``OutputLockedError``)
-       rather than racing it into the one ledger (a patient-safety fence against
-       double-filing);
-    2. read the manifest INSIDE the lock (lock-then-read — closes the TOCTOU);
-    3. check the run binding (:func:`check_run_binding`) — an output tree whose
-       source, destination or layout profile changed since it was prepared
-       refuses HERE, before the browser is touched;
-    4. ``attach()`` the destination (the single Playwright seam) and wrap it;
-    5. ``begin_run`` -> ``recover`` (resume any prior killed run) -> drive ->
-       ``finish_run`` (only on a clean finish; an abort stamps its own) ->
-       ``write_run_report``;
-    6. record the run state (:func:`record_upload_state`) — a clean landing is
-       the receipt that moves a bound run past ``prepared``.
-
-    ``attach`` is invoked only after the lock is held, the manifest reads
-    cleanly, the binding checks out, AND the bundle passes
-    :func:`~anastomosis.deliver.browser.gates.assert_deliverable` — so a locked
-    dir, a missing or malformed manifest, a drifted binding, or a bundle whose
-    gates did not pass never touches the browser. ``stop`` is the cooperative
-    cancel flag the engine checks at item boundaries (the GUI's
-    ``upload_stop``); the CLI passes ``None``.
-
-    When ``cmd.verify`` is set the engine is wired with a
-    :class:`~anastomosis.deliver.verify.LayeredVerifier` (lazily imported so the
-    ``render`` extra it needs stays off the default path); otherwise the engine
-    falls back to its pass-through :class:`NullVerifier` and behavior is
-    unchanged. The ladder verifies against the manifest's own record of the
-    render run — the template pack, the per-item expected page count, and the
-    per-item date of service — so an upload checks what the render produced, not
-    what the upload machine happens to hold today. A pre-v2 manifest carries
-    none of those; it still uploads, with the levels that need them degraded and
-    said so out loud.
-    """
+    """Contract: harden and lock the output dir, read the manifest inside
+    the lock, check the run binding (53), ``attach()`` only once the
+    bundle passes :func:`~anastomosis.deliver.browser.gates.assert_deliverable`,
+    drive the engine, then record the run state (53); ``cmd.verify`` wires
+    a lazy :class:`~anastomosis.deliver.verify.LayeredVerifier` (47)."""
     from anastomosis.core.locking import output_lock
     from anastomosis.core.output import secure_output_dir
     from anastomosis.deliver.browser.engine import UploadEngine

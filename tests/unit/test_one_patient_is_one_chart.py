@@ -1,22 +1,13 @@
 """One patient is one chart, however many documents the source holds them in.
 
-Every per-patient destination is keyed by ``patient.id``: the C-CDA export
-writes ``<patient-id>.xml``, the archive and the bundle each write one
-directory, and every writer in them is exist_ok/overwrite. The C-CDA adapter
-yields one record per DOCUMENT — a document is the unit its conservation ledger
-has to account for — so a patient with two documents arrived as two records,
-landed in one slot, and the second silently replaced the first while the run
-reported two patients (#375).
+Every per-patient destination is keyed by ``patient.id``. The fold lives at
+``pipeline.load_records``, where every adapter passes, so a source already
+yielding one record per patient is unaffected. These tests drive the real
+pipeline through the CLI and read what it actually wrote -- none re-states
+the merge rule itself.
 
-The fold that fixes it lives at ``pipeline.load_records``, where every adapter
-passes, so a source that already yields one record per patient is unaffected.
-These tests drive the real pipeline through the CLI and read what it actually
-wrote: none of them re-states the merge rule, because a test that re-implements
-the thing it checks agrees with the code by construction.
-
-Every byte here is generated — ``feedface-`` ids, the 555 exchange, invented
-people — and nothing is copied from any export.
-"""
+Every byte is generated (``feedface-`` ids, 555 exchange); nothing is
+copied from any export."""
 
 from __future__ import annotations
 
@@ -179,12 +170,8 @@ def _write_scanned(export: Path, name: str, *, document: str, body: bytes) -> No
 
 
 def _run(export: Path, out: Path, *deliveries: str) -> str:
-    """Drive ``anast pipeline run`` over ``export``; the run's output.
-
-    Chromium is not available in the unit lane, so the shared fake renderer
-    stands in and writes a real PDF (see ``_render_fakes``). QA is off: what is
-    under test is how many charts get written and where, not how they grade.
-    """
+    """Drive ``anast pipeline run`` over ``export`` with the fake Chromium
+    renderer (QA off); the run's output."""
     result = runner.invoke(
         app,
         [
@@ -233,14 +220,6 @@ def _fake_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_two_documents_for_one_patient_deliver_one_ccda(tmp_path: Path) -> None:
-    """Two ordinary CCDs for one patient are one C-CDA document on disk, and the
-    count the run REPORTS is the count that is there.
-
-    Before the fold the run said two patients and wrote one file: the second
-    record's CCD landed on the first through ``write_bytes``, so a physician
-    opening the delivered document read one visit and could not tell that the
-    other had ever existed.
-    """
     export, out, ccda = tmp_path / "export", tmp_path / "charts", tmp_path / "cda"
     _write_structured(
         export,
@@ -306,17 +285,6 @@ def test_both_documents_of_one_patient_keep_their_visits(tmp_path: Path) -> None
 
 
 def test_two_scanned_documents_for_one_patient_both_reach_the_chart(tmp_path: Path) -> None:
-    """Two Unstructured Documents for one patient: the bundle references both
-    scans exactly once, and the archive's attachments directory holds exactly
-    those files.
-
-    This is the same defect wearing its other face. The attachments are carried
-    on a different path — named per DOCUMENT, so both always landed in the
-    charts directory — while the record that names them is what the archive
-    keys by patient. One record therefore reached ``bundle.json`` and the other
-    did not, and a delivered archive claimed to be complete while holding a
-    scan nothing in it referred to.
-    """
     export, out, archive = tmp_path / "export", tmp_path / "charts", tmp_path / "arc"
     _write_scanned(
         export, "scan_1.xml", document="feedface-doc0-0000-0000-00000000000a", body=b"referral one"
@@ -341,15 +309,6 @@ def test_two_scanned_documents_for_one_patient_both_reach_the_chart(tmp_path: Pa
 def test_two_documents_naming_one_visit_under_a_guid_root_fold_to_one_encounter(
     tmp_path: Path,
 ) -> None:
-    """Two documents can name the SAME visit under one GUID ``<id root>`` — a
-    visit summary and a note that documents it, arriving as two files instead
-    of two sections of one. ``fold_encounters_sharing_an_id`` already folds
-    that pair inside a single document; this proves the pipeline's own fold
-    calls it across the two documents it merges too, rather than only unioning
-    them into a doubled visit. This is what the "delete the fold call"
-    mutation survives without: reproduced red (``encounters == 2``) in a
-    disposable copy of the tree before this test existed.
-    """
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -379,19 +338,9 @@ def test_two_documents_naming_one_visit_under_a_guid_root_fold_to_one_encounter(
 def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_fold_to_one_encounter(
     tmp_path: Path,
 ) -> None:
-    """The inverse of #377's old pin (superseded by #393): HL7 v3's ``II`` is
-    the PAIR ``(root, extension)``, not the root alone. Most vendors emit a
-    system OID as the encounter id root paired with a per-instance extension
-    — the owner's own exports do — and two documents stating the SAME pair
-    describe the same visit by the datatype's own definition, so the
-    cross-document fold must reach them too, not only a GUID root.
-
-    The id itself is the literal uuid5 the recipe produces (computed by hand,
-    not by calling the function under test — see
-    ``test_a_component_with_no_id_takes_a_provenance_derived_from_its_organizer``
-    for why a literal is the point): document-intrinsic, so it does not
-    change if this same pair is later read from a third file.
-    """
+    """HL7 v3's ``II`` is the PAIR (root, extension), not the root alone
+    (#377, superseded by #393): two documents stating the same
+    (root, extension) name one visit and must fold to one encounter."""
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -432,14 +381,8 @@ def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_fold_to_
 def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_deliver_one_chart(
     tmp_path: Path,
 ) -> None:
-    """The physician-facing shape of the same fix: before #393 the archive
-    wrote one page per Encounter OBJECT, and a vendor OID root plus extension
-    named across two documents was two objects, so a physician opening this
-    patient's chart found the same visit twice. Driven through the real
-    cross-document fold (:func:`~anastomosis.pipeline.load_records`) and the
-    real archive delivery — no PDFs directory is needed for the archive to
-    write its per-encounter page, so this stays fast and Chromium-free.
-    """
+    """The physician-facing shape of #393: a vendor OID root+extension named
+    across two documents must deliver one encounter page, not two."""
     from anastomosis.deliver.archive.archive import ArchiveDeliverer
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
@@ -483,16 +426,9 @@ def test_two_documents_naming_one_visit_under_an_oid_root_and_extension_deliver_
 def test_a_bare_oid_root_with_no_extension_still_does_not_fold_across_documents(
     tmp_path: Path,
 ) -> None:
-    """The authority case, and it must NOT fold. An OID root with no
-    extension is typically an assigning authority a vendor stamps on every
-    encounter it ever writes, not one visit's identity — HL7 v3's ``II`` is
-    the (root, extension) PAIR, and a root alone states only the namespace.
-    Folding on it would merge every distinct visit that vendor ever
-    documented into one, which is the misfiling this project exists to
-    prevent. So a bare OID root still derives a per-DOCUMENT id from the file
-    name and position, exactly as before #393, and two documents stating the
-    same bare root keep two encounter objects.
-    """
+    """A bare OID root with no extension is an assigning authority, not a
+    visit identity (RULES.md 9) -- it must NOT fold two distinct visits
+    into one, unlike a paired (root, extension) or a GUID root."""
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -605,17 +541,8 @@ def test_a_guid_root_paired_with_an_extension_hashes_the_pair_not_the_bare_root(
 def test_two_documents_carrying_one_appendix_are_read_as_two_declared_losses(
     tmp_path: Path,
 ) -> None:
-    """Two documents can both already carry the SAME stamped 51899-3 appendix
-    — an ordinary shape for a chart exported more than once and then split
-    across two files. The merge cannot tell "the same fact stamped twice" from
-    "two distinct objects that happen to share a value" — an entry string does
-    not carry enough to say — so it keeps the multiset rather than deduping:
-    the merged ledger states the entry twice, and a re-export writes the line
-    twice. That is the conservative direction, chosen on purpose: a loss
-    ledger may say a thing twice, but it must never say it zero times. The
-    multiset behaviour itself held before this round of fixes too; this test
-    only pins it.
-    """
+    """A loss ledger keeps duplicates rather than deduping two documents'
+    entries: it may say a thing twice, but must never say it zero times."""
     from anastomosis.deliver.ccda_export import deliver_ccda
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
@@ -650,14 +577,9 @@ def test_two_documents_carrying_one_appendix_are_read_as_two_declared_losses(
 
 
 def test_merged_extensions_treats_a_non_ledger_occupant_as_a_clashing_key() -> None:
-    """A dict at the loss-ledger key that is not actually shaped like one — no
-    source in this codebase writes one, but a hand-made FHIR bundle can park
-    any JSON at all under any key — must not be folded into as though it were
-    a ledger: ``merge_loss_narrative`` would have to read entries/generation it
-    does not have. It is parked the same way any other clashing extension is,
-    in EITHER arrival order — the crash this pins against only showed up with
-    the non-ledger value first, then a real ledger second.
-    """
+    """A dict at the loss-ledger key not actually shaped like one parks as an
+    ordinary clashing extension in either arrival order, never folded as
+    though it had entries/generation."""
     from anastomosis.pipeline import _merged_extensions
 
     ledger = {EXT_PRIOR_LOSS_NARRATIVE: {"generation": 1, "entries": ["patient.notes = x"]}}
@@ -673,14 +595,8 @@ def test_merged_extensions_treats_a_non_ledger_occupant_as_a_clashing_key() -> N
 
 
 def test_merged_extensions_keeps_a_none_occupant_in_either_arrival_order() -> None:
-    """``existing is None`` used to conflate "this key is absent" with "this
-    key is present and states ``None``" — a real shape, since an extensions
-    dict can hold an explicit null. ``[{K: None}, {K: ledger}]`` folded the
-    incoming ledger as though nothing occupied ``K`` yet, so the ``None``
-    value vanished instead of being parked as a clashing key the way any
-    other second value is; the reverse order happened to already work,
-    because the accumulator really does start empty there.
-    """
+    """An explicit ``None`` occupant at a key is a real, present value -- not
+    absence -- and must survive the fold like any other clashing value."""
     from anastomosis.pipeline import _merged_extensions
 
     ledger = {"generation": 1, "entries": ["patient.notes = x"]}
@@ -698,14 +614,9 @@ def test_merged_extensions_keeps_a_none_occupant_in_either_arrival_order() -> No
 
 
 def test_record_fold_refuses_a_field_it_does_not_recognise() -> None:
-    """``_record_list_fields`` raises loudly on any ``PatientRecord`` field
-    that is neither one of the four fields the fold names nor a ``list[...]``
-    collection: a new field kind is a code change the fold must not guess at.
-    ``TypeError`` is the right shape — this is caught wiring up a new field,
-    not from data a run produced, so it is never a pipeline-level refusal.
-    The guard itself existed before this round of fixes; this test only pins
-    it, it did not add it.
-    """
+    """A ``PatientRecord`` field that is neither one of the four named fields
+    nor a ``list[...]`` collection raises ``TypeError`` -- a new field kind
+    is a code change, never guessed at."""
     from anastomosis.core.model import PatientRecord
     from anastomosis.pipeline import _record_list_fields
 
@@ -717,13 +628,9 @@ def test_record_fold_refuses_a_field_it_does_not_recognise() -> None:
 
 
 def test_patient_fold_refuses_a_collection_shape_it_does_not_recognise() -> None:
-    """The same guard on the demographic side. ``get_origin(tuple[str, ...])``
-    is not ``list``, so without this guard a future tuple-valued demographic
-    would be silently classed single-valued and start refusing runs the first
-    time two documents state it in a different order. ``TypeError`` for the
-    same reason as the record-level guard above: a new field kind is a code
-    change, not a runtime condition.
-    """
+    """The same guard on the demographic side: an unrecognised collection
+    shape (e.g. a tuple) raises ``TypeError`` rather than silently folding
+    as single-valued."""
     from anastomosis.core.model import Patient
     from anastomosis.pipeline import _patient_list_fields
 
@@ -735,17 +642,9 @@ def test_patient_fold_refuses_a_collection_shape_it_does_not_recognise() -> None
 
 
 def test_patient_fold_classes_an_optional_list_as_a_collection() -> None:
-    """``list[str] | None`` is the shape a new list-valued demographic will
-    actually take — every optional field ``Patient`` already has is written
-    ``X | None``, never a bare default. Before this fix
-    ``get_origin(list[str] | None)`` was ``types.UnionType``, not ``list``, so
-    the field fell out of BOTH the collection set and the unhandled-shape
-    check (:data:`_SEQUENCE_LIKE_ORIGINS` does not name ``UnionType`` either)
-    and was silently classed single-valued — a chart with two documents
-    stating it in a different order would then refuse the fold as a
-    "disagreement" instead of unioning it, the one thing a list field exists
-    to allow.
-    """
+    """``list[str] | None`` -- the shape every optional demographic field
+    actually takes -- must be classed a collection, not fall through to
+    single-valued and refuse a legitimate multi-document union."""
     from anastomosis.core.model import Patient
     from anastomosis.pipeline import _patient_list_fields
 
@@ -772,15 +671,8 @@ def test_patient_fold_still_refuses_an_optional_tuple() -> None:
 
 
 def test_record_fold_classes_an_optional_list_as_a_collection_too() -> None:
-    """The record-level mirror of the two tests above, and the reason they
-    matter together: the module claims ``_record_list_fields`` and
-    ``_patient_list_fields`` treat an unrecognised shape "the same way".
-    Before this fix that was false for exactly this annotation — the record
-    guard raised ``TypeError`` on ``list[str] | None`` (unhandled, by
-    elimination) while the patient guard silently let it through as
-    single-valued. Both now class it as the collection it is, so the parity
-    claim holds.
-    """
+    """The record-level mirror of the two tests above: ``_record_list_fields``
+    and ``_patient_list_fields`` must class ``list[str] | None`` the same way."""
     from anastomosis.core.model import PatientRecord
     from anastomosis.pipeline import _record_list_fields
 
@@ -793,13 +685,9 @@ def test_record_fold_classes_an_optional_list_as_a_collection_too() -> None:
 def test_the_archive_and_bundle_bundles_are_byte_identical_and_the_ccd_reparses_both(
     tmp_path: Path,
 ) -> None:
-    """#375's own claim — "compares delivered artifacts by hash" — pinned by
-    actually hashing something. The archive and the bundle both write
-    ``bundle.json`` through the same ``deliver._shared.write_fhir_bundle`` on
-    the same merged record, so their bytes have to be identical, not merely
-    similar; and the delivered CCD has to re-parse to both documents' visits
-    and problems, not just exist on disk.
-    """
+    """#375's own claim -- delivered artifacts compare by hash -- pinned on
+    real bytes: archive and bundle write byte-identical ``bundle.json``,
+    and the delivered CCD re-parses to both documents' visits and problems."""
     import hashlib
 
     from anastomosis.sources.ccda.parser import parse_document
@@ -845,13 +733,6 @@ def test_the_archive_and_bundle_bundles_are_byte_identical_and_the_ccd_reparses_
 
 
 def test_two_different_patients_still_deliver_two_of_everything(tmp_path: Path) -> None:
-    """Two records that are two PATIENTS stay two charts everywhere.
-
-    A fold keyed on anything coarser than the patient id — or one that folded
-    unconditionally — would deliver a single merged chart here, which is the
-    wrong-patient failure the whole toolkit exists to prevent. The counterweight
-    is worth as much as the fix.
-    """
     export, out = tmp_path / "export", tmp_path / "charts"
     archive, bundles, ccda = tmp_path / "arc", tmp_path / "bun", tmp_path / "cda"
     _write_structured(
@@ -896,18 +777,10 @@ def test_two_different_patients_still_deliver_two_of_everything(tmp_path: Path) 
 
 
 def test_disagreeing_demographics_under_one_id_refuse_the_run(tmp_path: Path) -> None:
-    """Two records for one patient id stating two birth dates are two people as
-    far as anything here can tell, and merging them would put a date of birth on
-    a chart that half the source contradicts. The run stops at exit 2.
-
-    The message names the FIELD and the counts and nothing else: the values are
-    on the operator's screen already, and a refusal that quoted them would put a
-    patient's date of birth into a log line and a terminal scrollback. It DOES
-    name the patient — as a run-scoped surrogate — because a refusal that named
-    only a field and a count on a 60-document export gave an operator nothing
-    to bisect the export by hand with, which is exactly the recourse this
-    toolkit already refuses to leave for an unreadable document.
-    """
+    """The refusal names the FIELD and counts only, never the values (RULES.md
+    2) -- but it does name the patient, as a run-scoped surrogate, because a
+    field-and-count message alone gave an operator nothing to bisect a
+    60-document export by."""
     from anastomosis.core.logutil import safe_log_id
 
     export, out = tmp_path / "export", tmp_path / "charts"
@@ -955,20 +828,9 @@ def test_disagreeing_demographics_under_one_id_refuse_the_run(tmp_path: Path) ->
 def test_the_refusal_names_the_colliding_records_positions_and_the_total(
     tmp_path: Path,
 ) -> None:
-    """The surrogate above does not locate anything on a batch export: it is
-    keyed per PROCESS (``safe_log_id``), the run aborts inside
-    ``load_records`` so nothing else in that run prints a correlating line,
-    and it names one patient among N without saying which record. The device
-    that actually works is the one the C-CDA adapter's own document-not-read
-    refusal already uses (``sources/ccda/__init__.py``): a POSITION, in load
-    order — for this source, load order is sorted-filename order, so
-    ``ls *.xml | sort`` finds the file a position names, and the message
-    itself never learns a file name.
-
-    Six patients, two documents each, loaded in filename order (``p0-0.xml``,
-    ``p0-1.xml``, ``p1-0.xml``, ...): patient 4 (0-indexed 3) disagrees on
-    birth date, and its two documents are records 7 and 8 of 12.
-    """
+    """Positional, not filename-based, for the same PHI reason as the field
+    refusal above: "record 7 and 8 of 12, in load order" locates the pair
+    without the message ever learning a file name."""
     from anastomosis.core.logutil import safe_log_id
 
     export, out = tmp_path / "export", tmp_path / "charts"
@@ -1052,14 +914,8 @@ def test_a_gap_in_one_record_is_filled_from_the_other(tmp_path: Path) -> None:
 
 
 def test_a_second_phone_number_is_not_a_second_patient(tmp_path: Path) -> None:
-    """A demographic that holds SEVERAL values at once cannot contradict itself.
-
-    One document lists the home phone; the other lists the home phone and a
-    mobile. That is a patient with two numbers — which is the whole reason the
-    field is a list — and the merged record keeps both, each once. Reading it as
-    a disagreement would refuse the ordinary export rather than the ambiguous
-    one.
-    """
+    """A list-valued demographic holding several values does not contradict
+    itself: two documents naming different subsets union, each value once."""
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -1094,16 +950,9 @@ def test_a_second_phone_number_is_not_a_second_patient(tmp_path: Path) -> None:
 
 
 def test_a_document_that_omits_an_identifier_does_not_stop_the_run(tmp_path: Path) -> None:
-    """The same rule, on the field that makes it urgent.
-
-    One export repeats the patient's SSN and the next one does not — the
-    commonest asymmetry a real pair of documents has. Requiring the identifier
-    lists to match would call that two people and write no chart at all; and
-    because the parser also derives an identifier from the ``patientRole`` id,
-    any pair of documents filed under different assigning authorities would go
-    the same way. The merged record keeps every identifier either document
-    stated.
-    """
+    """An identifier list is unioned, not compared for equality: one document
+    omitting an SSN the other states is a gap, not a disagreement, and
+    every stated identifier from either document survives."""
     from anastomosis.core.model import IdentifierKind
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
@@ -1146,14 +995,9 @@ def test_a_document_that_omits_an_identifier_does_not_stop_the_run(tmp_path: Pat
 
 
 def test_what_two_documents_say_differently_is_both_kept(tmp_path: Path) -> None:
-    """``extensions`` is where every source field with no structured slot is
-    parked, so a merge that let one document's key overwrite another's would
-    defeat the losslessness guarantee at the one point it exists to hold.
-
-    Both documents' Problems narratives and both document ids survive: the
-    second lands at the ``#2`` variant the C-CDA parser already parks a repeated
-    section under, so nothing has to learn a second scheme to find it.
-    """
+    """A merge that let one document's extensions key overwrite another's
+    would defeat losslessness at the one point it exists to hold; a
+    repeated section lands at the ``#2`` variant the parser already uses."""
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -1187,14 +1031,9 @@ def test_what_two_documents_say_differently_is_both_kept(tmp_path: Path) -> None
 
 
 def test_a_single_record_passes_through_the_fold_untouched() -> None:
-    """One patient, one record: the fold hands back the object the adapter
-    built, not an equal one rebuilt from it.
-
-    Asserted at the seam because nothing downstream can see it: every source
-    that already meets the one-record-per-patient contract has to take exactly
-    the path it took before this fold existed, and "equal to what it used to
-    produce" is a weaker claim than "the same object".
-    """
+    """A source already meeting one-record-per-patient gets back the SAME
+    object, not an equal one rebuilt -- identity is a stronger claim than
+    equality, and nothing downstream can tell them apart otherwise."""
     from anastomosis.core.model import Patient, PatientRecord
     from anastomosis.pipeline import _fold_records_sharing_a_patient
 
@@ -1204,18 +1043,9 @@ def test_a_single_record_passes_through_the_fold_untouched() -> None:
 
 
 def test_the_merged_chart_says_how_many_source_records_it_is(tmp_path: Path) -> None:
-    """A merged chart can answer "how many source records am I?".
-
-    It is the only thing left that can: an operator reconciling one delivered
-    chart against two documents in the export has nowhere else to look, and the
-    count travels inside ``bundle.json`` with the rest of the record's
-    extensions. A COUNT and not the file names — a C-CDA export names its files
-    after the patient, which is why the adapter names an unreadable document by
-    position rather than by name.
-
-    A patient with one document says nothing at all, because nothing was folded:
-    a single-document export is the record the adapter built, untouched.
-    """
+    """A merged chart states how many source records it is, as a COUNT inside
+    ``bundle.json`` -- never file names, since a C-CDA export names files
+    after the patient. One document means untouched: nothing was folded."""
     from anastomosis.pipeline import EXT_FOLDED_RECORDS, load_records
     from anastomosis.sources import get_source
 
@@ -1246,15 +1076,9 @@ def test_the_merged_chart_says_how_many_source_records_it_is(tmp_path: Path) -> 
 
 
 def test_two_carried_loss_ledgers_merge_into_one_ledger(tmp_path: Path) -> None:
-    """A carried-forward loss ledger is not an ordinary clashing key.
-
-    It is a previous export generation's account of what could not be carried
-    structurally, and the exporter dedupes exactly one of them on the way back
-    out. Parking the second at a ``#2`` variant would hide it from that
-    carry-forward and grow the document by a whole ledger every round trip — the
-    unbounded growth the stamped section was introduced to stop. So the entries
-    concatenate into the one key and the higher generation wins.
-    """
+    """A carried-forward loss ledger is not an ordinary clashing key: entries
+    concatenate into the one key and the higher generation wins (RULES.md
+    61), rather than parking a second copy and growing the document forever."""
     from anastomosis.pipeline import load_records
     from anastomosis.sources import get_source
 
@@ -1288,15 +1112,9 @@ def test_two_carried_loss_ledgers_merge_into_one_ledger(tmp_path: Path) -> None:
 
 
 def test_two_records_under_one_id_that_reach_a_deliverer_collide(tmp_path: Path) -> None:
-    """The guard behind the fold, proved by handing each deliverer what the fold
-    is there to prevent.
-
-    Every one of these writers is exist_ok/overwrite, so without a witness on
-    the claim the second record's chart lands on the first and the run reports
-    two. The witness is the record itself, so a re-claim under one id by a
-    DIFFERENT record is a refusal — which is what makes a future regression in
-    the fold loud instead of silent.
-    """
+    """The backstop behind the fold: a re-claim of one id by a DIFFERENT
+    record refuses in every deliverer, so a future regression in the fold
+    is loud, never a silent overwrite."""
     from anastomosis.core.model import Patient, PatientRecord
     from anastomosis.deliver._shared import DeliveredNameCollision
     from anastomosis.deliver.archive import ArchiveDeliverer
@@ -1386,17 +1204,9 @@ def _authority_export(directory: Path, pairs: list[tuple[str, str, str]]) -> Pat
 
 
 def test_two_authorities_sharing_one_mrn_are_two_patients(tmp_path: Path) -> None:
-    """The wrong-patient merge #404 is about, at the seam that produced it.
-
-    A medical-record number is unique only inside the authority that issued
-    it — two practices both numbering their patients from 1 is the ordinary
-    case, not the exotic one. Hashing the extension alone merged them: driven
-    on the code before this fix, two documents differing ONLY in their
-    ``<id root>`` produced one canonical patient id, one bundle, one chart,
-    exit 0 and no warning. Demographics are identical here on purpose, so the
-    disagreement guard that happened to catch the owner's real export cannot
-    stand in for the identity rule.
-    """
+    """A medical-record number is unique only inside its issuing authority
+    (#404): two practices numbering patients from 1 is ordinary, not
+    exotic -- hashing the extension alone merged them into one chart."""
     from anastomosis.sources.ccda import parse_document
 
     export = _authority_export(
@@ -1434,14 +1244,9 @@ def test_one_authority_naming_one_patient_twice_is_still_one_chart(tmp_path: Pat
 
 
 def test_a_patient_id_root_with_no_extension_keeps_the_id_it_had(tmp_path: Path) -> None:
-    """A bare root is not an authority here, unlike an encounter's (#393).
-
-    A document has ONE ``patientRole``, so a root standing alone on it is the
-    only identifier the source gives for that patient rather than a namespace
-    shared across many. Reading it as an authority would flip these patients
-    to a per-file id and stop them folding across documents — which is what
-    the corpus's own root-only patient ids would have hit.
-    """
+    """A bare root is not an authority on a patient (unlike an encounter's,
+    #393): a document has exactly one ``patientRole``, so its root is the
+    only identifier the source gives, not a shared namespace."""
     from anastomosis.sources.ccda import parse_document
 
     body = _TWO_AUTHORITY_DOC.replace(' extension="{extension}"', "")
@@ -1457,12 +1262,9 @@ def test_a_patient_id_root_with_no_extension_keeps_the_id_it_had(tmp_path: Path)
 
 
 def test_a_colon_in_one_half_cannot_impersonate_the_other(tmp_path: Path) -> None:
-    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` are different patients.
-
-    Unquoted, both halves joined by ``:`` hash to one string; a vendor
-    extension carrying a literal colon has been seen. Same defence, same
-    reason, as the organizer and encounter recipes.
-    """
+    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` must hash to different
+    patients -- an unquoted join would collide on a vendor extension
+    containing a literal colon."""
     from anastomosis.sources.ccda import parse_document
 
     export = _authority_export(
@@ -1507,18 +1309,10 @@ def test_a_colon_in_one_half_cannot_impersonate_the_other_at_any_site() -> None:
 
 
 def test_a_bare_vendor_oid_does_not_merge_the_distinct_visits_a_document_lists() -> None:
-    """A document lists many DISTINCT encounters, and has no guard that would
-    catch two of them wrongly folded — so a shared vendor root is treated as
-    the assigning authority it is, and they keep positional ids (#393).
-
-    Organizations are deliberately NOT in this test. That was my first reading
-    and it was wrong: an organization is re-stated on purpose inside one
-    document (the author's practice is usually the custodian), so it MUST fold
-    on a bare root, and the dangerous case — two different clinics reusing one
-    root — is caught rather than absorbed: `_fill_gaps` raises on conflicting
-    facility fields, pinned by `test_ccda_participations.py`. An encounter has
-    no such guard, which is why it takes the positional fallback instead.
-    """
+    """A bare vendor OID has no guard against merging distinct encounters, so
+    it is treated as an assigning authority and kept positional (#393) --
+    unlike an organization, which is legitimately re-stated within one
+    document and so MUST fold on a bare root."""
     from anastomosis.sources.ccda import parser
 
     assert parser._encounter_id((_A_VENDOR_OID, None), "a.xml", 0) != parser._encounter_id(
@@ -1563,17 +1357,9 @@ def test_two_kinds_stating_one_pair_are_still_two_objects() -> None:
 
 
 def test_only_one_module_encodes_a_compound_identifier() -> None:
-    """The point of #412 is not that the facility bug is fixed — it is that the
-    rule has ONE implementation.
-
-    The tell of a hand-written `II` recipe is percent-encoding a half so the
-    two cannot be confused (`quote(root, safe="")`). Every such recipe now
-    lives in ``ccda_codes``. The uuid5 calls that remain elsewhere are purely
-    positional — ``{source_file}:{participation}:{index}`` and
-    ``{document.name}:nonXMLBody:{index}`` — and take neither a root nor an
-    extension, so they are not this rule's business. If a fourth compound
-    recipe is written anywhere else, this fails and names the file.
-    """
+    """#412: one compound-identifier recipe (percent-encoded root+extension,
+    hashed) must live only in ``ccda_codes`` -- any other module doing the
+    same pattern is a fourth hand-written recipe, and this names the file."""
     from pathlib import Path as _Path
 
     import anastomosis

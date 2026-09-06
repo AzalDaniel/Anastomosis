@@ -21,6 +21,7 @@ import sys
 import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path(__file__).resolve().parent / "prose_baseline.json"
@@ -96,12 +97,16 @@ class FileFindings:
     issue_refs: set[str] = field(default_factory=set)
 
 
-def _docstring_owners(tree: ast.Module) -> list[tuple[ast.stmt, str]]:
-    """Every ``(docstring-expr-node, scope)`` in ``tree`` — ``scope`` one of
-    ``module``/``class``/``function``, matching :data:`OVER_LONG_LIMITS`."""
-    owners: list[tuple[ast.stmt, str]] = []
+def _docstring_owners(tree: ast.Module) -> list[tuple[ast.stmt, str, str]]:
+    """Every ``(docstring-expr-node, scope, name)`` in ``tree`` — ``scope`` one
+    of ``module``/``class``/``function``, matching :data:`OVER_LONG_LIMITS`;
+    ``name`` the owner's dotted qualified name (``<module>`` for the module),
+    so a baseline entry survives the docstring moving to another line. A
+    second owner with the same name in one file gets a ``#2`` suffix."""
+    owners: list[tuple[ast.stmt, str, str]] = []
+    seen: dict[str, int] = {}
 
-    def _first_stmt_docstring(body: list[ast.stmt], scope: str) -> None:
+    def _record(body: list[ast.stmt], scope: str, name: str) -> None:
         if not body:
             return
         first = body[0]
@@ -110,14 +115,23 @@ def _docstring_owners(tree: ast.Module) -> list[tuple[ast.stmt, str]]:
             and isinstance(first.value, ast.Constant)
             and isinstance(first.value.value, str)
         ):
-            owners.append((first, scope))
+            count = seen.get(name, 0) + 1
+            seen[name] = count
+            owners.append((first, scope, name if count == 1 else f"{name}#{count}"))
 
-    _first_stmt_docstring(tree.body, "module")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            _first_stmt_docstring(node.body, "class")
-        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            _first_stmt_docstring(node.body, "function")
+    def _walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                _record(child.body, "class", prefix + child.name)
+                _walk(child, f"{prefix}{child.name}.")
+            elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                _record(child.body, "function", prefix + child.name)
+                _walk(child, f"{prefix}{child.name}.")
+            else:
+                _walk(child, prefix)
+
+    _record(tree.body, "module", "<module>")
+    _walk(tree, "")
     return owners
 
 
@@ -165,7 +179,7 @@ def analyze_file(path: Path, root: Path = REPO_ROOT) -> FileFindings:
     tree = ast.parse(source, filename=str(path))
 
     findings = FileFindings(totals=Totals())
-    for owner, scope in _docstring_owners(tree):
+    for owner, scope, name in _docstring_owners(tree):
         start, end = owner.lineno, owner.end_lineno or owner.lineno
         for row in range(start, end + 1):
             if 0 < row < len(kind):
@@ -174,7 +188,14 @@ def analyze_file(path: Path, root: Path = REPO_ROOT) -> FileFindings:
         limit = OVER_LONG_LIMITS[scope]
         if length > limit:
             findings.over_long.append(
-                {"file": relpath, "line": start, "length": length, "limit": limit, "scope": scope}
+                {
+                    "file": relpath,
+                    "line": start,
+                    "name": name,
+                    "length": length,
+                    "limit": limit,
+                    "scope": scope,
+                }
             )
         for row in range(start, end + 1):
             text = source_lines[row - 1] if 0 < row <= len(source_lines) else ""
@@ -275,12 +296,16 @@ def measure(root: Path = REPO_ROOT) -> dict[str, object]:
     }
 
 
-def _locations(entries: list[dict[str, object]]) -> set[tuple[str, int]]:
-    return {(str(e["file"]), int(e["line"])) for e in entries}
+def _docstring_key(entry: dict[str, object], by_name: bool) -> tuple[str, str]:
+    """``(file, owner name)`` — line numbers move whenever prose above them
+    shrinks, so the owner is the stable key; a baseline written before the
+    ``name`` field existed is matched by line instead (``by_name=False``)."""
+    return (str(entry["file"]), str(entry["name"] if by_name else entry["line"]))
 
 
-def _lengths(entries: list[dict[str, object]]) -> dict[tuple[str, int], int]:
-    return {(str(e["file"]), int(e["line"])): int(e["length"]) for e in entries}
+def _history_key(entry: dict[str, object]) -> tuple[str, str, str]:
+    """``(file, kind, text)`` — a phrase is the same phrase on any line."""
+    return (str(entry["file"]), str(entry["kind"]), str(entry["text"]))
 
 
 def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[list[str], int]:
@@ -319,36 +344,40 @@ def compare(current: dict[str, object], baseline: dict[str, object]) -> tuple[li
             f"repo-wide prose ratio rose: was {base_repo_ratio:.4f}, now {cur_repo_ratio:.4f}"
         )
 
-    base_overlong = _locations(baseline["over_long_docstrings"])  # type: ignore[arg-type]
-    base_overlong_lengths = _lengths(baseline["over_long_docstrings"])  # type: ignore[arg-type]
-    cur_overlong = current["over_long_docstrings"]
-    for entry in cur_overlong:  # type: ignore[union-attr]
-        loc = (str(entry["file"]), int(entry["line"]))
-        length = int(entry["length"])
-        if loc not in base_overlong:
+    base_entries = cast(list[dict[str, object]], baseline["over_long_docstrings"])
+    cur_entries = cast(list[dict[str, object]], current["over_long_docstrings"])
+    by_name = all("name" in e for e in base_entries)
+    base_overlong = {_docstring_key(e, by_name): int(str(e["length"])) for e in base_entries}
+    cur_overlong = {_docstring_key(e, by_name): e for e in cur_entries}
+    for key, entry in cur_overlong.items():
+        length = int(str(entry["length"]))
+        if key not in base_overlong:
             failures.append(
                 f"NEW over-long docstring: {entry['file']}:{entry['line']} "
                 f"({length} lines, {entry['scope']} limit {entry['limit']})"
             )
-        elif length > base_overlong_lengths[loc]:
+        elif length > base_overlong[key]:
             failures.append(
                 f"over-long docstring GREW: {entry['file']}:{entry['line']} was "
-                f"{base_overlong_lengths[loc]} lines, now {length}"
+                f"{base_overlong[key]} lines, now {length}"
             )
-        elif length < base_overlong_lengths[loc]:
-            improved_files.add(str(entry["file"]))
-    for resolved_file, _line in base_overlong - _locations(cur_overlong):  # type: ignore[arg-type]
+        elif length < base_overlong[key]:
+            improved_files.add(key[0])
+    for resolved_file, _name in set(base_overlong) - set(cur_overlong):
         improved_files.add(resolved_file)
 
-    base_history = _locations(baseline["history_hits"])  # type: ignore[arg-type]
-    cur_history = current["history_hits"]
-    for entry in cur_history:  # type: ignore[union-attr]
-        loc = (str(entry["file"]), int(entry["line"]))
-        if loc not in base_history:
+    base_history = {
+        _history_key(e) for e in cast(list[dict[str, object]], baseline["history_hits"])
+    }
+    cur_history = {
+        _history_key(e): e for e in cast(list[dict[str, object]], current["history_hits"])
+    }
+    for key, entry in cur_history.items():
+        if key not in base_history:
             failures.append(
                 f"NEW history phrase: {entry['file']}:{entry['line']}: {entry['text']!r}"
             )
-    for resolved_file, _line in base_history - _locations(cur_history):  # type: ignore[arg-type]
+    for resolved_file, _kind, _text in base_history - set(cur_history):
         improved_files.add(resolved_file)
 
     cur_guard, base_guard = int(current["guard_count"]), int(baseline["guard_count"])  # type: ignore[arg-type]
