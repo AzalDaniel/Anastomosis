@@ -1,27 +1,13 @@
 """E2E rendering tests for the practice_fusion_soap pack (REAL Chromium).
 
-Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through the
-``practice_fusion_soap`` pack with the real :class:`ChromiumRenderer`, then:
-
-* asserts the PDFs are parseable and carry Letter geometry (612x792pt) — the
-  forensic page size (GOLD_STANDARD §1);
-* compares the stable text/geometry layer byte-for-byte against the committed
-  golden ``tests/e2e/goldens/pf_tebra_v9_practice_fusion_soap.json``;
-* compares every page's word bounding boxes against the companion
-  ``.words.json`` baseline, so a value sliding under the wrong label fails
-  even when it happens on page 4 of this six-page pack;
-* verifies the #f1f1f1 heading-band fill is actually painted in the PDF (via
-  PyMuPDF ``get_drawings()`` fill colors — the §1 forensic-token check) and
-  that every PF section heading + the social-history labels survived to the
-  text layer.
-
-A text/geometry mismatch is either a regression or a deliberate re-baseline:
-run ``python tools/regen_goldens.py`` and review the JSON diff in the PR.
-
-PHI-safe: the fixture is the repo's synthetic ``feedface-`` export, so every
-value diffed/printed here is synthetic. Marked ``e2e``; SKIPS cleanly when
-Playwright/Chromium is unavailable.
-"""
+Renders the synthetic ``pf_tebra_v9`` fixture's six encounters through
+the ``practice_fusion_soap`` pack with the real :class:`ChromiumRenderer`,
+then checks: parseable Letter-geometry PDFs (GOLD_STANDARD §1); the
+text/geometry layer and every page's word boxes against committed
+goldens; and the #f1f1f1 heading-band fill plus every section heading in
+the text layer. A mismatch means either a regression or a re-baseline via
+``python tools/regen_goldens.py`` (review the JSON diff in the PR).
+PHI-safe, synthetic fixture. Marked ``e2e``, skipping without Chromium."""
 
 from __future__ import annotations
 
@@ -143,14 +129,11 @@ def test_render_matches_golden_geometry_and_text(
 def test_render_matches_golden_word_boxes(
     golden: dict[str, Any], golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
 ) -> None:
-    """Every page of every chart lands where the baseline says it lands.
-
-    The PF pack is a layout REPLICA — its whole claim is spatial — so identical
-    text at shifted coordinates is precisely the regression to catch, and the
-    text/geometry golden above cannot see it. Every page is checked (this pack
-    renders six), not just the header page: a value sliding under the wrong
-    label on page 4 is exactly as unsafe as one sliding on page 1.
-    """
+    """Every page of every chart lands where the baseline says it lands:
+    the PF pack is a layout REPLICA, so identical text at shifted
+    coordinates is the regression to catch, invisible to the
+    text/geometry golden alone — a value sliding under the wrong label
+    on page 4 is exactly as unsafe as one sliding on page 1."""
     expected_keys = sorted(k for k in golden_boxes if k != "_meta")
     assert expected_keys == sorted(k for k in golden if k != "_meta"), (
         "the word baseline must cover exactly the charts the text golden pins"

@@ -139,16 +139,11 @@ def test_first_definition_wins_user_shadows_builtin(tmp_path: Path) -> None:
 
 
 def test_every_shipped_pack_places_every_kind_in_exactly_one_half() -> None:
-    """A kind in neither ``carries`` nor ``omits`` is not excused — it is
-    forgotten, and QA cannot tell a lost section from a layout that never had
-    one.
-
-    This is the guard, and it is the reason the declaration is two lists rather
-    than one: with only ``carries``, leaving a kind out reads identically to
-    deciding the layout has no place for it, and nothing would ever ask which
-    it was. Add a kind to ``CHARTABLE_KINDS`` and this fails until every
-    shipped pack has said something about it.
-    """
+    """A kind in neither ``carries`` nor ``omits`` is forgotten, not
+    excused, and QA cannot tell a lost section from a layout that never
+    had one — the reason coverage is two lists, not one. Adding a kind to
+    ``CHARTABLE_KINDS`` must fail this until every shipped pack says
+    something about it."""
     from anastomosis.core.model import CHARTABLE_KINDS
 
     for name, status in sorted(discover_packs().items()):

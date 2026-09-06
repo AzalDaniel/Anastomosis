@@ -48,11 +48,9 @@ def _open(gui):
 def _with_a_ready_assistant(app):
     """Report the canned destination's filing assistant as set up.
 
-    The shipped `tebra` pack has no discovered selectors on a test machine, so
-    the real controller reports `ready: false` — correctly. Wrapping the live
-    call keeps the transit map genuine and flips only the one flag, so a test
-    about the HANDOFF is not also a test about pack discovery.
-    """
+    Wraps the live call (which correctly reports `ready: false`, since the
+    shipped `tebra` pack has no discovered selectors here) and flips only
+    that flag — so a HANDOFF test is not also a pack-discovery test."""
     app.page.evaluate(
         """() => {
           const real = window.pywebview.api.destination_status;
@@ -142,18 +140,10 @@ def test_destination_choice_lists_the_routes_in_plain_language(gui) -> None:
 
 
 def test_the_filing_assistant_is_offered_even_when_it_is_not_recommended(gui) -> None:
-    """The one thing Anastomosis can do by itself, on the screen built to offer it.
-
-    `tebra` is the only destination that ships a filing assistant, and it also
-    declares `ccda_import: in_product`, which the router prefers — so the
-    assistant was demoted to a plain "Available" card and the guidance talked
-    only about exporting a document and importing it by hand. A physician
-    following the recommendation never learned the tool could have done the
-    filing (#127).
-
-    The routing is unchanged and this asserts that too: the C-CDA route is still
-    the recommended one. What is fixed is that the choice was never offered.
-    """
+    """#127: the filing assistant must be offered even when `ccda_import:
+    in_product` makes the router prefer another route for `tebra` — never
+    demoted to a plain "Available" card with no offer at all. The routing
+    itself is unchanged: the C-CDA route is still the one recommended."""
     app = _with_a_ready_assistant(_open(gui))
     app.choose("#migrate-destination", CANNED_DESTINATION)
     app.page.wait_for_timeout(200)
@@ -175,17 +165,15 @@ def test_the_filing_assistant_is_offered_even_when_it_is_not_recommended(gui) ->
 def test_a_destination_with_no_route_is_not_offered_an_assistant(gui) -> None:
     """Six of the thirteen shipped destinations have no viable route at all.
 
-    Every transit map carries all three option kinds — that is the shape, not a
-    claim — so the paragraph has to key on `viable`, not on the option existing.
-    `advancedmd` is one of the six: three options, none of them usable.
-    """
+    Every transit map carries all three option kinds regardless, so this
+    keys on `viable`, not on the option existing — `advancedmd` is one of
+    the six: three options, none of them usable."""
     from stub import _NullSink  # type: ignore[import-not-found]
 
     from anastomosis.gui.controller import GuiController
 
-    # The real map for a destination with nothing viable, from the real
-    # controller — a hand-built payload here could drift from the router and
-    # this test would keep passing while the shape it models no longer exists.
+    # From the real controller, not a hand-built payload, so this cannot
+    # drift from the router's actual shape.
     nothing_viable = GuiController(_NullSink()).destination_status("advancedmd")
     assert nothing_viable["transit"]["chosen"] is None, nothing_viable
     app = gui(canned={"destination_status": nothing_viable})
@@ -220,16 +208,10 @@ def test_continue_on_uploads_carries_the_context(gui) -> None:
 
 
 def test_a_spent_handoff_never_retargets_uploads_again(gui) -> None:
-    """The offer is made once. Coming back to Uploads must not re-apply it.
-
-    The handoff used to live in a shell-global that was never cleared, and
-    Uploads re-read it on EVERY arrival. An operator who retargeted the results
-    folder and the filing assistant by hand for a second batch, glanced at
-    another view and came back had both silently reverted to the migration's —
-    and "Start filing" then drove the wrong folder into the wrong destination,
-    with no banner and no line in the strip. That is the promise this product
-    makes first: never silently misfile a chart.
-    """
+    """The offer is made once: coming back to Uploads must not re-apply it,
+    or an operator's own retargeting for a second batch could silently
+    revert to the migration's folder and destination — misfiling a chart
+    with no banner and no line in the strip."""
     app = _with_a_ready_assistant(_open(gui))
     page = app.page
     page.fill("#migrate-out-dir", "/synthetic/batch-a")
@@ -324,18 +306,15 @@ def test_no_automatic_route_is_reported_as_an_outcome(gui) -> None:
 def test_migrate_ignores_another_flow_terminal_event(gui) -> None:
     """The per-flow guard: a Charts `done` must not announce a migration.
 
-    Both views now live in one document, so the dispatcher — not a page
-    boundary — is what keeps them apart: the event goes to the ONE view that
-    registered that flow, and the other one carries on untouched.
-    """
+    Both views live in one document, so the dispatcher — not a page
+    boundary — is what keeps them apart: the event reaches only the view
+    that registered that flow."""
     app = _open(gui)
     page = app.page
     app.choose("#migrate-source", CANNED_SOURCE)
     app.choose("#migrate-destination", CANNED_DESTINATION)
     page.wait_for_timeout(150)
-    # Filled because a run has to actually start for this test to have a
-    # subject. It used to click straight through on a blank form — which
-    # worked only because the view submitted without checking its inputs.
+    # Both fields filled: a run has to actually start for this to have a subject.
     page.fill("#migrate-export-dir", "/synthetic/export")
     page.fill("#migrate-out-dir", "/synthetic/out")
     page.click("#migrate-run")
@@ -346,20 +325,17 @@ def test_migrate_ignores_another_flow_terminal_event(gui) -> None:
     assert page.locator("#migrate-run").is_disabled(), "a Charts run ended the migration"
     assert (page.locator("#migrate-result").text_content() or "").strip() == "Rebuilding…"
     assert page.locator("#migrate-patients").is_hidden()
-    # It landed where it belonged instead. (Checked on the attribute: the whole
-    # Charts section is off screen, so Playwright calls all of it invisible.)
+    # Checked on the attribute: the whole Charts section is off screen, so
+    # Playwright calls all of it invisible.
     assert app.last_args("last_run_summary") == ["deadbeef"]
     assert page.locator("#charts-patients").get_attribute("hidden") is None
 
 
 def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> None:
-    """The busy guard is shared with every other view, so this click is rejected.
-
-    Migrate had the same shape as Charts: it cleared the patient table and wrote
-    "Rebuilding…" over the verdict before asking, then reported the refusal as
-    the bare sentinel and left "Rebuilding…" standing over a run that had
-    already finished and one that never started.
-    """
+    """The busy guard is shared with every other view, so this click is
+    rejected: it must not first clear the patient table and paint
+    "Rebuilding…" over a verdict — a bare-sentinel refusal must never
+    overwrite a finished result with no way back."""
     app = _open(gui)
     page = app.page
     app.choose("#migrate-source", CANNED_SOURCE)
@@ -394,18 +370,10 @@ def test_a_finished_migration_survives_a_click_the_controller_refuses(gui) -> No
 
 
 def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
-    """The fix for #129 landed on Charts and never reached this view.
-
-    Both views compose the SAME run form, and its section memory is keyed by
-    layout — but the key is an argument, and Migrate was calling `setSections`
-    with two of the three. So nothing was ever remembered here: every change of
-    the "Chart pages" picker put the layout's defaults back, and the run was
-    submitted from the reinstated values. A physician who turned Vitals off got
-    a transfer document with Vitals in it.
-
-    This asserts the end that matters — what reaches the controller — not just
-    what the checkboxes look like afterwards.
-    """
+    """#129: section memory is keyed by layout, and every view sharing the
+    run form must call `setSections` with all three arguments so a choice
+    survives switching layouts and back. This asserts the end that matters
+    — what reaches the controller — not just the checkboxes afterwards."""
     app = _open(gui)
     page = app.page
     app.choose("#migrate-source", CANNED_SOURCE)
@@ -462,14 +430,11 @@ def test_section_choices_survive_a_layout_round_trip_here_too(gui) -> None:
 
 
 def test_an_assistant_that_is_not_set_up_is_not_handed_off(gui) -> None:
-    """The handoff was gated on whether a filing assistant EXISTED.
-
-    So this panel could say the assistant was not set up and, two lines below,
-    offer "Continue on Uploads" — which switches view, pre-fills both fields,
-    and leaves the operator one click from Start filing with an assistant that
-    cannot file. The canned destination is exactly this case: a shipped pack
-    with no discovered selectors.
-    """
+    """The handoff must be gated on whether a filing assistant is READY,
+    not merely whether one EXISTS — otherwise the panel can say "not set
+    up" and, two lines below, still offer "Continue on Uploads" into an
+    assistant that cannot file. The canned destination is exactly this
+    case: a shipped pack with no discovered selectors."""
     app = _open(gui)
     page = app.page
     app.choose("#migrate-destination", CANNED_DESTINATION)
@@ -478,9 +443,8 @@ def test_an_assistant_that_is_not_set_up_is_not_handed_off(gui) -> None:
     assert page.locator("#migrate-handoff-actions").is_hidden()
     guidance = page.locator("#migrate-guidance").text_content() or ""
     assert "has not been set up" in guidance
-    # Naming a step that exists. It used to say "Set it up from the Teach
-    # screen" — a screen whose whole control surface is document layouts and
-    # export formats, with no destination setup on it at all.
+    # Naming a step that exists: the Teach screen's whole control surface
+    # is document layouts and export formats, with no destination setup.
     assert "anast destination init" in guidance
     assert "Teach screen" not in guidance
 

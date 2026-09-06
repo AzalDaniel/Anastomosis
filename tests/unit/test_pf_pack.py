@@ -104,10 +104,9 @@ _EMPTY_STATES = [
     "No screenings/interventions/assessments recorded.",
 ]
 
-# The sections this pack renders but cannot reconstruct. Each used to print the
-# vendor's own denial ("No implantable devices recorded") over exports that
-# carry exactly that data; each now says the layout is unknown and points at
-# where the data is. See ``UNRECONSTRUCTED`` in the pack's context.py.
+# The sections this pack renders but cannot reconstruct: each says the
+# layout is unknown and points at where the data is, never the vendor's own
+# denial. See ``UNRECONSTRUCTED`` in the pack's context.py.
 _UNRECONSTRUCTED_SECTIONS = [
     "Implantable devices",
     "Orders",
@@ -333,7 +332,7 @@ def test_section_flags_are_togglable(pack: LoadedPack) -> None:
 
 def test_print_color_adjust_rule_present(pack: LoadedPack, records: list[Any]) -> None:
     html = _render_all(pack, records)[0]
-    # GOLD §1 — the 2-sprint grey-header bug fix; non-negotiable.
+    # GOLD §1: non-negotiable.
     assert "-webkit-print-color-adjust: exact !important" in html
     assert "print-color-adjust: exact !important" in html
 
@@ -409,15 +408,10 @@ def _one_encounter_record(patient: Any = None, **collections: Any) -> Any:
 
 
 def test_header_reads_the_columns_v9_actually_spells(pack: LoadedPack) -> None:
-    """Two demographics readers were spelled against columns no v9 table has.
-
-    ``DateOfDeath`` is ``DeathDate`` on patient-demographics, so the DATE OF
-    DEATH cell printed "-" over an export that carried the date. PRN read
-    ``PatientContactCode`` — the one column in the 85-table dictionary that
-    carries a patient's record number — but fell back to a bare ``PRN``, a name
-    nothing in v9 or in this codebase ever writes. The fallback is gone: a chain
-    over invented names is how a wrong guess hides (#248).
-    """
+    """#248: DATE OF DEATH reads ``DeathDate`` (not ``DateOfDeath``) on
+    patient-demographics, and PRN reads ``PatientContactCode`` — the one
+    column in the 85-table dictionary that carries it — never a fallback
+    to an invented name, which is how a wrong guess hides."""
     from anastomosis.core.model import Patient
 
     env = _env(pack)
@@ -451,15 +445,11 @@ def test_header_reads_the_columns_v9_actually_spells(pack: LoadedPack) -> None:
 
 
 def test_screenings_render_per_encounter_and_keep_their_negation(pack: LoadedPack) -> None:
-    """The Screenings/Interventions/Assessments section was starved by a
-    hard-coded empty list, so it printed "No screenings/interventions/assessments
-    recorded." over every export that had them.
-
-    Two things are asserted beyond the row appearing at all. The section is
-    encounter-scoped, so an event belonging to another visit must not leak into
-    this one. And an event the clinician marked as not performed must not read
-    as one that was — that is the row stating the opposite of the export.
-    """
+    """The Screenings/Interventions/Assessments section must render real
+    rows, never a hard-coded empty list. Two things beyond the row
+    appearing at all: it is encounter-scoped, so another visit's event
+    must not leak in, and an event marked not-performed must not read as
+    one that was."""
     from anastomosis.core.model import (
         Encounter,
         NoteSection,
@@ -525,15 +515,11 @@ def test_screenings_render_per_encounter_and_keep_their_negation(pack: LoadedPac
 
 
 def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> None:
-    """A chart over a record that HAS health concerns must show them and stop
-    printing the empty state — the section used to be two hard-coded no-record
-    rows with no variable behind them, so an export carrying concerns rendered
-    "No active health concerns recorded." on top of them.
-
-    The two sections are asserted independently: an active-only record must keep
-    the inactive empty state, because a section with genuinely nothing in it
-    still owes the chart reader that string.
-    """
+    """A chart over a record that HAS health concerns must show them,
+    never the empty state. The two sections are asserted independently:
+    an active-only record must keep the inactive empty state, since a
+    section with genuinely nothing in it still owes the reader that
+    string."""
     from datetime import date
 
     from anastomosis.core.model import Goal
@@ -577,19 +563,11 @@ def test_health_concerns_render_instead_of_being_denied(pack: LoadedPack) -> Non
 
 
 def test_a_row_with_no_text_does_not_print_the_word_none(pack: LoadedPack) -> None:
-    """`description` and `name` are both optional, and both are interpolated bare.
-
-    So a concern, goal or screening that arrives without one used to put the
-    literal token `None` where a clinician reads a diagnosis — a Python repr
-    printed on a medical record. The row still has to appear: its existence is
-    the fact, and dropping it would lose that the chart carries a concern at
-    all. What it prints instead is the pack's own "-", the same blank every
-    other empty cell in this chart uses.
-
-    The date beside a concern was guarded from the day it was written; the
-    description next to it was not, which is the shape this kind of bug keeps
-    taking — one cell of a pair remembered, the other forgotten.
-    """
+    """`description` and `name` are both optional and interpolated bare: a
+    missing one must never print the literal token `None` where a
+    clinician reads a diagnosis. The row still has to appear — its
+    existence is the fact — but prints the pack's own "-", the same blank
+    every other empty cell in this chart uses."""
     from anastomosis.core.model import Goal, ScreeningEvent
 
     env = _env(pack)
@@ -690,10 +668,10 @@ def test_payment_without_guarantor_is_all_dashes(pack: LoadedPack, records: list
 
 
 def test_payment_never_renders_raw_none(pack: LoadedPack, records: list[Any]) -> None:
-    """Regression: a guarantor PRESENT but with None attributes once leaked
-    literal 'None' strings into the PDF. Every payment cell must be a
-    non-empty string for every fixture encounter, and the rendered HTML must
-    never contain the bare token 'None'."""
+    """A guarantor PRESENT but with None attributes must never leak the
+    literal 'None' string into the PDF: every payment cell must be a
+    non-empty string for every fixture encounter, and the rendered HTML
+    must never contain the bare token 'None'."""
     for record in records:
         for encounter in record.encounters:
             payment = pack.build_context(encounter, record, _cfg(pack))["payment"]
@@ -722,20 +700,11 @@ def test_meds_as_of_is_render_day_not_encounter_date(pack: LoadedPack, records: 
 def test_the_as_of_stamp_follows_the_pack_not_the_machine(
     pack: LoadedPack, records: list[Any]
 ) -> None:
-    """Two clinics rendering the same record at the same moment got two charts.
-
-    `date.today()` reads the SYSTEM local date; every other date in this module
-    goes through `to_local(..., tz)` and lands in the practice's timezone. So
-    the stamp moved with the operator, and #194 measured it across the date
-    line: 08/28/2026 under `TZ=Pacific/Kiritimati`, 08/27/2026 under
-    `TZ=Etc/GMT+12`, same instant, same record.
-
-    Driven through the PACK's timezone rather than the process's, which is both
-    portable — Windows has no `time.tzset()`, and setting `TZ` does not move
-    its clock — and a stronger statement: the stamp has to TRACK the pack, not
-    merely ignore the machine. The two zones below are 26 hours apart, so their
-    local dates always differ, whenever this runs.
-    """
+    """#194: `date.today()` reads the SYSTEM local date, while every other
+    date in this module goes through `to_local(..., tz)` into the
+    practice's timezone — the stamp must TRACK the pack's clock, not the
+    machine's. The two zones below are 26 hours apart, so their local
+    dates always differ."""
     import datetime as dt
 
     from anastomosis.core.timeutil import to_local
@@ -813,14 +782,11 @@ def test_section_toggle_suppresses_section(pack: LoadedPack, records: list[Any])
 
 
 def test_renders_only_synthetic_identity(pack: LoadedPack, records: list[Any]) -> None:
-    """The PF note is built from SYNTHETIC fixtures and a SYNTHETIC placeholder
-    logo / footer URL only.
-
-    The repo-wide ``tools/phi_scan.py`` deny-list is the authoritative guarantee
-    that no real predecessor identity value exists anywhere in the tree (so this
-    test never hard-codes a real name — that would itself be a leak). Here we
-    assert positively: the synthetic fixture facility/patient render, and the
-    real PF vendor host never appears (the logo + footer are synthesized)."""
+    """The PF note is built from SYNTHETIC fixtures and a SYNTHETIC
+    placeholder logo/footer URL only — never a hard-coded real name, which
+    ``tools/phi_scan.py``'s deny-list is the authoritative guard against.
+    Asserts positively: the synthetic facility/patient render, and the
+    real PF vendor host never appears."""
     blob = "\n".join(_render_all(pack, records))
     lower = blob.lower()
     # The synthetic fixture facility + a synthetic patient must be present.
@@ -908,20 +874,11 @@ def test_record_static_context_built_once_and_merge_preserves_output(
 
 
 def test_the_flowsheet_shows_blood_pressure_like_the_per_encounter_rows_do() -> None:
-    """A vitals flowsheet exists to show a trend, and BP is the trend.
-
-    Observations arrive as two separate LOINC codes (8480-6 systolic, 8462-4
-    diastolic) and `_VITAL_ORDER` names only the combined "Blood Pressure" row,
-    so a path that does not fold them renders neither. The per-encounter rows
-    folded them; the flowsheet did not, and every prior-encounter blood
-    pressure was dropped from the archival copy of the chart with the run
-    reporting pass.
-
-    The flowsheet also lacked the per-encounter path's documented lossless
-    fallback, so a vital with no order slot vanished the same way.
-
-    Every value here is invented.
-    """
+    """A vitals flowsheet exists to show a trend, and BP is the trend:
+    observations arrive as two separate LOINC codes (8480-6, 8462-4), and
+    `_VITAL_ORDER` names only the combined "Blood Pressure" row, so the
+    flowsheet must fold them, with the same lossless fallback as the
+    per-encounter rows. Every value here is invented."""
     import datetime as dt
 
     from anastomosis.core.model import (
@@ -983,14 +940,11 @@ def test_the_flowsheet_shows_blood_pressure_like_the_per_encounter_rows_do() -> 
 
 
 def _denials_and_their_guards(pack: LoadedPack) -> list[tuple[str, frozenset[str]]]:
-    """Every denial sentence in the template's raw HTML, with the names the
-    enclosing ``{% if %}``/``{% for %}`` tests read.
-
-    Walks the Jinja AST rather than the rendered page, because what matters is
-    not whether a sentence appears for one record but whether ANY record could
-    make it go away. A sentence guarded only by a section-visibility flag is one
-    nothing in the chart can turn off.
-    """
+    """Every denial sentence in the template's raw HTML, with the names
+    the enclosing ``{% if %}``/``{% for %}`` tests read. Walks the Jinja
+    AST rather than the rendered page, since what matters is whether ANY
+    record could make the sentence go away — not whether it appears for
+    one."""
     from jinja2 import nodes
 
     denial = re.compile(r">\s*(No\b[^<{]*)", re.S)
@@ -1030,24 +984,11 @@ def _denials_and_their_guards(pack: LoadedPack) -> list[tuple[str, frozenset[str
 
 
 def test_no_section_denies_data_it_never_looked_for(pack: LoadedPack) -> None:
-    """The class of bug #236 named: a pack section with no mapper path.
-
-    Six sentences printed the vendor's own denial — "No implantable devices
-    recorded", "No orders attached to this encounter." — over v9 exports that
-    carry a 31-column devices table and 30,640 order rows. The note was not
-    merely incomplete; it asserted a negative the source contradicts.
-
-    Every denial left in the template must be reachable from data: some name in
-    its enclosing condition that is not a ``show_*`` section-visibility flag, so
-    a record with rows in it makes the sentence disappear. A section that cannot
-    be reconstructed says so instead (``UNRECONSTRUCTED``), which claims nothing
-    either way.
-
-    Stated limit: this reads raw HTML, so the ``{{ x or 'No …' }}`` shape is out
-    of its reach. That shape is data-driven by construction in the social-history
-    block, and the three places where the left side was a constant rather than a
-    record value are gone — see the reconciliation test below, which pins them.
-    """
+    """#236: every denial sentence left in the template must be reachable
+    from data — some name in its enclosing condition besides a ``show_*``
+    flag — or an ``UNRECONSTRUCTED`` notice instead. Stated limit: this
+    reads raw HTML, so the ``{{ x or 'No …' }}`` shape is out of reach
+    (pinned separately, below)."""
     stuck = [
         (text, sorted(guards))
         for text, guards in _denials_and_their_guards(pack)

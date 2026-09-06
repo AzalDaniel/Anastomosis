@@ -1,22 +1,13 @@
 """What the app says out loud while it works.
 
-Every view narrates a run in one line on screen — "Reading records…", "Step 2
-of 2 — confirm.", "Finished." — and none of it reached a screen reader: the
-lines carried no role and no ``aria-live``, so a click produced silence. On
-Teach that line is the *only* answer a click has, which is the whole reason an
-operator pressed the button a second time.
+Every view narrates a run in one line on screen, and that line must also
+reach a screen reader: one always-present polite region (``#announcer``)
+that ``Shell.setStatus`` writes with the visible line, plus an alert
+(``#banner``) in the accessibility tree before it has anything to say —
+never created only when there is news, never rewritten with the same words.
 
-The fix is one always-present polite region (``#announcer``) that
-``Shell.setStatus`` writes at the same moment it writes the visible line, plus
-an alert (``#banner``) that is now in the accessibility tree before it has
-anything to say. These tests pin both, and the two ways the arrangement fails
-quietly: a region that is only created when there is news, and a region rewritten
-with the words already in it.
-
-No screen reader runs here — none exists in this environment. What is checked is
-everything a screen reader reads: the roles, the tree membership, the computed
-name, and the mutations.
-"""
+No screen reader runs here; these tests check what one reads: roles, tree
+membership, computed name, and mutations."""
 
 from __future__ import annotations
 
@@ -40,14 +31,10 @@ def _announced(app) -> str:
 
 
 def test_the_announcer_is_there_before_there_is_anything_to_announce(gui) -> None:
-    """The region exists, empty, from first paint — the property that makes it work.
-
-    A live region is announced when its CONTENTS change. Create the region and
-    its first words in one task and there was no region to change: that is the
-    ordering assistive technologies handle worst, and it is what a
-    ``role="status"`` on ``#migrate-result`` (revealed with ``hidden``) would
-    have been. So this one is never hidden and never created late.
-    """
+    """The region exists, empty, from first paint: a live region is
+    announced when its CONTENTS change, so creating the region and its
+    first words in one task would leave no region to change — this one
+    is never hidden and never created late."""
     app = gui()
 
     state = app.page.evaluate(
@@ -106,16 +93,11 @@ def test_a_stopped_run_says_stopped(gui) -> None:
 
 
 def test_the_banner_was_already_in_the_tree_when_the_error_arrived(gui) -> None:
-    """`role="alert"` on a `display: none` box announces nothing reliably.
-
-    The banner used to be `display: none` until `showBanner` added `.show`, so
-    the alert and its text arrived together — the mutation happened outside the
-    render tree. It is now always rendered and merely empty, which is why
-    `hideBanner` clears the text rather than removing the box.
-
-    The alert is `#banner-text`, not the box: the dismiss button sits in the box
-    beside it, so pressing it is not announced as part of the message.
-    """
+    """`role="alert"` on a `display: none` box announces nothing reliably,
+    so the banner must always be rendered, merely empty — `hideBanner`
+    clears the text rather than removing the box. The alert is
+    `#banner-text`, not the box: the dismiss button beside it must not be
+    announced as part of the message."""
     app = gui()
 
     def banner():
@@ -152,13 +134,10 @@ def test_the_banner_was_already_in_the_tree_when_the_error_arrived(gui) -> None:
 
 
 def test_the_same_news_twice_is_said_once(gui) -> None:
-    """Uploads re-reads the record on a timer; an idle run must go quiet.
-
-    ``textContent = x`` is a mutation whether or not ``x`` is what was already
-    there, and a live region announces mutations. Without the guard in
-    ``Shell.announce`` a filing run that had not moved repeated its counts every
-    poll, forever.
-    """
+    """Uploads re-reads the record on a timer; an idle run must go quiet:
+    ``textContent = x`` is a mutation whether or not ``x`` is what was
+    already there, and a live region announces every mutation, so
+    ``Shell.announce`` must guard against repeating the same words."""
     app = gui()
     app.show("uploads")
     app.page.evaluate(
@@ -218,12 +197,10 @@ def test_teach_says_which_step_it_is_on(gui) -> None:
 
 
 def test_the_activity_strip_is_named_by_the_event_not_the_keyboard_hint(gui) -> None:
-    """`aria-label` overrode the contents, so the strip announced the hint.
-
-    The visible text read "Charts: stopped — UnsupportedSourceError" while the
-    accessible name stayed "Activity — click or press L for the full list". An
-    error surfaced only here was surfaced nowhere.
-    """
+    """`aria-label` must not override the strip's contents: an error
+    surfaced only in the visible text ("Charts: stopped —
+    UnsupportedSourceError") while the accessible name stayed the
+    keyboard hint would be surfaced nowhere."""
     app = gui()
 
     app.emit(error_event(_FLOW, "reconstruct", "UnsupportedSourceError"))

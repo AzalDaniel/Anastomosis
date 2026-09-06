@@ -104,18 +104,11 @@ def test_profile_columns_infers_types_and_masks_values() -> None:
 
 
 def test_the_mask_hides_every_script_not_just_ascii() -> None:
-    """A name is a name in every writing system, and this mask promises "no
-    values shown" in a literal on-screen sentence.
-
-    The old mask was `[A-Za-z] -> A` and `[0-9] -> N`, both ASCII-only classes,
-    so a value in any other script survived unchanged: a Han, Cyrillic, Arabic,
-    kana or Hangul name was printed verbatim to the console and shipped over the
-    GUI bridge — as was the accented letter in a Latin one. The mask now allows
-    the separators it keeps rather than denying the characters it hides, so a
-    script nobody anticipated is masked instead of shown.
-
-    Every value below is invented for this test.
-    """
+    """A name is a name in every writing system, and this mask promises
+    "no values shown" in a literal on-screen sentence: it allows the
+    separators it keeps rather than denying the characters it hides, so a
+    script nobody anticipated is masked instead of shown. Every value
+    below is invented for this test."""
     # A separator-only allow-list means the shape survives, in any script.
     assert _mask("John Smith") == "AAAA AAAAA"
     assert _mask("2024-01-15") == "NNNN-NN-NN"
@@ -217,24 +210,11 @@ def test_save_mapping_is_owner_only_and_writes_artifacts(tmp_path: Path) -> None
 def test_the_trust_digest_describes_the_bytes_that_are_actually_there(
     tmp_path: Path,
 ) -> None:
-    """The recorded sha256 must match a re-hash of the file as it sits on disk.
-
-    It did not on Windows. `_atomic_write` opened the temp file in text mode
-    with the default newline handling, so every `\n` became `\r\n` on the way
-    out, while the digest was taken from the pre-write string. Discovery hashes
-    what it reads, so the two could never agree: every mapping saved on Windows
-    announced itself as edited since review, seconds after being written.
-
-    The cost was not the noise. That warning is the only thing standing between
-    a reviewed mapping — which decides how a source file's columns become
-    patient identity — and one edited afterwards by someone else. A warning
-    that fires on all of them is one an operator learns to dismiss, and it was
-    firing on all of them on the platform this product ships an installer for.
-
-    Asserting on bytes rather than on text is the point: `read_text` would
-    normalise the very thing that broke, and this test would have passed
-    throughout.
-    """
+    """The recorded sha256 must match a re-hash of the file as it sits on
+    disk — bytes, not text: newline translation on write must never let
+    the digest disagree with the file, which is the only thing standing
+    between a reviewed mapping and one edited afterward. `read_text`
+    would normalise away the very mismatch this guards against."""
     analysis = analyze_source(FIXTURE)
     spec = build_mapping(
         analysis, mapping_id="clinic", display="Clinic", now=datetime(2026, 1, 1, tzinfo=UTC)
@@ -253,12 +233,9 @@ def test_the_trust_digest_describes_the_bytes_that_are_actually_there(
 
 
 def test_one_edited_byte_still_breaks_the_trust_digest(tmp_path: Path) -> None:
-    """The other half, and the half that matters more.
-
-    A digest that matches the file is worthless if it would match any file.
-    Flip one byte of a saved mapping and the recorded hash must stop agreeing
-    with it — that is the whole reason the digest is written down.
-    """
+    """A digest that matches the file is worthless if it would match any
+    file: flip one byte of a saved mapping and the recorded hash must
+    stop agreeing with it."""
     analysis = analyze_source(FIXTURE)
     spec = build_mapping(
         analysis, mapping_id="clinic", display="Clinic", now=datetime(2026, 1, 1, tzinfo=UTC)
@@ -273,15 +250,11 @@ def test_one_edited_byte_still_breaks_the_trust_digest(tmp_path: Path) -> None:
 
 
 def test_atomic_write_puts_exactly_the_string_it_was_given_on_disk(tmp_path: Path) -> None:
-    """Directly, because every caller's guarantee rests on this one function.
-
-    Be honest about what this catches where. Newline translation is a no-op on
-    POSIX, so reverting the write to text mode still passes this test on Linux
-    and fails it on the `windows-latest` legs — those legs are what hold the
-    fix, and they run the whole suite. What it does catch on every platform is
-    any other way the written bytes could stop being the given string: a
-    changed encoding, a strip, a normalisation, a rewrite that re-serialises.
-    """
+    """Directly, because every caller's guarantee rests on this one
+    function. Newline translation is a no-op on POSIX, so this only
+    bites on the `windows-latest` legs; on every platform it still
+    catches a changed encoding, a strip, a normalisation, or any other
+    rewrite that stops the bytes from being the given string."""
     text = "alpha\nbeta\r\ngamma\n"
     target = tmp_path / "sample.txt"
     _atomic_write(target, text, 0o600)
@@ -317,9 +290,8 @@ def test_analyze_json_array(tmp_path: Path) -> None:
 
 
 def test_round_trip_refuses_duplicate_patient_grain_before_value_loss(tmp_path: Path) -> None:
-    # row_scope=patient with duplicate patient rows used to collapse an un-mapped
-    # column to last-value-wins. The runtime now refuses the invalid grain before
-    # building a record, which is stronger than detecting the dropped value later.
+    # row_scope=patient must refuse the invalid grain before building a record,
+    # rather than silently collapsing an un-mapped column to last-value-wins.
     from anastomosis.sources.learned.reader import header_fingerprint
     from anastomosis.sources.learned.spec import Grouping, MappingSpec, SourceFormat
 
@@ -352,17 +324,11 @@ def test_round_trip_refuses_duplicate_patient_grain_before_value_loss(tmp_path: 
 
 
 def test_an_impossible_review_refuses_as_a_mapping_error_not_a_crash() -> None:
-    """The one error type this package promises, kept at the assembly door too.
-
-    `load_spec` already translates pydantic's ValidationError into MappingError
-    so a broken file on disk refuses in the package's own vocabulary. The same
-    constructor runs inside `build_mapping`, and there the translation was
-    missing: a review that aims two columns at one canonical field crashed out
-    as raw ValidationError, sailing past every `except MappingError` between
-    here and the wizard — which then blanked the proposal it existed to show.
-    Unreachable while nothing called `decisions`; one click away the moment a
-    review UI does.
-    """
+    """The one error type this package promises, kept at the assembly
+    door too: `build_mapping`'s constructor call must translate a
+    pydantic ValidationError into MappingError exactly like `load_spec`
+    does — a review aiming two columns at one canonical field must
+    refuse as MappingError, never crash a review UI."""
     analysis = analyze_source(FIXTURE)
     doubled = {
         "DOB": ("patient.birth_date", "parse_date"),

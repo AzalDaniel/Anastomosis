@@ -230,11 +230,10 @@ def test_remote_blob_is_reference_not_fetched(records: dict[str, PatientRecord])
 def test_two_vitals_on_one_encounter_become_two_observations(
     records: dict[str, PatientRecord],
 ) -> None:
-    # Collision regression: two measured
-    # events on encounter E1 (Systolic BP 128, Body weight 150) map to TWO
-    # distinct Observations, each keyed by its EVENT_ID, with BOTH values and
-    # their unit codes preserved. The old shared-encounter-extensions fold made
-    # the second value overwrite the first ("128" vanished).
+    # Two measured events on encounter E1 (Systolic BP 128, Body weight 150)
+    # must map to TWO distinct Observations, each keyed by its EVENT_ID, with
+    # BOTH values and their unit codes preserved — never folded into shared
+    # encounter extensions, where the second value would overwrite the first.
     obs = {o.id: o for o in records[P1].observations}
     bp = obs["900300002"]
     weight = obs["900300003"]
@@ -282,8 +281,7 @@ def test_discrete_event_columns_ride_to_own_extensions(
     obs = {o.id: o for o in records[P1].observations}
     assert obs["900300002"].extensions["oracle_ehi:EVENT_RELTN_CD"] == "8002"
     assert obs["900300002"].extensions["oracle_ehi:UPDT_CNT"] == "1"
-    # The collision used to fold these into encounter.extensions; that path is
-    # now empty of per-event result columns.
+    # The encounter's own extensions must carry no per-event result columns.
     e1 = next(e for e in records[P1].encounters if e.id == E1)
     assert "oracle_ehi:RESULT_VAL" not in e1.extensions
     assert "oracle_ehi:RESULT_UNITS_CD" not in e1.extensions
@@ -304,9 +302,8 @@ def test_superseded_event_is_filtered_but_preserved(
 def test_superseded_blob_body_survives_ingest(
     records: dict[str, PatientRecord],
 ) -> None:
-    # Superseded-body regression: the superseded event preserves not just its ROW but
-    # its CE_BLOB body. The superseded probe proved "Earlier draft of the
-    # progress note." vanished; it must now ride in the stashed payload.
+    # The superseded event preserves not just its ROW but its CE_BLOB body:
+    # "Earlier draft of the progress note." must ride in the stashed payload.
     e1 = next(e for e in records[P1].encounters if e.id == E1)
     payload = e1.extensions["oracle_ehi:CLINICAL_EVENT_superseded"][0]
     assert "Earlier draft of the progress note." in payload["oracle_ehi:CE_BLOB_body"]

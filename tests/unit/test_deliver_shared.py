@@ -1,26 +1,13 @@
 """Tests for the mechanics the file-writing deliverers share.
 
-Two properties, both of them "a chart must never go missing or land in the
-wrong slot":
-
-* :func:`~anastomosis.deliver._shared.budgeted_copy_name` — the DESTINATION
-  name for a copied chart, cut to fit the path budget of the tree it is being
-  copied into. Renderer chart names run to ~617 characters
-  (``{family}_{given}_{dos}_{type}.pdf``, each component capped at
-  ``MAX_NAME_CHARS``); copying one of those into a delivered tree used to fail
-  with an OSError the deliverers logged and continued past, which is a chart
-  silently absent from what the operator hands over.
-* :func:`~anastomosis.deliver._shared.claim_delivered_name` — the per-run
-  ledger. The deliverers write with ``mkdir(exist_ok=True)`` /
-  ``write_bytes`` / ``write_text``, so two source ids resolving to one
-  delivered name MERGE rather than fail. A second, different claimant raises.
-
-Plus :func:`~anastomosis.deliver._shared.copy_claimed_chart`, which chains
-the two together with the actual copy — the one budget→claim→copy sequence
-every deliverer's chart-copy site now shares.
-
-Synthetic ids only.
-"""
+Two properties, both "a chart must never go missing or land in the wrong
+slot": `budgeted_copy_name` cuts the DESTINATION name to fit the path
+budget of the tree it copies into (chart names run to ~617 characters,
+each component capped at ``MAX_NAME_CHARS``), never raising an OSError
+that leaves a chart silently absent; `claim_delivered_name` is the
+per-run ledger, where two source ids resolving to one name MERGE, but a
+second DIFFERENT claimant raises. `copy_claimed_chart` chains both with
+the actual copy. Synthetic ids only."""
 
 from __future__ import annotations
 

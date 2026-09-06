@@ -1,16 +1,12 @@
 """A killed run never leaves a truncated chart where a complete one was.
 
-`core/atomic.py` says it is "the one place [the write-then-replace shape]
-lives now, so every site gets the unlink-on-failure safety net without having
-to remember to write it". The `deliver/` package had not been converted: every
-final-artifact write in it — including the copied chart PDFs — wrote straight
-over its target, so a crash partway through left a half-written file where a
-complete one had been. `reconstruct/engine.py` renders the same PDF through
-`atomic_replace` and says why: "a crash mid-write (or a concurrent reader)
-never sees a partial PDF." The deliverer that copied it did not hold that.
-
-Two tests: one proves the property on the shared helpers, the other reads the
-package's syntax tree so a new write site cannot quietly reintroduce the gap.
+`core/atomic.py` is the one place the write-then-replace shape lives, so
+every site gets the unlink-on-failure safety net without writing it
+itself. Every final-artifact write in `deliver/`, including copied chart
+PDFs, must go through it: a crash mid-write never leaves a partial PDF
+for a concurrent reader, the same guarantee `reconstruct/engine.py`'s
+render gets from `atomic_replace`. Two tests: one on the shared helpers,
+one reading the syntax tree so a new write site cannot reintroduce the gap.
 """
 
 from __future__ import annotations

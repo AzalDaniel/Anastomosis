@@ -7,8 +7,7 @@ same-patient caveat, determinism, and the wizard's confirm/abort/exit-code
 behavior are all asserted without a browser.
 
 All values are synthetic (example-style names, 555 phones, feedface ids); no
-patient-derived data appears anywhere.
-"""
+patient-derived data appears anywhere."""
 
 from __future__ import annotations
 
@@ -94,14 +93,11 @@ def test_emit_writes_all_four_files(analysis: PackAnalysis, tmp_path: Path) -> N
 def test_the_draft_pack_is_hardened_like_anything_else_holding_phi(
     analysis: PackAnalysis, tmp_path: Path
 ) -> None:
-    """It can hold PHI, and this module's own caveat is why.
-
-    Hand the tool three copies of ONE patient's chart — the mistake
-    `SAME_PATIENT_CAVEAT` exists to warn about — and that patient's name, DOB
-    and MRN recur in 100% of samples and become indistinguishable from template
-    text. Raw strings are quarantined, but the directory still needs a PHI
-    warning and owner-only permissions.
-    """
+    """It can hold PHI, and this module's own caveat is why: three copies
+    of ONE patient's chart (`SAME_PATIENT_CAVEAT`'s warning) recur in
+    100% of samples and become indistinguishable from template text. Raw
+    strings are quarantined, but the directory still needs a PHI warning
+    and owner-only permissions."""
     pack_dir = emit_draft_pack(analysis, name="acme_soap", display="ACME", out_dir=tmp_path)
 
     assert (pack_dir / "_PHI_WARNING_README.txt").is_file(), (
@@ -358,17 +354,10 @@ def test_raw_provider_value_and_heading_patient_value_are_quarantined(tmp_path: 
 
 
 def test_arrow_in_static_text_cannot_escape_a_comment_it_is_not_in(tmp_path: Path) -> None:
-    """The hazard is gone by construction now, and that is the stronger fix.
-
-    A sample string containing ``-->`` used to need escaping because it was
-    written inside an HTML comment, where it could close the comment early and
-    spill the rest into the rendered page. It is not written there any more, so
-    there is no comment for it to escape — and it survives unescaped in the
-    quarantine, which is plain text and has no delimiters to break.
-
-    Escaping the string was a correct fix for the file it was in. Not putting
-    it in that file is a correct fix for the file.
-    """
+    """A sample string containing ``-->`` must not be written inside an
+    HTML comment, where it could close the comment early and spill the
+    rest into the rendered page: it survives unescaped in the quarantine
+    instead, which is plain text and has no delimiters to break."""
     pack_dir = emit_draft_pack(_hostile_analysis(), name="hostile", display="X", out_dir=tmp_path)
     html = (pack_dir / "template.html").read_text(encoding="utf-8")
     quarantine = (pack_dir / UNPLACED_NAME).read_text(encoding="utf-8")
@@ -462,9 +451,8 @@ def test_wizard_happy_path_with_yes(tmp_path: Path) -> None:
     assert (out / "acme_soap" / "pack.yaml").is_file()
     assert (out / "acme_soap" / "DRAFT.md").is_file()
     # The summary is shown, and the caveat reaches the operator. Asserted on its
-    # CONTENT rather than the heading above it: the heading said "Same-patient
-    # caveat", and the caveat is no longer only about that — a value the samples
-    # share is the failure that actually happens (#200).
+    # CONTENT rather than the "Same-patient caveat" heading above it: a value
+    # the samples share, not only the same patient, is the failure (#200).
     assert "MUST be from DIFFERENT patients" in result.stdout
     assert "NOT on their own enough" in result.stdout
     assert "Inferred design" in result.stdout
