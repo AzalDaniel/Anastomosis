@@ -1650,20 +1650,16 @@ _DELIVERED = "delivered document"
 
 
 class UnstructuredBodyMissingError(SourceDataError):
-    """An Unstructured Document's whole content is a file the export lacks.
-
-    Nothing else is on that chart, so carrying the document anyway would hand
-    the operator a patient with a name and no record — the silent total loss
-    this adapter exists to make impossible. The run refuses instead.
+    """An Unstructured Document's whole content is a file the export
+    lacks. The run refuses rather than delivering a named patient with
+    no record at all.
     """
 
 
 class UnstructuredBodyTooLargeError(SourceDataError):
-    """An artifact over :data:`MAX_ARTIFACT_BYTES`.
-
-    Refused whole rather than truncated: half a scanned discharge summary is
-    not a smaller version of that summary, it is a document whose second half
-    silently does not exist.
+    """An artifact over :data:`MAX_ARTIFACT_BYTES` — refused whole,
+    never truncated: half a scanned summary is not a smaller version of
+    it.
     """
 
 
@@ -1679,22 +1675,11 @@ def _within_ceiling(size: int, what: str) -> None:
 
 
 def _beside_document(reference: str, document: Path) -> Path | None:
-    """The file ``reference`` names beside ``document``, or ``None`` for none.
-
-    The value is a third party's word about the filesystem, so it is resolved
-    and then checked back against the directory it was resolved in: a ``../`` in
-    someone else's document must not make this adapter read a file the operator
-    never pointed at.
-
-    A value that is not a relative filename at all — an absolute path, a URL, a
-    ``#`` fragment — resolves to nothing beside the document and fails the same
-    check, which is the right answer for all three: this parser reads the export
-    the operator pointed at and fetches nothing.
-
-    Returns rather than raises because two constructs resolve references this
-    way and a missing file means a different thing to each: a ``nonXMLBody``'s
-    is the whole chart, a delivered artifact's is one document on it. Each
-    caller says its own sentence.
+    """The file ``reference`` names beside ``document``, or ``None`` for
+    none. Resolved then checked back against the directory it resolved
+    in, so a ``../`` cannot read a file the operator never pointed at.
+    Returns rather than raises: two constructs use this, and a missing
+    file means something different to each.
     """
     directory = document.parent.resolve()
     resolved = (directory / reference).resolve()
@@ -1704,11 +1689,9 @@ def _beside_document(reference: str, document: Path) -> Path | None:
 
 
 def _resolved_reference(reference: str, document: Path) -> Path:
-    """The file a ``nonXMLBody`` reference names, beside the document itself.
-
-    PHI: the refusal names no filename. A C-CDA export names its files after the
-    patient, so the reference value is a patient-derived string and the message
-    says the SHAPE of what is missing instead.
+    """The file a ``nonXMLBody`` reference names, beside the document
+    itself. PHI: the refusal names no filename (a C-CDA export names
+    files after the patient) — only the shape of what is missing.
     """
     resolved = _beside_document(reference, document)
     if resolved is None:
@@ -1725,17 +1708,9 @@ def _resolved_reference(reference: str, document: Path) -> Path:
 
 def _embedded_bytes(text: _Element) -> bytes:
     """The artifact a ``nonXMLBody`` carries inside itself.
-
-    ``representation="B64"`` is what a scan arrives as; anything else means the
-    element's own characters ARE the content (CDA's default for ED), which is
-    how a plain-text body comes across. Base64 that does not decode raises —
-    the adapter names the document by position and refuses the run — because
-    the alternative is a patient whose chart quietly became zero bytes.
-
-    The ceiling is checked against the encoded length BEFORE decoding: four
-    base64 characters are three bytes, so the estimate is exact to within the
-    padding, and a body that cannot be carried must not be materialized to find
-    that out.
+    ``representation="B64"`` is a scan; anything else is the element's
+    own characters (CDA's ED default). Checked against the encoded
+    length BEFORE decoding, so an oversized body is never materialized.
     """
     # Joined verbatim rather than through `_text_content`: that helper
     # collapses whitespace, which is right for narrative and destroys a
@@ -1753,12 +1728,9 @@ def _embedded_bytes(text: _Element) -> bytes:
 
 
 def _non_xml_body_extensions(body: _Element, text: _Element) -> dict[str, Any]:
-    """What the ``<nonXMLBody>`` declared that no ``DocumentArtifact`` field holds.
-
-    ``@mediaType`` is the one attribute consumed into a field (``mime_type``)
-    and so is not repeated here; a body that declared none is recorded as
-    having declared none, because "the document said octet-stream" and "the
-    document said nothing" are different facts about a chart.
+    """What the ``<nonXMLBody>`` declared that no ``DocumentArtifact``
+    field holds. A body declaring no ``@mediaType`` is recorded as such
+    — "said octet-stream" and "said nothing" are different facts.
     """
     declared: dict[str, Any] = {
         "note": UNSTRUCTURED_BODY_NOTE,
@@ -1777,14 +1749,10 @@ def _non_xml_body_extensions(body: _Element, text: _Element) -> dict[str, Any]:
 def _artifact_content(
     text: _Element, document: Path, extensions: dict[str, Any], media_type: str | None, index: int
 ) -> tuple[str, str]:
-    """``(delivered path, sha256)`` for the body, filling ``extensions`` as needed.
-
-    A referenced body already exists as a file in the export, and keeps the name
-    the export gave it — exactly like a ``pf_tebra`` attachment, so the pipeline
-    copies it with no new machinery. An EMBEDDED body has no file anywhere, so
-    its bytes travel on the artifact (:data:`EXT_INLINE_CONTENT`) and delivery
-    writes them under a name derived from the artifact's own id, which is
-    deterministic and carries nothing off the patient.
+    """``(delivered path, sha256)`` for the body, filling ``extensions``
+    as needed. A referenced body keeps the export's own filename; an
+    embedded one travels as bytes (:data:`EXT_INLINE_CONTENT`), delivered
+    under a name derived from the artifact's own id.
     """
     if (reference := _val_attr(text, "v3:reference", "value")) is not None:
         digest, size = hash_and_size(_resolved_reference(reference, document))
