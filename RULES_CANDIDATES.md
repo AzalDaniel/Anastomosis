@@ -10,6 +10,13 @@ carry it at. The orchestrator adjudicates; this file does not ship.
    upload console resolves its `_attach_destination` monkeypatch seam late,
    from inside the worker body, to stay import-cycle-free.
    (`gui/consoles/__init__.py:4-7`)
+3. The GUI's browser-upload console (`upload_start`) never calls
+   `ManagedDestination.close` on the operator's own logged-in browser (it
+   closes only its own ledger handle); `upload_stop` is cooperative and
+   honored only at item boundaries, never mid-item; a re-start naturally
+   resumes via the ledger (`recover` rewinds mid-flight items, terminal
+   items are not re-driven). (`gui/consoles/upload.py:220-346`, formerly a
+   longer "Safety model" docstring)
 
 ## Loose ends
 
