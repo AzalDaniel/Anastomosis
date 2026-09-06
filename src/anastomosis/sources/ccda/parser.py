@@ -801,30 +801,10 @@ def _social_history(section: _Element, patient_id: str, source_file: str) -> lis
 
 
 def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, index: int) -> str:
-    """Stable encounter id: the identifier the source states, when it states one.
-
-    HL7 v3's ``II`` datatype is the PAIR ``(root, extension)``: a root names a
-    namespace and an extension names the instance within it. Two encounters
-    stating the same pair are the same encounter by the datatype's own
-    definition — so ANY root paired with a non-blank extension is trusted as
-    identity, hashed deterministically over both halves.
-    A GUID root standing ALONE (no extension, the synthetic-fixture shape or
-    any 8-4-4-4-12 hex pattern a vendor would emit) is trusted too, verbatim,
-    because a GUID needs no assigning authority to be unique.
-
-    An OID root standing alone is different: it usually names the vendor's
-    assigning authority, shared by every encounter that vendor ever writes,
-    not a visit — so it is not treated as identity. Those encounters (and any
-    with no usable id at all) fall through to a deterministic UUID derived
-    from the file name and the encounter's positional index in the document
-    — so re-parsing the same CCD still yields the same encounter ids, which is
-    what the engine's idempotent-skip invariant rides on.
-
-    An extension that is blank or all-whitespace is not an extension —
-    ``id_pair`` never carries one (see :func:`~anastomosis.core.ccda_codes.
-    first_rooted_id`, which normalizes a blank extension to ``None`` before
-    this function ever sees it) — so a root with only a blank extension is
-    read as root-only, same as a bare root.
+    """Stable encounter id per rule 20: any root+extension pair, or a bare
+    GUID root, is identity; a bare OID root is the vendor's assigning
+    authority, not a visit, and falls through to a deterministic UUID
+    from the file name and position.
     """
     return identity_from_ii(
         "encounter",
@@ -905,14 +885,10 @@ _ENCOUNTER_IDENTITY_FIELDS = ("id", "patient_id", "provenance")
 
 
 def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
-    """Whether two encounters under one id are halves of one visit.
-
-    They are only if nothing they BOTH state disagrees. Two entries describing
-    genuinely different visits — different dates, different types — happen in
-    ordinary C-CDA and must stay two objects, so the archive refuses rather than
-    writing one page over the other. Folding those would invent a hybrid visit
-    that happened on neither day, which is the misfiling this project exists to
-    prevent (see tests/unit/test_duplicate_encounter_ids.py).
+    """Whether two encounters under one id are halves of one visit: only
+    if nothing they BOTH state disagrees. Genuinely different visits stay
+    two objects rather than being merged into a hybrid that happened on
+    neither day.
     """
     for name in type(seen).model_fields:
         if name in _ENCOUNTER_IDENTITY_FIELDS or name in _ENCOUNTER_LIST_FIELDS:
@@ -926,31 +902,10 @@ def _folds_together(seen: Encounter, incoming: Encounter) -> bool:
 
 
 def fold_encounters_sharing_an_id(encounters: list[Encounter]) -> list[Encounter]:
-    """One ``<id root>`` is one visit when the halves agree.
-
-    A C-CDA may describe the same encounter twice: once as an entry in the
-    46240-8 Encounters section and again as the Note Activity documenting it in
-    34109-9. Both legitimately carry the same ``<id root>``, and this parser
-    appended an Encounter for each, so a record round-tripped through our own
-    exporter came back with every visit doubled and two objects sharing one id.
-    Downstream that is fatal rather than untidy: ArchiveDeliverer refuses the
-    patient with DeliveredNameCollision, blaming a source that did nothing wrong.
-
-    Complementary halves fold — first non-None wins per scalar, lists
-    concatenate, order preserved. Contradictory ones do not: they stay separate
-    so the collision still surfaces.
-
-    Public because the same two halves also arrive in two DOCUMENTS: an export
-    holding one patient's visit summary and its note names that visit twice
-    across two files, and the pipeline's fold unions their encounters. The rule
-    is a property of the canonical Encounter, not of one traversal, so both
-    callers run this one — but the reach across documents is only as wide as
-    :func:`_encounter_id` makes it: the cross-document fold reaches encounters
-    whose ``<id>`` states an identity — a GUID root standing alone, or ANY
-    root paired with a non-blank extension (HL7 v3's ``II`` is the pair, not
-    the root alone). An OID root standing alone names an assigning authority
-    rather than a visit, so it still gets one id PER DOCUMENT and never folds
-    here, across two documents, no matter how it agrees with itself (#393).
+    """One ``<id root>`` is one visit when the fields agree (rule 9,
+    #393); contradictory halves stay separate. Complementary halves
+    merge — first non-None wins, lists concatenate. Public: the
+    pipeline's cross-document fold runs this same rule.
     """
     folded: dict[str, Encounter] = {}
     order: list[str] = []
