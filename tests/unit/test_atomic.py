@@ -21,7 +21,7 @@ from unittest import mock
 import pytest
 
 import anastomosis
-from anastomosis.core.atomic import atomic_replace, atomic_write_text
+from anastomosis.core.atomic import atomic_replace, atomic_write_bytes, atomic_write_text
 
 #: Where the child processes below must import the helper from. It comes off
 #: the already-imported package rather than from whatever a fresh interpreter
@@ -128,6 +128,23 @@ def test_atomic_replace_survives_a_second_failure_after_a_caller_retry(tmp_path:
 def test_atomic_write_text_mode_sets_owner_only_permissions(tmp_path: Path) -> None:
     target = tmp_path / "trust.json"
     atomic_write_text(target, "{}", mode=0o600)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_atomic_write_bytes_puts_exactly_the_bytes_it_was_given_on_disk(tmp_path: Path) -> None:
+    """The learned-mapping writer hashes the string it hands over, so any
+    newline translation, re-encoding or strip on the way to disk would make a
+    trust record describe a file that was never written."""
+    data = b"alpha\nbeta\r\ngamma\n"
+    target = tmp_path / "mapping.json"
+    atomic_write_bytes(target, data)
+    assert target.read_bytes() == data
+
+
+@pytest.mark.skipif(os.name != "posix", reason="owner-only mode is POSIX-only")
+def test_atomic_write_bytes_mode_sets_owner_only_permissions(tmp_path: Path) -> None:
+    target = tmp_path / "source_trust.json"
+    atomic_write_bytes(target, b"{}", mode=0o600)
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 

@@ -12,10 +12,11 @@ only; :class:`MigrationProfiles` stores config only, never a path.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from anastomosis.core.atomic import atomic_write_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -567,14 +568,11 @@ def _run_ccda_standard(
 #
 # A migration profile saves the REUSABLE config of a migration — source,
 # destination, render representation, section flags, QA — so an operator runs a
-# recurring migration by name. It deliberately does NOT save the per-run paths
-# (export_dir / out_dir), and it carries no PHI: every value is a vendor
-# identifier, a pack/render name, a section flag, or a boolean.
+# recurring migration by name.
 
 
 def user_migrations_path() -> Path:
-    """The per-user migration-profiles store path: a plain
-    ``~/.anastomosis/migrations.json``, matching
+    """``~/.anastomosis/migrations.json``, matching
     :func:`anastomosis.destinations.loader.user_destinations_dir` so all
     Anastomosis user state lives under one root."""
     return Path.home() / ".anastomosis" / "migrations.json"
@@ -616,25 +614,12 @@ class MigrationProfiles:
 
     def save(self, name: str, profile: dict[str, object]) -> None:
         """Persist ``profile`` under ``name``: only the config keys
-        (:data:`_PROFILE_KEYS`) are stored, any stray key (e.g. a path)
-        dropped, keeping the store PHI-free by construction (2). Atomic
-        write, owner-only from creation on POSIX (14, a fork of
-        :mod:`anastomosis.core.atomic`)."""
+        (:data:`_PROFILE_KEYS`) are stored, any stray key dropped, keeping the
+        store PHI-free (2); the write is atomic and owner-only on POSIX (14)."""
         self._store[name] = {key: profile[key] for key in _PROFILE_KEYS if key in profile}
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(self._store, indent=2, sort_keys=True) + "\n"
-        tmp = self._path.with_name(f".{self._path.name}.{os.getpid()}.tmp")
-        try:
-            if os.name == "posix":
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(payload)
-            else:  # pragma: no cover - POSIX is the tested platform
-                tmp.write_text(payload, encoding="utf-8")
-            os.replace(tmp, self._path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)  # never leave a stray temp on failure
-            raise
+        atomic_write_text(self._path, payload, mode=0o600)
 
 
 def default_migration_profiles() -> MigrationProfiles:
