@@ -1363,14 +1363,10 @@ def _facility_contacts(telecoms: list[_Element]) -> tuple[str | None, str | None
 
 
 def _facility(nodes: Sequence[_Element], source_file: str, index: int) -> Facility:
-    """A practice location from the organization element(s) that describe it.
-
-    Several elements rather than one because C-CDA splits a place across them:
-    an ``encompassingEncounter``'s ``healthCareFacility`` carries the id, the
-    ``location`` beneath it carries the name and address, and the
-    ``serviceProviderOrganization`` beside it carries the organization's. Each
-    field is taken from the first element that states it, in the order CDA
-    nests them, so a document that fills either half is read the same way.
+    """A practice location from the organization element(s) that
+    describe it — several because C-CDA splits a place across them (id
+    on ``healthCareFacility``, name/address on ``location``). Each field
+    is taken from the first element that states it.
     """
     identifier = _first(nodes, "v3:id")
     root = _attr(identifier, "root")
@@ -1424,11 +1420,9 @@ def _merge_facility_extensions(seen: dict[str, Any], incoming: dict[str, Any]) -
 
 
 def _mergeable(seen: Facility, incoming: Facility) -> Iterator[tuple[str, Any, Any]]:
-    """Each field the merge may consider, with both namings' values beside it.
-
-    Identity, provenance and the lossless tail are excluded: the first two are
-    what established these are the same organization, and the third merges by
-    its own rule rather than field by field.
+    """Each field the merge may consider, with both namings' values
+    beside it. Identity, provenance and the lossless tail are excluded:
+    the first two established these are the same organization.
     """
     for name in type(seen).model_fields:
         if name not in _FACILITY_SKIP:
@@ -1454,13 +1448,8 @@ def _unstated(seen: Facility, incoming: Facility) -> Iterator[tuple[str, Any, An
 
 
 def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
-    """One organization named twice is one facility; the second naming fills gaps.
-
-    Neither naming is more authoritative than the other — the author's header
-    and the custodian's block describe the same practice — so nothing already
-    stated is overwritten and only what was missing is filled. That is the same
-    rule two halves of one encounter fold by, for the same reason: writing one
-    over the other would silently pick a winner.
+    """One organization named twice is one facility; the second naming
+    fills gaps, never overwrites what the first already stated (rule 9).
     """
     conflicts = [name for name, old, new in _stated(seen, incoming) if old != new]
     if conflicts:
@@ -1476,13 +1465,10 @@ def _fill_gaps(seen: Facility, incoming: Facility) -> Facility:
 
 
 def _authors(root: _Element, actors: _Actors) -> None:
-    """Every ``<author>`` in the document, header and note alike.
-
-    Document-wide rather than header-only because the clinician who wrote a note
-    is as much the answer to "who wrote this" as the one in the header — and for
-    a reader of that note, it is the ONLY answer that helps. An
-    ``assignedAuthoringDevice`` takes the other branch: it is a system, not a
-    person, and the two must not arrive looking alike.
+    """Every ``<author>`` in the document, header and note alike — a
+    note's own author is the only answer that helps its reader.
+    ``assignedAuthoringDevice`` takes the other branch: a system, not a
+    person.
     """
     for author in root.iter(_q("author")):
         entity = _find(author, _ASSIGNED_AUTHOR.path)
