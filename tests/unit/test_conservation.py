@@ -1,14 +1,9 @@
 """Conservation at the stage seams: what goes in comes out, or the run stops.
 
-Every real defect this project has found was a boundary problem — data crossing
-from one component to the next and arriving short — and none was caught by
-verification, because verification reads artifacts and an artifact that never
-arrived has nothing to read. These tests hold the other question: was every
-unit of work this stage was handed accounted for.
-
-Each seam gets a pair: a correct run balances, and a stage that loses one unit
-refuses. The losing half is what matters — a conservation check nobody has seen
-fail is a comment.
+Verification alone cannot catch a boundary loss — data crossing from one
+component to the next and arriving short — because it reads artifacts,
+and an artifact that never arrived has nothing to read. Each seam gets a
+pair: a correct run balances, and a stage that loses one unit refuses.
 
 Synthetic throughout (``feedface-`` ids, invented names).
 """
@@ -109,12 +104,10 @@ def test_the_render_seam_balances_on_a_normal_run() -> None:
 
 
 def test_an_encounter_that_reached_no_column_stops_the_render() -> None:
-    """The #121 shape: two encounters, one page, and the run reported two.
-
-    An encounter that ends in none of rendered/skipped/failed has left the
-    accounting — and every downstream number is then computed over the
-    survivors, which is exactly how a loss reports clean.
-    """
+    """#121: two encounters, one page, and the run reported two — an
+    encounter ending in none of rendered/skipped/failed has left the
+    accounting, and every downstream number is then computed over the
+    survivors, which is exactly how a loss reports clean."""
     from anastomosis.reconstruct.engine import RenderResult, _render_conservation
 
     result = RenderResult()
@@ -176,12 +169,10 @@ def test_the_same_item_offered_twice_is_one_obligation() -> None:
 def test_the_archive_seam_balances_and_notices_a_chart_that_reached_nobody(
     tmp_path: Path,
 ) -> None:
-    """#110's shape: nothing malformed, and a chart that arrived nowhere.
-
-    The obligation is the union of what the render index NAMES and what is
-    actually sitting in the charts directory, so a chart the index forgot is
-    still owed an answer — which is what stops it being left behind.
-    """
+    """#110: nothing malformed, and a chart that arrived nowhere. The
+    obligation is the union of what the render index NAMES and what is
+    actually sitting in the charts directory, so a chart the index forgot
+    is still owed an answer."""
     from anastomosis.deliver.archive.archive import _chart_conservation
     from anastomosis.deliver.render_index import RenderEntry, RenderIndex
 
