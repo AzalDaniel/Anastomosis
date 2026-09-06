@@ -1,18 +1,12 @@
-"""The SBOM has to name the version it describes.
+"""The SBOM has to name the version it describes: ``cyclonedx-py
+--pyproject pyproject.toml`` reads the root component's identity out
+of ``[project]``, and this project declares ``dynamic = ["version"]``
+— so a root component with ``version: null`` also drops the installed
+``anastomosis`` component from the inventory, since the root is
+deduplicated against it.
 
-``cyclonedx-py --pyproject pyproject.toml`` reads the root component's identity
-out of ``[project]``, and this project declares ``dynamic = ["version"]``. Both
-shipped SBOMs therefore described a root component with ``version: null`` — and
-dropped the installed ``anastomosis`` component from the inventory, because the
-root is deduplicated against it. Measured on this tree before the fix:
-
-    root name   : anastomosis
-    root version: None
-    anastomosis in inventory: ABSENT   (of 84 components)
-
-``cyclonedx-py`` is not a test dependency and this does not run it. What is
-checked is the part that was wrong: the version the tool is handed, and the
-refusal of a document that does not carry it.
+``cyclonedx-py`` is not a test dependency and this does not run it;
+what is checked is the version the tool is handed.
 """
 
 from __future__ import annotations
