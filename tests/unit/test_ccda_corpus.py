@@ -655,12 +655,11 @@ def test_every_name_a_document_points_at_is_a_name_it_declares(
 def test_it_writes_the_narrative_arrangements_the_ledger_argues_about(
     corpus: list[tuple[str, bytes]],
 ) -> None:
-    """Contract: the corpus must write every narrative-containment shape the
-    ledger's crediting rule argues about -- a name over an unnamed cell,
-    a name at two nesting levels over one set of words, a name on the
-    arrangement itself (must not be credited), a cell rendering nothing,
-    and an unresolvable citation -- or a corpus of one shape would agree
-    with any containment rule at all."""
+    """Contract: the corpus must write every containment shape the ledger's
+    crediting rule argues about -- an unnamed cell under a named row, a name
+    at two nesting levels over one set of words, a name on the arrangement
+    itself (must not be credited), a cell rendering nothing, and an
+    unresolvable citation -- or one shape would agree with any rule."""
     from lxml import etree
 
     v3 = "urn:hl7-org:v3"

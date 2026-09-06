@@ -397,11 +397,10 @@ def test_a_third_partys_multimedia_is_not_read_as_a_delivered_document(tmp_path:
 
 def test_our_own_document_entry_is_read_back_rather_than_parked(tmp_path: Path) -> None:
     """A stamped ``DocumentArtifact`` entry is taken apart, not ALSO parked
-    verbatim -- else each export restates it beside its own copy and the
-    artifact entry doubles every generation. The typed object is the
-    better copy, restated with the delivered file's own name and
-    verified digest, never last generation's; an unstamped third-party
-    entry (above) stays parked."""
+    verbatim, or each export restates it beside its own copy and the entry
+    doubles every generation. The typed object is the better copy, restated
+    with the delivered file's own name and verified digest; an unstamped
+    third-party entry (above) stays parked."""
     export = tmp_path / "export"
     _embedded_and_referenced_export(export)
     record = parse_document(next(iter(sorted(export.glob("*.xml")))))
@@ -525,10 +524,9 @@ def test_the_cli_and_the_gui_conserve_documents_the_same_way(
 def test_the_cli_delivers_the_documents_a_scanned_chart_is_made_of(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#373's own reproduction, end to end through the real CLI: two
-    Unstructured Documents that the ``--ccda`` directory used to omit at
-    exit 0 must now arrive byte-identical, named by a CCD that
-    references them."""
+    """#373, end to end through the real CLI: two Unstructured Documents
+    must arrive in the ``--ccda`` directory byte-identical at exit 0, named
+    by a CCD that references them."""
     pytest.importorskip("pymupdf", reason="pipeline e2e needs PyMuPDF (render extra)")
     from _render_fakes import write_text_pdf
     from typer.testing import CliRunner

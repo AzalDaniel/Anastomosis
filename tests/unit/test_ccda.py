@@ -457,21 +457,18 @@ def test_immunizations(record: PatientRecord) -> None:
 
 # --- zero-sentinel timestamps (#385) ------------------------------------------
 #
-# A vendor's TS @value of nothing but zeros ("0", "00000000", ...) used to
-# make parse_dt raise and abort the whole document over one medication with
-# no known start. It now reads as absent, and the loss is credited on the
-# record — see core.timeutil.is_zero_sentinel and
+# A vendor's TS @value of nothing but zeros ("0", "00000000", ...) reads as
+# absent rather than raising out of parse_dt and aborting the whole document;
+# the loss is credited on the record — see core.timeutil.is_zero_sentinel and
 # sources.ccda.parser._record_zero_sentinels.
 
 
 def test_a_medication_whose_start_is_a_zero_sentinel_is_kept_without_one(
     zero_sentinel_record: PatientRecord,
 ) -> None:
-    """Red on main: `parse_document` raised `ValueError: unrecognized
-    date/time format: '0'` on this fixture's substanceAdministration/
-    effectiveTime/low. The medication must now survive with no start (high
-    was already nullFlavor="UNK", already None before this fix), and the
-    loss must be named on the record rather than vanishing."""
+    """A medication whose only stated start is an all-zero TS (#385) must
+    survive with no start (high is already nullFlavor="UNK", already None),
+    and the loss must be named on the record rather than vanishing."""
     [medication] = zero_sentinel_record.medications
     assert medication.start is None
     assert medication.stop is None
@@ -494,8 +491,8 @@ def test_a_numeric_zero_is_not_a_date_sentinel(zero_sentinel_record: PatientReco
 
 
 def test_a_nullflavor_timestamp_is_absent_not_a_sentinel(record: PatientRecord) -> None:
-    """Not a #385 acceptance test -- a nullFlavor TS already read as absent
-    before this fix, and ``is_zero_sentinel`` must not change that."""
+    """Not a #385 acceptance test -- a nullFlavor TS reads as absent on its
+    own, and ``is_zero_sentinel`` must not change that."""
     assert "ccda:timestamp_named_no_instant" not in record.patient.extensions
 
 
@@ -1075,9 +1072,9 @@ _VALUE_TYPES_CCD = """<?xml version="1.0"?>
 
 
 def test_every_ccda_value_type_keeps_its_result(tmp_path: Path) -> None:
-    """Only ``xsi:type="PQ"`` used to be read (#243) -- every other value
-    form left ``Observation.value`` None on a still-created result, which
-    a receiving EHR reads as "no result" rather than the finding recorded."""
+    """Every ``xsi:type`` form must keep its value (#243), not only ``PQ`` --
+    a still-created result with ``Observation.value`` None reads to a
+    receiving EHR as "no result" rather than the finding recorded."""
     (tmp_path / "values.xml").write_text(_VALUE_TYPES_CCD, encoding="utf-8")
 
     (record,) = list(get_source("ccda").load(tmp_path))
