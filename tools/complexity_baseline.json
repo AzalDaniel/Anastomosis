@@ -317,6 +317,11 @@
       "rank": "B",
       "total": 98
     },
+    "src/anastomosis/deliver/verify/levels.py": {
+      "avg": 5.8571,
+      "rank": "B",
+      "total": 123
+    },
     "src/anastomosis/packs/generic_soap/context.py": {
       "avg": 9.0,
       "rank": "B",
@@ -326,6 +331,11 @@
       "avg": 8.7714,
       "rank": "B",
       "total": 307
+    },
+    "src/anastomosis/qa/checks.py": {
+      "avg": 5.7059,
+      "rank": "B",
+      "total": 194
     },
     "src/anastomosis/sources/fhir_r4/__init__.py": {
       "avg": 6.0,
@@ -385,6 +395,7 @@
     "src/anastomosis/core/outcome.py": 2,
     "src/anastomosis/core/output.py": 54,
     "src/anastomosis/core/packinit.py": 25,
+    "src/anastomosis/core/pdfsnapshot.py": 22,
     "src/anastomosis/core/presentation.py": 13,
     "src/anastomosis/core/profiles.py": 60,
     "src/anastomosis/core/runmanifest.py": 47,
@@ -420,7 +431,7 @@
     "src/anastomosis/deliver/render_index.py": 32,
     "src/anastomosis/deliver/router.py": 26,
     "src/anastomosis/deliver/verify/composite.py": 48,
-    "src/anastomosis/deliver/verify/levels.py": 134,
+    "src/anastomosis/deliver/verify/levels.py": 123,
     "src/anastomosis/deliver/verify/types.py": 4,
     "src/anastomosis/destinations/base.py": 38,
     "src/anastomosis/destinations/browserpack.py": 145,
@@ -447,7 +458,7 @@
     "src/anastomosis/packs/practice_fusion_soap/context.py": 307,
     "src/anastomosis/pipeline.py": 203,
     "src/anastomosis/qa/base.py": 16,
-    "src/anastomosis/qa/checks.py": 208,
+    "src/anastomosis/qa/checks.py": 194,
     "src/anastomosis/qa/runner.py": 28,
     "src/anastomosis/qa/wholepatient.py": 9,
     "src/anastomosis/reconstruct/ccda_standard/renderer.py": 20,
