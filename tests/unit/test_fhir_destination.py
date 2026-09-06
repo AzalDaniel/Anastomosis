@@ -1,16 +1,11 @@
 """FhirApiDestination tests against an in-memory FHIR server (opener seam).
 
-The destination is driven through a REAL :class:`FhirClient` whose transport is
-an in-process fake server (an ``Opener``) — urllib is never touched, and the
-client's own JSON/id/status handling is exercised on the way. The fake server
-implements just enough FHIR R4 search/read/create semantics for the resolver,
-banner, scanner, driver, and the L5/L6 readers.
-
-The driver's DocumentReference is validated against the real
-``fhir.resources`` R4 model (the ``fhir`` extra is installed in this env) so a
-malformed resource fails loudly. The end-to-end test drives a real
-:class:`UploadEngine` + :class:`LayeredVerifier` and asserts COMPLETED with
-L5/L6 passing, then a duplicate second run.
+Driven through a REAL :class:`FhirClient` over an in-process fake server (an
+``Opener``) — urllib is never touched, and the client's own JSON/id/status
+handling is exercised too. The fake server implements just enough FHIR R4
+search/read/create semantics for the resolver, banner, scanner, driver, and
+the L5/L6 readers; the driver's DocumentReference is validated against the
+real ``fhir.resources`` R4 model, so a malformed resource fails loudly.
 
 Synthetic data only: ``feedface-`` ids, "Synthia Testpatient", DOB 1990-01-02.
 """
@@ -58,17 +53,11 @@ GOOD_LINES = [NAME, "DOB 01/02/1990", "Date of service: May 10, 2023", *_FILLER]
 
 
 class _FakeFhirServer:
-    """A tiny in-memory FHIR R4 server implementing the verbs the pusher uses.
-
-    Stores Patients and DocumentReferences; serves identifier/demographic
-    Patient search, read-by-id, DocumentReference subject search and read, and
-    create (assigning sequential ids, returning a Location header).
-
-    ``page_size`` makes the DocumentReference search page the way a real server
-    does — a window plus a ``Bundle.link[next]``. None means one page, which is
-    what every test here assumed until a client that only read the first page
-    turned out to be filing duplicates.
-    """
+    """A tiny in-memory FHIR R4 server implementing the verbs the pusher
+    uses: identifier/demographic Patient search, read-by-id,
+    DocumentReference subject search/read, and create. ``page_size`` pages
+    DocumentReference search like a real server (a window plus
+    ``Bundle.link[next]``); None means one page."""
 
     def __init__(self, *, page_size: int | None = None) -> None:
         self.patients: dict[str, dict[str, object]] = {}
@@ -441,13 +430,10 @@ def test_driver_accepts_an_item_within_the_bound(tmp_path: Path) -> None:
 
 
 def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path: Path) -> None:
-    """The preflight weighs the FILE, not the manifest.
-
-    ``size_bytes`` comes from the upload manifest and can be stale; the bytes
-    on disk are the ones read, base64-encoded, and serialized, so they are what
-    set the memory peak. A manifest that understates the file must not wave it
-    past the bound.
-    """
+    """The preflight weighs the FILE, not the manifest: ``size_bytes`` can be
+    stale, but the bytes on disk are the ones read, base64-encoded, and
+    serialized, so they set the memory peak. A manifest that understates
+    the file must not wave it past the bound."""
     server = _FakeFhirServer()
     pid = server.add_patient(_patient_resource("srv-1"))
     honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
@@ -458,13 +444,11 @@ def test_driver_catches_an_oversized_file_a_stale_manifest_understates(tmp_path:
 
 
 def test_driver_delivers_a_small_file_a_stale_manifest_overstates(tmp_path: Path) -> None:
-    """The other direction of the same rule: a manifest that lies LARGE about a
-    small file must NOT refuse it.
-
-    Nothing oversized is ever read here — the file on disk is well inside the
-    bound — so refusing on the manifest's word alone would strand a deliverable
-    chart on a number that describes nothing. The measurement is the stat.
-    """
+    """The other direction: a manifest that lies LARGE about a small file
+    must NOT refuse it. Nothing oversized is ever read here — the file on
+    disk is well inside the bound — so refusing on the manifest's word
+    alone would strand a deliverable chart on a number that describes
+    nothing."""
     server = _FakeFhirServer()
     pid = server.add_patient(_patient_resource("srv-1"))
     honest = _item(_make_pdf(tmp_path / "note.pdf", GOOD_LINES))
@@ -634,12 +618,11 @@ class _LaggingIndexServer(_FakeFhirServer):
 def test_verifier_reuses_engine_identity_and_never_creates_a_second_patient(
     tmp_path: Path,
 ) -> None:
-    """ID-005: with ``create_missing_patients`` and a lagging search index, the
-    engine's resolve legitimately POSTs ONE Patient. The verifier must REUSE
-    that identity (threaded in from the engine), never re-resolve through the
-    create-capable resolver — which under the lag would POST a SECOND Patient
-    (the exact side effect the destination's own docstring forbids). Total
-    POST /Patient stays 1, and engine-id == verifier-id."""
+    """ID-005: with ``create_missing_patients`` and a lagging search index,
+    the engine's resolve legitimately POSTs ONE Patient, and the verifier
+    must REUSE that identity — never re-resolve through the create-capable
+    resolver, which under the lag would POST a SECOND. Total POST /Patient
+    stays 1, and engine-id == verifier-id."""
     from anastomosis.deliver.browser.errors import WrongPatientError
 
     server = _LaggingIndexServer()
@@ -681,17 +664,11 @@ def test_no_phi_in_logs_on_failure(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_the_duplicate_scan_reads_every_page_of_the_searchset() -> None:
-    """A resumed run must not re-file a chart the destination already holds.
-
-    A FHIR search returns a searchset the SERVER pages, advertising the
-    continuation as `Bundle.link[relation="next"]`. The scan read one page and
-    stopped, so a patient with more documents than the server's page size had
-    fingerprints it could not see — and the invisible ones are the most
-    recently filed, which is exactly where a crashed run's last upload sits.
-
-    `destinations/base.py` states the contract this holds: "re-filing would
-    double a patient's chart."
-    """
+    """A resumed run must not re-file a chart the destination already
+    holds. A FHIR searchset is paged by the SERVER (`Bundle.link[relation=
+    "next"]`), so the scan must follow every page, or a patient with more
+    documents than one page has fingerprints invisible to it.
+    `destinations/base.py`: "re-filing would double a patient's chart"."""
     server = _FakeFhirServer(page_size=20)
     pid = server.add_patient(_patient_resource(PAT))
     subject = {"reference": f"Patient/{pid}"}
@@ -717,12 +694,10 @@ def test_the_duplicate_scan_reads_every_page_of_the_searchset() -> None:
 
 
 def test_the_duplicate_scan_refuses_a_cross_origin_next_link() -> None:
-    """The `next` URL is chosen by the server, so it gets the redirect rule.
-
-    The client refuses redirects because the Authorization header must never
-    travel to a host the operator did not configure. A `next` link pointing
-    off-origin is the same request wearing different clothes.
-    """
+    """The `next` URL is chosen by the server, so it gets the redirect
+    rule: the client refuses redirects because the Authorization header
+    must never travel to a host the operator did not configure. A `next`
+    link pointing off-origin is the same request wearing different clothes."""
     server = _FakeFhirServer()
     pid = server.add_patient(_patient_resource(PAT))
     subject = {"reference": f"Patient/{pid}"}
@@ -753,11 +728,10 @@ def test_the_duplicate_scan_refuses_a_cross_origin_next_link() -> None:
 
 # --- which identifier the destination is searched by (#232) -------------------
 #
-# The search takes ONE identifier, and it used to be whichever mapped first —
-# so the order the SOURCE DOCUMENT listed them in chose it. For the shipped
-# C-CDA fixture that was the patient's SSN, and search params ride in the query
-# string, where a request line is logged by the destination and by any proxy
-# between. These hold the order as a decision.
+# The search takes ONE identifier, by a fixed preference order — never the
+# order the SOURCE DOCUMENT happened to list them in, since search params
+# ride in the query string, where a request line is logged by the
+# destination and by any proxy between. These hold the order as a decision.
 
 
 def _searched_by(patient: Patient, *, allow_ssn: bool = False) -> str:
@@ -820,24 +794,18 @@ def test_anything_else_a_patient_carries_is_preferred_to_the_ssn(
 
 
 def test_an_ssn_only_patient_is_not_searched_for_by_default() -> None:
-    """The question #232 left open, answered the conservative way.
-
-    Search params ride in the query string, which the destination and every
-    proxy between record in a request line — not a place this tool can clean up
-    afterwards. So an SSN goes there when the operator asks for it and not
-    because the patient had nothing else.
-    """
+    """#232, answered the conservative way: search params ride in the
+    query string, which the destination and every proxy between record in
+    a request line — not a place this tool can clean up afterwards. An
+    SSN goes there only when the operator asks for it."""
     assert _searched_by(_patient_with(IdentifierKind.SSN)).startswith("(no search:")
 
 
 def test_an_ssn_only_patient_does_not_slide_into_a_demographic_match() -> None:
-    """The failure mode that would make this fix worse than the bug.
-
-    Demographics exists for a patient the source gave no identity at all.
-    Letting a withheld SSN fall through to it would trade a query-string
-    exposure for a name-and-DOB match on a stranger, which is the wrong-patient
-    failure this whole subsystem exists to prevent.
-    """
+    """Demographics exists for a patient the source gave no identity at
+    all. Letting a withheld SSN fall through to it would trade a
+    query-string exposure for a name-and-DOB match on a stranger — the
+    wrong-patient failure this whole subsystem exists to prevent."""
     patient = Patient(
         id="feedface-0000-0000-0000-0000000000ae",
         family_name="Testpatient",
@@ -886,13 +854,10 @@ def test_a_patient_with_no_identifier_still_falls_back_to_demographics() -> None
 
 
 def test_an_identifier_with_no_value_does_not_become_an_empty_search() -> None:
-    """A blank identifier must fall back, not search the destination for "".
-
-    Found by a surviving mutation rather than by reading: the preference order
-    covers every kind, so the only identifier the loop can skip is one with no
-    value — and searching ``mrn|`` would ask the destination to match every
-    patient whose MRN is blank.
-    """
+    """A blank identifier must fall back, not search the destination for
+    "": the preference order covers every kind, so the only identifier
+    the loop can skip is one with no value — and searching ``mrn|`` would
+    match every patient whose MRN is blank."""
     patient = Patient(
         id="feedface-0000-0000-0000-0000000000ad",
         family_name="Testpatient",
@@ -904,11 +869,9 @@ def test_an_identifier_with_no_value_does_not_become_an_empty_search() -> None:
 
 @pytest.mark.parametrize("source", ["pf-tebra", "ccda", "fhir-r4", "oracle-ehi"])
 def test_no_shipped_adapter_sends_an_ssn_when_the_patient_has_another_id(source: str) -> None:
-    """The fixture sweep that found this, kept as the guard.
-
-    C-CDA's first ``v3:id`` carries the SSN OID, so before the preference order
-    every C-CDA patient was looked up in the destination by their SSN.
-    """
+    """C-CDA's first ``v3:id`` carries the SSN OID, so the preference
+    order must not let it stand in for a patient's other identifiers when
+    one is available."""
     import anastomosis.sources.ccda
     import anastomosis.sources.fhir_r4
     import anastomosis.sources.oracle_ehi
