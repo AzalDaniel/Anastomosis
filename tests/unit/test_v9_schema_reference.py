@@ -1,14 +1,10 @@
 """The fixture must agree with the vendor, not just with the mapper.
 
-`tests/fixtures/pf_tebra_v9/` was written by hand and the mapper was written
-against it, so the two agreed with each other about 25 column names across 12
-tables that no real v9 export has. Every test passed. The first real export
-refused with `OrphanRowsError` and migrated nothing (#247).
-
-Nothing here reads a fixture row or builds a record. These tests compare two
-lists of names — what the fixture claims a table has, and what the vendor says
-it has — because that comparison is the one the suite could not make, and its
-absence is what let an invented schema look green for as long as it did.
+`tests/fixtures/pf_tebra_v9/` and the mapper were written to agree with
+each other about 25 column names across 12 tables that no real v9 export
+has (#247). Nothing here reads a fixture row or builds a record: these
+tests compare two lists of names, the fixture's and the vendor's, which
+the rest of the suite never does.
 """
 
 from __future__ import annotations
@@ -44,12 +40,10 @@ def test_the_reference_is_the_whole_v9_schema() -> None:
 
 
 def test_the_reference_carries_names_and_nothing_else() -> None:
-    """It is checked into a repository that must never hold PHI.
-
-    A column name is vendor documentation, the same for every practice that
-    ever ran the export. The shape assertion is what keeps it that way: a
-    mapping of table name to a flat list of strings has nowhere to put a row.
-    """
+    """It is checked into a repository that must never hold PHI: a column
+    name is vendor documentation, the same for every practice that ever
+    ran the export, and a mapping of table name to a flat list of strings
+    has nowhere to put a row."""
     for table, cols in _vendor().items():
         assert isinstance(table, str) and table
         assert isinstance(cols, list)
@@ -60,13 +54,11 @@ def test_the_reference_carries_names_and_nothing_else() -> None:
 
 @pytest.mark.parametrize("path", _fixture_tables(), ids=lambda p: p.stem)
 def test_every_fixture_column_is_one_the_vendor_publishes(path: Path) -> None:
-    """The check that would have caught #247 the day the fixture was written.
-
-    Subset, not equality: a fixture table carrying five of a table's fifty
-    columns is a perfectly good fixture. What it may not do is carry a
-    fifty-first that the vendor never defined, because the mapper will be
-    written to read it and the export will not have it.
-    """
+    """The check that would have caught #247 the day the fixture was
+    written. Subset, not equality: a fixture table carrying five of a
+    table's fifty columns is a perfectly good fixture, but a fifty-first
+    the vendor never defined is not — the mapper will be written to read
+    it, and the export will not have it."""
     vendor = _vendor()
     assert path.stem in vendor, f"{path.stem} is not a table in the v9 export"
     header = path.read_text(encoding="utf-8").splitlines()[0].split("\t")
@@ -83,13 +75,11 @@ def test_a_fixture_table_has_no_duplicate_columns(path: Path) -> None:
 
 
 def test_the_guard_would_actually_have_failed(tmp_path: Path) -> None:
-    """The guard above is only worth having if it bites, and a subset check is
-    exactly the kind that can be written so loosely it never does.
-
-    So: run its logic against the invented name #247 was really about —
-    `patient-allergy.AllergyGuid`, whose absence made every reaction row's
-    foreign key dangle and refused the whole migration.
-    """
+    """The guard above only counts if it bites, and a subset check can be
+    written loosely enough that it never does: run its logic against the
+    invented name #247 was really about — `patient-allergy.AllergyGuid`,
+    whose absence dangled every reaction row's foreign key and refused
+    the whole migration."""
     vendor = _vendor()
     assert "AllergyGuid" not in vendor["patient-allergy"]
     assert "PatientAllergyGuid" in vendor["patient-allergy"]
@@ -100,19 +90,11 @@ def test_the_guard_would_actually_have_failed(tmp_path: Path) -> None:
 
 
 def test_the_one_row_the_vendor_document_did_not_mean() -> None:
-    """A published document is evidence, not scripture.
-
-    The v9 dictionary lists an entry named `etc.` on
-    `patient-drug-alert-overrides`, with no data type and no description. It is
-    not a column: the preceding row's description ends in a list of examples
-    that ran across a line break in the vendor's HTML table, and the trailing
-    "etc." was parsed as a row of its own. It is dropped when the reference is
-    extracted, on the structural signature — no data type — rather than on its
-    name, and it is the only entry in all 85 tables with that signature.
-
-    Worth a test because it is the shape of thing that gets quietly re-added by
-    the next person to regenerate the file from the same source.
-    """
+    """A published document is evidence, not scripture: the v9 dictionary
+    lists an entry named `etc.` on `patient-drug-alert-overrides` with no
+    data type — a preceding example list that ran across an HTML line
+    break. Dropped by that structural signature, not by name: the only
+    entry in all 85 tables shaped that way."""
     vendor = _vendor()
     assert "etc." not in vendor["patient-drug-alert-overrides"]
     assert len(vendor["patient-drug-alert-overrides"]) == 12  # the document says 13
@@ -159,16 +141,11 @@ def _allowlists() -> dict[str, frozenset[str]]:
 
 
 def test_every_column_the_mapper_reads_is_one_the_vendor_publishes() -> None:
-    """Stronger than checking the fixture, and it caught two the fixture could not.
-
-    A column the mapper reads but no fixture table carries is invisible to the
-    header check: nothing declares it anywhere a test can see. Two were sitting
-    there. `patient-medications` was read for `LastModifiedDateTimeUtc`, which
-    v9 spells `DisplayLastModifiedDateTimeUtc` on that one table, so every
-    medication came back with no last-modified date. `patient-prescriptions`
-    was read for a bare `Refills`, a name no v9 table has at all — a fallback
-    that could only ever have fired over an export we made up ourselves.
-    """
+    """Stronger than checking the fixture: a column the mapper reads but
+    no fixture table carries is invisible to the header check —
+    `patient-medications`'s `LastModifiedDateTimeUtc` (v9 spells it
+    `DisplayLastModifiedDateTimeUtc` there) and `patient-prescriptions`'s
+    bare `Refills`, a name no v9 table has at all."""
     vendor = _vendor()
     wrong: dict[str, list[str]] = {}
     for name, columns in _allowlists().items():
@@ -180,12 +157,10 @@ def test_every_column_the_mapper_reads_is_one_the_vendor_publishes() -> None:
 
 
 def test_a_new_allowlist_has_to_say_which_table_it_reads() -> None:
-    """Otherwise the check above quietly stops covering the newest code.
-
-    The mapper's allowlists are module-level frozensets with no table attached,
-    so the correspondence lives in this file. If it can go stale, it will — and
-    a stale one fails open, which is the worst way for a guard to fail.
-    """
+    """Otherwise the check above quietly stops covering the newest code:
+    the mapper's allowlists are module-level frozensets with no table
+    attached, so the correspondence lives in this file, and a stale one
+    fails open — the worst way for a guard to fail."""
     assert set(_allowlists()) == set(_ALLOWLIST_TABLES)
     vendor = _vendor()
     for name, table in _ALLOWLIST_TABLES.items():

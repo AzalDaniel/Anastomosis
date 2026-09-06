@@ -1,32 +1,13 @@
 """Synthetic pages for the OCR tests, and the two metrics they are scored on.
 
-Every page here is DRAWN by this module with PyMuPDF and then rasterized —
-rendered to a pixmap and re-embedded as an image — so the PDF the OCR worker
-sees genuinely has no text objects at all. Nothing is checked in: no sample
-PDF exists in this repository, and none may.
+Every page is DRAWN with PyMuPDF and rasterized to an image, so the PDF
+the OCR worker sees has no text objects at all. Everything drawn is
+invented: placeholder names, ``feedface-`` GUIDs, 555-exchange phones,
+generic clinical content.
 
-Everything on these pages is invented. The names are placeholders
-(``Synthia Example``), the identifiers are ``feedface-`` GUIDs, the phone
-numbers use the 555 exchange, and the clinical content is generic. That is the
-PHI rule, and it is also what makes the goldens publishable.
-
-The two metrics are deliberately separate, and the goldens report them
-separately, because they answer different questions and neither can excuse the
-other:
-
-* :func:`semantic_ratio` — did the engine read the same WORDS the page was
-  drawn with? Sequence-aware, so a dropped or transposed word costs.
-* :func:`median_iou` and :func:`median_center_offset` — did it put them in the
-  same PLACE? The median box overlap, and the median distance between box
-  centres in PDF points. Both are reported because the first has a ceiling well
-  under 1.0 by construction (a native word box spans the font's full
-  ascender-to-descender metric; a recognized box hugs the ink) and the second
-  does not — an offset of a fraction of a point is the same-place answer that
-  an overlap of 0.55 is too easily misread as failing.
-
-A layout learner can be right about one and wrong about the other, and the
-failure that matters most — text in the wrong place — is invisible to a text
-comparison alone.
+Two metrics, reported SEPARATELY: :func:`semantic_ratio` (same WORDS?)
+and :func:`median_iou`/:func:`median_center_offset` (same PLACE?) — a
+layout learner can be right about one and wrong about the other.
 """
 
 from __future__ import annotations
@@ -159,12 +140,10 @@ def _paginated_second(page: Any) -> None:
 
 
 def _font_fallback(page: Any) -> None:
-    """Three faces the destination host may not have, drawn on one page.
-
-    Recognition recovers no face at all, which is the point: the golden proves
-    the WORDS and the BOXES survive a face change, and by construction proves
-    nothing about the typography, because there is nothing to recover.
-    """
+    """Three faces the destination host may not have, drawn on one page:
+    the golden proves the WORDS and BOXES survive a face change, and by
+    construction proves nothing about the typography — there is no face
+    to recover."""
     page.insert_text((60, 90), "SERIF HEADING", fontsize=13, fontname="tibo")
     page.insert_text((60, 130), "Monospaced body text sample", fontsize=11, fontname="cobo")
     page.insert_text((60, 170), "Italic annotation line", fontsize=11, fontname="tiit")
@@ -209,13 +188,9 @@ def draw_pdf(case: OcrCase, path: Path) -> Path:
 
 
 def rasterize(source: Path, target: Path, dpi: int = SCAN_DPI) -> Path:
-    """Render every page of ``source`` to an image and re-embed it in ``target``.
-
-    The result is what the 53-sample set was: a PDF whose pages are pictures.
-    ``extract_document`` finds no text objects on it, which is exactly the
-    condition the OCR worker exists for — the test is against a real raster,
-    not a mock of one.
-    """
+    """Render every page of ``source`` to an image and re-embed it in
+    ``target``: a PDF whose pages are pictures, so ``extract_document``
+    finds no text objects on it — a real raster, not a mock of one."""
     src = pymupdf.open(str(source))
     out = pymupdf.open()
     for page in src:
@@ -249,12 +224,10 @@ def native_words(path: Path) -> list[tuple[str, tuple[float, float, float, float
 
 
 def semantic_ratio(expected: list[str], observed: list[str]) -> float:
-    """Sequence similarity of the two word lists, 0..1.
-
-    ``difflib`` rather than a set comparison: reading the right words in the
-    wrong order is a reading-order failure, and a set would score it perfect.
-    Two empty lists agree completely, which is the blank-page case.
-    """
+    """Sequence similarity of the two word lists, 0..1: ``difflib`` rather
+    than a set comparison, since reading the right words in the wrong
+    order is a reading-order failure a set would score perfect. Two empty
+    lists agree completely (the blank-page case)."""
     if not expected and not observed:
         return 1.0
     return difflib.SequenceMatcher(a=expected, b=observed, autojunk=False).ratio()
@@ -276,16 +249,10 @@ def median_iou(
     observed: list[tuple[str, tuple[float, float, float, float]]],
 ) -> float | None:
     """Median best-match box overlap between recognized and native words.
-
-    ``None`` when there is nothing to measure (the blank page), which the
-    goldens report as ``null`` rather than as a passing score — an absent
-    measurement is not a good one.
-
-    The ceiling is below 1.0 by construction and not by defect: a native word
-    box spans the font's full ascender-to-descender metric while a recognized
-    box hugs the ink. The threshold is calibrated against what that geometry
-    can actually reach, and the goldens record the measured value beside it.
-    """
+    ``None`` when there is nothing to measure (the blank page) — the
+    goldens report that as ``null``, not a passing score. The ceiling is
+    below 1.0 by construction, not by defect: a native word box spans the
+    font's full ascender-to-descender metric, a recognized box hugs the ink."""
     if not observed or not truth:
         return None
     scores = [max((_iou(box, other) for _, other in truth), default=0.0) for _, box in observed]
@@ -296,13 +263,11 @@ def median_center_offset(
     truth: list[tuple[str, tuple[float, float, float, float]]],
     observed: list[tuple[str, tuple[float, float, float, float]]],
 ) -> float | None:
-    """Median distance, in points, from a recognized box centre to the nearest
-    native word box centre. ``None`` when there is nothing to measure.
-
-    The overlap metric's ceiling is a box-convention artefact; this one is not.
-    A word recognized a whole line away from where it was drawn shows up here
-    as points of error no matter how the boxes are cropped.
-    """
+    """Median distance, in points, from a recognized box centre to the
+    nearest native word box centre. ``None`` when there is nothing to
+    measure. Unlike the overlap metric's box-convention ceiling, a word
+    recognized a whole line away shows up here as points of error no
+    matter how the boxes are cropped."""
     if not observed or not truth:
         return None
     offsets = [
