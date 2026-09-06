@@ -1,20 +1,13 @@
 """A scanned chart is still a chart.
 
 A C-CDA Unstructured Document carries its whole clinical content as one
-embedded or referenced artifact under ``<nonXMLBody>`` — a scanned referral, a
-faxed discharge summary — instead of coded sections. The section walk cannot see
-it, so 1,024 of them in a 6,144-document ledger run parsed cleanly, raised
-nothing, and produced patients with correct names and empty charts.
+embedded or referenced artifact under ``<nonXMLBody>``, invisible to the
+section walk — it must not silently parse into a correct name and an
+empty chart. Carried, not refused, except where carrying is impossible —
+a missing reference, or an artifact over the declared ceiling.
 
-Carried, not refused: refusing loses the patient entirely, while carrying
-preserves exactly what the source had. What is refused is the shape where
-carrying is impossible — a reference to a file the export does not hold, and an
-artifact over the declared ceiling — because those are total losses for that
-patient and a run that reports success over one is the thing this project
-exists to end.
-
-Every byte here is generated: ``feedface-`` ids, the 555 exchange, and a PDF
-built in :func:`_pdf` rather than copied from anywhere.
+Every byte here is generated: ``feedface-`` ids, the 555 exchange, and a
+PDF built in :func:`_pdf`.
 """
 
 from __future__ import annotations
@@ -63,12 +56,10 @@ _DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def _pdf(pages: int = 1) -> bytes:
-    """A small, real PDF, generated here rather than copied from anywhere.
-
-    Structure only, no glyphs — so the bytes cannot be anybody's — but a genuine
-    catalogue/pages/page tree behind a valid xref, so what these fixtures carry
-    is a document rather than a string that happens to start with ``%PDF``.
-    """
+    """A small, real PDF, generated here rather than copied from anywhere:
+    structure only, no glyphs, but a genuine catalogue/pages/page tree
+    behind a valid xref — a document, not a string that merely starts
+    with ``%PDF``."""
     kids = b" ".join(f"{index + 3} 0 R".encode() for index in range(pages))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -126,13 +117,10 @@ def test_the_embedded_artifact_becomes_the_chart(tmp_path: Path) -> None:
 
 
 def test_the_media_type_is_the_one_the_document_declared(tmp_path: Path) -> None:
-    """Read, never guessed.
-
-    A scan announced as the PDF it is not would have this tool telling a
-    receiving system what a clinical artifact is — a claim only the document
-    holding it can make. So an unusual declared type survives verbatim, and the
-    delivered filename follows the declaration rather than leading it.
-    """
+    """Read, never guessed: a claim about what a clinical artifact is can
+    only be the document's own, so an unusual declared type must survive
+    verbatim, and the delivered filename follows the declaration rather
+    than leading it."""
     record = parse_document(
         _write(tmp_path / "export", _embedded(b"II*\x00 synthetic scan", "image/tiff"))
     )
@@ -211,13 +199,10 @@ def test_a_referenced_artifact_beside_the_document_is_carried(tmp_path: Path) ->
 
 
 def test_a_dangling_reference_refuses_the_run(tmp_path: Path) -> None:
-    """The loud half of the contract.
-
-    Nothing else is on this chart, so a reference that does not resolve is a
-    total loss for that patient. Carrying the document anyway would deliver
-    correct demographics over nothing at all — the silent failure this whole
-    change is about — so the adapter fails closed instead.
-    """
+    """The loud half of the contract: nothing else is on this chart, so a
+    reference that does not resolve is a total loss for that patient —
+    the adapter must fail closed rather than deliver correct demographics
+    over nothing at all."""
     path = _write(tmp_path / "export", _referencing("referral.pdf"))
 
     with pytest.raises(UnstructuredBodyMissingError) as caught:
@@ -263,12 +248,9 @@ def test_a_reference_that_names_no_file_at_all_is_refused(tmp_path: Path) -> Non
 
 
 def test_a_body_stating_no_text_offers_nothing_and_loses_nothing(tmp_path: Path) -> None:
-    """CDA requires the wrapper; a wrapper with nothing in it is not a loss.
-
-    The ledger reads this back as ``source_empty``, which is a different fact
-    from a body that was there and did not survive — the distinction the whole
-    instrument exists to keep.
-    """
+    """CDA requires the wrapper; a wrapper with nothing in it is not a
+    loss. The ledger must read this back as ``source_empty`` — a different
+    fact from a body that was there and did not survive."""
     path = _write(tmp_path / "export", "")
 
     assert parse_document(path).documents == []
@@ -277,11 +259,9 @@ def test_a_body_stating_no_text_offers_nothing_and_loses_nothing(tmp_path: Path)
 
 def test_two_bodies_in_one_document_are_two_artifacts(tmp_path: Path) -> None:
     """CDA allows a document one body; an export is not obliged to obey.
-
-    Carrying only the first would deliver a document that looks whole and is
-    half there, and giving both one derived name would file the second over the
-    first — the wrong-patient shape, inside a single patient.
-    """
+    Carrying only the first would deliver a document that looks whole and
+    is half there, and one derived name for both would file the second
+    over the first."""
     first, second = _pdf(pages=1), _pdf(pages=4)
     body = "</nonXMLBody><nonXMLBody>".join((_embedded(first), _embedded(second)))
     export = tmp_path / "export"
@@ -305,14 +285,11 @@ def test_the_ceiling_is_declared_not_discovered() -> None:
 def test_an_oversize_embedded_artifact_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Refused whole, never truncated: half a scanned discharge summary is not a
-    smaller version of that summary, it is one whose second half silently does
-    not exist.
-
-    The ceiling is lowered rather than a 32 MiB fixture written — the guard is
-    what is under test, and ``test_the_ceiling_is_declared_not_discovered``
-    holds the shipped number.
-    """
+    """Refused whole, never truncated: half a scanned discharge summary is
+    not a smaller version of it, but one whose second half silently does
+    not exist. The ceiling is lowered here rather than a 32 MiB fixture
+    written; ``test_the_ceiling_is_declared_not_discovered`` holds the
+    shipped number."""
     monkeypatch.setattr(ccda_parser, "MAX_ARTIFACT_BYTES", 128)
     path = _write(tmp_path / "export", _embedded(_pdf(pages=40)))
 
@@ -404,12 +381,9 @@ def test_the_ledger_credits_the_carry(tmp_path: Path) -> None:
 
 
 def test_the_ledger_reads_a_record_and_not_a_table(tmp_path: Path) -> None:
-    """The other direction, which is what makes the first one mean anything.
-
-    Handed the same document with the artifact taken back off the record, the
-    row returns to ``unsupported`` — so the reading is evidence from the record
-    rather than a dispatch table that would certify a fix that never ran.
-    """
+    """The reading is evidence from the record, not a dispatch table: with
+    the artifact taken back off the same document's record, the row
+    reverts to ``unsupported``."""
     path = _write(tmp_path / "export", _embedded(_pdf()))
     record = parse_document(path)
     record.documents = []
@@ -421,14 +395,10 @@ def test_the_ledger_reads_a_record_and_not_a_table(tmp_path: Path) -> None:
 
 
 def test_the_export_narrates_what_happened_and_not_the_bytes(tmp_path: Path) -> None:
-    """Exported onward, the record still says what a physician has to know.
-
-    The artifact's own BYTES are the one thing not narrated: they were written
-    beside the chart, and no CDA this toolkit writes has ever carried an
-    attachment's bytes. Narrating them would inline the scan into the document
-    and, since a re-ingest recovers the narrative and the next export re-narrates
-    it, grow the document generation over generation.
-    """
+    """Exported onward, the record still says what a physician has to
+    know. The artifact's own BYTES are the one thing never narrated —
+    they live beside the chart — or a re-ingest/re-export cycle would
+    inline the scan and grow the document generation over generation."""
     record = parse_document(_write(tmp_path / "export", _embedded(_pdf(pages=6))))
     exported = build_ccd(record)
     path = tmp_path / "ccd.xml"
