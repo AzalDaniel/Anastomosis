@@ -206,12 +206,9 @@ def upload_cmd(
     double-check after each chart all work the same. Everything the run writes
     stays in the results folder, which is created readable only by you.
     """
-    # NB: the docstring's FIRST line is this command's SHORT help, so it is also
-    # rendered into the top-level ``anast --help`` table — which
-    # tests/unit/test_cli_help_encoding.py renders through a strict cp1252
-    # console. Keep that line plain ASCII (no em dash); the body below is only
-    # rendered by ``anast upload --help``, where the house style's em dashes are
-    # fine. The note lives in a comment, not in the help text an operator reads.
+    # The docstring's FIRST line is also the top-level `anast --help` table's
+    # short help, rendered through a strict cp1252 console
+    # (test_cli_help_encoding.py): keep that one line plain ASCII.
     from rich.markup import escape as _escape
 
     from anastomosis import cli as _cli
@@ -223,11 +220,8 @@ def upload_cmd(
     from anastomosis.destinations.browserpack import PackNotReadyError
     from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
-    # 1. Route selection FIRST — it is pure argv, so it costs nothing and a
-    #    mis-typed invocation never reaches the disk or the network. EXACTLY one
-    #    route may be selected: a half-specified browser route (--to without
-    #    --cdp) or two routes at once is an operator-input error (exit 2, no
-    #    traceback), never a partially-configured run.
+    # 1. Route selection FIRST — pure argv, so a mis-typed invocation never
+    #    reaches the disk or the network. Exactly one route may be selected.
     if fhir is not None and (to is not None or cdp is not None):
         _cli.console.print(
             "[red]choose ONE upload route: --to PACK --cdp URL (browser) or "
@@ -240,40 +234,33 @@ def upload_cmd(
         )
         raise typer.Exit(code=2)
 
-    # 2. Validate the manifest (cheap, pre-attach), so a missing/malformed one
-    #    fails fast (exit 2) BEFORE the operator confirms the attach. Try the
-    #    dir itself, then a <dir>/charts subdir (migrate's layout). The
-    #    AUTHORITATIVE read happens inside run_upload_command under the output
-    #    lock (lock-then-read), so this early copy is validation only.
+    # 2. Validate the manifest (cheap, pre-attach) before the operator confirms
+    #    the attach. The authoritative read happens under the output lock
+    #    inside run_upload_command; this copy is validation only.
     try:
         read_upload_manifest(resolve_manifest_root(out_dir))
     except ManifestError as exc:
         _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from None
 
-    # 3. The route's own pre-flight, then its attach seam. Both seams are
-    #    resolved LATE through the cli module so the monkeypatch seams hold; both
-    #    return a Destination, so step 5 below is route-agnostic.
+    # 3. The route's own pre-flight, then its attach seam, both resolved LATE
+    #    through the cli module so the monkeypatch seams hold; both return a
+    #    Destination, so step 5 below is route-agnostic.
     attach: Callable[[], object]
     if fhir is not None:
-        # 3a. The transport gate — BEFORE any request is sent. FhirEndpoint
-        #     enforces https (http only for a loopback host, the cdp.py rule)
-        #     because a base URL carries the bearer token and patient
-        #     identifiers; a rejected URL is a clean exit 2, not a traceback.
-        #     The token is read from the ENVIRONMENT, never from argv (which is
-        #     ps-visible); an unset/blank variable means unauthenticated, which
-        #     is the normal case for a local HAPI server. Surrounding whitespace
-        #     is stripped: a trailing newline from `export TOKEN=$(cat file)`
-        #     would otherwise be rejected as an illegal HTTP header value.
+        # 3a. Transport gate before any request: https only (loopback excepted),
+        #     because the base URL carries the bearer token and patient ids.
+        #     Token comes from the ENVIRONMENT, never argv (ps-visible); a
+        #     trailing newline from `export TOKEN=$(cat file)` is stripped, or
+        #     it would be rejected as an illegal HTTP header value.
         bearer_token = os.environ.get(fhir_token_env, "").strip() or None
         try:
             FhirEndpoint(fhir, bearer_token=bearer_token)
         except ValueError as exc:
             _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
             raise typer.Exit(code=2) from None
-        # NO shared-machine warning and no attach confirmation here: this route
-        # touches no browser, so there is no session for a bystander to inherit
-        # and nothing for the operator to accept (--yes is inert on this route).
+        # No shared-machine warning or confirmation: this route touches no
+        # browser, so --yes is inert here.
         base_url = fhir  # rebound as a plain str for the closure below
 
         def _attach_api() -> object:
@@ -290,16 +277,14 @@ def upload_cmd(
         assert to is not None and cdp is not None
         cdp_url = cdp
 
-        # 3b. The loopback gate — BEFORE any browser touch.
+        # 3b. The loopback gate — before any browser touch.
         try:
             CdpEndpoint(cdp_url)
         except ValueError as exc:
             _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
             raise typer.Exit(code=2) from None
 
-        # 3c. Surface the shared-machine warning and confirm (unless --yes).
-        #     --yes still PRINTS the warning — the operator is told what they
-        #     accepted.
+        # 3c. --yes still PRINTS the warning: the operator is told what they accepted.
         _cli.console.print(SHARED_MACHINE_WARNING)
         prompt = "Connect to this browser and start filing?"
         if not yes and not typer.confirm(prompt, default=False):
@@ -334,14 +319,11 @@ def upload_cmd(
             _cli.console.print(f"[red]could not read skiplist ({type(exc).__name__})[/red]")
             raise typer.Exit(code=2) from None
 
-    # 5. Drive the engine through the SHARED upload command: it harden-locks the
-    #    output dir, reads the manifest UNDER the lock (lock-then-read), then
-    #    attaches the destination (the only browser/network touch — the injectable
-    #    seam) and drives recover -> run -> finish -> report. A locked dir, a
-    #    manifest that vanished after the pre-flight, or any other unexpected
-    #    drive failure is a clean exit 2 named by exception TYPE only (no PHI, no
-    #    traceback); a process-kill BaseException sails through to resume on the
-    #    next run.
+    # 5. Drive the engine through the shared upload command: it harden-locks
+    #    the output dir, reads the manifest under that lock, attaches the
+    #    destination, and drives recover -> run -> finish -> report. Any
+    #    unexpected drive failure is a clean exit 2 named by exception TYPE
+    #    only; a process-kill BaseException sails through to resume next time.
     from anastomosis.deliver.browser.reports import summary_line
 
     result = _drive_or_exit(
@@ -352,8 +334,6 @@ def upload_cmd(
     )
     _cli.console.print(summary_line(result.counts))
     _cli.console.print(f"run report {_cli._glyphs().arrow} {result.report_path}")
-    # The verdict (0 on a clean landing, 1 on abort/any non-clean terminal) is
-    # the SHARED classifier on the result, so the CLI exit and the GUI's
-    # done-vs-error branch cannot drift.
+    # Shared classifier: the CLI exit and the GUI's done-vs-error branch can't drift.
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)

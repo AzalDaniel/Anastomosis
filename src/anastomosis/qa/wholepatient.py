@@ -1,33 +1,14 @@
-"""QA for a document that stands for the whole record rather than one visit.
+"""QA for a document that stands for the whole record, not one visit.
 
-Two paths now render such a document: the ccda-standard migration renders HL7's
-own view per patient as its primary artifact, and every pack-mode run renders
-the same view beside the charts as the record summary. They are the SAME
-document, so they have to be graded the same way — and the way is not the
-per-encounter way:
-
-* only the DOCUMENT-GENERIC engine checks can be answered by a whole-patient
-  page (:data:`DOC_GENERIC_CHECKS`);
-* the encounter-scoped ones are recorded as skipped WITH A REASON
-  (:data:`ENCOUNTER_SCOPED_SKIPS`), never silently omitted — a report that
-  quietly drops a check reads exactly like a report where the check passed;
-* ``carries`` is every :data:`~anastomosis.core.model.CHARTABLE_KINDS` kind,
-  because this view is HL7's stylesheet over the whole record: a fact family
-  the record holds and this page does not show is a defect, not a layout
-  choice. That is what makes ``record_coverage`` able to FAIL here, which is
-  the whole reason the summary is in the bundle.
-
-The two tables between them must name EVERY registered check. Nothing enforced
-that when they lived in the migration module, and ``note_body`` was registered
-later and landed in neither — so the one path that promised never to omit a
-check omitted it. ``test_the_whole_patient_report_names_every_check_the_neutral_path_does``
-is what keeps the promise honest now, and it guards both paths at once because
-both read these tables.
-
-PHI rule: this module builds contexts and returns a report. Findings may quote
-chart values (the report lands inside the hardened output directory); nothing
-here logs.
-"""
+The C-CDA migration's HL7 stylesheet page and the pack-mode record summary
+are the same kind of document and are graded the same way: only
+:data:`DOC_GENERIC_CHECKS` apply, and the rest are recorded as skipped with
+a reason (:data:`ENCOUNTER_SCOPED_SKIPS`), never silently omitted.
+``carries`` is every :data:`~anastomosis.core.model.CHARTABLE_KINDS` kind, so
+a fact family missing from the page is a defect, not a layout choice. The
+two tables together must name every registered check
+(``test_the_whole_patient_report_names_every_check_the_neutral_path_does``).
+Findings may quote chart values; nothing here logs."""
 
 from __future__ import annotations
 
@@ -52,17 +33,10 @@ __all__ = [
 
 #: The engine checks a whole-patient document can actually answer.
 #:
-#: ``unattributed_vitals`` belongs here rather than below because it never reads
-#: ``ctx.encounter`` at all: it asks whether the RECORD's observations name
-#: encounters the record contains, which is as fair a question of a whole-patient
-#: document as of a per-encounter one. It DOES read ``ctx.record_summary_path``
-#: — and for this population that path is the document being graded, so a
-#: vital orphaned from every encounter is checked against the very page in
-#: front of it, not a second one fetched on faith.
-#:
-#: ``record_coverage`` is the one that earns this document its place in the
-#: bundle. Paired with the ``carries`` below, it cannot pass while a fact family
-#: the record holds has zero representation on the page.
+#: ``unattributed_vitals`` never reads ``ctx.encounter``, only the record's
+#: own observations, so it applies here too — and for this population
+#: ``ctx.record_summary_path`` IS the document being graded. ``record_coverage``,
+#: paired with ``carries`` below, is what can FAIL this document.
 DOC_GENERIC_CHECKS: tuple[str, ...] = (
     "data_integrity",
     "layout_pagination",
@@ -93,27 +67,17 @@ ENCOUNTER_SCOPED_SKIPS: dict[str, str] = {
 #: ``reconstruct.ccda_standard.renderer._default_renderer``).
 WHOLE_PATIENT_PAGE_SIZE = "Letter"
 
-#: Every chartable kind, because this view is the record.
-#:
-#: Named rather than inlined because a kind dropping out of it is INVISIBLE in
-#: the verdicts: ``RecordCoverageCheck`` asks whether coverage was declared at
-#: all and whether a kind is excused by ``omits``, so a kind quietly missing
-#: from this set still fails when it is absent — right up until someone excuses
-#: it. The set is the promise, so the set is what a test pins.
+#: Every chartable kind, because this view is the record. Named rather than
+#: inlined so ``RecordCoverageCheck`` still catches a kind dropped from this
+#: set (rather than never checking it); the set itself is what a test pins.
 WHOLE_PATIENT_CARRIES: frozenset[str] = frozenset(CHARTABLE_KINDS)
 
 
 def _anchor_record(record: PatientRecord) -> PatientRecord:
-    """The record ``data_integrity`` can actually anchor on for this document.
-
-    The HL7 stylesheet canonicalizes the patient NAME (uppercase family,
-    non-breaking-space separators), so the shared name matcher cannot assert the
-    mixed-case spelling the record holds. Blanking the name lets that check's OWN
-    conditional skip take over (a falsy ``display_name`` skips the name
-    sub-check) and leaves the DOB — which this view renders in a matchable
-    spelling — as the identity anchor. Nothing is weakened silently: the check
-    still has to find the DOB on the page.
-    """
+    """Blanks the patient name so ``data_integrity``'s own conditional skip
+    takes over and anchors on DOB instead: the HL7 stylesheet canonicalizes
+    the name (uppercase, non-breaking-space separators), which the shared
+    name matcher cannot assert against the record's mixed-case spelling."""
     patient = record.patient.model_copy(
         update={
             "given_name": None,
@@ -128,14 +92,10 @@ def _anchor_record(record: PatientRecord) -> PatientRecord:
 def whole_patient_batch(
     documents: Iterable[tuple[Path, PatientRecord]],
 ) -> list[tuple[Path, Encounter, PatientRecord]]:
-    """Turn ``(pdf, record)`` pairs into the ``(pdf, encounter, record)`` triples
-    :func:`~anastomosis.qa.runner.run_qa` takes.
-
-    A whole-patient document has no encounter, and QA's context requires one. A
-    synthetic encounter carrying the patient's own id (and therefore no date of
-    service) is the honest stand-in: the DOS sub-checks self-skip rather than
-    grading the document against a visit it does not represent.
-    """
+    """``(pdf, record)`` pairs to the ``(pdf, encounter, record)`` triples
+    :func:`~anastomosis.qa.runner.run_qa` takes, standing in a synthetic
+    encounter (the patient's own id, no date of service) so the DOS
+    sub-checks self-skip rather than grade against a visit that isn't one."""
     return [
         (
             path,
@@ -147,38 +107,23 @@ def whole_patient_batch(
 
 
 def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAReport:
-    """Grade whole-patient documents and return their report (never written here).
-
-    The caller decides what to do with it: the migration settles it on its own,
-    the pack pipeline merges it into the per-encounter report so ONE report
-    describes the whole bundle. Both get the same check set, the same skips, and
-    the same ``carries``.
-
-    ``documents`` is materialized (not just iterated once) because it feeds two
-    things: the batch itself, and the patient-id -> path map that tells
-    ``unattributed_vitals`` where each patient's OWN summary is. For this
-    population the graded document IS the record summary — the same page a
-    per-encounter chart's context would point at — so a vital this page cannot
-    attribute to an encounter is graded against the very page being read.
-    """
+    """Grade whole-patient documents and return the report, never written
+    here — the caller decides (settle it alone, or merge it into the
+    per-encounter report). ``documents`` is materialized because it also
+    builds the patient-id -> path map ``unattributed_vitals`` reads: for
+    this population the graded document IS the record summary."""
     from .base import CheckResult, Verdict, engine_checks
     from .runner import run_qa
 
     docs = list(documents)
     by_name = {check.name: check for check in engine_checks()}
-    # Keyed by patient id, not zipped positionally: `_allocate` maps every
-    # record sharing a patient id to the SAME path, so this is injective in
-    # practice, and keying on the id (rather than the record object) means it
-    # agrees with `run_qa`'s own lookup no matter which record's identity
-    # `whole_patient_batch`'s `_anchor_record` copy carries by the time it gets
-    # there.
+    # Keyed by patient id, not the record object, so it still agrees with
+    # `run_qa`'s lookup after `_anchor_record` copies the record.
     summary_paths = {record.patient.id: path for path, record in docs}
     report = run_qa(
         whole_patient_batch(docs),
         section_flags={},
         page_size=WHOLE_PATIENT_PAGE_SIZE,
-        # HL7's own stylesheet over the whole record, so every chartable kind IS
-        # on the page and an absence is a defect rather than a layout choice.
         carries=WHOLE_PATIENT_CARRIES,
         checks=[by_name[name] for name in DOC_GENERIC_CHECKS],
         record_summary_paths=summary_paths,
