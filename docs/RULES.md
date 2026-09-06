@@ -9,9 +9,9 @@ Rules marked `#NNN` were paid for by a real defect. The number is the receipt.
 ## 1. PHI
 
 1. No real patient data enters this repository. Fixtures are synthetic (`feedface-` ids, 555 phones, never-issued SSNs) or Synthea. `tools/phi_scan.py` enforces it in CI.
-2. Nothing patient-derived is ever logged, raised, printed, or embedded in a message: not a name, value, path under an export, cell, row, selector text, search text, banner text, or dialog text. Log element names, LOINC codes, counts, booleans, hashes and enumerated codes only. An error path logs `exc_tag(exc)`, the type name, never `str(exc)`, because an exception message embeds the input that raised it. `docs/AUDIT_LEDGER.md` §11 names the sites that still violate this; each closes in the slice that touches its file.
+2. Nothing patient-derived is ever logged, raised, printed, or embedded in a message: not a name, value, path under an export, cell, row, selector text, search text, banner text, or dialog text. Log element names, LOINC codes, counts, booleans, hashes and enumerated codes only. An error path logs `exc_tag(exc)`, the type name, never `str(exc)`, because an exception message embeds the input that raised it. `docs/AUDIT_LEDGER.md` §11 names the sites that still violate this; each closes in the slice that touches its file. A refusal that must correlate a claim across a batch names the record by its position in load order or a run-scoped surrogate id (`safe_log_id`), never by filename or value.
 3. A summary the operator sees (learn proposals, pack summaries, run manifests, verify coverage) may carry column names, type labels, counts, masked shapes, static template text, profile hashes, state names, and operator-chosen paths — never a cell value, never an export path echoed back.
-4. The one written exception to rule 3: the QA report may quote chart values, because it is written only inside the hardened output directory. Loggers still get verdict counts only.
+4. The one written exception to rule 3: the QA report may quote chart values, because it is written only inside the hardened output directory. Loggers still get verdict counts only. A finding that can travel into a run-level summary outside that directory (`RecordCoverageCheck`) names kinds and counts only.
 5. The one soft spot, stated so it is not mistaken for a guarantee: `packgen` promotes text that recurs across samples; two samples sharing a patient value would recur. A **single-sample** run emits no sample-derived text at all; multi-sample runs rely on the operator confirming the samples are distinct patients (`#200`). The wizard asks. Code does not verify. Raw sample text goes to `UNPLACED.txt` only and never into `template.html`.
 
 ## 2. Identity — the one wrong-match defence
@@ -63,7 +63,7 @@ Rules marked `#NNN` were paid for by a real defect. The number is the receipt.
 38. Every archive page opens from `file://` with zero outbound requests, declares a strict CSP, and references assets by relative path only.
 39. The only `<script>` blocks are `type="application/json"` data on `index.html` and one self-served `assets/anast-index.js`. No inline executable JavaScript.
 40. Patient directories are named by id only; renaming a patient never moves files. `index.json`'s `search` field is exactly the lowercased concatenation of name, DOB, chief complaints and note text.
-41. `FhirEndpoint` refuses plaintext `http` except to loopback. The bearer token never appears in `__repr__`, a log, or a traceback. Errors carry status code and resource type only — never the `OperationOutcome` body or the URL.
+41. `FhirEndpoint` refuses plaintext `http` except to loopback. The bearer token never appears in `__repr__`, a log, or a traceback. Errors carry status code and resource type only — never the `OperationOutcome` body or the URL. A destination-attach seam takes the token as a constructor parameter only and never reads it from the environment or argv itself.
 42. FHIR status maps to one taxonomy: 401/403/404/other 4xx → permanent; 408/429/5xx/transport → transient. Every redirect, same-origin included, is refused rather than followed with the bearer re-attached. A URL the server names (a `next` link, an attachment `url`) is followed only when it resolves to the same origin as the endpoint.
 43. The FHIR route inlines the document in the request body, so it weighs the file's actual size on disk before reading it and raises `PayloadTooLarge` above `max_payload_bytes`; the manifest's advisory size is never trusted for this, and the refusal names the item key and the two sizes, never the filename.
 
@@ -115,7 +115,7 @@ Rules marked `#NNN` were paid for by a real defect. The number is the receipt.
 
 ## 12. Imports and startup
 
-75. `import anastomosis.deliver` and `import anastomosis.cli` stay cheap: no lxml, jinja2, Playwright or sqlite3 at module load. Nothing under `deliver/browser` imports Playwright at module load, so the package imports without the `deliver-browser` extra. PyMuPDF, `sourcelearn` and the learned-source package import lazily inside their entry functions; a minimal install imports every module cleanly.
+75. `import anastomosis.deliver` and `import anastomosis.cli` stay cheap: no lxml, jinja2, Playwright or sqlite3 at module load. Nothing under `deliver/browser` imports Playwright at module load, so the package imports without the `deliver-browser` extra. PyMuPDF, `sourcelearn` and the learned-source package import lazily inside their entry functions; a minimal install imports every module cleanly. Importing `anastomosis.gui` never requires the `gui` extra: pywebview is imported inside `gui/shell.py`'s `launch` only.
 76. `core/` imports nothing from `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`, `destinations`, `packgen` or `gui`. The command layer lives in `commands/`, not in the primitives package. Until the slice that moves it lands, the nine modules `docs/AUDIT_LEDGER.md` names are the known exceptions.
 
 ## 13. Gates (never weakened to pass)
@@ -134,3 +134,29 @@ Rules marked `#NNN` were paid for by a real defect. The number is the receipt.
 85. **One concern per PR**, under roughly 400 hand-edited lines. Refactor and feature never share one. Deleted code takes its tests with it. A slice under 200 lines of delta is churn and folds into a neighbour.
 86. **Touched, not inferred.** A run claim carries its exit code read unpiped, a file claim its bytes, a UI claim the rendered control. "Should work" is not a sentence in a report.
 87. **Decisions go global.** A policy set for one adapter, deliverer or frontend is set for all of them, in the same PR or the next one with an issue naming it. Two adapters with opposite answers to one question is a defect.
+
+## 15. Rules the prose sweep rescued
+
+Each of these lived only in a docstring or comment until the sweep (S-1) cut it to one line and moved the rule here. They sit at the end so no earlier number moves; the sweep cites numbers in place.
+
+88. A delivery routes cheapest-first: vendor API, then C-CDA import, then browser automation, never in another order.
+89. Two different source ids that would take one delivered name raise `DeliveredNameCollision`; they are never merged into one slot.
+90. `VERIFYING_PRE` runs the wrong-patient banner check before the duplicate scan, and the duplicate scan is trusted only after that identity check passed.
+91. The CLI and the GUI show `SHARED_MACHINE_WARNING`, the same text, before attaching over CDP, because loopback is reachable by every local user of a shared machine.
+92. A media type is what the source declared, never sniffed from bytes: the Practice Fusion page counter, the C-CDA `<nonXMLBody>` `@mediaType` reader and the upload manifest all follow it.
+93. Every delivered file and directory is named by id (patient id, artifact id), never by patient name or the source's own filename; a C-CDA export is the artifact most likely to leave this tool's directory control.
+94. A C-CDA delivery that cannot write every source document a record names raises `ArtifactNotDelivered` before reporting success (`#373`).
+95. A construct CDA gives no `<id>` to is credited by exact stated content (no case-fold, no trimmed padding), never by re-running the parser's mapping; N such constructs against M matching objects credit `min` by multiset intersection, each object answering for one construct and then spent.
+96. A run-of-zeros timestamp the parser reads as absent is also credited on the record under `ccda:timestamp_named_no_instant`, so the degradation from "stated a sentinel" to "absent" is never silent.
+97. A ledger verdict states a disposition, never a cause: a construct that moves from credited to uncredited because of a shared id root is the instrument's blind spot, never a claimed adapter failure.
+98. A narrative citation resolves to exactly one cell, the innermost identified element wrapping the cited text; ties between competing claims break on content (how much is claimed, then the cited names as a set), never on document order.
+99. Learned-source discovery never raises: a directory without `mapping.json`, a malformed, un-reviewed or id-colliding mapping is skipped with a name-only diagnosis, the same way rule 21 treats a broken pack.
+100. An attachment stem that matches more than one file in an export is dropped from the index, never resolved to an arbitrary match: an unresolved attachment is recoverable, a wrongly guessed one is not.
+101. A cross-patient join that resolves one shared fact (an insurance plan's type) reads that one fact from another patient's row and never that row's other columns.
+102. Every frontend field that names a folder or a file goes through `core/output.py`'s `typed_path`, never a bare `Path(arg)`; `tests/unit/test_gui_console_paths.py` walks each console's AST to pin it.
+103. `core/timeutil.py`'s `all_date_spellings` is the one list of date spellings the delivery verifier (L2/L3) and QA's `DataIntegrityCheck` accept, so they cannot disagree about which rendering counts as present.
+104. A command the operator declines at its own confirmation exits 0 like success and calls `core/outcome.py`'s `declined`; `take_declined` is a destructive read, so a stale outcome never frames the next run.
+105. Whether a stream is a terminal is asked with `isatty()` directly, never Rich's `is_terminal`: `FORCE_COLOR` and `TTY_COMPATIBLE` make the latter say yes for a piped file, and an unattended run would wait on a prompt nobody can see.
+106. FHIR export carries a canonical field with no clean R4 home as `urn:anastomosis:field:<name>` and the source's own `extensions` dict as `urn:anastomosis:ext`; `provenance` is local lineage and is never exported. Ingest reverses exactly that.
+107. No `cli_commands` module imports `anastomosis.gui` and importing `gui` never imports `cli_commands`; `tests/unit/test_import_boundaries.py` pins the peer-frontend boundary.
+108. The upload console never closes the operator's own browser, only the tool's ledger handle; a stop is honoured at item boundaries, never mid-item; a restart resumes from the ledger, which rewinds mid-flight items and never re-drives terminal ones.
