@@ -51,17 +51,33 @@ def first_page_text(pages: list[PageInfo]) -> str:
 
 
 class PdfSnapshot:
-    """One PDF's pages, read on the first ask and shared from there. Lazy: L1's
-    size floor still rejects unopened, and a corrupt file fails the check that asked."""
+    """One PDF read on the first ask and shared from there. Lazy: L1's size
+    floor still rejects unopened, and a corrupt file fails the check that asked."""
 
-    __slots__ = ("_pages", "path")
+    __slots__ = ("_page_count", "_page_one_text", "_pages", "path")
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._pages: list[PageInfo] | None = None
+        self._page_count: int | None = None
+        self._page_one_text: str | None = None
+
+    def _head(self) -> tuple[int, str]:
+        """Count and page one in ONE open, reading no page past the first: the
+        pair the ladder wants, where extracting all 300 cost 51x on one chart."""
+        if self._pages is not None:
+            return len(self._pages), first_page_text(self._pages)
+        count, text = self._page_count, self._page_one_text
+        if count is None or text is None:
+            with import_pymupdf().open(self.path) as doc:
+                count = int(doc.page_count)
+                text = str(doc[0].get_text()) if count else ""
+            self._page_count, self._page_one_text = count, text
+        return count, text
 
     @property
     def pages(self) -> list[PageInfo]:
+        """Every page's text and geometry: the only ask that reads the whole file."""
         if self._pages is None:
             with import_pymupdf().open(self.path) as doc:
                 self._pages = pages_of(doc)
@@ -69,11 +85,11 @@ class PdfSnapshot:
 
     @property
     def page_count(self) -> int:
-        return len(self.pages)
+        return self._head()[0]
 
     @property
     def page_one_text(self) -> str:
-        return first_page_text(self.pages)
+        return self._head()[1]
 
     @property
     def text(self) -> str:
