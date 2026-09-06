@@ -330,8 +330,7 @@ def _fold_records_sharing_a_patient(records: list[PatientRecord]) -> list[Patien
     """Contract: one patient is one chart, whatever the adapter yielded —
     every destination is keyed by ``patient.id`` and overwrites, so two
     records under one id would silently replace each other. A lone record
-    passes through unchanged; each keeps its 1-based load position for a
-    later disagreement refusal to name.
+    passes through unchanged; each keeps its load position for later.
     """
     groups: dict[str, list[tuple[int, PatientRecord]]] = {}
     for position, record in enumerate(records, start=1):
@@ -671,10 +670,9 @@ def _settle_render_provenance(
     out: Path, provenance: RenderProvenance, templates: dict[str, str]
 ) -> None:
     """Contract: publish what the charts were produced from; refuse a
-    mid-run layout swap loudly before writing the record, since a digest
-    mismatch means the batch rendered from two different layouts. Failure
-    marks nothing, so a later run reads an older build's folder unrefused;
-    ``--force`` into an empty folder is the named remedy, not an enforced one.
+    mid-run layout swap before writing the record, since a digest mismatch
+    means two layouts rendered this batch. Failure marks nothing; ``--force``
+    into an empty folder is the named remedy.
     """
     from anastomosis.reconstruct.provenance import RENDER_PROVENANCE_NAME, swapped_templates
 
@@ -743,11 +741,9 @@ SELECTION_REPORT_VERSION = 2
 
 
 def _selection_exclusions(records: list[PatientRecord]) -> list[dict[str, str]]:
-    """Every encounter an adapter's selection rules kept out of the render.
-
-    Ids and rule names only. An encounter id is a source identifier and a
-    reason is the name of a rule, so this carries none of the chart — which is
-    what lets it be written beside the charts and read back without care.
+    """Every encounter an adapter's selection rules kept out of the render —
+    ids and rule names only, so this carries none of the chart and can be
+    written beside the charts and read back without care.
     """
     exclusions: list[dict[str, str]] = []
     for record in records:
@@ -775,8 +771,7 @@ def settle_quarantine(adapter: SourceAdapter, out: Path) -> dict[str, int]:
     """Persist what the adapter held back; return the INGEST event's extra
     counts. Shared by both orchestrators so an operator reading the stage
     rail cannot tell which produced the run. Rows go to ``quarantine.json``,
-    grouped by table and PHI-free reason; a clean run also removes a stale
-    one, so repairing the export and re-running does not read as still held.
+    grouped by table and reason; a clean run also removes a stale one.
     """
     from anastomosis.core.output import secure_output_dir
 
@@ -810,9 +805,8 @@ def _quarantine_payload(held: list[QuarantinedRows]) -> tuple[dict[str, object],
 def settle_source_ledger(adapter: SourceAdapter, out: Path) -> tuple[str, ...]:
     """Contract: publish the source ledger's construct-by-construct account
     to ``loss_ledger.json`` beside the charts; return its reading as
-    PHI-free, chart-vocabulary sentences, one per line. An adapter with no
-    ledger returns empty and writes nothing; a re-run that ledgers nothing
-    removes a stale artifact.
+    PHI-free, chart-vocabulary sentences. No ledger means an empty reading
+    and nothing written; a re-run that ledgers nothing removes stale output.
     """
     from anastomosis.core.output import secure_output_dir
 
@@ -850,10 +844,9 @@ def _write_selection_report(
 
 def _carry_attachments(records: list[PatientRecord], export_dir: Path, out: Path) -> int:
     """Contract: put every source-resolved attachment into the run's output,
-    keeping the export's own storage-id name. Names are claimed through the
-    delivery ledger with the file's digest as witness, so two different files
-    reusing one storage id are refused. Returns the count carried; raises
-    :class:`PipelineError` if any claimed attachment did not arrive.
+    keeping the export's own storage-id name, claimed through the delivery
+    ledger with the file's digest as witness (two files reusing one id are
+    refused). Raises :class:`PipelineError` if a claimed attachment is missing.
     """
     from anastomosis.core.output import secure_output_dir
 
@@ -891,16 +884,9 @@ def _carry_one(
     doc: DocumentArtifact, root: Path, target: Path, claims: dict[str, str]
 ) -> str | None:
     """Land one artifact in ``target``; a PHI-safe failure tag, or ``None``.
-
-    Two kinds arrive here and both leave as one file under one claimed name. A
-    source whose export holds the file names it and it is COPIED. A source whose
-    artifact came inside the record it was read from — a C-CDA Unstructured
-    Document's scan is inside the XML, not beside it — carries its own bytes on
-    the artifact and they are WRITTEN. Nothing downstream is told which: the
-    archive, the bundle and the deliverers all read one thing out of this
-    directory, a document on disk beside the charts, so an artifact that has no
-    file to copy is not a second delivery path to keep in step with this one.
-    """
+    A source naming a file in its export gets it COPIED; a source carrying
+    its own bytes (e.g. a C-CDA scan) gets them WRITTEN — either way, one
+    file under one claimed name."""
     from anastomosis.core.model import EXT_INLINE_CONTENT
     from anastomosis.deliver._shared import DeliveredNameCollision, claim_delivered_name
 
@@ -919,13 +905,10 @@ def _carry_one(
 
 
 def _copy_from_export(relative: Path, name: str, root: Path, destination: Path) -> str | None:
-    """Copy the export's own file into the output; the failure tag, or ``None``.
-
-    The path is the source adapter's word, and a record can also arrive from a
-    FHIR bundle someone else wrote. Reading it must stay inside the export the
-    operator pointed at: a ``../..`` in a hand-made bundle would otherwise copy
-    a file from anywhere the process can read into an output directory that gets
-    delivered onward.
+    """Copy the export's own file into the output; the failure tag, or
+    ``None``. Reading stays inside the export root: a ``../..`` in a
+    hand-made bundle must not copy a file from anywhere else into an output
+    directory that gets delivered onward.
     """
     from anastomosis.deliver._shared import copy_delivered_file
 
@@ -940,15 +923,10 @@ def _copy_from_export(relative: Path, name: str, root: Path, destination: Path) 
 
 
 def _write_inline(content: str, destination: Path) -> str | None:
-    """Write an artifact the record carries its own bytes for.
-
-    Base64 that will not decode is the artifact arriving as nothing, so it is
-    reported as a failure the conservation check above turns into a refusal —
-    the same answer a file that would not copy gets, because it is the same
-    outcome for the chart.
-
-    PHI: the return is an exception TYPE name. The bytes are a patient's
-    document and are written, never logged.
+    """Write an artifact the record carries its own bytes for; return the
+    failure's exception TYPE name, or ``None``. Undecodable base64 is the
+    artifact arriving as nothing, same as a file that would not copy. The
+    bytes are a patient's document: written, never logged.
     """
     import base64
     import binascii
@@ -971,30 +949,10 @@ RECORD_SUMMARY_DIRNAME = "record-summary"
 def _render_record_summaries(
     records: list[PatientRecord], out: Path, *, force: bool
 ) -> CCDARenderResult:
-    """Render one whole-patient record summary per patient into the bundle.
-
-    A visit note is a note about ONE visit, so every layout selects by encounter
-    — and a fact the record holds that no encounter claims (a laboratory result
-    that arrived with no visit attached, a standing list no SOAP note has a
-    section for) reached no page at all. The chart was not wrong; it was
-    partial, and nothing in the bundle said so.
-
-    So the bundle also carries the record. This is HL7's own whole-patient view
-    of the same C-CDA the migration delivers — no encounter is guessed, nothing
-    is invented, and QA grades it with every chartable kind declared carried, so
-    a fact family that reaches neither the charts nor this page fails the run.
-
-    Loud on failure: a summary that did not render is a patient whose record has
-    no whole-record page in the bundle, and the run stops rather than shipping a
-    bundle that quietly lost one. The ``(patient_id, exception-type)`` pairs ride
-    on the error exactly as the per-encounter render failures do — pseudonymous
-    ids and type names, never exception text.
-
-    Returns the render result (rather than discarding it, as before #383):
-    a chart with no encounters renders zero per-encounter documents, and this
-    is the only population left to gate QA on and grade — the caller needs
-    the paths this actually wrote, and the record behind each one.
-    """
+    """Contract: render one whole-patient record summary per patient (HL7's
+    whole-patient C-CDA view), since an encounter-scoped layout misses a
+    fact no encounter claims. Loud on failure: raises with pseudonymous
+    ``(patient_id, exception-type)`` pairs. Returns the render result."""
     from anastomosis.reconstruct.ccda_standard import render_ccda_standard
 
     view = render_ccda_standard(records, out / RECORD_SUMMARY_DIRNAME, force=force)
@@ -1022,18 +980,10 @@ def run_pipeline(
     include: list[str] | None = None,
     on_event: EventSink | None = None,
 ) -> PipelineResult:
-    """The full pipeline (ingest -> reconstruct -> optional QA), frontend-free.
-
-    Emits PHI-safe :class:`StageEvent`\\ s through ``on_event`` as each stage
-    completes, returns rich state so a caller can layer archive/bundle/ccda
-    delivery without re-loading records or re-rendering charts, and raises
-    :class:`PipelineError` on any loud failure.
-
-    ``section`` overrides the layout's section flags; ``include`` names the
-    source's render-selection rules this run does NOT apply, so the encounters
-    they would have kept out of the render are rendered. Both default to
-    nothing, which is what every run did before either was a choice.
-    """
+    """Contract: the full pipeline (ingest -> reconstruct -> optional QA),
+    frontend-free. Emits PHI-safe :class:`StageEvent`\\ s through
+    ``on_event``, raises :class:`PipelineError` on failure, and returns
+    state for delivery. ``section``/``include`` override layout and rules."""
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.chromium import ChromiumRenderer, RendererUnavailable
@@ -1043,9 +993,8 @@ def run_pipeline(
 
     emit = on_event or (lambda _event: None)
 
-    # Pre-flight the output dir BEFORE any ingest/render work, so a path that is
-    # actually a file fails in milliseconds with a clean message rather than
-    # raising deep in the engine after a long run.
+    # Pre-flight the output dir before any ingest/render work, so a bad path
+    # fails in milliseconds rather than deep in the engine after a long run.
     try:
         validate_output_target(out)
     except OutputPathError as exc:
@@ -1053,19 +1002,16 @@ def run_pipeline(
 
     adapter = resolve_source(export_dir, source)
     emit(StageEvent(STAGE_DETECT, detail=adapter.name))
-    # The run's selection choices, settled against the resolved source before
-    # anything is read: a rule name this source does not have is an operator
-    # error, and it costs nothing to say so before the export is opened.
+    # Selection choices settle against the resolved source before anything is
+    # read: an unknown rule name is cheap to reject before the export opens.
     switched_off = _switched_off(adapter, include)
     rules_report = _selection_rules_report(adapter, switched_off)
     adapter = with_selection(adapter, switched_off)
 
     dirs = list(pack_dirs or [])
-    # The trust store is always consulted now, not only when --pack-dir is in
-    # play: a learned layout lives in the per-user pack directory and is
-    # hash-gated there too, so a run that names one has to be able to prove the
-    # code it is about to execute is the code that was confirmed. Built-ins need
-    # no store and never consult it.
+    # The trust store is always consulted, since a learned layout in the
+    # per-user pack dir must prove its code is what was confirmed; built-ins
+    # need none.
     statuses = discover_packs(
         dirs,
         allow_external=bool(dirs),
@@ -1074,17 +1020,15 @@ def run_pipeline(
     )
     status = statuses.get(pack)
     if status is None or status.pack is None:
-        # No fallback, ever. A layout that is missing, changed since it was
-        # confirmed, or untrusted refuses the run — rendering the operator's
-        # charts through some OTHER layout would be the same false completion in
-        # a costlier place.
+        # No fallback, ever: rendering through some OTHER layout would be the
+        # same false completion, just in a costlier place.
         diagnosis = status.diagnosis if status else f"unknown pack (have: {', '.join(statuses)})"
         raise PipelineError(f"Pack {pack!r} unavailable: {diagnosis}", exit_code=2, kind="bad_pack")
 
     overrides = parse_section_overrides(section)
     manifest = status.pack.manifest
-    # Section-NAME validation: a typo'd or unknown section silently changed
-    # backend state before. Reject it loudly against the pack's own matrix.
+    # A typo'd or unknown section must not silently change backend state:
+    # reject it loudly against the pack's own matrix.
     unknown = sorted(set(overrides) - set(manifest.sections))
     if unknown:
         known = ", ".join(sorted(manifest.sections)) or "(none)"
@@ -1104,15 +1048,13 @@ def run_pipeline(
         lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
         section_overrides=overrides,
     )
-    # Before any ingest work: if this folder already holds charts, do they answer
-    # the question being asked? A mismatch is refused here rather than discovered
-    # as a silently-unchanged output at the end.
+    # Before any ingest work: if this folder already holds charts, do they
+    # answer the question being asked? Refuse here, not as a silent no-op later.
     settings = _render_settings(pack, engine.section_flags, switched_off)
     _guard_render_settings(out, settings, force=force)
-    # And the same question about the layout's BYTES rather than its name:
-    # measured here, before the render, because a folder whose charts came from
-    # different bytes has to refuse before it is filled with a second layout's
-    # pages. `status.pack` is not None — the unavailable case raised above.
+    # Same question about the layout's BYTES, not its name: refuse before a
+    # second layout's pages get mixed in. `status.pack` is not None here —
+    # the unavailable case already raised.
     provenance = pack_provenance(status.pack, status.origin)
     _guard_render_provenance(out, provenance, force=force)
 
@@ -1128,28 +1070,17 @@ def run_pipeline(
     try:
         result = engine.run(records, out, force=force)
     except RendererUnavailable as exc:
-        # A property of the machine, not of a chart. It reaches the operator as
-        # the loud, PHI-safe failure the CLI prints verbatim — exit 2, the code
-        # this pipeline already uses for "a capability this run needs is not
-        # available here", the same class as an unavailable pack. Previously it
-        # was tagged onto every encounter, so a base install answered with six
-        # identical "(RuntimeError)" lines and threw away the one sentence
-        # naming what to install.
+        # A property of the machine, not of a chart: exit 2, the code this
+        # pipeline uses for "a capability this run needs is not available
+        # here", the same class as an unavailable pack.
         raise PipelineError(str(exc), exit_code=2, kind="render_unavailable") from None
     except ConservationError as exc:
-        # The seam lost work. Not a chart's failure and not the machine's: the
-        # stage was handed N encounters and cannot say what became of all of
-        # them, so nothing downstream may treat the survivors as the whole set.
-        # PHI-safe by construction — the message carries counts and column
-        # names only.
+        # The seam lost work: the stage can't say what became of all N
+        # encounters, so nothing downstream may treat survivors as the whole set.
         raise PipelineError(str(exc), exit_code=1, kind="conservation_failed") from None
     if result.failed:
-        # Loud render failure, before the stage is announced as finished and
-        # before anything is carried: a run that could not render every chart
-        # has no business scattering a patient's scanned records around, and
-        # the render failure is the message an operator needs, not a
-        # consequence of it. The (encounter_id, type) pairs ride on the error
-        # so the CLI can print its per-encounter detail lines; PHI-safe.
+        # Loud before the stage announces finished or anything is carried: a
+        # run that could not render every chart must not scatter records around.
         raise PipelineError(
             f"{len(result.failed)} encounter(s) failed to render",
             exit_code=1,
@@ -1157,10 +1088,8 @@ def run_pipeline(
             failed=tuple(result.failed),
         )
 
-    # The charts are one visit each; this is the record. Rendered before
-    # attachments are carried and before QA, so a bundle that could not carry
-    # the whole record for every patient stops here rather than being graded and
-    # delivered as complete.
+    # The charts are one visit each; this is the record, rendered before
+    # attachments/QA so an incomplete record stops here, not delivered as whole.
     summaries = _render_record_summaries(records, out, force=force)
 
     # `out` is hardened by the engine above, so this is the first point a
@@ -1168,11 +1097,9 @@ def run_pipeline(
     carried = _carry_attachments(records, export_dir, out)
     exclusions = _selection_exclusions(records)
     _write_selection_report(out, exclusions, rules_report)
-    # Provenance settles BEFORE the settings record, from the SAME measurement
-    # the guard compared plus what the renderer actually read — so the record
-    # and the refusal can never disagree about which layout this run held, and
-    # a mid-render layout swap refuses before EITHER record claims this folder
-    # is coherent.
+    # Provenance settles before the settings record, from the same
+    # measurement the guard used, so a mid-render layout swap refuses before
+    # either record claims the folder is coherent.
     _settle_render_provenance(out, provenance, engine.templates_read)
     _write_json(out / RENDER_SETTINGS_NAME, settings)
     emit(
@@ -1205,12 +1132,9 @@ def run_pipeline(
 
 def settle_qa(report: QAReport, out: Path, emit: EventSink) -> None:
     """Write the QA report, announce it, and refuse the run if it failed.
-
-    Both orchestrators end QA this way, and they have to end it the SAME way —
-    an operator reading the stage rail cannot tell which one produced the run,
-    and a script reading the exit code must not care. There is already a parity
-    test asserting the two share a stage contract; this makes it the contract
-    rather than a claim about two copies that happened to agree.
+    Both orchestrators end QA this way, so an operator reading the stage
+    rail, or a script reading the exit code, cannot tell which produced the
+    run — a parity test pins the two to this one shared contract.
     """
     from anastomosis.qa import Verdict, write_report
 
@@ -1220,9 +1144,8 @@ def settle_qa(report: QAReport, out: Path, emit: EventSink) -> None:
         "warn": report.count(Verdict.WARN),
         "fail": report.count(Verdict.FAIL),
     }
-    # Only when there is something to say. Three green counts over a batch whose
-    # layout had no place for the problem list is true of every check and false
-    # of the run, and the rail is where an operator reads the run.
+    # Only when there is something to say: three green counts over a batch
+    # with no place for the problem list is true of every check, false of the run.
     if report.not_carried:
         counts["not_carried"] = report.not_carried
     emit(StageEvent(STAGE_QA, counts=counts))
@@ -1241,63 +1164,11 @@ def _run_qa_stage(
     page_size: str,
     emit: EventSink,
 ) -> QAReport | None:
-    """Verify every rendered document; return the report (None if QA downgraded
-    or nothing was rendered to verify).
-
-    Two populations, ONE report. The charts are graded against the pack's own
-    ``carries``/``omits`` — a SOAP note is allowed to have no problem list, and
-    the count it does not carry is reported rather than graded green. The record
-    summaries are graded as whole-patient documents, with every chartable kind
-    declared carried: between them the run cannot come back clean while a fact
-    family the record holds reached no page at all. One report because there is
-    one bundle, and an operator reading two summaries has to reconcile them.
-    The caller gates on ``qa`` alone now — no longer on whether anything
-    actually rendered. A chart with no encounters renders zero per-encounter
-    documents and still owes an operator a verified bundle through the
-    summaries (#383); gating entry on ``result.documents or summaries.
-    documents`` used to try to say so, but ``_render_record_summaries`` raises
-    on any render failure and otherwise returns exactly one ``documents``
-    entry per record, and ``load_records`` never returns an empty ``records``
-    list — so ``summaries.documents`` was truthy on every real run and the
-    per-encounter half of that condition never decided anything (#383's
-    round-two dead-arm finding). Worse, on the one shape where a caller COULD
-    force both populations empty (stubbing the renderer itself), that gate
-    refused entry before this function's own emptiness rule ever ran, so the
-    rail stayed silent instead of getting a skip event — the exact complaint
-    #383 closed, reappeared through the gate meant to fix it. So both
-    populations may simply be empty here, and this copes with either or both
-    being empty rather than assuming a per-encounter document exists — that
-    rule, not a pre-condition on the caller's side, is what decides.
-
-    ``summaries.by_path`` carries the record beside each distinct path it
-    wrote, which is what lets this grade ONE row per rendered file. Two
-    ``PatientRecord``s sharing a patient id (the C-CDA adapter yields one per
-    source document, and an attachment-only chart's Unstructured Documents are
-    exactly this) render to the SAME summary path (``_allocate`` keys on
-    ``patient.id``); re-deriving that path per record, as this used to, graded
-    the one file on disk once per record that named it — an indistinguishable
-    duplicate row for a chart that was verified exactly once. This reads
-    ``by_path`` directly rather than re-zipping ``summaries.documents`` and
-    ``summaries.records`` itself: that used to be a plain ``dict(zip(...))``,
-    which keeps the LAST list entry for a repeated key — under ``force=False``
-    the record whose render took the idempotent-skip branch, never the writer
-    (#383's round-two blocker). ``render_ccda_standard`` already resolves that
-    association correctly; re-deriving it here a second way is exactly how it
-    was lost the first time.
-
-    A missing PyMuPDF (the optional ``render`` extra) downgrades QA to a
-    no-op rather than failing the run — the only ``ImportError`` allowed to
-    soften here, mirroring the original CLI behavior. A failing report raises
-    :class:`PipelineError` (exit 1).
-
-    Each per-encounter document is graded knowing its OWN patient's rendered
-    record summary (``record_summary_paths``, keyed by ``by_path`` the same
-    way): a vital the linker could not attach to any dated encounter is not
-    automatically lost, because :class:`~anastomosis.qa.checks.
-    UnattributedVitalsCheck` can still find it on that page (#392) — it just
-    cannot find it on THIS one, which is the honest thing for a per-encounter
-    chart to say.
-    """
+    """Contract: verify every rendered document; return the report, or
+    ``None`` if downgraded (missing PyMuPDF) or nothing rendered. Grades
+    per-encounter charts against the pack's carries/omits and record
+    summaries as whole-patient, matched by ``summaries.by_path`` so
+    shared-patient records (#383) grade once."""
     try:
         # The probe, not the whole surface: settle_qa imports what it needs
         # once QA has actually run, and by then pymupdf is known to be here.
@@ -1315,10 +1186,8 @@ def _run_qa_stage(
         return None
 
     lookup = {(r.patient.id, e.id): (e, r) for r in records for e in r.encounters}
-    # Keyed by patient id (not re-derived per encounter): `summaries.by_path`
-    # already resolved which record's render actually WROTE each summary
-    # (#383's round-two fix), and every per-encounter chart for that patient
-    # has to point at that SAME page, not one guessed from its own record.
+    # Keyed by patient id, not re-derived per encounter: `summaries.by_path`
+    # already resolved which record's render wrote each summary (#383).
     record_summary_paths = {record.patient.id: path for path, record in summaries.by_path.items()}
     report = run_qa(
         ((d.path, *lookup[d.patient_id, d.encounter_id]) for d in result.documents),
@@ -1335,11 +1204,9 @@ def _run_qa_stage(
     report.documents.extend(whole_patient_report(summaries.by_path.items()).documents)
 
     if not report.documents:
-        # Both populations were empty. The gate above no longer screens for
-        # this (it is just ``qa``), so this rule alone decides — and a report
-        # that graded nothing is not evidence of anything passing, the same
-        # downgrade the missing-PyMuPDF branch takes, for the same reason: a
-        # tick over a verification that never ran is a false completion.
+        # Both populations empty: a report that graded nothing is not
+        # evidence of anything passing, so this downgrades like the
+        # missing-PyMuPDF branch — a tick over unrun verification is false.
         emit(
             StageEvent(
                 STAGE_QA,
