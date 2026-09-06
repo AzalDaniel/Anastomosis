@@ -11,7 +11,6 @@ PHI: pack-relative paths, hex digests, a pack name and origin word only.
 
 from __future__ import annotations
 
-import hashlib
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from jinja2 import FileSystemLoader
 
-from anastomosis.core.hashutil import HASH_CHUNK_BYTES
+from anastomosis.core.hashutil import file_sha256
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -61,20 +60,9 @@ _SKIPPED_DIRS = frozenset({"__pycache__"})
 
 
 def _digest(path: Path) -> str:
-    """Streamed sha256 of one file, or :data:`UNREADABLE`.
-
-    Streamed in :mod:`anastomosis.core.hashutil`'s chunk size so a large
-    asset is never resident all at once; the unreadable case is a recorded
-    value here, not a raise, so ``hash_and_size`` is not reused directly.
-    """
-    digest = hashlib.sha256()
-    try:
-        with path.open("rb") as handle:
-            while chunk := handle.read(HASH_CHUNK_BYTES):
-                digest.update(chunk)
-    except OSError:
-        return UNREADABLE
-    return digest.hexdigest()
+    """One file's streamed sha256, or :data:`UNREADABLE` — a value the record
+    carries rather than a raise that would drop the file from it."""
+    return file_sha256(path, unreadable=UNREADABLE)
 
 
 def pack_file_digests(root: Path) -> dict[str, str]:
@@ -109,11 +97,9 @@ def pack_file_digests(root: Path) -> dict[str, str]:
 
 
 def _dir_identity(path: Path) -> tuple[int, int] | None:
-    """``(device, inode)`` for a directory, or ``None`` when it cannot be read.
-
-    The cycle guard for the followed walk: a link pointing at an ancestor
-    would otherwise recurse until the path length gave out.
-    """
+    """``(device, inode)`` for a directory, or ``None`` when it cannot be read:
+    the cycle guard for the followed walk, since a link pointing at an ancestor
+    would otherwise recurse until the path length gave out."""
     try:
         info = path.stat()
     except OSError:
