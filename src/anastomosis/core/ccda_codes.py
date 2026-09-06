@@ -1,21 +1,7 @@
-"""The C-CDA vocabulary the reader and the writer must agree on, defined once.
-
-``sources/ccda/parser.py`` and ``deliver/ccda_export/builder.py`` are the two
-halves of one round trip, and their contract is that the builder emits exactly
-what the parser traverses. That made twenty-one constants obligate to mirror —
-and they were mirrored by hand, in two files, with a comment on each side
-telling the reader so.
-
-The comment was wrong. It said "these four must mirror
-sources/ccda/parser.py exactly" over a block of five, one of which
-(``LOSS_NARRATIVE_TEMPLATE_VERSION``) the parser has never had, while sixteen
-others mirrored silently a few lines above with nothing saying they had to. A
-value that must agree across a boundary should not be a promise a reader has
-to keep; it should be one definition.
-
-Neither side may import the other — ``sources`` and ``deliver`` are
-deliberately orthogonal, and there is a test that says so — so the definitions
-live here, in a leaf module of literals that both may depend on.
+"""The C-CDA vocabulary ``sources/ccda/parser.py`` and
+``deliver/ccda_export/builder.py`` must agree on, defined once (84):
+neither side may import the other, so these constants live in a leaf
+module both depend on rather than being mirrored by hand in two files.
 """
 
 from __future__ import annotations
@@ -146,30 +132,11 @@ ARTIFACT_INTEGRITY_ALGORITHM = "SHA-256"
 
 
 def first_rooted_id(element: etree._Element) -> tuple[str, str | None] | None:
-    """``element``'s first direct-child ``<id>`` that states a root, or ``None``.
-
-    The single reading both halves of the C-CDA round trip use for "what id
-    does this element state" — an organizer's own id, and a component
-    observation's own id. Before this helper existed, the parser read an
-    id through ``_attr`` (nullFlavor-aware, whitespace-stripped) while the
-    builder read one by raw truthiness (``id_node.get("root")``, unstripped);
-    a padded root or extension then hashed to two different derived ids, and
-    the parser separately read only a component's FIRST ``<id>`` child while
-    the builder scanned all of them — so a component whose first ``<id>`` was
-    ``nullFlavor="NI"`` and whose second carried a root was read as id-less by
-    one side and as owning ``COMPROOT`` by the other. Four fixture shapes
-    (padded root, padded extension, nullFlavor-then-rooted, whitespace-only
-    root) reproduced the duplication #378 had just removed, on the derived-id
-    branch alone.
-
-    An ``<id nullFlavor="NI"/>`` states no id and is skipped, not read as an
-    empty root. ``root`` and ``extension`` are ``.strip()``ed the way
-    ``sources/ccda``'s ``_attr`` always has; a root that is blank after
-    stripping is not a root either, so the search continues to the next
-    ``<id>`` rather than stopping on it; a blank extension normalizes to
-    ``None``. The first ``<id>`` to survive all three checks wins, in
-    document order — "first rooted id", not "first id".
-    """
+    """Contract (#378): ``element``'s first direct-child ``<id>`` that
+    states a root, or ``None`` — the single reading both round-trip halves
+    use. ``nullFlavor="NI"`` states no id and is skipped, not read as an
+    empty root; a root blank after ``.strip()`` does not stop the search.
+    "First rooted id", not "first id"."""
     for id_node in element.findall(f"{{{V3}}}id"):
         if id_node.get("nullFlavor") is not None:
             continue
@@ -200,47 +167,11 @@ def identity_from_ii(
     *,
     bare_root_names_the_instance: bool,
 ) -> str:
-    """The one place an HL7 v3 ``II`` becomes an object's canonical id.
-
-    An ``II`` is the PAIR ``(root, extension)``: the root names an assigning
-    authority, the extension names the instance within it. Reading half of it
-    merges distinct things, and this repository learned that three separate
-    times — for facilities and providers in the PR #320 review, for encounters
-    in #393, and for patients in #404, where it put two people in one chart.
-    Each fix was correct and local; none propagated, so the next site paid the
-    bill again. This function exists so there is no next site: it is the only
-    place in the tree that turns a root and an extension into an id, and the
-    per-kind differences are arguments rather than re-implementations (#412).
-
-    The rules, in order:
-
-    * **An extension paired with a root** is the identifier, hashed over BOTH
-      halves. Each is ``quote``d (``safe=""``) because a vendor extension
-      carrying a literal ``:`` has been seen: unquoted, ``("1.2.3", "X:4")``
-      and ``("1.2.3:X", "4")`` would hash to one string.
-    * **A GUID root standing alone** is trusted verbatim — already globally
-      unique, so it names the instance without an authority.
-    * **A non-GUID root standing alone** is the ambiguous case, and the ONLY
-      thing that legitimately varies between kinds. It is an authority's OID,
-      shared by every instance that vendor writes — so it names the instance
-      only where the document structurally admits exactly one holder. That is
-      true of ``recordTarget/patientRole``: a document has one, so its bare
-      root cannot be ambiguous, and folding on it is what lets one patient
-      named the same way in two documents be one chart. It is false of
-      encounters, organizations and participations, which a document may carry
-      many of; there a bare root would merge every distinct visit or facility
-      that vendor ever wrote, so those take ``fallback``.
-    * **No usable id at all** takes ``fallback`` — the caller's deterministic
-      positional recipe, so re-parsing one document still yields one id.
-
-    ``kind`` namespaces the hash so an encounter and a facility stating the
-    same pair are still two objects. ``fallback`` is the complete recipe
-    string, already including its own ``kind``, because the positional
-    fallbacks are file-scoped while the stated-identity branches deliberately
-    are not: an id built from what the source SAID has to survive the same
-    object being named in a different file, which is the whole point of
-    honouring the pair.
-    """
+    """Contract (7, #404, #412): the one place an HL7 v3 ``II``
+    ``(root, extension)`` becomes a canonical id. An extension paired with
+    a root hashes both; a GUID root alone is trusted verbatim; a non-GUID
+    root alone names the instance only when
+    ``bare_root_names_the_instance``; no usable id takes ``fallback``."""
     if id_pair is not None:
         root, extension = id_pair
         if extension:
@@ -254,30 +185,11 @@ def identity_from_ii(
 
 
 def organizer_component_source_id(root: str, extension: str | None, index: int) -> str:
-    """Derive a provenance id for an organizer component that states none of its own.
-
-    A component ``<observation>`` under an identified organizer (e.g. a
-    30954-2 Results organizer) is the organizer's statement, not a free-floating
-    one, even when its own ``<id>`` is ``nullFlavor="NI"``. Both the parser
-    (source_id on ingest) and the builder (the pairing key on export) need the
-    SAME id for the same position, or the round trip either loses the pairing
-    (unbounded duplication) or invents a match that isn't there — so the
-    recipe lives once, here, and both sides import it rather than mirror it.
-    Both read ``root``/``extension`` through :func:`first_rooted_id`, so the
-    two sides agree on the pair by construction rather than by promise.
-
-    Deliberately document-intrinsic: no ``source_file`` in the recipe, unlike
-    the file-scoped ids elsewhere in this codebase, because this id has to
-    survive an export/re-ingest round trip under a different filename.
-    ``index`` is the 0-based position among the organizer's component
-    ``<observation>``s in document order (a ``<procedure>`` component does
-    not count — driven: neither side derives an id for one).
-    ``root``/``extension`` are each ``quote``d (``safe=""``) into the recipe,
-    so a literal ``:`` inside either (a vendor extension has been seen to use
-    one) can never be misread as the field separator: unquoted,
-    ``("1.2.3", "X:4", 0)`` and ``("1.2.3:X", "4", 0)`` would hash to the same
-    string.
-    """
+    """Contract: a provenance id for an organizer component that states
+    none of its own, derived once here so parser and builder always agree
+    on the same id for the same position. Document-intrinsic (no
+    ``source_file``): survives an export/re-ingest round trip under a
+    different filename. ``index`` is the 0-based component position."""
     name = (
         f"anastomosis:ccda:organizer:{quote(root, safe='')}:"
         f"{quote(extension or '', safe='')}:component:{index}"
