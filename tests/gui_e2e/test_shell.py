@@ -61,13 +61,6 @@ def test_first_paint_matches_the_shared_expectations(gui) -> None:
 
 
 def test_nav_switches_views_without_navigating(gui) -> None:
-    """Four switches, no document navigation, and the chrome follows along.
-
-    Every "tab" used to be an anchor doing a full same-window document load:
-    the stylesheet, the fonts, the SVG filter defs and the JS were re-parsed on
-    every click, and the bridge was re-raced each time. GuiPage.show() asserts
-    the boot marker survives, so a regression to real navigation fails here.
-    """
     app = gui()
     start_url = app.page.url
 
@@ -122,13 +115,9 @@ def test_view_switch_crossfades(gui) -> None:
 
 @pytest.mark.parametrize("view", VIEWS)
 def test_hidden_panels_are_actually_hidden(gui, view: str) -> None:
-    """A panel marked ``hidden`` must not render before it has content.
-
-    The attribute is expressed by a UA-stylesheet rule that ANY author
-    ``display`` declaration outranks, and the panels are all flex/grid
-    components — so a view once opened on a full grid of zero counters and the
-    Teach modes on empty result scaffolds.
-    """
+    """A panel marked ``hidden`` must not render before it has content -- the
+    attribute is a UA-stylesheet rule any author ``display`` declaration
+    outranks."""
     app = gui()
     app.show(view)
 
@@ -143,15 +132,10 @@ def test_hidden_panels_are_actually_hidden(gui, view: str) -> None:
 
 
 def test_no_view_speaks_engineering(gui) -> None:
-    """No banned vocabulary reaches the operator, in text or in attributes.
-
-    The words below are the ones COPY_MAP retires. This walks all four views —
-    hidden panels included, because they are one click from being read.
-
-    Scope note: strings the CONTROLLER produces (a route's registry evidence, a
-    migration notice) are Python-owned and are not asserted here; the GUI never
-    promotes them to headline copy.
-    """
+    """No banned vocabulary (COPY_MAP) reaches the operator, text or
+    attribute, across all four views including hidden panels.
+    Controller-owned strings (route evidence, migration notices) are out
+    of scope here."""
     app = gui()
     offenders: list[str] = []
     for view in VIEWS:
@@ -163,12 +147,6 @@ def test_no_view_speaks_engineering(gui) -> None:
 
 
 def test_activity_strip_carries_every_flow(gui) -> None:
-    """A run reports from whichever view is on screen — the strip is global.
-
-    Starting a run and switching views used to orphan its event stream: no page
-    was listening for that flow any more, and the one that came up said
-    "— idle —" while the run was still in flight.
-    """
     app = gui()
     app.show("teach")
 
@@ -184,14 +162,6 @@ def test_activity_strip_carries_every_flow(gui) -> None:
 
 @pytest.mark.parametrize("prefix", ["charts", "migrate"])
 def test_double_check_is_a_switch_that_answers_a_real_mouse_click(gui, prefix: str) -> None:
-    """Double-checking is a binary setting, so it wears the switch idiom.
-
-    It used to be a second sliding pill on the same screen as the view nav,
-    which read to assistive tech as a radiogroup of "On"/"Off" — a control
-    announcing its own states instead of naming what it does. It also inherited
-    the pill's pointer capture, which retargeted the click away from the option
-    and left the control mouse-dead.
-    """
     app = gui()
     view = "charts" if prefix == "charts" else "migrate"
     app.show(view)
@@ -206,12 +176,8 @@ def test_double_check_is_a_switch_that_answers_a_real_mouse_click(gui, prefix: s
 
 
 def test_the_sliding_pill_is_only_the_view_nav(gui) -> None:
-    """One pill in the app, and it means "peer destinations".
-
-    A binary setting is a switch and one-of-N is a chooser; when a second
-    control wore the pill, the screen offered two different idioms for two
-    different kinds of choice and neither read as the more important one.
-    """
+    """One pill in the app: a binary setting is a switch, one-of-N is a
+    chooser -- two idioms on one screen for two different kinds of choice."""
     app = gui()
 
     for view in VIEWS:
@@ -220,13 +186,6 @@ def test_the_sliding_pill_is_only_the_view_nav(gui) -> None:
 
 
 def test_segment_indicator_is_actually_drawn(gui) -> None:
-    """The indicator has a real width — its CSS vars must reach it.
-
-    They used to arrive as a ``style="--segment-count: 2"`` markup attribute,
-    which the app's own ``style-src 'self'`` CSP refuses: two console errors on
-    every load, and ``width: calc((100% - 8px) / var(--segment-count))``
-    collapsing to zero. shell.js writes them through the CSSOM instead.
-    """
     app = gui()
 
     indicator = app.page.locator("#nav-pill .segment-indicator")
@@ -291,14 +250,6 @@ def test_bridge_attaching_without_the_ready_event_still_goes_live(_browser) -> N
 
 
 def test_the_nav_is_one_tablist_that_never_scrolls_away(gui) -> None:
-    """Four opaque boxes became one floating pill, and it stays put.
-
-    The old nav scrolled with the content: at scrollTop 400 it sat at y = -354 on
-    Charts and Migrate, entirely off-screen, which the HIG names directly ("make
-    sure the tab bar is visible when people navigate to different sections").
-    It also had no material — its background sampled byte-identical to the page
-    ground, 1.00:1 — so nothing marked it as chrome at all.
-    """
     app = gui()
     page = app.page
 
@@ -320,14 +271,6 @@ def test_the_nav_is_one_tablist_that_never_scrolls_away(gui) -> None:
 
 
 def test_the_nav_reads_as_tabs_and_keys_like_tabs(gui) -> None:
-    """A group of peer destinations is a tablist, not a radiogroup.
-
-    The mechanism used to serve two vocabularies — a settings toggle wore the
-    same pill and announced itself as a radiogroup — and getting that wrong
-    tells assistive tech the views are a multiple-choice question. The settings
-    toggle is a switch now, so the pill has one caller; this pins that the one
-    it has still reads as tabs.
-    """
     app = gui()
     page = app.page
 
@@ -360,13 +303,8 @@ def test_the_nav_reads_as_tabs_and_keys_like_tabs(gui) -> None:
 
 
 def test_reduced_motion_fades_the_lozenge_rather_than_teleporting_it(gui) -> None:
-    """The global transition-zeroing rule is a deletion, not a fallback.
-
-    A selection indicator that vanishes and reappears somewhere else is harder
-    to follow than one that travels, so travel is replaced by a fade — which is
-    what the HIG asks for ("replacing transitions in x-, y-, and z-axes with
-    fades"), not what zeroing every duration produces.
-    """
+    """The global transition-zeroing rule is a deletion, not a fallback:
+    travel becomes a fade under reduced motion (HIG), never a teleport."""
     app = gui()
     page = app.page
     # Set after load on purpose: shell.js checks the query per activation rather
@@ -391,15 +329,6 @@ def test_reduced_motion_fades_the_lozenge_rather_than_teleporting_it(gui) -> Non
 
 
 def test_the_activity_strip_floats_instead_of_landing_on_the_last_panel(gui) -> None:
-    """Sticky kept the strip in the scroll flow, so it parked on the content.
-
-    At the end of a view it settled ON TOP of the last panel and painted a
-    translucent film over it. That is not only ugly: it was the sole cause of
-    five WCAG failures — the strip's own timestamp and hint, and the help line
-    underneath it, measured 4.04:1 on a surface that reads 4.58:1 when nothing
-    covers it. It is chrome, so it floats like the rest of the chrome, and the
-    shell's bottom padding is the gutter that keeps content clear of it.
-    """
     app = gui()
     page = app.page
 
@@ -425,18 +354,8 @@ def test_the_activity_strip_floats_instead_of_landing_on_the_last_panel(gui) -> 
 
 
 def test_nothing_an_operator_clicks_is_smaller_than_a_fingertip(gui) -> None:
-    """Every control on every view measures at least 44px on its short axis.
-
-    This used to be 52 of 69, twelve of them under WCAG 2.5.8's 24px AA floor:
-    the section switches were 20px of clickable track, the disclosure summaries
-    18px of text, and every text field 35px. The CSS floors are asserted in
-    tests/unit/test_gui_assets.py; this is the one that proves they render,
-    because a floor loses to a fixed height and neither the sheet nor a reviewer
-    would notice.
-
-    A checkbox is measured on its label row, which is what a person aims at —
-    the input itself is deliberately invisible and 0px.
-    """
+    """Every control measures >=44px on its short axis (a checkbox on its
+    label row, since the input itself is invisible)."""
     app = gui()
     page = app.page
     measure = """() => {
@@ -465,20 +384,10 @@ def test_nothing_an_operator_clicks_is_smaller_than_a_fingertip(gui) -> None:
 
 
 def test_a_switch_says_which_way_it_is_set_without_relying_on_colour(gui) -> None:
-    """OFF is legible by its edge, and ON/OFF are told apart by the thumb.
-
-    The two track fills are close on purpose — an oxblood switch that screamed
-    would compete with the one oxblood button on the panel — so the states are
-    NOT distinguishable by fill, and the 16px the thumb travels is what carries
-    the difference (WCAG 1.4.1). That makes two things load-bearing and worth
-    pinning: the OFF track's border must clear 3:1 against the panel behind it
-    (1.4.11), or the OFF switch is an invisible rectangle, and the thumb must
-    clear 3:1 against the ON fill, or the cue itself disappears when it matters.
-
-    The edge cleared the floor by 0.007 at the alpha it was first written with,
-    which is not a margin — hence the assertion, and hence the wider alpha it
-    now carries.
-    """
+    """Two load-bearing contrasts (WCAG 1.4.1/1.4.11): the OFF track's border
+    clears 3:1 against the panel, and the thumb clears 3:1 against the ON
+    fill -- since the two track fills are deliberately too close to serve
+    as the only cue."""
     app = gui()
     app.show("charts")
 
@@ -538,18 +447,9 @@ def test_a_switch_says_which_way_it_is_set_without_relying_on_colour(gui) -> Non
 
 
 def test_the_chooser_keys_like_the_control_it_replaced(gui) -> None:
-    """The whole APG select-only combobox keyboard contract, in one trace.
-
-    A native <select> gave this for free, and it is the reason replacing one is
-    usually a bad idea. It was replaced anyway because its popup is drawn by the
-    OS: unstyleable past a point, invisible to this test, and one text slot per
-    option — which is why the app printed `generic_soap` at people. So the
-    contract it used to provide is now something this repo owes, and this is
-    where that debt is paid.
-
-    DOM focus stays on the trigger throughout; the row the keyboard is pointing
-    at is named by aria-activedescendant, never by :focus.
-    """
+    """The APG select-only combobox keyboard contract: DOM focus stays on the
+    trigger throughout, and the active row is named by
+    ``aria-activedescendant``, never by ``:focus``."""
     app = gui()
     page = app.page
     app.show("charts")
@@ -611,12 +511,8 @@ def test_the_chooser_keys_like_the_control_it_replaced(gui) -> None:
 
 
 def test_no_view_shows_a_machine_id_where_a_name_belongs(gui) -> None:
-    """The ids appear as captions and tooltips, never as the thing you read.
-
-    `generic_soap` was on screen as the chart layout's name, `pf-tebra` as an
-    export format's, `tebra` as a destination's — not a copy defect but a
-    control defect: an <option> has one text slot, so the id took it.
-    """
+    """Machine ids appear only as captions/tooltips, never as the thing a
+    person reads in an option's one text slot."""
     app = gui()
     seen = 0
 
@@ -636,17 +532,9 @@ def test_no_view_shows_a_machine_id_where_a_name_belongs(gui) -> None:
 
 
 def test_a_machine_id_becomes_a_name_a_person_would_write(gui) -> None:
-    """The derivation, on the ids this app actually ships — a guess, and only that.
-
-    It used to carry `ccda -> "C-CDA"` as a hard-coded exception, because no
-    re-casing of the parts can produce it. That exception was the evidence the
-    derivation was standing in for something missing: sources and layouts now
-    declare their own name (#164), so this is what is left for the ids that do
-    not — destinations, and third-party packs written before the field existed.
-
-    The cases it gets wrong are still worth pinning: an initialism it has not
-    been told about comes out title-cased, which is wrong but readable.
-    """
+    """A best-effort name derivation for ids with no declared name (sources
+    and layouts declare their own, #164) -- destinations and third-party
+    packs still need the guess, and it can get an initialism wrong."""
     app = gui()
 
     def name(raw: str) -> str:
@@ -682,13 +570,6 @@ def test_a_declared_name_wins_over_the_guess(gui) -> None:
 
 
 def test_a_region_with_no_rows_says_what_would_fill_it(gui) -> None:
-    """Two clauses: what is not here, then the one thing that puts it here.
-
-    These regions used to be `hidden` outright, so a screen that had not run
-    yet was a form and then nothing — no indication that a list was coming, or
-    what would summon it. The heading stays either way; what swaps is the list
-    and the sentence.
-    """
     app = gui()
 
     for view, region, opening in (
@@ -717,13 +598,6 @@ def test_a_region_with_no_rows_says_what_would_fill_it(gui) -> None:
 
 
 def test_a_count_is_a_number_over_its_name_and_nothing_else(gui) -> None:
-    """Value displays, and the two rules that keep them from shouting.
-
-    They were four glass tiles 96px tall, each with a sentence underneath
-    restating its own label, and each coloured by its bucket — so a run with
-    nothing wrong still showed a green number and an oxblood zero. Colour is
-    earned by a number that asks for something; a zero never asks.
-    """
     app = gui()
     app.show("uploads")
     app.page.fill("#uploads-results-dir", "/synthetic/out")
@@ -754,20 +628,11 @@ def test_a_count_is_a_number_over_its_name_and_nothing_else(gui) -> None:
 
 
 def test_the_status_tints_stay_separable_without_colour_vision(gui) -> None:
-    """The four row states are a luminance ladder, and they have to stay one.
-
-    Three hues of equal weight is the obvious design and it is wrong: at equal
-    weight amber and red are the IDENTICAL colour under deuteranopia, the
-    commonest colour-vision deficiency, so "in progress" and "needs attention"
-    become one state for roughly one man in twelve. The ladder is ordered by
-    urgency instead — the loudest state is the lightest and most saturated
-    thing on screen and success is the quietest — which holds under all three
-    simulations because it never asked hue to do the work.
-
-    The floor is a RAW luminance ratio, not a WCAG contrast ratio: near black
-    the +0.05 constant swamps the difference between two adjacent steps, so it
-    would report every ladder as flat. (It did, the first time this was run.)
-    """
+    """The four row states are a luminance ladder ordered by urgency (loudest
+    = lightest/most saturated, success = quietest), so state survives
+    protanopia, deuteranopia and achromatopsia -- a RAW luminance ratio,
+    not WCAG contrast, since near black the +0.05 constant would flatten
+    every step."""
     app = gui()
 
     measured = app.page.evaluate(
@@ -853,13 +718,8 @@ def test_the_status_tints_stay_separable_without_colour_vision(gui) -> None:
 
 
 def test_a_tinted_row_says_its_state_in_words(gui) -> None:
-    """The tint is reinforcement; the words are what carry the state.
-
-    Which is the whole reason the ladder above can be trusted — if the colour
-    were the only carrier, a monotone ladder would still be a UI that stops
-    working in greyscale. And --ink-muted never appears inside a tinted row:
-    --ink-secondary is the floor there.
-    """
+    """The tint reinforces; words carry the state -- ``--ink-muted`` (too
+    faint) never appears inside a tinted row."""
     app = gui()
     app.show("uploads")
     app.page.fill("#uploads-results-dir", "/synthetic/out")
@@ -887,20 +747,9 @@ def test_a_tinted_row_says_its_state_in_words(gui) -> None:
 
 
 def test_no_view_carries_more_help_than_fields(gui) -> None:
-    """A help line under every field is a help line under nothing.
-
-    Two views used to carry MORE help lines than fields — ten under six, ten
-    under seven — and most of them restated the label they sat beneath ("The
-    folder Anastomosis writes the finished charts into." under "Where results
-    go"). Uniform emphasis is no emphasis: when every field looks equally
-    annotated the reader stops reading all of them, including the two that
-    would have saved them.
-
-    A line survives only if the label cannot carry the point: the consequence
-    is not recoverable from it, the value comes from outside the app, there is
-    a format the placeholder cannot show, or the field is Advanced and needs
-    one line saying when a person would want it.
-    """
+    """A help line survives only if the label cannot carry the point itself:
+    an unrecoverable consequence, a value from outside the app, an
+    unshowable format, or an Advanced field needing a when-to-use note."""
     app = gui()
     counts = {}
 
@@ -939,13 +788,9 @@ def test_no_view_carries_more_help_than_fields(gui) -> None:
 
 
 def test_refusing_transparency_turns_off_every_backdrop_filter(gui) -> None:
-    """Both ways of saying "no glass", and they turn off the same thing.
-
-    Every backdrop-filter in the app reads --glass-blur or --glass-modal-blur
-    and every glass fill reads --glass-bg or --glass-modal-bg, so the fallback
-    is four token overrides rather than a per-component list somebody has to
-    keep in step. This asserts that property, not the list.
-    """
+    """Every glass fill/blur reads one of four --glass-* tokens, so "no
+    transparency" is one property assertion, not a per-component list to
+    maintain."""
     app = gui()
     count = """() => [...document.querySelectorAll('*')]
         .filter(n => getComputedStyle(n).backdropFilter !== 'none').length"""
@@ -1000,13 +845,9 @@ def test_refusing_transparency_turns_off_every_backdrop_filter(gui) -> None:
 
 
 def test_reduced_motion_stops_travel_but_keeps_three_fades(gui) -> None:
-    """Motion off, except where deleting it makes a change harder to follow.
-
-    The HIG's rule is to replace transitions in x, y and z with fades, not to
-    remove them: a lozenge that teleports between two view names is harder to
-    track than one that moves, and a view that swaps with no crossfade reads as
-    a page load — which is the one thing this shell exists not to do.
-    """
+    """Reduced motion replaces travel with fades (HIG); it does not delete
+    animation entirely -- a teleporting lozenge and a hard cut both read
+    as a page load, which this shell exists not to be."""
     app = gui(reduced_motion=True)
 
     timings = app.page.evaluate(
