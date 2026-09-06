@@ -461,19 +461,9 @@ def _loss_generation(section: _Element) -> int | None:
 
 
 def _narrative_entries(text_node: _Element | None) -> list[str]:
-    """Every discrete piece of a section's narrative, in document order.
-
-    One entry per child element — a ``<paragraph>`` as our exporter writes them,
-    but equally a ``<table>`` or a ``<list>`` some other system rendered — plus
-    any loose text between them.
-
-    Paragraphs alone used to be collected, with the whole ``<text>`` kept only
-    when there were NONE. A section holding one paragraph and one table
-    therefore lost the table: it reached neither the carried-forward ledger nor
-    the ordinary foreign-narrative key, and did not survive re-export. This is
-    the section where fields with no structured slot are parked so nothing is
-    dropped, so dropping part of it defeated the mechanism at the one point it
-    exists to hold.
+    """Every discrete piece of a section's narrative, in document order —
+    one entry per child element (a ``<paragraph>``, but equally a
+    ``<table>`` or ``<list>``), plus any loose text between them.
     """
     if text_node is None:
         return []
@@ -494,19 +484,11 @@ def _narrative_entries(text_node: _Element | None) -> list[str]:
 
 
 def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
-    """Preserve OUR OWN loss ledger under ``ccda:prior_loss_narrative``.
-
-    Captured as discrete entries (one per ``<paragraph>``, as the exporter wrote
-    them) rather than as one ``ccda:section:51899-3`` narrative blob, so the next
-    export can carry the entries forward deduplicated instead of swallowing the
-    whole block as a single ever-growing line. A ledger whose narrative is not
-    per-paragraph (hand-edited, or a shape from before this contract) is kept
-    whole as one entry — unreadable structure must not cost the content.
-
-    A document merged from two exports can carry two stamped ledgers; their
-    entries CONCATENATE into the one key (highest generation wins) so the
-    exporter dedupes a single carry-forward ledger and neither one is
-    overwritten.
+    """Preserve OUR OWN loss ledger under
+    ``ccda:prior_loss_narrative``, as discrete per-paragraph entries so a
+    re-export can dedupe them (rule 61) rather than swallowing one
+    ever-growing blob. An unreadable (non-per-paragraph) ledger is kept
+    whole as one entry.
     """
     entries = _narrative_entries(_find(section, "v3:text"))
     if not entries:
@@ -515,14 +497,10 @@ def _capture_loss_narrative(record: PatientRecord, section: _Element) -> None:
 
 
 def is_loss_ledger(value: Any) -> bool:
-    """Whether ``value`` has the ``{generation, entries}`` shape this module
-    writes under :data:`EXT_PRIOR_LOSS_NARRATIVE`.
-
-    Public because two callers need to tell a real carried-forward ledger from
-    an ordinary dict that happens to sit under the same key — a hand-made FHIR
-    bundle may park any JSON at all there — before folding into it: this
-    module's own :func:`merge_loss_narrative`, checking what it is about to
-    fold INTO, and the pipeline's fold, checking what it is about to fold IN.
+    """Whether ``value`` has the ``{generation, entries}`` shape this
+    module writes under :data:`EXT_PRIOR_LOSS_NARRATIVE`. Public: both
+    :func:`merge_loss_narrative` and the pipeline's fold must tell a real
+    carried-forward ledger from an ordinary dict before folding into it.
     """
     return (
         isinstance(value, dict)
@@ -534,38 +512,13 @@ def is_loss_ledger(value: Any) -> bool:
 def merge_loss_narrative(
     extensions: dict[str, Any], generation: int | None, entries: list[str]
 ) -> None:
-    """Fold one stamped loss ledger into whatever ``extensions`` already holds.
-
-    Entries CONCATENATE in the order they were read and the highest generation
-    wins, so neither ledger is overwritten. That keeps one document's own
-    round trip — export, re-ingest, export again — down to a single
-    carry-forward appendix, because the exporter dedupes prior against current
-    (``_carried_forward``) before it writes the next generation. It does NOT
-    dedupe across the several source records one patient's chart can now be
-    merged from (:mod:`anastomosis.pipeline`'s fold): two documents that both
-    already carry an identical stamped entry merge into a ledger that states it
-    twice, on purpose — an entry string does not carry enough to tell "the same
-    fact stamped twice" from "two distinct objects that genuinely share a
-    value", so the accepted direction is to risk saying a true thing twice
-    rather than ever say it zero times. An absent generation on either side
-    does not reset the counter for the other.
-
-    The accumulator is checked with :func:`is_loss_ledger`, not merely
-    ``isinstance(prior, dict)``: a chart merged from several source records can
-    already hold a non-ledger dict at this key from one of them (an ordinary
-    extensions clash the pipeline's fold has not yet resolved), and folding
-    into it as though it were a ledger would raise on the shape it does not
-    have instead of leaving it for the pipeline's own clashing-key rule.
-
-    Public because two callers fold ledgers into one key: this module, walking
-    the several stamped sections of one document, and the pipeline's fold,
-    merging the several source records of one patient. The rule is the same on
-    both sides, so it is written once.
+    """Fold one stamped loss ledger into whatever ``extensions`` already
+    holds: entries concatenate, highest generation wins (rule 61).
+    Checked via :func:`is_loss_ledger`, never bare ``isinstance(dict)``,
+    since a merged chart can already hold a non-ledger dict at this key.
     """
-    # Annotated (rather than left to inference): `dict[str, Any].get` without a
-    # default types as `Any | None`, and `is_loss_ledger` is an ordinary bool
-    # (not a TypeGuard), so mypy cannot narrow the `| None` away on its own —
-    # only the isinstance this function no longer needs at runtime did that.
+    # Annotated: `dict.get` without a default types `Any | None`, and
+    # `is_loss_ledger` isn't a TypeGuard, so mypy needs the hint explicitly.
     prior: Any = extensions.get(EXT_PRIOR_LOSS_NARRATIVE)
     if is_loss_ledger(prior):
         prior_generation = prior["generation"]
