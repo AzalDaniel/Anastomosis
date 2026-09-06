@@ -1,20 +1,12 @@
-"""The C-CDA an operator hands over carries the patient's documents.
+"""The C-CDA an operator hands over carries the patient's documents
+(#373): the delivery writes every source document beside the CCD
+that names it, under the artifact's own pseudonymous id, and refuses
+before reporting success when it cannot -- the reader resolves those
+names back to the same artifacts, so the deliverable is a round trip,
+not a one-way door.
 
-#373: a C-CDA whose whole clinical content is ``nonXMLBody`` artifacts parsed
-into ``DocumentArtifact``s and was preserved byte-for-byte in the charts and in
-the archive — while the same exit-0 run's ``--ccda`` deliverable, the directory
-handed to the receiving EHR, held neither the artifacts nor any resolvable
-reference to them. Reparsing that deliverable produced the patient with an
-empty chart, which is what a physician would have opened.
-
-The rule now: the C-CDA delivery writes every source document beside the CCD
-that names it, under the artifact's own pseudonymous id, and refuses before
-reporting success when it cannot. The reader resolves those names back to the
-same artifacts, so the deliverable is a round trip rather than a one-way door.
-
-Every byte here is generated: ``feedface-`` ids, the 555 exchange, and PDFs
-built in :func:`_pdf` rather than copied from anywhere.
-"""
+Synthetic throughout (``feedface-`` ids, 555 exchange, PDFs built in
+:func:`_pdf`)."""
 
 from __future__ import annotations
 
@@ -62,12 +54,9 @@ _DOCUMENT = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def _pdf(pages: int = 1, tag: bytes = b"synthetic") -> bytes:
-    """A small, real PDF, generated here rather than copied from anywhere.
-
-    Structure only, no glyphs — so the bytes cannot be anybody's — but a genuine
-    catalogue/pages/page tree behind a valid xref, so what these fixtures carry
-    is a document rather than a string that happens to start with ``%PDF``.
-    """
+    """A small, real PDF (structure only, no glyphs) with a genuine
+    catalogue/pages/page tree behind a valid xref -- a document, not a
+    string that happens to start with ``%PDF``."""
     kids = b" ".join(f"{index + 3} 0 R".encode() for index in range(pages))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -89,12 +78,9 @@ def _pdf(pages: int = 1, tag: bytes = b"synthetic") -> bytes:
 
 
 def _embedded_and_referenced_export(directory: Path) -> Path:
-    """One C-CDA holding two Unstructured bodies: one inline, one beside it.
-
-    Both shapes in one document on purpose — a delivery that carries the bytes
-    it was handed and drops the ones it has to fetch (or the reverse) passes
-    half of this file otherwise.
-    """
+    """One C-CDA holding two Unstructured bodies, one inline and one beside
+    it, so a delivery that drops either shape (or the reverse) fails
+    half this file."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "referenced_1pp.pdf").write_bytes(_pdf(1, b"referenced"))
     inline = base64.b64encode(_pdf(2, b"embedded")).decode()
@@ -161,12 +147,9 @@ def test_a_referenced_artifact_survives_the_ccda_deliverable(tmp_path: Path) -> 
 
 
 def test_reparsing_the_delivered_ccda_restores_both_artifacts(tmp_path: Path) -> None:
-    """The deliverable is a round trip, not a one-way door.
-
-    Same identity, same SHA-256, same declared media type — the three facts a
-    receiving system needs to say WHICH document this is and that it is intact.
-    Before the fix this reparse produced the patient with an empty chart.
-    """
+    """Same identity, same SHA-256, same declared media type -- the three
+    facts a receiving system needs to say WHICH document this is and
+    that it is intact."""
     export = tmp_path / "export"
     record = parse_document(_embedded_and_referenced_export(export))
     attachments = _carried(record, export, tmp_path / "charts")
@@ -220,19 +203,11 @@ def test_an_artifact_the_source_never_resolved_is_not_a_delivery_failure(tmp_pat
 
 
 def test_a_patient_with_two_documents_is_one_ccd_carrying_both(tmp_path: Path) -> None:
-    """One file per PATIENT, carrying every document their records held.
-
-    A C-CDA export gives a patient one document per encounter and this adapter
-    reads each as its own record, so writing them all to ``<patient-id>.xml``
-    handed the receiving EHR the LAST one and silently dropped the rest —
-    artifacts and all, which is how #373's own reproduction lost a scan even
-    once the bytes were being written. #375 settled where that is fixed: the
-    pipeline folds a patient's records into one before any deliverer sees
-    them, so this one is handed a single record carrying both documents and
-    writes a single CCD with both artifacts beside it. Two records arriving
-    here still under one id is the collision it refuses, which the loud half
-    below covers.
-    """
+    """One file per patient, carrying every document their records held:
+    writing per-encounter records straight to ``<patient-id>.xml`` handed
+    the last one and silently dropped the rest (#373's reproduction).
+    #375's fold merges a patient's records into one before any deliverer
+    sees them, so this one CCD carries every artifact."""
     from anastomosis.pipeline import _fold_records_sharing_a_patient
 
     def _scanned(tag: bytes, pages: int) -> DocumentArtifact:
@@ -268,13 +243,9 @@ def test_a_patient_with_two_documents_is_one_ccd_carrying_both(tmp_path: Path) -
 
 
 def test_a_document_the_run_resolved_but_lost_refuses_the_delivery(tmp_path: Path) -> None:
-    """The deliverable conserves every artifact or it stops.
-
-    The run resolved this document — it is on the record with a path and a
-    digest — and then it was not in the directory the run put it in. Delivering
-    anyway would hand a receiving EHR a chart naming a file that is not there,
-    under a green success line, which is the shape #373 reported.
-    """
+    """A resolved document missing from the run's own directory must refuse
+    delivery, not ship a chart naming a file that is not there under a
+    green success line (#373)."""
     record = PatientRecord(
         patient=Patient(id=PATIENT_ID),
         documents=[
@@ -293,13 +264,9 @@ def test_a_document_the_run_resolved_but_lost_refuses_the_delivery(tmp_path: Pat
 
 
 def test_a_document_whose_bytes_are_not_the_witnessed_ones_refuses(tmp_path: Path) -> None:
-    """A corrupt sidecar fails before the success outcome, not after it.
-
-    The digest is taken from the delivered file and compared with the one the
-    record witnesses. A truncated copy or a swapped source file opens in the
-    destination and is not the document the chart means, which nothing
-    downstream can detect.
-    """
+    """The digest is taken from the delivered file, not trusted from the
+    record: a corrupt or swapped sidecar fails before success, not
+    after."""
     attachments = tmp_path / "attachments"
     attachments.mkdir()
     (attachments / "scan.pdf").write_bytes(_pdf(1, b"not-the-witnessed-one"))
@@ -333,15 +300,10 @@ def test_inline_bytes_that_will_not_decode_refuse_the_delivery(tmp_path: Path) -
 
 
 def test_two_documents_under_one_id_refuse_rather_than_merge(tmp_path: Path) -> None:
-    """Two different scans, one source id, no digest on either.
-
-    The delivered name comes from the artifact id, so both land on one file and
-    the second would be written over the first — inside a single patient, which
-    is the wrong-document shape the delivery ledger exists to stop. The witness
-    is therefore the digest of the bytes about to be written, not the one the
-    record happens to carry, so a source that cannot tell two documents apart
-    stops the run instead of quietly picking one.
-    """
+    """Two scans sharing one artifact id would collide on one delivered
+    filename; the witness is the digest of the bytes about to be
+    written, so a source that cannot tell two documents apart stops the
+    run instead of quietly picking one."""
     shared = "feedface-d0c0-0000-0000-000000000373"
     record = PatientRecord(
         patient=Patient(id=PATIENT_ID),
@@ -366,12 +328,9 @@ def test_two_documents_under_one_id_refuse_rather_than_merge(tmp_path: Path) -> 
 
 
 def test_a_delivered_document_that_did_not_travel_refuses_on_re_ingest(tmp_path: Path) -> None:
-    """The reader's half of the same rule.
-
-    The delivery directory holds the CCD and its documents together. Split them
-    up and the chart refers to a document nobody can produce, so the re-ingest
-    stops rather than carrying a patient whose scan silently is not there.
-    """
+    """The reader's half of the same rule: split a CCD from its documents
+    and re-ingest must refuse rather than carry a patient whose scan
+    silently is not there."""
     export = tmp_path / "export"
     record = parse_document(_embedded_and_referenced_export(export))
     attachments = _carried(record, export, tmp_path / "charts")
@@ -406,14 +365,9 @@ def test_a_delivered_document_edited_after_the_export_refuses_on_re_ingest(
 
 
 def test_a_third_partys_multimedia_is_not_read_as_a_delivered_document(tmp_path: Path) -> None:
-    """Only this toolkit's own stamp is read back this way.
-
-    An ``<observationMedia>`` in somebody else's C-CDA is their multimedia, and
-    claiming it as a delivered artifact would send this reader looking for a
-    file they never wrote — turning an ordinary third-party document into a
-    refused run. It stays what it has always been: narrative and entries
-    preserved, nothing claimed about it.
-    """
+    """Only this toolkit's own stamped entry is read back as a delivered
+    artifact; a third party's ``<observationMedia>`` stays ordinary
+    narrative and entries, nothing claimed about it."""
     bodies = (
         "<component><structuredBody><component><section>"
         '<code code="34109-9" displayName="Note" codeSystem="2.16.840.1.113883.6.1"/>'
@@ -442,23 +396,12 @@ def test_a_third_partys_multimedia_is_not_read_as_a_delivered_document(tmp_path:
 
 
 def test_our_own_document_entry_is_read_back_rather_than_parked(tmp_path: Path) -> None:
-    """A stamped artifact entry is taken apart, so it is not ALSO copied.
-
-    The C-CDA ingest parks every section's entries verbatim, and each structured
-    emitter then asks which of its objects those copies already state. A
-    document entry had no such question asked of it: the reader took the stamped
-    ``<observationMedia>`` into a ``DocumentArtifact`` AND the capture parked a
-    copy of the same entry, so the next export wrote the artifact entry again
-    beside the copy — 7,464 → 9,990 → 12,850 → 18,892 bytes over four
-    generations, artifacts doubling each round and the doubles narrating in the
-    loss ledger.
-
-    These bytes are this tool's own writing rather than the source's, and the
-    typed object is the better copy: restated next generation with the name of
-    the file the run actually delivered and that file's verified digest, not
-    with last generation's. The third-party test above holds the other side —
-    an unstamped ``<observationMedia>`` is nobody's to restate and stays parked.
-    """
+    """A stamped ``DocumentArtifact`` entry is taken apart, not ALSO parked
+    verbatim -- else each export restates it beside its own copy and the
+    artifact entry doubles every generation. The typed object is the
+    better copy, restated with the delivered file's own name and
+    verified digest, never last generation's; an unstamped third-party
+    entry (above) stays parked."""
     export = tmp_path / "export"
     _embedded_and_referenced_export(export)
     record = parse_document(next(iter(sorted(export.glob("*.xml")))))
@@ -484,20 +427,10 @@ def test_our_own_document_entry_is_read_back_rather_than_parked(tmp_path: Path) 
 
 
 def test_repeated_export_does_not_grow_the_document_without_bound(tmp_path: Path) -> None:
-    """Export → ingest → export is a loop a migration legitimately runs.
-
-    The documents ride as files with references, never as base64 in the CDA, so
-    what a re-ingest recovers and the next export re-narrates is a handful of
-    fixed lines rather than a scan. Five generations: the size settles and the
-    artifacts keep arriving, and no generation carries a single base64 byte.
-
-    Settles at generation THREE. It settled at two until #404 stopped this
-    patient's id surviving re-ingest verbatim — the identifier states an
-    assigning authority, so the id is derived from the whole pair, and the
-    document id derived from it changes once before it too settles. Driven to
-    generation six: 7,464, 9,100, 9,209, 9,209, 9,209, 9,209. The bound is
-    what this guards; which generation it lands on is not.
-    """
+    """Export -> ingest -> export must settle by generation 3 (not 2, since
+    #404's patient-id re-derivation shifts it once), and no generation
+    may carry a base64 byte -- documents ride as files with references,
+    never inline in the CDA."""
     export = tmp_path / "export"
     _embedded_and_referenced_export(export)
     sizes: list[int] = []
@@ -547,14 +480,9 @@ def _one_record_result() -> object:
 def test_the_cli_and_the_gui_conserve_documents_the_same_way(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One conservation path, driven from both entry points.
-
-    The GUI is where the clinical user actually runs a migration, so a fix
-    wired into the CLI's own code would have left them delivering charts with
-    no documents on them. Both reach ``deliver_outputs``, which is the only
-    thing that knows where the run put the documents — this holds that both
-    hand the deliverer that directory, by capturing what each one passes.
-    """
+    """One conservation path, driven from both entry points: CLI and GUI
+    both reach ``deliver_outputs``, and this pins that both hand it the
+    real attachments directory."""
     import anastomosis.core.commands as commands
     import anastomosis.deliver.ccda_export as ccda_export
     from anastomosis.core.commands import DeliveryCommand, deliver_outputs
@@ -597,14 +525,10 @@ def test_the_cli_and_the_gui_conserve_documents_the_same_way(
 def test_the_cli_delivers_the_documents_a_scanned_chart_is_made_of(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#373's own reproduction, driven through the CLI that reported it green.
-
-    Two Unstructured Documents for one patient — one embedded, one referenced —
-    and the ``--ccda`` directory came back with neither, exit 0. It now comes
-    back with both, byte-identical, and with a CCD per record that names them.
-    This is the end-to-end assertion the parser/deliverer seam has to hold up:
-    remove either half of the assembly and this goes red.
-    """
+    """#373's own reproduction, end to end through the real CLI: two
+    Unstructured Documents that the ``--ccda`` directory used to omit at
+    exit 0 must now arrive byte-identical, named by a CCD that
+    references them."""
     pytest.importorskip("pymupdf", reason="pipeline e2e needs PyMuPDF (render extra)")
     from _render_fakes import write_text_pdf
     from typer.testing import CliRunner
