@@ -47,7 +47,7 @@ def _writer_is_gone(tmp_name: str) -> bool:
 
 def _reap_dead_temps(target: Path) -> None:
     """Unlink ``target``'s dead-writer ``.NAME.<pid>.tmp`` siblings (15);
-    nothing else on the system will (see ``RULES_CANDIDATES.md``)."""
+    the archive's orphan sweep globs ``*.pdf`` only and never sees them."""
     reaped = 0
     # `glob.escape`: the target's name is data, not pattern — an unescaped
     # `[`, `]`, `*` or `?` would match a different (or no) chart's temps.

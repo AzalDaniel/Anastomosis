@@ -42,8 +42,8 @@ def clean_typed_path(raw: str) -> str:
 
 
 def typed_path(raw: str) -> Path:
-    """A Path from a string a person typed or pasted into a field (see
-    ``RULES_CANDIDATES.md``: every such field must go through here)."""
+    """A Path from a string a person typed or pasted into a field: every
+    such frontend field must go through here, never a bare ``Path(arg)``."""
     return Path(clean_typed_path(raw))
 
 

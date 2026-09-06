@@ -139,9 +139,9 @@ def parse_date(value: str | None) -> date | None:
 def all_date_spellings(value: date) -> set[str]:
     """Every chart spelling a pack might render ``value`` as, shared by the
     L2/L3 delivery verifier and the QA integrity check so they can never
-    diverge on which spelling counts as present (see
-    ``RULES_CANDIDATES.md``). Unpadded ``%-m``/``%-d`` forms are built by
-    hand: those strftime codes are glibc-only, absent on Windows."""
+    diverge on which spelling counts as present. Unpadded ``%-m``/``%-d``
+    forms are built by hand: those strftime codes are glibc-only, absent
+    on Windows."""
     return {
         # numeric, padded and unpadded, slash and dash
         f"{value.month:02d}/{value.day:02d}/{value.year}",
