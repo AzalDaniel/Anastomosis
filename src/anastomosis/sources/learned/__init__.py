@@ -1,32 +1,13 @@
 """Learned source adapters: formats taught from an example, executed as data.
 
-When the toolkit meets a structured export it does not recognize, the answer is
-not to fail — it is to *learn* the format from one example (the wizard in
-:mod:`anastomosis.core.sourcelearn`), save a declarative ``mapping.json``, and
-from then on read that format like any built-in source. This package is the
-runtime half:
+An operator teaches an unrecognized export's format once, via
+:mod:`anastomosis.core.sourcelearn`, into a declarative ``mapping.json``;
+:func:`register_learned_sources` then reads it like a built-in source.
 
-* :mod:`.spec` — the validated :class:`~.spec.MappingSpec` (data, never code);
-* :mod:`.transforms` — the closed transform verb table;
-* :mod:`.reader` — single-file IO + the column fingerprint;
-* :mod:`.interpreter` — the one generic :class:`~.interpreter.LearnedSourceAdapter`
-  that turns any mapping into canonical records.
-
-Discovery is explicit, not implicit: importing this package registers nothing.
-:func:`register_learned_sources` is called from the pipeline's import-time block
-(like the built-in adapters), and scans the user directory then. It is
-deliberately defensive — a broken or unreviewed mapping is skipped with a
-PHI-safe diagnosis, never crashing discovery, and a name that collides with a
-built-in adapter is skipped rather than shadowing it.
-
-Trust is LIGHTER than template packs because a mapping carries no code: there is
-no hash-gated execution. The gates are ``human_reviewed`` (a hard skip) and a
-``source_trust.json`` content hash that only WARNS when a reviewed mapping was
-hand-edited afterward — it never blocks loading.
-
-PHI: this layer handles mapping ids, file paths to mapping config, and counts —
-never patient data.
-"""
+* :mod:`.spec` — the validated :class:`~.spec.MappingSpec` (data, never code)
+* :mod:`.transforms` — the closed transform verb table
+* :mod:`.reader` — single-file IO and the column fingerprint
+* :mod:`.interpreter` — the one generic adapter that runs any mapping"""
 
 from __future__ import annotations
 
@@ -53,14 +34,10 @@ _TRUST_FILE = "source_trust.json"
 
 
 def user_sources_dir() -> Path:
-    """The per-user directory learned mappings live in.
-
-    A plain ``~/.anastomosis/sources`` (NOT ``platformdirs`` — no new
-    dependency), matching the convention of
+    """``~/.anastomosis/sources`` — no ``platformdirs`` dependency, matching
     :func:`anastomosis.destinations.loader.user_destinations_dir` and
-    :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path` so all user
-    state shares one root. Each mapping is ``<here>/<mapping_id>/mapping.json``.
-    """
+    :func:`anastomosis.reconstruct.packtrust.user_pack_trust_path`. Each
+    mapping is ``<here>/<mapping_id>/mapping.json``."""
     return Path.home() / ".anastomosis" / "sources"
 
 
@@ -81,12 +58,9 @@ def _warn_if_edited(mapping_dir: Path) -> None:
 
 
 def discover_learned_specs(base_dir: Path | None = None) -> list[MappingSpec]:
-    """Load every human-reviewed mapping under ``base_dir`` (defaults to user dir).
-
-    Defensive: a directory without a ``mapping.json``, a malformed mapping, or
-    an un-reviewed mapping is skipped with a count/name-only log line — discovery
-    never raises.
-    """
+    """Load every human-reviewed mapping under ``base_dir`` (default: user dir).
+    A missing/malformed/un-reviewed mapping is skipped with a name-only log
+    line; discovery never raises."""
     root = base_dir if base_dir is not None else user_sources_dir()
     if not root.is_dir():
         return []
@@ -119,11 +93,8 @@ def discover_learned_specs(base_dir: Path | None = None) -> list[MappingSpec]:
 
 def register_learned_sources(base_dir: Path | None = None) -> list[str]:
     """Register an adapter for each discovered mapping; return the names added.
-
-    A mapping whose id collides with an already-registered adapter (a built-in,
-    or one registered by a prior call) is skipped, so this is safe to call more
-    than once and can never shadow a built-in source.
-    """
+    A mapping id colliding with an existing adapter is skipped, so a repeat
+    call is safe and a learned source can never shadow a built-in."""
     existing = {adapter.name for adapter in available_sources()}
     added: list[str] = []
     for spec in discover_learned_specs(base_dir):

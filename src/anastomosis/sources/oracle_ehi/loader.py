@@ -1,27 +1,12 @@
 """SQL-dump loading for Oracle Health (Cerner Millennium) EHI exports.
 
-The single-patient Millennium export ships the V500 data model as MySQL
-``INSERT`` dumps split across three subdirectories — ``v500/{schema,activity,
-reference}`` — per the brief's §5.1 packaging table. The DDL under
-``v500/schema`` is irrelevant to ingest; the data we need lives in the
-``activity`` and ``reference`` INSERT dumps as ``<table_name><_##>.sql``
-(1..N files per table, §5.1).
-
-This module is deliberately dumb: a dependency-free reader that turns the
-``INSERT`` statements for *only the tables the mapper consumes* into
-header-keyed rows. The brief (§3.1) documents ~6,590 tables; loading all of
-them would be absurd, so the loader is told which tables to read and ignores
-the rest. All semantics (sentinels, joins, code resolution, blob decoding)
-live in the mapper, mirroring the PF/Tebra loader/mapper split.
-
-The INSERT parser handles what real MySQL dumps contain — multi-row
-``INSERT`` statements, single-quoted strings with backslash and doubled-quote
-escapes, ``NULL``, and bare numbers — and raises a loud :exc:`ValueError`
-naming the offending file on malformed SQL. It is **not** a general SQL
-engine: DDL, comments, and ``INSERT`` targets we did not ask for are skipped.
-Column names come from each table's DDL in ``v500/schema`` so value tuples can
-be keyed without guessing.
-"""
+The V500 data model ships as MySQL ``INSERT`` dumps under
+``v500/{schema,activity,reference}`` (§5.1); DDL supplies column names only,
+never executed. Dumb on purpose: reads only the tables the mapper consumes,
+into header-keyed rows — semantics live in the mapper. The parser handles
+real dump syntax (multi-row INSERTs, quote escapes, ``NULL``, bare numbers)
+and raises :exc:`ValueError` naming the file on malformed SQL; it is not a
+general SQL engine."""
 
 from __future__ import annotations
 
@@ -45,10 +30,8 @@ __all__ = [
 Row = dict[str, str | None]
 Export = dict[str, list[Row]]
 
-# Tables the mapper consumes today, grouped by the V500 classification that
-# decides which subdirectory they ship in (§3.1, §5.1). A real export carries
-# thousands more; they are simply not read. Names are verified against the
-# brief's cited data-model reports (§3.2, §4).
+# Tables the mapper consumes, grouped by V500 classification (which
+# subdirectory they ship in, §3.1/§5.1); names verified against §3.2/§4.
 ACTIVITY_TABLES = (
     "PERSON",  # §3.2 dms_person3.html — identity spine
     "PERSON_ALIAS",  # task scope (MRN); columns undocumented in brief → extensions
@@ -106,21 +89,11 @@ def parse_column_names(ddl: str, table: str) -> list[str] | None:
 
 
 class _InsertLexer:
-    """A single-pass MySQL lexer over a whole dump file.
-
-    Scope is deliberately narrow: the literals that appear in Millennium EHI
-    INSERT dumps — single-quoted strings (with ``\\`` escapes and ``''``
-    doubling), ``NULL``, and bare numeric tokens. Anything else is malformed
-    for our purposes and raises, naming the source file.
-
-    The pass is *single*: string literals are consumed as opaque units before
-    any ``INSERT ... VALUES`` head is matched, so a quoted cell whose text
-    happens to contain a literal ``INSERT INTO ... VALUES`` shape can never be
-    mistaken for a statement head (a regex ``finditer`` over the raw text
-    cannot make that distinction — it is the false-collision this lexer
-    closes). The head regex is only ever tried anchored at the current scan
-    position, which the scanner only reaches outside a string literal.
-    """
+    """A single-pass MySQL lexer over a whole dump file, scoped to what
+    Millennium EHI dumps contain: quoted strings (``\\`` and ``''``
+    escapes), ``NULL``, bare numbers. String literals are consumed whole
+    before any INSERT head is matched, so a quoted cell containing literal
+    ``INSERT ... VALUES`` text can never be mistaken for a statement head."""
 
     def __init__(self, text: str, source: str) -> None:
         self._text = text
@@ -176,14 +149,9 @@ class _InsertLexer:
 
     def read_statements(self, table: str, columns: list[str]) -> list[Row]:
         """Scan the whole file once, returning rows from matching INSERTs.
-
-        String literals are consumed whole (see the class docstring) before
-        any INSERT head is matched, so a head-shaped literal inside a quoted
-        cell is never mis-parsed. Between statements (comments, DDL,
-        whitespace) the scanner just steps one char at a time; a stray
-        apostrophe there is harmless filler, never a string start (real
-        string literals live only inside value tuples, handled above).
-        """
+        String literals are consumed whole (see the class docstring), so a
+        head-shaped literal inside a quoted cell is never mis-parsed; a
+        stray apostrophe between statements is harmless filler."""
         rows: list[Row] = []
         while self._pos < self._len:
             head = _INSERT_HEAD_RE.match(self._text, self._pos)
@@ -201,9 +169,8 @@ class _InsertLexer:
                 continue  # a different table's INSERT: parsed past, not kept
             for values in tuples:
                 if len(values) != len(cols):
-                    # Not a SQL query: a parse-error message about a malformed
-                    # dump file. The arity mismatch means we would misalign
-                    # every field, so we raise rather than silently drop one.
+                    # Not a SQL query: a parse-error about a malformed dump.
+                    # The arity mismatch would misalign every field if ignored.
                     self._fail(
                         f"tuple has {len(values)} values but {table} declares {len(cols)} columns"
                     )
@@ -260,9 +227,8 @@ class _InsertLexer:
 _UNESCAPE = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "b": "\b", "Z": "\x1a"}
 
 # ``INSERT [IGNORE] INTO `TABLE` [(...)] VALUES`` up to the first value tuple.
-# Matched only anchored at the lexer's current (outside-a-string) position via
-# ``re.Pattern.match(text, pos)`` — never ``finditer`` over the raw text, which
-# would false-collide with an ``INSERT ... VALUES`` shape inside a quoted cell.
+# Matched only anchored at the lexer's current position (``match``, never
+# ``finditer``, which would false-collide with this shape in a quoted cell).
 _INSERT_HEAD_RE = re.compile(
     r"INSERT\s+(?:IGNORE\s+)?INTO\s+`?(?P<table>\w+)`?\s*"
     r"(?:\((?P<cols>[^)]*)\)\s*)?VALUES",
@@ -271,25 +237,17 @@ _INSERT_HEAD_RE = re.compile(
 
 
 def iter_insert_rows(sql: str, table: str, columns: list[str], source: str) -> list[Row]:
-    """Parse every ``INSERT INTO <table>`` in ``sql`` via one lexer pass (see
-    :class:`_InsertLexer`).
-
-    ``columns`` is the DDL column order for the table. When an INSERT names
-    its own column list, that ordering wins (some dumps reorder); otherwise
-    the DDL order applies. A value tuple whose arity does not match the column
-    count is malformed and raises (lossless rule: a mismatch means we would
-    misalign every field, never silently drop one).
-    """
+    """Parse every ``INSERT INTO <table>`` in ``sql`` via one lexer pass.
+    ``columns`` is the DDL order; an INSERT naming its own column list wins
+    over it (some dumps reorder). An arity mismatch raises rather than
+    silently misaligning or dropping a field."""
     return _InsertLexer(sql, source).read_statements(table, columns)
 
 
 def _read_schema(root: Path) -> str:
-    """Concatenate every ``v500/schema`` DDL file into one string.
-
-    Column names come from the ``V500TableSchema*.sql`` DDL (§5.1); reading
-    all schema files is cheap (DDL is tiny next to the data dumps) and avoids
-    guessing which file holds which table.
-    """
+    """Concatenate every ``v500/schema`` DDL file into one string — reading
+    all of them is cheap (DDL is tiny next to the data dumps) and avoids
+    guessing which file holds which table."""
     schema_dir = root / "v500" / "schema"
     if not schema_dir.is_dir():
         return ""
@@ -321,10 +279,8 @@ def read_export(root: Path) -> Export:
     for table in KNOWN_TABLES:
         columns = parse_column_names(ddl, table)
         if columns is None:
-            # No DDL for a table we ask for means either the table is absent
-            # from this export (fine — empty) or the schema files are missing.
-            # We cannot key rows without column names, so a present-but-unkeyed
-            # data file would be silent loss; guard that below.
+            # No DDL for a table we ask for: either absent from this export
+            # (fine) or the schema files are missing — guard below either way.
             if _has_data_file(root, table):
                 raise ValueError(
                     f"oracle_ehi: data dump for {table} present but no CREATE TABLE "

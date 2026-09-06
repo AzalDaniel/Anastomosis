@@ -29,13 +29,10 @@ class OracleEHIAdapter:
     description = "Oracle Health / Cerner Millennium EHI export (V500 MySQL dumps)"
 
     def detect(self, path: Path) -> bool:
-        """Cheap structural sniff for the §5.1 single-patient export shape.
-
-        The export's signature is a ``v500`` directory carrying ``schema`` +
-        at least one data subdirectory, with the schema file naming the brief
-        documents (``V500TableSchema*.sql``). PF/Tebra (flat TSVs) and C-CDA
-        (loose XML) have no such tree, so this never collides with them.
-        """
+        """Cheap structural sniff for the §5.1 single-patient export shape: a
+        ``v500`` directory with a ``schema`` subdir naming
+        ``V500TableSchema*.sql`` and at least one data subdirectory. PF/Tebra
+        (flat TSVs) and C-CDA (loose XML) have no such tree."""
         v500 = path / "v500"
         if not v500.is_dir():
             return False
