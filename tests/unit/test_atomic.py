@@ -299,3 +299,19 @@ def test_a_bracket_in_a_chart_name_is_not_a_glob_pattern(tmp_path: Path) -> None
 
     assert escaped == [mine], "the escaped pattern must find the temp it is about"
     assert naive == [], "the unescaped pattern reads [A-Z] as a character class"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="permission bits are POSIX")
+def test_a_fresh_temp_is_never_at_the_umask_default_before_the_chmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+    real_chmod = os.chmod
+
+    def spy(path: object, mode: int, **kw: object) -> None:
+        seen.append(Path(str(path)).stat().st_mode & 0o777)
+        real_chmod(path, mode, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "chmod", spy)
+    atomic_write_bytes(tmp_path / "m.json", b"{}", mode=0o600)
+    assert seen and all(m == 0o600 for m in seen)
