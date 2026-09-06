@@ -1,16 +1,12 @@
-"""FhirClient + FhirEndpoint tests: status routing, id parsing, token masking.
+"""FhirClient + FhirEndpoint tests: status routing, id parsing, token
+masking. The transport is an in-process fake opener injected at
+construction — urllib is never monkeypatched. Synthetic data only.
 
-The transport is an in-process fake opener injected at construction — urllib is
-never monkeypatched. Synthetic data only: ``example.com`` hosts, ``feedface-``
-ids, a never-real bearer token string.
+PHI discipline is probed directly: a raised message and the endpoint
+repr must never carry the token, the URL, or a query string.
 
-PHI discipline is probed directly: a raised message and the endpoint repr must
-never carry the token, the request URL, or a query string.
-
-The redirect-refusal tests at the bottom are the one exception to the fake
-transport: they drive the PRODUCTION urllib opener against real loopback
-``http.server`` instances, because the property under test (a bearer token
-never reaches a second origin) is only meaningful against real urllib.
+The redirect-refusal tests at the bottom drive the PRODUCTION urllib
+opener against real loopback ``http.server`` instances instead.
 """
 
 from __future__ import annotations
@@ -380,13 +376,10 @@ def test_refused_redirect_is_permanent_not_transient(status: int) -> None:
 
 
 def test_same_origin_redirect_is_also_refused() -> None:
-    """A same-origin redirect is refused too, by design.
-
-    A validated FHIR base URL that redirects is a misconfiguration, and the
-    only way to call one redirect "safe" is to parse the target — which is
-    server-controlled text. Refusing every redirect is the loud, safe default;
-    the operator's fix is to configure the final URL.
-    """
+    """A same-origin redirect is refused too, by design: a validated
+    FHIR base URL that redirects is a misconfiguration, and the only
+    way to call a redirect "safe" is to parse server-controlled text.
+    Refusing every redirect is the loud, safe default."""
     holder: list[str] = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -409,16 +402,11 @@ def test_same_origin_redirect_is_also_refused() -> None:
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
 def test_redirect_without_a_location_header_is_a_clean_permanent_error(status: int) -> None:
-    """A 3xx carrying NO Location must surface as a clean delivery error.
-
-    urllib routes a 30x through the redirect handler only when there is a
-    target to redirect TO; with no ``Location`` (a malformed server, or one
-    stripping the header) the redirect handlers decline and urllib's default
-    error path raises ``HTTPError``. That must land in the delivery taxonomy as
-    a PERMANENT error naming the status and the resource type — not as a raw
-    urllib exception escaping the client, and not as a transient the engine
-    would retry forever against a server that cannot answer.
-    """
+    """A 3xx carrying NO Location must surface as a clean delivery
+    error: urllib's redirect handler declines with no target, so its
+    default error path raises ``HTTPError`` — which must land as a
+    PERMANENT error naming status and resource type, never a raw
+    urllib exception or a transient the engine would retry forever."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _handle(self) -> None:
