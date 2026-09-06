@@ -1,29 +1,13 @@
 """Live FHIR-server integration tests (PLAN item 13a).
 
 Runs the real :class:`FhirApiDestination` over a real :class:`FhirClient`
-(stdlib urllib transport) against a live FHIR R4 server — a HAPI service
-container in CI — at two altitudes:
-
-* the ENGINE level, driving :class:`UploadEngine` directly (push, search,
-  banner, read-back, duplicate scan);
-* the COMMAND level, driving :func:`run_upload_command` exactly as ``anast
-  upload --fhir`` does — real manifest on disk, real output lock, the L0-L6
-  ladder on, the ledger and run report written into the 0700 output dir.
-
-It is gated two ways so it never disturbs the normal lanes:
-
-* the ``fhir_integration`` marker, which the default test runs exclude; and
-* a ``skipif`` on ``ANAST_FHIR_BASE_URL`` being unset, so even a direct
-  ``pytest -m fhir_integration`` is a no-op without a server.
-
-Synthetic data only: ``feedface-`` GUID identifiers, "Synthia Testpatient",
-DOB 1990-01-02, and locally-built PDFs (a tiny hand-written one for the engine
-test, a PyMuPDF-rendered one the L0-L6 ladder can actually read for the command
-test). No PHI, no real server.
-
-``tests/`` is not a package (``tests/unit`` has no ``__init__.py``), so this
-file mirrors that — no ``__init__.py`` is added.
-"""
+against a live FHIR R4 server (a HAPI container in CI): the ENGINE level
+(:class:`UploadEngine` directly) and the COMMAND level
+(:func:`run_upload_command`, as ``anast upload --fhir`` does). Gated by
+the ``fhir_integration`` marker (excluded by default) and a ``skipif`` on
+``ANAST_FHIR_BASE_URL`` unset. Synthetic data only: ``feedface-`` GUIDs,
+invented identity, locally-built PDFs — no ``__init__.py``, matching
+``tests/unit``."""
 
 from __future__ import annotations
 
@@ -171,14 +155,11 @@ def _cmd_patient() -> Patient:
 
 
 def _verifiable_pdf(pymupdf: ModuleType, path: Path) -> Path:
-    """A real one-page PDF whose page 1 carries the patient's name and DOB.
-
-    The L0-L6 ladder reads the file for real: L1 rejects a sub-KiB "PDF" and L2
-    hard-fails unless page 1 shows the DOB and fuzzy-matches the name, so the
-    tiny hand-written PDF the engine-level test uses cannot serve here. Filler
-    lines pad the page past the 1 KiB floor — the same shape
-    ``tests/unit/test_verify_composite.py`` builds.
-    """
+    """A real one-page PDF whose page 1 carries the patient's name and
+    DOB: the L0-L6 ladder reads the file for real (L1 rejects a sub-KiB
+    "PDF", L2 hard-fails unless page 1 shows the DOB and fuzzy-matches the
+    name), so filler lines pad the page past the 1 KiB floor — the same
+    shape ``tests/unit/test_verify_composite.py`` builds."""
     lines = [
         "Synthia Testpatient",
         "DOB 01/02/1990",
@@ -193,15 +174,11 @@ def _verifiable_pdf(pymupdf: ModuleType, path: Path) -> Path:
 
 
 def test_run_upload_command_files_and_verifies_end_to_end(tmp_path: Path) -> None:
-    """The whole operator path: a manifest on disk -> ``run_upload_command`` with
-    the real :class:`FhirApiDestination` -> a clean result, a COMPLETED ledger,
-    and a run report proving the ladder reached L5/L6.
-
-    This is the CLI's exact drive (``anast upload --fhir`` differs only in
-    parsing argv and printing the summary), so it pins the API route end to end:
-    the output lock, the lock-then-read manifest, the L0-L6 verifier wired to a
-    packless destination, the ledger, and the report.
-    """
+    """The whole operator path: a manifest on disk -> ``run_upload_command``
+    with the real :class:`FhirApiDestination` -> a clean result, a
+    COMPLETED ledger, and a run report proving the ladder reached L5/L6 —
+    the CLI's exact drive (``anast upload --fhir`` differs only in
+    parsing argv and printing the summary)."""
     assert _BASE_URL is not None  # guarded by the module skipif
     pymupdf = pytest.importorskip("pymupdf", reason="the L0-L6 ladder needs the render extra")
 
