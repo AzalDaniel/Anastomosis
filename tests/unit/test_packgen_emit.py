@@ -7,8 +7,7 @@ same-patient caveat, determinism, and the wizard's confirm/abort/exit-code
 behavior are all asserted without a browser.
 
 All values are synthetic (example-style names, 555 phones, feedface ids); no
-patient-derived data appears anywhere.
-"""
+patient-derived data appears anywhere."""
 
 from __future__ import annotations
 

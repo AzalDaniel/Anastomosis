@@ -7,8 +7,7 @@ record summary (#239), against what actually RENDERED — and graded once
 per rendered file, never once per `PatientRecord` sharing its id.
 
 Synthetic throughout: `feedface-` ids, the 555 exchange, and PDFs from
-`test_ccda_unstructured` (the same shape #381's fixture uses).
-"""
+`test_ccda_unstructured` (the same shape #381's fixture uses)."""
 
 from __future__ import annotations
 

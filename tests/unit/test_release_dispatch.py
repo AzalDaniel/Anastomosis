@@ -7,8 +7,7 @@ provenance attestation, unsigned-installer labeling, #282) and
 
 Also pins one security property across EVERY workflow: a ref/tag name
 must never reach a ``run:`` script through ``${{ }}`` interpolation, only
-a quoted ``env:`` value.
-"""
+a quoted ``env:`` value."""
 
 from __future__ import annotations
 

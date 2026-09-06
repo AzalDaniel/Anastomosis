@@ -7,8 +7,7 @@ against the generating system, a legal authenticator against an
 informant, an emergency contact against a clinician, an allergen against
 a header participant — collapsing any of them makes the record wrong.
 
-Synthetic throughout: ``feedface-`` ids, invented people, the 555 exchange.
-"""
+Synthetic throughout: ``feedface-`` ids, invented people, the 555 exchange."""
 
 from __future__ import annotations
 

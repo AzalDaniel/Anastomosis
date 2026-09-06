@@ -7,8 +7,7 @@ throughout: render fixtures -> analyze -> ``emit_draft_pack`` -> assert
 the draft loads, lists SOAP headings in order, matches page geometry,
 RENDERS a parseable PDF, and re-analyzing its output is a FIXED POINT.
 PHI-safe: synthetic ``feedface-`` PF/Tebra fixture. Marked ``e2e``,
-skipping cleanly without Playwright/Chromium.
-"""
+skipping cleanly without Playwright/Chromium."""
 
 from __future__ import annotations
 

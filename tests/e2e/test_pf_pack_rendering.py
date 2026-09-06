@@ -7,8 +7,7 @@ text/geometry layer and every page's word boxes against committed
 goldens; and the #f1f1f1 heading-band fill plus every section heading in
 the text layer. A mismatch means either a regression or a re-baseline via
 ``python tools/regen_goldens.py`` (review the JSON diff in the PR).
-PHI-safe, synthetic fixture. Marked ``e2e``, skipping without Chromium.
-"""
+PHI-safe, synthetic fixture. Marked ``e2e``, skipping without Chromium."""
 
 from __future__ import annotations
 

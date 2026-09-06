@@ -7,8 +7,7 @@ generic clinical content.
 
 Two metrics, reported SEPARATELY: :func:`semantic_ratio` (same WORDS?)
 and :func:`median_iou`/:func:`median_center_offset` (same PLACE?) — a
-layout learner can be right about one and wrong about the other.
-"""
+layout learner can be right about one and wrong about the other."""
 
 from __future__ import annotations
 

@@ -7,8 +7,7 @@ RE-DISCOVERS the pack's own ground-truth design: the PF section-heading
 taxonomy, Letter page geometry, and the #f1f1f1 heading-band fill — proof
 the learner is honest about a real PF-shaped document, not just the
 simpler ``generic_soap`` note. PHI-safe: synthetic ``feedface-`` fixture.
-Marked ``e2e``; SKIPS cleanly without Playwright/Chromium.
-"""
+Marked ``e2e``; SKIPS cleanly without Playwright/Chromium."""
 
 from __future__ import annotations
 

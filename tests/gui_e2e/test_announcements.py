@@ -7,8 +7,7 @@ that ``Shell.setStatus`` writes with the visible line, plus an alert
 never created only when there is news, never rewritten with the same words.
 
 No screen reader runs here; these tests check what one reads: roles, tree
-membership, computed name, and mutations.
-"""
+membership, computed name, and mutations."""
 
 from __future__ import annotations
 

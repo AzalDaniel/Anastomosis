@@ -7,8 +7,7 @@ arrow-key navigation, not `role="tab"` with only a click handler.
 
 These tests press keys. Where the point is that focus MOVED, the
 assertion is on ``document.activeElement``, not an attribute the markup
-just set.
-"""
+just set."""
 
 from __future__ import annotations
 

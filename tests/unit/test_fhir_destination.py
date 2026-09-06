@@ -7,8 +7,7 @@ search/read/create semantics for the resolver, banner, scanner, driver, and
 the L5/L6 readers; the driver's DocumentReference is validated against the
 real ``fhir.resources`` R4 model, so a malformed resource fails loudly.
 
-Synthetic data only: ``feedface-`` ids, "Synthia Testpatient", DOB 1990-01-02.
-"""
+Synthetic data only: ``feedface-`` ids, "Synthia Testpatient", DOB 1990-01-02."""
 
 from __future__ import annotations
 

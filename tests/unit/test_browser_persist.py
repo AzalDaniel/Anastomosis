@@ -7,8 +7,7 @@ degraded verification and say so out loud rather than be refused.
 
 Synthetic data only — ``feedface-`` ids, neutral file names in ``tmp_path``.
 A name-shaped basename deliberately proves the writer logs only an item
-COUNT, never the path/name.
-"""
+COUNT, never the path/name."""
 
 from __future__ import annotations
 

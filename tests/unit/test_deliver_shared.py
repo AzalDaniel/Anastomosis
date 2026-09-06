@@ -7,8 +7,7 @@ each component capped at ``MAX_NAME_CHARS``), never raising an OSError
 that leaves a chart silently absent; `claim_delivered_name` is the
 per-run ledger, where two source ids resolving to one name MERGE, but a
 second DIFFERENT claimant raises. `copy_claimed_chart` chains both with
-the actual copy. Synthetic ids only.
-"""
+the actual copy. Synthetic ids only."""
 
 from __future__ import annotations
 

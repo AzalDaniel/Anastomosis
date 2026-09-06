@@ -7,8 +7,7 @@ empty chart. Carried, not refused, except where carrying is impossible —
 a missing reference, or an artifact over the declared ceiling.
 
 Every byte here is generated: ``feedface-`` ids, the 555 exchange, and a
-PDF built in :func:`_pdf`.
-"""
+PDF built in :func:`_pdf`."""
 
 from __future__ import annotations
 
