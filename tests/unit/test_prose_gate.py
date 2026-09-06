@@ -231,19 +231,20 @@ def test_a_history_phrase_that_only_moved_is_not_new(tmp_path: Path) -> None:
     assert failures == []
 
 
-def test_deleting_code_from_a_file_never_fails_even_though_its_ratio_rises() -> None:
-    _write_tree(tmp := Path(__import__("tempfile").mkdtemp()))
-    baseline = measure(tmp)
-    mod = tmp / "src" / "pkg" / "mod.py"
+def test_deleting_code_from_a_file_never_fails_even_though_its_ratio_rises(
+    tmp_path: Path,
+) -> None:
+    _write_tree(tmp_path)
+    mod = tmp_path / "src" / "pkg" / "mod.py"
     mod.write_text(
         mod.read_text(encoding="utf-8") + "\n\ndef sub(a, b):\n    return a - b\n", encoding="utf-8"
     )
-    baseline = measure(tmp)
+    baseline = measure(tmp_path)
     mod.write_text(
         mod.read_text(encoding="utf-8").replace("\n\ndef sub(a, b):\n    return a - b\n", ""),
         encoding="utf-8",
     )
-    current = measure(tmp)
+    current = measure(tmp_path)
     assert float(current["files"]["src/pkg/mod.py"]["ratio"]) > float(
         baseline["files"]["src/pkg/mod.py"]["ratio"]
     )  # type: ignore[index]
