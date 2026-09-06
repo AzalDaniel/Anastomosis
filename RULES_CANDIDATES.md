@@ -19,6 +19,11 @@ adjudicate into `RULES.md` or reject.
   `all_date_spellings` as the single source of accepted date spellings, so
   they can never diverge on which chart rendering counts as present
   (`core/timeutil.py:175`).
+- A command that stops because the operator declined its own confirmation
+  exits 0 like success does; it must call `core/outcome.py`'s `declined`
+  so the caller can tell the two apart, and the read via `take_declined`
+  is destructive so a stale outcome never frames the next run
+  (`core/outcome.py:1`).
 
 ## Loose ends
 
