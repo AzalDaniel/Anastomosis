@@ -86,7 +86,9 @@ def _claim(tmp: Path, mode: int | None) -> None:
     already exists, so a stale same-pid temp would carry its own bits over."""
     if mode is None or os.name != "posix":
         return
-    tmp.touch()
+    # Created WITH the mode, so there is no instant at the umask default;
+    # chmod afterwards covers a temp that already existed.
+    os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode))
     os.chmod(tmp, mode)
 
 
