@@ -213,40 +213,10 @@ def _identifiers(patient_role: _Element) -> list[Identifier]:
 
 
 def _patient_id(patient_role: _Element, source_file: str) -> str:
-    """Stable canonical patient id: the identifier the SOURCE states.
-
-    A ``recordTarget/patientRole/<id>`` is not this tool's bookkeeping. C-CDA
-    requires it, the originating EHR writes it, and it is that EHR's own
-    statement of who this chart belongs to — so it takes precedence over
-    anything derived here, and the whole of it is honoured rather than half.
-
-    HL7 v3's ``II`` is the PAIR. A root names the assigning authority; an
-    extension names the instance within it. Patient ``MRN-000123`` at one
-    practice is a different person from ``MRN-000123`` at another, and an MRN
-    is exactly the identifier that collides, because two practices both
-    numbering their patients from 1 is the ordinary case. Hashing the
-    extension alone — what this did until #404 — merged them into one chart:
-    driven, two documents differing only in their ``<id root>`` produced one
-    canonical id, one bundle, one patient, exit 0, no warning. A physician
-    opens that chart and reads somebody else's problems.
-
-    So: an extension paired with a root is hashed as the pair, each half
-    ``quote``d (``safe=""``) for the reason
-    :func:`~anastomosis.core.ccda_codes.identity_from_ii` documents —
-    unquoted, ``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` hash to one
-    string. A GUID root standing alone is already globally unique and stays
-    verbatim. A non-GUID root standing alone is the only identifier
-    the document gives for its one patient, so it remains that patient's
-    identity exactly as before — unlike an encounter, where a bare root
-    repeated across many visits is manifestly an authority (#393); a document
-    has one ``patientRole`` and cannot repeat it. Absent any id at all, the
-    file name stands in.
-
-    This MOVES the id of any patient whose document states a root and an
-    extension. That is the correction, not a regression: the old value was
-    derived by discarding half of what the source said. Re-parsing one
-    document still yields one id, and one patient named the same way in two
-    documents still folds to one chart.
+    """Stable canonical patient id: the identifier the SOURCE states,
+    honoured whole per rule 20 (the pair, each half quoted per
+    :func:`~anastomosis.core.ccda_codes.identity_from_ii`). Absent any id,
+    the file name stands in.
     """
     fallback = f"{source_file}:patient"
     for ident in _identifiers(patient_role):
@@ -368,19 +338,10 @@ def _entries(section: _Element) -> list[_Element]:
 
 
 def _artifact_media(entry: _Element) -> _Element | None:
-    """``entry``'s ``<observationMedia>`` when THIS toolkit's export wrote it.
-
-    One reading, used by both halves that care: :func:`_delivered_artifacts`
-    takes such an entry apart into a :class:`DocumentArtifact`, and
-    :func:`_capture_entries` leaves it out of the verbatim copies for exactly
-    that reason. Two hand-written spellings of "is this ours" would drift, and
-    the drift is not visible until a document has been round-tripped four
-    times.
-
-    The stamp is what decides, never the element name: a third party's
-    ``<observationMedia>`` carries no ``ARTIFACT_TEMPLATE_ROOT`` templateId and
-    stays what it has always been — narrative and entries preserved verbatim,
-    nothing claimed about it.
+    """``entry``'s ``<observationMedia>`` when THIS toolkit's export wrote
+    it — one reading shared by :func:`_delivered_artifacts` and
+    :func:`_capture_entries`, so the two cannot drift. Decided by the
+    stamp (:data:`ARTIFACT_TEMPLATE_ROOT`), never the element name.
     """
     media = _find(entry, "v3:observationMedia")
     if media is None:
@@ -390,29 +351,20 @@ def _artifact_media(entry: _Element) -> _Element | None:
 
 
 def entry_verbatim(entry: _Element) -> str:
-    """One ``<entry>``, exactly as the document spells it.
-
-    The shared vocabulary between what :func:`_capture_entries` stores and what
-    the ledger later asks the record for — the same function on both sides, so
-    the mirror cannot drift. lxml serialises a parsed element deterministically,
-    and both sides parse the same file, so the strings compare byte-for-byte.
-    ``with_tail=False`` because the whitespace after ``</entry>`` belongs to the
-    section, not the entry.
+    """One ``<entry>``, exactly as the document spells it — the shared
+    vocabulary between what :func:`_capture_entries` stores and what the
+    ledger asks for, so the mirror cannot drift. ``with_tail=False``: the
+    whitespace after ``</entry>`` belongs to the section, not the entry.
     """
     return etree.tostring(entry, encoding="unicode", with_tail=False)
 
 
 def free_key(extensions: dict[str, Any], key: str) -> str:
-    """``key``, or its first free ``#2``, ``#3``, … variant, in document order.
-
-    Documents legitimately repeat a section code (Problems (Active) and Problems
-    (Resolved) are both 11450-4) and may carry several code-less sections — one
-    stored section must never silently replace another.
-
-    Public because the pipeline's fold (one patient's several source records
-    into one chart) parks a clashing extension the same way. Two spellings of
-    "keep both" would put a key somewhere the reader of the other one never
-    looks, so there is one.
+    """``key``, or its first free ``#2``, ``#3``, … variant, in document
+    order — a document may repeat a section code or carry several
+    code-less sections, and one stored section must never replace
+    another. Public: the pipeline's record fold parks a clashing
+    extension the same way.
     """
     if key not in extensions:
         return key
@@ -423,20 +375,10 @@ def free_key(extensions: dict[str, Any], key: str) -> str:
 
 
 def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | None) -> None:
-    """Preserve one section's title and narrative under ``ccda:section:<loinc>``.
-
-    Runs for EVERY section, structurally parsed or not: a structural parser
-    skips an entry whose shape it does not support, and the narrative is then
-    one of the two copies of what that section said — the other being its
-    entries, kept verbatim beside this by :func:`_capture_entries`, since prose
-    about a section is not a copy of the entries beneath it. A section with
-    neither a title nor narrative text has no prose to keep and adds no key
-    (sentinel discipline — absent stays absent). Mutating the model's
-    extensions dict in place persists it on the patient (it is the validated
-    dict object, not a fresh copy).
-
-    The first occurrence of a repeated section code keeps the bare key, so a
-    document with one section per code reads exactly as it always has.
+    """Preserve one section's title and narrative under
+    ``ccda:section:<loinc>`` (rule 59), for EVERY section whether or not
+    it structurally parsed. No title and no text adds no key. Mutates the
+    model's extensions dict in place.
     """
     title = _text_content(_find(section, "v3:title"))
     text = _text_content(_find(section, "v3:text"))
@@ -448,51 +390,10 @@ def _capture_narrative(record: PatientRecord, section: _Element, loinc: str | No
 
 
 def _capture_entries(root: _Element) -> dict[_Element, list[str]]:
-    """Every section's entries, exactly as the document spells them.
-
-    Taken in one pass over the untouched tree, before anything in this module
-    rewrites it, and keyed by the section element so the section walk can
-    collect its own without re-serialising a tree that has since changed.
-
-    The shape issue #314 named: a section with ``<entry>`` children and no
-    ``<text>`` reaches neither book, because the structural parser takes what
-    it can and there is no narrative for the rest to fall back to. So what the
-    document said is kept instead, in document order, parsed or not.
-
-    A parsed entry's copy is redundant with its canonical object, and that
-    redundancy is accepted on purpose — deciding per entry whether the parser
-    consumed it would make this capture depend on the parser's reach, and the
-    point of preservation is that it must not. The exporter resolves the
-    redundancy at the other end: each structured emitter asks which of its
-    objects the preserved entries already state and emits only the rest.
-
-    One kind of entry is left out, and it is not an exception to that rule but
-    the same rule from the other side: an ``<observationMedia>`` THIS toolkit's
-    own export stamped (:func:`_artifact_media`). Those bytes are not the
-    source's statement — this tool wrote them last generation, naming a file it
-    delivered and witnessing that file's digest — and they are read back into a
-    :class:`DocumentArtifact` here, so the next export restates them from the
-    typed object with the name and digest of the file it actually wrote. Parked
-    as well, the copy would ride beside the entry rewritten from it: the two
-    documents grew 7,464 → 9,990 → 12,850 → 18,892 bytes over four generations,
-    each round doubling the artifact entries and narrating the doubled ones in
-    the loss ledger. A third party's unstamped ``<observationMedia>`` is not
-    ours to restate and is preserved verbatim like anything else.
-
-    EVERY section, whatever it renders. The capture used to stop at sections
-    rendering no text, on the reading that prose about a section stands in for
-    the entries beneath it. It does not: a C-CDA narrative is under no
-    obligation to state what its entries state, and the corpus disproves it in
-    its own documents — a Plan of Treatment reading "Continue lisinopril and
-    recheck blood pressure in three months" carries an entry stating the coded
-    value "No current problems". So the same entry was preserved or dropped by
-    nothing but whether its section happened to carry prose. What made that
-    limit hold for so long was the export side: the builder narrated each
-    parked key into the 51899-3 loss section, which a re-ingest parked and the
-    next export narrated again, so capturing every section grew the ledger
-    without bound. The builder now DELIVERS these bytes as ``<entry>`` elements
-    in the section carrying their code instead of narrating them, which is what
-    lets this capture be complete.
+    """Every section's entries, exactly as spelled, in one pass over the
+    untouched tree (rule 59) — EVERY section, whatever it renders (#314).
+    Excludes this toolkit's own stamped ``<observationMedia>``: re-derived
+    from the typed object, not the source's statement.
     """
     captured: dict[_Element, list[str]] = {}
     for section in _sections(root):
@@ -508,12 +409,10 @@ def _store_entries(
     section: _Element,
     loinc: str | None,
 ) -> None:
-    """Park one section's captured entries under ``ccda:entries:<loinc>``.
-
-    The stored shape is read by two other places — the ingest ledger's entry
-    pool and, since the export delivers these bytes as entries rather than
-    narrating them, ``deliver/ccda_export``. A section with no code of its own
-    parks under :data:`SECTION_CODE_UNKNOWN`, the one bucket all three name.
+    """Park one section's captured entries under
+    ``ccda:entries:<loinc>``, read by the ingest ledger's entry pool and
+    ``deliver/ccda_export``. A section with no code parks under
+    :data:`SECTION_CODE_UNKNOWN`.
     """
     entries = captured.get(section)
     if not entries:
