@@ -1,23 +1,8 @@
-"""Desktop GUI entry point.
+"""Desktop GUI entry point (``python -m anastomosis.gui`` and the frozen exe).
 
-``python -m anastomosis.gui`` and the frozen GUI executable produced by the
-Windows packaging build both launch the liquid-glass dashboard through the
-pywebview shell — the same code path the CLI's ``anast gui`` command runs. The
-packaged app's Start-menu shortcut targets this entry (and the
-``anastomosis-gui`` GUI script declared in ``pyproject.toml``).
-
-Kept deliberately thin: it only resolves the shell and reports a startup failure
-cleanly. ``webview`` is imported lazily inside :func:`anastomosis.gui.shell.launch`,
+``webview`` is imported lazily inside :func:`anastomosis.gui.shell.launch`,
 so importing this module never requires the ``gui`` extra; a missing runtime
 surfaces as a clean message + non-zero exit, never a traceback.
-
-A ``--self-check`` flag runs the SAME bundled-asset self-check the CLI's
-``anast doctor`` runs — but against the GUI bundle (its own copy of every data
-asset + Chromium), WITHOUT launching the pywebview window — and exits 0/1. The
-Windows packaging CI runs the GUI exe with this flag so a mis-bundled GUI build
-fails the job instead of shipping a broken Start-menu app. It deliberately uses
-plain ``print`` + the shared :func:`~anastomosis.core.presentation.terminal_glyphs`
-(not Rich/typer) so it stays as dependency-light as the launch path.
 """
 
 from __future__ import annotations
@@ -26,12 +11,9 @@ import sys
 
 
 def _self_check() -> int:
-    """Run the bundled-asset self-check and print it like ``anast doctor``; return an exit code.
+    """Run the bundled-asset self-check like ``anast doctor``; return 0/1.
 
-    Mirrors :func:`anastomosis.cli.doctor_cmd`: one line per check (glyph, name,
-    detail), then an aggregate verdict; ``0`` when every check passed, ``1``
-    otherwise. PHI-free by construction — a check's detail is a count / "ok" /
-    "skipped" / an exception TYPE name (see :mod:`anastomosis.core.selfcheck`).
+    ``detail`` stays count/enumerated-code/exception-type only (RULES.md 2).
     """
     from anastomosis.core.presentation import terminal_glyphs
     from anastomosis.core.selfcheck import check_bundled_assets
@@ -52,16 +34,13 @@ def _self_check() -> int:
 def main() -> None:
     """Launch the desktop GUI; report a startup failure cleanly (no traceback).
 
-    With ``--self-check`` on the command line, runs the bundled-asset self-check
-    (the GUI bundle's own assets + Chromium) and exits 0/1 WITHOUT launching the
-    window — the CI gate for the GUI bundle.
+    ``--self-check`` runs the bundled-asset check instead, without a window.
     """
     if "--self-check" in sys.argv[1:]:
         raise SystemExit(_self_check())
 
-    # Install the redacting log handler before launching (the root logger
-    # otherwise falls back to an unredacted lastResort handler). logutil is
-    # stdlib-only, so a plain lazy import keeps this entry dependency-light.
+    # Must run before launch: the root logger's default lastResort handler
+    # leaks unredacted otherwise. logutil is stdlib-only, so import stays lazy.
     import logging
 
     from anastomosis.core.logutil import configure_logging
@@ -73,8 +52,7 @@ def main() -> None:
     try:
         launch()
     except Exception as exc:  # top-level entry: a user must never see a raw traceback
-        # Broad catch: print the exception TYPE only (its message may embed
-        # input); the type name is always safe to surface.
+        # Type name only, never exc's message: it may embed input (RULES.md 2).
         print(f"GUI failed to start ({type(exc).__name__})", file=sys.stderr)
         raise SystemExit(1) from None
 

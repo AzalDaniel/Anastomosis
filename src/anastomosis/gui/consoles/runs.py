@@ -32,11 +32,9 @@ __all__ = ["MigrationConsole", "PipelineConsole", "SummaryStore"]
 class SummaryStore:
     """A bounded, keyed store of runs' per-patient detail (PHI, local only).
 
-    Per-run per-patient detail (display name, DOB, note counts) is keyed by an
-    opaque summary id the `done` event carries, for the dashboard/wizard to
-    fetch via :meth:`get`. Keyed (not a single slot) so a rapid SECOND run cannot
-    overwrite the slot the first run's UI then reads (the summary race). Bounded
-    to the most recent few. PHI: local display only, never logged or emitted.
+    Keyed by an opaque summary id (not a single slot) so a rapid second run
+    cannot overwrite the first's slot before its UI reads it. Bounded to
+    the most recent few; local display only, never logged or emitted.
     """
 
     # Bound how many runs' detail we retain (PHI in memory, local only): keep the
@@ -49,9 +47,8 @@ class SummaryStore:
     def store_summary(self, patients: list[dict[str, object]]) -> str:
         """Stash a run's per-patient detail under a fresh opaque id; return the id.
 
-        The id is random hex (never patient-derived) and rides the `done` event;
-        the front end passes it back to :meth:`get`. Oldest entries are evicted
-        past ``_SUMMARY_CAP`` so PHI does not accumulate unbounded.
+        The id is random hex (never patient-derived); oldest entries are
+        evicted past ``_SUMMARY_CAP``.
         """
         summary_id = uuid4().hex
         self._summaries[summary_id] = patients
@@ -72,19 +69,8 @@ class SummaryStore:
 class _RunConsole:
     """What the pipeline and migration consoles do identically.
 
-    The two flows differ in what they RUN and what they report; they do not
-    differ in how they wire themselves to the GUI. Everything in here is that
-    wiring — construction, the stage→rail event bridge, the no-traceback error
-    contract, and the shape of the per-patient roll-up — and each piece was
-    re-typed identically in both consoles before it moved here.
-
-    The one thing a subclass must supply is :attr:`_FLOW`, the operation family
-    stamped on every event it emits. It is what lets each PAGE consume only its
-    own run: dashboard and wizard emit identical stage/progress/done/error
-    kinds, so the flow tag is the per-page guard against one page announcing the
-    other's terminal event. A subclass that forgot to set it would emit events
-    no page listens to, so the base leaves it deliberately empty rather than
-    defaulting to a real flow name.
+    Shared wiring: construction, the stage-rail bridge, the error contract,
+    the roll-up shape. :attr:`_FLOW` is left empty, not defaulted, so a forgotten one fails loud.
     """
 
     #: The operation family this console owns — set by every subclass.
@@ -103,12 +89,8 @@ class _RunConsole:
     def _stage_emitter(self, rollup: dict[str, int]) -> Callable[[StageEvent], None]:
         """The pipeline-stage → rail-event bridge for ONE run.
 
-        Returns the ``on_event`` callback the shared command core drives, which
-        paints the rail (start → counts → done, per stage) and accumulates the
-        run's counts into ``rollup`` for the terminal event. PHI: an event
-        carries a stage name and counts, never a patient-derived value. A stage
-        the rail does not draw (``detect``) is skipped rather than invented.
-        """
+        Returns the ``on_event`` callback the shared core drives: paints
+        the rail, accumulates counts into ``rollup``; a railless stage (``detect``) is skipped."""
 
         def _on_event(event: StageEvent) -> None:
             stage = _STAGE_MAP.get(event.stage)
@@ -116,9 +98,8 @@ class _RunConsole:
                 return  # the detect stage has no rail of its own
             self._emit(stage_event(self._FLOW, stage, "start"))
             self._emit(progress_event(self._FLOW, stage, **event.counts))
-            # A downgraded stage closes as "skipped", never "done": the rail
-            # paints a tick for "done", and a tick over a verification that
-            # never ran is the app telling the physician something untrue.
+            # A downgraded stage closes "skipped", never "done": a tick over a
+            # verification that never ran would tell the physician something untrue.
             self._emit(stage_event(self._FLOW, stage, "skipped" if event.skipped else "done"))
             rollup.update(event.counts)
 
@@ -150,10 +131,8 @@ class _RunConsole:
     def _carry_reading(event: dict[str, object], reading: list[str]) -> dict[str, object]:
         """Attach the source ledger's reading to an event, when the run has one.
 
-        Only when: a ledgerless run's events stay byte-identical to before this
-        surface existed, with no empty key to explain. The sentences are
-        PHI-free by ``physician_reading``'s contract, which is what lets them
-        ride an event the way the migration flow's ``notice`` does.
+        A ledgerless run's events carry no empty key. The sentences are
+        PHI-free by ``physician_reading``'s contract.
         """
         if reading:
             event["source_reading"] = reading
@@ -163,9 +142,8 @@ class _RunConsole:
 class PipelineConsole(_RunConsole):
     """The pipeline run flow (reconstruct-and-deliver)."""
 
-    # The operation family this console owns; stamped on every event so the
-    # dashboard page consumes them and the wizard (flow "migration") does not
-    # (both emit identical stage/progress/done/error kinds — the per-page flow guard).
+    # Stamped on every event so the dashboard consumes them and the wizard
+    # (flow "migration") does not — both emit identical event kinds.
     _FLOW = "pipeline"
 
     def run_pipeline(
@@ -187,25 +165,9 @@ class PipelineConsole(_RunConsole):
     ) -> dict[str, object]:
         """Drive the shared pipeline core, emitting stage/progress events.
 
-        Returns the final roll-up dict (also emitted as a ``done`` event), with
-        a ``patients`` key carrying the per-patient detail for local display
-        (names/DOB/note counts — never emitted as events; see
-        :meth:`last_run_summary`). Any failure becomes ``{"ok": False, "error":
-        <type-or-diagnosis>}`` plus an ``error`` event. The ``busy`` guard
-        rejects a second concurrent run.
-
-        ``sections`` overrides the layout's section flags and ``include`` names
-        the source's render-selection rules this run does NOT apply — the two
-        halves of "what goes on the page", one per end of the pipeline, and the
-        same words the CLI's ``--section`` and ``--include`` carry.
-
-        ``force`` re-renders documents that already exist; ``pack_dirs`` makes
-        extra pack directories available and ``trust_new`` records (trusts)
-        their current code hash on first use — the same backend levers the CLI
-        exposes, no longer hard-coded off. Deliverer flags
-        (``archive``/``bundle``/``ccda``) write into sibling subdirectories of
-        ``out_dir`` since the GUI has one output-dir field.
-        """
+        Returns the roll-up dict (also a ``done`` event) with ``patients``
+        for local display; a failure is ``{"error": <diagnosis>}`` plus an
+        event. ``sections``/``include`` mirror the CLI's ``--section``/``--include``."""
         if not self._jobs.acquire():
             return {"ok": False, "error": "Busy"}
         try:
@@ -247,15 +209,8 @@ class PipelineConsole(_RunConsole):
     ) -> dict[str, object]:
         """Run the pipeline on a daemon thread (the GUI stays responsive).
 
-        Acquires the busy flag SYNCHRONOUSLY before returning, so two quick
-        clicks can't both get ``{"started": True}`` (the worker then runs the
-        locked body and releases in ``finally``). Returns ``{"ok": True,
-        "started": True}`` on success or ``{"ok": False, "error": "Busy"}`` if a
-        run is already in flight. The result arrives as
-        ``stage``/``progress``/``done``/``error`` events; the per-patient detail
-        is fetched after ``done`` via :meth:`last_run_summary` (the events stay
-        count-only).
-        """
+        Acquires the busy flag synchronously; returns ``{"started": True}``
+        or ``{"error": "Busy"}``. Detail comes from :meth:`last_run_summary` after ``done``."""
 
         def _worker() -> None:
             self._run_pipeline_locked(
@@ -290,19 +245,15 @@ class PipelineConsole(_RunConsole):
         pack: str,
         source: str | None,
         sections: dict[str, bool],
-        # Required, like `sections` and for the reason the four below are: a
-        # dropped keyword would silently revert the choice to "every rule
-        # applied" and nothing would fail.
+        # Required like `sections`: a dropped keyword would silently revert to
+        # "every rule applied" with nothing failing.
         include: list[str],
         qa: bool,
         archive: bool,
         bundle: bool,
         ccda: bool,
-        # No defaults, deliberately. Both entries always pass all four, and a
-        # default here makes a DROPPED keyword legal: the option would silently
-        # revert instead of failing, and mypy would not say so. Required
-        # parameters turn that class of slip into a type error. See
-        # test_every_pipeline_option_survives_the_async_entry.
+        # No defaults: a default would make a dropped keyword legal (silent
+        # revert, no mypy error). See test_every_pipeline_option_survives_the_async_entry.
         force: bool,
         pack_dirs: list[str] | None,
         trust_new: bool,
@@ -321,10 +272,8 @@ class PipelineConsole(_RunConsole):
         )
         from anastomosis.pipeline import PipelineError
 
-        # The blankness of an empty field only survives until Path() sees it, so
-        # it is caught here rather than in validate_output_target: Path("") is
-        # Path("."), which would write patient-named charts into whatever folder
-        # the app was launched from and report success.
+        # Caught here, not in validate_output_target: Path("") is Path(".") —
+        # an empty field would silently write patient-named charts into the launch dir.
         try:
             out = require_output_dir(out_dir)
         except OutputPathError as exc:
@@ -333,9 +282,8 @@ class PipelineConsole(_RunConsole):
         rollup: dict[str, int] = {}
         _on_event = self._stage_emitter(rollup)
 
-        # GUI deliveries land in sibling subdirectories of the output dir (the
-        # GUI has one output-dir field), through the same command path the CLI
-        # uses with operator-chosen paths.
+        # Sibling subdirectories of the output dir (the GUI has one output-dir
+        # field), through the same command path the CLI uses.
         deliveries: list[DeliveryCommand] = []
         if archive:
             deliveries.append(DeliveryCommand("archive", out / "archive"))
@@ -386,9 +334,8 @@ class PipelineConsole(_RunConsole):
     ) -> None:
         """Emit the deliver-rail events from the completed delivery outcomes.
 
-        The deliverers themselves ran inside the shared command core; this only
-        presents the counts. PHI rule: each event carries a COUNT of artifacts
-        written, never the rendered filenames or the operator's chosen paths.
+        The deliverers ran inside the shared core; this only presents
+        counts — never rendered filenames or chosen paths.
         """
         self._emit(stage_event(self._FLOW, "deliver", "start"))
         for kind in ("archive", "bundle", "ccda"):
@@ -397,9 +344,8 @@ class PipelineConsole(_RunConsole):
                 continue
             patients = outcome.counts["patients"]
             rollup[f"{kind}_patients"] = patients
-            # What the delivery could NOT file travels with what it did. Zero
-            # is left out rather than shown, so the rail stays a short line on
-            # an ordinary run and a non-zero count is the thing that changed.
+            # What could NOT be filed travels with what was; zero is omitted
+            # so the rail stays short on an ordinary run and a non-zero count stands out.
             shortfall = {
                 key: outcome.counts[key]
                 for key in ("missing", "unattributed")
@@ -418,9 +364,8 @@ class PipelineConsole(_RunConsole):
 class MigrationConsole(_RunConsole):
     """The migration run flow (EHR-to-EHR; PF→Tebra is one instance)."""
 
-    # The operation family this console owns; stamped on every event so the
-    # wizard page consumes them and the dashboard (flow "pipeline") does not —
-    # the per-page flow guard against one page consuming the other's terminal event.
+    # Stamped on every event so the wizard consumes them and the dashboard
+    # (flow "pipeline") does not — the per-page flow guard.
     _FLOW = "migration"
 
     def run_migration(
@@ -438,14 +383,8 @@ class MigrationConsole(_RunConsole):
     ) -> dict[str, object]:
         """Drive the shared migration core, emitting stage/progress events.
 
-        Mirrors :meth:`run_pipeline` exactly for the contract: never raises (a
-        failure is ``{"ok": False, "error": <type-or-diagnosis>}`` plus an
-        ``error`` event), busy-guarded, PHI-safe events only, and the per-patient
-        roll-up stored for :meth:`last_run_summary`. The resolved transit map
-        rides the return value (``route``) so the wizard can draw the chosen
-        route the migration would take. Returns ``{"ok": True, **rollup,
-        "route": {...}, "patients": [...]}``.
-        """
+        Mirrors :meth:`run_pipeline`'s contract exactly; the resolved
+        transit map rides the return value (``route``) for the wizard to draw."""
         if not self._jobs.acquire():
             return {"ok": False, "error": "Busy"}
         try:
@@ -479,13 +418,8 @@ class MigrationConsole(_RunConsole):
     ) -> dict[str, object]:
         """Run the migration on a daemon thread (the GUI stays responsive).
 
-        Mirrors :meth:`run_pipeline_async`: acquires the busy flag SYNCHRONOUSLY
-        so two quick clicks can't both start, returns ``{"ok": True, "started":
-        True}`` (or ``{"ok": False, "error": "Busy"}``), and streams the result
-        as ``stage``/``progress``/``done``/``error`` events. The per-patient
-        detail and the route are fetched after ``done`` via
-        :meth:`last_run_summary` (the route also rides the synchronous return of
-        :meth:`run_migration`; the async path's done event carries counts only).
+        Mirrors :meth:`run_pipeline_async`. The route rides the SYNC return
+        of :meth:`run_migration`; the async ``done`` event carries counts only.
         """
 
         def _worker() -> None:
@@ -574,9 +508,8 @@ class MigrationConsole(_RunConsole):
         # migration: how many patients' charts moved as importable C-CDA).
         rollup["ccda_patients"] = result.ccda_export.counts["patients"]
 
-        # Where the per-patient detail comes from differs by mode: pack mode has
-        # a pipeline result to summarize, ccda-standard has none, so it is
-        # derived from the loaded records (one document per patient).
+        # Pack mode has a pipeline result to summarize; ccda-standard has
+        # none, so detail is derived from the loaded records instead.
         if result.render_mode == RENDER_CCDA_STANDARD:
             patients = self._ccda_standard_patients(result)
         else:
@@ -585,19 +518,14 @@ class MigrationConsole(_RunConsole):
         summary_id = self._store.store_summary(patients)
         route = _transit_to_dict(result.transit)
 
-        # The SAME shared verdict the CLI uses. A migration with no viable
-        # automated route still WROTE its artifacts (the C-CDA + charts), but the
-        # operator must import them by hand — so surface it as a manual-import
-        # (error) event, never a silent `done`, exactly as the CLI exits 1 with a
-        # loud notice. This keeps CLI/GUI parity: both frontends surface a
-        # no-viable-route migration as a manual-import event, never a silent done.
+        # No viable route still WRITES its artifacts, but needs manual import
+        # — surfaced as an error event (never silent `done`), matching the CLI's exit 1.
         reading = list(result.source_reading)
         status = classify_migration(result)
         if status.needs_manual_import:
             notice = manual_import_notice(status)
-            # The reading rides the manual-import verdict too — it matters MOST
-            # here, where a person is about to import the transfer document by
-            # hand and should know what it carries as data and what as text.
+            # Matters most here: a person about to hand-import the transfer
+            # document should know what it carries as data vs. text.
             self._emit(self._carry_reading(error_event(self._FLOW, "deliver", notice), reading))
             return {
                 "ok": False,
@@ -609,11 +537,8 @@ class MigrationConsole(_RunConsole):
                 "patients": patients,
                 "source_reading": reading,
             }
-        # A route resolved: the artifacts + the verified route plan ARE written,
-        # but `migrate` executes no delivery route, so the honest verdict is
-        # PREPARED, never delivered. Carry the outcome + the prepared notice on the
-        # `done` event (and the return dict) so the wizard renders it truthfully —
-        # "prepared, delivery not yet executed" — matching the CLI's exit-0 notice.
+        # `migrate` executes no delivery route, so a resolved route is
+        # honestly PREPARED, never delivered — carried on `done` matching the CLI's exit-0 notice.
         notice = prepared_notice(status)
         done = done_event(self._FLOW, summary_id=summary_id, **rollup)
         done["outcome"] = status.outcome.value
@@ -633,14 +558,8 @@ class MigrationConsole(_RunConsole):
     def _ccda_standard_patients(result: object) -> list[dict[str, object]]:
         """Per-patient roll-up for ccda-standard mode (no pipeline result).
 
-        The standard-view render has no Jinja pack and thus no
-        :class:`PipelineResult` to feed :func:`summarize_patients`, but the
-        migration retains the canonical records, so the same per-patient detail
-        is available here as in pack mode: display name, DOB, encounter count,
-        and one C-CDA-view document per patient (this mode renders exactly one
-        whole-patient PDF each). PHI: LOCAL display only — these values ride the
-        return value / :meth:`last_run_summary`, never an event or a log.
-        """
+        No :class:`PipelineResult` exists in this mode, so detail is
+        derived from the canonical records instead. Local display only, never an event."""
         from anastomosis.core.migrate import MigrationResult
 
         assert isinstance(result, MigrationResult)
@@ -660,13 +579,8 @@ class MigrationConsole(_RunConsole):
     def _pack_readiness(self, transit: TransitMap) -> dict[str, object] | None:
         """Resolve the browser pack for a transit map, if it has one.
 
-        A destination whose browser route is viable names a pack in the
-        BROWSER option's ``requires``; we load it defensively to report
-        ``ready`` (selectors discovered) vs ``needs-discovery``. Destinations
-        with no browser pack return ``None`` — the wizard simply omits the
-        readiness chip. Loud failures from the loader are swallowed into a
-        diagnosis (type name), never raised.
-        """
+        Loads the pack the BROWSER option's ``requires`` names, reporting
+        ``ready`` vs ``needs-discovery``; loader failures become a diagnosis, never raised."""
         from anastomosis.deliver.router import RouteKind
         from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
@@ -690,12 +604,8 @@ class MigrationConsole(_RunConsole):
             "name": loaded.name,
             "ready": loaded.ready,
             "builtin": loaded.builtin,
-            # What a person actually runs to make this ready. The wizard used to
-            # tell them to "set it up from the Teach screen" — a screen whose
-            # whole control surface is document layouts and export formats, with
-            # no destination setup on it at all. Carried here rather than typed
-            # into the JS so the command lives beside the code that knows it,
-            # next to the same advice `pack_freshness` already returns.
+            # What a person actually runs; carried here (not typed into the JS)
+            # so the command lives beside the code that knows it, like pack_freshness's advice.
             "advice": f"anast destination init {loaded.name}",
         }
 
@@ -703,9 +613,8 @@ class MigrationConsole(_RunConsole):
 def _failed_stage(message: str) -> str:
     """Best-effort: which rail stage a PipelineError belongs to (for the event).
 
-    Maps the loud failure messages the pipeline core raises onto a rail name so
-    the error banner can highlight the right card. Falls back to ``ingest`` (the
-    earliest stage) for source/pack-resolution failures.
+    Maps known failure-message prefixes to a rail name; falls back to
+    ``ingest`` for source/pack-resolution failures.
     """
     if message.startswith("QA failed"):
         return "qa"

@@ -1,15 +1,12 @@
 """The upload console: the browser-delivery operator surface.
 
-Owns the read-only tracking-ledger views (``upload_status``,
-``upload_item_keys``, ``upload_manifest_preview``, ``upload_safety_notice``)
-and the live drive (``upload_start`` / ``upload_stop``). Every method keeps the
-controller's contract verbatim: return a JSON-safe dict, never raise, emit only
-PHI-safe events (counts, state names, ids, exception TYPE names).
+Owns the read-only ledger views and the live drive
+(``upload_start``/``upload_stop``); every method returns a JSON-safe dict,
+never raises, emits only PHI-safe events.
 
-The live-drive worker attaches the browser behind the module-level
-``_attach_destination`` seam in :mod:`anastomosis.gui.controller`; the GUI tests
-monkeypatch that seam, so the console resolves it LATE (a lazy import inside the
-worker body) instead of binding it at module load.
+The live-drive worker resolves ``_attach_destination``
+(:mod:`anastomosis.gui.controller`) LATE via a lazy import, so tests can
+monkeypatch the module-level seam.
 """
 
 from __future__ import annotations
@@ -53,15 +50,8 @@ def _upload_preflight(
 ) -> _UploadInputs | dict[str, object]:
     """The upload drive's never-raise pre-flight: validate, then normalize inputs.
 
-    Runs the SAME cheap, pre-attach gates ``anast upload`` runs, in order: the
-    loopback CDP gate, the manifest validation (``<dir>`` then ``<dir>/charts``,
-    the migrate layout), the destination-pack load + readiness gate, and the
-    operator-skiplist normalization. Returns the validated :class:`_UploadInputs`
-    on a clean pre-flight, or the enumerated failure dict (``BadCdpEndpoint`` /
-    ``BadManifest`` / ``PackNotReady`` / an :func:`exc_tag` pack-load type name),
-    which emits no event and spawns no worker. A surprise (a non-string
-    ``out_dir`` / ``pack_dirs``) is left to RAISE so the caller routes it through
-    the no-traceback ``_fail`` path — matching the original inline behaviour.
+    Runs ``anast upload``'s SAME pre-attach gates: loopback CDP, manifest,
+    pack readiness, skiplist. A surprise input is left to RAISE.
     """
     # The deliver-browser imports are lazy so this module loads without the
     # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
@@ -77,12 +67,8 @@ def _upload_preflight(
     except ValueError:
         return {"ok": False, "error": "BadCdpEndpoint"}
 
-    # 2. Validate the manifest (cheap, pre-attach), trying <dir> then
-    #    <dir>/charts (the migrate layout) — the SAME resolution the CLI
-    #    uses, so a migrate output dir works in either frontend. Loud on
-    #    missing/malformed. The AUTHORITATIVE read happens inside
-    #    run_upload_command under the output lock (lock-then-read), so this
-    #    early copy is validation only.
+    # 2. Validate the manifest (<dir> then <dir>/charts, matching the CLI);
+    #    loud on missing/malformed. The AUTHORITATIVE read is later, under the output lock.
     out = typed_path(out_dir)
     try:
         read_upload_manifest(resolve_manifest_root(out))
@@ -97,9 +83,8 @@ def _upload_preflight(
     if not loaded.ready:
         return {"ok": False, "error": "PackNotReady"}
 
-    # 4. Normalize the operator skiplist (GUI parity for the CLI's
-    #    --skiplist): one item_key/encounter_id per entry; blanks and
-    #    "#" comments ignored, matching deliver.browser.manifest.load_skiplist.
+    # 4. Normalize the skiplist (GUI parity for --skiplist): one key per
+    #    entry, blanks/"#" comments ignored, matching deliver.browser.manifest.load_skiplist.
     skiplist_set = frozenset(
         entry.strip()
         for entry in (skiplist or [])
@@ -118,26 +103,15 @@ class UploadConsole:
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
         self._emit = emit
         self._jobs = jobs
-        # The cooperative stop flag for the in-flight upload run, if any. Set by
-        # upload_stop() and checked by the engine at item boundaries; None when
-        # no upload is in flight. (The busy guard ensures at most one run at a
-        # time, so a single flag is sufficient.)
+        # Cooperative stop flag for the in-flight run; set by upload_stop(),
+        # checked at item boundaries. None when idle (the busy guard caps this at one run).
         self._upload_stop: threading.Event | None = None
 
     def upload_status(self, db_path: str) -> dict[str, object]:
         """The upload console's read-only view of a tracking ledger.
 
-        Opens the WAL SQLite ledger at ``db_path`` read-only (this method never
-        writes; live driving is :meth:`upload_start`/:meth:`upload_stop`) and
-        returns the
-        state-machine counters grouped into pending/active/terminal, the latest
-        run's info, and the attempts + error-TYPE histograms (from the same
-        :mod:`reports` accessors the run report uses). Every value is a count, a
-        state name, a destination/run id, an ISO timestamp, or an exception TYPE
-        name — never an item key, a path, or any patient-derived value.
-
-        A missing/garbage ledger file is a clean ``{"ok": False, ...}`` (the DB
-        is opened defensively); never a traceback.
+        Opens the WAL SQLite ledger read-only; returns state counters, the
+        latest run's info, and attempts/error-TYPE histograms. A missing ledger fails clean.
         """
         from anastomosis.gui.shared import _group_states
 
@@ -174,14 +148,8 @@ class UploadConsole:
     def upload_item_keys(self, db_path: str, limit: int = 200) -> dict[str, object]:
         """Pending item KEYS for the Uploads search, and how many there are.
 
-        Returns the opaque ``item_key`` values (``encounter_id:sha256[:12]``) of
-        items still owing work. These are ids by construction — never a patient
-        name, never a file path. This is a read-only visibility accessor; a run
-        is driven by :meth:`upload_start`/:meth:`upload_stop`.
-
-        ``limit`` caps the list so a huge ledger cannot flood the view, and
-        ``total`` is what the ledger actually holds, so the view can say it is
-        showing a slice instead of quietly presenting one as the whole.
+        Opaque ``item_key`` values (``encounter_id:sha256[:12]``) — ids by
+        construction. ``limit`` caps the list; ``total`` is the ledger's real count.
         """
         tracking = None
         try:
@@ -208,12 +176,8 @@ class UploadConsole:
     def upload_manifest_preview(self, out_dir: str) -> dict[str, object]:
         """Count the renderable PDFs an upload run would carry, from ``out_dir``.
 
-        A thin, read-only preview over the reconstruction output directory: the
-        number of ``*.pdf`` files (the unit of upload work) and their total
-        bytes. No manifest is built and no hashing happens — that needs the
-        per-encounter ids the upload engine carries, not on-disk files — so this
-        is a count-and-size sketch only, by design. Counts and a byte total
-        only; never a filename. A missing directory is a clean error.
+        A read-only ``*.pdf`` count + byte total — no manifest, no hashing
+        (that needs ids the engine carries). Counts and bytes only.
         """
         try:
             from anastomosis.core.output import typed_path
@@ -230,11 +194,8 @@ class UploadConsole:
     def upload_safety_notice(self) -> dict[str, object]:
         """The shared-machine warning the console must surface before any attach.
 
-        The SINGLE source of truth for the warning text the JS displays in
-        ``#safety-warning`` — the exact :data:`SHARED_MACHINE_WARNING` the CLI
-        prints. The console fetches this on load and renders it via
-        ``textContent``; there is no second copy of the wording in the assets.
-        PHI-free by construction (a fixed security advisory). Never raises.
+        The single source of truth for the JS's ``#safety-warning`` text —
+        :data:`SHARED_MACHINE_WARNING`, the same the CLI prints.
         """
         from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING
 
@@ -252,55 +213,11 @@ class UploadConsole:
     ) -> dict[str, object]:
         """Drive the resumable browser upload engine over a CDP attach (async).
 
-        The GUI equivalent of ``anast upload``: it mirrors that command's proven
-        flow EXACTLY by driving the SAME shared core
-        (:func:`anastomosis.core.upload_command.run_upload_command`) — validate
-        the loopback CDP gate, validate the manifest, gate on pack readiness,
-        then (only on a clean pre-flight) acquire the busy guard, spawn a daemon
-        worker, and lock -> read-manifest -> attach -> recover -> run -> finish ->
-        report. Returns immediately with ``{"ok": True, "started": True}``; the
-        result arrives as ``upload`` stage/error events and the live counts come
-        from the JS polling :meth:`upload_status` against the ledger.
-
-        ``skiplist`` is an optional list of ``item_key``/``encounter_id`` lines to
-        exclude (the GUI parity for the CLI's ``--skiplist``); blanks and ``#``
-        comments are ignored. ``max_attempts`` is the per-item retry budget,
-        defaulting to the SHARED :data:`~anastomosis.core.upload_command.DEFAULT_MAX_ATTEMPTS`
-        both frontends now use (they previously diverged). ``verify`` (default
-        ``True``, the GUI parity for the CLI's ``--verify``/``--no-verify``) runs
-        the L0-L6 verification ladder around each upload; set it ``False`` to
-        skip the ladder. The engine's wrong-patient banner abort runs regardless.
-
-        Safety model (never weakened — the engine enforces it; this only drives):
-
-        * **Loopback only.** The CDP endpoint is validated through
-          :class:`CdpEndpoint`; any non-loopback host is a hard
-          ``{"ok": False, "error": "BadCdpEndpoint"}`` BEFORE the busy guard is
-          taken or any worker spawns — the operator's authenticated EHR session
-          is never exposed to the network.
-        * **Never closes the browser.** The operator launched and logged into the
-          browser by hand; the worker attaches over CDP and, on finish, closes
-          ONLY our own ledger handle. ``ManagedDestination.close`` is never
-          called — see the comment in the worker's ``finally``.
-        * **Cooperative stop.** :meth:`upload_stop` sets a flag the engine checks
-          at item boundaries; an in-flight upload is never abandoned mid-item.
-        * **Resume.** A re-start naturally resumes a prior run — ``recover``
-          rewinds any mid-flight items, and already-terminal items are not
-          re-driven (the ledger's resumability guarantee).
-        * **PHI-safe.** Events carry stage/state/abort-TYPE names only; the
-          manifest, ledger, and run state all live inside the 0700 ``out_dir``.
-
-        Pre-flight failures return a clean enumerated error and DO NOT acquire
-        the busy guard or spawn a worker: ``BadCdpEndpoint`` (non-loopback),
-        ``BadManifest`` (missing/malformed manifest), ``PackNotReady`` (selectors
-        undiscovered — run ``anast destination init``), an :func:`exc_tag` type
-        name for a pack load error, or ``Busy`` (a run already in flight).
+        The GUI twin of ``anast upload`` (:func:`run_upload_command`);
+        pre-flight (loopback gate, 52) can refuse first. Never closes the operator's browser.
         """
-        # Pre-flight, wrapped so it NEVER raises (the controller contract): a
-        # non-string out_dir/pack_dirs or any other surprise becomes the
-        # no-traceback error dict, like every sibling method. The enumerated
-        # codes return their dict directly (no event); only a surprise takes the
-        # _fail path here.
+        # Wrapped so this NEVER raises: any surprise becomes the no-traceback
+        # error dict; enumerated codes return their dict directly (no event, no _fail).
         try:
             preflight = _upload_preflight(out_dir, cdp_url, pack_name, pack_dirs, skiplist)
         except Exception as exc:  # never-raise: a malformed argument, etc.
@@ -308,10 +225,8 @@ class UploadConsole:
         if isinstance(preflight, dict):
             return preflight  # an enumerated pre-flight failure — no busy guard taken
 
-        # The cooperative cancel flag upload_stop() sets; published to self in
-        # on_start (after the busy guard is held) so the stop request reaches
-        # the engine's item-boundary check, and cleared in cleanup on every
-        # exit path (worker finish OR spawn failure).
+        # Published to self in on_start (after the guard is held) so upload_stop()
+        # reaches the engine's item-boundary check; cleared in cleanup on every exit.
         stop = threading.Event()
 
         def _on_start() -> None:
@@ -321,10 +236,8 @@ class UploadConsole:
         def _cleanup() -> None:
             self._upload_stop = None
 
-        # 5. Only now hand off to the job runner (a clean pre-flight never
-        # blocks the busy guard). The runner owns acquire-or-Busy, the start
-        # event via on_start, the worker's cleanup+release finally, and the
-        # spawn-failure path (cleanup + release + upload error event).
+        # 5. Hand off to the job runner only now (a clean pre-flight never
+        #    blocks the busy guard); it owns acquire-or-Busy, the start event, and cleanup+release.
         return self._jobs.submit(
             GuiJob(
                 name="upload",
@@ -348,30 +261,16 @@ class UploadConsole:
     ) -> Callable[[], None]:
         """Build the daemon worker that drives the shared upload core to a terminal event.
 
-        The closure the job runner spawns once the busy guard is held; it drives
-        the SAME shared core (:func:`run_upload_command`) the CLI's ``anast
-        upload`` drives, emitting the terminal ``done``/``error`` upload event
-        from the returned outcome. Split out of :meth:`upload_start` so the
-        entry reads preflight -> closures -> job submit; behaviour is unchanged.
+        The closure the job runner spawns once the busy guard is held;
+        drives :func:`run_upload_command`, emitting the terminal event.
         """
         out = inputs.out
         loaded = inputs.loaded
         skiplist_set = inputs.skiplist
 
         def _worker() -> None:
-            # Drive the SAME shared core the CLI's `anast upload` drives, so the
-            # two frontends cannot diverge: it harden-locks the output dir, reads
-            # the manifest UNDER the lock (lock-then-read — closes the TOCTOU the
-            # pre-flight copy would otherwise leave), attaches the browser behind
-            # the monkeypatchable seam, and drives recover -> run -> finish ->
-            # report. It closes ONLY our own ledger handle — never the operator's
-            # browser. The terminal `done`/`error` event is emitted here from the
-            # returned outcome.
-            #
-            # The `_attach_destination` seam stays module-level in
-            # anastomosis.gui.controller (the GUI tests monkeypatch it there); it
-            # is resolved LATE, at call time, through this lazy import so the
-            # monkeypatch is honored.
+            # Locks, reads the manifest UNDER the lock (closing the pre-flight
+            # copy's TOCTOU), attaches, recovers, runs, reports — never the operator's browser.
             from anastomosis.core.locking import OutputLockedError
             from anastomosis.core.upload_command import UploadCommand, run_upload_command
             from anastomosis.deliver.browser.gates import DeliveryRefused
@@ -393,21 +292,14 @@ class UploadConsole:
                     # error event carrying the abort TYPE name — never a value.
                     self._emit(error_event(self._FLOW, "upload", result.aborted_reason))
                 elif not result.is_clean:
-                    # No abort, but items landed in non-clean TERMINAL states
-                    # (failed / pre_verify_failed / ...). Emitting `done` here was
-                    # the bug — "upload complete" for a run that actually failed.
-                    # Surface an error carrying a PHI-safe state-name summary
-                    # (state names + counts only) so the operator sees the truth.
+                    # Non-clean TERMINAL states (failed / pre_verify_failed / ...) must
+                    # surface as an error, not `done` — names+counts only, PHI-safe.
                     self._emit(error_event(self._FLOW, "upload", result.nonclean_summary()))
                 else:
                     self._emit(stage_event(self._FLOW, "upload", "done"))
             except DeliveryRefused as exc:
-                # The bundle read fine and describes something nobody should
-                # file: gates that did not pass, a route with no viable way in,
-                # or charts that no longer match what was reviewed. The message
-                # is PHI-free by that module's contract and names the remedy, so
-                # it is surfaced whole — the CLI prints the same sentence, and
-                # an operator switching frontends must not get less of it.
+                # PHI-free by that module's contract, names the remedy; surfaced
+                # whole so an operator switching frontends sees the same sentence the CLI prints.
                 self._emit(error_event(self._FLOW, "upload", str(exc)))
             except OutputLockedError:
                 # A CLI or GUI run already holds this output dir — refuse cleanly.
@@ -420,13 +312,8 @@ class UploadConsole:
     def upload_stop(self) -> dict[str, object]:
         """Request the in-flight upload stop after the current document.
 
-        Cooperative cancel: sets the flag the engine checks at item boundaries,
-        so the current document finishes cleanly and later items stay PENDING (a
-        later :meth:`upload_start` resumes them). A mid-item cancel is NOT safe
-        and is deliberately not offered — the engine never abandons an in-flight
-        upload. Returns ``{"ok": True, "stopping": True}`` when a run was asked
-        to stop, or ``{"ok": False, "error": "NoRun"}`` when none is in flight.
-        Never raises.
+        Cooperative: sets the flag the engine checks at item boundaries, so
+        later items stay PENDING for a later :meth:`upload_start` to resume.
         """
         stop = self._upload_stop
         if stop is not None:
@@ -438,10 +325,8 @@ class UploadConsole:
     def _latest_run(tracking: TrackingDB) -> dict[str, object] | None:
         """The most-recent run row (by started_at), as a JSON-safe dict, or None.
 
-        Reuses :meth:`TrackingDB.latest_run_id` + :meth:`TrackingDB.run_info`
-        (the upload console shows one current run). All values are log-safe: a
-        run id, a destination name, ISO timestamps, and an abort TYPE name —
-        never a patient value.
+        Run id, destination name, ISO timestamps, and an abort TYPE name only
+        — never a patient value.
         """
         run_id = tracking.latest_run_id()
         if run_id is None:

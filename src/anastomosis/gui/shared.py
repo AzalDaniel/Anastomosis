@@ -1,17 +1,9 @@
 """Leaf constants and serializers shared across the GUI consoles.
 
-The pieces here have no behavior of their own — they are the small, pure
-building blocks (the stage-rail names, the upload state groupings, the
-transit-map serializer, the no-traceback error-dict builder) that several GUI
-consoles and the controller need in common. Kept in a dependency-free leaf
-module (it imports nothing from :mod:`anastomosis.gui.controller` or the
-consoles) so both the controller facade and every console can import it
-without a cycle.
-
-The underscore-prefixed public names are preserved as-is to minimize churn:
-``tests/unit/test_frontend_constants.py`` imports ``_STAGE_MAP``,
-``_STAGE_RAIL`` and ``_STATE_GROUPS`` directly, and the controller still uses
-``_transit_to_dict``/``_STAGE_RAIL``/``_STATE_GROUPS`` directly.
+Pure building blocks with no behavior of their own; imports nothing from
+:mod:`anastomosis.gui.controller` or the consoles, so both can import it
+without a cycle. The underscore-prefixed names stay public:
+``tests/unit/test_frontend_constants.py`` imports them directly.
 """
 
 from __future__ import annotations
@@ -42,10 +34,8 @@ _STAGE_MAP = {
     "qa": "qa",
 }
 
-# The dashboard's stage rail, in display order — the Python-canonical list the
-# JS consumes via gui_config() (app.js keeps a same-valued fallback for the
-# api-less browser preview; the drift test pins the two together). Every
-# _STAGE_MAP value must be a member; "deliver" is driven by delivery events.
+# JS mirrors this via gui_config() (drift-tested against app.js's fallback);
+# every _STAGE_MAP value must appear here; "deliver" comes from delivery events.
 _STAGE_RAIL: tuple[str, ...] = ("ingest", "reconstruct", "qa", "deliver")
 
 
@@ -68,10 +58,8 @@ def _transit_to_dict(transit: TransitMap) -> dict[str, object]:
     }
 
 
-# State groupings for the upload console's glass cards (the 15 states bucketed
-# pending/active/terminal). PENDING is its own "pending" bucket; mid-flight work
-# is "active"; everything else is "terminal" (no work owed). Pure presentation
-# data — counts only flow through it.
+# The 15 upload states bucketed for the console's glass cards; "terminal"
+# means no work owed. Presentation only — counts flow through, no values.
 _STATE_GROUPS: dict[str, tuple[str, ...]] = {
     "pending": ("pending",),
     "active": (
@@ -108,10 +96,8 @@ def fail_result(
 ) -> dict[str, object]:
     """Convert a caught exception to the no-traceback error contract.
 
-    Emits an :func:`~anastomosis.gui.events.error_event` carrying only the
-    exception's TYPE name (never its message — PHI may ride an exception's
-    args) and returns the matching ``{"ok": False, "error": <type>}`` dict.
-    Every controller/console ``_fail`` method delegates here.
+    Emits :func:`~anastomosis.gui.events.error_event` with the exception's
+    TYPE name only; every controller/console ``_fail`` method delegates here.
     """
     tag = exc_tag(exc)
     emit(error_event(flow, stage, tag))
