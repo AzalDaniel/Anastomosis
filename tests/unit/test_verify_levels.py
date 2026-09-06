@@ -111,16 +111,11 @@ def test_date_spellings_built_without_glibc_codes() -> None:
     assert "January 2, 1990" in renders
 
 
-def test_qa_and_verify_date_spellings_are_unified() -> None:
-    """The L2/L3 verifier now enumerates date spellings by calling
-    ``core.timeutil`` itself; QA's check reaches the same function. The set is
-    pinned element by element, including the unpadded-dash ``1-5-1990`` form
-    whose absence from the QA half once blocked a correct chart."""
-    from anastomosis.qa.checks import _date_spellings
-
-    for d in (date(1990, 1, 5), date(1990, 1, 2), date(2023, 12, 31), date(2024, 7, 4)):
-        assert _date_spellings(d) == all_date_spellings(d)
-
+def test_the_one_enumerator_pins_every_spelling_the_ladder_accepts() -> None:
+    """The L2/L3 verifier and QA's DataIntegrityCheck both call this one
+    function, so the set they accept can only drift by an element dropping out
+    of it — including the unpadded-dash ``1-5-1990`` form whose absence from the
+    QA half once blocked a correct chart."""
     assert all_date_spellings(date(1990, 1, 5)) == {
         "01/05/1990",
         "1/5/1990",
