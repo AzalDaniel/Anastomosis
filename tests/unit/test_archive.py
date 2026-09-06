@@ -32,13 +32,10 @@ def records() -> list[PatientRecord]:
 
 
 def _engine_prefix(patient: Patient) -> str:
-    """The engine's ``{family}_{given}_`` filename prefix.
-
-    Used only by the test's :func:`_fake_pdfs` helper to mimic the engine's
-    naming pattern; production attribution is by the render-index sidecar
-    the engine writes, not by this prefix (which would cross-leak between
-    same-named patients).
-    """
+    """The engine's ``{family}_{given}_`` filename prefix, for
+    :func:`_fake_pdfs` only — production attribution is by the render-index
+    sidecar, never this prefix (rule 11), which cross-leaks between
+    same-named patients."""
     family = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.family_name or "").strip()).strip("_")
     given = re.sub(r"[^A-Za-z0-9_-]+", "_", (patient.given_name or "").strip()).strip("_")
     if not (family and given):
@@ -271,13 +268,10 @@ def test_archive_handles_missing_pdfs_dir(tmp_path: Path, records: list[PatientR
 
 
 def test_archive_long_ids_stay_writable_and_linked(tmp_path: Path) -> None:
-    """A source id far longer than the filesystem allows must still produce a
-    browsable archive: the patient directory and every encounter page are
-    written, and the link on the patient page resolves to the file that was
-    actually created. Unbudgeted, this raised ``OSError``/``FileNotFoundError``
-    mid-delivery; a link that pointed at nothing would be just as bad — a chart
-    the operator cannot reach.
-    """
+    """A source id far longer than the filesystem allows must still produce
+    a browsable archive: the patient directory and every encounter page are
+    written, and the link on the patient page resolves to the file actually
+    created — never one pointing at nothing."""
     from datetime import date
 
     from anastomosis.core.model import Encounter, Patient, PatientRecord
@@ -406,12 +400,9 @@ def test_archive_missing_render_index_routes_to_unattributed(tmp_path: Path) -> 
 def test_archive_unattributed_count_logs_only_successful_copies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Regression: the unattributed-PDF sweep used to report ``len(orphans)``
-    — the number of copies ATTEMPTED — while the two other chart-copy sites
-    (attributed patient PDFs, the bundle deliverer) counted only successes.
-    A copy that fails mid-sweep (disk full, permissions) must not inflate
-    the "(N unattributed)" count past what actually landed on disk.
-    """
+    """The "(N unattributed)" count must match copies that actually landed
+    on disk, like the other two chart-copy sites — not ``len(orphans)``,
+    the number attempted, which a mid-sweep failure would inflate."""
     import logging
 
     import anastomosis.deliver._shared as shared
@@ -573,16 +564,10 @@ def test_archive_delivered_log_never_carries_output_path(
 
 
 def test_archive_budgets_the_copied_chart_and_keeps_the_link_true(tmp_path: Path) -> None:
-    """A renderer-length chart name must still be DELIVERED, and the encounter
-    page must link to the file that actually landed.
-
-    The renderer names charts ``{family}_{given}_{dos}_{type}.pdf`` with every
-    component capped at ``MAX_NAME_CHARS`` — up to ~617 characters. Copied into
-    the archive unbudgeted, that raised an OSError the deliverer logged as "pdf
-    copy failed" and continued past: a chart silently missing from the delivered
-    tree. Budgeting the destination fixes it only if the page LINK is budgeted
-    from the same call — otherwise the archive shows a link to nothing.
-    """
+    """A renderer-length chart name (``{family}_{given}_{dos}_{type}.pdf``,
+    up to ~617 chars) must still be DELIVERED, and the encounter page's
+    link must resolve to the same budgeted destination name — budgeting one
+    without the other leaves either a missing chart or a link to nothing."""
     from datetime import date
 
     from anastomosis.core.model import Encounter, Patient, PatientRecord
@@ -621,13 +606,9 @@ def test_archive_budgets_the_copied_chart_and_keeps_the_link_true(tmp_path: Path
 
 
 def test_archive_refuses_a_chart_it_cannot_name(tmp_path: Path) -> None:
-    """An output tree too deep to hold ANY distinct chart name fails loudly.
-
-    This is the ``unattributed/`` route (no render index, so nothing is
-    guessed onto a patient) with an operator-chosen directory deep enough that
-    not even a hash tag fits underneath it. Warn-and-continue here would hand
-    over a tree missing a chart; the budget raises instead.
-    """
+    """An output tree too deep to hold ANY distinct chart name (not even a
+    hash tag fits under ``unattributed/``) must raise, not warn-and-continue
+    into a tree silently missing a chart."""
     from anastomosis.core.textutil import MAX_PATH_CHARS
 
     # Deep enough that ``<out>/unattributed/<name>.pdf`` has no room left.
@@ -643,13 +624,10 @@ def test_archive_refuses_a_chart_it_cannot_name(tmp_path: Path) -> None:
 
 
 def test_archive_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> None:
-    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``.
-
-    Every writer under ``patients/<id>/`` is exist_ok/overwrite, so a silent
-    collision would file the second patient's bundle, pages, and charts into
-    the first patient's directory — a merged chart, the worst outcome the
-    toolkit has. The run must stop instead.
-    """
+    """``MRN 1234`` and ``MRN/1234`` both sanitize to ``MRN_1234``. Every
+    writer under ``patients/<id>/`` is exist_ok/overwrite, so a silent
+    collision would file the second patient's bundle, pages and charts into
+    the first patient's directory — a merged chart. The run must stop."""
     from anastomosis.core.model import Patient, PatientRecord
     from anastomosis.deliver._shared import DeliveredNameCollision
 
@@ -663,12 +641,10 @@ def test_archive_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> 
 
 
 def test_archive_two_patient_ids_past_truncation_get_distinct_dirs(tmp_path: Path) -> None:
-    """Two patient ids sharing every character up to the truncation cut,
-    differing only in the tail that gets cut away, must not collapse onto one
-    ``patients/<id>/`` slot. ``budgeted_name`` hashes the FULL original value
-    (not the kept prefix), so the two land on distinct hash-tagged names —
-    the ``_shared`` discipline's expected path, confirmed rather than assumed.
-    """
+    """Two patient ids sharing every character up to the truncation cut must
+    not collapse onto one ``patients/<id>/`` slot: ``budgeted_name`` hashes
+    the FULL original value, not the kept prefix, so the two land on
+    distinct hash-tagged names."""
     from anastomosis.core.model import Patient, PatientRecord
 
     base = "feedface-0000-0000-0000-0000000000aa" + "z" * 300
@@ -688,14 +664,11 @@ def test_archive_two_patient_ids_past_truncation_get_distinct_dirs(tmp_path: Pat
 def test_archive_two_encounter_ids_that_sanitize_alike_raise_without_patient_values(
     tmp_path: Path,
 ) -> None:
-    """Two encounters within ONE patient whose ids differ only in characters
-    ``safe_name`` strips (``enc 0001`` and ``enc/0001`` both become
-    ``enc_0001``) must not silently overwrite one encounter's page with the
-    other's — the same discipline the patient-directory ledger already
-    enforces, now applied to encounter pages (``encounters/`` writes are
-    ``exist_ok``, so without a claim this merges the two into one file). The
-    refusal must carry no patient- or encounter-derived value.
-    """
+    """Two encounters within ONE patient whose ids sanitize alike (``enc
+    0001``, ``enc/0001`` -> ``enc_0001``) must not silently overwrite one
+    encounter page with the other's (``exist_ok`` writes merge them without
+    a claim). The refusal must carry no patient- or encounter-derived
+    value (rule 2)."""
     from datetime import date
 
     from anastomosis.core.model import Encounter, Patient, PatientRecord
@@ -723,15 +696,10 @@ def test_archive_two_encounter_ids_that_sanitize_alike_raise_without_patient_val
 
 
 def test_archive_budgeted_chart_is_not_also_routed_to_unattributed(tmp_path: Path) -> None:
-    """A chart delivered under a BUDGETED name is still 'owned'.
-
-    Ownership is tracked by the SOURCE filename, because the unattributed
-    sweep looks at ``pdfs_dir`` where the renderer's own long name still
-    stands. Matching against the shortened DELIVERED name instead would leave
-    the source unclaimed and copy the chart a second time into
-    ``unattributed/`` — the same chart in two places, one of them labelled
-    "we could not attribute this".
-    """
+    """A chart delivered under a BUDGETED name is still 'owned': ownership
+    is tracked by the SOURCE filename in ``pdfs_dir``, not the shortened
+    delivered one, or the unattributed sweep would copy it a second time
+    into ``unattributed/`` as unclaimed."""
     from datetime import date
 
     from anastomosis.core.model import Encounter, Patient, PatientRecord
@@ -778,13 +746,9 @@ def _charts_with_attachments(tmp_path: Path, records: list[PatientRecord]) -> Pa
 def test_a_patients_documents_land_in_their_own_directory(
     tmp_path: Path, records: list[PatientRecord]
 ) -> None:
-    """The scans and lab reports a chart references, delivered beside it.
-
-    Attribution needs no index: a chart's filename carries no patient id, so
-    ownership had to be looked up, but a document is named BY the record that
-    owns it. What this pins is that nothing lands in a directory whose record
-    did not ask for it.
-    """
+    """The scans and lab reports a chart references, delivered beside it: a
+    document is named BY the record that owns it, so nothing lands in a
+    patient directory whose record did not ask for it."""
     charts = _charts_with_attachments(tmp_path, records)
     expected = {Path(d.path).name for r in records for d in r.documents if d.path}
     assert expected, "the fixture no longer exercises this path"
@@ -875,14 +839,10 @@ def test_the_patient_page_links_each_document_by_name_and_length(
 def test_a_document_missing_from_the_charts_dir_is_named_not_counted(
     tmp_path: Path, records: list[PatientRecord], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Conservation belongs to the run; the deliverer must not overstate.
-
-    `pipeline._carry_attachments` knows the export and stops a run whose
-    attachments did not all arrive. This deliverer only sees a charts
-    directory, so a record naming a document that is not in it means the
-    directory was assembled without the carry step or edited after — it says
-    so, by surrogate id, and does not count what it did not deliver.
-    """
+    """This deliverer only sees a charts directory, not the export
+    (`pipeline._carry_attachments` owns that conservation check), so a
+    record naming a document missing from it must be named by surrogate id
+    and not counted as delivered."""
     charts = tmp_path / "charts"
     charts.mkdir()  # no attachments/ at all
 
