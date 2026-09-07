@@ -35,6 +35,7 @@ __all__ = [
     "RenderResult",
     "RenderedDoc",
     "Renderer",
+    "build_render_engine",
 ]
 
 logger = logging.getLogger(__name__)
@@ -351,3 +352,26 @@ class ReconstructionEngine:
                 self._retire_renderer()
                 self._acquire_renderer().render(html, tmp)
         self._after_render()
+
+
+def build_render_engine(
+    pack: LoadedPack, *, section_overrides: dict[str, bool] | None = None
+) -> ReconstructionEngine:
+    """Contract: the Chromium-backed engine both the pipeline run and the
+    pack preview build — page size and all four margins read off this pack's
+    own manifest, so neither caller restates them."""
+    # Bound per call, not at import: the renderer is a monkeypatch seam.
+    from .chromium import ChromiumRenderer
+
+    page = pack.manifest.page
+    margins = {
+        "top": page.margin_top,
+        "right": page.margin_right,
+        "bottom": page.margin_bottom,
+        "left": page.margin_left,
+    }
+    return ReconstructionEngine(
+        pack,
+        lambda: ChromiumRenderer(page_size=page.size, margins=margins),
+        section_overrides=section_overrides,
+    )

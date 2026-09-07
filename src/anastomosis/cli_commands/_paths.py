@@ -11,28 +11,20 @@ import typer
 
 from anastomosis.core.output import clean_typed_path
 
-__all__ = ["in_file", "out_dir", "out_file"]
-
-
-def _typed_path(raw: str, what: str) -> Path:
-    cleaned = clean_typed_path(raw)
-    if not cleaned:
-        # BadParameter, not ValueError: Typer's parser wrapper reports a bare
-        # ValueError as just the value, which is empty here.
-        # This parser backs both a required and an optional path option, so it
-        # cannot suggest "leave it off" without sometimes being wrong.
-        raise typer.BadParameter(
-            f"no {what} was given. Name the {what} this command should write to."
-        )
-    return Path(cleaned)
+__all__ = ["in_file", "out_dir"]
 
 
 def out_dir(raw: str) -> Path:
-    return _typed_path(raw, "output folder")
-
-
-def out_file(raw: str) -> Path:
-    return _typed_path(raw, "output file")
+    cleaned = clean_typed_path(raw)
+    if not cleaned:
+        # BadParameter, not ValueError: Typer's parser wrapper reports a bare
+        # ValueError as just the value, which is empty here. This option is
+        # required on one command and optional on another, so it cannot
+        # suggest "leave it off" without sometimes being wrong.
+        raise typer.BadParameter(
+            "no output folder was given. Name the output folder this command should write to."
+        )
+    return Path(cleaned)
 
 
 def in_file(raw: str) -> Path:
