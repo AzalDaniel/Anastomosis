@@ -86,16 +86,15 @@ class TransitMap:
 
 def _capability_option(
     kind: RouteKind,
-    field: str,
     entry: str,
     viable_values: tuple[str, ...],
     verified_label: str,
     requires: tuple[str, ...],
 ) -> RouteOption:
     """Shared viability check for the vendor-API and C-CDA routes; they
-    differ only in field name, viable values, and what taking the route
-    ``requires``. ``"unverified"`` (RULES.md 69) gets its own why, pointing
-    at re-verification, distinct from an ordinary unviable value."""
+    differ only in the value read, which values count as viable, and what
+    taking the route ``requires``. ``"unverified"`` (RULES.md 69) gets its
+    own why, pointing at re-verification, not an ordinary unviable value."""
     if entry in viable_values:
         return RouteOption(
             kind=kind,
@@ -115,7 +114,6 @@ def _capability_option(
 def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteOption:
     return _capability_option(
         RouteKind.VENDOR_API,
-        "doc_write_api",
         entry_doc_write_kind,
         (DocWriteKind.FHIR_DOCUMENTREFERENCE.value, DocWriteKind.VENDOR_REST.value),
         verified_label,
@@ -126,7 +124,6 @@ def _vendor_api_option(entry_doc_write_kind: str, verified_label: str) -> RouteO
 def _ccda_option(entry_ccda_kind: str, verified_label: str) -> RouteOption:
     return _capability_option(
         RouteKind.CCDA_IMPORT,
-        "ccda_import",
         entry_ccda_kind,
         (CcdaImportKind.API.value, CcdaImportKind.IN_PRODUCT.value),
         verified_label,
