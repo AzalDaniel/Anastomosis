@@ -829,18 +829,12 @@ def test_the_whole_patient_report_grades_a_vital_against_its_own_page(tmp_path: 
 
 
 def test_the_whole_patient_report_names_every_check_the_neutral_path_does() -> None:
-    """A check must never fall out of a whole-patient report unnoticed:
-    every registered check must land in either the document-generic table
-    or the encounter-scoped-skip table, never both — the tables are shared,
-    guarding both the ccda-standard migration's per-patient view and
-    pack-mode's record summaries."""
-    from anastomosis.qa.wholepatient import DOC_GENERIC_CHECKS, ENCOUNTER_SCOPED_SKIPS
+    """A check must never fall out of a whole-patient report unnoticed: the
+    scope table places every engine check, and it is shared by the
+    ccda-standard migration's per-patient view and pack-mode's summaries."""
+    from anastomosis.qa.wholepatient import WHOLE_PATIENT_SCOPE
 
-    placed = set(DOC_GENERIC_CHECKS) | set(ENCOUNTER_SCOPED_SKIPS)
-    registered = {check.name for check in ENGINE_CHECKS}
-    assert registered - placed == set(), "a registered check named in neither table"
-    assert placed - registered == set(), "a table names a check that is not registered"
-    assert set(DOC_GENERIC_CHECKS).isdisjoint(ENCOUNTER_SCOPED_SKIPS), "run it or skip it, not both"
+    assert set(WHOLE_PATIENT_SCOPE) == {check.name for check in ENGINE_CHECKS}
 
 
 # --- record coverage: did the chart carry the record? ------------------------
