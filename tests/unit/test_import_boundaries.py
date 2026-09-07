@@ -1,19 +1,21 @@
 """Enforce package import boundaries that the architecture relies on.
 
-Quick property checks against ``sys.modules``: import a frontend package
-in isolation (subprocess, so the test runner's already-loaded modules
-don't bias the result) and assert no forbidden module ended up loaded.
+The GUI must not depend on the CLI: peer frontends over a shared core,
+checked by importing a package in a clean subprocess (so the runner's
+loaded modules cannot bias it) and reading ``sys.modules``. The shared
+browser-attach code both import lives in ``deliver.browser.attach``.
 
-Today's only boundary: the GUI must not depend on the CLI (peer frontends
-over a shared core). The shared browser-attach code both import directly
-lives in ``anastomosis.deliver.browser.attach``.
+``core/`` must import nothing outward (rule 76), read off the syntax tree
+because the edges it guards are lazy ones inside functions.
 """
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 
 def _modules_after_import(target: str) -> set[str]:
@@ -197,4 +199,69 @@ def test_browser_reports_does_not_directly_import_verify_composite() -> None:
     assert "from anastomosis.deliver.verify.types import LevelCoverage" in reports_src, (
         "browser/reports.py must import LevelCoverage from the leaf .verify.types "
         "module (the break-the-cycle fix)."
+    )
+
+
+# --- the core boundary (rule 76) -------------------------------------------
+#
+# Everything above core/ may import it; it imports nothing above itself. The
+# edges this guards are lazy ones inside functions, so it reads the syntax
+# tree rather than sys.modules.
+
+SRC = Path(__file__).resolve().parents[2] / "src"
+CORE = SRC / "anastomosis" / "core"
+
+
+def _package_of(path: Path) -> str:
+    """The dotted package a relative import inside `path` resolves against."""
+    parts = path.relative_to(SRC).with_suffix("").parts
+    return ".".join(parts if parts[-1] == "__init__" else parts[:-1])
+
+
+def _outward_imports(path: Path) -> list[tuple[int, str]]:
+    """Every `anastomosis` module imported from outside `anastomosis.core`,
+    with its line. Relative imports resolve first (`core/model` and
+    `core/fhir` are written with them); the walk reaches function bodies and
+    `TYPE_CHECKING` blocks."""
+    package = _package_of(path)
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        targets: list[str] = []
+        if isinstance(node, ast.Import):
+            targets = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # One dot is the file's own package; each further dot climbs
+                # a level, and rsplit clamps at the top package.
+                base = package.rsplit(".", node.level - 1)[0]
+                targets = [f"{base}.{node.module}" if node.module else base]
+            elif node.module:
+                targets = [node.module]
+        else:
+            continue
+        found.extend(
+            (node.lineno, target)
+            for target in targets
+            if target.startswith("anastomosis.")
+            and target != "anastomosis.core"
+            and not target.startswith("anastomosis.core.")
+        )
+    return found
+
+
+def test_core_imports_nothing_outward() -> None:
+    """Rule 76: nothing under `core/` imports another `anastomosis` package —
+    not `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
+    `destinations`, `packgen`, `gui`, nor `commands`."""
+    scanned = sorted(CORE.rglob("*.py"))
+    assert CORE / "identity.py" in scanned, f"walked nothing under {CORE}"
+    offenders = [
+        f"{path.relative_to(SRC)}:{line} imports {target}"
+        for path in scanned
+        for line, target in _outward_imports(path)
+    ]
+    assert not offenders, (
+        "core/ imports outside anastomosis.core (rule 76): "
+        + "; ".join(offenders)
+        + ". The command layer lives in commands/, not in the primitives package."
     )
