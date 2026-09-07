@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from anastomosis.deliver.router import RouteKind
 
 if TYPE_CHECKING:
-    from anastomosis.core.migrate import MigrationResult
+    from anastomosis.commands.migrate import MigrationResult
 
 __all__ = [
     "MigrationOutcome",

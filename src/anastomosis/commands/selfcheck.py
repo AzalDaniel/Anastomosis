@@ -166,7 +166,7 @@ def _check_synonyms() -> AssetCheck:
     try:
         import json
 
-        from anastomosis.core.sourcelearn import _SYNONYMS_PATH
+        from anastomosis.commands.sourcelearn import _SYNONYMS_PATH
 
         if not _readable(_SYNONYMS_PATH):
             return AssetCheck("learned-source synonyms", False, "missing")

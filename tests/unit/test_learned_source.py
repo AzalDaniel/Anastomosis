@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.commands.sourcelearn import analyze_source, build_mapping
 from anastomosis.core.model_paths import ASSEMBLED_ENCOUNTER_PATHS, ASSEMBLED_PATIENT_PATHS
-from anastomosis.core.sourcelearn import analyze_source, build_mapping
 from anastomosis.sources.learned import discover_learned_specs, register_learned_sources
 from anastomosis.sources.learned.interpreter import LearnedSourceAdapter
 from anastomosis.sources.learned.reader import header_fingerprint, read_rows

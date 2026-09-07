@@ -1,4 +1,4 @@
-"""Tests for the shared application/command layer (``core/commands.py``).
+"""Tests for the shared application/command layer (``commands/run.py``).
 
 This is the single orchestration core both the CLI and the GUI now build on, so
 these tests pin its contract directly: the toolkit-info probe, and a full
@@ -15,7 +15,7 @@ import pytest
 from _render_fakes import write_text_pdf
 
 import anastomosis.reconstruct.chromium as chromium
-from anastomosis.core.commands import (
+from anastomosis.commands.run import (
     DeliveryCommand,
     PipelineCommand,
     deliver_outputs,
@@ -235,7 +235,7 @@ def _declared_extras() -> set[str]:
 
 
 def test_every_extra_info_names_is_one_the_package_declares() -> None:
-    from anastomosis.core.commands import _EXTRAS
+    from anastomosis.commands.run import _EXTRAS
 
     named = {extra for extra, _ in _EXTRAS}
     assert named == _declared_extras(), (
@@ -248,7 +248,7 @@ def test_every_extra_has_a_capability_name() -> None:
     """An extra with no plain-English name prints as its packaging id, which is
     the thing `CAPABILITY_NAMES` exists to avoid."""
     from anastomosis.cli import CAPABILITY_NAMES
-    from anastomosis.core.commands import _EXTRAS
+    from anastomosis.commands.run import _EXTRAS
 
     assert {extra for extra, _ in _EXTRAS} <= set(CAPABILITY_NAMES)
 
@@ -277,7 +277,7 @@ def test_the_gui_probe_asks_for_a_backend_not_just_the_wrapper() -> None:
     pywebview then raises on launch — so probing the wrapper alone reported the
     desktop app as ready on a machine where `anast gui` could not start. That
     has to hold on every platform, not only the one the test leg runs on."""
-    from anastomosis.core.commands import _gui_requirement
+    from anastomosis.commands.run import _gui_requirement
 
     for platform_name in _SUPPORTED_PLATFORMS:
         requirement = _gui_requirement(platform_name)
@@ -300,12 +300,12 @@ def test_the_extras_table_asks_for_the_backend_the_platform_it_runs_on_uses(
     import subprocess
     import sys
 
-    from anastomosis.core.commands import _gui_requirement
+    from anastomosis.commands.run import _gui_requirement
 
     probe = (
         "import sys\n"
         f"sys.platform = {platform_name!r}\n"
-        "from anastomosis.core.commands import _EXTRAS\n"
+        "from anastomosis.commands.run import _EXTRAS\n"
         "print(dict(_EXTRAS)['gui'])\n"
     )
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
@@ -332,7 +332,7 @@ def test_a_backed_install_reads_as_available_on_every_supported_platform(
     monkeypatch: pytest.MonkeyPatch, platform_name: str, installed: set[str]
 ) -> None:
     """A machine that can draw the window says so."""
-    from anastomosis.core.commands import _extra_available, _gui_requirement
+    from anastomosis.commands.run import _extra_available, _gui_requirement
 
     _only_these_modules(monkeypatch, installed)
     assert _extra_available(_gui_requirement(platform_name)), (
@@ -346,7 +346,7 @@ def test_the_wrapper_without_a_backend_is_never_enough(
 ) -> None:
     """The other half of the same invariant: pywebview installed `--no-deps`,
     with nothing underneath it to draw with, must not read as ready anywhere."""
-    from anastomosis.core.commands import _extra_available, _gui_requirement
+    from anastomosis.commands.run import _extra_available, _gui_requirement
 
     _only_these_modules(monkeypatch, {"webview"})
     assert not _extra_available(_gui_requirement(platform_name)), (
@@ -361,7 +361,7 @@ def test_probing_an_extra_does_not_execute_it() -> None:
     import sys
 
     probe = (
-        "import sys; from anastomosis.core.commands import get_toolkit_info; "
+        "import sys; from anastomosis.commands.run import get_toolkit_info; "
         "get_toolkit_info(); "
         "print('pymupdf' in sys.modules or 'webview' in sys.modules)"
     )
@@ -389,7 +389,7 @@ def test_the_archive_deliverer_imports_without_the_render_extra() -> None:
         "        return None\n"
         "sys.meta_path.insert(0, Deny())\n"
         "import anastomosis.deliver.archive\n"
-        "from anastomosis.core.selfcheck import check_bundled_assets\n"
+        "from anastomosis.commands.selfcheck import check_bundled_assets\n"
         "print([c.name for c in check_bundled_assets().checks if not c.ok])\n"
     )
     out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)

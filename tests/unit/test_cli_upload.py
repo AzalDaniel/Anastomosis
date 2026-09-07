@@ -246,7 +246,7 @@ def test_failed_items_no_abort_exit_1(tmp_path: Path, monkeypatch: pytest.Monkey
     """A run that FINISHES with no abort but leaves items in a non-clean terminal
     state (every upload fails permanently -> FAILED) exits 1 — so a script can
     branch on a failed file. Delegates to the shared result.exit_code verdict."""
-    from anastomosis.core.upload_command import resolve_manifest_root
+    from anastomosis.commands.upload_command import resolve_manifest_root
     from anastomosis.deliver.browser.persist import read_upload_manifest
 
     out_dir = _write_manifest(tmp_path)
@@ -410,10 +410,10 @@ def test_malformed_manifest_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def _capture_cmd(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Patch the shared run_upload_command to capture the UploadCommand
     it gets. The CLI imports it lazily FROM
-    anastomosis.core.upload_command, so the patch lives on that module,
+    anastomosis.commands.upload_command, so the patch lives on that module,
     not on cli's namespace."""
-    import anastomosis.core.upload_command as upload_command
-    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+    import anastomosis.commands.upload_command as upload_command
+    from anastomosis.commands.upload_command import UploadCommand, UploadCommandResult
 
     captured: dict[str, object] = {}
 

@@ -84,7 +84,7 @@ _SEMVER_RE = re.compile(r"^\d+\.\d+(\.\d+)?([.\-+][0-9A-Za-z.\-]+)?$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 #: Keys whose VALUE is path-derived (a digest OF an absolute path, not the
-#: path itself — see ``core/runmanifest.py:export_dir_id``) and therefore only
+#: path itself — see ``commands/runmanifest.py:export_dir_id``) and therefore only
 #: stable between two captures made from the same checkout location.
 _PATH_DERIVED_KEYS = frozenset({"export_dir_id"})
 

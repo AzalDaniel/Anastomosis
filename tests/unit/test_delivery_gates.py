@@ -299,7 +299,7 @@ def test_the_executor_refuses_before_it_touches_the_destination(tmp_path: Path) 
     """The refusal has to land BEFORE ``attach``: reaching a browser at all
     means a session was opened against a live EHR for a bundle that was never
     going to be filed."""
-    from anastomosis.core.upload_command import UploadCommand, run_upload_command
+    from anastomosis.commands.upload_command import UploadCommand, run_upload_command
 
     gates = RunGates(qa=GATE_FAIL, conservation=CONSERVATION_BALANCED, layout_hash=None)
     out = _bundle(tmp_path, gates=gates)
@@ -319,7 +319,7 @@ def test_a_render_run_records_its_own_gates(
     pytest.importorskip("pymupdf", reason="the fake renderer writes a real PDF")
     import anastomosis.reconstruct.chromium as chromium
     import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
-    from anastomosis.core.commands import PipelineCommand, run_pipeline_command
+    from anastomosis.commands.run import PipelineCommand, run_pipeline_command
     from anastomosis.reconstruct.provenance import RENDER_PROVENANCE_NAME
 
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)

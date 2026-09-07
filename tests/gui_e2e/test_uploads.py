@@ -15,7 +15,7 @@ pytest.importorskip("playwright", reason="the GUI lane needs playwright + chromi
 
 from stub import CANNED_LEDGER_COUNTS, CANNED_RUN
 
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.consoles.upload import UploadConsole
 from anastomosis.gui.events import error_event, stage_event
 

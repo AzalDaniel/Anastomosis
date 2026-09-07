@@ -482,9 +482,9 @@ def test_the_cli_and_the_gui_conserve_documents_the_same_way(
     """One conservation path, driven from both entry points: CLI and GUI
     both reach ``deliver_outputs``, and this pins that both hand it the
     real attachments directory."""
-    import anastomosis.core.commands as commands
+    import anastomosis.commands.run as commands
     import anastomosis.deliver.ccda_export as ccda_export
-    from anastomosis.core.commands import DeliveryCommand, deliver_outputs
+    from anastomosis.commands.run import DeliveryCommand, deliver_outputs
     from anastomosis.gui.controller import GuiController
     from anastomosis.pipeline import ATTACHMENTS_DIRNAME
 

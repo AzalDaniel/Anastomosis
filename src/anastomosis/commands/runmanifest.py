@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from anastomosis.core.profiles import RunBinding
+from anastomosis.commands.profiles import RunBinding
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -281,7 +281,7 @@ def recapture_binding(manifest: RunManifest, *, pack_dirs: Sequence[Path] = ()) 
     """Capture the three profiles again, for the identities this manifest
     names: the manifest supplies WHICH source/destination/pack, the machine
     supplies the current content, so only their hashes can differ."""
-    from anastomosis.core.profiles import capture_binding, reprofile_layout
+    from anastomosis.commands.profiles import capture_binding, reprofile_layout
 
     return capture_binding(
         source=manifest.source,

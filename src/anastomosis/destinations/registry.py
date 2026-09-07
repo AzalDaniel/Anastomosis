@@ -126,7 +126,7 @@ class DestinationEntry(BaseModel):
     ``version`` defaults to :data:`UNVERSIONED` — an explicit value, not a
     missing field, for a vendor with no readable product version. An entry
     that DOES carry one refuses when it changes underneath
-    (:mod:`anastomosis.core.profiles`).
+    (:mod:`anastomosis.commands.profiles`).
     """
 
     model_config = ConfigDict(extra="forbid")

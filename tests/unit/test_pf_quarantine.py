@@ -349,7 +349,7 @@ def test_an_adapter_without_the_attribute_settles_clean(tmp_path: Path) -> None:
 def test_the_migration_orchestrator_settles_the_same_way(tmp_path: Path) -> None:
     """Both orchestrators share the settlement: a migration over a dirty export
     writes quarantine.json at the output root and carries the count on INGEST."""
-    from anastomosis.core.migrate import MigrationCommand, _resolve_source_and_load
+    from anastomosis.commands.migrate import MigrationCommand, _resolve_source_and_load
     from anastomosis.pipeline import STAGE_INGEST, StageEvent
 
     dirty = _export_with_dangler(tmp_path / "dirty")

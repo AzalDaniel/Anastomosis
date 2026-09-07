@@ -17,8 +17,20 @@
       "cc": 22,
       "rank": "D"
     },
-    "src/anastomosis/core/commands.py::run_pipeline_command": {
+    "src/anastomosis/commands/run.py::run_pipeline_command": {
       "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/commands/source_init_command.py::run_source_init_command": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/commands/sourcelearn.py::_infer_grouping": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/commands/sourcelearn.py::round_trip": {
+      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/core/fhir/export.py::_observation": {
@@ -47,18 +59,6 @@
     },
     "src/anastomosis/core/output.py::_dacl_section": {
       "cc": 11,
-      "rank": "C"
-    },
-    "src/anastomosis/core/source_init_command.py::run_source_init_command": {
-      "cc": 11,
-      "rank": "C"
-    },
-    "src/anastomosis/core/sourcelearn.py::_infer_grouping": {
-      "cc": 11,
-      "rank": "C"
-    },
-    "src/anastomosis/core/sourcelearn.py::round_trip": {
-      "cc": 12,
       "rank": "C"
     },
     "src/anastomosis/core/textutil.py::_SoapHtmlSanitizer._emit_start": {
@@ -395,6 +395,46 @@
       "avg": 12.5,
       "total": 25
     },
+    "src/anastomosis/commands/migrate.py": {
+      "avg": 2.48,
+      "total": 62
+    },
+    "src/anastomosis/commands/migration_status.py": {
+      "avg": 1.5,
+      "total": 9
+    },
+    "src/anastomosis/commands/packinit.py": {
+      "avg": 4.1667,
+      "total": 25
+    },
+    "src/anastomosis/commands/profiles.py": {
+      "avg": 1.9355,
+      "total": 60
+    },
+    "src/anastomosis/commands/run.py": {
+      "avg": 3.0526,
+      "total": 58
+    },
+    "src/anastomosis/commands/runmanifest.py": {
+      "avg": 2.35,
+      "total": 47
+    },
+    "src/anastomosis/commands/selfcheck.py": {
+      "avg": 3.7333,
+      "total": 56
+    },
+    "src/anastomosis/commands/source_init_command.py": {
+      "avg": 4.0909,
+      "total": 45
+    },
+    "src/anastomosis/commands/sourcelearn.py": {
+      "avg": 4.7188,
+      "total": 151
+    },
+    "src/anastomosis/commands/upload_command.py": {
+      "avg": 3.5385,
+      "total": 46
+    },
     "src/anastomosis/core/atomic.py": {
       "avg": 2.8571,
       "total": 20
@@ -410,10 +450,6 @@
     "src/anastomosis/core/codes.py": {
       "avg": 4.0,
       "total": 12
-    },
-    "src/anastomosis/core/commands.py": {
-      "avg": 3.0526,
-      "total": 58
     },
     "src/anastomosis/core/conservation.py": {
       "avg": 1.8571,
@@ -442,14 +478,6 @@
     "src/anastomosis/core/logutil.py": {
       "avg": 3.0,
       "total": 21
-    },
-    "src/anastomosis/core/migrate.py": {
-      "avg": 2.48,
-      "total": 62
-    },
-    "src/anastomosis/core/migration_status.py": {
-      "avg": 1.5,
-      "total": 9
     },
     "src/anastomosis/core/model/actors.py": {
       "avg": 3.3333,
@@ -495,10 +523,6 @@
       "avg": 4.5,
       "total": 54
     },
-    "src/anastomosis/core/packinit.py": {
-      "avg": 4.1667,
-      "total": 25
-    },
     "src/anastomosis/core/pdfsnapshot.py": {
       "avg": 1.6923,
       "total": 22
@@ -507,26 +531,6 @@
       "avg": 2.1667,
       "total": 13
     },
-    "src/anastomosis/core/profiles.py": {
-      "avg": 1.9355,
-      "total": 60
-    },
-    "src/anastomosis/core/runmanifest.py": {
-      "avg": 2.35,
-      "total": 47
-    },
-    "src/anastomosis/core/selfcheck.py": {
-      "avg": 3.7333,
-      "total": 56
-    },
-    "src/anastomosis/core/source_init_command.py": {
-      "avg": 4.0909,
-      "total": 45
-    },
-    "src/anastomosis/core/sourcelearn.py": {
-      "avg": 4.7188,
-      "total": 151
-    },
     "src/anastomosis/core/textutil.py": {
       "avg": 2.9667,
       "total": 89
@@ -534,10 +538,6 @@
     "src/anastomosis/core/timeutil.py": {
       "avg": 4.0,
       "total": 52
-    },
-    "src/anastomosis/core/upload_command.py": {
-      "avg": 3.5385,
-      "total": 46
     },
     "src/anastomosis/core/vesselmark.py": {
       "avg": 3.2083,

@@ -36,7 +36,7 @@ from anastomosis.core.presentation import Glyphs, terminal_glyphs
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from anastomosis.core.commands import DeliveryOutcome, PipelineCommand, SourceInfo
+    from anastomosis.commands.run import DeliveryOutcome, PipelineCommand, SourceInfo
     from anastomosis.pipeline import StageEvent
 
 
@@ -158,7 +158,7 @@ def _print_source(source: SourceInfo) -> None:
 @app.command()
 def info() -> None:
     """Show what this copy of Anastomosis can do on this computer."""
-    from anastomosis.core.commands import get_toolkit_info
+    from anastomosis.commands.run import get_toolkit_info
 
     toolkit = get_toolkit_info()
     console.print(f"[bold]anastomosis[/bold] {toolkit.version}")
@@ -228,7 +228,7 @@ def doctor_cmd() -> None:
     required asset is missing, so the Windows packaging CI can run it against the
     frozen executable to prove the installer bundle is complete.
     """
-    from anastomosis.core.selfcheck import check_bundled_assets
+    from anastomosis.commands.selfcheck import check_bundled_assets
 
     glyphs = _glyphs()
     result = check_bundled_assets()
@@ -328,7 +328,7 @@ def _run_command(cmd: PipelineCommand) -> None:
     then delivery outcomes in archive->bundle->ccda order;
     :class:`PipelineError` becomes the same ``console.print`` + ``typer.Exit``.
     """
-    from anastomosis.core.commands import run_pipeline_command
+    from anastomosis.commands.run import run_pipeline_command
     from anastomosis.pipeline import PipelineError
 
     _print_event = _make_event_printer(source=cmd.source, charts_dir=cmd.charts_dir)

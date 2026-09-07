@@ -1,7 +1,7 @@
 """Learned source adapters: formats taught from an example, executed as data.
 
 An operator teaches an unrecognized export's format once, via
-:mod:`anastomosis.core.sourcelearn`, into a declarative ``mapping.json``;
+:mod:`anastomosis.commands.sourcelearn`, into a declarative ``mapping.json``;
 :func:`register_learned_sources` then reads it like a built-in source.
 
 * :mod:`.spec` — the validated :class:`~.spec.MappingSpec` (data, never code)

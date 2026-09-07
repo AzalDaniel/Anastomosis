@@ -17,7 +17,7 @@ import pytest
 
 pymupdf = pytest.importorskip("pymupdf", reason="packgen needs the render extra")
 
-from anastomosis.core.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
 from anastomosis.packgen.extract import (  # noqa: E402
     NoExtractableTextError,
     OcrRequiredError,

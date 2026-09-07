@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from anastomosis.core.sourcelearn import (
+from anastomosis.commands.sourcelearn import (
     FuzzyNameScorer,
     _mask,
     _write_owner_only,

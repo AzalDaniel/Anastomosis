@@ -21,8 +21,8 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
 from anastomosis.gui.consoles import (
     MigrationConsole,
     PackgenConsole,
@@ -123,11 +123,11 @@ class GuiController:
     def info(self) -> dict[str, object]:
         """Toolkit status for the dashboard header and the run form.
 
-        Wraps :func:`anastomosis.core.commands.get_toolkit_info`; PHI-free
+        Wraps :func:`anastomosis.commands.run.get_toolkit_info`; PHI-free
         (versions, names, booleans).
         """
         try:
-            from anastomosis.core.commands import get_toolkit_info
+            from anastomosis.commands.run import get_toolkit_info
 
             toolkit = get_toolkit_info()
             return {
@@ -163,11 +163,11 @@ class GuiController:
     def doctor(self) -> dict[str, object]:
         """Bundled-asset self-check for the dashboard (install health).
 
-        Wraps :func:`anastomosis.core.selfcheck.check_bundled_assets`; on
+        Wraps :func:`anastomosis.commands.selfcheck.check_bundled_assets`; on
         failure returns ``{"ok": False, "error": <type>}`` with no ``checks`` key. Never raises.
         """
         try:
-            from anastomosis.core.selfcheck import check_bundled_assets
+            from anastomosis.commands.selfcheck import check_bundled_assets
 
             result = check_bundled_assets()
             return {

@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from anastomosis.core.commands import DeliveryOutcome
-from anastomosis.core.migrate import MigrationResult
-from anastomosis.core.migration_status import (
+from anastomosis.commands.migrate import MigrationResult
+from anastomosis.commands.migration_status import (
     MigrationOutcome,
     classify_migration,
     manual_import_notice,
     prepared_notice,
 )
+from anastomosis.commands.run import DeliveryOutcome
 from anastomosis.deliver.router import plan_route
 from anastomosis.destinations.registry import DestinationRegistry
 

@@ -29,7 +29,7 @@ def test_doctor_reports_all_assets_ok() -> None:
 
 
 def test_doctor_exits_1_on_a_missing_asset(monkeypatch: pytest.MonkeyPatch) -> None:
-    import anastomosis.core.selfcheck as selfcheck
+    import anastomosis.commands.selfcheck as selfcheck
 
     def _one_failure() -> selfcheck.SelfCheckResult:
         return selfcheck.SelfCheckResult(
@@ -802,7 +802,7 @@ def test_migrate_save_then_load_profile_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`--save-profile` then `--profile NAME` reuses the saved source/to/render."""
-    import anastomosis.core.migrate as migrate_mod
+    import anastomosis.commands.migrate as migrate_mod
 
     _patch_migration_chromium(monkeypatch)
     store = tmp_path / "migrations.json"
@@ -842,7 +842,7 @@ def test_migrate_save_then_load_profile_round_trip(
 
 
 def test_migrate_unknown_profile_exits_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import anastomosis.core.migrate as migrate_mod
+    import anastomosis.commands.migrate as migrate_mod
 
     monkeypatch.setattr(migrate_mod, "user_migrations_path", lambda: tmp_path / "migrations.json")
     result = runner.invoke(

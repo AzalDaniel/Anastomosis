@@ -16,8 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.gui.events import error_event, stage_event
 from anastomosis.gui.jobs import GuiJob, GuiJobRunner
 from anastomosis.gui.shared import fail_result
@@ -55,8 +55,8 @@ def _upload_preflight(
     """
     # The deliver-browser imports are lazy so this module loads without the
     # extra; the pre-flight needs only cdp/persist/loader (no Playwright).
+    from anastomosis.commands.upload_command import resolve_manifest_root
     from anastomosis.core.output import typed_path
-    from anastomosis.core.upload_command import resolve_manifest_root
     from anastomosis.deliver.browser.cdp import CdpEndpoint
     from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
     from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
@@ -271,8 +271,8 @@ class UploadConsole:
         def _worker() -> None:
             # Locks, reads the manifest UNDER the lock (closing the pre-flight
             # copy's TOCTOU), attaches, recovers, runs, reports — never the operator's browser.
+            from anastomosis.commands.upload_command import UploadCommand, run_upload_command
             from anastomosis.core.locking import OutputLockedError
-            from anastomosis.core.upload_command import UploadCommand, run_upload_command
             from anastomosis.deliver.browser.gates import DeliveryRefused
             from anastomosis.gui import controller as _controller_module
 

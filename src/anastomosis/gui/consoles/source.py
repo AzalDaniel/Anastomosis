@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from anastomosis.gui.consoles.wizard import WizardConsole
 
 if TYPE_CHECKING:
-    from anastomosis.core.source_init_command import SourceInitResult
+    from anastomosis.commands.source_init_command import SourceInitResult
 
 __all__ = ["SourceConsole"]
 
@@ -154,11 +154,11 @@ class SourceConsole(WizardConsole):
         (28, 29). ``destination`` binds a profile hash (32).
         """
         try:
-            from anastomosis.core.output import typed_path
-            from anastomosis.core.source_init_command import (
+            from anastomosis.commands.source_init_command import (
                 SourceInitCommand,
                 run_source_init_command,
             )
+            from anastomosis.core.output import typed_path
 
             parsed = _parse_review(review)
 
@@ -197,11 +197,11 @@ class SourceConsole(WizardConsole):
         """
 
         def _run() -> dict[str, object]:
-            from anastomosis.core.output import typed_path
-            from anastomosis.core.source_init_command import (
+            from anastomosis.commands.source_init_command import (
                 SourceInitCommand,
                 run_source_init_command,
             )
+            from anastomosis.core.output import typed_path
 
             # Parsed INSIDE the step, not before: a malformed review must
             # surface as this console's ordinary failure dict, which only the step runner catches.

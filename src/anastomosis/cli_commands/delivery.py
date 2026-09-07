@@ -29,7 +29,7 @@ from anastomosis.cli_commands._paths import out_dir
 if TYPE_CHECKING:
     # Type-only: the runtime import stays inside the command body so `anast
     # --help` skips it; safe since `command` is decorated at runtime, not here.
-    from anastomosis.core.commands import DeliveryKind
+    from anastomosis.commands.run import DeliveryKind
 
 
 def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help: str) -> None:
@@ -60,7 +60,7 @@ def _register(kind: "DeliveryKind", *, summary: str, out_help: str, charts_help:
         ] = None,
     ) -> None:
         from anastomosis import cli as _cli
-        from anastomosis.core.commands import DeliveryCommand, PipelineCommand
+        from anastomosis.commands.run import DeliveryCommand, PipelineCommand
 
         sections = _cli._sections_or_exit(section, source=source, pack=pack)
         charts = charts_dir or (out / "_charts")
