@@ -852,6 +852,40 @@ def test_migrate_unknown_profile_exits_2(tmp_path: Path, monkeypatch: pytest.Mon
     assert "no saved migration profile" in result.output
 
 
+def test_migrate_profile_supplies_the_qa_choice_and_a_typed_flag_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--qa/--no-qa` is tri-state so a saved profile can supply it: unsaid
+    means the profile decides, a profile with nothing to say means on, and a
+    typed flag beats both."""
+    import json
+
+    import anastomosis.commands.migrate as migrate_mod
+    from anastomosis.cli_commands.migrate import _resolve_migration_profile
+
+    store = tmp_path / "migrations.json"
+    store.write_text(
+        json.dumps(
+            {
+                "quiet": {"source": "pf-tebra", "destination": "tebra", "qa": False},
+                "plain": {"source": "pf-tebra", "destination": "tebra"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(migrate_mod, "user_migrations_path", lambda: store)
+
+    def _qa_of(profile: str, qa: bool | None) -> bool:
+        return _resolve_migration_profile(
+            profile, source=None, destination=None, render=None, section=None, qa=qa
+        )[4]
+
+    assert _qa_of("quiet", None) is False
+    assert _qa_of("quiet", True) is True
+    assert _qa_of("plain", None) is True
+    assert _qa_of("plain", False) is False
+
+
 def test_migrate_ccda_prints_what_the_source_offered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
