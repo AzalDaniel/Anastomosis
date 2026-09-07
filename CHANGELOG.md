@@ -579,6 +579,33 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The Practice Fusion pack keeps only what is its own.** `packs/
+  practice_fusion_soap/context.py` was 1,090 lines, and most of them were a
+  view layer any pack rendering a chart would write the same way: the date and
+  time formatters, the vitals LOINC-to-label table with its blood-pressure fold
+  and its two row builders, the record-level groupings, the flowsheet, the
+  entity rows (diagnosis, allergy, concern, screening, immunization, addendum),
+  the guarantor and payment cells, and the pack logo resolver. They live in
+  `reconstruct/packctx.py` now, the surface a pack reaches through the sandbox
+  allowlist, and the pack is 500 lines of what is PF's alone: the ESCRIPT line,
+  the insurance and demographics grids (both read `pf_tebra:`-namespaced
+  columns, so neither may live in a module that must not know a source
+  adapter's namespace), the seventeen social-history sub-categories, the
+  section flags, and the notice a section prints when this layout cannot
+  reconstruct it. The 35-section replica is unchanged, and the committed
+  goldens — page geometry, text layer and every word box — prove it: the
+  rendered PDFs are the same bytes.
+
+  This is the one file the prose sweep skipped, because a pack's layout hash
+  covers every byte of every file in it. That hash therefore moves, once and
+  deliberately: `5b84f853…` becomes `29d72b52…`. Nothing else moves with it.
+  The five snapshot fixtures render through `generic_soap`, whose bytes are
+  untouched, so `tools/snapshot.py` passes without a regenerated baseline —
+  including the `render_provenance.json` and `upload_manifest.json` it
+  captures. The complexity ratchet was re-pinned for exactly the seven blocks
+  that changed file: same rank, same number, one of them three lower, and
+  whole-`src` cyclomatic complexity falls from 7,192 to 7,189.
+
 - **One deliverer writes both file trees.** The offline archive and the
   per-patient bundle were the same operation written twice: claim a patient
   directory name against a per-run ledger, copy the documents that patient's

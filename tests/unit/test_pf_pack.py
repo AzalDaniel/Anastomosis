@@ -135,10 +135,10 @@ def test_record_view_index_splits_match_naive_filtering(records: list[Any]) -> N
     """The per-call RecordViewIndex must group each collection exactly as the
     old inline comprehensions did (order-preserving active/inactive splits,
     complete by-id maps), so build_context output is unchanged."""
-    from anastomosis.packs.practice_fusion_soap.context import _RecordViewIndex
+    from anastomosis.reconstruct.packctx import RecordViewIndex
 
     for record in records:
-        idx = _RecordViewIndex.build(record)
+        idx = RecordViewIndex.build(record)
         assert idx.active_coverages == sorted(
             (c for c in record.coverages if c.active),
             key=lambda c: c.order_of_benefits if c.order_of_benefits is not None else 99,
@@ -165,7 +165,7 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
         Patient,
         PatientRecord,
     )
-    from anastomosis.packs.practice_fusion_soap.context import _RecordViewIndex
+    from anastomosis.reconstruct.packctx import RecordViewIndex
 
     pid = "feedface-0000-0000-0000-0000000000aa"
     record = PatientRecord(
@@ -188,7 +188,7 @@ def test_record_view_index_inactive_and_duplicate_branches() -> None:
             Goal(patient_id=pid, description="concern-inactive", active=False),
         ],
     )
-    idx = _RecordViewIndex.build(record)
+    idx = RecordViewIndex.build(record)
     # active coverages sorted by benefit order (tie keeps source order); inactive split out.
     assert [c.order_of_benefits for c in idx.active_coverages] == [1, 2]
     assert [c.order_of_benefits for c in idx.inactive_coverages] == [1]
@@ -210,7 +210,8 @@ def test_flowsheet_index_cached_once_and_cutoff_applied_per_encounter(
     encounter — so the earliest encounter sees no prior columns while a later one
     reuses the SAME cached index. (The rendered flowsheet's byte-identity is
     pinned by the e2e practice_fusion_soap golden.)"""
-    from anastomosis.packs.practice_fusion_soap.context import _build_flowsheet
+    from anastomosis.packs.practice_fusion_soap.context import _FLOWSHEET_MAX_COLUMNS
+    from anastomosis.reconstruct.packctx import flowsheet
 
     record = next(r for r in records if len([e for e in r.encounters if e.date_of_service]) >= 2)
     dated = sorted(
@@ -221,13 +222,15 @@ def test_flowsheet_index_cached_once_and_cutoff_applied_per_encounter(
 
     # The latest encounter sees the most strictly-prior columns; this populates
     # the per-record cache.
-    _build_flowsheet(record, dated[-1].date_of_service, cache)
+    flowsheet(record, dated[-1].date_of_service, cache, max_columns=_FLOWSHEET_MAX_COLUMNS)
     assert "flowsheet_index" in cache, "the per-record vital scan must be memoized"
     first_index = cache["flowsheet_index"]
 
     # The earliest encounter has NO strictly-prior encounter → empty flowsheet,
     # and it must REUSE the cached index (built once, not rescanned per encounter).
-    cols_early, rows_early = _build_flowsheet(record, dated[0].date_of_service, cache)
+    cols_early, rows_early = flowsheet(
+        record, dated[0].date_of_service, cache, max_columns=_FLOWSHEET_MAX_COLUMNS
+    )
     assert cache["flowsheet_index"] is first_index, "the index must be reused, not rebuilt"
     assert cols_early == [] and rows_early == []  # the per-encounter cutoff still applies
 
