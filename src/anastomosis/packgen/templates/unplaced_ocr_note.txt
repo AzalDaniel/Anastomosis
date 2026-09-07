@@ -1,0 +1,4 @@
+
+Lines marked [OCR] were RECOGNIZED from a page image, not read from
+the document. They are layout evidence: treat every character as
+unverified and check it against the original page. See ${evidence_name}.

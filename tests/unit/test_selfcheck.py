@@ -23,6 +23,7 @@ _REQUIRED = (
     "GUI fonts",
     "learned-source synonyms",
     "archive web assets",
+    "draft-pack templates",
 )
 
 
