@@ -579,6 +579,24 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The command layer left the primitives package.** Ten modules under `core/`
+  imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
+  `destinations`, `packgen` and `gui`: the command layer living where the
+  shared primitives live, which is why the import graph showed `core → gui`
+  and why every later slice read its dependency direction wrong. They are now
+  `commands/`. `migrate`, `migration_status`, `packinit`, `profiles`,
+  `runmanifest`, `selfcheck`, `source_init_command`, `sourcelearn` and
+  `upload_command` keep their names; `core/commands.py` is `commands/run.py`,
+  because `commands/commands.py` would say the same word twice. Nothing but
+  import lines and the reference strings that name them changed, so no CLI
+  flag, help string or deliverable byte differs and nothing a user can see
+  moved. `core/` now imports nothing outside `anastomosis.core` — at module
+  level, inside a function and inside a `TYPE_CHECKING` block alike — and
+  `tests/unit/test_import_boundaries.py` walks every module under it to hold
+  that. Every deliverable of the five fixtures is byte-identical
+  (`tools/snapshot.py`), the corpus pin is unmoved, the guard count holds at
+  72, and both gate baselines carry their old numbers under the new paths.
+
 - **The shared primitives have one implementation each.** Five streaming or
   whole-file sha256 readers became `core/hashutil.file_sha256` and
   `sha256_hex`, with `unreadable=` naming what an unreadable file answers

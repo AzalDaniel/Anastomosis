@@ -17,7 +17,7 @@ import pytest
 
 pymupdf = pytest.importorskip("pymupdf", reason="the layout learner needs the render extra")
 
-from anastomosis.core.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
 from anastomosis.packgen import analyze  # noqa: E402
 from anastomosis.packgen.emit import OCR_EVIDENCE_NAME, UNPLACED_NAME  # noqa: E402
 from anastomosis.packgen.evidence import (  # noqa: E402

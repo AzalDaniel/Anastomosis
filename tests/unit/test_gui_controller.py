@@ -19,7 +19,7 @@ from test_ccda_unstructured import _embedded, _pdf, _write
 
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.browser.gates import GATE_PASS, assert_deliverable
 from anastomosis.deliver.browser.persist import load_upload_manifest
 from anastomosis.gui.controller import GuiApi, GuiController
@@ -695,7 +695,7 @@ def test_run_migration_forwards_all_levers(tmp_path: Path, monkeypatch: pytest.M
     """The controller threads render/sections/qa/force/pack_dirs/trust_new into the
     MigrationCommand — the levers the GUI migrate wizard now exposes (parity gap
     P1-4). Capture the command at the core boundary (a fake stops the run early)."""
-    import anastomosis.core.migrate as migrate_mod
+    import anastomosis.commands.migrate as migrate_mod
     from anastomosis.pipeline import PipelineError
 
     captured: dict[str, object] = {}
@@ -1729,7 +1729,7 @@ def test_upload_start_failed_items_emit_error_not_done(
     `error` event — never the `done` that JS renders as "upload complete".
     The message names the offending state(s) with counts and carries no
     patient value."""
-    from anastomosis.core.upload_command import resolve_manifest_root
+    from anastomosis.commands.upload_command import resolve_manifest_root
     from anastomosis.deliver.browser.fake import FakeDestination
     from anastomosis.deliver.browser.persist import read_upload_manifest
     from anastomosis.deliver.browser.states import UploadState
@@ -2060,8 +2060,8 @@ def _capture_upload_command(monkeypatch: pytest.MonkeyPatch) -> dict[str, object
 
     The controller's worker imports it lazily FROM ``anastomosis.core.upload_
     command``, so the patch lives on that module, not the controller's."""
-    import anastomosis.core.upload_command as upload_command
-    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+    import anastomosis.commands.upload_command as upload_command
+    from anastomosis.commands.upload_command import UploadCommand, UploadCommandResult
 
     captured: dict[str, object] = {}
 
@@ -2213,7 +2213,7 @@ def test_run_pipeline_threads_write_manifest(
 ) -> None:
     """run_pipeline(write_manifest=...) builds a PipelineCommand with it set — GUI
     parity for `anast pipeline run --upload-manifest`."""
-    import anastomosis.core.commands as commands
+    import anastomosis.commands.run as commands
     from anastomosis.pipeline import PipelineError
 
     captured: dict[str, object] = {}
@@ -2239,7 +2239,7 @@ def test_every_pipeline_option_survives_the_async_entry(
     Both entries forward the same parameters to one locked body that
     requires them (a drop is a type error) — only this test proves the
     VALUES arrive through the async entry too."""
-    import anastomosis.core.commands as commands
+    import anastomosis.commands.run as commands
     from anastomosis.pipeline import PipelineError
 
     captured: dict[str, object] = {}
@@ -2279,7 +2279,7 @@ def test_an_unticked_selection_rule_survives_the_async_entry(
     revert the run to "every rule applied" and nothing would fail. The locked
     body requires the parameter (a drop is a type error); this holds that the
     VALUE arrives, which no signature can promise."""
-    import anastomosis.core.commands as commands
+    import anastomosis.commands.run as commands
     from anastomosis.pipeline import PipelineError
 
     captured: dict[str, object] = {}

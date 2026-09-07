@@ -11,7 +11,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from anastomosis.core.source_init_command import (
+from anastomosis.commands.source_init_command import (
     SourceInitCommand,
     resolve_example,
     run_source_init_command,

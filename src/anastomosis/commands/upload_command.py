@@ -22,7 +22,7 @@ from anastomosis.core.logutil import exc_tag
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from anastomosis.core.runmanifest import RunManifest
+    from anastomosis.commands.runmanifest import RunManifest
     from anastomosis.reconstruct.packs import LoadedPack
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ def resolve_run_manifest_root(out_dir: Path) -> Path:
     :func:`resolve_manifest_root` allows for the upload manifest; the run
     manifest sits one level up, so without this check_run_binding would
     find nothing and file every chart unchecked."""
-    from anastomosis.core.runmanifest import run_manifest_path
+    from anastomosis.commands.runmanifest import run_manifest_path
 
     if run_manifest_path(out_dir).is_file():
         return out_dir
@@ -155,12 +155,16 @@ def resolve_run_manifest_root(out_dir: Path) -> Path:
 
 
 def check_run_binding(out_dir: Path) -> RunManifest | None:
-    """Contract (53): raises :class:`~anastomosis.core.runmanifest.BindingError`
+    """Contract (53): raises :class:`~anastomosis.commands.runmanifest.BindingError`
     naming which profile moved if the folder's binding drifted since it was
     prepared. Returns the manifest when bound and current, ``None`` when
     none exists (logged, not a fault) — unreadable is a different, raised
     case."""
-    from anastomosis.core.runmanifest import load_run_manifest, recapture_binding, verify_binding
+    from anastomosis.commands.runmanifest import (
+        load_run_manifest,
+        recapture_binding,
+        verify_binding,
+    )
 
     manifest = load_run_manifest(resolve_run_manifest_root(out_dir))
     if manifest is None:
@@ -180,7 +184,7 @@ def record_upload_state(out_dir: Path, result: UploadCommandResult, *, verified:
     folder records nothing. Best-effort only in this direction — the
     charts are already filed, so a bookkeeping failure here logs rather
     than turning success into a reported failure."""
-    from anastomosis.core.runmanifest import (
+    from anastomosis.commands.runmanifest import (
         BindingError,
         RunManifestError,
         RunState,

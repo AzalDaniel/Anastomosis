@@ -19,9 +19,7 @@ from typing import Any
 
 import pytest
 
-from anastomosis.core.locking import OutputLockedError, output_lock
-from anastomosis.core.model import Encounter, Patient, PatientRecord
-from anastomosis.core.upload_command import (
+from anastomosis.commands.upload_command import (
     DEFAULT_MAX_ATTEMPTS,
     LEDGER_NAME,
     UploadCommand,
@@ -30,6 +28,8 @@ from anastomosis.core.upload_command import (
     resolve_manifest_root,
     run_upload_command,
 )
+from anastomosis.core.locking import OutputLockedError, output_lock
+from anastomosis.core.model import Encounter, Patient, PatientRecord
 from anastomosis.deliver.browser.fake import FakeCrash, FakeDestination
 from anastomosis.deliver.browser.persist import MANIFEST_NAME, write_upload_manifest
 from anastomosis.deliver.browser.states import UploadState

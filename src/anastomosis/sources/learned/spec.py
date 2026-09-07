@@ -145,7 +145,7 @@ class ValueTranslation(BaseModel):
 
 class DestinationBinding(BaseModel):
     """The destination this mapping was taught FOR, pinned by
-    ``profile_hash`` (:attr:`anastomosis.core.profiles.DestinationProfile.
+    ``profile_hash`` (:attr:`anastomosis.commands.profiles.DestinationProfile.
     profile_hash` at teaching time) — running it at a different
     destination, or the same one changed, is a different move made
     silently, so the migration refuses when it disagrees."""
@@ -256,7 +256,7 @@ def load_spec(path: Path) -> MappingSpec:
 def mapping_json_text(spec: MappingSpec) -> str:
     """The exact ``mapping.json`` text a saved mapping holds — one
     definition, because ``save_mapping`` writes these bytes and
-    :func:`anastomosis.core.profiles.capture_source_profile` recomputes
+    :func:`anastomosis.commands.profiles.capture_source_profile` recomputes
     the same digest with no file on disk; disagreeing on indentation or
     the trailing newline would read every fresh mapping as edited."""
     return json.dumps(spec.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"

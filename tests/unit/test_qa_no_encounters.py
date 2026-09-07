@@ -23,7 +23,7 @@ from test_ccda_unstructured import _embedded, _pdf, _write
 import anastomosis.reconstruct.ccda_standard as ccda_standard
 import anastomosis.reconstruct.chromium as chromium
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the pf-tebra adapter
-from anastomosis.core.commands import PipelineCommand, run_pipeline_command
+from anastomosis.commands.run import PipelineCommand, run_pipeline_command
 from anastomosis.core.model import AllergyIntolerance, Condition, Patient, PatientRecord
 from anastomosis.deliver.browser.gates import (
     GATE_NOT_RUN,

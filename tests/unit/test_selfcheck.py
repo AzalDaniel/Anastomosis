@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import sys
 
-from anastomosis.core import selfcheck
-from anastomosis.core.selfcheck import check_bundled_assets, is_frozen
+from anastomosis.commands import selfcheck
+from anastomosis.commands.selfcheck import check_bundled_assets, is_frozen
 
 # Asset checks that never depend on an optional extra — all must pass in any
 # healthy checkout/wheel/frozen build.

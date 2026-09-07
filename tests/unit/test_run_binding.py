@@ -22,8 +22,8 @@ import pytest
 from _render_fakes import write_text_pdf
 
 import anastomosis.reconstruct.chromium as chromium
-from anastomosis.core.migrate import MigrationCommand, resolve_pack, run_migration
-from anastomosis.core.profiles import (
+from anastomosis.commands.migrate import MigrationCommand, resolve_pack, run_migration
+from anastomosis.commands.profiles import (
     SOURCE_BUILTIN,
     SOURCE_LEARNED,
     DestinationCapability,
@@ -37,7 +37,7 @@ from anastomosis.core.profiles import (
     capture_layout_profile,
     capture_source_profile,
 )
-from anastomosis.core.runmanifest import (
+from anastomosis.commands.runmanifest import (
     RUN_MANIFEST_NAME,
     BindingError,
     RunManifest,
@@ -53,12 +53,12 @@ from anastomosis.core.runmanifest import (
     verify_binding,
     write_run_manifest,
 )
-from anastomosis.core.source_init_command import SourceInitCommand, run_source_init_command
+from anastomosis.commands.source_init_command import SourceInitCommand, run_source_init_command
 from anastomosis.destinations.registry import UNVERSIONED, DestinationRegistry
 from anastomosis.pipeline import PipelineError
 
 if TYPE_CHECKING:
-    from anastomosis.core.profiles import RunBinding as _RunBinding
+    from anastomosis.commands.profiles import RunBinding as _RunBinding
 
 PF_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 CSV_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "learned" / "clinic_visits.csv"
@@ -587,7 +587,7 @@ def test_verify_binding_names_every_drifted_profile(tmp_path: Path) -> None:
 def test_upload_binding_check_refuses_a_drifted_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from anastomosis.core.upload_command import check_run_binding
+    from anastomosis.commands.upload_command import check_run_binding
 
     out = _prepare_folder(tmp_path)
     assert check_run_binding(out) is not None  # current: uploads proceed
@@ -600,7 +600,7 @@ def test_upload_over_an_unbound_tree_proceeds_and_says_so(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An output tree from before run manifests uploads exactly as it did — loudly."""
-    from anastomosis.core.upload_command import check_run_binding
+    from anastomosis.commands.upload_command import check_run_binding
 
     with caplog.at_level("WARNING"):
         assert check_run_binding(tmp_path) is None
@@ -655,7 +655,7 @@ def test_an_external_pack_survives_the_step_that_never_saw_pack_dir(
     where the render actually read from, not re-run discovery with nothing
     to discover against."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
-    from anastomosis.core.upload_command import check_run_binding
+    from anastomosis.commands.upload_command import check_run_binding
 
     vendor = tmp_path / "vendor"
     vendor.mkdir()
@@ -700,7 +700,7 @@ def test_an_external_pack_survives_the_step_that_never_saw_pack_dir(
 
 def test_a_pack_that_moved_but_did_not_change_is_not_drift(tmp_path: Path) -> None:
     """`root` is recorded and deliberately not hashed: same bytes, new place."""
-    from anastomosis.core.profiles import reprofile_layout
+    from anastomosis.commands.profiles import reprofile_layout
     from anastomosis.reconstruct.packtrust import pack_content_hash
 
     first = tmp_path / "a"
@@ -730,7 +730,7 @@ def test_the_upload_folder_below_a_bound_run_is_still_checked(
     manifest: the binding check must still find the run manifest one level
     up rather than reporting a PHI-free "not bound" and filing unchecked."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
-    from anastomosis.core.upload_command import check_run_binding
+    from anastomosis.commands.upload_command import check_run_binding
 
     out = tmp_path / "out"
     run_migration(
@@ -783,7 +783,7 @@ def test_a_second_upload_still_reaches_verified(tmp_path: Path, fake_chromium: N
     a full one — must not strand the run one state short of the truth: the
     first transition's raise must not be swallowed by a shared `try`."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
-    from anastomosis.core.upload_command import record_upload_state
+    from anastomosis.commands.upload_command import record_upload_state
 
     out = tmp_path / "out"
     run_migration(

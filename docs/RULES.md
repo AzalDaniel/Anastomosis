@@ -116,7 +116,7 @@ Rules marked `#NNN` were paid for by a real defect. The number is the receipt.
 ## 12. Imports and startup
 
 75. `import anastomosis.deliver` and `import anastomosis.cli` stay cheap: no lxml, jinja2, Playwright or sqlite3 at module load. Nothing under `deliver/browser` imports Playwright at module load, so the package imports without the `deliver-browser` extra. PyMuPDF, `sourcelearn` and the learned-source package import lazily inside their entry functions; a minimal install imports every module cleanly. Importing `anastomosis.gui` never requires the `gui` extra: pywebview is imported inside `gui/shell.py`'s `launch` only.
-76. `core/` imports nothing from `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`, `destinations`, `packgen` or `gui`. The command layer lives in `commands/`, not in the primitives package. Until the slice that moves it lands, the nine modules `docs/AUDIT_LEDGER.md` names are the known exceptions.
+76. `core/` imports nothing from `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`, `destinations`, `packgen` or `gui`. The command layer lives in `commands/`, not in the primitives package. `tests/unit/test_import_boundaries.py` pins it.
 
 ## 13. Gates (never weakened to pass)
 

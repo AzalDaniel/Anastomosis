@@ -1,5 +1,5 @@
 """The shared EHR-to-EHR migration core, frontend-free like
-:mod:`anastomosis.pipeline`/:mod:`anastomosis.core.commands`. Every
+:mod:`anastomosis.pipeline`/:mod:`anastomosis.commands.run`. Every
 migration emits BOTH the structured C-CDA the target EHR imports
 (``deliver.ccda_export.deliver_ccda``) and a rendered-PDF representation
 (neutral pack, HL7 standard view, or vendor Jinja skin), plus a
@@ -21,9 +21,9 @@ from anastomosis.core.atomic import atomic_write_text
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.commands.profiles import RunBinding
+    from anastomosis.commands.run import DeliveryOutcome
     from anastomosis.core.model import PatientRecord
-    from anastomosis.core.profiles import RunBinding
     from anastomosis.deliver.browser.gates import RoutePlan, RunGates
     from anastomosis.deliver.ccda_export import CcdaExportResult
     from anastomosis.deliver.router import TransitMap
@@ -201,7 +201,7 @@ def _bind_run(cmd: MigrationCommand) -> RunBinding:
     (53); pack discovery mirrors ``run_pipeline``'s exactly. ``trust_new``
     is deliberately NOT passed: profiling records nothing. An unknown
     source/destination is a clean exit-2 :class:`PipelineError`."""
-    from anastomosis.core.profiles import ProfileError, capture_binding
+    from anastomosis.commands.profiles import ProfileError, capture_binding
     from anastomosis.pipeline import PipelineError
     from anastomosis.reconstruct.packtrust import default_pack_trust
 
@@ -257,7 +257,7 @@ def _refuse_stale_folder(cmd: MigrationCommand, binding: RunBinding) -> None:
     changed (53): writing a second run's artifacts under DIFFERENT inputs
     would leave one tree that is two runs with nothing saying which file
     came from which. ``--rebind`` is the explicit override."""
-    from anastomosis.core.runmanifest import (
+    from anastomosis.commands.runmanifest import (
         BindingError,
         RunManifestError,
         load_run_manifest,
@@ -298,9 +298,9 @@ def bind_migration(cmd: MigrationCommand) -> RunBinding:
 def _write_run_manifest(cmd: MigrationCommand, binding: RunBinding) -> None:
     """Record what this run was prepared under, beside its artifacts.
     ``prepared`` is the only state a migration writes (53); advancing
-    past it needs a receipt (:func:`anastomosis.core.runmanifest.advance_state`)."""
+    past it needs a receipt (:func:`anastomosis.commands.runmanifest.advance_state`)."""
     from anastomosis import __version__
-    from anastomosis.core.runmanifest import RunManifest, export_dir_id, write_run_manifest
+    from anastomosis.commands.runmanifest import RunManifest, export_dir_id, write_run_manifest
 
     write_run_manifest(
         cmd.out_dir,
@@ -354,7 +354,7 @@ def _run_pack_mode(
     """Neutral / Jinja-pack mode: the full pipeline plus a ccda delivery,
     reusing :func:`run_pipeline_command` verbatim (locking, output
     validation, QA, event emission) rather than re-implementing it."""
-    from anastomosis.core.commands import DeliveryCommand, PipelineCommand, run_pipeline_command
+    from anastomosis.commands.run import DeliveryCommand, PipelineCommand, run_pipeline_command
     from anastomosis.deliver.browser.gates import route_plan_of
 
     pack = resolve_pack(cmd.render)
@@ -457,7 +457,7 @@ def _run_ccda_standard(
     ``test_migrate_pack_and_ccda_standard_share_stage_contract``."""
     from contextlib import ExitStack
 
-    from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.commands.run import DeliveryOutcome
     from anastomosis.core.locking import OutputLockedError, output_lock
     from anastomosis.deliver.browser.gates import RunGates, route_plan_of
     from anastomosis.deliver.ccda_export import ArtifactNotDelivered, deliver_ccda

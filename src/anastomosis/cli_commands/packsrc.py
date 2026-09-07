@@ -2,7 +2,7 @@
 
 See :mod:`anastomosis.cli_commands` for the split/registration rationale. Both
 commands are thin adapters over their shared command cores
-(:mod:`anastomosis.core.packinit`, :mod:`anastomosis.core.source_init_command`) so
+(:mod:`anastomosis.commands.packinit`, :mod:`anastomosis.commands.source_init_command`) so
 the CLI and the GUI run ONE flow; this module keeps only the CLI's Rich UX (the
 count line, the low-confidence warning, the same-patient confirm, the next-steps
 block).
@@ -20,8 +20,8 @@ from anastomosis.cli_commands._paths import out_dir
 from anastomosis.core.outcome import declined
 
 if TYPE_CHECKING:
+    from anastomosis.commands.source_init_command import SourceInitResult
     from anastomosis.core.model import PatientRecord
-    from anastomosis.core.source_init_command import SourceInitResult
 
 
 def _synthetic_preview_record() -> PatientRecord:
@@ -351,7 +351,7 @@ def pack_init(
     context.py un-trusts it until it is confirmed again.
     """
     from anastomosis import cli as _cli
-    from anastomosis.core.packinit import (
+    from anastomosis.commands.packinit import (
         LOW_SAMPLE_FLOOR,
         PackInitCommand,
         run_pack_init,
@@ -539,7 +539,7 @@ def source_init(
     else refuses instead of mapping one system's columns into another.
     """
     from anastomosis import cli as _cli
-    from anastomosis.core.source_init_command import SourceInitCommand, run_source_init_command
+    from anastomosis.commands.source_init_command import SourceInitCommand, run_source_init_command
 
     # Analyze step (confirmed=False), via the SHARED core the GUI source wizard
     # also runs; this command only presents the proposal and confirms it.

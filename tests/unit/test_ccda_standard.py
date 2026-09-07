@@ -225,7 +225,7 @@ def test_ccda_render_result_rejects_mismatched_documents_and_records() -> None:
 
 
 def test_generic_soap_is_the_neutral_default_pf_is_opt_in() -> None:
-    from anastomosis.core.commands import PipelineCommand, get_toolkit_info
+    from anastomosis.commands.run import PipelineCommand, get_toolkit_info
 
     # The pipeline's default pack is the neutral generic_soap, never PF.
     assert PipelineCommand(export_dir=PF, charts_dir=PF).pack == "generic_soap"

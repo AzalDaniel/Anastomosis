@@ -15,8 +15,8 @@ def _self_check() -> int:
 
     ``detail`` stays count/enumerated-code/exception-type only (RULES.md 2).
     """
+    from anastomosis.commands.selfcheck import check_bundled_assets
     from anastomosis.core.presentation import terminal_glyphs
-    from anastomosis.core.selfcheck import check_bundled_assets
 
     glyphs = terminal_glyphs(sys.stdout)
     result = check_bundled_assets()

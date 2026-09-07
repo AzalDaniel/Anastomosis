@@ -1,4 +1,4 @@
-"""Tests for the shared migration core (``core/migrate.py``).
+"""Tests for the shared migration core (``commands/migrate.py``).
 
 A migration is a general EHR→EHR move; PF→Tebra is one instance. These pin:
 the three render modes (neutral → generic_soap, a Jinja pack → that pack,
@@ -21,7 +21,7 @@ from _render_fakes import write_text_pdf
 
 import anastomosis.reconstruct.ccda_standard.renderer as ccda_renderer
 import anastomosis.reconstruct.chromium as chromium
-from anastomosis.core.migrate import (
+from anastomosis.commands.migrate import (
     RENDER_CCDA_STANDARD,
     RENDER_NEUTRAL,
     MigrationCommand,
@@ -593,7 +593,7 @@ def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
     runs directly, not via `run_migration`, since #377/#381 already
     refuse or fold that duplication before QA would ever see it."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
-    from anastomosis.core.migrate import _run_ccda_standard_qa
+    from anastomosis.commands.migrate import _run_ccda_standard_qa
     from anastomosis.core.model import Patient
     from anastomosis.qa.runner import REPORT_NAME
     from anastomosis.reconstruct.ccda_standard import render_ccda_standard
@@ -622,7 +622,7 @@ def test_migrate_ccda_standard_warns_instead_of_failing_when_the_summary_carries
     ``_FakeChromium`` (full text), not ``_ViewChromium`` (truncated to
     80 lines), since the vitals section may not be in the first 80."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
-    from anastomosis.core.migrate import _run_ccda_standard_qa
+    from anastomosis.commands.migrate import _run_ccda_standard_qa
     from anastomosis.core.model import Encounter, Observation, ObservationCategory, Patient
     from anastomosis.qa.runner import REPORT_NAME
     from anastomosis.reconstruct.ccda_standard import render_ccda_standard

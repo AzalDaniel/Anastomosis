@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from anastomosis.core.commands import get_toolkit_info
+from anastomosis.commands.run import get_toolkit_info
 from anastomosis.reconstruct.packs import PackManifest
 
 

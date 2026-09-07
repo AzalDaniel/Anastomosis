@@ -420,7 +420,7 @@ def capture_binding(
 ) -> RunBinding:
     """Capture all three profiles for one run. ``layout`` is passed by a
     caller that already knows WHERE it is
-    (:func:`~anastomosis.core.runmanifest.recapture_binding` re-reads it
+    (:func:`~anastomosis.commands.runmanifest.recapture_binding` re-reads it
     at the recorded root) rather than re-discovering it and falsely
     reporting a vanished pack."""
     return RunBinding(

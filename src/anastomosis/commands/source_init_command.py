@@ -1,5 +1,5 @@
 """The shared learn-a-source command layer, mirroring
-:mod:`anastomosis.core.packinit`: one analyze -> confirm -> build ->
+:mod:`anastomosis.commands.packinit`: one analyze -> confirm -> build ->
 round-trip -> save flow for the CLI and the GUI (28), never printing.
 ``confirmed=True`` round-trips the mapping to prove no column is dropped,
 then saves owner-only (29). ``destination`` is resolved before analysis
@@ -16,11 +16,11 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from anastomosis.commands.packinit import PACK_NAME_RE
 from anastomosis.core.logutil import exc_tag
-from anastomosis.core.packinit import PACK_NAME_RE
 
 if TYPE_CHECKING:  # the real types, without paying the import at runtime
-    from anastomosis.core.sourcelearn import SourceAnalysis
+    from anastomosis.commands.sourcelearn import SourceAnalysis
     from anastomosis.sources.learned.spec import DestinationBinding, MappingSpec
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ def run_source_init_command(cmd: SourceInitCommand) -> SourceInitResult:
     assert resolved is not None  # a None refusal guarantees a resolved example
 
     # Lazy imports so a minimal install loads this module cleanly.
-    from anastomosis.core.sourcelearn import (
+    from anastomosis.commands.sourcelearn import (
         analyze_source,
         build_mapping,
         round_trip,
@@ -265,7 +265,7 @@ def _destination_binding(name: str | None) -> tuple[DestinationBinding | None, s
     guess."""
     if name is None:
         return None, None
-    from anastomosis.core.profiles import ProfileError, capture_destination_profile
+    from anastomosis.commands.profiles import ProfileError, capture_destination_profile
     from anastomosis.sources.learned.spec import DestinationBinding
 
     try:

@@ -21,9 +21,9 @@ from types import ModuleType
 
 import pytest
 
+from anastomosis.commands.upload_command import LEDGER_NAME, UploadCommand, run_upload_command
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.core.model.patient import Identifier, IdentifierKind
-from anastomosis.core.upload_command import LEDGER_NAME, UploadCommand, run_upload_command
 from anastomosis.deliver.browser.engine import UploadEngine
 from anastomosis.deliver.browser.manifest import build_manifest
 from anastomosis.deliver.browser.persist import write_upload_manifest

@@ -22,7 +22,7 @@ from anastomosis.gui.jobs import GuiJob, GuiJobRunner
 from anastomosis.gui.shared import _STAGE_MAP, _transit_to_dict, fail_result
 
 if TYPE_CHECKING:
-    from anastomosis.core.commands import DeliveryOutcome, PatientSummary
+    from anastomosis.commands.run import DeliveryOutcome, PatientSummary
     from anastomosis.deliver.router import TransitMap
     from anastomosis.pipeline import StageEvent
 
@@ -259,7 +259,7 @@ class PipelineConsole(_RunConsole):
         trust_new: bool,
         write_manifest: bool,
     ) -> dict[str, object]:
-        from anastomosis.core.commands import (
+        from anastomosis.commands.run import (
             DeliveryCommand,
             PipelineCommand,
             run_pipeline_command,
@@ -456,17 +456,17 @@ class MigrationConsole(_RunConsole):
         pack_dirs: list[str] | None,
         trust_new: bool,
     ) -> dict[str, object]:
-        from anastomosis.core.commands import summarize_patients
-        from anastomosis.core.migrate import (
+        from anastomosis.commands.migrate import (
             RENDER_CCDA_STANDARD,
             MigrationCommand,
             run_migration,
         )
-        from anastomosis.core.migration_status import (
+        from anastomosis.commands.migration_status import (
             classify_migration,
             manual_import_notice,
             prepared_notice,
         )
+        from anastomosis.commands.run import summarize_patients
         from anastomosis.core.output import OutputPathError, clean_typed_path, require_output_dir
         from anastomosis.pipeline import PipelineError
 
@@ -560,7 +560,7 @@ class MigrationConsole(_RunConsole):
 
         No :class:`PipelineResult` exists in this mode, so detail is
         derived from the canonical records instead. Local display only, never an event."""
-        from anastomosis.core.migrate import MigrationResult
+        from anastomosis.commands.migrate import MigrationResult
 
         assert isinstance(result, MigrationResult)
         return [

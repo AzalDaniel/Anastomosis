@@ -1,6 +1,6 @@
-"""Unit tests for the shared pack-init command core (core/packinit.py).
+"""Unit tests for the shared pack-init command core (commands/packinit.py).
 
-Drives :func:`anastomosis.core.packinit.run_pack_init` directly — the analyze →
+Drives :func:`anastomosis.commands.packinit.run_pack_init` directly — the analyze →
 confirm → emit flow both the CLI and the GUI run. Synthetic 'sample' PDFs are
 built with PyMuPDF (the test_packgen_emit / test_gui_controller pattern), so the
 whole flow is exercised without a browser. All values are synthetic
@@ -15,7 +15,7 @@ import pytest
 
 pymupdf = pytest.importorskip("pymupdf", reason="packinit tests need the render extra (PyMuPDF)")
 
-from anastomosis.core.packinit import (  # noqa: E402
+from anastomosis.commands.packinit import (  # noqa: E402
     PackInitCommand,
     run_pack_init,
 )

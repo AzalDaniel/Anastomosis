@@ -226,7 +226,7 @@ def _cli_lines(kind: str, **counts: int) -> list[str]:
     from rich.console import Console
 
     import anastomosis.cli as cli
-    from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.commands.run import DeliveryOutcome
 
     recorder = Console(record=True, width=200, no_color=True)
     original, cli.console = cli.console, recorder
@@ -280,7 +280,7 @@ def test_the_cli_shortfall_names_no_chart() -> None:
 
 def _deliver_events(kind: str = "archive", **counts: int) -> list[dict[str, object]]:
     """The events the GUI's deliver rail receives for one delivery outcome."""
-    from anastomosis.core.commands import DeliveryOutcome
+    from anastomosis.commands.run import DeliveryOutcome
     from anastomosis.gui.consoles.runs import PipelineConsole, SummaryStore
 
     class _Jobs:

@@ -146,7 +146,7 @@ class LearnedSourceAdapter:
     @property
     def spec(self) -> MappingSpec:
         """The mapping this adapter executes — read-only, for profiling it.
-        :func:`anastomosis.core.profiles.capture_source_profile` needs the
+        :func:`anastomosis.commands.profiles.capture_source_profile` needs the
         mapping's id, version and destination binding to address the
         adapter by content; the spec is frozen by convention, so handing
         it out is a read, not a seam."""

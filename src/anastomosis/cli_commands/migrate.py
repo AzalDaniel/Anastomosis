@@ -13,7 +13,7 @@ from anastomosis.cli import app
 from anastomosis.cli_commands._options import ExportDir, Force, OutDir, PackDirs, TrustPack
 
 if TYPE_CHECKING:
-    from anastomosis.core.migrate import MigrationCommand
+    from anastomosis.commands.migrate import MigrationCommand
     from anastomosis.pipeline import PipelineError
 
 
@@ -35,7 +35,7 @@ def _resolve_migration_profile(
     sections, qa)``.
     """
     from anastomosis import cli as _cli
-    from anastomosis.core.migrate import RENDER_NEUTRAL, default_migration_profiles
+    from anastomosis.commands.migrate import RENDER_NEUTRAL, default_migration_profiles
 
     saved: dict[str, object] = {}
     if profile_name is not None:
@@ -115,12 +115,12 @@ def _run_migration(cmd: MigrationCommand, save_profile: str | None) -> None:
     executed — exit 0) or the manual-import notice (no viable route — exit 1).
     """
     from anastomosis import cli as _cli
-    from anastomosis.core.migrate import (
+    from anastomosis.commands.migrate import (
         bind_migration,
         default_migration_profiles,
         run_migration,
     )
-    from anastomosis.core.migration_status import (
+    from anastomosis.commands.migration_status import (
         classify_migration,
         manual_import_notice,
         prepared_notice,
@@ -292,7 +292,7 @@ def migrate_cmd(
     folder after any of them changed refuses and says which one moved;
     ``--rebind`` is how you say the earlier artifacts no longer stand.
     """
-    from anastomosis.core.migrate import MigrationCommand
+    from anastomosis.commands.migrate import MigrationCommand
 
     resolved = _resolve_migration_profile(
         profile,

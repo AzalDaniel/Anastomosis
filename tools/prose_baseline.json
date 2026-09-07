@@ -97,6 +97,94 @@
       "ratio": 0.28115,
       "total": 339
     },
+    "src/anastomosis/commands/__init__.py": {
+      "blank": 0,
+      "code": 0,
+      "comment": 0,
+      "docstring": 0,
+      "ratio": 0.0,
+      "total": 0
+    },
+    "src/anastomosis/commands/migrate.py": {
+      "blank": 87,
+      "code": 375,
+      "comment": 78,
+      "docstring": 87,
+      "ratio": 0.305556,
+      "total": 627
+    },
+    "src/anastomosis/commands/migration_status.py": {
+      "blank": 18,
+      "code": 67,
+      "comment": 4,
+      "docstring": 23,
+      "ratio": 0.287234,
+      "total": 112
+    },
+    "src/anastomosis/commands/packinit.py": {
+      "blank": 32,
+      "code": 116,
+      "comment": 21,
+      "docstring": 35,
+      "ratio": 0.325581,
+      "total": 204
+    },
+    "src/anastomosis/commands/profiles.py": {
+      "blank": 67,
+      "code": 288,
+      "comment": 18,
+      "docstring": 61,
+      "ratio": 0.215259,
+      "total": 434
+    },
+    "src/anastomosis/commands/run.py": {
+      "blank": 69,
+      "code": 304,
+      "comment": 73,
+      "docstring": 69,
+      "ratio": 0.318386,
+      "total": 515
+    },
+    "src/anastomosis/commands/runmanifest.py": {
+      "blank": 50,
+      "code": 219,
+      "comment": 18,
+      "docstring": 60,
+      "ratio": 0.262626,
+      "total": 347
+    },
+    "src/anastomosis/commands/selfcheck.py": {
+      "blank": 44,
+      "code": 159,
+      "comment": 12,
+      "docstring": 19,
+      "ratio": 0.163158,
+      "total": 234
+    },
+    "src/anastomosis/commands/source_init_command.py": {
+      "blank": 48,
+      "code": 221,
+      "comment": 37,
+      "docstring": 51,
+      "ratio": 0.28479,
+      "total": 357
+    },
+    "src/anastomosis/commands/sourcelearn.py": {
+      "blank": 89,
+      "code": 520,
+      "comment": 38,
+      "docstring": 71,
+      "ratio": 0.173291,
+      "total": 718
+    },
+    "src/anastomosis/commands/upload_command.py": {
+      "blank": 46,
+      "code": 192,
+      "comment": 95,
+      "docstring": 60,
+      "ratio": 0.446686,
+      "total": 393
+    },
     "src/anastomosis/core/__init__.py": {
       "blank": 0,
       "code": 0,
@@ -136,14 +224,6 @@
       "docstring": 10,
       "ratio": 0.214876,
       "total": 134
-    },
-    "src/anastomosis/core/commands.py": {
-      "blank": 69,
-      "code": 304,
-      "comment": 73,
-      "docstring": 69,
-      "ratio": 0.318386,
-      "total": 515
     },
     "src/anastomosis/core/conservation.py": {
       "blank": 13,
@@ -208,22 +288,6 @@
       "docstring": 22,
       "ratio": 0.341176,
       "total": 104
-    },
-    "src/anastomosis/core/migrate.py": {
-      "blank": 87,
-      "code": 375,
-      "comment": 78,
-      "docstring": 87,
-      "ratio": 0.305556,
-      "total": 627
-    },
-    "src/anastomosis/core/migration_status.py": {
-      "blank": 18,
-      "code": 67,
-      "comment": 4,
-      "docstring": 23,
-      "ratio": 0.287234,
-      "total": 112
     },
     "src/anastomosis/core/model/__init__.py": {
       "blank": 2,
@@ -321,14 +385,6 @@
       "ratio": 0.252033,
       "total": 282
     },
-    "src/anastomosis/core/packinit.py": {
-      "blank": 32,
-      "code": 116,
-      "comment": 21,
-      "docstring": 35,
-      "ratio": 0.325581,
-      "total": 204
-    },
     "src/anastomosis/core/pdfsnapshot.py": {
       "blank": 26,
       "code": 72,
@@ -345,46 +401,6 @@
       "ratio": 0.475806,
       "total": 147
     },
-    "src/anastomosis/core/profiles.py": {
-      "blank": 67,
-      "code": 288,
-      "comment": 18,
-      "docstring": 61,
-      "ratio": 0.215259,
-      "total": 434
-    },
-    "src/anastomosis/core/runmanifest.py": {
-      "blank": 50,
-      "code": 219,
-      "comment": 18,
-      "docstring": 60,
-      "ratio": 0.262626,
-      "total": 347
-    },
-    "src/anastomosis/core/selfcheck.py": {
-      "blank": 44,
-      "code": 159,
-      "comment": 12,
-      "docstring": 19,
-      "ratio": 0.163158,
-      "total": 234
-    },
-    "src/anastomosis/core/source_init_command.py": {
-      "blank": 48,
-      "code": 221,
-      "comment": 37,
-      "docstring": 51,
-      "ratio": 0.28479,
-      "total": 357
-    },
-    "src/anastomosis/core/sourcelearn.py": {
-      "blank": 89,
-      "code": 520,
-      "comment": 38,
-      "docstring": 71,
-      "ratio": 0.173291,
-      "total": 718
-    },
     "src/anastomosis/core/textutil.py": {
       "blank": 53,
       "code": 300,
@@ -400,14 +416,6 @@
       "docstring": 36,
       "ratio": 0.276596,
       "total": 219
-    },
-    "src/anastomosis/core/upload_command.py": {
-      "blank": 46,
-      "code": 192,
-      "comment": 95,
-      "docstring": 60,
-      "ratio": 0.446686,
-      "total": 393
     },
     "src/anastomosis/core/vesselmark.py": {
       "blank": 76,

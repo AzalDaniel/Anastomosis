@@ -18,7 +18,7 @@ import pytest
 pymupdf = pytest.importorskip("pymupdf", reason="the Teach flow needs the render extra (PyMuPDF)")
 
 import anastomosis.reconstruct.chromium as chromium  # noqa: E402
-from anastomosis.core.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
 from anastomosis.gui.controller import GuiController  # noqa: E402
 from anastomosis.pipeline import RENDER_SETTINGS_NAME, PipelineError  # noqa: E402
 from anastomosis.reconstruct import discover_packs, user_packs_dir  # noqa: E402
@@ -359,7 +359,7 @@ def test_upload_verification_re_reads_a_trusted_learned_layout(tmp_path: Path) -
     charts: the pack is not copied into the output tree, so the upload
     side re-discovers it by name and loads it only while it still
     matches the hash the Teach recorded."""
-    from anastomosis.core.upload_command import _verification_pack
+    from anastomosis.commands.upload_command import _verification_pack
 
     _teach(tmp_path)
 

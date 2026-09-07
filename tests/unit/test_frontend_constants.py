@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS, LEDGER_NAME
 from anastomosis.deliver.browser.states import UploadState
 from anastomosis.gui.controller import GuiController
 from anastomosis.gui.shared import _STAGE_MAP, _STAGE_RAIL, _STATE_GROUPS
@@ -42,7 +42,7 @@ def test_frontend_backend_retry_constants_do_not_drift() -> None:
     )
     assert int(match.group(1)) == DEFAULT_MAX_ATTEMPTS, (
         f"frontend/backend retry-budget drift: console.js fallback has "
-        f"{match.group(1)}, core.upload_command.DEFAULT_MAX_ATTEMPTS is "
+        f"{match.group(1)}, commands.upload_command.DEFAULT_MAX_ATTEMPTS is "
         f"{DEFAULT_MAX_ATTEMPTS}. Change both together."
     )
     # And the console actually refreshes from the canonical endpoint.

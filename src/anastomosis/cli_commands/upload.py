@@ -28,14 +28,14 @@ import typer
 
 from anastomosis.cli import app
 from anastomosis.cli_commands._paths import in_file
+from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.core.outcome import declined
-from anastomosis.core.upload_command import DEFAULT_MAX_ATTEMPTS
 from anastomosis.deliver.fhir_api.attach import DEFAULT_TOKEN_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from anastomosis.core.upload_command import UploadCommand, UploadCommandResult
+    from anastomosis.commands.upload_command import UploadCommand, UploadCommandResult
 
 
 def _drive_or_exit(cmd: UploadCommand, attach: Callable[[], object]) -> UploadCommandResult:
@@ -57,11 +57,11 @@ def _drive_or_exit(cmd: UploadCommand, attach: Callable[[], object]) -> UploadCo
     from rich.markup import escape as _escape
 
     from anastomosis import cli as _cli
-    from anastomosis.core.locking import OutputLockedError
-    from anastomosis.core.upload_command import (
+    from anastomosis.commands.upload_command import (
         VerificationUnavailableError,
         run_upload_command,
     )
+    from anastomosis.core.locking import OutputLockedError
     from anastomosis.deliver.browser.gates import DeliveryRefused
     from anastomosis.deliver.browser.persist import ManifestError
 
@@ -212,7 +212,7 @@ def upload_cmd(
     from rich.markup import escape as _escape
 
     from anastomosis import cli as _cli
-    from anastomosis.core.upload_command import UploadCommand, resolve_manifest_root
+    from anastomosis.commands.upload_command import UploadCommand, resolve_manifest_root
     from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
     from anastomosis.deliver.browser.manifest import load_skiplist
     from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest

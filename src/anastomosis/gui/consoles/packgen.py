@@ -1,6 +1,6 @@
 """The pack-from-samples wizard backend (the packgen console).
 
-A thin adapter over the shared :func:`anastomosis.core.packinit.run_pack_init`
+A thin adapter over the shared :func:`anastomosis.commands.packinit.run_pack_init`
 core — the analyze -> confirm -> emit flow the CLI's ``anast pack init`` runs —
 offered both synchronously (:meth:`PackgenConsole.pack_init`) and as a
 busy-guarded daemon job (:meth:`PackgenConsole.pack_init_async`). Every method
@@ -16,7 +16,7 @@ from anastomosis.gui.consoles.wizard import WizardConsole
 from anastomosis.gui.events import error_event
 
 if TYPE_CHECKING:
-    from anastomosis.core.packinit import PackInitResult
+    from anastomosis.commands.packinit import PackInitResult
 
 __all__ = ["PackgenConsole"]
 
@@ -42,8 +42,8 @@ class PackgenConsole(WizardConsole):
         Adapter over :func:`run_pack_init` (28); confirmed emits the draft,
         else refuses ``ConfirmationRequired``. ``out_dir=None`` uses the per-user dir (36)."""
         try:
+            from anastomosis.commands.packinit import PackInitCommand, run_pack_init
             from anastomosis.core.output import typed_path
-            from anastomosis.core.packinit import PackInitCommand, run_pack_init
 
             result = run_pack_init(
                 PackInitCommand(
@@ -113,8 +113,8 @@ class PackgenConsole(WizardConsole):
         """
 
         def _run() -> dict[str, object]:
+            from anastomosis.commands.packinit import PackInitCommand, run_pack_init
             from anastomosis.core.output import typed_path
-            from anastomosis.core.packinit import PackInitCommand, run_pack_init
 
             return self._pack_init_result_dict(
                 run_pack_init(

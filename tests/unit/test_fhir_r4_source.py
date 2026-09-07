@@ -1324,7 +1324,7 @@ def test_no_patient_is_a_loud_failure(tmp_path: Path) -> None:
 
 
 def test_adapter_registered_in_toolkit_info() -> None:
-    from anastomosis.core.commands import get_toolkit_info
+    from anastomosis.commands.run import get_toolkit_info
 
     sources = {s.name for s in get_toolkit_info().sources}
     assert "fhir-r4" in sources
@@ -1335,7 +1335,7 @@ def test_end_to_end_render_through_pipeline(
 ) -> None:
     pytest.importorskip("pymupdf", reason="render e2e needs PyMuPDF")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
-    from anastomosis.core.commands import PipelineCommand, run_pipeline_command, summarize_patients
+    from anastomosis.commands.run import PipelineCommand, run_pipeline_command, summarize_patients
 
     out = tmp_path / "charts"
     result = run_pipeline_command(

@@ -86,7 +86,7 @@ def pipeline_run(
 ) -> None:
     """Ingest an export and reconstruct every encounter into chart PDFs."""
     from anastomosis import cli as _cli
-    from anastomosis.core.commands import DeliveryCommand, PipelineCommand
+    from anastomosis.commands.run import DeliveryCommand, PipelineCommand
 
     sections = _cli._sections_or_exit(section, source=source, pack=pack)
     includes = _cli._includes_or_exit(include, source=source, pack=pack)
