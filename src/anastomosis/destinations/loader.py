@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -25,9 +25,15 @@ from anastomosis.destinations.browserpack import (
 __all__ = [
     "BrowserPackError",
     "LoadedBrowserPack",
+    "PackReadiness",
     "load_destination_pack",
+    "pack_readiness",
     "user_destinations_dir",
 ]
+
+#: Whether this installation can file into a destination: its pack is
+#: discovered, or present but undiscovered, or not here at all.
+PackReadiness = Literal["ready", "needs-discovery", "absent"]
 
 # Built-in scaffolds ship alongside this module (destinations/<name>/pack.yaml).
 _BUILTIN_DIR = Path(__file__).resolve().parent
@@ -202,3 +208,16 @@ def load_destination_pack(name: str, pack_dirs: list[Path] | None = None) -> Loa
         f"no destination pack {name!r} found (looked in --pack-dir, "
         f"{user_destinations_dir()}, and built-ins under {_BUILTIN_DIR})"
     )
+
+
+def pack_readiness(name: str, pack_dirs: list[Path] | None = None) -> PackReadiness:
+    """How far along the local browser pack for ``name`` is.
+
+    The one answer every surface showing filing readiness reads. A pack that
+    will not load is ``absent``: unavailable, and never a crash (rule 21).
+    """
+    try:
+        loaded = load_destination_pack(name, pack_dirs)
+    except BrowserPackError:
+        return "absent"
+    return "ready" if loaded.ready else "needs-discovery"

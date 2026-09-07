@@ -276,6 +276,33 @@ def test_flow_1_carries_every_answer_into_the_command(
     assert "choose 3 to file these charts" in session.output
 
 
+def test_the_destination_picker_says_which_can_be_filed_into(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The registry lists thirteen systems and one of them has a filing
+    assistant. All thirteen stay on offer; only one reads as ready."""
+    import anastomosis.destinations.loader as loader
+    from anastomosis.destinations.browserpack import SelectorMap
+    from anastomosis.destinations.registry import DestinationRegistry
+
+    monkeypatch.setattr(loader, "user_destinations_dir", lambda: tmp_path)
+    options = guide._destination_options()
+    assert len(options) == len(DestinationRegistry.load().entries)
+    assert options[0][0] == "tebra"
+    assert options[0][1].endswith("the filing assistant is here but not set up yet")
+    assert all(label.endswith("no filing assistant yet") for _value, label in options[1:])
+
+    (tmp_path / "tebra").mkdir()
+    (tmp_path / "tebra" / "selectors.yaml").write_text(
+        "selectors:\n" + "".join(f'  {s}: "#{s}"\n' for s in SelectorMap.required_slots()),
+        encoding="utf-8",
+    )
+    assert guide._destination_options()[0] == (
+        "tebra",
+        "Tebra (Kareo + PatientPop), ready to file charts into",
+    )
+
+
 def test_flow_2_prepares_a_move(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     out = tmp_path / "move"
     sources = [value for value, _label in guide._source_options()]
