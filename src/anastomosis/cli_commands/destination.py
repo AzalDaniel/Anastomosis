@@ -60,12 +60,9 @@ def _oldest_evidence(entry: object) -> str:
 
 
 def _local_pack_status(name: str) -> str:
-    """The table's cell for ``name``'s local pack.
-
-    Shown in `destination list`/`route` so the operator can see a pack is
-    present (and whether the wizard has been run) without it ever auto-affecting
-    routing — the registry overlay stays the single routing truth.
-    """
+    """What `destination list` and `destination route` print for ``name``'s
+    local pack: present, and whether the wizard has been run, without it ever
+    auto-affecting routing — the registry overlay stays the routing truth."""
     from anastomosis.destinations.loader import pack_readiness
 
     readiness = pack_readiness(name)
