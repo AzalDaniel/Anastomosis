@@ -276,6 +276,9 @@ def _load_context_builder_from_source(
     return cast(ContextBuilder, builder)
 
 
+_TEMPLATE_FILE = "template.html"
+_CONTEXT_FILE = "context.py"
+
 _BuildResult = tuple[PackManifest, Path, ContextBuilder]
 
 
@@ -284,7 +287,6 @@ def _finish_load(
 ) -> PackStatus:
     """Run ``build()`` and turn it into a :class:`PackStatus`, diagnosing defensively.
 
-    Shared tail for :func:`_load_pack_dir` and :func:`_load_pack_snapshot`.
     ``name_cell`` is a one-item mutable cell so ``build`` can update the
     reported name once the manifest parses, including on a later failure.
     """
@@ -318,62 +320,40 @@ def _finish_load(
     )
 
 
-def _load_pack_dir(root: Path, origin: str) -> PackStatus:
+def _load_pack(root: Path, origin: str, snapshot: PackSnapshot | None = None) -> PackStatus:
+    """One pack, read off ``root`` or from a ``snapshot``'s pinned bytes: with
+    a snapshot the manifest parses and ``context.py`` execs from the bytes the
+    trust hash covered, never re-read, so nothing can swap a file between check
+    and exec. ``template.html`` is required here and read at render time."""
     name_cell = [root.name]
+    pinned = snapshot.files if snapshot is not None else None
+
+    def require(relname: str) -> Path:
+        present = relname in pinned if pinned is not None else (root / relname).is_file()
+        if not present:
+            raise FileNotFoundError(f"{relname} not found")
+        return root / relname
 
     def build() -> _BuildResult:
-        manifest_path = root / _PACK_FILE
-        if not manifest_path.is_file():
-            raise FileNotFoundError("pack.yaml not found")
-        manifest = PackManifest.model_validate(
-            yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = require(_PACK_FILE)
+        raw = (
+            pinned[_PACK_FILE].decode("utf-8")
+            if pinned is not None
+            else manifest_path.read_text(encoding="utf-8")
         )
+        manifest = PackManifest.model_validate(yaml.safe_load(raw))
         name_cell[0] = manifest.name
-        template_path = root / "template.html"
-        if not template_path.is_file():
-            raise FileNotFoundError("template.html not found")
-        context_path = root / "context.py"
-        if not context_path.is_file():
-            raise FileNotFoundError("context.py not found")
-        return (
-            manifest,
-            template_path,
-            _load_context_builder(context_path, restricted=origin != ORIGIN_BUILTIN),
+        template_path = require(_TEMPLATE_FILE)
+        context_path = require(_CONTEXT_FILE)
+        restricted = origin != ORIGIN_BUILTIN
+        builder = (
+            _load_context_builder_from_source(
+                pinned[_CONTEXT_FILE], context_path, restricted=restricted
+            )
+            if pinned is not None
+            else _load_context_builder(context_path, restricted=restricted)
         )
-
-    return _finish_load(name_cell, origin, root, build)
-
-
-def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
-    """Load a pack from its hashed :class:`PackSnapshot` — the trusted-external path.
-
-    Contract: parses and execs from the snapshot's PINNED bytes, never
-    re-read, so what runs is exactly what the trust hash covered.
-    ``context.py`` is pinned to execution; ``template.html``'s presence is
-    checked here but read from disk at render time; other assets are outside
-    the hash. Diagnoses defensively like :func:`_load_pack_dir`.
-    """
-    root = snapshot.root
-    name_cell = [root.name]
-
-    def build() -> _BuildResult:
-        manifest_bytes = snapshot.files.get(_PACK_FILE)
-        if manifest_bytes is None:
-            raise FileNotFoundError("pack.yaml not found")
-        manifest = PackManifest.model_validate(yaml.safe_load(manifest_bytes.decode("utf-8")))
-        name_cell[0] = manifest.name
-        if snapshot.files.get("template.html") is None:
-            raise FileNotFoundError("template.html not found")
-        context_bytes = snapshot.files.get("context.py")
-        if context_bytes is None:
-            raise FileNotFoundError("context.py not found")
-        # Every caller of this path is a non-built-in origin, so pack code is
-        # always restricted here; the flag is passed rather than assumed so the
-        # two loaders read the same way.
-        builder = _load_context_builder_from_source(
-            context_bytes, root / "context.py", restricted=origin != ORIGIN_BUILTIN
-        )
-        return manifest, root / "template.html", builder
+        return manifest, template_path, builder
 
     return _finish_load(name_cell, origin, root, build)
 
@@ -432,7 +412,7 @@ def _discover_one(
     its root to its current content hash.
     """
     if origin == ORIGIN_BUILTIN:
-        return _load_pack_dir(root, origin)
+        return _load_pack(root, origin)
     if origin == ORIGIN_PACK_DIR and not allow_external:
         return PackStatus(
             name=root.name,
@@ -445,7 +425,7 @@ def _discover_one(
         # A per-user pack has no consent-only path: only the hash proves the
         # code is what the operator confirmed.
         if origin == ORIGIN_PACK_DIR:
-            return _load_pack_dir(root, origin)
+            return _load_pack(root, origin)
         return PackStatus(
             name=root.name,
             pack=None,
@@ -470,17 +450,17 @@ def _load_trusted_external(
     """Gate one code-bearing candidate on its content hash, then load it if allowed.
 
     Contract: the pack is read ONCE into a :class:`PackSnapshot`; a trusted
-    hash execs those SAME bytes via :func:`_load_pack_snapshot` — no
+    hash execs those SAME bytes via :func:`_load_pack` — no
     swap-between-hash-and-exec window. ``trust_new`` records the hash
     (trust-on-first-use) and proceeds.
     """
     snapshot = read_pack_snapshot(root)
     content_hash = snapshot.content_hash
     if trust.is_trusted(root, content_hash):
-        return _load_pack_snapshot(snapshot, origin)
+        return _load_pack(root, origin, snapshot)
     if trust_new:
         trust.record(root, content_hash)
-        return _load_pack_snapshot(snapshot, origin)
+        return _load_pack(root, origin, snapshot)
     remedy = (
         "re-run with --trust-pack to trust it"
         if origin == ORIGIN_PACK_DIR
