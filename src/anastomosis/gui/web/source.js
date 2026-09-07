@@ -254,14 +254,6 @@
     return `format-pick-${pickSeq}`;
   }
 
-  function hasApi() {
-    return Shell.hasApi();
-  }
-
-  function setStep(text) {
-    Shell.setStatus(el("format-step"), text);
-  }
-
   //: A grouping key as one column name. The controller sends a name or null;
   //: an older payload sent a list of them.
   function keyValue(key) {
@@ -709,11 +701,6 @@
     renderTable();
     renderChanges();
     el("format-summary").textContent = (res.summary || []).join("\n");
-    el("format-proposal").hidden = false;
-    // Consent is per-analysis, never sticky.
-    el("format-confirm").checked = false;
-    el("format-save").disabled = true;
-    setStep(REVIEW_STEP);
   }
 
   //: A proposal is an answer about ONE file. Point the wizard at a different
@@ -744,14 +731,12 @@
     el("format-confirm").checked = false;
     el("format-save").disabled = true;
     Shell.hideBanner();
-    setStep("Step 1 of 2 — look at the example.");
+    wizard.setStep("Step 1 of 2 — look at the example.");
   }
 
-  function renderSaved(res) {
-    el("format-result-path").textContent = `The format was saved to ${res.mapping_dir}`;
-    el("format-result-md").textContent = res.mapping_md || "";
-    el("format-result").hidden = false;
-    setStep("Done. This export format is now available when you rebuild charts.");
+  function renderSaved(res, ui) {
+    ui.showResult(`The format was saved to ${res.mapping_dir}`, res.mapping_md);
+    ui.setStep("Done. This export format is now available when you rebuild charts.");
   }
 
   // ─── Anchoring a refusal ──────────────────────────────────────
@@ -963,113 +948,20 @@
     return Object.prototype.hasOwnProperty.call(ANCHORED, error) ? ANCHORED[error] : null;
   }
 
-  // ConfirmationRequired is the EXPECTED outcome of step 1. The three refusals
-  // keep their loud semantics and now carry the proposal with them, so each one
-  // points AT something instead of describing it.
-  function route(res) {
+  // ConfirmationRequired and a written mapping are the scaffold's to route.
+  // The three refusals are this mode's own: each keeps its loud semantics and
+  // carries the proposal with it, so it points AT something instead of
+  // describing it. The stashed result is what carries that detail, which is why
+  // an error event fetches it rather than banner-ing the bare code.
+  function onRefusal(res) {
     const anchor = res ? anchorFor(res.error) : null;
-    if (res && res.ok) {
-      renderSaved(res);
-    } else if (res && res.error === "ConfirmationRequired") {
-      renderProposal(res);
-    } else if (anchor) {
-      // A refusal reached before any proposal was painted still carries one.
-      if (!proposal && (res.suggestions || []).length) renderProposal(res);
-      clearAttention();
-      anchor(res);
-      setStep(REVIEW_STEP);
-    } else {
-      Shell.showBanner(
-        `The example could not be turned into a format: ${res ? res.error : "no answer from the app"}`
-      );
-    }
-  }
-
-  async function fetchResult() {
-    if (!hasApi()) return;
-    try {
-      route(await window.pywebview.api.last_source_result());
-    } catch (err) {
-      setAnalyzing(false);
-      Shell.showBanner(String(err));
-    }
-  }
-
-  // Both the terminal stage AND an error fetch the stashed result: the result
-  // carries the outcome-specific detail (which columns, which transform) that a
-  // bare error string does not.
-  //: Held from the click until the run's terminal event.
-  //:
-  //: NOT `Shell.guardButton`: that releases when its `work` resolves, and
-  //: `source_init_async` resolves as soon as the WORKER STARTS. Three rapid
-  //: clicks still fired three analyses through it — measured, not assumed.
-  //: The only on-screen feedback here is the step line, which is not a live
-  //: region, so a screen-reader operator gets nothing from a click and will
-  //: reasonably click again.
-  let analyzeLabel = "";
-  function setAnalyzing(busy) {
-    const button = el("format-analyze");
-    if (!button) return;
-    // Remember the button's OWN label rather than re-typing it here, so the
-    // markup stays the single place the wording lives.
-    if (!analyzeLabel) analyzeLabel = button.textContent;
-    button.disabled = busy;
-    button.textContent = busy ? "Looking…" : analyzeLabel;
-  }
-
-  function onEvent(event) {
-    if (event.type === "done" || event.type === "error" || event.state === "done") {
-      setAnalyzing(false);
-    }
-    if (event.type === "stage" && event.stage === "source" && event.state === "done") {
-      fetchResult();
-    } else if (event.type === "done" || event.type === "error") {
-      fetchResult();
-    }
-  }
-
-  function values() {
-    return {
-      example: el("format-example").value,
-      name: el("format-name").value,
-      display: el("format-display").value || null,
-    };
-  }
-
-  async function onAnalyze() {
-    if (!hasApi()) return;
-    Shell.hideBanner();
-    el("format-result").hidden = true;
-    const v = values();
-    if (
-      !Shell.requireFields([
-        [v.example, "the example export to learn from", "format-example"],
-        [v.name, "a short name for this format", "format-name"],
-      ])
-    ) {
-      return;
-    }
-    setStep("Step 1 of 2 — looking at the example…");
-    setAnalyzing(true);
-    try {
-      // Looking again re-runs the scorer over the same file, so it carries no
-      // review: there is nothing yet for one to correct.
-      const started = await window.pywebview.api.source_init_async(
-        v.example,
-        v.name,
-        v.display,
-        false,
-        null,
-        null
-      );
-      if (started && started.ok === false) {
-        Shell.showBanner(Shell.refusalText(started.error, "The example could not be read"));
-        setStep("Step 1 of 2 — look at the example.");
-        setAnalyzing(false);
-      }
-    } catch (err) {
-      Shell.showBanner(String(err));
-    }
+    if (!anchor) return false;
+    // A refusal reached before any proposal was painted still carries one.
+    if (!proposal && (res.suggestions || []).length) wizard.paintProposal(res);
+    clearAttention();
+    anchor(res);
+    wizard.setStep(REVIEW_STEP);
+    return true;
   }
 
   //: An empty wording is a transform the loader cannot parse. Caught here, in
@@ -1089,49 +981,53 @@
     return blank ? Shell.requireFields([["", "the wording to use", blank.id]]) : true;
   }
 
-  async function onSave() {
-    if (!hasApi() || !el("format-confirm").checked) return;
-    if (!literalsFilled()) return;
-    Shell.hideBanner();
-    clearAttention();
-    const v = values();
-    setStep("Step 2 of 2 — checking that no column would be lost…");
-    try {
-      const started = await window.pywebview.api.source_init_async(
-        v.example,
+  const wizard = window.AnastLearn.wizard({
+    mode: "format",
+    stage: "source",
+    input: "format-example",
+    write: "format-save",
+    needs: {
+      input: "the example export to learn from",
+      name: "a short name for this format",
+    },
+    say: {
+      looking: "Step 1 of 2 — looking at the example…",
+      look: "Step 1 of 2 — look at the example.",
+      review: REVIEW_STEP,
+      writing: "Step 2 of 2 — checking that no column would be lost…",
+      unreadable: "The example could not be read",
+      unwritable: "The format could not be saved",
+      failed: "The example could not be turned into a format",
+    },
+    // The corrections ride the confirmed call as its `review` argument; the
+    // look carries none, because there is nothing yet for one to correct.
+    start: (v, confirmed) =>
+      window.pywebview.api.source_init_async(
+        v.input,
         v.name,
         v.display,
-        true,
+        confirmed,
         null,
-        currentReview()
-      );
-      if (started && started.ok === false) {
-        Shell.showBanner(Shell.refusalText(started.error, "The format could not be saved"));
-        setStep(REVIEW_STEP);
-      }
-    } catch (err) {
-      Shell.showBanner(String(err));
-    }
-  }
+        confirmed ? currentReview() : null
+      ),
+    last: () => window.pywebview.api.last_source_result(),
+    renderProposal,
+    renderWritten: renderSaved,
+    beforeWrite: () => {
+      if (!literalsFilled()) return false;
+      clearAttention();
+      return true;
+    },
+    onRefusal,
+  });
 
-  function init() {
-    el("format-analyze").addEventListener("click", onAnalyze);
-    el("format-save").addEventListener("click", onSave);
-    // Which FILE is being taught is an edit like any other, and a harder one:
-    // the proposal below is about the old file, so it goes rather than merely
-    // losing its tick. The NAME is only what the mapping will be called — the
-    // columns and every correction over them still stand — so it revokes
-    // consent and keeps the work.
-    el("format-example").addEventListener("input", discardProposal);
-    el("format-name").addEventListener("input", onEdit);
-    el("format-confirm").addEventListener("change", () => {
-      el("format-save").disabled = !el("format-confirm").checked;
-    });
-    Shell.onReady((live) => {
-      el("format-analyze").disabled = !live;
-    });
-  }
+  // Which FILE is being taught is an edit like any other, and a harder one:
+  // the proposal below is about the old file, so it goes rather than merely
+  // losing its tick. The NAME is only what the mapping will be called — the
+  // columns and every correction over them still stand — so it revokes
+  // consent and keeps the work.
+  el("format-example").addEventListener("input", discardProposal);
+  el("format-name").addEventListener("input", onEdit);
 
-  Shell.registerFlow("source_init", onEvent);
-  init();
+  Shell.registerFlow("source_init", wizard.onEvent);
 })();

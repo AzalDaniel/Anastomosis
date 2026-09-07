@@ -4,14 +4,8 @@
  * Owns the "pack_init" flow and registers the Teach view itself (mode 2,
  * export formats, lives in source.js and registers only its own flow).
  *
- * Two steps, gated the way the CLI gates them:
- *   1. "Look at the samples" calls pack_init_async(confirmed=false) — the
- *      controller refuses to write and stashes the summary, so the operator
- *      sees exactly what they are confirming;
- *   2. the confirmation enables "Write the draft layout", which calls
- *      pack_init_async(confirmed=true) to emit the draft.
- * Both are fire-and-forget: the call returns {started:true} and the real result
- * arrives via the shell's dispatcher → last_pack_result().
+ * The two-step gate is learn.js's; this file is the descriptor for it plus
+ * what only this mode paints.
  *
  * PHI discipline: the summary carries static template text (recurring across
  * distinct samples) and counts only; sample paths are never echoed.
@@ -22,33 +16,18 @@
   const Shell = window.AnastShell;
   const el = (id) => document.getElementById(id);
 
-  function hasApi() {
-    return Shell.hasApi();
-  }
-
-  // The step line is the whole of what a click on "Look at the samples"
-  // answers, so it is said as well as shown.
-  function setStep(text) {
-    Shell.setStatus(el("layout-step"), text);
-  }
+  const FAILED = "The samples could not be turned into a layout";
 
   function renderProposal(res) {
     el("layout-summary").textContent = (res.summary || []).join("\n");
     el("layout-caveat").textContent = res.caveat
       ? `Before you confirm: ${res.caveat}`
       : "";
-    el("layout-proposal").hidden = false;
-    // Consent is per-analysis, never sticky: a fresh look re-arms the gate.
-    el("layout-confirm").checked = false;
-    el("layout-write").disabled = true;
-    setStep("Step 2 of 2 — review and confirm.");
   }
 
-  function renderWritten(res) {
-    el("layout-result-path").textContent = `The draft layout was written to ${res.pack_dir}`;
-    el("layout-result-md").textContent = res.draft_md || "";
-    el("layout-result").hidden = false;
-    setStep(
+  function renderWritten(res, ui) {
+    ui.showResult(`The draft layout was written to ${res.pack_dir}`, res.draft_md);
+    ui.setStep(
       res.pack
         ? `Done. "${res.pack}" is now offered on Charts and Migrate — review the draft against an original sample before using it.`
         : "Done. Review the draft against an original sample before using it."
@@ -59,124 +38,33 @@
     Shell.reloadInfo();
   }
 
-  // ConfirmationRequired is the EXPECTED outcome of step 1 (it carries the
-  // summary to confirm); ok is the written draft; anything else is a failure.
-  function route(res) {
-    if (res && res.ok) {
-      renderWritten(res);
-    } else if (res && res.error === "ConfirmationRequired") {
-      renderProposal(res);
-    } else {
-      Shell.showBanner(
-        `The samples could not be turned into a layout: ${res ? res.error : "no answer from the app"}`
-      );
-    }
-  }
-
-  async function fetchResult() {
-    if (!hasApi()) return;
-    try {
-      route(await window.pywebview.api.last_pack_result());
-    } catch (err) {
-      setAnalyzing(false);
-      Shell.showBanner(String(err));
-    }
-  }
-
-  //: Held from the click until the run's terminal event.
-  //:
-  //: NOT `Shell.guardButton`: that releases when its `work` resolves, and
-  //: `packgen_init_async` resolves as soon as the WORKER STARTS. Three rapid
-  //: clicks still fired three analyses through it — measured, not assumed.
-  //: The only on-screen feedback here is the step line, which is not a live
-  //: region, so a screen-reader operator gets nothing from a click and will
-  //: reasonably click again.
-  let analyzeLabel = "";
-  function setAnalyzing(busy) {
-    const button = el("layout-analyze");
-    if (!button) return;
-    // Remember the button's OWN label rather than re-typing it here, so the
-    // markup stays the single place the wording lives.
-    if (!analyzeLabel) analyzeLabel = button.textContent;
-    button.disabled = busy;
-    button.textContent = busy ? "Looking…" : analyzeLabel;
-  }
-
-  function onEvent(event) {
-    if (event.type === "done" || event.type === "error" || event.state === "done") {
-      setAnalyzing(false);
-    }
-    if (event.type === "stage" && event.stage === "packgen" && event.state === "done") {
-      fetchResult();
-    } else if (event.type === "done") {
-      fetchResult();
-    } else if (event.type === "error") {
-      Shell.showBanner(`The samples could not be turned into a layout: ${event.error}`);
-    }
-  }
-
-  function values() {
-    return {
-      samples: el("layout-samples").value,
-      name: el("layout-name").value,
-      display: el("layout-display").value || null,
-    };
-  }
-
-  async function onAnalyze() {
-    if (!hasApi()) return;
-    Shell.hideBanner();
-    el("layout-result").hidden = true;
-    const v = values();
-    if (
-      !Shell.requireFields([
-        [v.samples, "the folder your sample charts are in", "layout-samples"],
-        [v.name, "a short name for this layout", "layout-name"],
-      ])
-    ) {
-      return;
-    }
-    setStep("Step 1 of 2 — looking at the samples…");
-    setAnalyzing(true);
-    try {
-      const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, false);
-      if (started && started.ok === false) {
-        Shell.showBanner(Shell.refusalText(started.error, "The samples could not be read"));
-        setStep("Step 1 of 2 — look at the samples.");
-        setAnalyzing(false);
-      }
-    } catch (err) {
-      Shell.showBanner(String(err));
-    }
-  }
-
-  async function onWrite() {
-    if (!hasApi() || !el("layout-confirm").checked) return;
-    Shell.hideBanner();
-    const v = values();
-    setStep("Step 2 of 2 — writing the draft…");
-    try {
-      const started = await window.pywebview.api.pack_init_async(v.samples, v.name, v.display, true);
-      if (started && started.ok === false) {
-        Shell.showBanner(Shell.refusalText(started.error, "The draft layout could not be written"));
-        setStep("Step 2 of 2 — review and confirm.");
-      }
-    } catch (err) {
-      Shell.showBanner(String(err));
-    }
-  }
-
-  function init() {
-    el("layout-analyze").addEventListener("click", onAnalyze);
-    el("layout-write").addEventListener("click", onWrite);
-    el("layout-confirm").addEventListener("change", () => {
-      el("layout-write").disabled = !el("layout-confirm").checked;
-    });
-    Shell.onReady((live) => {
-      el("layout-analyze").disabled = !live;
-    });
-    Shell.onInfo(renderKnown);
-  }
+  const wizard = window.AnastLearn.wizard({
+    mode: "layout",
+    stage: "packgen",
+    input: "layout-samples",
+    write: "layout-write",
+    needs: {
+      input: "the folder your sample charts are in",
+      name: "a short name for this layout",
+    },
+    say: {
+      looking: "Step 1 of 2 — looking at the samples…",
+      look: "Step 1 of 2 — look at the samples.",
+      review: "Step 2 of 2 — review and confirm.",
+      writing: "Step 2 of 2 — writing the draft…",
+      unreadable: "The samples could not be read",
+      unwritable: "The draft layout could not be written",
+      failed: FAILED,
+    },
+    start: (v, confirmed) =>
+      window.pywebview.api.pack_init_async(v.input, v.name, v.display, confirmed),
+    last: () => window.pywebview.api.last_pack_result(),
+    renderProposal,
+    renderWritten,
+    // This mode has no pointed refusals to anchor, so an error event says what
+    // it carries rather than costing a fetch for the same sentence.
+    onErrorEvent: (event) => Shell.showBanner(`${FAILED}: ${event.error}`),
+  });
 
   // "Teach it another" needs an "another than WHAT". This is that: the formats
   // and layouts already installed, as static rows — no tint, because every row
@@ -212,13 +100,14 @@
     }
   }
 
+  Shell.onInfo(renderKnown);
+
   // The Teach VIEW is registered here (one workspace, two modes); source.js
   // registers only the second mode's flow.
   Shell.registerView({
     name: "teach",
     title: "Teach",
     flow: "pack_init",
-    onEvent,
+    onEvent: wizard.onEvent,
   });
-  init();
 })();

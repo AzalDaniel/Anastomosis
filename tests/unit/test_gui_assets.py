@@ -16,19 +16,24 @@ import pytest
 WEB = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "gui" / "web"
 FONTS = WEB / "fonts"
 
-#: The shipped assets: ONE document, the two stylesheets, the shell, and one
-#: script per view (Teach hosts two modes, so two of them).
+#: The shipped assets: ONE document, the two stylesheets, the two shared
+#: scripts, and one script per view (Teach hosts two modes, so two of them).
 ASSETS = (
     "index.html",
     "tokens.css",
     "app.css",
     "shell.js",
+    "learn.js",
     "app.js",
     "wizard.js",
     "console.js",
     "packgen.js",
     "source.js",
 )
+
+#: Loaded by every view, owning no flow of its own: the shell, and the teach
+#: scaffold both Teach modes run on.
+SHARED_SCRIPTS = ("shell.js", "learn.js")
 
 #: The per-view scripts and the event flow each one owns.
 VIEW_SCRIPTS = (
@@ -404,7 +409,7 @@ def test_index_ships_the_four_views_and_their_nav() -> None:
             f"the {view!r} view ships {'hidden' if is_hidden else 'visible'}"
         )
     # Every script the document loads is loaded exactly once.
-    for script in ("shell.js", *[name for name, _flow in VIEW_SCRIPTS]):
+    for script in (*SHARED_SCRIPTS, *[name for name, _flow in VIEW_SCRIPTS]):
         assert text.count(f'src="{script}"') == 1, f"{script} is not loaded exactly once"
 
 
@@ -447,7 +452,7 @@ def test_one_event_dispatcher_lives_in_the_shell() -> None:
     shell = _read("shell.js")
     assert "window.anastEvent = function anastEvent" in shell
     assert "BY_FLOW[event.flow]" in shell, "the dispatcher no longer routes by flow"
-    for script, _flow in VIEW_SCRIPTS:
+    for script in ("learn.js", *[name for name, _flow in VIEW_SCRIPTS]):
         # An assignment, not a mention: the view headers may point at the shell's.
         assert "window.anastEvent =" not in _read(script), (
             f"{script} defines a second dispatcher — the shell owns the only one"
@@ -465,12 +470,21 @@ def test_each_view_registers_the_flow_it_owns(script: str, flow: str) -> None:
     assert "registerView" in text or "registerFlow" in text, f"{script} registers nothing"
 
 
+#: The two Teach modes hand their bridge calls to learn.js, which owns the
+#: guard and the readiness wait for both of them, so that is where the guard is
+#: read for those two. That they really stay quiet with no bridge at all is
+#: driven per view in ``tests/gui_e2e/test_bridge_surface.py``.
+SCAFFOLD = {"packgen.js": "learn.js", "source.js": "learn.js"}
+
+
 @pytest.mark.parametrize("script", [name for name, _flow in VIEW_SCRIPTS])
 def test_view_script_uses_the_bridge_through_the_shell_guard(script: str) -> None:
     text = _read(script)
-    assert "pywebview" in text and "hasApi" in text
+    assert "pywebview" in text
+    guard = _read(SCAFFOLD.get(script, script))
+    assert "Shell.hasApi()" in guard, f"{script} reaches the bridge unguarded"
     # The bridge bootstrap happens ONCE, in the shell: a view waits on it.
-    assert "Shell.onReady" in text or "Shell.onInfo" in text
+    assert "Shell.onReady" in guard or "Shell.onInfo" in guard
 
 
 def test_the_run_form_is_built_once_and_composed_twice() -> None:
