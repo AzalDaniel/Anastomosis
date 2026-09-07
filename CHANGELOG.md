@@ -579,6 +579,50 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **Teach-a-format and teach-a-layout are one learn capability.** Both flows
+  were already analyze → confirm → emit and said so in their own docstrings,
+  so `commands/packinit.py` and `commands/source_init_command.py` are now
+  `commands/learn.py`: one `LearnCommand` carrying the kind, one `LearnResult`,
+  one name refusal against one registry argument, one confirm gate, one place
+  each arm's writer is released from. What genuinely differs stays behind the
+  kind rather than being flattened — one example file against N sample PDFs,
+  the format's per-item review step, three atomic files against six draft
+  files, the pack trust store against `source_trust.json`, the format's
+  in-process `register()`, and the layout's removal of a draft whose hash it
+  could not record. `pack init` and `source init` are unchanged as typed: the
+  whole CLI help surface diffs clean, and so do the wire keys the two GUI
+  wizard pages read. Three fields that were two names for one thing are one —
+  `written_dir`, `review_md`, `learned_name`.
+
+- **The draft pack's markup lives in template files.** `packgen/emit.py` built
+  a Jinja template out of an f-string, so every brace the draft needed was
+  written twice and every brace the f-string needed twice more. `template.html`,
+  `DRAFT.md` with its OCR block, `OCR_EVIDENCE.md` and `UNPLACED.txt` now come
+  from `packgen/templates/` and fill `$name` placeholders, which cannot collide
+  with a Jinja delimiter at all; the `E501` exemption `emit.py` carried for its
+  long markup lines went with them, and `_comment_safe`, which had no caller
+  anywhere, is gone. Every emitted byte is unchanged across a multi-sample
+  draft, a single-sample one, one carrying Jinja delimiters in its sample text
+  and an OCR batch. `anast doctor` asks after the templates now, because a
+  build that dropped them would otherwise refuse only at the end of a teach,
+  after the samples had been read.
+
+- **A half-written draft is not a draft.** The six writers in `emit_draft_pack`
+  went through plain `write_text`; they go through `core/atomic` now, like
+  every other writer rule 14 covers. `DRAFT.md` is the file that tells the
+  operator this draft may hold their own patients' values — the same-patient
+  caveat is its second heading — and a copy that stops mid-sentence withholds
+  that warning while looking complete.
+
+- **A trust hash gates execution, not editing** (new rule 111). A pack whose
+  content hash changed is unavailable because its `context.py` is code the
+  renderer would run; a learned mapping whose `source_trust.json` hash no
+  longer matches still loads and warns by name, because `mapping.json` is data
+  that every load re-validates against the closed target and transform sets,
+  and refining it by hand is exactly what `anast source init` prints as the
+  next step. The asymmetry was a standing audit finding; it is now a written
+  rule with a test on each side.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the
