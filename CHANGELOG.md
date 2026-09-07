@@ -579,6 +579,27 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **One deliverer writes both file trees.** The offline archive and the
+  per-patient bundle were the same operation written twice: claim a patient
+  directory name against a per-run ledger, copy the documents that patient's
+  record names, write their FHIR bundle, copy the charts the render index
+  attributes to them. What differs is where the directory sits and what sits
+  beside it — a cross-patient search index and HTML pages, or a QA slice and
+  the patient's own README — so that is what `grouping=` now says, as a two-row
+  layout table rather than a flag read in four places. The four budget-claim-copy
+  loops (two per deliverer) are one `copy_claimed_charts` in
+  `deliver/_shared.py`, and the two README mechanisms are one. `BundleResult`
+  survives unchanged as the per-patient row and now rides on `ArchiveResult`,
+  which is how `anast pipeline run --bundle` reports its counts;
+  `anastomosis.deliver.bundle` re-exports from the merged module. Two entry
+  points go: `BundleDeliverer.deliver_records`, and `BundleDeliverer.deliver`,
+  the single-record form that existed so `deliver_records` could pass its own
+  claim ledger into it. Every delivered byte is unchanged — `tools/snapshot.py`
+  passes and the corpus pin has not moved. One behaviour is deliberately
+  unified: a bundle run now logs the same warning the archive already did when
+  a record names a document the charts directory does not hold, where it used
+  to be silent.
+
 - **One FHIR field table, walked in both directions.** `core/fhir/export.py`
   and `core/fhir/ingest.py` each named the same twelve entities and stated
   every field's identity twice — model attribute, tail key, converter — so a
@@ -695,6 +716,15 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
 
 - **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
   carries five lists that FHIR has no resource for, and the exporter stashed

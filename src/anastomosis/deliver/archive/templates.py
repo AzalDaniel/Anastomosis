@@ -1,9 +1,10 @@
-"""Jinja2 templates for the offline archive.
+"""Jinja2 templates and README texts for the offline archive.
 
 Three pages: :data:`INDEX_HTML` (search + inline-JSON data, the only page
 with a script tag), :data:`PATIENT_HTML` and :data:`ENCOUNTER_HTML` (no
 JavaScript at all). Every template: strict CSP, relative asset paths only,
-static and openable from ``file://`` (RULES.md 38-39).
+static and openable from ``file://`` (RULES.md 38-39). The two README texts
+are plain ``str.format`` templates, one per grouping.
 
 All user-supplied strings autoescape; the only literal HTML is the
 templates' own structural markup."""
@@ -13,10 +14,12 @@ from __future__ import annotations
 from jinja2 import Environment, select_autoescape
 
 __all__ = [
+    "BUNDLE_README_TEXT",
     "CSP_META_CONTENT",
     "ENCOUNTER_HTML",
     "INDEX_HTML",
     "PATIENT_HTML",
+    "README_TEXT",
     "build_env",
 ]
 
@@ -204,6 +207,30 @@ Licenses
 --------
 See ``LICENSES/`` for the licenses of bundled assets. The Anastomosis tooling
 itself is AGPL-3.0-or-later (https://github.com/AzalDaniel/Anastomosis).
+"""
+
+BUNDLE_README_TEXT = """\
+Anastomosis per-patient bundle
+================================
+
+Patient id : {patient_id}
+Generated  : {generated_at}
+Generator  : {generator}
+
+Contents:
+  bundle.json   — FHIR R4 Bundle (collection) for this one patient.
+                  Machine-readable; round-trips back to the canonical model.
+  pdfs/         — Rendered chart PDFs for this patient's encounters.
+  qa_report.json (optional)
+                — Per-document QA results, only for this patient's charts.
+
+PHI WARNING
+-----------
+This folder contains Protected Health Information about a single patient.
+Handle accordingly:
+  * Do not upload to consumer cloud storage.
+  * Do not share by unencrypted email.
+  * Store on encrypted media; destroy securely when no longer needed.
 """
 
 

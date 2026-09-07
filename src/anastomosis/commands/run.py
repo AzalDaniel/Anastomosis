@@ -206,19 +206,17 @@ def _run_deliveries(
                 },
             )
         elif dc.kind == "bundle":
-            from anastomosis.deliver.bundle import BundleDeliverer
+            from anastomosis.deliver.archive import ArchiveDeliverer, Grouping
 
-            # Single-pass per-patient attribution, not an O(patients x pdfs)
-            # re-filter of every chart for every patient.
-            written = BundleDeliverer().deliver_records(
+            bun = ArchiveDeliverer(grouping=Grouping.BUNDLE).deliver(
                 result.records, charts_dir, dc.out_dir, qa_report=result.qa_report
             )
             outcomes["bundle"] = DeliveryOutcome(
                 kind="bundle",
                 out_dir=dc.out_dir,
                 counts={
-                    "patients": len(written),
-                    "missing": sum(w.missing_count for w in written),
+                    "patients": bun.patient_count,
+                    "missing": bun.missing_count,
                 },
             )
         elif dc.kind == "ccda":
