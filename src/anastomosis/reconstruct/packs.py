@@ -31,13 +31,11 @@ from pydantic import (
 )
 
 from anastomosis.core.model import CHARTABLE_KINDS
+from anastomosis.core.packdirs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR, candidate_pack_dirs
 from anastomosis.reconstruct.packexec import restrict_module
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
 __all__ = [
-    "ORIGIN_BUILTIN",
-    "ORIGIN_PACK_DIR",
-    "ORIGIN_USER",
     "LoadedPack",
     "PackCoverage",
     "PackManifest",
@@ -49,13 +47,7 @@ __all__ = [
 ]
 
 _BUILTIN_DIR = Path(__file__).resolve().parent.parent / "packs"
-
-#: Where a pack came from, as reported on :class:`PackStatus` and the info
-#: surface. Named because three call sites now branch on the values and a
-#: mistyped literal would silently downgrade a pack's trust handling.
-ORIGIN_BUILTIN = "builtin"
-ORIGIN_PACK_DIR = "pack-dir"
-ORIGIN_USER = "user"
+_PACK_FILE = "pack.yaml"
 
 
 def builtin_pack_names() -> frozenset[str]:
@@ -330,7 +322,7 @@ def _load_pack_dir(root: Path, origin: str) -> PackStatus:
     name_cell = [root.name]
 
     def build() -> _BuildResult:
-        manifest_path = root / "pack.yaml"
+        manifest_path = root / _PACK_FILE
         if not manifest_path.is_file():
             raise FileNotFoundError("pack.yaml not found")
         manifest = PackManifest.model_validate(
@@ -365,7 +357,7 @@ def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
     name_cell = [root.name]
 
     def build() -> _BuildResult:
-        manifest_bytes = snapshot.files.get("pack.yaml")
+        manifest_bytes = snapshot.files.get(_PACK_FILE)
         if manifest_bytes is None:
             raise FileNotFoundError("pack.yaml not found")
         manifest = PackManifest.model_validate(yaml.safe_load(manifest_bytes.decode("utf-8")))
@@ -386,46 +378,6 @@ def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
     return _finish_load(name_cell, origin, root, build)
 
 
-def _packs_under(parent: Path, origin: str) -> list[tuple[Path, str]]:
-    """The pack candidates a parent directory offers, as ``(root, origin)``.
-
-    A directory may BE a pack (it holds ``pack.yaml``) or CONTAIN packs. A
-    directory that is neither — absent, a file, empty — contributes nothing;
-    discovery stays defensive about what it is pointed at.
-    """
-    if not parent.is_dir():
-        return []
-    if (parent / "pack.yaml").is_file():
-        return [(parent, origin)]
-    return [
-        (child, origin)
-        for child in sorted(parent.iterdir())
-        if child.is_dir() and (child / "pack.yaml").is_file()
-    ]
-
-
-def _iter_candidate_dirs(
-    pack_dirs: list[Path], *, include_user: bool = True
-) -> list[tuple[Path, str]]:
-    """Every candidate pack root, in precedence order (first name wins).
-
-    Explicit ``--pack-dir`` directories, then the per-user directory a taught
-    layout is written to, then the shipped built-ins.
-    """
-    candidates: list[tuple[Path, str]] = []
-    for parent in pack_dirs:
-        candidates.extend(_packs_under(parent, ORIGIN_PACK_DIR))
-    if include_user:
-        candidates.extend(_packs_under(user_packs_dir(), ORIGIN_USER))
-    if _BUILTIN_DIR.is_dir():
-        candidates.extend(
-            (child, ORIGIN_BUILTIN)
-            for child in sorted(_BUILTIN_DIR.iterdir())
-            if child.is_dir() and (child / "pack.yaml").is_file()
-        )
-    return candidates
-
-
 def discover_packs(
     pack_dirs: list[Path] | None = None,
     *,
@@ -444,7 +396,13 @@ def discover_packs(
     per-user directory, for the install self-check only.
     """
     results: dict[str, PackStatus] = {}
-    for root, origin in _iter_candidate_dirs(pack_dirs or [], include_user=include_user):
+    candidates = candidate_pack_dirs(
+        pack_dirs or [],
+        user_dir=user_packs_dir() if include_user else None,
+        builtin_dir=_BUILTIN_DIR,
+        manifest=_PACK_FILE,
+    )
+    for root, origin in candidates:
         status = _discover_one(root, origin, allow_external, trust, trust_new)
         seen = results.get(status.name)
         if seen is None:

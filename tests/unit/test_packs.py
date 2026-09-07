@@ -2,6 +2,12 @@
 
 from pathlib import Path
 
+from anastomosis.core.packdirs import (
+    ORIGIN_BUILTIN,
+    ORIGIN_PACK_DIR,
+    ORIGIN_USER,
+    candidate_pack_dirs,
+)
 from anastomosis.reconstruct import discover_packs
 
 GOOD_MANIFEST = """\
@@ -133,6 +139,72 @@ def test_first_definition_wins_user_shadows_builtin(tmp_path: Path) -> None:
     statuses = discover_packs([a, b], allow_external=True)
     pack = statuses["demo_soap"].pack
     assert pack is not None and pack.manifest.version == "1.0"
+
+
+# --- the one walk both loaders take ------------------------------------------
+
+ONE_PACK_EACH = [
+    ("explicit/demo_soap", ORIGIN_PACK_DIR),
+    ("user/demo_soap", ORIGIN_USER),
+    ("builtin/demo_soap", ORIGIN_BUILTIN),
+]
+
+
+def three_origins(tmp_path: Path) -> dict[str, Path]:
+    dirs = {kind: tmp_path / kind for kind in ("explicit", "user", "builtin")}
+    for parent in dirs.values():
+        make_pack(parent)
+    return dirs
+
+
+def walk(tmp_path: Path, dirs: dict[str, Path], name: str | None = None) -> list[tuple[str, str]]:
+    found = candidate_pack_dirs(
+        [dirs["explicit"]],
+        user_dir=dirs["user"],
+        builtin_dir=dirs["builtin"],
+        manifest="pack.yaml",
+        name=name,
+    )
+    return [(root.relative_to(tmp_path).as_posix(), origin) for root, origin in found]
+
+
+def test_the_walk_offers_the_three_origins_in_rule_21_order(tmp_path: Path) -> None:
+    assert walk(tmp_path, three_origins(tmp_path)) == ONE_PACK_EACH
+
+
+def test_the_walk_narrowed_to_one_name_keeps_that_order(tmp_path: Path) -> None:
+    dirs = three_origins(tmp_path)
+    assert walk(tmp_path, dirs, "demo_soap") == ONE_PACK_EACH
+    assert walk(tmp_path, dirs, "no_such_pack") == []
+
+
+def test_a_parent_that_is_itself_a_pack_is_offered_whole(tmp_path: Path) -> None:
+    """``anast doctor`` and ``--pack-dir`` may name one pack, not a shelf."""
+    dirs = three_origins(tmp_path)
+    inner = {**dirs, "explicit": dirs["explicit"] / "demo_soap"}
+    assert walk(tmp_path, inner) == ONE_PACK_EACH
+    assert walk(tmp_path, inner, "demo_soap") == ONE_PACK_EACH
+
+
+def test_a_named_walk_looks_past_a_parent_pack_of_another_name(tmp_path: Path) -> None:
+    """An unnamed walk takes such a parent whole; a walk asking for one
+    name still reaches that parent's ``<name>/`` child."""
+    dirs = three_origins(tmp_path)
+    (dirs["explicit"] / "pack.yaml").write_text(GOOD_MANIFEST)
+    assert walk(tmp_path, dirs)[0] == ("explicit", ORIGIN_PACK_DIR)
+    assert walk(tmp_path, dirs, "demo_soap")[0] == ("explicit/demo_soap", ORIGIN_PACK_DIR)
+
+
+def test_the_walk_skips_the_user_directory_when_asked(tmp_path: Path) -> None:
+    """The install self-check asks only about the shipped layouts."""
+    dirs = three_origins(tmp_path)
+    found = candidate_pack_dirs(
+        [dirs["explicit"]],
+        user_dir=None,
+        builtin_dir=dirs["builtin"],
+        manifest="pack.yaml",
+    )
+    assert [origin for _root, origin in found] == [ORIGIN_PACK_DIR, ORIGIN_BUILTIN]
 
 
 # --- coverage: what a layout carries out of the record ----------------------
