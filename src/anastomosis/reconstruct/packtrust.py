@@ -11,7 +11,6 @@ PHI: carries pack file paths and hex digests only, never patient data.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
@@ -20,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from anastomosis.core.atomic import atomic_write_text
+from anastomosis.core.hashutil import sha256_hex
 from anastomosis.core.locking import output_lock
 
 __all__ = [
@@ -79,13 +79,13 @@ def _hash_snapshot_files(files: Mapping[str, bytes]) -> str:
     Each name emits ``b"\\0<name>\\0"`` then its bytes (nothing but the
     separator when the file is absent from the mapping).
     """
-    digest = hashlib.sha256()
+    parts: list[bytes] = []
     for name in _HASHED_FILES:
-        digest.update(b"\0" + name.encode("utf-8") + b"\0")
+        parts.append(b"\0" + name.encode("utf-8") + b"\0")
         data = files.get(name)
         if data is not None:
-            digest.update(data)
-    return digest.hexdigest()
+            parts.append(data)
+    return sha256_hex(*parts)
 
 
 def pack_content_hash(root: Path) -> str:

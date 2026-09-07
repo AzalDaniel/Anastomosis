@@ -43,6 +43,7 @@ from anastomosis.core.model import (
     SectionKind,
 )
 from anastomosis.core.textutil import html_to_text
+from anastomosis.core.timeutil import iso_date, iso_datetime
 from anastomosis.sources.base import SourceDataError
 
 __all__ = ["AmbiguousUnanchoredError", "records_from_resources"]
@@ -311,29 +312,18 @@ def _num_str(value: Any) -> str | None:
 
 def _date(value: Any) -> date | None:
     """Parse a FHIR ``date``/``dateTime`` to a calendar date (partials padded)."""
-    if not value:
-        return None
-    text = str(value).split("T", 1)[0]
-    parts = text.split("-")
-    if len(parts) == 1 and parts[0].isdigit():
-        text = f"{parts[0]}-01-01"
-    elif len(parts) == 2:
-        text = f"{parts[0]}-{parts[1]}-01"
     try:
-        return date.fromisoformat(text)
+        return iso_date(value, pad_partial=True)
     except ValueError:
         return None
 
 
 def _datetime(value: Any) -> datetime | None:
     """Parse a FHIR ``dateTime`` (date-only widens to midnight; never raises)."""
-    if not value:
-        return None
     try:
-        return datetime.fromisoformat(str(value))
+        return iso_datetime(value, pad_partial=True)
     except ValueError:
-        day = _date(value)
-        return datetime.fromisoformat(day.isoformat()) if day else None
+        return None
 
 
 def _prov(source_file: str | None, source_id: str | None) -> Provenance:
@@ -486,10 +476,9 @@ def _patient(resource: dict[str, Any], source_file: str | None) -> Patient:
     addresses = [_address(a) for a in resource.get("address", []) if isinstance(a, dict)]
     race, race_paths = _race_ethnicity(resource, "race")
     ethnicity, ethnicity_paths = _race_ethnicity(resource, "ethnicity")
-    # `name`/`extension` are consumed only in PART; _residual preserves what
-    # these sub-paths miss. Indices are RAW list positions while the reads
-    # above filter empty entries, so a degenerate entry only duplicates into
-    # the residue, never drops a value.
+    # `name`/`extension` are consumed only in PART; _residual preserves the rest.
+    # Indices are RAW list positions while the reads above filter empty entries,
+    # so a degenerate entry only duplicates into the residue, never drops a value.
     consumed = {
         "birthDate",
         "gender",
@@ -753,11 +742,10 @@ def _observations(
         if isinstance(comp, dict)
     ]
     top_value, top_unit, top_paths = _value_unit(resource)
-    # Emit the panel's own value when it has one, AND every component (US
-    # Core BP is a value-less panel + systolic/diastolic components; a panel
-    # may carry both). Component ids are index-qualified so two components
-    # sharing a LOINC never collide; an element counts as consumed only once
-    # it has actually landed on an observation this returns.
+    # Emit the panel's own value when it has one, AND every component (US Core
+    # BP is a value-less panel + systolic/diastolic components; a panel may carry
+    # both). Component ids are index-qualified so two components sharing a LOINC
+    # never collide; an element counts as consumed only once it has landed.
     emitted: list[tuple[str, Any, str | None, str | None, Any]] = []
     panel_code_landed = False
     if top_value is not None:
@@ -1326,9 +1314,8 @@ def _assemble(
 ) -> PatientRecord:
     patient_id = patient_res["id"]
     # Partition this patient's DocumentReferences: a narrative note whose
-    # context.encounter resolves attaches to that encounter; one with no/
-    # dangling encounter gets a synthetic encounter; binary content becomes
-    # a DocumentArtifact.
+    # context.encounter resolves attaches to that encounter; one with no or a
+    # dangling encounter gets a synthetic one; binary content becomes an artifact.
     encounter_ids = {r["id"] for r in grp.get("Encounter", []) if r.get("id")}
     notes_for_enc: dict[str, list[NoteSection]] = defaultdict(list)
     note_meta: dict[str, Any] = {}

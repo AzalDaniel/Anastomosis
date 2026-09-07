@@ -9,11 +9,12 @@ version strings, capability kinds, hex digests — never a patient value.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from anastomosis.core.hashutil import file_sha256, sha256_hex
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -60,13 +61,11 @@ class ProfileError(Exception):
 
 def _digest(kind: str, payload: Mapping[str, Any]) -> str:
     """SHA-256 hex over ``payload``'s canonical JSON, domain-separated by
-    ``kind`` and schema version: without the kind prefix, two different
-    profiles that serialize identically would collide."""
+    ``kind`` and schema version so two alike serializations cannot collide."""
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    digest = hashlib.sha256()
-    digest.update(f"anastomosis.profile\0{PROFILE_SCHEMA_VERSION}\0{kind}\0".encode())
-    digest.update(body.encode("utf-8"))
-    return digest.hexdigest()
+    return sha256_hex(
+        f"anastomosis.profile\0{PROFILE_SCHEMA_VERSION}\0{kind}\0".encode(), body.encode("utf-8")
+    )
 
 
 @dataclass(frozen=True)
@@ -295,7 +294,7 @@ def capture_source_profile(name: str, *, sources_dir: Path | None = None) -> Sou
     base = sources_dir if sources_dir is not None else user_sources_dir()
     spec_path = base / spec.mapping_id / SPEC_FILENAME
     try:
-        digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        digest = file_sha256(spec_path)
     except OSError:
         # No file to read (custom --out-dir, or a session-only registration):
         # the spec in hand IS the mapping, and its canonical text is the same

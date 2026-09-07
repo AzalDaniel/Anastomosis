@@ -106,12 +106,12 @@
       "total": 0
     },
     "src/anastomosis/core/atomic.py": {
-      "blank": 19,
+      "blank": 21,
       "code": 66,
       "comment": 6,
       "docstring": 22,
       "ratio": 0.297872,
-      "total": 113
+      "total": 115
     },
     "src/anastomosis/core/ccda_codes.py": {
       "blank": 23,
@@ -171,19 +171,19 @@
     },
     "src/anastomosis/core/fhir/ingest.py": {
       "blank": 58,
-      "code": 465,
+      "code": 466,
       "comment": 13,
       "docstring": 9,
-      "ratio": 0.045175,
-      "total": 545
+      "ratio": 0.045082,
+      "total": 546
     },
     "src/anastomosis/core/hashutil.py": {
-      "blank": 6,
-      "code": 13,
-      "comment": 2,
-      "docstring": 5,
-      "ratio": 0.35,
-      "total": 26
+      "blank": 19,
+      "code": 33,
+      "comment": 3,
+      "docstring": 11,
+      "ratio": 0.297872,
+      "total": 66
     },
     "src/anastomosis/core/identity.py": {
       "blank": 26,
@@ -210,12 +210,12 @@
       "total": 104
     },
     "src/anastomosis/core/migrate.py": {
-      "blank": 86,
-      "code": 386,
-      "comment": 80,
-      "docstring": 90,
-      "ratio": 0.305755,
-      "total": 642
+      "blank": 87,
+      "code": 375,
+      "comment": 78,
+      "docstring": 87,
+      "ratio": 0.305556,
+      "total": 627
     },
     "src/anastomosis/core/migration_status.py": {
       "blank": 18,
@@ -329,6 +329,14 @@
       "ratio": 0.325581,
       "total": 204
     },
+    "src/anastomosis/core/pdfsnapshot.py": {
+      "blank": 26,
+      "code": 72,
+      "comment": 0,
+      "docstring": 12,
+      "ratio": 0.142857,
+      "total": 110
+    },
     "src/anastomosis/core/presentation.py": {
       "blank": 23,
       "code": 65,
@@ -338,12 +346,12 @@
       "total": 147
     },
     "src/anastomosis/core/profiles.py": {
-      "blank": 66,
-      "code": 289,
+      "blank": 67,
+      "code": 288,
       "comment": 18,
-      "docstring": 62,
-      "ratio": 0.216802,
-      "total": 435
+      "docstring": 61,
+      "ratio": 0.215259,
+      "total": 434
     },
     "src/anastomosis/core/runmanifest.py": {
       "blank": 50,
@@ -371,11 +379,11 @@
     },
     "src/anastomosis/core/sourcelearn.py": {
       "blank": 89,
-      "code": 529,
+      "code": 520,
       "comment": 38,
-      "docstring": 73,
-      "ratio": 0.173437,
-      "total": 729
+      "docstring": 71,
+      "ratio": 0.173291,
+      "total": 718
     },
     "src/anastomosis/core/textutil.py": {
       "blank": 53,
@@ -386,12 +394,12 @@
       "total": 451
     },
     "src/anastomosis/core/timeutil.py": {
-      "blank": 25,
-      "code": 114,
+      "blank": 31,
+      "code": 136,
       "comment": 16,
-      "docstring": 28,
-      "ratio": 0.278481,
-      "total": 183
+      "docstring": 36,
+      "ratio": 0.276596,
+      "total": 219
     },
     "src/anastomosis/core/upload_command.py": {
       "blank": 46,
@@ -659,11 +667,11 @@
     },
     "src/anastomosis/deliver/verify/__init__.py": {
       "blank": 3,
-      "code": 30,
+      "code": 28,
       "comment": 0,
-      "docstring": 10,
-      "ratio": 0.25,
-      "total": 43
+      "docstring": 9,
+      "ratio": 0.243243,
+      "total": 40
     },
     "src/anastomosis/deliver/verify/composite.py": {
       "blank": 38,
@@ -674,12 +682,12 @@
       "total": 335
     },
     "src/anastomosis/deliver/verify/levels.py": {
-      "blank": 83,
-      "code": 319,
-      "comment": 32,
-      "docstring": 71,
-      "ratio": 0.244076,
-      "total": 505
+      "blank": 70,
+      "code": 286,
+      "comment": 30,
+      "docstring": 58,
+      "ratio": 0.235294,
+      "total": 444
     },
     "src/anastomosis/deliver/verify/types.py": {
       "blank": 10,
@@ -938,12 +946,12 @@
       "total": 99
     },
     "src/anastomosis/qa/checks.py": {
-      "blank": 112,
-      "code": 364,
-      "comment": 18,
-      "docstring": 101,
-      "ratio": 0.246377,
-      "total": 595
+      "blank": 93,
+      "code": 336,
+      "comment": 16,
+      "docstring": 77,
+      "ratio": 0.216783,
+      "total": 522
     },
     "src/anastomosis/qa/runner.py": {
       "blank": 18,
@@ -1035,11 +1043,11 @@
     },
     "src/anastomosis/reconstruct/provenance.py": {
       "blank": 38,
-      "code": 135,
+      "code": 127,
       "comment": 20,
-      "docstring": 76,
-      "ratio": 0.415584,
-      "total": 269
+      "docstring": 70,
+      "ratio": 0.414747,
+      "total": 255
     },
     "src/anastomosis/sources/__init__.py": {
       "blank": 2,
@@ -1099,11 +1107,11 @@
     },
     "src/anastomosis/sources/fhir_r4/mapper.py": {
       "blank": 131,
-      "code": 1074,
-      "comment": 100,
+      "code": 1064,
+      "comment": 97,
       "docstring": 128,
-      "ratio": 0.175115,
-      "total": 1433
+      "ratio": 0.174554,
+      "total": 1420
     },
     "src/anastomosis/sources/learned/__init__.py": {
       "blank": 13,
@@ -1194,12 +1202,12 @@
       "total": 287
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "blank": 200,
-      "code": 1239,
-      "comment": 116,
+      "blank": 198,
+      "code": 1234,
+      "comment": 114,
       "docstring": 138,
-      "ratio": 0.170127,
-      "total": 1693
+      "ratio": 0.169583,
+      "total": 1684
     },
     "tests/e2e/test_golden_rendering.py": {
       "blank": 29,
@@ -1410,12 +1418,12 @@
       "total": 99
     },
     "tests/unit/test_atomic.py": {
-      "blank": 54,
-      "code": 156,
+      "blank": 64,
+      "code": 183,
       "comment": 9,
-      "docstring": 38,
-      "ratio": 0.231527,
-      "total": 257
+      "docstring": 45,
+      "ratio": 0.227848,
+      "total": 301
     },
     "tests/unit/test_attachments_carried.py": {
       "blank": 51,
@@ -1690,12 +1698,12 @@
       "total": 399
     },
     "tests/unit/test_complexity_gate.py": {
-      "blank": 28,
-      "code": 80,
-      "comment": 3,
+      "blank": 36,
+      "code": 132,
+      "comment": 8,
       "docstring": 25,
-      "ratio": 0.259259,
-      "total": 136
+      "ratio": 0.2,
+      "total": 201
     },
     "tests/unit/test_conservation.py": {
       "blank": 48,
@@ -1888,6 +1896,14 @@
       "docstring": 59,
       "ratio": 0.132548,
       "total": 828
+    },
+    "tests/unit/test_hashutil.py": {
+      "blank": 23,
+      "code": 36,
+      "comment": 1,
+      "docstring": 1,
+      "ratio": 0.052632,
+      "total": 61
     },
     "tests/unit/test_identity.py": {
       "blank": 34,
@@ -2137,6 +2153,14 @@
       "ratio": 0.209205,
       "total": 311
     },
+    "tests/unit/test_pdfsnapshot.py": {
+      "blank": 35,
+      "code": 97,
+      "comment": 0,
+      "docstring": 8,
+      "ratio": 0.07619,
+      "total": 140
+    },
     "tests/unit/test_pf_pack.py": {
       "blank": 158,
       "code": 715,
@@ -2211,27 +2235,27 @@
     },
     "tests/unit/test_property_invariants.py": {
       "blank": 14,
-      "code": 38,
+      "code": 37,
       "comment": 7,
-      "docstring": 14,
-      "ratio": 0.355932,
-      "total": 73
+      "docstring": 13,
+      "ratio": 0.350877,
+      "total": 71
     },
     "tests/unit/test_prose_gate.py": {
-      "blank": 42,
-      "code": 178,
+      "blank": 44,
+      "code": 196,
       "comment": 10,
       "docstring": 1,
-      "ratio": 0.058201,
-      "total": 231
+      "ratio": 0.05314,
+      "total": 251
     },
     "tests/unit/test_qa.py": {
-      "blank": 202,
-      "code": 690,
+      "blank": 205,
+      "code": 710,
       "comment": 42,
-      "docstring": 128,
-      "ratio": 0.197674,
-      "total": 1062
+      "docstring": 131,
+      "ratio": 0.195923,
+      "total": 1088
     },
     "tests/unit/test_qa_no_encounters.py": {
       "blank": 84,
@@ -2282,12 +2306,12 @@
       "total": 296
     },
     "tests/unit/test_render_provenance.py": {
-      "blank": 97,
-      "code": 257,
+      "blank": 102,
+      "code": 275,
       "comment": 8,
-      "docstring": 39,
-      "ratio": 0.154605,
-      "total": 401
+      "docstring": 41,
+      "ratio": 0.151235,
+      "total": 426
     },
     "tests/unit/test_render_settings.py": {
       "blank": 35,
@@ -2434,12 +2458,12 @@
       "total": 462
     },
     "tests/unit/test_timeutil.py": {
-      "blank": 52,
-      "code": 142,
-      "comment": 14,
+      "blank": 66,
+      "code": 179,
+      "comment": 15,
       "docstring": 34,
-      "ratio": 0.252632,
-      "total": 242
+      "ratio": 0.214912,
+      "total": 294
     },
     "tests/unit/test_upload_command.py": {
       "blank": 107,
@@ -2474,12 +2498,12 @@
       "total": 291
     },
     "tests/unit/test_verify_levels.py": {
-      "blank": 124,
-      "code": 349,
-      "comment": 51,
-      "docstring": 33,
-      "ratio": 0.193995,
-      "total": 557
+      "blank": 122,
+      "code": 344,
+      "comment": 47,
+      "docstring": 32,
+      "ratio": 0.186761,
+      "total": 545
     },
     "tests/unit/test_vesselmark.py": {
       "blank": 156,
@@ -3374,17 +3398,9 @@
     },
     {
       "file": "src/anastomosis/reconstruct/provenance.py",
-      "length": 6,
-      "limit": 5,
-      "line": 64,
-      "name": "_digest",
-      "scope": "function"
-    },
-    {
-      "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 10,
       "limit": 5,
-      "line": 81,
+      "line": 69,
       "name": "pack_file_digests",
       "scope": "function"
     },
@@ -3392,7 +3408,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 6,
       "limit": 5,
-      "line": 126,
+      "line": 112,
       "name": "RenderProvenance",
       "scope": "class"
     },
@@ -3400,7 +3416,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 6,
       "limit": 5,
-      "line": 140,
+      "line": 126,
       "name": "RenderProvenance.identity",
       "scope": "function"
     },
@@ -3408,7 +3424,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 8,
       "limit": 5,
-      "line": 173,
+      "line": 159,
       "name": "pack_provenance",
       "scope": "function"
     },
@@ -3416,7 +3432,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 10,
       "limit": 5,
-      "line": 192,
+      "line": 178,
       "name": "RecordingLoader",
       "scope": "class"
     },
@@ -3424,7 +3440,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 6,
       "limit": 5,
-      "line": 217,
+      "line": 203,
       "name": "swapped_templates",
       "scope": "function"
     },
@@ -3432,7 +3448,7 @@
       "file": "src/anastomosis/reconstruct/provenance.py",
       "length": 6,
       "limit": 5,
-      "line": 247,
+      "line": 233,
       "name": "provenance_difference",
       "scope": "function"
     },
@@ -3479,12 +3495,12 @@
   ],
   "packages": {
     "anastomosis": {
-      "blank": 5642,
-      "code": 27717,
-      "comment": 3285,
-      "docstring": 6408,
-      "ratio": 0.259102,
-      "total": 43052
+      "blank": 5657,
+      "code": 27725,
+      "comment": 3275,
+      "docstring": 6384,
+      "ratio": 0.258373,
+      "total": 43041
     },
     "tests.e2e": {
       "blank": 186,
@@ -3511,21 +3527,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 9873,
-      "code": 36780,
-      "comment": 2841,
-      "docstring": 5315,
-      "ratio": 0.181503,
-      "total": 54809
+      "blank": 9971,
+      "code": 37079,
+      "comment": 2844,
+      "docstring": 5334,
+      "ratio": 0.180701,
+      "total": 55228
     }
   },
   "repo": {
-    "blank": 16567,
-    "code": 68292,
-    "comment": 6521,
-    "docstring": 12372,
-    "ratio": 0.2167,
-    "total": 103752
+    "blank": 16680,
+    "code": 68599,
+    "comment": 6514,
+    "docstring": 12367,
+    "ratio": 0.215832,
+    "total": 104160
   },
   "tool": "tools/prose_gate.py"
 }

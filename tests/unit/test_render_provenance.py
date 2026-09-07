@@ -23,6 +23,7 @@ from anastomosis.reconstruct.packs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR
 from anastomosis.reconstruct.packtrust import pack_content_hash
 from anastomosis.reconstruct.provenance import (
     RENDER_PROVENANCE_NAME,
+    UNREADABLE,
     RenderProvenance,
     pack_file_digests,
     provenance_difference,
@@ -276,9 +277,7 @@ def test_pack_file_digests_leaves_out_the_bytecode_cache(tmp_path: Path) -> None
     assert sorted(pack_file_digests(pack)) == ["context.py"]
 
 
-def test_an_unreadable_pack_file_is_recorded_not_dropped(tmp_path: Path) -> None:
-    """Losslessness: a file that could not be measured is a fact about the
-    render, and a record that omitted it would compare equal to a healthy one."""
+def test_a_directory_where_a_file_is_expected_is_not_measured(tmp_path: Path) -> None:
     pack = tmp_path / "pack"
     pack.mkdir()
     (pack / "template.html").write_text("<html></html>", encoding="utf-8")
@@ -288,6 +287,32 @@ def test_an_unreadable_pack_file_is_recorded_not_dropped(tmp_path: Path) -> None
 
     assert "locked" not in digests  # a directory is not a file
     assert set(digests) == {"template.html"}
+
+
+def test_an_unreadable_pack_file_records_the_unreadable_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RULES.md 26: a file inside the pack that cannot be read is RECORDED as
+    unreadable, never dropped and never raised — a record that omitted it would
+    compare equal to a run where the file was fine. The read failure is
+    injected: this suite can run as a uid no permission bit stops."""
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "template.html").write_text("<html></html>", encoding="utf-8")
+    (pack / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    real_open = Path.open
+
+    def _refuse(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "logo.png":
+            raise PermissionError(self.name)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _refuse)
+    digests = pack_file_digests(pack)
+
+    assert digests["logo.png"] == UNREADABLE
+    assert len(digests["template.html"]) == 64
+    assert digests["template.html"] != UNREADABLE
 
 
 def test_a_template_swapped_mid_batch_is_named() -> None:

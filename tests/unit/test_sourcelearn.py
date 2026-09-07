@@ -18,8 +18,8 @@ import pytest
 
 from anastomosis.core.sourcelearn import (
     FuzzyNameScorer,
-    _atomic_write,
     _mask,
+    _write_owner_only,
     analyze_source,
     build_mapping,
     detect_format,
@@ -257,7 +257,7 @@ def test_atomic_write_puts_exactly_the_string_it_was_given_on_disk(tmp_path: Pat
     rewrite that stops the bytes from being the given string."""
     text = "alpha\nbeta\r\ngamma\n"
     target = tmp_path / "sample.txt"
-    _atomic_write(target, text, 0o600)
+    _write_owner_only(target, text)
     assert target.read_bytes() == text.encode("utf-8")
 
 
