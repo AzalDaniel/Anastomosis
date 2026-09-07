@@ -238,3 +238,50 @@ def test_core_imports_nothing_outward() -> None:
         + "; ".join(offenders)
         + ". The command layer lives in commands/, not in the primitives package."
     )
+
+
+# --- the import graph: no package re-exports (rule 75) ---------------------
+#
+# `deliver/browser/__init__.py` and `destinations/__init__.py` are docstring
+# markers, so one submodule costs one submodule; `.persist` proves it, since
+# `anast upload` reads a manifest long after the render run. One edge stays
+# open: `.persist` needs `VerifyPolicy` at runtime, importing
+# `deliver.verify.types` runs `deliver/verify/__init__.py`, and that init has
+# six callers of `LayeredVerifier` — so `verify.composite` is absent below.
+
+#: Module `.persist` must not load -> the import that would re-introduce it.
+_PERSIST_MUST_NOT_LOAD = {
+    "sqlite3": "anastomosis.deliver.browser.tracking, the ledger",
+    "anastomosis.deliver.browser.engine": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.tracking": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.cdp": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.destinations.browserpack": "a re-export in destinations/__init__.py",
+}
+
+
+def test_manifest_writer_does_not_load_the_upload_engine() -> None:
+    """Importing the manifest writer loads the manifest writer: not the SQLite
+    ledger, the upload engine, the CDP client, nor the destination pack
+    adapter. One re-export in either package ``__init__`` puts every one of
+    them back on the import path."""
+    loaded = _modules_after_import("anastomosis.deliver.browser.persist")
+    leaked = sorted(set(_PERSIST_MUST_NOT_LOAD) & loaded)
+    assert not leaked, (
+        "importing the manifest writer loaded "
+        + "; ".join(f"{name}, re-introduced by {_PERSIST_MUST_NOT_LOAD[name]}" for name in leaked)
+        + ". Import each name from the module that defines it (rule 75)."
+    )
+
+
+def test_verification_ladder_does_not_load_the_sqlite_ledger() -> None:
+    """The ladder verifies delivered bytes; the ledger records upload
+    progress. Importing :mod:`anastomosis.deliver.verify` opens only the
+    first: it reaches ``browser.errors`` for two exception types, and a bare
+    ``browser/__init__.py`` keeps that from meaning the whole package."""
+    loaded = _modules_after_import("anastomosis.deliver.verify")
+    assert "sqlite3" not in loaded, (
+        "importing the verification ladder loaded sqlite3, re-introduced by "
+        "anastomosis.deliver.browser.tracking — the ladder imports "
+        "browser.errors, and a re-export in deliver/browser/__init__.py makes "
+        "that the ledger too (rule 75)."
+    )
