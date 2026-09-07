@@ -31,8 +31,6 @@ ASSETS = (
     "source.js",
 )
 
-#: Loaded by every view, owning no flow of its own: the shell, and the teach
-#: scaffold both Teach modes run on.
 SHARED_SCRIPTS = ("shell.js", "learn.js")
 
 #: The per-view scripts and the event flow each one owns.
@@ -470,10 +468,7 @@ def test_each_view_registers_the_flow_it_owns(script: str, flow: str) -> None:
     assert "registerView" in text or "registerFlow" in text, f"{script} registers nothing"
 
 
-#: The two Teach modes hand their bridge calls to learn.js, which owns the
-#: guard and the readiness wait for both of them, so that is where the guard is
-#: read for those two. That they really stay quiet with no bridge at all is
-#: driven per view in ``tests/gui_e2e/test_bridge_surface.py``.
+#: Where a script's bridge guard lives when it is not in the script's own file.
 SCAFFOLD = {"packgen.js": "learn.js", "source.js": "learn.js"}
 
 
