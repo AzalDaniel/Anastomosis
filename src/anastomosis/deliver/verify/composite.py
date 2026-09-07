@@ -29,16 +29,16 @@ from anastomosis.destinations.base import (
 from anastomosis.reconstruct.packs import LoadedPack
 
 from .levels import (
-    L0FileIntegrity,
-    L1PageAndSize,
-    L2IdentityText,
-    L3HeaderFields,
-    L4Banner,
-    L5Metadata,
-    L6RoundTrip,
     LevelResult,
     LevelStatus,
     PdfSnapshot,
+    l0_file_integrity,
+    l1_page_and_size,
+    l2_identity_text,
+    l3_header_fields,
+    l4_banner,
+    l5_metadata,
+    l6_round_trip,
 )
 
 # Re-exported here (the public typedef lives in .types so the
@@ -134,14 +134,6 @@ class LayeredVerifier:
         self._results: dict[str, list[LevelResult]] = {}
         self.last_results: list[LevelResult] = []
 
-        self._l0 = L0FileIntegrity()
-        self._l1 = L1PageAndSize()
-        self._l2 = L2IdentityText()
-        self._l3 = L3HeaderFields()
-        self._l4 = L4Banner()
-        self._l5 = L5Metadata()
-        self._l6 = L6RoundTrip()
-
     # --- Verifier protocol ---
 
     def verify_pre(
@@ -161,24 +153,24 @@ class LayeredVerifier:
         snapshot = PdfSnapshot(item.file_path)
 
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
-            ("L0", lambda: self._l0.run(item)),
+            ("L0", lambda: l0_file_integrity(item)),
             (
                 "L1",
-                lambda: self._l1.run(
+                lambda: l1_page_and_size(
                     item,
                     expected_pages=self._expected_pages.get(item.item_key),
                     snapshot=snapshot,
                     policy=policy,
                 ),
             ),
-            ("L2", lambda: self._l2.run(item, patient, snapshot=snapshot)),
+            ("L2", lambda: l2_identity_text(item, patient, snapshot=snapshot)),
             (
                 "L3",
-                lambda: self._l3.run(
+                lambda: l3_header_fields(
                     item, patient, pack=self._pack, encounter=encounter, snapshot=snapshot
                 ),
             ),
-            ("L4", lambda: self._l4.run(patient, banner=self._banner())),
+            ("L4", lambda: l4_banner(patient, banner=self._banner())),
         )
         steps = _for_policy(steps, policy)
         # An L4 wrong-patient escapes as WrongPatientError; the partial
@@ -204,13 +196,13 @@ class LayeredVerifier:
         steps: tuple[tuple[str, Callable[[], LevelResult]], ...] = (
             (
                 "L5",
-                lambda: self._l5.run(
+                lambda: l5_metadata(
                     item, dest_patient, doc_id, reader=self._metadata_reader(), snapshot=snapshot
                 ),
             ),
             (
                 "L6",
-                lambda: self._l6.run(
+                lambda: l6_round_trip(
                     item,
                     dest_patient,
                     doc_id,
