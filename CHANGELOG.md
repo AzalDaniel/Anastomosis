@@ -579,6 +579,24 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **Two package `__init__` files stopped re-exporting.** `deliver/browser`
+  eagerly imported thirty-seven names out of eleven submodules and
+  `destinations` twenty-six out of four, so taking one name took all of them:
+  importing `deliver.browser.persist` — the manifest writer `anast upload`
+  reads long after the render run — opened the SQLite ledger, the upload
+  engine, the CDP client and the destination pack adapter along with it.
+  Nothing imported through either package: no `from anastomosis.deliver.browser
+  import ...` and no `from anastomosis.destinations import ...` anywhere in
+  `src`, `tests` or `tools`, and no attribute path through either. Both are
+  now the docstring that states their contract, with no `__getattr__` and no
+  other lazy machinery standing in for the re-exports.
+  `deliver.browser.persist` costs 64 `anastomosis` modules instead of 75 and
+  stops opening `sqlite3`; `deliver.verify` costs 31 instead of 75 and stops
+  opening `sqlite3`, `jinja2` and `lxml` alike. Importing the CLI is unchanged
+  at 20 modules, which was never where this cost sat. Two tests in
+  `tests/unit/test_import_boundaries.py` hold both packages down, each naming
+  the module that leaked and the import that put it back.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the
