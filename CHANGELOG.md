@@ -579,6 +579,32 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **Both Teach modes run on one scaffold in the browser.** `packgen.js` and
+  `source.js` wrote the same two-step gate twice — hold the look button from
+  the click to the run's terminal event, fetch the result the controller
+  stashed, route it, and wrap the analyze click. `gui/web/learn.js` is that
+  gate once; a descriptor carries the stage, the two ids the markup does not
+  spell from the mode name, the two bridge calls, the sentences and the
+  painters. What genuinely differs stays with the mode that owns it: the
+  layout's caveat and its re-ask for the layout lists, and the format's
+  mapping table, its three anchored refusals and its review argument. So does
+  the one behaviour they never shared — an error event banners its own
+  sentence for the layout, which has nothing to point at, and fetches the
+  stash for the format, which does. `anast doctor` asks after the new script
+  by name. Five browser tests close gaps the shared code leaned on and nothing
+  drove: both error paths, a start the controller refuses, the format mode's
+  own missing-field words, and the display name on the wire.
+
+- **The counts and the not-yet-begun run are each spelled out once.**
+  `app.js` carried a byte-identical copy of the shell's `countsText`, its own
+  comment saying so; the activity strip and the Charts rail read the same
+  event and now read it through the same function. Charts and Migrate each
+  wrote out the same ordering rule around a run asked for but not started —
+  the click answers at once, the last run's results stay until this run has
+  its own, and the reset happens on the run's first event so a late reset
+  cannot wipe what an earlier one set. The rule is stated once in the shell
+  now; each view says only what it saves and what it puts back.
+
 - **Teach-a-format and teach-a-layout are one learn capability.** Both flows
   were already analyze → confirm → emit and said so in their own docstrings,
   so `commands/packinit.py` and `commands/source_init_command.py` are now
