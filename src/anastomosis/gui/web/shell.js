@@ -211,8 +211,8 @@
   // the CLI's own words (pipeline.py's settle_qa, #297). settle_qa puts the key
   // on the counts dict only when it is nonzero, so this reads exactly the CLI's
   // "only when there is something to say" rule — silent whenever a chart
-  // abbreviates nothing. Kept in step with app.js's copy: the activity strip
-  // and the Charts rail read the SAME event, and must say the same thing.
+  // abbreviates nothing. The activity strip and the Charts rail read the SAME
+  // event and must say the same thing, so they read it here.
   const COUNT_TEXT = {
     not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
   };
@@ -1802,6 +1802,7 @@
     announce,
     setStatus,
     stageLabel,
+    countsText,
     initSegmentToggles,
     displayName,
     nameOf,

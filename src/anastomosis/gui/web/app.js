@@ -120,32 +120,6 @@
     }
   }
 
-  // `not_carried`'s bare key name says nothing: it is QA's "N fact(s) carried
-  // by the record summary, not the visit charts" register, spelled out here in
-  // the CLI's own words (pipeline.py's settle_qa, #297). settle_qa puts the key
-  // on the counts dict only when it is nonzero, so this reads exactly the CLI's
-  // "only when there is something to say" rule — silent whenever a chart
-  // abbreviates nothing.
-  const COUNT_TEXT = {
-    not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
-  };
-  const NON_COUNT_KEYS = [
-    "type",
-    "stage",
-    "state",
-    "flow",
-    "summary_id",
-    "notice",
-    "outcome",
-    "source_reading",
-  ];
-  function countsText(event) {
-    return Object.keys(event)
-      .filter((k) => !NON_COUNT_KEYS.includes(k))
-      .map((k) => (COUNT_TEXT[k] ? COUNT_TEXT[k](event[k]) : `${k.replace(/_/g, " ")} ${event[k]}`))
-      .join(" · ");
-  }
-
   function setCurrent(text) {
     Shell.setStatus(el("charts-current"), text);
   }
@@ -253,7 +227,7 @@
       case "progress": {
         const card = ensureStageCard(event.stage);
         const counts = card && card.querySelector(".stage-counts");
-        if (counts) counts.textContent = countsText(event);
+        if (counts) counts.textContent = Shell.countsText(event);
         break;
       }
       case "done":
