@@ -90,10 +90,9 @@ class CdpSelectorValidator:
 
 
 def attach_selector_validator(cdp_url: str) -> SelectorValidator:
-    """Contract: attach over CDP to the operator's open browser (loopback
-    only) and return a :class:`CdpSelectorValidator` over its first page.
-    Playwright imports here, so nothing pays for it at module load; the
-    one-shot leaves teardown to process exit."""
+    """Contract: attach over CDP to the operator's open browser (loopback only)
+    and return a :class:`CdpSelectorValidator` over its first page."""
+    # Playwright loads here, not at import; the one-shot leaves teardown to exit.
     from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
     from anastomosis.destinations.browserpack import PlaywrightPageAdapter
 
@@ -157,12 +156,9 @@ def write_selectors(
 
 
 def registry_overlay_snippet(name: str) -> str:
-    """The printed registry-overlay snippet flipping ``name`` to the browser pack.
-
-    ``registry.yaml`` is the single routing truth and is NEVER
-    auto-modified; the operator pastes this into their own ``--registry``
-    overlay.
-    """
+    """The printed registry-overlay snippet flipping ``name`` to the browser
+    pack. ``registry.yaml`` is the single routing truth and is NEVER
+    auto-modified; the operator pastes this into their own ``--registry`` overlay."""
     return (
         "entries:\n"
         f"  {name}:\n"

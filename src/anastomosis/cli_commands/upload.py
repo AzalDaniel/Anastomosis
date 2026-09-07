@@ -81,6 +81,82 @@ def _drive_or_exit(cmd: UploadCommand, attach: Callable[[], object]) -> UploadCo
         raise typer.Exit(code=2) from None
 
 
+def _resolve_api_attach(
+    base_url: str, token_env: str, *, create_patients: bool, search_by_ssn: bool
+) -> Callable[[], object]:
+    """Contract: gate the transport (https, or plain http only to a loopback
+    host, since the base URL carries the token and patient ids), read the
+    bearer token from the ENVIRONMENT, and return the attach callable. A
+    refused URL is a clean exit 2."""
+    from rich.markup import escape as _escape
+
+    from anastomosis import cli as _cli
+    from anastomosis.deliver.fhir_api.client import FhirEndpoint
+
+    # A trailing newline from `export TOKEN=$(cat file)` is stripped, or it
+    # would be rejected as an illegal HTTP header value.
+    bearer_token = os.environ.get(token_env, "").strip() or None
+    try:
+        FhirEndpoint(base_url, bearer_token=bearer_token)
+    except ValueError as exc:
+        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+
+    def _attach_api() -> object:
+        from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
+
+        return attach_fhir_destination(
+            base_url,
+            bearer_token=bearer_token,
+            create_missing_patients=create_patients,
+            search_by_ssn=search_by_ssn,
+        )
+
+    return _attach_api
+
+
+def _resolve_browser_attach(
+    to: str, cdp_url: str, pack_dir: list[Path] | None, *, yes: bool
+) -> Callable[[], object]:
+    """Contract: gate the endpoint on loopback, warn about the shared machine
+    and take the operator's confirmation, load the destination pack and gate
+    it on discovered selectors, then return the attach callable. A decline
+    exits 0 and records it (104); every refusal is a clean exit 2."""
+    from rich.markup import escape as _escape
+
+    from anastomosis import cli as _cli
+    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
+    from anastomosis.destinations.browserpack import PackNotReadyError
+    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
+
+    try:
+        CdpEndpoint(cdp_url)
+    except ValueError as exc:
+        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+
+    # --yes still PRINTS the warning: the operator is told what they accepted.
+    _cli.console.print(SHARED_MACHINE_WARNING)
+    if not yes and not typer.confirm("Connect to this browser and start filing?", default=False):
+        _cli.console.print("aborted")
+        declined("No charts were filed.")
+        raise typer.Exit(code=0)
+
+    try:
+        loaded = load_destination_pack(to, list(pack_dir or []))
+        loaded.require_selectors()
+    except (BrowserPackError, PackNotReadyError) as exc:
+        _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from None
+
+    def _attach_browser() -> object:
+        from anastomosis.deliver.browser.attach import attach_destination
+
+        return attach_destination(cdp_url, loaded)
+
+    return _attach_browser
+
+
 @app.command("upload")
 def upload_cmd(
     out_dir: Annotated[
@@ -212,12 +288,8 @@ def upload_cmd(
 
     from anastomosis import cli as _cli
     from anastomosis.commands.upload_command import UploadCommand, resolve_manifest_root
-    from anastomosis.deliver.browser.cdp import SHARED_MACHINE_WARNING, CdpEndpoint
     from anastomosis.deliver.browser.manifest import load_skiplist
     from anastomosis.deliver.browser.persist import ManifestError, read_upload_manifest
-    from anastomosis.deliver.fhir_api.client import FhirEndpoint
-    from anastomosis.destinations.browserpack import PackNotReadyError
-    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
 
     # 1. Route selection FIRST — pure argv, so a mis-typed invocation never
     #    reaches the disk or the network. Exactly one route may be selected.
@@ -242,75 +314,22 @@ def upload_cmd(
         _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from None
 
-    # 3. The route's own pre-flight, then its attach seam. Both seams return a
+    # 3. The route's own pre-flight and its attach seam. Both return a
     #    Destination, so step 5 below is route-agnostic.
     attach: Callable[[], object]
     if fhir is not None:
-        # 3a. Transport gate before any request: https only (loopback excepted),
-        #     because the base URL carries the bearer token and patient ids.
-        #     Token comes from the ENVIRONMENT, never argv (ps-visible); a
-        #     trailing newline from `export TOKEN=$(cat file)` is stripped, or
-        #     it would be rejected as an illegal HTTP header value.
-        bearer_token = os.environ.get(fhir_token_env, "").strip() or None
-        try:
-            FhirEndpoint(fhir, bearer_token=bearer_token)
-        except ValueError as exc:
-            _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-            raise typer.Exit(code=2) from None
         # No shared-machine warning or confirmation: this route touches no
         # browser, so --yes is inert here.
-        base_url = fhir  # rebound as a plain str for the closure below
-
-        def _attach_api() -> object:
-            from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
-
-            return attach_fhir_destination(
-                base_url,
-                bearer_token=bearer_token,
-                create_missing_patients=create_patients,
-                search_by_ssn=search_by_ssn,
-            )
-
-        attach = _attach_api
+        attach = _resolve_api_attach(
+            fhir,
+            fhir_token_env,
+            create_patients=create_patients,
+            search_by_ssn=search_by_ssn,
+        )
     else:
         # The route gate in step 1 guarantees both browser flags are present.
         assert to is not None and cdp is not None
-        cdp_url = cdp
-
-        # 3b. The loopback gate — before any browser touch.
-        try:
-            CdpEndpoint(cdp_url)
-        except ValueError as exc:
-            _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-            raise typer.Exit(code=2) from None
-
-        # 3c. --yes still PRINTS the warning: the operator is told what they accepted.
-        _cli.console.print(SHARED_MACHINE_WARNING)
-        prompt = "Connect to this browser and start filing?"
-        if not yes and not typer.confirm(prompt, default=False):
-            _cli.console.print("aborted")
-            declined("No charts were filed.")
-            raise typer.Exit(code=0)
-
-        # 3d. Load the destination pack and gate on readiness (selectors found).
-        try:
-            loaded = load_destination_pack(to, list(pack_dir or []))
-        except BrowserPackError as exc:
-            _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-            raise typer.Exit(code=2) from None
-        if not loaded.ready:
-            try:
-                loaded.require_selectors()
-            except PackNotReadyError as exc:
-                _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
-                raise typer.Exit(code=2) from None
-
-        def _attach_browser() -> object:
-            from anastomosis.deliver.browser.attach import attach_destination
-
-            return attach_destination(cdp_url, loaded)
-
-        attach = _attach_browser
+        attach = _resolve_browser_attach(to, cdp, pack_dir, yes=yes)
 
     # 4. Load the operator skiplist if given (a missing file raises -> exit 2).
     skiplist_set: frozenset[str] = frozenset()

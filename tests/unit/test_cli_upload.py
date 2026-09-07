@@ -36,11 +36,6 @@ def _attach_seam(monkeypatch: pytest.MonkeyPatch, make: object) -> None:
     monkeypatch.setattr(browser_attach, "attach_destination", make)
 
 
-def _fhir_seam(monkeypatch: pytest.MonkeyPatch, make: object) -> None:
-    """Point the API route's live attach seam at ``make``."""
-    monkeypatch.setattr(fhir_attach, "attach_fhir_destination", make)
-
-
 LOOPBACK = "http://127.0.0.1:9222"
 DEST = "testdest"
 
@@ -503,10 +498,9 @@ def _invoke_fhir(out_dir: Path, *extra: str) -> object:
 def _fhir_spy(
     monkeypatch: pytest.MonkeyPatch, dest: FakeDestination | None = None
 ) -> list[dict[str, object]]:
-    """Patch the API attach seam, recording the endpoint config it
-    receives. Mirrors the browser route's ``attach_destination`` patch: the
-    command imports the seam inside its body, so patching the attribute here
-    is what it actually calls."""
+    """Patch the API attach seam, recording the endpoint config it receives.
+    Mirrors the browser route's ``attach_destination`` patch: the command
+    imports its seam inside the body, so this attribute is what it calls."""
     calls: list[dict[str, object]] = []
     made = dest if dest is not None else FakeDestination(_known())
 
@@ -527,7 +521,7 @@ def _fhir_spy(
         )
         return made
 
-    _fhir_seam(monkeypatch, _spy)
+    monkeypatch.setattr(fhir_attach, "attach_fhir_destination", _spy)
     return calls
 
 
