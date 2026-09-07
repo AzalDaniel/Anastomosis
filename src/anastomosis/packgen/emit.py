@@ -18,6 +18,7 @@ import textwrap
 from pathlib import Path
 from string import Template
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.output import secure_output_dir
 
 from .evidence import AMBIGUOUS, IMAGE_ONLY, MIXED, MIXED_EVIDENCE, LayoutEvidence
@@ -903,26 +904,25 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     # indistinguishable from template text. Raw strings stay in the quarantine,
     # but the generated directory still requires the same owner-only handling.
     pack_dir = secure_output_dir(out_dir / name)
-    (pack_dir / "pack.yaml").write_text(
-        _render_pack_yaml(analysis, name=name, display=display), encoding="utf-8"
+    # Atomically (14): a truncated DRAFT.md withholds the same-patient caveat.
+    atomic_write_text(
+        pack_dir / "pack.yaml", _render_pack_yaml(analysis, name=name, display=display)
     )
-    (pack_dir / "template.html").write_text(_render_template_html(analysis), encoding="utf-8")
-    (pack_dir / "context.py").write_text(_CONTEXT_PY, encoding="utf-8")
-    (pack_dir / "DRAFT.md").write_text(
-        _render_draft_md(analysis, name=name, display=display), encoding="utf-8"
-    )
+    atomic_write_text(pack_dir / "template.html", _render_template_html(analysis))
+    atomic_write_text(pack_dir / "context.py", _CONTEXT_PY)
+    atomic_write_text(pack_dir / "DRAFT.md", _render_draft_md(analysis, name=name, display=display))
     # The quarantine, and only when there is something to quarantine: an empty
     # UNPLACED.txt in every pack would train operators to ignore the name.
     quarantined = _quarantined_text(analysis)
     if quarantined:
-        (pack_dir / UNPLACED_NAME).write_text(
-            _render_unplaced_file(quarantined, analysis.evidence), encoding="utf-8"
+        atomic_write_text(
+            pack_dir / UNPLACED_NAME, _render_unplaced_file(quarantined, analysis.evidence)
         )
     # Written only when a page was recognized, for the same reason the
     # quarantine file is conditional: a file that is always there and usually
     # empty is a file nobody reads.
     if analysis.evidence.review_required:
-        (pack_dir / OCR_EVIDENCE_NAME).write_text(
-            _render_ocr_evidence_file(analysis, name=name), encoding="utf-8"
+        atomic_write_text(
+            pack_dir / OCR_EVIDENCE_NAME, _render_ocr_evidence_file(analysis, name=name)
         )
     return pack_dir
