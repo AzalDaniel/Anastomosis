@@ -19,6 +19,7 @@ from anastomosis.core.fhir.fields import TABLES
 from anastomosis.core.model import (
     Address,
     AllergyCategory,
+    AllergyIntolerance,
     DocumentArtifact,
     Guarantor,
     Patient,
@@ -570,6 +571,7 @@ def test_every_clinical_resource_id_is_derived_rather_than_minted() -> None:
 #: a particular shape (an empty contentType, a line2-only address), and the
 #: nested models with required fields of their own.
 _SAMPLE_OVERRIDES: dict[str, object] = {
+    "mime_type": "",
     "addresses": [Address(line2="Suite 400")],
     "contacts": [PatientContact(name="Next Of Kin", relationship="spouse")],
     "guarantor": Guarantor(name="Guarantor Name"),
@@ -647,6 +649,28 @@ def test_every_field_in_the_table_survives_the_round_trip() -> None:
                 )
 
 
+def test_every_record_level_list_survives_the_round_trip() -> None:
+    """The lists that hang off PatientRecord itself, driven by the record's own
+    annotations rather than by the table that carries them — `health_concerns`
+    and `screening_events` were dropped by both sides and no test saw it.
+    """
+    record = PatientRecord(patient=Patient(id=_PID))
+    lists = {
+        name: field
+        for name, field in PatientRecord.model_fields.items()
+        if str(field.annotation).startswith("list[")
+    }
+    for name, field in lists.items():
+        item_cls = field.annotation.__args__[0]  # type: ignore[union-attr]
+        anchored = {"patient_id": _PID} if "patient_id" in item_cls.model_fields else {}
+        record = record.model_copy(update={name: [item_cls(**anchored)]})
+
+    rebuilt = from_bundle(to_bundle(record))
+
+    for name in lists:
+        assert len(getattr(rebuilt, name)) == 1, f"{name} did not survive the bundle"
+
+
 #: Every ``urn:anastomosis:field:`` key `to_bundle` writes, in emission order,
 #: spelled out rather than derived from the table — a row renamed, dropped or
 #: reordered moves both walkers at once, so only a literal catches it.
@@ -675,6 +699,7 @@ _TAIL_KEYS: dict[str, tuple[str, ...]] = {
         "pack_name",
         "encounter_id",
         "generated_at",
+        "mime_type",
     ),
     "Encounter": ("encounter_type", "signed_by_id", "signed_at", "last_modified_at"),
     "FamilyMemberHistory": ("relation", "diagnosis", "onset_date"),
@@ -737,3 +762,71 @@ def test_the_tail_carries_exactly_the_inventory_it_is_committed_to() -> None:
         )
 
     assert {k: tuple(v) for k, v in emitted.items()} == _TAIL_KEYS
+
+
+# --- the four asymmetries the S-4 audit named --------------------------------
+
+
+def _only(bundle: dict, resource_type: str) -> dict:
+    (resource,) = [
+        e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == resource_type
+    ]
+    return resource
+
+
+def test_a_lossy_fhir_projection_never_decides_what_comes_back() -> None:
+    """`sex`, allergy `category` and allergy `severity` are each written twice:
+    once as the FHIR code a foreign system reads, once verbatim in the tail.
+    Only the tail is read back, so a charted value outside FHIR's value set
+    survives while the projection beside it is simply absent.
+    """
+    charted = AllergyIntolerance(
+        id="feedface-0000-4000-8000-0000000000a1",
+        patient_id=_PID,
+        category=AllergyCategory.OTHER,
+        severity="Life-threatening",
+        reactions=["Hives"],
+    )
+    record = PatientRecord(patient=Patient(id=_PID, sex="F"), allergies=[charted])
+
+    bundle = to_bundle(record)
+    allergy = _only(bundle, "AllergyIntolerance")
+    assert "gender" not in _only(bundle, "Patient")  # "F" is not a FHIR gender
+    assert "category" not in allergy  # OTHER has no FHIR allergy category
+    assert "severity" not in allergy["reaction"][0]  # nor is it a FHIR severity
+
+    rebuilt = from_bundle(bundle)
+    assert rebuilt.patient.sex == "F"
+    assert rebuilt.allergies[0].category is AllergyCategory.OTHER
+    assert rebuilt.allergies[0].severity == "Life-threatening"
+
+    # The projection is real, not merely never written: a value FHIR does hold
+    # lands in the standard element as well as the tail.
+    coded = charted.model_copy(update={"category": AllergyCategory.DRUG, "severity": "severe"})
+    bundle = to_bundle(PatientRecord(patient=Patient(id=_PID, sex="female"), allergies=[coded]))
+    assert _only(bundle, "Patient")["gender"] == "female"
+    assert _only(bundle, "AllergyIntolerance")["category"] == ["medication"]
+    assert _only(bundle, "AllergyIntolerance")["reaction"][0]["severity"] == "severe"
+
+
+def test_an_empty_mime_type_comes_back_empty_not_as_a_different_default() -> None:
+    """The two sides defaulted differently: export's model default is
+    `application/pdf`, ingest's read fallback `application/octet-stream`, and
+    `Attachment.contentType` is pruned when empty — so an empty mime type came
+    back as a type the record never claimed. The tail now carries that case.
+    """
+    document = DocumentArtifact(
+        id="feedface-0000-4000-8000-0000000000d1", patient_id=_PID, mime_type="", title="Chart"
+    )
+    record = PatientRecord(patient=Patient(id=_PID), documents=[document])
+
+    bundle = to_bundle(record)
+    assert "contentType" not in _only(bundle, "DocumentReference")["content"][0]["attachment"]
+    assert from_bundle(bundle).documents[0].mime_type == ""
+
+    # A bundle from a foreign system, with neither contentType nor the tail,
+    # still reads as the unknown-binary default rather than guessing PDF.
+    foreign = copy.deepcopy(bundle)
+    docref = _only(foreign, "DocumentReference")
+    docref["extension"] = [x for x in docref["extension"] if not x["url"].endswith(":mime_type")]
+    assert from_bundle(foreign).documents[0].mime_type == "application/octet-stream"

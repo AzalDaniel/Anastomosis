@@ -34,6 +34,7 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
     PrescriptionTransaction,
+    ScreeningEvent,
 )
 from anastomosis.core.timeutil import iso_date, iso_datetime
 
@@ -228,6 +229,9 @@ ARTIFACT = (
     Field("pack_name"),
     Field("encounter_id"),
     Field("generated_at", DATETIME),
+    # `Attachment.contentType` is pruned when empty and ingest cannot tell an
+    # empty type from an absent one, so the tail carries it in that case.
+    Field("mime_type", value=lambda d: d.mime_type if not d.mime_type else None),
 )
 
 #: Every tail table, by the canonical model it belongs to.
@@ -253,6 +257,8 @@ RECORD_EXTRAS: dict[str, type[AnastBase]] = {
     "past_medical_history": PastMedicalHistory,
     "advance_directives": AdvanceDirective,
     "goals": Goal,
+    "health_concerns": Goal,
+    "screening_events": ScreeningEvent,
 }
 
 

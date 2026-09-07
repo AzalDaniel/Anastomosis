@@ -583,7 +583,7 @@ issue and fixed in its own pull request.
   and `core/fhir/ingest.py` each named the same twelve entities and stated
   every field's identity twice — model attribute, tail key, converter — so a
   field added to one side and forgotten on the other simply vanished, which is
-  how two record-level lists came to be dropped (below). The 67 fields that
+  how two record-level lists came to be dropped (below). The 68 fields that
   ride the `urn:anastomosis:field:` tail are now one table,
   `core/fhir/fields.py`: `to_bundle` walks it forward and `from_bundle` walks
   it backward as its exact inverse. The code systems (LOINC, ICD-10-CM,
@@ -695,6 +695,26 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus
