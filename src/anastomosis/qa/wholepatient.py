@@ -112,11 +112,12 @@ def whole_patient_report(documents: Iterable[tuple[Path, PatientRecord]]) -> QAR
     per-encounter report). ``documents`` is materialized because it also
     builds the patient-id -> path map ``unattributed_vitals`` reads: for
     this population the graded document IS the record summary."""
-    from .base import CheckResult, Verdict, engine_checks
+    from .base import CheckResult, Verdict
+    from .checks import ENGINE_CHECKS
     from .runner import run_qa
 
     docs = list(documents)
-    by_name = {check.name: check for check in engine_checks()}
+    by_name = {check.name: check for check in ENGINE_CHECKS}
     # Keyed by patient id, not the record object, so it still agrees with
     # `run_qa`'s lookup after `_anchor_record` copies the record.
     summary_paths = {record.patient.id: path for path, record in docs}
