@@ -579,6 +579,45 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The guided session stops telling you every system is ready to receive
+  charts.** `anast` with no arguments offered the thirteen destinations as a
+  plain alphabetical list, so Epic — which no filing assistant on this
+  computer can file into — read exactly like Tebra, the one destination that
+  ships an assistant, and AdvancedMD was the pre-filled default because the
+  alphabet put it first. All thirteen still appear: the registry is data and
+  nothing was removed from it. Each now carries how far along its filing
+  assistant is ("ready to file charts into", "the filing assistant is here
+  but not set up yet", "no filing assistant yet"), and the ones that can be
+  filed into come first. The three states come from one function,
+  `destinations.loader.pack_readiness`, which is also what `anast destination
+  list` and `anast destination route` print in their Filing assistant column.
+
+- **Template packs and destination packs are discovered by one walk.**
+  `destinations/loader.py` opened by saying it mirrored
+  `reconstruct/packs.py`, and it did: the same `--pack-dir` → user directory →
+  built-in order (rule 21), the same "a directory may BE a pack or CONTAIN
+  packs" rule, and the same three origin names retyped as private copies.
+  There is now one walk in `core/packdirs.py` — enumerating for
+  `discover_packs`, narrowed by name for `load_destination_pack` — and it
+  keeps both readings of the one case where the two differed. Alongside it,
+  `_load_pack_dir` and `_load_pack_snapshot` became one `_load_pack`: they
+  stated the same contract twice (pack.yaml, template.html and context.py all
+  required, each refused by name, the manifest naming the pack), differing
+  only in where the bytes come from. Both context loaders stay as they were —
+  an importlib load off a path and an exec of hash-pinned bytes are different
+  mechanisms, and rule 22 hangs on the second.
+
+- **The browser pack's selector slots are read off the schema that declares
+  them.** `SelectorMap`'s eighteen fields, `_REQUIRED_SLOTS`,
+  `_OPTIONAL_SLOTS` and `_FORM_SLOTS` said the same names three times over;
+  the three sets now come off `dataclasses.fields`, with no default meaning
+  required and a `form` marker naming the seven slots the upload dialog owns.
+  Same names, same order, so the wizard prompts and writes `selectors.yaml`
+  exactly as before. Two tests hold it: one restates all eighteen names and
+  which half each is in, cross-checked against the wizard's own guidance
+  keys; the other says a form slot may carry the `{idx}` row token, which
+  nothing had ever checked.
+
 - **Two package `__init__` files stopped re-exporting.** `deliver/browser`
   eagerly imported thirty-seven names out of eleven submodules and
   `destinations` twenty-six out of four, so taking one name took all of them:
