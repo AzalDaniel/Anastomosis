@@ -1,6 +1,6 @@
 # The run manifest — profiles, binding, and state
 
-Reference for `core/profiles.py` and `core/runmanifest.py`. The modules'
+Reference for `commands/profiles.py` and `commands/runmanifest.py`. The modules'
 docstrings state the invariants; this is the file's field list and the refusal
 table, which a reader needs once.
 
@@ -124,7 +124,7 @@ prepared ──> delivered ──> verified
 ```
 
 `migrate` writes `prepared` and nothing else: it resolves a route and writes
-artifacts, and executes no delivery — the invariant `core/migration_status.py`
+artifacts, and executes no delivery — the invariant `commands/migration_status.py`
 states, unchanged. A state past `prepared` is a claim that something happened,
 so `advance_state` requires a `receipt` naming the evidence. Today the one
 producer of such evidence is a clean `anast upload`, which records `delivered`

@@ -13,7 +13,7 @@ wizard. A GUI and a CLI drive the same command layer. Tebra (the owner's earlier
 
 The five stages: **read** (`sources/`) → **model** (`core/model`) →
 **render** (`reconstruct/`, `packs/`) → **check** (`qa/`) → **deliver and
-verify** (`deliver/`). `packgen/` and `core/sourcelearn` are the learn
+verify** (`deliver/`). `packgen/` and `commands/sourcelearn` are the learn
 capability. Everything else is the CLI, the GUI, or the seam between them.
 
 If a rule is not written in `docs/RULES.md`, it is not settled: decide,
