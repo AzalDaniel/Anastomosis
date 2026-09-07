@@ -60,7 +60,7 @@ ORIGIN_USER = "user"
 
 def builtin_pack_names() -> frozenset[str]:
     """The shipped layouts' names, read off the package directory without
-    loading anything — the set a Teach may not claim (see ``run_pack_init``)."""
+    loading anything — the set a Teach may not claim (see ``run_learn``)."""
     if not _BUILTIN_DIR.is_dir():
         return frozenset()
     return frozenset(child.name for child in _BUILTIN_DIR.iterdir() if child.is_dir())

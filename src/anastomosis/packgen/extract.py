@@ -366,7 +366,7 @@ def extract_samples(
             samples.append(extract_document(path, index, ocr=ocr))
         except (NoExtractableTextError, OcrEngineError, OcrRegionError, OcrRequiredError):
             # Keep the specific type (already PHI-safe: index + page only) so
-            # run_pack_init can surface exc_tag; the generic wrapper below
+            # run_learn can surface exc_tag; the generic wrapper below
             # names the PATH, wrong for a refusal that already said enough —
             # and for OcrEngineError, wrong in substance: those four cases are
             # facts about the ENGINE, not the sample.
