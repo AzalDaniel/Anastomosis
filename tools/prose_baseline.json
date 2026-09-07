@@ -418,12 +418,12 @@
       "total": 219
     },
     "src/anastomosis/core/vesselmark.py": {
-      "blank": 76,
-      "code": 285,
-      "comment": 104,
-      "docstring": 83,
-      "ratio": 0.396186,
-      "total": 548
+      "blank": 41,
+      "code": 172,
+      "comment": 59,
+      "docstring": 50,
+      "ratio": 0.3879,
+      "total": 322
     },
     "src/anastomosis/core/vesselmark_data.py": {
       "blank": 3,
@@ -2514,12 +2514,12 @@
       "total": 545
     },
     "tests/unit/test_vesselmark.py": {
-      "blank": 156,
-      "code": 489,
-      "comment": 28,
-      "docstring": 94,
-      "ratio": 0.199673,
-      "total": 767
+      "blank": 130,
+      "code": 394,
+      "comment": 22,
+      "docstring": 70,
+      "ratio": 0.1893,
+      "total": 616
     },
     "tests/unit/test_workflow_supply_chain.py": {
       "blank": 51,
@@ -3503,12 +3503,12 @@
   ],
   "packages": {
     "anastomosis": {
-      "blank": 5657,
-      "code": 27725,
-      "comment": 3275,
-      "docstring": 6384,
-      "ratio": 0.258373,
-      "total": 43041
+      "blank": 5622,
+      "code": 27612,
+      "comment": 3230,
+      "docstring": 6351,
+      "ratio": 0.257602,
+      "total": 42815
     },
     "tests.e2e": {
       "blank": 186,
@@ -3535,21 +3535,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 9971,
-      "code": 37079,
-      "comment": 2844,
-      "docstring": 5334,
-      "ratio": 0.180701,
-      "total": 55228
+      "blank": 9945,
+      "code": 36984,
+      "comment": 2838,
+      "docstring": 5310,
+      "ratio": 0.180537,
+      "total": 55077
     }
   },
   "repo": {
-    "blank": 16680,
-    "code": 68599,
-    "comment": 6514,
-    "docstring": 12367,
-    "ratio": 0.215832,
-    "total": 104160
+    "blank": 16619,
+    "code": 68391,
+    "comment": 6463,
+    "docstring": 12310,
+    "ratio": 0.215376,
+    "total": 103783
   },
   "tool": "tools/prose_gate.py"
 }

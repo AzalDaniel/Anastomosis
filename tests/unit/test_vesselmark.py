@@ -3,8 +3,8 @@ keeps: a script never sees it (only a real terminal gets it, plain
 header otherwise, byte for byte); a legacy console never sees mojibake
 (pure ASCII ramp, CP-1252-safe); the entrance ends exactly where the
 settled mark is (frame-indexed, never clock-driven); it cannot outstay
-its welcome (bounded frames, abandoned on the first keystroke); and it
-is the logo (re-sampled from the geometry ``tools/make_vessel.py``
+its welcome (``FRAMES`` frames, under a second, and then it is over);
+and it is the logo (re-sampled from the geometry ``tools/make_vessel.py``
 writes the icons from, so it cannot drift)."""
 
 from __future__ import annotations
@@ -219,30 +219,39 @@ def _recording(seen: list[int]) -> Callable[[int], tuple[tuple[int, ...], ...]]:
     return _record
 
 
-def test_a_keystroke_ends_the_entrance_early(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nobody waits on an animation to answer the question underneath it."""
+def test_the_entrance_plays_every_frame_and_then_stops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole bound on how long a greeting may hold the prompt: nothing
+    follows the entrance, so ``_play`` draws exactly ``FRAMES`` frames and
+    returns. Nobody has to press anything to get their menu back."""
     drawn: list[int] = []
-    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: True)
     monkeypatch.setattr(vesselmark, "frame_levels", _recording(drawn))
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
     console = _console()
     vesselmark._play(console, GREETING, unicode_dots=True)
 
-    assert drawn == [0], f"the entrance kept playing after a keystroke: {drawn}"
-    # And what is left on screen is the settled mark, not the frame it stopped on.
+    assert drawn == list(range(vesselmark.FRAMES))
+    # And what is left on screen is the settled mark: the last frame is it.
     assert vesselmark.UNICODE_DOTS[LEVELS] in _said(console)
 
 
-def test_an_uninterrupted_entrance_plays_every_frame(monkeypatch: pytest.MonkeyPatch) -> None:
-    drawn: list[int] = []
-    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: False)
-    monkeypatch.setattr(vesselmark, "frame_levels", _recording(drawn))
+def test_the_entrance_carries_the_ramp_a_console_can_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The mark is coloured from the moment it arrives — each cell on the
+    stop its own density gives it — where the settled fallback is weight
+    alone. Only the stops for levels that exist may reach the wire."""
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    console = Console(
+        file=_TerminalFile("utf-8"), width=100, force_terminal=True, color_system="truecolor"
+    )
+    assert terminal_colour_depth(console) == "truecolor"
+    vesselmark._play(console, GREETING, unicode_dots=True)
 
-    vesselmark._play(_console(), GREETING, unicode_dots=True)
-
-    assert drawn == list(range(vesselmark.FRAMES - 1))
+    said = _said(console)
+    for stop in vesselmark.MARK_STOPS[1 : LEVELS + 1]:
+        red, green, blue = (int(stop[index : index + 2], 16) for index in (1, 3, 5))
+        assert f"\x1b[38;2;{red};{green};{blue}m" in said, f"{stop} never reached the terminal"
 
 
 # --- who gets the mark, and who gets the plain header ------------------------
@@ -585,121 +594,14 @@ def test_rich_reports_the_depth_this_gate_was_built_against() -> None:
 def test_the_mark_is_unchanged_with_the_colour_stripped() -> None:
     """Colour is the second channel, never the only one: every frame's
     CHARACTERS must be identical whether or not a palette was passed."""
-    for frame in (0, 5, vesselmark.FRAMES, vesselmark.FRAMES + 40, vesselmark.FRAMES + 137):
-        levels, stops = vesselmark.pulse_frame(frame, seed=2.4)
+    stops = vesselmark.mark_levels()
+    for frame in (0, 5, vesselmark.FRAMES - 1, vesselmark.FRAMES + 40):
+        levels = vesselmark.frame_levels(frame)
         plain = vesselmark.render(levels, unicode_dots=True)
         coloured = vesselmark.render(
             levels, unicode_dots=True, stops=stops, palette=vesselmark.MARK_STOPS
         )
         assert [line.plain for line in plain] == [line.plain for line in coloured]
-
-
-# --- the perfusion -----------------------------------------------------------
-
-
-def test_the_pulse_settles_on_the_still_mark() -> None:
-    """Amplitude zero reproduces the settled logo exactly, in both channels.
-
-    This is what the exit stands on: whichever frame a keystroke lands in, what
-    is written last is the mark itself, not a frame that happened to be close.
-    """
-    levels, stops = vesselmark.pulse_frame(0)
-    assert levels == vesselmark.mark_levels()
-    assert stops == vesselmark.home_stops()
-
-
-def test_no_cell_ever_outgrows_its_settled_level() -> None:
-    """The mark breathes inward. It never swells past the logo's own silhouette."""
-    home = vesselmark.mark_levels()
-    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 120):
-        levels, _stops = vesselmark.pulse_frame(frame, seed=1.1)
-        pairs = zip(levels, home, strict=True)
-        for row, home_row in pairs:
-            for level, settled in zip(row, home_row, strict=True):
-                assert level <= settled
-
-
-def test_the_pulse_never_blinks() -> None:
-    """Nothing dims or brightens all at once — that is a strobe, not a pulse.
-
-    The cheapest way to catch a regression that multiplies the whole grid by
-    something: watch the mean inked level and require it to stay in a band.
-    """
-    home = vesselmark.mark_levels()
-    inked = sum(1 for row in home for level in row if level)
-    means = []
-    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 160):
-        levels, _stops = vesselmark.pulse_frame(frame, seed=0.7)
-        means.append(sum(level for row in levels for level in row) / inked)
-    assert 2.2 <= min(means) and max(means) <= 2.95, f"{min(means):.3f}..{max(means):.3f}"
-
-
-def test_the_pulse_actually_moves_and_never_repeats() -> None:
-    """A frozen animation is invisible in a diff, so churn is asserted; the
-    three temporal ratios are incommensurable, so no two frames may
-    repeat."""
-    home = vesselmark.mark_levels()
-    inked = sum(1 for row in home for level in row if level)
-    grids, churn = [], []
-    for frame in range(vesselmark.FRAMES, vesselmark.FRAMES + 200):
-        levels, stops = vesselmark.pulse_frame(frame, seed=1.9)
-        grids.append((levels, stops))
-        if len(grids) > 1:
-            previous = grids[-2]
-            changed = sum(
-                1
-                for r in range(vesselmark.MARK_HEIGHT)
-                for c in range(vesselmark.MARK_WIDTH)
-                if home[r][c]
-                and (levels[r][c], stops[r][c]) != (previous[0][r][c], previous[1][r][c])
-            )
-            churn.append(changed / inked)
-    assert sum(churn) / len(churn) >= 0.08, "the mark is barely moving"
-    assert len(set(grids)) == len(grids), "a frame repeated: the field has a period"
-
-
-def test_the_two_arms_are_visibly_out_of_step() -> None:
-    """The two mirrored arms must not beat in lockstep (reads as machinery):
-    mean phase divergence over inked mirrored pairs must clear 0.20 --
-    "not exactly equal" is too weak a guard, since residual asymmetry
-    alone already satisfies it without the lateral term."""
-    home = vesselmark.mark_levels()
-    deltas = [
-        abs(
-            vesselmark.wave(col, row, when)
-            - vesselmark.wave(vesselmark.MARK_WIDTH - 1 - col, row, when)
-        )
-        for when in (0.7, 1.3, 2.1, 3.4)
-        for row in range(vesselmark.MARK_HEIGHT)
-        for col in range(vesselmark.MARK_WIDTH // 2)
-        if home[row][col] and home[row][vesselmark.MARK_WIDTH - 1 - col]
-    ]
-    mean = sum(deltas) / len(deltas)
-    assert mean >= 0.20, (
-        f"mirrored cells differ by only {mean:.4f} on average; the arms are "
-        "beating together, which reads as machinery rather than tissue"
-    )
-
-
-def test_the_hub_is_where_the_geometry_puts_it() -> None:
-    """Recomputed from ``make_vessel``'s own constants: if the logo's
-    geometry moves, the pulse's hub (where the cut vessels meet the
-    trunk) must move with it."""
-    from tools.make_vessel import MATRIX_COLS, MATRIX_ROWS, SIZE
-
-    trimmed = MATRIX_ROWS - vesselmark.MARK_HEIGHT
-    hub_col = (0.500 * SIZE) / (SIZE / MATRIX_COLS) - 0.5
-    hub_row = (0.615 * SIZE) / (SIZE / MATRIX_ROWS) - 0.5 - trimmed
-    assert abs(hub_col - vesselmark.HUB_COL) < 1e-6
-    assert abs(hub_row - vesselmark.HUB_ROW) < 1e-6
-
-
-def test_two_runs_do_not_open_alike() -> None:
-    """A fresh `anast` starts somewhere else in a field that never repeats."""
-    first = vesselmark.pulse_frame(vesselmark.FRAMES + 30, seed=0.0)
-    second = vesselmark.pulse_frame(vesselmark.FRAMES + 30, seed=2.2)
-    assert first != second
-    assert 0.0 <= vesselmark._seed() < 6.284
 
 
 def test_every_ramp_glyph_is_narrow() -> None:
@@ -712,56 +614,3 @@ def test_every_ramp_glyph_is_narrow() -> None:
             assert unicodedata.east_asian_width(glyph) in {"N", "Na"}, (
                 f"{glyph!r} (U+{ord(glyph):04X}) can render double-width"
             )
-
-
-def test_an_unwatched_greeting_still_stops(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bounded cost of running unattended: measured against a real pty run
-    (never reached the menu inside sixty seconds at a 1200-frame cap)."""
-    drawn: list[int] = []
-    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: False)
-    monkeypatch.setattr("time.sleep", lambda _seconds: None)
-    real = vesselmark.pulse_frame
-
-    def _record(frame: int, seed: float = 0.0) -> object:
-        drawn.append(frame)
-        return real(frame, seed)
-
-    monkeypatch.setattr(vesselmark, "pulse_frame", _record)
-    vesselmark._play(_console(), GREETING, unicode_dots=True)
-    assert max(drawn) < vesselmark._IDLE_FRAMES
-    assert vesselmark._IDLE_FRAMES * vesselmark.FRAME_SECONDS <= 10.0, (
-        "an unattended greeting may not hold the prompt for more than ten seconds"
-    )
-
-
-def test_a_legacy_windows_console_is_never_sent_the_sync_sequences(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """DECSET 2026 sync sequences are free on any terminal that parses them,
-    but a legacy Windows console has no VT parser at all and would print
-    the literal escape bytes instead of obeying them -- driven on both
-    states of the flag explicitly, since rich reports ``legacy_windows``
-    true for any redirected stream on a Windows runner."""
-    monkeypatch.setattr(vesselmark, "_key_pressed", lambda: True)
-    monkeypatch.setattr("time.sleep", lambda _seconds: None)
-
-    # Both halves state the flag outright. Neither may inherit it from the host:
-    # on a Windows runner rich reports `legacy_windows` TRUE for a fresh console
-    # — the VT probe fails when the stream is redirected — so a test that let
-    # the platform decide would assert the modern path on POSIX and the legacy
-    # path on Windows while appearing to test one thing.
-    modern = _console()
-    monkeypatch.setattr(modern, "legacy_windows", False)
-    vesselmark._play(modern, GREETING, unicode_dots=True)
-    assert "\x1b[?2026h" in _said(modern), (
-        "a terminal that can synchronise should still be asked to"
-    )
-
-    legacy = _console()
-    monkeypatch.setattr(legacy, "legacy_windows", True)
-    vesselmark._play(legacy, GREETING, unicode_dots=True)
-    said = _said(legacy)
-    assert "\x1b[?2026h" not in said and "\x1b[?2026l" not in said, (
-        "a legacy Windows console would print these, not obey them"
-    )
-    assert said.strip(), "the mark must still be drawn there, just unsynchronised"
