@@ -592,7 +592,7 @@ issue and fixed in its own pull request.
   is no keyboard to put into cbreak, no keystroke to swallow before it
   answers the next question, and no frame-synchronisation wrapper around the
   console's writes. Measured on a real 100x40 pty: the menu question used to
-  arrive 8.61 s after the first byte and now arrives at 0.87 s, over 18
+  arrive 8.61 s after the first byte and now arrives at 0.86 s, over 18
   redraws instead of 174, and the settled mark the run ends on is character
   for character and stop for stop the one it ended on before. **This is the
   only visible change in the audit series; everything else in it is
@@ -608,7 +608,7 @@ issue and fixed in its own pull request.
   arrives to hold something nothing held before: that the entrance reaches a
   truecolor terminal in the mark's own stops. The prose ratchet records only
   those two files, so the base branch's own drift is not folded into this
-  slice.
+  slice. (#428)
 
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
