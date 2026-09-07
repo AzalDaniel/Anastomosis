@@ -76,31 +76,21 @@ def test_parse_dt_rejects_unknown_formats_loudly() -> None:
 
 @pytest.mark.parametrize("raw", ["0", "00", "000", "0000", "000000", "00000000", "0" * 12])
 def test_a_run_of_zeros_is_the_source_saying_nothing(raw: str) -> None:
-    """#385: `is_zero_sentinel` names a run of zeros (any length) as a value
-    that names no year, so it names no instant — one notch further than the
-    year-1 SQL sentinel. This is the shared PREDICATE only: `parse_dt`/
-    `parse_date` themselves do not consult it (see
-    `test_parse_dt_still_raises_on_a_zero_run`) — a C-CDA vendor's "0" and a
-    row-based adapter's TSV cell holding a literal "0" are not the same claim,
-    and only the C-CDA parser's own `_ts`/`_ts_date` readers know which one
-    they are reading.
-    """
+    """#385: `is_zero_sentinel` names a run of zeros (any length) as a
+    value that names no year. Shared PREDICATE only: `parse_dt`/
+    `parse_date` never consult it (see the sibling test below), since
+    only the C-CDA parser's own readers know a "0" cell claims a C-CDA
+    sentinel rather than a literal TSV value."""
     assert is_zero_sentinel(raw)
 
 
 @pytest.mark.parametrize("raw", ["0", "00", "000", "0000", "000000", "00000000", "0" * 12])
 def test_parse_dt_still_raises_on_a_zero_run(raw: str) -> None:
-    """#385 round two: an earlier version of this fix made `parse_dt` itself
-    swallow a zero run as absent. That widening reached every row-based
-    adapter through the SAME function — `sources/_rowutil.clean_dt`/
-    `clean_date` (pf_tebra, oracle_ehi) and the learned adapter's
-    `parse_date`/`parse_datetime` transform verbs — so a TSV cell that
-    genuinely states "0" started reading as silently absent in three
-    unrelated adapters, with no ledger anywhere recording the loss.
-    `parse_dt`/`parse_date` must keep raising here; the C-CDA-specific
-    reading now lives in the C-CDA-specific caller instead (`test_ccda.py`'s
-    `test_a_medication_whose_start_is_a_zero_sentinel_is_kept_without_one`).
-    """
+    """#385 round two: `parse_dt`/`parse_date` must keep raising on a
+    zero run — row-based adapters (pf_tebra, oracle_ehi, the learned
+    adapter) share this function, so swallowing "0" here would treat a
+    genuine TSV value as absent in three unrelated adapters. The
+    C-CDA-specific reading lives in the C-CDA-specific caller."""
     with pytest.raises(ValueError, match="unrecognized"):
         parse_dt(raw)
     with pytest.raises(ValueError, match="unrecognized"):
@@ -222,14 +212,11 @@ def test_age_display_rejects_future_dob() -> None:
 
 
 def test_hour_precision_ts_is_read_by_position_not_re_segmented() -> None:
-    """The defect this parser exists to prevent (#241).
-
-    ``strptime``'s %m/%d/%H/%M/%S each match one OR TWO digits, so a 10-digit
-    hour-precision TS did not fail — it re-segmented. "2023051015" came back as
-    2023-05-01: nine days wrong, no exception, nothing in the loss ledger. The
-    reference implementation reads value[:8] and gets the 10th, so the two
-    disagreed by nine days on the same string.
-    """
+    """The defect this parser exists to prevent (#241): ``strptime``'s
+    %m/%d/%H/%M/%S each match one OR TWO digits, so a 10-digit
+    hour-precision TS would re-segment instead of failing —
+    "2023051015" reading as 2023-05-01, nine days wrong with no
+    exception."""
     assert parse_date("2023051015") == date(2023, 5, 10)
     assert parse_date("20230510") == date(2023, 5, 10)
     assert parse_dt("202305101504") == datetime(2023, 5, 10, 15, 4, tzinfo=UTC)

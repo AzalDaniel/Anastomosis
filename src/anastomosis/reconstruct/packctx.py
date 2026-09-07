@@ -1,27 +1,11 @@
 """The per-record cache seam every template pack's ``build_context`` shares.
 
-The engine allocates ONE ``record_cache`` dict per record and passes it in
-``cfg`` (see :meth:`anastomosis.reconstruct.engine.ReconstructionEngine.run`),
-so a pack can build a record-level grouping once instead of once per encounter.
-Two things about that seam are pack-independent — reading the cache out of
-``cfg`` at all, and the observations-by-encounter grouping every SOAP pack
-needs for its vitals. They live here so a third pack inherits the same
-semantics instead of re-deriving them.
-
-CONTRACT (load-bearing, repeated at every call site): a ``record_cache`` is
-**per record**. The engine allocates a fresh dict for each record; a caller that
-shares one across DIFFERENT records mis-renders the second. A pack invoked
-without a cache (a direct ``build_context`` call in a test or a tool) still
-works — it just builds its groupings locally, on a throwaway dict.
-
-A third pack-independent helper lives here too: :func:`format_local_dt`, the
-practice-local datetime formatter every built-in SOAP pack's ``signed_at``
-field uses, re-typed identically in each before it moved here.
-
-Packs are exec'd from file paths but import :mod:`anastomosis` freely; this
-module deliberately depends on nothing but the canonical model and
-:mod:`anastomosis.core.timeutil` — both leaf modules — so importing it from a
-pack cannot drag the engine or the registry into a pack's namespace.
+Contract: a ``record_cache`` is PER RECORD; a caller sharing one across
+different records mis-renders the second. A pack invoked with no cache
+still works, building groupings on a throwaway dict. Also carries
+:func:`format_local_dt`, the datetime formatter every SOAP pack's
+``signed_at`` uses. Depends on nothing but the canonical model and
+``core.timeutil`` (both leaves), so importing this cannot drag the engine in.
 """
 
 from __future__ import annotations

@@ -1,28 +1,13 @@
 """The closed set of value transforms a learned mapping may name.
 
-A learned mapping is data, and the anti-Mirth rule says data must never carry
-code: a mapping cannot embed a Python lambda or an ``eval`` string. Instead it
-names a transform from this fixed verb table, optionally with literal
-arguments (``parse_date:%m/%d/%Y``, ``split:,:0``). The verb set is small and
-every verb is single-input (one source cell in, one canonical value out) — a
-transform can never reach across columns or rows.
-
-A transform spec is ``verb`` or ``verb:arg`` or ``verb:arg1:arg2``. Parsing and
-arity are validated at mapping LOAD time (:func:`parse_transform`), before any
-row is read, so a typo'd verb or a ``split`` missing its index is a loud
-:class:`~anastomosis.sources.learned.spec.MappingError`, never a per-row
-surprise.
-
-Every transform returns ``None`` for an empty/sentinel input (so an unmapped
-blank stays blank) and raises only on a genuinely malformed NON-empty value —
-matching the loud-on-malformed contract the other adapters keep. The cell
-hygiene and parsing reuse :mod:`anastomosis.core.textutil` /
-:mod:`anastomosis.core.timeutil`, so a learned source treats sentinels and date
-formats exactly as the built-in adapters do.
-
-PHI: transforms operate on cell values, so they never log and their error
-messages name only the verb (never the offending value).
-"""
+A mapping is data, and data must never carry code: no lambda, no ``eval``.
+It names a transform from this fixed verb table instead (``verb``,
+``verb:arg``, ``verb:arg1:arg2``), each single-input. Arity is validated
+at LOAD time (:func:`parse_transform`), so a typo'd verb is a loud
+:class:`MappingError`, never a per-row surprise. Every transform returns
+``None`` for an empty/sentinel input, matching
+:mod:`anastomosis.core.textutil`/``timeutil`` sentinel handling. PHI:
+errors name the verb only, never the value."""
 
 from __future__ import annotations
 
@@ -110,9 +95,8 @@ _NULLARY: dict[str, _Transform] = {
     "lower": _lower,
     "phone": format_phone,
     "numeric": clean_numeric,
-    # No-arg date/datetime use the multi-format parsers (ISO + the US/C-CDA
-    # spellings the built-in adapters already handle); the ``:FMT`` forms below
-    # pin one explicit format.
+    # No-arg date/datetime use the multi-format parsers (ISO + the C-CDA
+    # spellings already handled); the ``:FMT`` forms below pin one format.
     "parse_date": parse_date,
     "parse_datetime": parse_dt,
 }
@@ -126,13 +110,11 @@ _PARAMETRIC: dict[str, tuple[int, Callable[..., _Transform]]] = {
 }
 
 
-#: Verbs whose OUTPUT does not determine their INPUT. ``const`` discards the
-#: cell outright, ``split`` keeps one piece of it, ``upper``/``lower`` fold
-#: case away. A column read through one of these must ALSO keep its raw value
-#: in ``extensions`` — the mapped field alone cannot answer "what did the file
-#: say", and a mapping that quietly narrows the answer is a loss wearing a
-#: read. The interpreter and the round-trip proof both consult this set, so a
-#: verb added here without preservation fails the proof rather than shipping.
+#: Verbs whose OUTPUT does not determine their INPUT (``const`` discards the
+#: cell, ``split`` keeps one piece, ``upper``/``lower`` fold case away). A
+#: column read through one of these must ALSO keep its raw value in
+#: ``extensions``; the interpreter and the round-trip proof both consult this
+#: set, so an added verb without preservation fails the proof.
 LOSSY_TRANSFORMS = frozenset({"const", "split", "upper", "lower"})
 
 
@@ -142,16 +124,11 @@ def is_lossy(spec: str) -> bool:
 
 
 def parse_transform(spec: str) -> _Transform:
-    """Resolve a transform spec string to a bound transform, or raise.
-
-    Raises :class:`TransformError` for an unknown verb or wrong argument arity —
-    at LOAD time, so a malformed mapping never reaches a data row.
-
-    Arguments are split by the verb's KNOWN arity (``rest.split(":", arity-1)``),
-    not blindly on every ``:`` — so a single-argument verb's value may itself
-    contain colons (``parse_datetime:%Y-%m-%d %H:%M``) while a two-argument verb
-    still gets two (``split:,:0``).
-    """
+    """Resolve a transform spec string to a bound transform, or raise
+    :class:`TransformError` for an unknown verb or wrong arity — at LOAD
+    time, before any row is read. Arguments split on the verb's KNOWN
+    arity, not blindly on every ``:``, so a single-argument value may
+    itself contain colons (``parse_datetime:%Y-%m-%d %H:%M``)."""
     verb, sep, rest = spec.partition(":")
     if sep == "":  # a bare verb, no arguments
         if verb in _NULLARY:

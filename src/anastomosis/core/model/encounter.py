@@ -50,10 +50,8 @@ class Addendum(BaseModel):
 
 class Encounter(AnastBase):
     patient_id: str
-    # Calendar date, deliberately not a datetime: sources chart DOS as a
-    # date-only field, and a midnight-UTC datetime shifts to the previous
-    # day the moment it's rendered in a western timezone. Precise instants
-    # (signed, seen, modified) are datetimes below.
+    # Deliberately a date, not a datetime: a midnight-UTC datetime shifts to
+    # the previous day once rendered in a western timezone.
     date_of_service: date | None = None
     chief_complaint: str | None = None
     encounter_type: str | None = None

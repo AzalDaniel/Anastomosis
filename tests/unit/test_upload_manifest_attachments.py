@@ -1,20 +1,11 @@
-"""A patient whose whole chart is a scan has something to upload.
+"""Upload-route parity with the bundle: a patient whose whole chart is a
+C-CDA Unstructured Document still has files to carry, and the upload
+manifest must record exactly what the bundle records — one item per
+carried file, resolvable back off disk, attributed to one patient, and
+verified only to the level its bytes actually support.
 
-A C-CDA Unstructured Document carries its clinical content as an artifact under
-``<nonXMLBody>`` and renders no encounter at all, so a run over one produced
-zero charts — correctly — and then wrote an upload manifest with zero items and
-zero patients and exited 0. Both of that patient's documents were sitting in
-``charts/attachments`` at the time, with their exact source hashes, carried into
-the archive and the bundle by every other delivery route.
-
-So these tests are about one question asked in several places: does the upload
-route carry the same record the bundle does? An item per carried file, resolvable
-back off disk, attributed to exactly one patient, and verified by the levels its
-bytes can actually support rather than by the ones calibrated for a chart this
-toolkit printed.
-
-Synthetic by construction: ``feedface-`` ids, the 555 exchange, and PDFs built
-here from structure with no glyphs, so no byte in this file is anybody's.
+Synthetic: ``feedface-`` ids, the 555 exchange, and structure-only PDFs
+with no glyphs — no byte here is anybody's.
 """
 
 from __future__ import annotations
@@ -56,13 +47,9 @@ DOS = datetime.date(2023, 5, 10)
 
 
 def _pdf(pages: int = 1) -> bytes:
-    """A real ``pages``-page PDF, generated here rather than copied from anywhere.
-
-    Structure only, no glyphs — so the bytes cannot be anybody's — but a genuine
-    catalogue/pages/page tree behind a valid xref, so what these fixtures carry
-    is a document rather than a string that happens to start with ``%PDF``.
-    (The same builder ``test_ccda_unstructured`` uses, for the same reason.)
-    """
+    """A real ``pages``-page PDF: structure only, no glyphs, but a genuine
+    catalogue/pages/page tree behind a valid xref — a document, not a
+    string that merely starts with ``%PDF``."""
     kids = b" ".join(f"{index + 3} 0 R".encode() for index in range(pages))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -105,12 +92,9 @@ def _artifact(name: str, content: bytes, *, patient_id: str = PAT, **rest: Any) 
 
 
 def _scanned_record(out_dir: Path) -> tuple[PatientRecord, bytes, bytes]:
-    """The #374 shape: one patient, no encounters, two carried documents.
-
-    One embedded body delivered under the artifact's own uuid5 name and one
-    referenced body keeping the name the export gave it — the two shapes a C-CDA
-    ``<nonXMLBody>`` arrives in.
-    """
+    """The #374 shape: one patient, no encounters, two carried documents —
+    one embedded body under the artifact's own uuid5 name, one referenced
+    body keeping the export's name (C-CDA ``<nonXMLBody>``'s two forms)."""
     referenced, embedded = _pdf(pages=1), _pdf(pages=2)
     _carry(out_dir, "referred_report.pdf", referenced)
     _carry(out_dir, "feedface-a000-0000-0000-0000000003a1.pdf", embedded)
@@ -162,12 +146,9 @@ def test_the_patient_is_written_even_with_no_encounter_renders(tmp_path: Path) -
 
 
 def test_the_stored_path_is_relative_to_the_bundle_not_a_bare_basename(tmp_path: Path) -> None:
-    """A basename would re-absolutize to a file that is not there.
-
-    Charts sit in the bundle root and keep the basename the manifest has always
-    stored; a source document sits one directory down and has to say so, or the
-    item resolves to nothing on the machine that reads the manifest.
-    """
+    """A basename would re-absolutize to a file that is not there: charts
+    keep the bundle-root basename, but a source document sits one
+    directory down and must say so, or the item resolves to nothing."""
     out_dir = tmp_path / "charts"
     record, _referenced, _embedded = _scanned_record(out_dir)
 
@@ -186,12 +167,9 @@ def test_the_stored_path_is_relative_to_the_bundle_not_a_bare_basename(tmp_path:
 def test_a_fresh_load_resolves_both_files_and_reopens_them_at_their_page_counts(
     tmp_path: Path,
 ) -> None:
-    """The acceptance line, driven rather than inferred.
-
-    Nothing is carried over from the write: the manifest is read back off disk,
-    each item's path is re-absolutized, and the file at the end of it is opened
-    and counted.
-    """
+    """Nothing carries over from the write: the manifest is read back off
+    disk, each item's path re-absolutized, and the file at the end of it
+    opened and counted."""
     pymupdf = pytest.importorskip("pymupdf", reason="page counts need PyMuPDF (render extra)")
     out_dir = tmp_path / "charts"
     record, _referenced, _embedded = _scanned_record(out_dir)
@@ -282,14 +260,10 @@ def test_one_file_two_records_name_is_listed_once(tmp_path: Path) -> None:
 
 
 def test_a_document_two_patients_both_claim_is_refused(tmp_path: Path) -> None:
-    """The cross-patient overwrite: one delivered file, two charts.
-
-    ``pipeline._carry_attachments`` claims each delivered name against the
-    file's digest, which catches two DIFFERENT artifacts colliding — but two
-    records handed the same artifact id and the same bytes re-claim one slot as
-    one owner and pass. Attributing that file to whichever record sorted first
-    would file one patient's document into another patient's chart.
-    """
+    """Two records sharing one artifact id and bytes re-claim the same
+    delivered slot and pass ``_carry_attachments``'s digest check —
+    attributing it to whichever sorted first would file one patient's
+    document into another patient's chart."""
     out_dir = tmp_path / "charts"
     content = _pdf(pages=1)
     _carry(out_dir, "shared.pdf", content)
@@ -312,13 +286,9 @@ def test_a_document_two_patients_both_claim_is_refused(tmp_path: Path) -> None:
 
 
 def test_two_files_that_would_share_an_item_key_are_refused(tmp_path: Path) -> None:
-    """The ledger keys on ``item_key``, so a collision is a file never sent.
-
-    One patient's scan carried twice under two names is two files with one key:
-    no encounter to tell them apart, so the patient id stands in, and identical
-    bytes give an identical digest. Enqueuing both writes one ledger row and
-    uploads one file, with nothing anywhere saying the other did not go.
-    """
+    """The ledger keys on ``item_key``: two files that collide (no
+    encounter to tell them apart, same patient id, identical digest)
+    enqueue as one ledger row and one upload — the other never goes."""
     out_dir = tmp_path / "charts"
     content = _pdf(pages=1)
     _carry(out_dir, "referral.pdf", content)
@@ -349,12 +319,9 @@ def test_a_document_that_changed_under_the_bundle_is_refused(tmp_path: Path) -> 
 def test_a_document_the_bundle_never_carried_is_reported_not_dropped_in_silence(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Absent is not a refusal here, because one caller legitimately has none.
-
-    ``migrate --render ccda-standard`` writes its manifest beside charts it
-    rendered and carries no attachment at all, so refusing would strand that
-    mode. What it may not do is pass without saying so.
-    """
+    """Absent is not a refusal: ``migrate --render ccda-standard`` writes
+    its manifest with no attachment carried at all, so refusing would
+    strand that mode. What it may not do is pass without saying so."""
     out_dir = tmp_path / "charts"
     content = _pdf(pages=1)
     record = PatientRecord(
@@ -418,15 +385,10 @@ def test_a_pdf_the_source_declared_is_paged_and_carries_its_page_count(tmp_path:
 def test_a_media_type_nothing_pages_is_carried_with_no_page_expectation(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A TIFF scan is deliverable and unpageable, and the manifest says both.
-
-    The type is the one the SOURCE declared. Sniffing the bytes to page it
-    anyway would be this toolkit telling a receiving system what a clinical
-    artifact is — the claim only the document holding it may make. And nothing
-    tries: opening every carried file to ask how many pages it has would report
-    each unpageable one as an unreadable count, which is a warning about the
-    toolkit dressed up as a warning about the bundle.
-    """
+    """A TIFF scan is deliverable and unpageable; the manifest says both.
+    The media type is the one the SOURCE declared — sniffing the bytes to
+    page it anyway would make a clinical claim only the document itself
+    may make, and would report a spurious "unreadable count" warning."""
     out_dir = tmp_path / "charts"
     content = b"II*\x00 synthetic scan, not a real TIFF"
     _carry(out_dir, "scan.tiff", content)
@@ -449,12 +411,10 @@ def test_a_media_type_nothing_pages_is_carried_with_no_page_expectation(
 
 
 def test_the_ladder_reads_bytes_off_a_source_document_and_nothing_else(tmp_path: Path) -> None:
-    """L0 and L1 still mean something over a scan; L2 and L3 cannot.
-
-    A scanned referral has no rendered text layer and no pack ever touched it,
-    so the page-one levels would fail every source document for the absence of
-    something that was never going to be there.
-    """
+    """L0 and L1 still mean something over a scan; L2 and L3 cannot — a
+    scanned referral has no rendered text layer and no pack ever touched
+    it, so those levels would fail every source document for lacking
+    something that was never going to be there."""
     pytest.importorskip("pymupdf", reason="the ladder reads PDFs with PyMuPDF")
     from anastomosis.deliver.verify import LayeredVerifier, LevelStatus
 
@@ -479,12 +439,10 @@ def test_the_ladder_reads_bytes_off_a_source_document_and_nothing_else(tmp_path:
 
 
 def test_a_small_source_pdf_is_not_condemned_by_the_chart_size_floor(tmp_path: Path) -> None:
-    """The sub-KiB floor is a fact about a Chromium print, not about a PDF.
-
-    A scanner's output is whatever the scanner wrote. L0 has already re-hashed
-    those bytes against the digest the SOURCE recorded, which is a stronger
-    statement about a source file than any size heuristic.
-    """
+    """The sub-KiB size floor is a fact about a Chromium print, not a
+    PDF: a scanner's output is whatever the scanner wrote. L0 already
+    re-hashes those bytes against the source's own digest, which says
+    more about a source file than any size heuristic."""
     pytest.importorskip("pymupdf", reason="the ladder reads PDFs with PyMuPDF")
     from anastomosis.deliver.verify import LayeredVerifier, LevelStatus
 
@@ -628,12 +586,10 @@ def test_the_writer_never_logs_a_document_name(
 
 
 def test_a_base64_body_is_never_what_the_manifest_measures(tmp_path: Path) -> None:
-    """The item's digest is of the FILE on disk, not of the record's copy of it.
-
-    A C-CDA Unstructured Document carries its bytes inline on the artifact and
-    delivery writes them out; hashing the base64 rather than the written file
-    would record a digest no upload could ever re-measure.
-    """
+    """The item's digest is of the FILE on disk, not the record's copy: a
+    C-CDA Unstructured Document carries its bytes inline and delivery
+    writes them out, so hashing the base64 instead would record a digest
+    no upload could ever re-measure."""
     from anastomosis.core.model import EXT_INLINE_CONTENT
 
     out_dir = tmp_path / "charts"
@@ -715,13 +671,9 @@ def _items_on_disk(charts: Path) -> list[tuple[str, str, str, int]]:
 def test_the_cli_and_the_gui_write_the_same_manifest_for_a_scanned_chart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The whole point of one shared writer, driven through both frontends.
-
-    ``anast pipeline run --upload-manifest`` and the GUI's run console reach
-    ``write_upload_manifest`` through the same ``PipelineCommand``, so a fix in
-    one is a fix in both — and this is what says so, rather than a claim that
-    they agree.
-    """
+    """``anast pipeline run --upload-manifest`` and the GUI's run console
+    reach ``write_upload_manifest`` through the same ``PipelineCommand``,
+    so a fix in one is a fix in both — driven here, not merely claimed."""
     pytest.importorskip("pymupdf", reason="the record summary is rendered with PyMuPDF")
     from typer.testing import CliRunner
 

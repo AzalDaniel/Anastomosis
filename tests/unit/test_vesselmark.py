@@ -1,23 +1,11 @@
-"""The vessel mark the guided session greets with, and the promises it makes.
-
-Five of them, in the order they can hurt someone:
-
-* **A script never sees it.** The mark and its entrance are unreachable
-  without a real terminal on the other end; a pipe, a redirect or a CI log
-  gets the plain header ``anast`` has always printed, byte for byte.
-* **A legacy console never sees mojibake.** The ASCII ramp is pure ASCII, and
-  the rendered frames encode on a CP-1252 stream — the Windows console the
-  rest of the CLI already degrades for.
-* **The entrance ends where the mark is.** Every frame is driven by an index,
-  never a clock, so this walks the whole entrance and pins that it only gains
-  ink and that its last frame is the settled mark exactly.
-* **It cannot outstay its welcome.** Bounded in frames, and abandoned on the
-  first keystroke.
-* **It is the logo.** The grid is generated from the same geometry
-  ``tools/make_vessel.py`` writes the icons from; this re-samples it and fails
-  on any difference, so the mark in the terminal cannot drift away from the
-  one on the taskbar.
-"""
+"""The vessel mark the guided session greets with, and the promises it
+keeps: a script never sees it (only a real terminal gets it, plain
+header otherwise, byte for byte); a legacy console never sees mojibake
+(pure ASCII ramp, CP-1252-safe); the entrance ends exactly where the
+settled mark is (frame-indexed, never clock-driven); it cannot outstay
+its welcome (bounded frames, abandoned on the first keystroke); and it
+is the logo (re-sampled from the geometry ``tools/make_vessel.py``
+writes the icons from, so it cannot drift)."""
 
 from __future__ import annotations
 
@@ -87,13 +75,8 @@ def _mark_columns(line: str) -> str:
 
 
 def test_the_grid_is_still_what_the_geometry_samples_to() -> None:
-    """Re-sample the mark and compare: the checked-in grid must match.
-
-    ``src/anastomosis/core/vesselmark_data.py`` is generated, and the whole
-    reason it is generated rather than drawn is that a hand-made grid drifts
-    away from the logo the moment the logo changes. Regenerate with
-    ``python tools/make_vessel.py``.
-    """
+    """Re-sampling the checked-in grid must match exactly; regenerate with
+    ``python tools/make_vessel.py`` if the logo's geometry changes."""
     from tools import make_vessel
 
     written = (REPO_ROOT / "src" / "anastomosis" / "core" / "vesselmark_data.py").read_text(
@@ -116,12 +99,9 @@ def test_the_grid_is_a_rectangle_of_levels_the_ramp_can_draw() -> None:
 
 
 def test_the_trunk_reaches_the_bottom_row() -> None:
-    """The silhouette, in one assertion: the mark is a fan on a stem.
-
-    The bottom of the logo is trunk and nothing else, so the last row of the
-    grid carries ink in exactly one short run of cells. A sampling change that
-    flattened the mark into a blob would lose this.
-    """
+    """The silhouette is a fan on a stem: the bottom row must carry ink in
+    exactly one short contiguous run, or the sampling flattened it into a
+    blob."""
     bottom = DENSITY[-1]
     inked = [index for index, digit in enumerate(bottom) if digit != "0"]
     assert inked, "the trunk must reach the foot of the mark"
@@ -133,12 +113,9 @@ def test_the_trunk_reaches_the_bottom_row() -> None:
 
 
 def test_the_ramp_climbs_in_both_channels_at_once() -> None:
-    """Density and weight agree about which cell is heavier.
-
-    Colour is never the only signal in this product, and in the mark it is not
-    a signal at all: the gradient is glyph size and text weight, ordered the
-    same way, so the mark still reads on a terminal that renders neither.
-    """
+    """Density and weight agree on which cell is heavier: colour is never
+    the only signal, so the gradient must read as glyph size and weight
+    alone."""
     assert vesselmark._WEIGHTS == ("", "dim", "default", "default", "bold")
     assert vesselmark._WEIGHTS[2] == vesselmark._WEIGHTS[3]
     for ramp in (vesselmark.UNICODE_DOTS, vesselmark.ASCII_DOTS):
@@ -370,13 +347,9 @@ def test_the_header_draws_the_mark_on_a_terminal(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-only")
 def test_the_mark_reaches_a_real_pty() -> None:
-    """Run the real entry point on a real terminal and read what came back.
-
-    Everything above drives the renderer directly. This drives ``anast``
-    itself, on a pty, and looks for the settled mark in the bytes — the one
-    check that fails if the greeting stops being wired to the command an
-    operator actually types.
-    """
+    """Drives ``anast`` on a real pty and looks for the settled mark in the
+    bytes -- the one check that fails if the greeting stops being wired
+    to the real command."""
     import pty
     import select
     import time
@@ -434,13 +407,8 @@ def test_the_mark_reaches_a_real_pty() -> None:
 
 
 def test_the_greeting_renders_on_a_strict_cp1252_console() -> None:
-    """The Windows leg's proof: a legacy console gets dots, not an exception.
-
-    ``anast`` on a stock Windows console writes through a CP-1252 stdout, and
-    one character it cannot encode aborts the command mid-output. Rendered in a
-    subprocess with stdio pinned to strict CP-1252, exactly as
-    ``test_cli_help_encoding`` pins the help page.
-    """
+    """A stock Windows console writes through strict CP-1252; one
+    unencodable character must not abort the command mid-output."""
     script = (
         "import sys\n"
         "from rich.console import Console\n"
@@ -507,25 +475,10 @@ def _resolved(stop: str) -> str:
 
 
 def test_every_mark_stop_clears_three_to_one_on_both_grounds() -> None:
-    """The test that replaces a deleted certainty, rather than deleting it.
-
-    §11 used to say the CLI names no absolute colour at all, and that rule was
-    load-bearing: a hue chosen against one background is invisible on another,
-    and the background belongs to whoever is running this. The amendment does
-    not drop the rule, it discharges it — the mark may carry ONE ramp, and only
-    while every stop in it is measurably legible on a dark ground and a light
-    one at once.
-
-    So this is the whole of the licence. The window matters as much as the nine
-    grounds: an edit that happened to pass on these nine while drifting outside
-    0.175-0.242 has left the reason the ramp is safe, and would fail on the
-    tenth terminal nobody thought to list.
-
-    For scale, the values this replaces: the mark's own oxblood `#701a14`
-    measures 1.13 : 1 on `#171310` and 1.23 : 1 on One Dark, and even
-    `--brand-bright` reaches only 2.53 : 1 on porcelain and 2.90 : 1 on One
-    Dark. None of them could ever have shipped here.
-    """
+    """Contract: every mark stop's relative luminance falls in 0.175-0.242,
+    the window where it holds >=3:1 (WCAG 1.4.11) against both a dark and
+    a light ground at once -- the whole licence a decorative hue needs,
+    since a background belongs to whoever runs the terminal."""
     for name, ramp in (("truecolor", vesselmark.MARK_STOPS), ("256", vesselmark.MARK_STOPS_256)):
         for stop in ramp:
             resolved = _resolved(stop)
@@ -543,12 +496,9 @@ def test_every_mark_stop_clears_three_to_one_on_both_grounds() -> None:
 
 
 def test_the_mark_does_not_borrow_the_refusal_colour() -> None:
-    """Identity may not wear the colour that means "this failed".
-
-    Red is this product's refusal. The ramp lives in the same hue family by
-    necessity — it is the brand's hue — so "not red" has to be measured rather
-    than asserted, in a space where distance means what the eye means by it.
-    """
+    """Identity may not wear the colour that means "this failed": measured
+    as OKLab distance from the refusal reds, since "not red" must be
+    judged the way the eye judges it."""
 
     def oklab(hex_colour: str) -> tuple[float, float, float]:
         def linear(value: int) -> float:
@@ -595,18 +545,10 @@ class _Capable:
 
 
 def test_the_sixteen_colour_floor_takes_no_colour_at_all() -> None:
-    """Sixteen colours, `NO_COLOR`, and nobody watching all get no colour.
-
-    At sixteen every stop quantises onto ANSI 9, which is `bright_red` — the
-    refusal colour, which identity may not borrow — so the honest answer at
-    that rung is the weight ramp that shipped before any of this.
-
-    Driven by the three attributes the gate actually reads rather than by
-    environment variables, because how rich INFERS them is rich's business and
-    differs by platform: on Windows `TERM` decides nothing, which is what an
-    earlier version of this test got wrong and the windows-latest leg caught.
-    What must hold everywhere is the mapping, and that is what this pins.
-    """
+    """At sixteen colours every stop quantises onto ANSI 9 (bright_red, the
+    refusal colour), so the honest answer is no colour at all -- driven
+    by the three attributes the gate actually reads, including NO_COLOR
+    (which still reports color_system="256") and whether anyone is watching."""
     assert terminal_colour_depth(_Capable("truecolor")) == "truecolor"
     assert terminal_colour_depth(_Capable("256")) == "256"
     for sixteen_or_fewer in ("standard", "windows", None):
@@ -623,17 +565,11 @@ def test_the_sixteen_colour_floor_takes_no_colour_at_all() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="rich reads TERM only on POSIX")
 def test_rich_reports_the_depth_this_gate_was_built_against() -> None:
-    """The real-world half: what rich actually says about real terminals.
-
-    Worth pinning because the answers are surprising and the design leans on
-    them. Rich's `_TERM_COLORS` has three entries and matches only the last
-    hyphen-delimited segment, so `TERM=alacritty` and `TERM=xterm-ghostty` both
-    come back `standard` — meaning **the 256 rung is the common case on modern
-    terminals, and truecolor is the exception**. That is why the 256 rung gets
-    three validated palette indices rather than a downgrade, and why no
-    `TERM_PROGRAM` allowlist is used to guess a terminal upward: guessing wrong
-    emits truecolor bytes that a sixteen-colour terminal renders as garbage.
-    """
+    """Rich's `_TERM_COLORS` matches only the last hyphen segment, so
+    `alacritty` and `xterm-ghostty` both read `standard` -- the 256 rung
+    is the common case, truecolor the exception, and no `TERM_PROGRAM`
+    allowlist guesses upward (a wrong guess emits truecolor bytes a
+    sixteen-colour terminal renders as garbage)."""
     for environ, expected in (
         ({"TERM": "xterm-256color"}, "256"),
         ({"COLORTERM": "truecolor", "TERM": "xterm-256color"}, "truecolor"),
@@ -647,14 +583,8 @@ def test_rich_reports_the_depth_this_gate_was_built_against() -> None:
 
 
 def test_the_mark_is_unchanged_with_the_colour_stripped() -> None:
-    """§11's promise, mechanised: strip the colour and the mark is what it was.
-
-    The single most important test here. Colour is the second channel, never
-    the only one — so every frame's CHARACTERS must be identical whether or not
-    a palette was passed. If this ever fails, someone has started encoding form
-    in hue, and the sixteen-colour rung and the `NO_COLOR` rung have quietly
-    become a different mark.
-    """
+    """Colour is the second channel, never the only one: every frame's
+    CHARACTERS must be identical whether or not a palette was passed."""
     for frame in (0, 5, vesselmark.FRAMES, vesselmark.FRAMES + 40, vesselmark.FRAMES + 137):
         levels, stops = vesselmark.pulse_frame(frame, seed=2.4)
         plain = vesselmark.render(levels, unicode_dots=True)
@@ -705,14 +635,9 @@ def test_the_pulse_never_blinks() -> None:
 
 
 def test_the_pulse_actually_moves_and_never_repeats() -> None:
-    """It lives, and it does not loop.
-
-    Two failures caught at once. A frozen animation is obvious in person and
-    invisible in a diff, so churn is asserted. And "continuously looped" would
-    be a lie if the field had a period — the three temporal ratios are
-    incommensurable precisely so it has none, so no two frames in a long run
-    may draw the same grid.
-    """
+    """A frozen animation is invisible in a diff, so churn is asserted; the
+    three temporal ratios are incommensurable, so no two frames may
+    repeat."""
     home = vesselmark.mark_levels()
     inked = sum(1 for row in home for level in row if level)
     grids, churn = [], []
@@ -734,21 +659,10 @@ def test_the_pulse_actually_moves_and_never_repeats() -> None:
 
 
 def test_the_two_arms_are_visibly_out_of_step() -> None:
-    """The cut vessels must not pulse together, and "not identical" is too weak.
-
-    The mark is mirror-symmetric about column 10 and radial distance is
-    therefore the same on each arm, so without a term that breaks it both arms
-    beat in lockstep and the whole thing reads as machinery. Its absence is
-    invisible in a still frame, which makes it an easy accidental deletion.
-
-    An earlier version of this test asserted only that mirrored cells differ at
-    all, and it PASSED with the lateral term removed — `_phase_offset` leaves
-    some residual asymmetry, so "not exactly equal" is satisfied by a field
-    that still visibly beats together. That is a guard which cannot fail, so it
-    is asserted on magnitude instead. Measured over inked mirrored pairs at
-    four instants: 0.3234 with both terms, 0.0974 with the lateral term gone,
-    and exactly 0.0 with neither. The threshold sits between the first two.
-    """
+    """The two mirrored arms must not beat in lockstep (reads as machinery):
+    mean phase divergence over inked mirrored pairs must clear 0.20 --
+    "not exactly equal" is too weak a guard, since residual asymmetry
+    alone already satisfies it without the lateral term."""
     home = vesselmark.mark_levels()
     deltas = [
         abs(
@@ -768,12 +682,9 @@ def test_the_two_arms_are_visibly_out_of_step() -> None:
 
 
 def test_the_hub_is_where_the_geometry_puts_it() -> None:
-    """Recomputed from `make_vessel`'s own constants, not copied from a note.
-
-    The wave radiates from the anastomosis — where the two cut vessels meet the
-    trunk — and if the logo's geometry ever moves, the hub has to move with it
-    or the mark starts pulsing from somewhere that means nothing.
-    """
+    """Recomputed from ``make_vessel``'s own constants: if the logo's
+    geometry moves, the pulse's hub (where the cut vessels meet the
+    trunk) must move with it."""
     from tools.make_vessel import MATRIX_COLS, MATRIX_ROWS, SIZE
 
     trimmed = MATRIX_ROWS - vesselmark.MARK_HEIGHT
@@ -792,13 +703,8 @@ def test_two_runs_do_not_open_alike() -> None:
 
 
 def test_every_ramp_glyph_is_narrow() -> None:
-    """No glyph in either ramp may render double-width.
-
-    This is the regression guard for a bug that shipped: `·` U+00B7, `•`
-    U+2022 and `●` U+25CF are all East Asian Width Ambiguous, so a terminal
-    configured for CJK drew them two columns wide and sheared the 21-column
-    grid into nonsense. Every braille codepoint is Narrow, and so is ASCII.
-    """
+    """No glyph may render double-width: `·`/`•`/`●` are East Asian Width
+    Ambiguous and sheared the 21-column grid on a CJK-configured terminal."""
     import unicodedata
 
     for ramp in (vesselmark.UNICODE_DOTS, vesselmark.ASCII_DOTS):
@@ -809,13 +715,8 @@ def test_every_ramp_glyph_is_narrow() -> None:
 
 
 def test_an_unwatched_greeting_still_stops(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nobody who types `anast` and looks away waits forever for the menu.
-
-    The cost of running continuously, bounded. It was measured rather than
-    assumed: at a 1200-frame cap the real pty run never reached the menu inside
-    sixty seconds — the mark was perfusing correctly and the question
-    underneath it was waiting for it to finish.
-    """
+    """Bounded cost of running unattended: measured against a real pty run
+    (never reached the menu inside sixty seconds at a 1200-frame cap)."""
     drawn: list[int] = []
     monkeypatch.setattr(vesselmark, "_key_pressed", lambda: False)
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
@@ -836,20 +737,11 @@ def test_an_unwatched_greeting_still_stops(monkeypatch: pytest.MonkeyPatch) -> N
 def test_a_legacy_windows_console_is_never_sent_the_sync_sequences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one terminal that would print them instead of obeying them.
-
-    DECSET 2026 is free on every terminal that parses it and free on every
-    terminal that does not — an unknown DEC private parameter is skipped. The
-    exception is a Windows console still in legacy mode, which has no VT parser
-    at all: rich detects it, renders through `legacy_windows_render`, and
-    colours by calling the console API, but the plain text still arrives at
-    `console.file.write`. Anything the wrapper prepends there is not a mode
-    change, it is nineteen characters of literal escape at the head of every
-    frame, twenty times a second.
-
-    Verified by driving the real `_play` twice, because a guard on a flag
-    nothing sets is a guard that has never run.
-    """
+    """DECSET 2026 sync sequences are free on any terminal that parses them,
+    but a legacy Windows console has no VT parser at all and would print
+    the literal escape bytes instead of obeying them -- driven on both
+    states of the flag explicitly, since rich reports ``legacy_windows``
+    true for any redirected stream on a Windows runner."""
     monkeypatch.setattr(vesselmark, "_key_pressed", lambda: True)
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
 

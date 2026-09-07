@@ -1,36 +1,12 @@
-"""What "static" actually means, said in the words the operator reads.
+"""What "static" actually means, in the words the operator reads.
 
-``pack init --from-samples`` splits sample text into "static" (the form) and
-per-patient (the values) by counting how many samples each string appears in.
-Three of the places that describe that split called it a proof:
-
-* ``emit.py``: *"Per-patient values never recur and never reach here."*
-* ``infer.py``: *"Per-patient values, recurring in fewer samples, are
-  excluded."*
-* the GUI, directly above the list: *"No patient data is shown below."*
-
-None of that is true. A frequency count cannot tell who wrote a string, and
-with three samples the bar is two — so a diagnosis or an ethnicity that two of
-three DIFFERENT patients share classifies as template chrome and is written
-verbatim into ``template.html`` and ``DRAFT.md`` (#200).
-
-That sweep read the source files and the GUI markup, and missed the copies
-emit.py writes *into* the pack: the header of the UNPLACED comment in
-``template.html`` and the "Unplaced static text" paragraph in ``DRAFT.md``,
-both of which called the list "template labels/boilerplate, not patient data"
-directly above the values two patients shared. Those are the words the
-operator reads at the moment they decide what to keep, so they are the ones
-that mattered most. The sweep below now covers the emitted files too.
-
-This file holds that reproduction. The split is no longer a frequency count: a
-string now has to be on EVERY sample AND own a place on the page nothing else
-occupies, so the shared diagnosis and the shared ethnicity below no longer
-reach the pack at all. What survives is the residual the filter cannot catch —
-a value ALL of the patients share, in a fixed cell, with no competitor to give
-it away — and the wording that tells the operator to look for exactly that.
-
-PHI: the fixture below is synthetic by construction — invented names, a
-textbook diagnosis, and a standard OMB ethnicity category. Nothing copied.
+``pack init --from-samples`` classifies text as static (form) or
+per-patient (values) by two rules together: a string must appear on EVERY
+sample, AND occupy a page position no other sample's value ever occupies.
+Frequency alone lets a shared value recur through (#200); position alone
+lets a value every patient shares in a fixed cell through, quarantined and
+captioned, never claimed clean. Fixture is synthetic: invented names, a
+textbook diagnosis, a standard OMB category.
 """
 
 from __future__ import annotations
@@ -41,9 +17,8 @@ import pytest
 
 from anastomosis.packgen.emit import SAME_PATIENT_CAVEAT
 
-#: The shared diagnosis this issue reproduced. Two of the three patients carry
-#: it, which is an ordinary thing for two patients to do — and used to be
-#: enough to promote it to template chrome.
+#: The shared diagnosis this issue reproduced (#200): two of the three
+#: patients carry it, an ordinary thing for two patients to do.
 _SHARED_DX = "Type 2 diabetes mellitus"
 
 #: The same diagnosis again, on EVERY patient, in a problem list whose rows
@@ -105,13 +80,10 @@ def _samples(tmp_path: Path) -> list[Path]:
 def test_a_value_two_patients_share_no_longer_classifies_as_template_text(
     tmp_path: Path,
 ) -> None:
-    """The reproduction, now run against the fix.
-
-    The assessment and the ethnicity are on two of three charts, so the
-    every-sample rule is what stops them. "Signed electronically" is on all
-    three, at the same place every time, so it is kept — a filter that took the
-    labels with it would be no use.
-    """
+    """The assessment and ethnicity are on two of three charts, so the
+    every-sample rule stops them; "Signed electronically" is on all three
+    at the same place, so it is kept — the filter must not take real
+    template chrome with it."""
     from anastomosis.packgen import analyze, extract_samples
 
     analysis = analyze(extract_samples(_samples(tmp_path)))
@@ -132,14 +104,10 @@ def test_a_value_two_patients_share_no_longer_classifies_as_template_text(
 def test_a_shared_diagnosis_on_every_chart_is_caught_by_the_page_not_the_count(
     tmp_path: Path,
 ) -> None:
-    """The case frequency cannot reach, and the reason the rule has two halves.
-
-    This diagnosis is on all three charts, so being on every sample says
-    nothing about it. What settles it is where it lands: the problem list puts
-    it at a different row in each chart, and every row it occupies holds
-    somebody else's diagnosis in one of the others. It never owns a place on
-    the page, so it is not the form's furniture.
-    """
+    """On all three charts, so frequency says nothing about it; what settles
+    it is the page — the problem list puts it at a different row each time,
+    and every row it occupies holds somebody else's diagnosis elsewhere, so
+    it never owns a place."""
     from anastomosis.packgen import analyze, extract_samples
 
     analysis = analyze(extract_samples(_samples(tmp_path)))
@@ -155,14 +123,10 @@ def test_a_shared_diagnosis_on_every_chart_is_caught_by_the_page_not_the_count(
 def test_a_value_only_one_chart_carries_is_excluded_however_alone_it_stands(
     tmp_path: Path,
 ) -> None:
-    """The half the count still has to do, and the reason the rule keeps it.
-
-    Owning a slot means nothing else was ever printed there — and a line only
-    ONE chart has, at a spot no other chart reaches, owns its slot by default.
-    Nobody was competing for it because nobody else got that far down the page.
-    So being on every sample is not redundant with the page test; it is what
-    catches the value that is alone rather than fixed.
-    """
+    """A line only ONE chart has, at a spot no other chart reaches, owns
+    its slot by default — nobody else got that far down the page to
+    compete for it. The every-sample rule is what catches this, not the
+    page test."""
     pymupdf = pytest.importorskip("pymupdf", reason="the learner reads PDFs")
     from anastomosis.packgen import analyze, extract_samples
 
@@ -186,14 +150,10 @@ def test_a_value_only_one_chart_carries_is_excluded_however_alone_it_stands(
 
 
 def test_a_value_every_patient_shares_still_gets_through(tmp_path: Path) -> None:
-    """The residual, stated rather than hoped away.
-
-    Nothing on the page distinguishes a payer all three patients share, printed
-    in the same cell every time, from a label the form printed there. No filter
-    that reads only the samples can. So it still reaches the pack — which is
-    why the list is quarantined and captioned, and why the caveat tells the
-    operator to look for this exact shape.
-    """
+    """Nothing on the page distinguishes a payer all three patients share,
+    printed in the same cell every time, from a label the form printed
+    there — no filter reading only the samples can. It reaches the pack,
+    quarantined and captioned."""
     from anastomosis.packgen import analyze, extract_samples
 
     analysis = analyze(extract_samples(_samples(tmp_path)))
@@ -201,18 +161,10 @@ def test_a_value_every_patient_shares_still_gets_through(tmp_path: Path) -> None
 
 
 def test_the_caveat_names_the_failure_that_actually_happens() -> None:
-    """It warned about one patient's chart handed in three times, and stopped there.
-
-    That failure is real and the wording for it stays. What was missing was the
-    one #200 reproduced: distinct patients, which the prompt asks the operator
-    to confirm, and which the confirmation therefore implied was the safe case.
-
-    The examples it names have moved with the fix, and had to. A shared
-    diagnosis and a shared ethnicity are caught now, so telling an operator to
-    hunt for those would send them looking for the wrong thing; what still gets
-    through is a value EVERY sample shares in a fixed cell, so those are what
-    the caveat names.
-    """
+    """The caveat still warns about one patient's chart handed in three
+    times, but must also name what actually still gets through post-#200:
+    a value EVERY sample shares in a fixed cell — not a shared diagnosis or
+    ethnicity, which the every-sample-and-position rule now catches."""
     caveat = SAME_PATIENT_CAVEAT
 
     assert "MUST be from DIFFERENT patients" in caveat
@@ -230,11 +182,10 @@ def test_no_surface_promises_the_list_is_free_of_patient_data() -> None:
     """Every place that said so; the list cannot keep that promise."""
     from anastomosis.gui.shell import _WEB_DIR
 
-    # A source sweep can only forbid a phrasing the file does not also quote,
-    # and this codebase confesses in quotations — the docstrings that used to
-    # make the claim now print it back with "is what this said" after it. So
-    # the entries below are the wordings no file states OR quotes; the emitted
-    # files, which carry no such commentary, are swept properly two tests down.
+    # A source sweep can only forbid a phrasing the file does not also quote
+    # back (e.g. inside "is what this said"). The entries below are the
+    # wordings no file states OR quotes; the emitted files, which carry no
+    # such commentary, are swept properly two tests down.
     repo = Path(__file__).resolve().parents[2]
     packgen = repo / "src" / "anastomosis" / "packgen"
     claims = {
@@ -282,24 +233,10 @@ def _flat(text: str) -> str:
 
 
 def test_sample_text_lands_in_the_quarantine_and_in_no_other_file(tmp_path: Path) -> None:
-    """One file carries text taken from the samples, and deleting it is the job.
-
-    This assertion is the inverse of the one it replaces, and deliberately so.
-    That test pinned the shared diagnosis as PRESENT in template.html and
-    DRAFT.md — it was documenting the leak while checking the wording printed
-    above it. Wording was the right fix for the claim; it is not a fix for the
-    string being in those files.
-
-    Both of them travel. template.html renders every future patient's chart and
-    is what gets copied when a second pack is derived from this one; DRAFT.md
-    is the sheet handed over with it. A previous patient's diagnosis in either
-    is carried everywhere the pack goes, and being an HTML comment is what
-    makes it easy never to notice.
-
-    So the strings sit in UNPLACED.txt, which renders nothing and is imported by
-    nothing, and the operator's remedy stops depending on their diligence: they
-    delete one file rather than reading two and remembering a third.
-    """
+    """Sample-derived text must live in UNPLACED.txt only: template.html
+    and DRAFT.md both travel (copied into every pack derived from this
+    one), so a diagnosis leaking into either — even as an HTML comment —
+    ships everywhere the pack goes. One file to delete, not two to scrub."""
     from anastomosis.packgen import analyze, extract_samples
     from anastomosis.packgen.emit import STATIC_LIST_NOTE, UNPLACED_NAME, emit_draft_pack
 
@@ -335,13 +272,10 @@ def test_sample_text_lands_in_the_quarantine_and_in_no_other_file(tmp_path: Path
 
 
 def test_a_single_sample_draft_does_not_claim_nothing_was_dropped(tmp_path: Path) -> None:
-    """One sample withholds every string, and the draft used to report the opposite.
-
-    With ``low_confidence`` the emitter writes no sample-derived text at all —
-    the right call. But DRAFT.md read the empty result as "all static text
-    mapped to known header fields" and repeated the losslessness line under it,
-    telling the operator the pack held everything the learner saw.
-    """
+    """With ``low_confidence`` the emitter writes no sample-derived text at
+    all, so DRAFT.md must not read the empty result as "all static text
+    mapped to known header fields" and repeat the losslessness claim under
+    it."""
     from anastomosis.packgen import analyze, extract_samples
     from anastomosis.packgen.emit import emit_draft_pack
 

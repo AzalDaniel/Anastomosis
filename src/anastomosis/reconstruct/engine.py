@@ -1,21 +1,11 @@
 """The reconstruction engine: canonical records → chart PDFs via a pack.
 
-Behaviors this engine guarantees:
-
-* **Renderer recycling** — Chromium leaks slowly; the engine retires and
-  relaunches the renderer every N renders instead of debugging that.
-* **Crash relaunch** — a renderer crash mid-run costs one retry, not the
-  batch.
-* **Collision suffixing** — two same-day visits resolve to the same
-  filename; the loser gets a source-id suffix rather than overwriting, and
-  the suffix widens until the name is genuinely free (the same-day-visit
-  defense). Two encounters carrying one id have no name that separates
-  them: that chart is reported as a failure, never quietly overwritten.
-* **Idempotent skip** — re-running a half-finished batch only renders what
-  is missing, so interruption is always safe.
-
-Failures are recorded as exception *types* only (PHI-safe logging rule);
-the run report never embeds patient-derived text.
+Guarantees: renderer recycling (Chromium leaks; retire/relaunch every N
+renders), one retry on a mid-run crash, collision suffixing (same-day
+visits widen to a source-id suffix; two sharing one id fail loud, never
+silently), and idempotent skip (a half-finished batch renders only what's
+missing). Failures are recorded as exception TYPES only — never
+patient-derived text.
 """
 
 from __future__ import annotations
@@ -95,16 +85,10 @@ def _render_conservation(offered: int, result: RenderResult) -> Conservation:
     """The canonical -> rendered seam: every encounter ends in exactly one of
     three columns.
 
-    This holds by construction today — ``_render_one`` appends to exactly one
-    list on every path — which is the point. The class of defect it exists for
-    is the one where that stops being true and nothing notices: an early return
-    that forgets to record the encounter, an exception caught a level too high,
-    two encounters allocated one filename. Then the run reports the survivors
-    as though they were everything, which is how two encounters became one page
-    and a clean report.
-
-    A run that raised (an unavailable renderer) never reaches this: it has no
-    books to balance because it has no result.
+    Holds by construction (``_render_one`` appends to exactly one list on
+    every path); guards against an early return or over-broad ``except``
+    silently dropping an encounter. A run that raised (unavailable renderer)
+    never reaches this — it has no result to balance.
     """
     return Conservation(
         stage="canonical -> rendered",
@@ -160,10 +144,8 @@ class ReconstructionEngine:
     def templates_read(self) -> dict[str, str]:
         """``{pack-relative template name: sha256}`` for what this engine read.
 
-        Empty until something is rendered. Jinja compiles a template once per
-        environment, and this engine holds one environment per run, so the
-        mapping is the run's whole template surface rather than a per-document
-        one.
+        Empty until something is rendered. One environment per run, so this
+        is the run's whole template surface, not a per-document one.
         """
         return dict(self._loader.templates_read)
 
@@ -204,19 +186,13 @@ class ReconstructionEngine:
     def _allocate_target(
         self, out_dir: Path, name: str, encounter: Encounter, claimed: set[Path]
     ) -> Path:
-        """Deterministic name allocation: collisions are resolved against the
-        names claimed *this run* (iteration order is stable), so a re-run
-        allocates identical names and the idempotent skip works. The loser of
-        a same-day collision gets a source-id suffix — never an overwrite.
-
-        The suffix used to be the id's first eight characters, applied once,
-        with no check that the suffixed name was free either. Ids that agree on
-        those eight characters are not exotic — sequential Millennium
-        ``ENCNTR_ID``s share long prefixes by construction, and every GUID in
-        this repo's own pf_tebra fixture starts ``feedface`` — so a third
-        same-day visit landed on the second and took it with it. Hence the
-        widening loop: eight characters, then the whole id, which two distinct
-        encounters cannot share.
+        """Deterministic name allocation: collisions resolve against the names
+        claimed THIS RUN (stable iteration order), so a re-run allocates
+        identical names and the idempotent skip works. The loser of a
+        same-day collision gets a source-id suffix, widening from eight
+        characters to the whole id — sequential ``ENCNTR_ID``s and this
+        repo's own ``feedface`` GUIDs share long prefixes, so eight
+        characters alone is not always enough to stay free.
         """
         stem, ext = Path(name).stem, Path(name).suffix
         ident = encounter.id.replace("-", "")

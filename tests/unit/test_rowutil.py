@@ -1,18 +1,12 @@
-"""Tests for sources._rowutil — the row-cell helpers pf_tebra and oracle_ehi
-share (and, through the same `core.timeutil.parse_dt`/`parse_date` the
-learned adapter's `parse_date`/`parse_datetime` transform verbs reach too).
+"""Tests for sources._rowutil — the row-cell helpers pf_tebra,
+oracle_ehi, and the learned adapter's transform verbs all share
+(through `core.timeutil.parse_dt`/`parse_date`).
 
-`clean_dt`/`clean_date` are a thin wrap over `parse_dt`/`parse_date`, with no
-ledger or extensions dict of their own to credit a silently-absorbed value on
-— so a value these three adapters' date columns could state has nowhere
-honest to land except a loud failure. #385 first read a C-CDA vendor's
-all-zero TS `@value` ("0") as absent inside `parse_dt` itself, which is this
-module's OWN reader too: `clean_dt({"c": "0"}, "c")` silently returned `None`
-for a TSV cell of literal `"0"` on that fix, in all three adapters, with
-nothing anywhere recording it. The zero-sentinel reading now lives in the
-C-CDA parser's own `_ts`/`_ts_date` (see `test_ccda.py`), never here —
-`clean_dt`/`clean_date` must keep raising on a value this module has never
-seen, exactly as they did before #385 touched anything.
+`clean_dt`/`clean_date` are a thin wrap with no ledger of their own to
+credit a silently-absorbed value on, so a value these adapters' date
+columns could state has nowhere honest to land except a loud failure
+(#385). The zero-sentinel reading lives in the C-CDA parser's own
+readers instead.
 """
 
 import pytest
@@ -22,13 +16,11 @@ from anastomosis.sources._rowutil import clean_date, clean_dt
 
 @pytest.mark.parametrize("raw", ["0", "00000000"])
 def test_clean_dt_raises_on_a_zero_run_it_cannot_read(raw: str) -> None:
-    """#385 round two: a TSV cell holding a literal zero-run is a value that
-    states something, not a vendor's C-CDA "no date" spelling — pf_tebra and
-    oracle_ehi read every date column through this function, and neither has
-    anywhere to record a silently-absorbed value the way the C-CDA parser
-    can. Red on the interim fix in a2858a4 (returned `None`); green both
-    before that commit and after this one.
-    """
+    """#385 round two: a TSV cell holding a literal zero-run states
+    something, not a vendor's C-CDA "no date" spelling — pf_tebra and
+    oracle_ehi read every date column through this function, with
+    nowhere to record a silently-absorbed value the way the C-CDA
+    parser can."""
     with pytest.raises(ValueError, match="unrecognized"):
         clean_dt({"c": raw}, "c")
 

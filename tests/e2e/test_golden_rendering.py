@@ -1,35 +1,12 @@
 """Golden rendering tests — pin what REAL Chromium produces.
 
-These tests render the ``pf_tebra_v9`` fixture's six encounters through the
-``generic_soap`` pack with the real :class:`ChromiumRenderer`, extract stable
-properties with PyMuPDF (page count, page geometry in points, and the full
-text layer normalized to single-spaced text), and compare them byte-for-byte
-against the committed golden snapshot in
-``tests/e2e/goldens/pf_tebra_v9_generic_soap.json``.
-
-Text and geometry alone cannot catch a *spatial* regression: a stylesheet
-change that slides a value out from under its label leaves the page count, the
-page size, and the extracted words all identical, and ships a chart that reads
-the wrong value against the right heading. So EVERY page of every golden chart
-also pins the word bounding boxes PyMuPDF reports (``page.get_text("words")``)
-against ``tests/e2e/goldens/pf_tebra_v9_generic_soap.words.json`` (one entry
-per page), compared with a few points of slack rather than exact floats.
-
-A mismatch means the rendered output changed. That is either a regression to
-fix, or — if the template/pack/engine changed *intentionally* — a deliberate
-re-baseline: run ``python tools/regen_goldens.py`` (it rewrites both baselines
-from one render) and review the JSON diff in the pull request. Regenerating is
-never a reflex to make the test pass; the diff is the whole point.
-
-The ``_meta`` block (Playwright + Chromium versions) is recorded for
-diagnosability and is IGNORED by the comparison, so a browser bump alone does
-not fail the suite — only a change in rendered text or geometry does.
-
-PHI-safe: the fixture is the repo's synthetic ``feedface-`` PF/Tebra export,
-so the normalized text stored and diffed here is entirely synthetic.
-
-Marked ``e2e`` so the unit lanes never collect it; it SKIPS cleanly (no import
-crash) when Playwright/Chromium is unavailable.
+Renders ``pf_tebra_v9`` through ``generic_soap`` with the real
+:class:`ChromiumRenderer`, comparing page count, geometry and normalized
+text byte-for-byte against ``tests/e2e/goldens/*.json`` — plus word
+bounding boxes (a few points of slack), since those alone miss a
+*spatial* regression. A mismatch is a regression or a deliberate
+re-baseline via ``python tools/regen_goldens.py``, never a reflex.
+PHI-safe; ``e2e``, SKIPS without Chromium.
 """
 
 from __future__ import annotations
@@ -167,14 +144,11 @@ def test_golden_boxes_cover_every_page(
 def test_render_matches_golden_word_boxes(
     golden_boxes: dict[str, Any], rendered_boxes: dict[str, Any]
 ) -> None:
-    """Every page of every chart lands where it landed when the baseline was cut.
-
-    This is the check the text/geometry golden cannot make: same words, same
-    page size, different POSITIONS — a value slid under the neighbouring label,
-    on any page, not just the first. Compared with
-    :data:`regen_goldens.BOX_TOLERANCE` points of slack, so sub-pixel rounding
-    never fails the suite but a visible move always does.
-    """
+    """The check the text/geometry golden cannot make: same words, same
+    page size, different POSITIONS — a value slid under the neighbouring
+    label. Compared with :data:`regen_goldens.BOX_TOLERANCE` points of
+    slack, so sub-pixel rounding never fails but a visible move always
+    does."""
     for enc_id in sorted(k for k in golden_boxes if k != "_meta"):
         assert enc_id in rendered_boxes, f"{enc_id}: no word boxes were rendered"
         differences = regen_goldens.diff_word_boxes(golden_boxes[enc_id], rendered_boxes[enc_id])

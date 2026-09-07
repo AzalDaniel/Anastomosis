@@ -1,25 +1,12 @@
 """FHIR R4 / US Core ingest adapter (the universal "any EHR in" lane).
 
-Reads the structured export every certified US EHR can produce — a FHIR R4
-Bundle (``Patient/$everything``) or a Bulk-Data ``$export`` NDJSON set — into
-canonical :class:`PatientRecord` objects. One Patient resource yields one
-record; resource types with no canonical home are preserved into ``extensions``
-(the lossless guarantee). The per-field mapping lives in ``mapper.py``.
-
-This is deliberately distinct from :func:`anastomosis.core.fhir.ingest.from_bundle`,
-which round-trips THIS project's own export (its ``urn:anastomosis:*``
-extensions). This adapter targets *arbitrary* US Core exports, so it reads only
-the public US Core codings — making "FHIR EHR A → EHR B" a real migration, not a
-self-round-trip.
-
-Memory expectation: grouping is global — a Bulk-Data ``$export`` is split across
-per-resource-type NDJSON files and is not patient-sorted, so the whole export
-must be resident to join it. Files stream in without a per-file intermediate
-list, but resident memory still scales with export size (the grouped index holds
-every resource). Very large Bulk-Data exports should be split per-patient-cohort
-upstream before ingest; spooling larger-than-memory exports to disk is roadmap
-(M6).
-"""
+Reads a FHIR R4 Bundle (``Patient/$everything``) or a Bulk-Data ``$export``
+NDJSON set into canonical :class:`PatientRecord` objects; unmapped resource
+types are preserved into ``extensions``. Distinct from
+:func:`anastomosis.core.fhir.ingest.from_bundle` (this project's own
+round-trip): reads only public US Core codings, so "FHIR EHR A → EHR B" is
+a real migration. Grouping is global, so resident memory scales with
+export size — split a very large export per-patient-cohort upstream."""
 
 from __future__ import annotations
 
@@ -53,10 +40,8 @@ def _resources_from_file(path: Path) -> Iterator[dict[str, Any]]:
     lone resource), streaming rather than materializing a per-file list. Loud on
     malformed JSON — a corrupt export must not parse to empty."""
     if path.suffix.lower() == ".ndjson":
-        # Stream line-by-line (a $export NDJSON can be hundreds of MB; read_text
-        # +splitlines holds the whole file AND a list of its lines in RAM at
-        # once). utf-8-sig strips a leading BOM if present — Windows export tools
-        # often emit one, and a BOM otherwise makes json.loads raise on line 1.
+        # Stream line-by-line: read_text+splitlines would hold the whole file
+        # AND its line list in RAM. utf-8-sig strips a BOM some Windows tools emit.
         with path.open(encoding="utf-8-sig") as handle:
             for raw in handle:
                 line = raw.strip()
@@ -94,19 +79,11 @@ class FHIRR4Adapter:
         return False
 
     def load(self, path: Path) -> Iterator[PatientRecord]:
-        """Parse every Bundle/NDJSON file under ``path`` into patient records.
-
-        All resources across all files are pooled before grouping, so a
-        ``$export`` split into ``Patient.ndjson`` / ``Observation.ndjson`` / …
-        joins correctly. Files are read in sorted order for determinism; a
-        deterministic ``source_file`` is recorded in provenance.
-
-        Each file streams straight into one flat list (no per-file intermediate
-        list). ``records_from_resources`` still needs the full, re-iterable
-        collection — it groups globally and an NDJSON ``$export`` is not
-        patient-sorted — so resident memory scales with export size; see the
-        module docstring for the spooling roadmap note.
-        """
+        """Parse every Bundle/NDJSON file under ``path`` into patient
+        records. All resources across all files are pooled before grouping
+        (a ``$export`` split into ``Patient.ndjson``/``Observation.ndjson``/…
+        joins correctly); files are read in sorted order for a deterministic
+        ``source_file`` in provenance."""
         files = sorted(
             [p for p in path.glob("*.json") if self._looks_fhir_json(p)]
             + list(path.glob("*.ndjson"))

@@ -129,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
 
     files_a = resolve(args.a, args.src)
     files_b = resolve(args.b, args.src)
+    if not files_a or not files_b:
+        # Both arguments are repository roots; ``<root>/src`` is the default
+        # target. An empty side is a wrong path, never a pass.
+        print(f"ast_equal: FAILED (no .py files under {args.src!r} on one side; pass repo roots)")
+        return 2
     differences = compare(files_a, files_b)
 
     for line in differences:

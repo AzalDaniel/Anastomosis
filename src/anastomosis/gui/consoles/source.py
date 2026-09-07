@@ -1,14 +1,10 @@
 """The learn-a-source wizard backend (the source console).
 
-Marshals the shared
-:func:`anastomosis.core.source_init_command.run_source_init_command` core into
-the wizard's JSON dict — synchronously (:meth:`SourceConsole.source_init`, which
-describes the flow) and as a busy-guarded daemon job
-(:meth:`SourceConsole.source_init_async`).
+Marshals :func:`run_source_init_command` into the wizard's JSON dict,
+synchronously and as a busy-guarded daemon job.
 
-PHI rule: the proposal carries column names, inferred type labels, counts, and
-masked shapes only — never a cell value; the example path the operator typed is
-not echoed back.
+PHI rule: the proposal carries column names, type labels, counts and
+masked shapes only — never a cell value or the example path.
 """
 
 from __future__ import annotations
@@ -27,12 +23,8 @@ __all__ = ["SourceConsole"]
 def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
     """Marshal a :class:`SourceInitResult` into the learn-a-source wizard's dict.
 
-    Preserves the wizard's JSON contract exactly: a pre-analyze failure
-    (``InvalidSourceName`` / ``NoExampleFile`` / ``AmbiguousExample`` /
-    ``CannotAnalyze``) is the bare ``{"ok": False, "error": <code>}``; once
-    analysis succeeded the PHI-safe proposal rides along (column names, type
-    labels, counts, masked shapes — never a cell value), plus the
-    outcome-specific keys (``dropped`` / ``detail`` / the saved-mapping fields).
+    A pre-analyze failure is the bare ``{"ok": False, "error": <code>}``;
+    once analysis succeeds the PHI-safe proposal rides along, plus outcome-specific keys.
     """
     out: dict[str, object] = {"ok": result.ok, "error": result.error}
     if result.fmt_type is None:
@@ -58,10 +50,8 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
             ],
             "mapped": result.mapped,
             "targets": list(result.targets),
-            # The destination this format is being taught FOR, echoed back so the
-            # view can show what the mapping is bound to. ``None`` for an
-            # unbound teach — the default, and every mapping taught before the
-            # destination-first step existed.
+            # Echoed back so the view shows what this mapping is bound to;
+            # ``None`` for an unbound teach — the default, and every mapping predating this step.
             "destination": result.destination,
         }
     )
@@ -119,11 +109,8 @@ class _Review:
 def _parse_review(review: dict[str, object] | None) -> _Review | None:
     """The browser's review, parsed defensively, or ``None`` for no review.
 
-    Decisions submitted from the page are input, not truth: a malformed shape
-    here is a stale frontend rather than an operator mistake, and it must
-    surface as this console's ordinary failure dict, never a traceback. Only
-    string-keyed ``[target, transform]`` pairs are admitted; everything else
-    raises for the caller's catch-all to translate.
+    Malformed input surfaces as this console's ordinary failure dict, never
+    a traceback: only string-keyed ``[target, transform]`` pairs are admitted.
     """
     if review is None:
         return None
@@ -146,9 +133,8 @@ def _parse_review(review: dict[str, object] | None) -> _Review | None:
 class SourceConsole(WizardConsole):
     """The learn-a-source wizard backend."""
 
-    # The operation family this console owns; stamped on every event so only the
-    # learn-a-source wizard page consumes them (the per-page flow guard).
-    # The event STAGE stays "source"; the FLOW is the page-owning family name.
+    # Stamped on every event so only this wizard page consumes them; STAGE
+    # stays "source", FLOW is the page-owning family name.
     _FLOW = "source_init"
     _STAGE = "source"
 
@@ -164,32 +150,8 @@ class SourceConsole(WizardConsole):
     ) -> dict[str, object]:
         """Learn a new structured-export format from one example (wizard backend).
 
-        Mirrors the CLI ``anast source init`` headlessly: resolve the example to
-        a single structured file, analyze it LOCALLY, and propose a mapping to the
-        canonical model. Without ``confirmed`` this REFUSES
-        (``error: ConfirmationRequired``) and writes nothing — returning the
-        proposed mapping so the operator sees what they are confirming (the same
-        two-step shape as :meth:`pack_init`). With ``confirmed`` it builds the
-        mapping, round-trips it against the example to PROVE no column is dropped,
-        and only then saves it (owner-only), returning the mapping directory and
-        ``MAPPING.md``; a mapping that would drop a column refuses with
-        ``error: WouldDropColumns`` and the offending column names.
-
-        ``destination`` is the destination-before-teaching step (the CLI's
-        ``--to``): a registry name recorded in the saved mapping as a profile
-        hash, so a migration that later runs the mapping somewhere else refuses.
-        An unknown name refuses with ``error: UnknownDestination`` before the
-        example is analysed. ``None`` teaches unbound, as before.
-
-        PHI rule: ``summary``/``suggestions`` carry column names, inferred type
-        labels, counts, and digit/letter-masked shapes only — never a cell value;
-        the example path the operator typed is not echoed back. Returns JSON-safe
-        data; never raises.
-
-        The analyze -> build -> round-trip -> save flow lives in the SHARED
-        :func:`anastomosis.core.source_init_command.run_source_init_command` core
-        (the same one ``anast source init`` runs), so the two frontends cannot
-        diverge; this method only marshals its result into the wizard's dict.
+        Mirrors ``anast source init`` via :func:`run_source_init_command`
+        (28, 29). ``destination`` binds a profile hash (32).
         """
         try:
             from anastomosis.core.output import typed_path
@@ -230,11 +192,8 @@ class SourceConsole(WizardConsole):
     ) -> dict[str, object]:
         """Run :meth:`source_init` on a daemon thread (the GUI stays responsive).
 
-        :class:`~anastomosis.gui.consoles.wizard.WizardConsole` owns the busy
-        guard, the events and the stashing; this method only supplies the source
-        step to run. The JS fetches :meth:`last_source_result` after BOTH the
-        ``done`` and the ``error`` event, so it can render the outcome-specific
-        detail (dropped columns, the load-failure diagnosis). Never raises.
+        :class:`WizardConsole` owns the busy guard/events/stashing; this
+        supplies only the source step. Never raises.
         """
 
         def _run() -> dict[str, object]:
@@ -244,10 +203,8 @@ class SourceConsole(WizardConsole):
                 run_source_init_command,
             )
 
-            # Parsed INSIDE the submitted step, not before it: a malformed
-            # review from a stale page must surface as this console's ordinary
-            # failure dict, and only the step runner has that catch. The sync
-            # twin already sits inside its own try for the same reason.
+            # Parsed INSIDE the step, not before: a malformed review must
+            # surface as this console's ordinary failure dict, which only the step runner catches.
             parsed = _parse_review(review)
             return _source_result_dict(
                 run_source_init_command(
@@ -271,9 +228,7 @@ class SourceConsole(WizardConsole):
     def last_source_result(self) -> dict[str, object]:
         """The most recent :meth:`source_init_async` result, for the wizard to fetch.
 
-        The proposal for a ``ConfirmationRequired`` checkpoint, the path +
-        ``MAPPING.md`` for a saved mapping, or the dropped columns / load
-        diagnosis for a refusal. PHI-safe (column names, type labels, counts,
-        masked shapes, mapping config).
+        The proposal, the saved mapping path + ``MAPPING.md``, or the
+        dropped columns / load diagnosis for a refusal. PHI-safe.
         """
         return self._last_result()

@@ -261,12 +261,10 @@ _SUPPORTED_PLATFORMS = ("linux", "win32", "darwin")
 
 
 def _only_these_modules(monkeypatch: pytest.MonkeyPatch, present: set[str]) -> None:
-    """Let the probe see exactly `present`, and nothing else.
-
-    That is how one platform's `pip install "anastomosis[gui]"` can be asked
-    about from any other, without installing a thing. `_module_available` reaches
-    for `find_spec` on every call, so patching it here is enough.
-    """
+    """Let the probe see exactly `present`, and nothing else:
+    `_module_available` reaches for `find_spec` on every call, so
+    patching it here is enough to ask about one platform's
+    `pip install "anastomosis[gui]"` from any other."""
     import importlib.util
 
     monkeypatch.setattr(
@@ -295,12 +293,10 @@ def test_the_gui_probe_asks_for_a_backend_not_just_the_wrapper() -> None:
 def test_the_extras_table_asks_for_the_backend_the_platform_it_runs_on_uses(
     platform_name: str,
 ) -> None:
-    """`_EXTRAS` is what `anast info` and the dashboard header actually report,
-    and it is built once at import, so the honest way to ask what a Windows or
-    macOS box would say is to import it as one. Hard-coding the Linux pair there
-    called the desktop app unavailable on Windows and macOS, however carefully
-    the helper answered.
-    """
+    """`_EXTRAS` is what `anast info` and the dashboard header report,
+    built once at import — the honest way to ask what a Windows or macOS
+    box would say is to import it as one, not hard-code the Linux GTK/Qt
+    pair for every platform."""
     import subprocess
     import sys
 
@@ -374,16 +370,11 @@ def test_probing_an_extra_does_not_execute_it() -> None:
 
 
 def test_the_archive_deliverer_imports_without_the_render_extra() -> None:
-    """A base install has to pass its own doctor.
-
-    `qa/checks.py` imported pymupdf at module scope, `qa/runner.py` imports
-    checks, and `deliver/archive` imports `anastomosis.qa` — so on an install
-    without the `render` extra the archive deliverer was unimportable, and
-    `anast doctor` caught the ModuleNotFoundError and reported the archive's own
-    bundled assets as MISSING. Both files it names are present and readable. The
-    README tells people to run doctor after installing, so a correct install
-    self-reported as broken.
-    """
+    """A base install has to pass its own doctor: `deliver/archive`
+    imports `anastomosis.qa`, which reaches `qa/checks.py`, so pymupdf
+    must never load at module scope there — a missing `render` extra
+    must not make `anast doctor` report the archive's own present,
+    readable bundled assets as MISSING."""
     import subprocess
     import sys
 

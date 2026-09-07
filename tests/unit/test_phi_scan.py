@@ -103,12 +103,9 @@ def test_dob_adjacent_date_fails(tmp_path: Path, canary_denylist: Path) -> None:
 
 
 def test_unapproved_nul_binary_fails(tmp_path: Path, canary_denylist: Path) -> None:
-    """Default-deny: a binary the text passes cannot read must fail, not skip.
-
-    Before this gate, any file with a NUL in its first 8 KiB (or a media
-    suffix) was silently skipped — an unapproved media file could carry
-    sensitive content past the scanner unread.
-    """
+    """Default-deny: a binary the text passes cannot read must fail, not
+    skip — a file with a NUL in its first 8 KiB (or a media suffix) must
+    not carry sensitive content past the scanner unread."""
     f = tmp_path / "mystery.pdf"
     f.write_bytes(b"%PDF-1.4\x00" + b"opaque payload the scanner cannot read")
     assert run_scan([f], canary_denylist) == 1
@@ -143,14 +140,11 @@ def test_allowlisted_binary_hash_passes(
 
 
 def test_base64_armored_payload_in_a_text_file_fails(tmp_path: Path, canary_denylist: Path) -> None:
-    """A base64 blob inside a readable file is opaque content, and must fail.
-
-    The binary gate keys on a suffix or a NUL byte, so a text file carrying a
-    ``data:...;base64,...`` payload sails past it — and the token splitter
-    shreds the blob at every ``+``/``/``/``=``, so no pattern inspects it
-    either. That is a chart, a scan, or a spreadsheet of PHI hiding in plain
-    sight inside a .md or .html the reviewer skims.
-    """
+    """A base64 blob inside a readable file is opaque content and must
+    fail: the binary gate keys on a suffix or NUL byte, so a
+    ``data:...;base64,...`` payload sails past it, and the token splitter
+    shreds it at every ``+``/``/``/``=``, so no pattern inspects it
+    either."""
     f = tmp_path / "page.html"
     payload = "QUJDRA" * 60  # > BASE64_ARMOR_MIN_CHARS of base64 alphabet
     f.write_text(f'<img src="data:image/png;base64,{payload}">\n')
@@ -160,12 +154,10 @@ def test_base64_armored_payload_in_a_text_file_fails(tmp_path: Path, canary_deny
 def test_hash_approved_file_may_carry_a_base64_payload(
     tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The escape hatch is the SAME one binaries use: approve the whole file.
-
-    This is how the vendored HL7 stylesheet (whose two payloads are its own
-    toolbar icons) passes — by provenance, recorded once, invalidated by any
-    change to the file.
-    """
+    """The escape hatch is the SAME one binaries use: approve the whole
+    file. The vendored HL7 stylesheet (whose two payloads are its own
+    toolbar icons) passes this way — by provenance, recorded once,
+    invalidated by any change to the file."""
     f = tmp_path / "stylesheet.xsl"
     f.write_text(f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n")
     allowlist = tmp_path / "allow.txt"
@@ -186,13 +178,10 @@ def test_hash_approved_file_may_carry_a_base64_payload(
 def test_armor_approval_is_line_ending_independent(
     tmp_path: Path, canary_denylist: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One approval hash covers the LF and CRLF checkouts of a text file.
-
-    git checks text files out with CRLF on Windows runners (autocrlf), so the
-    raw bytes of the SAME committed file hash differently per platform; the
-    armor gate therefore hashes the LF form. Without this, an approval
-    computed on Linux failed every Windows run of the whole-repo scan.
-    """
+    """One approval hash covers the LF and CRLF checkouts of a text file:
+    git checks text files out with CRLF on Windows (autocrlf), so the same
+    committed file's raw bytes hash differently per platform, and the
+    armor gate must hash the LF form to make one approval cover both."""
     lf_content = f"<xsl:text>data:image/png;base64,{'QUJDRA' * 60}</xsl:text>\n"
     allowlist = tmp_path / "allow.txt"
     allowlist.write_text(
@@ -225,12 +214,9 @@ def test_short_base64_runs_do_not_trip_the_armor_gate(
 def test_indented_comment_never_becomes_an_allowlist_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An INDENTED ``#`` line is a comment, not an allowlist entry.
-
-    Testing the comment marker before stripping let an indented comment enter
-    the token allowlist verbatim — every word of a justification note would
-    then excuse itself, silently widening the ledger.
-    """
+    """An INDENTED ``#`` line is a comment, not an allowlist entry: testing
+    the marker before stripping would let it enter the token allowlist
+    verbatim, so every word of a justification note excuses itself."""
     allowlist = tmp_path / "allow.txt"
     allowlist.write_text("    # an indented justification comment\nrealentry\n")
     monkeypatch.setattr(phi_scan, "ALLOWLIST", allowlist)

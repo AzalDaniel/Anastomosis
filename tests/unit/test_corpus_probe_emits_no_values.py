@@ -1,20 +1,11 @@
 """The corpus probe reports shape, never content — proven, not asserted.
 
 The probe reads real charts, so "it only prints counts" cannot rest on
-inspection. CodeQL said as much: it flagged the output line as clear-text
-logging of sensitive information, and kept flagging it after the reporting
-moved behind helpers, because a patient's record crossed into them and no
-scanner can see that only field NAMES come back.
-
-The answer was to stop needing the argument. Every key the probe can print is
-now a string literal declared in the probe itself, and the only thing it takes
-from a chart is a yes/no and a length. This file holds both ends of that: the
-declared vocabulary really is the schema (so the probe cannot quietly report on
-a field that no longer exists, or miss one that appeared), and a chart parsed
-by the real parser contributes not one of its own strings to the output.
-
-A future edit that starts emitting a value — a birth date, a name, an
-observation's text — fails here rather than in somebody's log.
+inspection: every key it can print is a string literal declared in the
+probe itself, and the only thing it takes from a chart is a yes/no and a
+length. This file proves both ends: the declared vocabulary is the schema
+(no silent drift from a model's fields), and a chart parsed by the real
+parser contributes none of its own strings to the output.
 """
 
 from __future__ import annotations
@@ -64,12 +55,10 @@ def _strings(value: Any, found: set[str]) -> None:
 
 
 def test_the_declared_vocabulary_is_the_schema(probe: ModuleType) -> None:
-    """The probe's literal field names match the models exactly, both ways.
-
-    Written out rather than read off the model at runtime, they could drift from
-    it; this is what stops that. A field added to Patient and not added here
-    would go unreported without anyone noticing.
-    """
+    """The probe's literal field names match the models exactly, both
+    ways: written out rather than read off the model at runtime, they
+    could otherwise drift, letting a field added to Patient go unreported
+    without anyone noticing."""
     assert probe.PATIENT_FIELDS == tuple(Patient.model_fields)
     assert probe.ENCOUNTER_FIELDS == tuple(Encounter.model_fields)
     empty = PatientRecord(patient=Patient(id="x"))
@@ -89,13 +78,9 @@ def test_a_filled_field_is_answered_yes_or_no_and_nothing_more(probe: ModuleType
 def test_no_string_from_a_parsed_chart_appears_in_the_probes_output(
     probe: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The end the scanner cared about, exercised end to end.
-
-    Runs the probe over an archive holding a real (synthetic) C-CDA, takes every
-    string the parser found in that chart, and requires that none of them reach
-    what the probe printed. This is the claim the suppression makes, mechanised:
-    if any value ever escapes into the output, this fails.
-    """
+    """Runs the probe over an archive holding a real (synthetic) C-CDA,
+    takes every string the parser found in that chart, and requires that
+    none of them reach what the probe printed."""
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     with zipfile.ZipFile(corpus / "bundle.zip", "w") as bundle:

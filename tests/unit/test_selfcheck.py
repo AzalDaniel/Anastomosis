@@ -65,12 +65,11 @@ def test_chromium_required_when_frozen_optional_otherwise(monkeypatch) -> None: 
 
 
 def test_tebra_check_targets_the_bundled_pack_not_a_user_override(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The tebra check must reflect the BUNDLED pack, not a user override.
-
-    Point the bundled-pack anchor at a directory with NO ``pack.yaml`` (a hidden
-    / un-bundled built-in) while a valid USER pack of the same name exists. The
-    old precedence-respecting check would let the user pack mask the missing
-    built-in and falsely pass; the bundled-specific check must FAIL."""
+    """The tebra check must reflect the BUNDLED pack, not a user
+    override: pointing the bundled-pack anchor at a directory with NO
+    ``pack.yaml`` (a hidden / un-bundled built-in), while a valid USER
+    pack of the same name exists, must FAIL — a precedence-respecting
+    lookup that let the user pack mask the missing built-in would not."""
     from importlib.resources import files as real_files
 
     # A USER-dir tebra pack that WOULD satisfy the loader by precedence.

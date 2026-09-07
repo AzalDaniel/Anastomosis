@@ -69,15 +69,11 @@ def _recording_run(
     exc: Exception | None = None,
     sddl: str | None = None,
 ) -> object:
-    """Build a fake ``subprocess.run`` that records commands and returns SIDs.
-
-    ``whoami.exe`` calls yield stdout containing ``user_sid``; ``icacls.exe``
-    calls succeed, and a ``/save`` call writes a compliant SDDL file (override
-    the descriptor with ``sddl`` to simulate a DACL the hardening did NOT
-    produce). ``fail_on`` matches an executable's basename, ``fail_on_arg`` a
-    specific argument (``"/reset"``, ``"/grant:r"``); either raises ``exc``
-    for that call.
-    """
+    """Build a fake ``subprocess.run`` that records commands and returns
+    SIDs. ``whoami.exe`` yields stdout containing ``user_sid``;
+    ``icacls.exe`` succeeds, and ``/save`` writes a compliant SDDL file
+    (override with ``sddl`` to simulate a DACL the hardening did NOT
+    produce). ``fail_on``/``fail_on_arg`` raise ``exc`` for a matching call."""
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append((list(cmd), dict(kwargs)))
@@ -251,27 +247,21 @@ def test_sddl_without_a_dacl_section_is_unverifiable(
 
 
 def test_short_ace_is_unverifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An ACE with fewer than six fields is not a shape this parser knows.
-
-    Reading its LAST field as the trustee would be a guess, and a guess that
-    happens to land on an allowed token would report a directory as hardened
-    on the strength of an ACE nobody parsed.
-    """
+    """An ACE with fewer than six fields is not a shape this parser
+    knows: reading its LAST field as the trustee would be a guess that
+    could land on an allowed token and report a directory as hardened on
+    the strength of an ACE nobody parsed."""
     hardened, aces = _harden_with_sddl(tmp_path, monkeypatch, "D:PAI(A;OICI;FA)")
     assert aces is None
     assert hardened is False
 
 
 def test_conditional_ace_is_unverifiable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A conditional ACE hides a whole ACE from the old parse. Fail closed.
-
-    ``(XA;...;(@User.Title=="S:x"))`` embeds parentheses AND a literal ``S:``
-    in its condition. The old parse cut the DACL at that ``S:`` (thinking it
-    was the SACL section) and matched ACEs with a ``[^)]*`` regex that stopped
-    at the condition's first ``)``: the Everyone ACE after it vanished from the
-    parse while the three clean ACEs remained, so the verify returned True with
-    Everyone still on the directory.
-    """
+    """A conditional ACE can hide a whole ACE from a naive parse: fail
+    closed instead. ``(XA;...;(@User.Title=="S:x"))`` embeds parentheses
+    AND a literal ``S:`` in its condition — a parse that cuts the DACL at
+    that ``S:``, or stops matching at the condition's first ``)``, would
+    silently drop the Everyone ACE that follows it."""
     survived = (
         f"D:PAI(A;OICI;FA;;;{_FAKE_USER_SID})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
         '(XA;OICI;FA;;;S-1-5-21-9;(@User.Title=="S:x"))'
@@ -353,14 +343,11 @@ def test_secure_output_dir_warns_and_writes_readme_when_hardening_fails(
 
 @pytest.mark.skipif(os.name != "nt", reason="real NTFS ACL mutation (Windows CI lane)")
 def test_windows_real_dacl_survives_a_seeded_broad_ace(tmp_path: Path) -> None:
-    """A pre-existing broad EXPLICIT ACE must not survive the hardening.
-
-    ``/grant:r`` replaces only NAMED trustees' entries and ``/inheritance:r``
-    removes only INHERITED ones, so an explicit Everyone ACE seeded before the
-    call (a sync tool, a helpful admin) used to ride through both steps while
-    the function reported success. The ``/reset`` + post-verify close that:
-    after ``secure_output_dir`` the DACL matches the allowlist exactly.
-    """
+    """A pre-existing broad EXPLICIT ACE must not survive the hardening:
+    ``/grant:r`` replaces only NAMED trustees, ``/inheritance:r`` removes
+    only INHERITED ones, and a sync tool's own Everyone ACE needs the
+    ``/reset`` + post-verify to catch it — after ``secure_output_dir`` the
+    DACL matches the allowlist exactly."""
     target = tmp_path / "out"
     target.mkdir()
     # Seed the broad explicit ACE by SID (S-1-1-0 = Everyone; locale-safe).

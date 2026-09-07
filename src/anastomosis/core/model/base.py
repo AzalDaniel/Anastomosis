@@ -1,13 +1,8 @@
 """Foundation of the canonical model.
 
-Every Anastomosis model carries two things beyond its mapped fields:
-
-* ``extensions`` — a namespaced dict holding **every source field the adapter
-  could not map**. Nothing from a source export is ever silently dropped;
-  this is the toolkit's lossless-migration guarantee. Keys are namespaced by
-  source system, e.g. ``"pf_tebra:PatientContactCode"``.
-* ``provenance`` — where this object came from (system, file, original id),
-  so any reconstructed document can be traced back to its source rows.
+``extensions`` holds every source field the adapter could not map, namespaced
+by source system (the lossless guarantee). ``provenance`` traces an object
+back to its source system, file and id.
 """
 
 from __future__ import annotations

@@ -354,17 +354,13 @@ def sample_matrix() -> tuple[str, ...]:
 
 _MATRIX_TEMPLATE = '''"""The vessel mark, sampled onto a character grid. GENERATED — do not edit.
 
-One digit per character cell, 0 (nothing) to 4 (solid): the share of that cell
-the mark covers, quantised to the density ramp
-:mod:`anastomosis.core.vesselmark` draws with. The grid comes from the same
-geometry as ``assets/icon/icon.svg`` — see ``tools/make_vessel.py``, which
-writes this file — so the greeting a terminal shows and the icon on the
-taskbar cannot drift apart. Regenerate with::
-
-    python tools/make_vessel.py
-
-``tests/unit/test_vesselmark.py`` re-samples the geometry and fails if this
-file no longer matches it.
+One digit per cell, 0 (nothing) to 4 (solid): the share of that cell the
+mark covers, quantised to the density ramp :mod:`anastomosis.core.vesselmark`
+draws with. Sampled from the same geometry as ``assets/icon/icon.svg`` by
+``tools/make_vessel.py``, so the terminal greeting and the taskbar icon
+cannot drift apart. Regenerate with ``python tools/make_vessel.py``;
+``tests/unit/test_vesselmark.py`` re-samples the geometry and fails on any
+mismatch with this file.
 """
 
 from __future__ import annotations

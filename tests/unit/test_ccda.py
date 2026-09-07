@@ -155,12 +155,9 @@ def test_a_ccd_extension_loads_beside_an_xml_export(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("name", ["patient.CCD", "patient.Ccda"])
 def test_uppercase_and_mixed_case_extensions_load(tmp_path: Path, name: str) -> None:
-    """Matched on ``Path.suffix.lower()``, so a capitalised extension — a
-    Windows EHR's own spelling, or an operator's rename — is not a second
-    silent miss on top of #384's first one. Proven on this test's own
-    filesystem, which is case-sensitive (POSIX): nothing here relies on the OS
-    folding the case for us.
-    """
+    """Matched on ``Path.suffix.lower()`` -- a capitalised extension is not
+    a second silent miss on top of #384; proven on a case-sensitive
+    (POSIX) filesystem."""
     import shutil
 
     shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / name)
@@ -206,15 +203,10 @@ _REFERENCING_UNSTRUCTURED_CCD = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_a_non_cda_file_beside_the_export_is_not_counted(tmp_path: Path) -> None:
-    """An export legitimately carries non-CDA files beside its documents — a
-    ``nonXMLBody``'s own referenced attachment, for one (see
-    ``parser._resolved_reference``). Counting every one of those as skipped
-    would bury #384's actual finding — a document the adapter's own sniff
-    recognised, left unread by an accident of its extension — in noise about
-    files this adapter was never going to read regardless. Neither matching an
-    accepted extension nor sniffing as CDA, the referenced PDF is not counted,
-    and the document that references it still loads.
-    """
+    """A non-CDA file legitimately beside an export (e.g. a referenced
+    attachment) is neither counted as skipped nor blamed for #384's
+    finding -- it matches no accepted extension and does not sniff as
+    CDA, and the document referencing it still loads."""
     (tmp_path / "referral.xml").write_text(_REFERENCING_UNSTRUCTURED_CCD, encoding="utf-8")
     (tmp_path / "referral.pdf").write_bytes(b"not a CDA document, unaccepted extension\n")
 
@@ -229,12 +221,9 @@ def test_a_non_cda_file_beside_the_export_is_not_counted(tmp_path: Path) -> None
 
 
 def test_detect_never_raises_on_a_file_path(tmp_path: Path) -> None:
-    """``detect`` must never raise (``sources/base.py``). Before this fix, a
-    file path made the unguarded ``path.iterdir()`` raise
-    ``NotADirectoryError`` straight out of ``detect`` — which aborted
-    ``detect_source``'s whole loop over every adapter, so no OTHER adapter
-    (including the learned adapter, documented to accept a FILE path) was
-    ever consulted. A ``False`` here is "not mine", not a crash."""
+    """``detect`` must never raise: a file path (not a directory) reads as
+    "not mine", never a crash that would abort ``detect_source``'s loop
+    over every other adapter."""
     a_file = tmp_path / "export.xml"
     a_file.write_text("not a directory\n", encoding="utf-8")
     assert get_source("ccda").detect(a_file) is False
@@ -260,12 +249,9 @@ def test_detect_never_raises_on_a_directory_it_cannot_list(
 def test_a_subdirectory_sharing_a_document_extension_does_not_abort_the_load(
     tmp_path: Path,
 ) -> None:
-    """A subdirectory (or broken symlink) named ``*.ccd`` used to raise
-    ``IsADirectoryError`` out of the unguarded accepted-extension read inside
-    ``_scan``, aborting the whole walk over one sibling that was never a
-    document at all (#384 round two, finding 7). ``_entries``' ``is_file()``
-    filter excludes it before any content read is attempted, so the one real
-    document beside it still loads."""
+    """A subdirectory or broken symlink sharing a document extension
+    (``*.ccd``) is excluded by ``is_file()`` before any content read is
+    attempted, never aborting the walk (#384 round two)."""
     import shutil
 
     shutil.copy(CCDA_FIXTURE / "feedface_ccd.xml", tmp_path / "summary.xml")
@@ -345,16 +331,9 @@ def test_a_clinical_document_in_the_wrong_namespace_is_not_read(tmp_path: Path) 
 
 
 def test_document_order_is_filename_order_not_creation_order(tmp_path: Path) -> None:
-    """Mutant proof: ``sorted(path.iterdir(), reverse=True)`` produced ZERO
-    failures across the whole suite (#384 round two, finding 3) — the
-    refusal's position is the operator's only PHI-safe handle on which
-    document to repair, and nothing checked it was really filename order.
-
-    Three documents created in REVERSE-alphabetical order (so creation order
-    disagrees with sorted order), with the ALPHABETICALLY-FIRST one broken:
-    a forward sort puts it at position 1 of 3; the ``reverse=True`` mutant
-    would put it at position 3 of 3.
-    """
+    """Mutant-proof: document order is filename order, never creation order
+    (#384 round two) -- the refusal's position is the operator's only
+    PHI-safe handle on which document to repair."""
     from anastomosis.pipeline import PipelineError, load_records
 
     good = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
@@ -478,21 +457,18 @@ def test_immunizations(record: PatientRecord) -> None:
 
 # --- zero-sentinel timestamps (#385) ------------------------------------------
 #
-# A vendor's TS @value of nothing but zeros ("0", "00000000", ...) used to
-# make parse_dt raise and abort the whole document over one medication with
-# no known start. It now reads as absent, and the loss is credited on the
-# record — see core.timeutil.is_zero_sentinel and
+# A vendor's TS @value of nothing but zeros ("0", "00000000", ...) reads as
+# absent rather than raising out of parse_dt and aborting the whole document;
+# the loss is credited on the record — see core.timeutil.is_zero_sentinel and
 # sources.ccda.parser._record_zero_sentinels.
 
 
 def test_a_medication_whose_start_is_a_zero_sentinel_is_kept_without_one(
     zero_sentinel_record: PatientRecord,
 ) -> None:
-    """Red on main: `parse_document` raised `ValueError: unrecognized
-    date/time format: '0'` on this fixture's substanceAdministration/
-    effectiveTime/low. The medication must now survive with no start (high
-    was already nullFlavor="UNK", already None before this fix), and the
-    loss must be named on the record rather than vanishing."""
+    """A medication whose only stated start is an all-zero TS (#385) must
+    survive with no start (high is already nullFlavor="UNK", already None),
+    and the loss must be named on the record rather than vanishing."""
     [medication] = zero_sentinel_record.medications
     assert medication.start is None
     assert medication.stop is None
@@ -515,27 +491,17 @@ def test_a_numeric_zero_is_not_a_date_sentinel(zero_sentinel_record: PatientReco
 
 
 def test_a_nullflavor_timestamp_is_absent_not_a_sentinel(record: PatientRecord) -> None:
-    """Regression guard, NOT a #385 acceptance test — this already passed on
-    main. `_attr`'s own nullFlavor check already reads a nullFlavor TS as
-    absent, and `is_zero_sentinel` must not change that: the main fixture's
-    medications section carries nullFlavor TS elements (lisinopril's high
-    nullFlavor="UNK") and no all-zero run, so the zero-sentinel extension
-    this fix adds must never appear on it."""
+    """Not a #385 acceptance test -- a nullFlavor TS reads as absent on its
+    own, and ``is_zero_sentinel`` must not change that."""
     assert "ccda:timestamp_named_no_instant" not in record.patient.extensions
 
 
 def test_every_timestamp_path_the_parser_reads_is_named_in_TS_PATHS() -> None:
-    """Anti-drift guard: TS_PATHS is the list `_count_zero_sentinels` walks to
-    find a zero-sentinel TS, kept by hand beside the `_ts`/`_ts_date` call
-    sites it has to agree with. Read as an AST (comments and docstrings are
-    invisible to it, unlike a plain-text scan) rather than trusted from
-    memory, so a new call reading a path TS_PATHS does not name — or a name
-    in TS_PATHS nothing reads any more — fails here instead of separating
-    silently. One indirection is resolved: medications reads an
-    already-found effectiveTime node's own low/high (`_ts_date(period,
-    "v3:low")`), and the path that is actually read is still
-    "effectiveTime/low", not the bare "low" the call spells locally.
-    """
+    """Anti-drift: ``TS_PATHS`` (hand-kept) must name every timestamp path
+    the parser actually reads, verified by walking the parser's own AST
+    rather than trusted from memory -- so a call reading an unlisted
+    path, or a listed path nothing reads, fails here instead of drifting
+    silently."""
     from anastomosis.sources.ccda import parser as ccda_parser
 
     tree = ast.parse(inspect.getsource(ccda_parser))
@@ -608,19 +574,10 @@ def test_results(record: PatientRecord) -> None:
 
 
 def test_a_measurement_is_charted_at_the_visit_it_was_taken_at(record: PatientRecord) -> None:
-    """The link the packs index by.
-
-    Both SOAP packs group observations strictly by ``encounter.id``, so an
-    observation with no ``encounter_id`` renders nowhere — and this adapter,
-    alone among the sources, never set one. Every vital and lab on the chart sat
-    in the patient-level bucket, the vitals section of every C-CDA-sourced PDF
-    came out empty, and the QA check written to catch that iterated the same
-    empty list and passed on an empty loop.
-
-    The fixture's Notes entry is dated the same day as the office visit; it must
-    not count as a second candidate, or the day would read as ambiguous and
-    nothing would link at all.
-    """
+    """Both SOAP packs group observations by ``encounter.id``; this adapter
+    alone left it unset, so every vital/lab rendered nowhere. The
+    same-day Notes entry must not count as a second candidate, or the
+    day reads ambiguous and nothing links."""
     office = next(
         e for e in record.encounters if (e.encounter_type or "").startswith("Office outpatient")
     )
@@ -702,15 +659,9 @@ _TWO_VISITS_ONE_DAY_CCD = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_two_visits_on_one_day_leave_the_measurement_record_level(tmp_path: Path) -> None:
-    """The restraint half, and the reason this is a link and not a guess.
-
-    A calendar day with one visit on it is evidence about where a reading
-    belongs. A day with two is not, and charting the reading at whichever
-    encounter the parser happened to see first would put a real measurement on a
-    visit it may not have been taken at — the misfiling this project exists to
-    prevent. So it stays record-level, where the archive and the C-CDA export
-    still carry it, rather than being written onto the wrong page.
-    """
+    """The restraint half: two visits on one calendar day is not evidence
+    for either, so the measurement stays record-level rather than being
+    charted to whichever encounter the parser saw first."""
     from anastomosis.sources.ccda.parser import parse_document
 
     doc = tmp_path / "two_visits.xml"
@@ -726,14 +677,9 @@ def test_two_visits_on_one_day_leave_the_measurement_record_level(tmp_path: Path
 
 
 def test_the_link_is_only_made_on_evidence_the_document_gives() -> None:
-    """Two things the linker declines to do, neither reachable through today's
-    parser but both one small change away.
-
-    If a future reader learns to follow an ``entryRelationship`` to the encounter
-    it names, that link is the document's own statement and a same-day guess must
-    never overwrite it. And a measurement the document never dated has nothing to
-    match on at all.
-    """
+    """The linker declines to guess past the document's own evidence: a
+    future ``entryRelationship`` follow would win over a same-day guess,
+    and an undated measurement has nothing to match on."""
     from anastomosis.core.model import Encounter, Observation
     from anastomosis.sources.ccda.parser import _link_measurements_to_encounters
 
@@ -979,14 +925,9 @@ _TWO_ENCOUNTER_CCD = """<?xml version="1.0" encoding="UTF-8"?>
 def test_encounter_identity_pair_quotes_each_half_so_a_colon_cannot_cross_it(
     tmp_path: Path,
 ) -> None:
-    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` must NOT hash to the same
-    encounter id — the same collision :func:`organizer_component_source_id`
-    guards against, for the same reason: a vendor extension carrying a
-    literal ``:`` has been seen, and an unquoted recipe would let it cross
-    into the root half. Pinned against LITERAL uuid5 strings, not against a
-    second call to the function under test (#378's own precedent) — a recipe
-    change is a decision that rewrites every already-migrated chart's id.
-    """
+    """``("1.2.3", "X:4")`` and ``("1.2.3:X", "4")`` must not hash to the
+    same encounter id -- pinned against literal uuid5 strings, not a
+    second call to the function under test (#378's own precedent)."""
     from anastomosis.sources.ccda.parser import parse_document
 
     doc = tmp_path / "two_encounters.xml"
@@ -1003,12 +944,9 @@ def test_encounter_identity_pair_quotes_each_half_so_a_colon_cannot_cross_it(
 def test_an_oid_root_and_extension_encounter_id_is_stable_across_reparses(
     tmp_path: Path,
 ) -> None:
-    """#393's own idempotent-skip invariant, on the NEW identity path
-    specifically: :func:`test_encounter_ids_are_deterministic_across_reparses`
-    above exercises only the shared fixture's GUID-root encounters, which
-    this change leaves untouched, so it proves nothing about the
-    ``(root, extension)`` recipe re-parsing the same way twice.
-    """
+    """#393's idempotent-skip invariant on the (root, extension) recipe
+    specifically -- the shared-fixture test above only exercises
+    GUID-root encounters."""
     from anastomosis.sources.ccda.parser import parse_document
 
     doc = tmp_path / "two_encounters.xml"
@@ -1023,12 +961,9 @@ def test_an_oid_root_and_extension_encounter_id_is_stable_across_reparses(
 def test_an_encounter_whose_first_id_is_nullflavor_still_reads_its_second_rooted_id(
     tmp_path: Path,
 ) -> None:
-    """The consequence #393 calls out by name: the encounter walk reads its
-    ``<id>`` through :func:`~anastomosis.core.ccda_codes.first_rooted_id`,
-    not by raw first-child attribute lookup — an ``<id nullFlavor="NI"/>``
-    ahead of a real rooted ``<id>`` used to read as id-less (#378's
-    duplication, reproduced here on the encounter branch specifically).
-    """
+    """The encounter walk reads its id through ``first_rooted_id``, not raw
+    first-child lookup: a nullFlavor id ahead of a real rooted one must
+    not read as id-less (#378, on the encounter branch #393 names)."""
     from anastomosis.sources.ccda.parser import parse_document
 
     doc = tmp_path / "nullflavor_first.xml"
@@ -1137,14 +1072,9 @@ _VALUE_TYPES_CCD = """<?xml version="1.0"?>
 
 
 def test_every_ccda_value_type_keeps_its_result(tmp_path: Path) -> None:
-    """Only ``xsi:type="PQ"`` used to be read (#243).
-
-    Every other form left ``Observation.value`` as None while the Observation was
-    still created carrying its LOINC code — a finalized result that says nothing.
-    A receiving EHR reads that as "no result" rather than as the Negative or
-    Trace the document actually recorded, and qualitative results are a large
-    fraction of any real lab feed.
-    """
+    """Every ``xsi:type`` form must keep its value (#243), not only ``PQ`` --
+    a still-created result with ``Observation.value`` None reads to a
+    receiving EHR as "no result" rather than the finding recorded."""
     (tmp_path / "values.xml").write_text(_VALUE_TYPES_CCD, encoding="utf-8")
 
     (record,) = list(get_source("ccda").load(tmp_path))
@@ -1158,14 +1088,10 @@ def test_every_ccda_value_type_keeps_its_result(tmp_path: Path) -> None:
 
 
 def test_one_unreadable_document_is_refused_by_position_not_anonymously(tmp_path: Path) -> None:
-    """A document the adapter cannot parse refuses the run — a partial migration
-    that silently omits a patient is the failure this project exists to prevent.
-
-    But refusing has to say WHICH document to repair, and it did not: the
-    exception escaped as an arbitrary error, so the pipeline could show only its
-    type — "Could not read the ccda export (ValueError)." Against 2,103 real
-    documents that leaves bisecting by hand as the only recourse (#243).
-    """
+    """A document the adapter cannot parse refuses the run, and must say
+    WHICH one by position -- not by filename (patient-derived) or by
+    bare exception type, which left bisecting 2,103 documents by hand as
+    the only recourse (#243)."""
     from anastomosis.pipeline import PipelineError, load_records
 
     good = (CCDA_FIXTURE / "feedface_ccd.xml").read_text(encoding="utf-8")
@@ -1223,15 +1149,9 @@ _NARRATIVE_REFS_CCD = """<?xml version="1.0"?>
 
 
 def test_a_narrative_reference_is_read_as_the_words_it_points_at(tmp_path: Path) -> None:
-    """Linking a coded entry to its narrative by ``<reference value="#id"/>`` is
-    THE standard C-CDA mechanism, and a reference element carries no text of its
-    own (#243).
-
-    So a problem whose originalText is a reference arrived unnamed — a blank row
-    on the chart's problem list — and a note whose body is a reference arrived
-    empty, rendering the visit as a blank SOAP note, while the words sat a few
-    elements away in the same document.
-    """
+    """A ``<reference value="#id"/>`` carries no text of its own (#243): a
+    problem or note whose body is only a reference must resolve to the
+    words it points at, not arrive blank."""
     (tmp_path / "refs.xml").write_text(_NARRATIVE_REFS_CCD, encoding="utf-8")
 
     (record,) = list(get_source("ccda").load(tmp_path))

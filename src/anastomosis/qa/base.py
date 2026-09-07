@@ -36,11 +36,8 @@ class CheckResult:
     check: str
     verdict: Verdict
     findings: list[str] = field(default_factory=list)
-    #: Record items this document was never going to show, because the layout
-    #: has no place for them. Only the coverage check sets it, and it exists so
-    #: the run-level summary can say so: a report reading "1 pass, 0 warn,
-    #: 0 fail" over a chart that dropped thirteen clinical facts is accurate
-    #: about each check and wrong about the run.
+    #: Record items the layout has no place for; only the coverage check sets
+    #: it, so the run-level summary can be accurate even when every check passes.
     not_carried: int = 0
 
 
@@ -52,33 +49,23 @@ class QAContext:
     record: PatientRecord
     section_flags: dict[str, bool] = field(default_factory=dict)
     page_size: str = "Letter"
-    #: The pack's timezone, so a check that needs to know what day it was when
-    #: these documents were rendered asks the same clock the pack stamped them
-    #: with. ``None`` means no pack said (the C-CDA path, a third-party context),
-    #: and a check falls back to the host's day.
+    #: The pack's timezone; ``None`` (the C-CDA path, a third-party context)
+    #: falls back to the host's day.
     render_tz: str | None = None
-    #: How many render-day date stamps this layout places on purpose. More than
-    #: this many on a page is the accidental-now() defect the staleness check
-    #: exists for; this many or fewer is the layout doing what it says.
+    #: How many render-day date stamps this layout places on purpose. More
+    #: than this is the accidental-now() defect the staleness check exists for.
     render_day_stamps: int = 0
     #: The record kinds this layout renders (see ``PackCoverage``). A kind here
     #: that reaches no page is a defect.
     carries: frozenset[str] = frozenset()
-    #: The record kinds this layout has no place for, each with the reason. Their
-    #: absence is expected, counted, and reported — never graded as a pass with
-    #: nothing said.
+    #: The record kinds this layout has no place for, each with the reason —
+    #: never graded as a pass with nothing said.
     omits: dict[str, str] = field(default_factory=dict)
-    #: The rendered whole-patient record summary for THIS patient, when one was
-    #: rendered. ``None`` means nothing was rendered for the whole record — it
-    #: does NOT mean a check declined to look. A fact the per-encounter charts
-    #: cannot place (a measurement on no dated encounter) can still be on this
-    #: page, and a check asking whether something reached ANY chart has to open
-    #: it rather than infer absence from the record it is meant to audit
+    #: This patient's rendered whole-record summary, if any. ``None`` means
+    #: nothing was rendered, never that a check declined to look — a fact no
+    #: per-encounter chart can place may still be on this page
     #: (:class:`~anastomosis.qa.checks.UnattributedVitalsCheck`). Read through
-    #: the same ``_document_text(path, ctx)`` every other check uses — the
-    #: shared snapshot cache is keyed by path (#398), so asking for a SECOND
-    #: document through one context reads that document's own bytes rather than
-    #: the one already open for ``pdf_path``.
+    #: the shared ``_document_text(path, ctx)`` cache, keyed by path (#398).
     record_summary_path: Path | None = None
 
     @property

@@ -1,16 +1,7 @@
-"""The ingest ledger has to be right in BOTH directions, or it is decoration.
-
-An instrument that can only report loss is as blind as no instrument: it agrees
-with every pessimist, it agrees with itself after a fix that did nothing, and
-nobody can tell the difference. So every construct class here is proved twice —
-a thing the adapter really parses must come back ``structurally_parsed``, and a
-thing it really drops must come back ``unsupported`` — and the participation
-case is proved by handing the ledger a record that DOES carry the author, so it
-is visibly measuring the record rather than reciting a table of what the parser
-is believed to do.
-
-Synthetic throughout (``feedface-`` ids, invented names, the 555 exchange).
-"""
+"""Every construct is proved twice: what the adapter parses asserts
+``structurally_parsed``, what it drops asserts ``unsupported`` -- so the
+ledger cannot pass by reciting the parser's own beliefs. Synthetic
+throughout (``feedface-`` ids, 555 exchange)."""
 
 from __future__ import annotations
 
@@ -75,30 +66,17 @@ def _write(tmp_path: Path, *, body: str = "", header: str = "") -> Path:
 
 
 def _unparked(record: PatientRecord) -> PatientRecord:
-    """``record`` with the verbatim entry copies taken away.
-
-    The parser parks EVERY section's entries, so an entry's own bytes answer
-    for it before anything else is consulted. The citation tests below are
-    about what a ``<reference>`` into narrative proves, and answering them with
-    the wrong evidence would leave that whole rule untested — so they take the
-    copies away first, the same move
-    ``test_the_same_entries_unparked_read_unsupported`` makes about the copies
-    themselves. It is not a hypothetical shape either: the entries the parser
-    parks nothing for — our own stamped loss ledger, and a subsection nested
-    deeper than its walk reaches — are settled by exactly this rule.
-    """
+    """``record`` with the verbatim entry-copy extensions removed, so citation
+    tests must resolve ``<reference>`` targets from real parsed data rather
+    than the parked mirror (RULES.md 59)."""
     for key in [k for k in record.patient.extensions if k.startswith("ccda:entries:")]:
         del record.patient.extensions[key]
     return record
 
 
 def _row(ledger: object, construct: str) -> object:
-    """The one merged row for ``construct``.
-
-    Read through ``aggregate`` because a document ledger holds one row per
-    SECTION OCCURRENCE — two Problems sections are two obligations, not one —
-    and the merge is what turns those back into a single line to assert on.
-    """
+    """The one merged row for ``construct``, read through ``aggregate`` since a
+    document ledger holds one row per section OCCURRENCE, not per construct."""
     corpus = aggregate([ledger])  # type: ignore[list-item]
     rows = [row for row in corpus.rows if row.construct == construct]
     assert rows, f"no row for {construct}"
@@ -170,15 +148,6 @@ def test_a_section_the_adapter_only_narrates_is_counted_as_narrative(
 def test_the_author_and_the_custodian_now_become_canonical_objects(
     fixture_record: PatientRecord,
 ) -> None:
-    """The 2,103-document finding, closed on the repo's own reference document.
-
-    The author and the custodian were right there in the header and no canonical
-    object came from either. Both do now: the author as a Practitioner carrying
-    the role the document gave them, the practice that holds the chart as a
-    Facility. Asserted against the RECORD rather than the ledger because on this
-    fixture the ledger cannot credit either — see the next test, which is that
-    blind spot named.
-    """
     authors = [
         p
         for p in fixture_record.practitioners
@@ -192,15 +161,6 @@ def test_the_author_and_the_custodian_now_become_canonical_objects(
 def test_a_construct_whose_id_root_is_shared_is_still_not_credited(
     fixture_ledger: object, construct: str
 ) -> None:
-    """One root on two constructs credits neither, even now that both are parsed.
-
-    This fixture stamps one provider id on the header author and again on the
-    note that author wrote, and one organization OID on the author's practice
-    and again on the custodian — both ordinary C-CDA. A root two constructs
-    share cannot say which of them an object came from, so the ledger credits
-    neither and counts the instances in ``unlinkable``: its own blind spot,
-    reported rather than resolved in the flattering direction.
-    """
     row = _row(fixture_ledger, construct)
     assert _sole(fixture_ledger, construct) is Disposition.UNSUPPORTED
     assert row.unlinkable == row.offered  # type: ignore[attr-defined]
@@ -237,16 +197,6 @@ def test_the_fixtures_books_balance(fixture_ledger: object) -> None:
 
 
 def test_an_author_the_record_DOES_carry_reads_as_parsed(tmp_path: Path) -> None:
-    """The proof that ``unsupported`` above is a measurement.
-
-    One author, on an id root nothing else in this document shares. The parser
-    produces a Practitioner whose provenance names that root, and the ledger
-    reads STRUCTURALLY_PARSED — where the same XML read UNSUPPORTED before the
-    extraction landed. Then the same document is measured against a record
-    stripped of its practitioners and the verdict goes back: the ledger is
-    grading the RECORD, not reciting a table of what the parser is believed to
-    do, which is the only way it could grade a fix at all.
-    """
     header = """
     <author>
       <time value="20230510150000-0500"/>
@@ -331,16 +281,8 @@ _INFORMANT = """
 def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
     tmp_path: Path, construct: str, header: str
 ) -> None:
-    """The half of the blind spot that was schema, not adapter.
-
-    Neither of these can ever carry an ``<id root>``, so for as long as an id
-    was the only evidence admitted, both were reported lost in every document
-    that had one — a permanent under-reading of the parser rather than a finding
-    about it. The record states what the document stated, and that is the
-    evidence. Then the same document is measured against a record with its
-    actors removed and the verdict goes back: still the RECORD being graded, not
-    a table of what the parser is believed to do.
-    """
+    """Constructs CDA's schema gives no ``<id>`` (Device author, informant) are
+    credited on stated content instead, never guessed."""
     path = _write(tmp_path, header=header)
     record = parse_document(path)
     ledger = document_ledger(path, record)
@@ -354,14 +296,6 @@ def test_an_actor_cda_gives_no_id_is_credited_on_what_it_states(
 
 
 def test_an_actor_that_states_nothing_still_cannot_be_credited(tmp_path: Path) -> None:
-    """The other half, and the reason the first half is not a loophole.
-
-    An informant with no name, no number and no relationship states nothing for
-    a record to state back, so nothing about it can be proved and it stays in
-    the blind spot — even though the record here does hold an actor that states
-    just as little. Matching two empty statements would make absence of evidence
-    into evidence, which is the one direction this instrument may not fail in.
-    """
     path = _write(tmp_path, header='<informant><relatedEntity classCode="PRS"/></informant>')
     record = parse_document(path)
     record.practitioners.append(
@@ -376,13 +310,7 @@ def test_an_actor_that_states_nothing_still_cannot_be_credited(tmp_path: Path) -
 def test_an_actor_the_record_spells_differently_is_not_credited(
     tmp_path: Path, recorded: str
 ) -> None:
-    """Content evidence is worth having only while it is exact.
-
-    A comparison that folded case or trimmed padding would credit a device the
-    record does not actually carry — and every loosening of it moves the reading
-    in the flattering direction, where an instrument built to detect loss can
-    afford to be wrong least.
-    """
+    """Content evidence must match exactly -- no case-fold, no trimmed padding."""
     path = _write(tmp_path, header=_DEVICE_AUTHOR)
     record = parse_document(path)
     record.practitioners[0].extensions["ccda:softwareName"] = recorded
@@ -392,13 +320,6 @@ def test_an_actor_the_record_spells_differently_is_not_credited(
 
 
 def test_two_identical_actors_and_one_object_credit_one_parse(tmp_path: Path) -> None:
-    """Two obligations and one object is one parse and one loss.
-
-    The document names the same spouse twice, and the record kept one of them.
-    Crediting both from the single object would report a document that lost half
-    its informants as one that lost none — the arithmetic that makes a loss
-    detector agree with whatever it is shown.
-    """
     path = _write(tmp_path, header=_INFORMANT * 2)
     record = parse_document(path)
     assert len(record.practitioners) == 2
@@ -410,14 +331,9 @@ def test_two_identical_actors_and_one_object_credit_one_parse(tmp_path: Path) ->
 
 
 def test_a_shared_id_root_is_still_refused_where_content_would_match(tmp_path: Path) -> None:
-    """Content evidence answers only where an id was never possible.
-
-    An ``informant`` playing an ``assignedEntity`` DOES carry an id, and this
-    one shares its root with the author — the ordinary C-CDA ambiguity the
-    ledger refuses. Both actors are in the record and both would match by
-    content, so admitting a class CDA does give an id would quietly convert the
-    ambiguity refusal into a credit and no other test would notice.
-    """
+    """Content evidence never overrides a root-sharing refusal (RULES.md 58): an
+    actor that carries an id is judged by it even where content would also
+    match."""
     shared = "feedface-shar-0000-0000-000000000001"
     name = "<name><given>Robin</given><family>Sample</family></name>"
     person = f"<assignedPerson>{name}</assignedPerson>"
@@ -433,25 +349,13 @@ def test_a_shared_id_root_is_still_refused_where_content_would_match(tmp_path: P
 
 
 def test_only_the_classes_cda_leaves_without_an_id_are_admitted() -> None:
-    """The scope is a list, so widening it is an edit somebody has to make.
-
-    "This construct had no id in this document" is a fact about one document;
-    "this construct can never have an id" is a fact about CDA, and only the
-    second may relax the evidence rule. Inferring the difference at runtime
-    would let a document decide how it is graded.
-    """
+    """``ID_LESS_CONSTRUCTS`` is a fact about CDA's schema, never inferred at
+    runtime from one document's missing id."""
     assert set(ID_LESS_CONSTRUCTS) == {"assignedAuthoringDevice", "informant"}
     assert set(ID_LESS_CONSTRUCTS) <= set(PARTICIPATION_PATHS)
 
 
 def test_a_content_credited_reading_still_names_nobody(tmp_path: Path) -> None:
-    """The comparison happens in memory and none of it may travel.
-
-    A device's software name is the vendor's, but a spouse's name and number are
-    the patient's household, and they are now read on every document with an
-    informant in it. The report is the thing that leaves, so it is the thing
-    that is checked.
-    """
     path = _write(tmp_path, header=_DEVICE_AUTHOR + _INFORMANT)
     report = aggregate([document_ledger(path)]).as_report()
     assert_emittable(report)
@@ -513,17 +417,6 @@ def test_an_entry_with_no_statement_in_it_is_source_empty(tmp_path: Path) -> Non
 
 
 def test_a_stored_title_does_not_rescue_the_entries_underneath_it(tmp_path: Path) -> None:
-    """The Payers refusal, kept — and sharpened by #314.
-
-    A section with entries and no ``<text>`` stores ``{"title": ..., "text":
-    None}``, and the word "Payers" is not a recovery of the coverage that was
-    in the entries. Since #314 the parser ALSO stores the entries themselves,
-    and crediting them against their own bytes is not the flattering
-    arithmetic this test refuses — it is a real preservation. The refusal is
-    proved by deletion: with the stored copies gone and only the title left,
-    the entries fall straight back to unsupported, exactly as before. The
-    title, alone, still rescues nothing.
-    """
     body = """
     <component><section>
       <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/>
@@ -571,9 +464,8 @@ def test_two_sections_sharing_a_code_are_two_obligations(tmp_path: Path) -> None
 
 
 def test_an_unstructured_document_arrives_with_its_chart(tmp_path: Path) -> None:
-    """The shape that used to parse perfectly and yield a chart with nothing on
-    it: a scanned referral whose whole clinical content is one embedded
-    artifact. It leaves with that artifact, and the row says so."""
+    """A scanned referral whose whole clinical content is one embedded PDF: no
+    coded sections, just the ``nonXMLBody`` artifact."""
     path = tmp_path / "scan.xml"
     path.write_text(
         _DOCUMENT.replace(
@@ -709,13 +601,7 @@ def test_a_real_corpus_report_carries_only_structure() -> None:
     assert not re.search(r"[A-Za-z]{2,}\s+[A-Za-z]{2,}", flat)  # no free text anywhere
 
 
-# --- the places themselves ---------------------------------------------------
-#
-# These three tests are the reason #329 was worth doing. None of them can be
-# written against the shape this module had before: spending lived inside two
-# private methods on a six-field object that needed a parsed document and a
-# built record to construct at all, so "can this place be asked twice" was a
-# question you answered by reading, not by running.
+# --- the places themselves (#329) --------------------------------------------
 
 
 def test_a_fact_answers_as_often_as_it_is_asked() -> None:
@@ -726,12 +612,8 @@ def test_a_fact_answers_as_often_as_it_is_asked() -> None:
 
 
 def test_a_fact_has_no_way_to_be_spent() -> None:
-    """The guarantee is the type's, not the caller's discipline.
-
-    Frozen dataclass over a ``frozenset``: there is no method that removes a
-    member, and rebinding the field is an error rather than a surprise. A
-    future edit cannot quietly turn an id into something that answers once.
-    """
+    """Frozen dataclass over a ``frozenset``: no method removes a member, so a
+    fact cannot be spent by accident."""
     facts = ledger._Facts(frozenset({"a"}))
     with pytest.raises(dataclasses.FrozenInstanceError):
         facts.held = frozenset()  # type: ignore[misc]
@@ -740,12 +622,8 @@ def test_a_fact_has_no_way_to_be_spent() -> None:
 
 
 def test_a_pool_yields_no_more_than_it_holds_however_it_is_asked() -> None:
-    """Conservation, provable on the place alone — no document, no record.
-
-    Both pools decrement before answering, so the count of yeses can never
-    exceed what went in. That is what stops two identical informants against
-    one object crediting two parses.
-    """
+    """Both pools decrement before answering, so a credit can never exceed what
+    was offered."""
     narrative = ledger._KeyedPool(Counter({("Allergies", "none known"): 2}))
     draws = [narrative.take(("Allergies", "none known")) for _ in range(5)]
     assert draws == [True, True, False, False, False]
@@ -757,15 +635,8 @@ def test_a_pool_yields_no_more_than_it_holds_however_it_is_asked() -> None:
 
 
 def test_a_pool_cannot_be_consulted_without_spending_it() -> None:
-    """There is deliberately no way to look without taking.
-
-    A caller that could ask without spending could write a predicate crediting
-    one stored thing twice, which is the arithmetic this ledger exists to
-    refuse. Taking is the entire query surface of both pools — ``take_all``
-    joined it for a caller that needs several claims to answer one question,
-    and it obeys the same law: a yes costs, and a no costs nothing precisely
-    because it credited nothing.
-    """
+    """Taking is the only query surface of every pool; there is no way to check
+    a claim without spending it."""
     places = (ledger._KeyedPool(Counter()), ledger._MatchedPool([]), ledger._Anchors({}))
     for pool in places:
         surface = {name for name in vars(type(pool)) if not name.startswith("_")}
@@ -824,13 +695,6 @@ _TEXTLESS_PROBLEMS = """
 
 
 def test_a_textless_sections_entries_ARE_preserved_and_read_as_such(tmp_path: Path) -> None:
-    """The shape #314 names, proved on what the record actually holds.
-
-    A section with entries and no <text> has no narrative for its entries to
-    be preserved BY. The parser now keeps the entries themselves, verbatim,
-    and the ledger credits each entry against its own stored bytes — spending
-    them, so the credit is exactly as large as the preservation.
-    """
     path = _write(tmp_path, body=_TEXTLESS_PROBLEMS)
     record = parse_document(path)
     parked = [k for k in record.patient.extensions if k.startswith("ccda:entries:")]
@@ -847,12 +711,6 @@ def test_a_textless_sections_entries_ARE_preserved_and_read_as_such(tmp_path: Pa
 
 
 def test_the_same_entries_unparked_read_unsupported(tmp_path: Path) -> None:
-    """Proved twice: take the stored copies away and the credit disappears.
-
-    The disposition follows the EVIDENCE, not the document's shape — a ledger
-    that credited these entries with the extensions key deleted would be
-    reporting a preservation nobody performed.
-    """
     path = _write(tmp_path, body=_TEXTLESS_PROBLEMS)
     record = parse_document(path)
     del record.patient.extensions["ccda:entries:11450-4"]
@@ -862,12 +720,6 @@ def test_the_same_entries_unparked_read_unsupported(tmp_path: Path) -> None:
 
 
 def test_one_stored_copy_credits_one_entry_not_two(tmp_path: Path) -> None:
-    """Spending, at the entry grain: two identical entries, one stored copy.
-
-    The pool is a multiset of exact strings. Halving the stored list must
-    halve the credit — a pool that answered twice for one copy would credit an
-    entry that was dropped, which is the arithmetic this ledger refuses.
-    """
     entry = """
     <entry>
       <observation classCode="OBS" moodCode="EVN">
@@ -897,15 +749,6 @@ def test_one_stored_copy_credits_one_entry_not_two(tmp_path: Path) -> None:
 def test_an_entry_reads_the_same_whether_or_not_its_section_renders_prose(
     tmp_path: Path, prose: str
 ) -> None:
-    """One entry, two documents, one reading.
-
-    The same coded observation this adapter has no dispatch for used to be
-    preserved or dropped by nothing but whether the section above it happened to
-    carry a sentence — and a sentence about a section is not a copy of the
-    entries beneath it, which is the finding this ledger already applies
-    everywhere it counts. Both halves park now, so both say the same thing about
-    the same entry.
-    """
     body = f"""
     <component><section>
       <code code="18776-5" codeSystem="2.16.840.1.113883.6.1"/>
@@ -929,21 +772,6 @@ def test_an_entry_reads_the_same_whether_or_not_its_section_renders_prose(
 def test_a_sections_prose_does_not_answer_for_an_entry_it_never_states(
     tmp_path: Path,
 ) -> None:
-    """The section keeps its narrative; what answers for the entry is its bytes.
-
-    This test used to assert that the prose credited the entry, and the
-    assumption underneath it was that a section's ``<text>`` is a copy of what
-    its entries say. C-CDA makes no such promise, and the corpus this repo
-    generates disproves it in its own documents: a Plan of Treatment whose prose
-    reads "Continue lisinopril and recheck blood pressure in three months"
-    carries an entry stating the coded value "No current problems".
-
-    So the section's narrative answers for the SECTION, and the entry is asked
-    at its own address. It has an answer there now — the parser parks every
-    section's entries verbatim, prose or no prose — and the second half of this
-    test is the same document with that copy taken away: the prose is still
-    sitting there, and it still credits nothing.
-    """
     body = """
     <component><section>
       <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -968,12 +796,7 @@ def test_a_sections_prose_does_not_answer_for_an_entry_it_never_states(
     assert stripped.instances == {Disposition.NARRATIVE_PRESERVED: 1}  # type: ignore[attr-defined]
 
 
-# --- the reading a physician gets ---------------------------------------------
-#
-# #315: the instrument shipped in every build and nothing ran it. Now a load
-# ends with these sentences, so they are held to the same two-directional
-# standard as the rows they summarize: right about what arrived, right about
-# what did not, and incapable of carrying a document's own words.
+# --- the reading a physician gets (#315) --------------------------------------
 
 
 def test_the_reading_speaks_the_fixture_in_chart_vocabulary(fixture_ledger: object) -> None:
@@ -1080,12 +903,9 @@ _TWO_AUTHORS = """
 
 
 def test_a_shared_id_root_cannot_put_a_cause_in_the_verdict(tmp_path: Path) -> None:
-    """The review's blocker, pinned: the record CARRIES both authors either
-    way, and the only difference between these two documents is whether their
-    id roots collide. A collision may move the count from credited to
-    uncredited — that is the documented bias — but it must never make the
-    sentence assert a loss with a cause, because the "loss" here is the
-    instrument's blindness, not the adapter's slot."""
+    """A shared id root may move a construct from credited to uncredited, but the
+    verdict must never assert a cause ("dropped", "no place") -- the loss
+    here is the instrument's blind spot, not a stated adapter failure."""
     verdicts = {}
     for label, second_root in (
         ("shared", "feedface-auth-0000-0000-000000000001"),
@@ -1133,13 +953,7 @@ def test_three_bodies_in_one_document_are_not_three_documents(tmp_path: Path) ->
     assert "3 documents" not in " ".join(lines)
 
 
-# --- what a positive disposition has to be backed by --------------------------
-#
-# Three ways this ledger awarded credit it had not earned, each found by an
-# adversarial probe that mutated a parsed record and re-graded it. The shape of
-# every test below is the same: prove the intact case is still CREDITED, then
-# take away exactly the evidence the credit was supposed to rest on and prove
-# the verdict changes. A guard that only ever says no is not a guard.
+# --- what a positive disposition has to be backed by -------------------------
 
 
 _SERVICE_EVENT_HEADER = """
@@ -1152,17 +966,6 @@ _SERVICE_EVENT_HEADER = """
 
 
 def test_an_empty_parked_payload_is_not_a_preserved_participation(tmp_path: Path) -> None:
-    """A namespace key is the cheapest thing in a record to be right about.
-
-    ``parked_under`` asked whether ``ccda:serviceEvent`` existed, so an adapter
-    that wrote the key and stored nothing under it scored exactly what one that
-    stored the event's facts scored. A regression that cleared the payload was
-    reported as preservation. The payload is what is read now.
-
-    No performer on this event on purpose: a nested practitioner would give
-    ``links`` an id of its own to credit the whole wrapper by, and the question
-    here is what the PARKED evidence proves by itself.
-    """
     path = _write(tmp_path, header=_SERVICE_EVENT_HEADER)
     record = parse_document(path)
     construct = "participation:serviceEvent"
@@ -1180,12 +983,6 @@ def test_an_empty_parked_payload_is_not_a_preserved_participation(tmp_path: Path
 
 
 def test_one_parked_item_answers_for_one_offered_construct(tmp_path: Path) -> None:
-    """Two events against one stored item is one preserved and one lost.
-
-    The claim is spent, like every other pool in this file. A place that could
-    be asked without spending would credit the same stored fact twice, which is
-    the arithmetic this ledger exists to refuse.
-    """
     path = _write(tmp_path, header=_SERVICE_EVENT_HEADER * 2)
     record = parse_document(path)
     row = _row(document_ledger(path, record), "participation:serviceEvent")
@@ -1224,19 +1021,6 @@ _TWO_MEASUREMENTS = """
 
 
 def test_a_sibling_lost_inside_one_entry_is_not_a_parsed_entry(tmp_path: Path) -> None:
-    """One surviving id used to answer for every statement beside it.
-
-    An ``<organizer>`` of two results kept its ``structurally_parsed`` verdict
-    when one of the two was dropped, because ``links`` asked whether ANY id
-    under the entry reached the record. Organizer entries routinely carry
-    several results or vital signs, so a regression could drop any subset and
-    the ledger would still certify the wrapper.
-
-    What the entry falls back to is the verbatim copy of its own bytes, so the
-    partial loss reads as preserved rather than as unsupported. The column this
-    test forbids is the other one: a dropped measurement is not a parse,
-    whatever else under the entry survived.
-    """
     path = _write(tmp_path, body=_TWO_MEASUREMENTS)
     record = parse_document(path)
     construct = "section:30954-2"
@@ -1266,13 +1050,6 @@ def test_a_sibling_lost_inside_one_entry_is_not_a_parsed_entry(tmp_path: Path) -
 
 
 def test_a_sibling_lost_under_a_parked_entry_is_preserved_not_parsed(tmp_path: Path) -> None:
-    """The same loss where the entry's own bytes ARE kept: still not parsed.
-
-    A text-less section parks its entries verbatim, so a partially-lost entry
-    there has real evidence behind it and reads narrative_preserved rather than
-    unsupported. What it must not read is structurally_parsed — that is the
-    claim a dropped measurement disproves, whatever else survived.
-    """
     body = _TWO_MEASUREMENTS.replace(
         "<text>Prose about the panel, which is not a copy of either measurement.</text>", ""
     )
@@ -1286,15 +1063,8 @@ def test_a_sibling_lost_under_a_parked_entry_is_preserved_not_parsed(tmp_path: P
 
 
 def test_a_statement_the_mapping_folds_in_is_not_required_to_link(tmp_path: Path) -> None:
-    """The other half of the same rule, and the reason it is calibrated.
-
-    A Problem Concern Act is what this adapter records a condition by; the
-    Problem Observation nested inside it never carries its own provenance and
-    never will, because one entry becomes one Condition. Requiring every
-    statement to link would report every conforming problem entry as half lost,
-    which is the same lie told backwards. Only kinds this document has been
-    SEEN to link are required, so the fold-in is not an obligation.
-    """
+    """Only statement kinds this document has been SEEN to link are required to;
+    a kind that never links here is not an obligation."""
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1322,15 +1092,7 @@ def test_a_statement_the_mapping_folds_in_is_not_required_to_link(tmp_path: Path
 
 
 def test_a_parked_entry_is_stored_as_the_document_spells_it(tmp_path: Path) -> None:
-    """The verbatim copy is of the FILE, not of the tree the parser worked on.
-
-    ``_inline_narrative_references`` fills each ``<reference>`` element's own
-    text in place so the structural parsers can read a coded entry's referenced
-    name. It ran before the capture, so the stored "verbatim" entry carried
-    narrative the document does not spell at that position — and the ledger,
-    re-reading the file, computed different bytes and reported a preserved
-    entry as lost. The capture happens first now.
-    """
+    """Captured before the tree's in-place rewrite, not after (RULES.md 59)."""
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1357,16 +1119,6 @@ def test_a_parked_entry_is_stored_as_the_document_spells_it(tmp_path: Path) -> N
 
 
 def test_two_statement_kinds_are_never_merged_into_one() -> None:
-    """A merged kind is somebody else's success calibrating YOUR obligation.
-
-    ``_statement_kind`` is the identity ``links`` calibrates against, so every
-    pair it wrongly merges makes a statement an obligation on the strength of
-    an unrelated one that linked — the false-alarm direction. Two ways it did:
-    the template roots went through the vocabulary check, which collapses every
-    non-OID root to one label, so two unrelated vendor templates read as one
-    kind; and the element name was dropped whenever a template existed, so an
-    ``<act>`` and an ``<observation>`` sharing a template did the same.
-    """
     from lxml import etree
 
     from anastomosis.sources.ccda.ledger import _statement_kind
@@ -1403,16 +1155,9 @@ def test_two_statement_kinds_are_never_merged_into_one() -> None:
 def test_a_section_that_renders_no_text_still_parks_its_entries(
     tmp_path: Path, narrative: str
 ) -> None:
-    """RENDERS no text, not HAS no ``<text>`` element.
-
-    The capture used to ask whether the section's narrative was empty AFTER
-    rendering; rewriting it to ask whether the element exists quietly stopped
-    preserving four real shapes — an empty element, one holding only
-    whitespace, a nullFlavor, and a multimedia-only cell. In each the entries
-    are still the only thing the document said, and their bytes stopped
-    reaching the record at all, so the export's declared-loss section could not
-    name them either.
-    """
+    """Renders no text, not merely lacks a ``<text>`` element -- an empty
+    element, whitespace only, ``nullFlavor``, and multimedia-only text all
+    count as none."""
     body = f"""
   <component><section>
     <code code="18776-5" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1435,18 +1180,6 @@ def test_a_section_that_renders_no_text_still_parks_its_entries(
 def test_an_entry_pointing_at_narrative_the_record_kept_is_preserved(
     tmp_path: Path,
 ) -> None:
-    """A ``<reference>`` is the document's own answer, and it is checkable.
-
-    C-CDA's mechanism for "this is my human-readable form" is a reference into
-    the section narrative, and it is the one entry-to-narrative link a machine
-    can follow. Asking each entry for its OWN bytes and nothing else was too
-    strict by exactly this much: a conforming vendor entry that cites a
-    narrative cell the record kept was reported as not credited as data.
-
-    The second entry is the control. It states a fact of its own and cites
-    nothing, so the same stored narrative says nothing about it and it stays
-    uncredited — which is the section-prose credit this whole change removes.
-    """
     body = """
   <component><section>
     <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1473,12 +1206,6 @@ def test_an_entry_pointing_at_narrative_the_record_kept_is_preserved(
 
 
 def test_an_entry_citing_narrative_the_record_lost_is_not_preserved(tmp_path: Path) -> None:
-    """The reference has to land in text the record actually kept.
-
-    Same document, with the section's narrative removed from the record after
-    parsing. The citation is still in the entry; what it points at is gone, so
-    it proves nothing.
-    """
     body = """
   <component><section>
     <code code="47519-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1500,15 +1227,6 @@ def test_an_entry_citing_narrative_the_record_lost_is_not_preserved(tmp_path: Pa
 
 
 def test_a_statement_behind_a_shared_root_is_a_blind_spot_not_a_pass(tmp_path: Path) -> None:
-    """The same loss, hidden by an id root something else in the document reuses.
-
-    An obligation is only checkable when the statement carries a root unique to
-    it, and one organisation OID stamped on a header author and on an entry is
-    ordinary C-CDA. Dropping such a statement from the obligation set let its
-    sibling's success answer for it — and the row read structurally_parsed with
-    unlinkable=0, a clean bill of health, which is the one thing this ledger's
-    stated bias forbids. It is counted as impossible to check instead.
-    """
     shared = "feedface-shared-0000-0000-000000000901"
     header = f"""
   <author><time value="20200101"/><assignedAuthor><id root="{shared}"/>
@@ -1550,24 +1268,6 @@ def test_a_statement_behind_a_shared_root_is_a_blind_spot_not_a_pass(tmp_path: P
 def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
     tmp_path: Path,
 ) -> None:
-    """A statement's obligation is its OWN id, not its descendants'.
-
-    ``_own_id_roots`` reads an act's ``<id>`` CHILDREN. Read the descendants
-    instead and any carried id under the act answers for the act itself, which
-    is the any-of habit reappearing one level down.
-
-    Both entries are concern acts of the same template, so the kind is
-    calibrated. The second entry's condition is re-provenanced onto its nested
-    REACTION observation — the shape of an adapter that recorded that entry by
-    an inner statement — leaving the concern act's own id carried by nothing.
-    The two entries' inner statements are different templates on purpose, so
-    calibrating one does not make an obligation of the other.
-
-    The first entry stays parsed. The second must not, and must not become so
-    on the strength of an id sitting inside it — it reads as preserved, on the
-    verbatim copy of its own bytes the parser parks, which is a different column
-    from the one this test forbids.
-    """
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1617,12 +1317,8 @@ def test_a_nested_statements_id_does_not_answer_for_the_act_that_holds_it(
 
 
 # --- what the mismatch-repair review found in the repair itself ---------------
-#
-# The <reference> credit was resolved against every ID in the document and
-# tested by asking whether the cell's words occurred anywhere in the section's
-# prose. Both halves were wrong, and together they handed back the credit this
-# whole branch removes. It is decided by the tree now: a cited cell must be one
-# this section's own <text> defines, and one cell answers for one entry.
+# A cited cell must be one this section's own <text> defines; one cell answers
+# for one entry.
 
 
 def _procedures(text: str, entries: str) -> str:
@@ -1662,13 +1358,8 @@ def _cites(number: int, reference: str, display: str) -> str:
 def test_a_sections_whole_prose_is_not_one_of_its_own_narrative_cells(
     tmp_path: Path,
 ) -> None:
-    """The section's ``<text>`` may carry an ID, and citing it is citing prose.
-
-    This is the section-level credit coming back through the front door: put an
-    ID on the narrative and every entry beneath can name it, and a containment
-    test passes trivially because the text contains itself. A cell is something
-    INSIDE the narrative; the narrative is not a cell.
-    """
+    """A section's whole ``<text>`` is not itself a cell; a cell is something
+    INSIDE the narrative."""
     body = _procedures(
         '<text ID="sect-text">Continue lisinopril and recheck in three months.</text>',
         _cites(1, "#sect-text", "No current problems")
@@ -1681,12 +1372,6 @@ def test_a_sections_whole_prose_is_not_one_of_its_own_narrative_cells(
 
 
 def test_a_cell_in_another_section_does_not_answer_here(tmp_path: Path) -> None:
-    """Containment decided by the tree, not by one string occurring in another.
-
-    The cited cell lives in another section and reads a word this section's
-    prose happens to contain. Resolving anchors document-wide and asking only
-    whether the words occur made that a preservation.
-    """
     body = """
   <component><section>
     <code code="48768-6" codeSystem="2.16.840.1.113883.6.1"/><title>Payers</title>
@@ -1724,12 +1409,6 @@ def test_one_narrative_cell_answers_for_one_entry(tmp_path: Path) -> None:
 def test_an_entry_citing_one_real_cell_and_one_dangling_gets_nothing(
     tmp_path: Path,
 ) -> None:
-    """All of them, not any — which is what the docstring said and the code did not.
-
-    Filtering unresolved anchors out before the check meant an entry could name
-    a cell the document never defined and still be counted, on the strength of
-    its other citation. Half an account is not an account.
-    """
     body = _procedures(
         '<text><paragraph ID="proc-1">Medication reconciliation (procedure)</paragraph></text>',
         """
@@ -1748,13 +1427,6 @@ def test_an_entry_citing_one_real_cell_and_one_dangling_gets_nothing(
 
 
 def test_one_entry_naming_one_cell_twice_is_one_citation(tmp_path: Path) -> None:
-    """A procedure names its row from ``<originalText>`` and again from ``<text>``.
-
-    That is C-CDA's ordinary spelling, and it is one entry citing one cell —
-    not a claim on two copies of it. Requiring a copy per reference made the
-    real vendor document's only cited entry read as lost, which is the false
-    alarm this credit exists to remove.
-    """
     body = _procedures(
         '<text><paragraph ID="proc-1">Medication reconciliation (procedure)</paragraph></text>',
         """
@@ -1775,17 +1447,6 @@ def test_one_entry_naming_one_cell_twice_is_one_citation(tmp_path: Path) -> None
 def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
     tmp_path: Path,
 ) -> None:
-    """Two byte-identical entries, one parked copy, and no theft between them.
-
-    An empty coded entry repeats across sections, and the stored copies were
-    pooled by their bytes alone — so a section could claim the copy parked for
-    another, and which one got it depended on document order. The parser writes
-    the section code into the key; this side reads it.
-
-    Both sections park now, so the theft is asked for by taking Payers' own copy
-    away: with the bytes alone as the handle it would answer itself out of the
-    copy Plan parked, and both would read preserved.
-    """
     entry = """
     <entry><observation classCode="OBS" moodCode="EVN">
       <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1811,23 +1472,10 @@ def test_a_parked_entry_answers_only_for_the_section_that_parked_it(
     }
 
 
-# --- what round three found ---------------------------------------------------
-#
-# The headline outcome of the anchor rewrite — the one real vendor document's
-# cited entry reading preserved — was pinned by nothing: every test here put the
-# cited cell on a direct child of <text>, while a real C-CDA puts it in a <td>
-# inside <table><tbody><tr>. A one-token mutation flipped that document and the
-# whole suite stayed green. These are the shapes that were missing.
+# --- narrative anchors nested inside real C-CDA table markup -----------------
 
 
 def test_a_cell_deep_inside_a_narrative_table_is_still_a_cell(tmp_path: Path) -> None:
-    """Where a real C-CDA actually puts its anchors.
-
-    Every other test in this file cites a ``<paragraph ID>`` sitting directly
-    under ``<text>``, and so does the corpus generator — so the descendant walk
-    could have been a direct-child walk and nothing would have failed, while
-    the one vendor-shaped fixture in the tree silently lost its credit.
-    """
     body = _procedures(
         """<text><table><tbody><tr>
         <td ID="proc-1">Medication reconciliation (procedure)</td>
@@ -1842,13 +1490,6 @@ def test_a_cell_deep_inside_a_narrative_table_is_still_a_cell(tmp_path: Path) ->
 
 
 def test_the_shipped_vendor_fixture_keeps_its_cited_entry(tmp_path: Path) -> None:
-    """The claim this change is verified by, asserted rather than described.
-
-    The Synthea sample's Procedures entry cites a ``<td>`` in its own section's
-    narrative table. It is the only document in the tree that exercises the
-    citation path end to end, so it gets an assertion of its own instead of
-    being a sentence in a commit message.
-    """
     del tmp_path
     fixture = (
         Path(__file__).resolve().parents[1] / "fixtures" / "synthea" / "synthea_ccda_sample.xml"
@@ -1876,13 +1517,6 @@ def test_a_cell_that_renders_no_words_preserves_nothing(tmp_path: Path) -> None:
 
 
 def test_a_table_holding_the_prose_is_not_one_of_its_cells(tmp_path: Path) -> None:
-    """The whole-prose credit, wearing a container's clothes.
-
-    Excluding the ``<text>`` element by identity closed the direct route and
-    left the obvious detour: wrap the prose in a ``<table ID>`` and every entry
-    beneath can cite the arrangement instead. A cell is a thing inside the
-    table, not the table.
-    """
     body = _procedures(
         """<text><table ID="whole"><tbody><tr>
         <td>Continue lisinopril and recheck blood pressure in three months.</td>
@@ -1896,12 +1530,6 @@ def test_a_table_holding_the_prose_is_not_one_of_its_cells(tmp_path: Path) -> No
 
 
 def test_one_id_on_two_nodes_is_still_one_cell(tmp_path: Path) -> None:
-    """Counting occurrences let a repeated name answer twice.
-
-    A document carrying one ID on two nodes is malformed and real. The parser's
-    own resolver keeps one node per name, so counting the nodes made the two
-    sides of this mirror disagree about how many cells a name is.
-    """
     body = _procedures(
         """<text><paragraph ID="proc-1">Medication reconciliation</paragraph>
         <paragraph ID="proc-1">Medication reconciliation</paragraph></text>""",
@@ -1927,17 +1555,6 @@ _SHARED_CODE_ENTRY = """
 def test_two_sections_sharing_a_code_do_not_share_a_parked_copy(
     tmp_path: Path, textless_first: bool
 ) -> None:
-    """Problems (Active) and Problems (Resolved) are both 11450-4.
-
-    Keying the stored copies by section code narrowed the theft rather than
-    ending it: two sections of one code met in the same bucket, and which of
-    them got a copy depended on which came first. The bucket holds as many
-    copies as there are sections that parked into it — both of these do — and
-    each takes exactly one, so the reading is the same either way round. A
-    parser that parked for only one of them would leave the other reading
-    unsupported in one order and preserved in the other, which is the reading
-    nobody could reproduce.
-    """
     textless = f"""
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -1979,14 +1596,9 @@ def _stamped_ledger(title_suffix: str, *paragraphs: str) -> str:
 
 
 def _out_of_the_walk(kind: str, ledger: str) -> str:
-    """``ledger``, placed where the parser's section walk does not go.
-
-    The walk is one anchored path, ``component/structuredBody/component/
-    section``, and there is more than one way to sit off it. Nesting is the
-    shape the defect was found in; a section straight under
-    ``<structuredBody>``, with no ``<component>`` of its own, is the same
-    document saying the same thing with less ceremony.
-    """
+    """``ledger``, placed where the parser's section walk does not reach --
+    nested under another ``<structuredBody>``, or with no ``<component>``
+    wrapper at all."""
     if kind == "nested":
         return f"""
   <component><section>
@@ -2009,24 +1621,6 @@ def _out_of_the_walk(kind: str, ledger: str) -> str:
 def test_a_loss_ledger_the_parser_never_reached_is_not_credited(
     tmp_path: Path, burial: str, buried_lines: tuple[str, ...], readable_first: bool
 ) -> None:
-    """One key, however many stamped ledgers a document carries.
-
-    The parser concatenates every stamped 51899-3 IT WALKS into a single
-    ``ccda:prior_loss_narrative`` — so a re-export carries one deduplicated
-    appendix rather than nesting each generation inside the next. That store's
-    address is therefore "the lines the walked ledgers put there", and a
-    stamped section off the walk has no claim on it: nothing of that section
-    is anywhere in the record.
-
-    The second parameter is the one that bites. A buried ledger naming a line
-    of its own can be caught by the store simply not holding it; a buried
-    ledger whose lines are all ALSO in a readable one's is held out by nothing
-    but the address. Both are ordinary — two exports that dropped the same
-    field write the same line — and in the second the reachable ledger, which
-    really did deliver every line, was the one reported lost. Which of the two
-    got the credit came down to which came first in the document, so the
-    order is a parameter too.
-    """
     readable = _stamped_ledger("", "coverage: 1 dropped", "and: 1 dropped")
     buried = _out_of_the_walk(burial, _stamped_ledger(" (buried)", *buried_lines))
     path = _write(tmp_path, body=readable + buried if readable_first else buried + readable)
@@ -2051,15 +1645,6 @@ def test_a_loss_ledger_the_parser_never_reached_is_not_credited(
 def test_a_ledger_that_said_nothing_is_not_credited_for_saying_nothing(
     tmp_path: Path,
 ) -> None:
-    """A stamped section with an empty ``<text/>`` stores nothing, so it is
-    owed nothing.
-
-    The claim is every line the section offers, and a claim of no lines is
-    vacuously true — "all zero of them arrived" — which reads as preserved on
-    a section the record has no trace of. It is the emptiest possible false
-    clean bill, and the only thing standing between it and the report is that
-    the claim is refused when there is nothing to claim.
-    """
     path = _write(tmp_path, body=_stamped_ledger(""))
     rows = [
         row
@@ -2072,16 +1657,6 @@ def test_a_ledger_that_said_nothing_is_not_credited_for_saying_nothing(
 def test_a_ledger_line_pointing_into_the_narrative_is_still_its_own_line(
     tmp_path: Path,
 ) -> None:
-    """The two sides must read the same tree state, not the same file twice.
-
-    ``_inline_narrative_references`` fills a ``<reference>`` element's own text
-    in place before the section walk, so a line captured after it runs carries
-    words the document does not spell at that position. The ledger reads the
-    lines off the file again, finds the hydrated copy matching none of them,
-    and reports a ledger that arrived whole as lost. The verbatim entries were
-    bitten by this once and are captured before hydration; the loss ledger is
-    captured there now too.
-    """
     problems = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2109,14 +1684,6 @@ def test_a_ledger_line_pointing_into_the_narrative_is_still_its_own_line(
 
 
 def test_a_ledger_line_that_is_only_a_reference_is_kept_whole(tmp_path: Path) -> None:
-    """The same trade, in the shape where it costs the most.
-
-    A ``<paragraph>`` holding nothing but a ``<reference>`` has no words of its
-    own, so a capture taken before the parser resolves it stores NOTHING for
-    that line — the appendix that exists to carry what this toolkit cannot
-    model would drop it silently, and the verdict would still read preserved
-    because the ledger asked for a list that no longer mentioned it.
-    """
     problems = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2140,18 +1707,6 @@ def test_a_ledger_line_that_is_only_a_reference_is_kept_whole(tmp_path: Path) ->
 def test_an_ordinary_sections_prose_that_points_elsewhere_is_not_reported_lost(
     tmp_path: Path,
 ) -> None:
-    """The same mismatch, on the sections there are most of.
-
-    A ``<reference>`` in a section's own prose is resolved by the parser before
-    the narrative is stored, so the record holds the words it points at. This
-    side re-reads the file, sees the pointer, and used to conclude that a
-    section which arrived whole had been dropped — a false loss on the
-    instrument whose whole job is to be believed about loss.
-
-    The corpus cannot see this one: no generated document puts a resolving
-    reference in an ordinary section's ``<text>``, so the 6,144-document
-    reading is byte-identical either way. It is pinned here instead.
-    """
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2177,14 +1732,6 @@ def test_an_ordinary_sections_prose_that_points_elsewhere_is_not_reported_lost(
 def test_a_cell_that_is_only_a_pointer_still_answers_for_the_entry_citing_it(
     tmp_path: Path,
 ) -> None:
-    """The raw-versus-hydrated split, one level down from the narrative.
-
-    A named cell whose only content is a ``<reference>`` has no words in the
-    file and has them once the parser resolves it. Reading the cells off the
-    raw tree made it no cell at all, so an unparsed entry citing it was
-    reported lost in the same row that reported the narrative — the words the
-    entry cites — preserved. One reading, contradicting itself.
-    """
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2218,14 +1765,6 @@ def test_a_cell_that_is_only_a_pointer_still_answers_for_the_entry_citing_it(
 
 
 def test_the_hydrated_twin_of_one_document_is_not_kept_after_the_next(tmp_path: Path) -> None:
-    """One document is live per reading, and the copy made for it goes when it does.
-
-    The twin is a second parsed tree of a patient's chart. A cache that kept
-    several of them would hold that much protected data past any use it could
-    be put to — every reading re-parses, so a slot for a document already read
-    is a slot that can never hit. Measured at eight slots: 168 MB resident for
-    eight one-megabyte documents, against 71 MB with one.
-    """
     from anastomosis.sources.ccda import ledger as module
 
     module._hydrated_sections.cache_clear()
@@ -2239,14 +1778,6 @@ def test_the_hydrated_twin_of_one_document_is_not_kept_after_the_next(tmp_path: 
 def test_a_loss_ledger_key_that_is_not_a_list_of_strings_is_read_not_raised(
     tmp_path: Path,
 ) -> None:
-    """The pool's boundary, which a record this module did not build can breach.
-
-    ``ccda:prior_loss_narrative`` is contracted to hold a list of strings. A
-    record from somewhere else may not, and the reading is a report rather than
-    a parser: an unhashable member used to raise out of ``Counter`` and abort
-    the whole document, and a bare string used to be counted one CHARACTER at a
-    time, which is a pool of nonsense answering real questions.
-    """
     path = _write(tmp_path, body=_stamped_ledger("", "a = 1"))
     for entries in ([{"k": 1}, "a = 1"], "a = 1", 7):
         record = parse_document(path)
@@ -2264,18 +1795,6 @@ def test_a_loss_ledger_key_that_is_not_a_list_of_strings_is_read_not_raised(
 def test_two_loss_ledgers_the_parser_does_read_are_both_credited(
     tmp_path: Path, second_entry: str
 ) -> None:
-    """The counterweight: a rule that credits one and loses the rest is wrong too.
-
-    A document merged from two exports legitimately carries two stamped
-    ledgers, and the parser concatenates both. Spending one claim per offered
-    section would report the second as lost — the false alarm that mirrors the
-    false clean bill above.
-
-    Run twice, and the second run is the one that matters: two exports that
-    dropped the SAME field carry the same line, and the store holds it twice.
-    Counting distinct lines instead of lines would make one of those two
-    answer for both and report a ledger that arrived intact as lost.
-    """
     body = _stamped_ledger(" (first)", "coverage: 1 dropped") + _stamped_ledger(
         " (second)", second_entry
     )
@@ -2295,16 +1814,6 @@ def test_two_loss_ledgers_the_parser_does_read_are_both_credited(
 def test_a_line_the_record_kept_only_once_does_not_answer_for_two(
     tmp_path: Path,
 ) -> None:
-    """The claim is the section's LINES, not the set of them.
-
-    A ledger repeating a line is ordinary — an export that dropped the same
-    field in two places says so twice — and the store holds it twice because
-    both were kept. If something between the two ever collapsed them, the
-    section would be offering two lines the record answers for once, and a
-    claim that asked only which distinct lines are present would call that
-    whole. The record is an input here, so the shortfall is stated directly
-    rather than waiting for a future dedup to introduce it.
-    """
     line = "coverage: 1 dropped"
     path = _write(tmp_path, body=_stamped_ledger("", line, line))
     record = parse_document(path)
@@ -2321,14 +1830,6 @@ def test_a_line_the_record_kept_only_once_does_not_answer_for_two(
 def test_a_stamped_loss_ledger_does_not_claim_a_foreign_sections_copy(
     tmp_path: Path,
 ) -> None:
-    """51899-3 is a public LOINC, and this repo's exporter writes one too.
-
-    The parser reads its OWN loss ledger back as prior losses rather than
-    parking its entries, so a stamped section has no copy of its own. Meeting
-    a foreign 51899-3 in the same bucket, it took the copy that one earned —
-    the shared-code theft above from a third direction, and the direction the
-    round that added this guard did not pin.
-    """
     stamped = f"""
   <component><section>
     <templateId root="{LOSS_NARRATIVE_TEMPLATE_ROOT}"/>
@@ -2359,12 +1860,6 @@ def test_a_stamped_loss_ledger_does_not_claim_a_foreign_sections_copy(
 
 
 def test_a_code_less_section_still_claims_its_own_parked_entries(tmp_path: Path) -> None:
-    """The ``unknown`` bucket both sides have to agree on.
-
-    The parser writes ``ccda:entries:unknown`` for a section with no code and
-    numbers a repeat ``#2``; this side has to name the same bucket, and neither
-    the suffix strip nor the fallback was pinned by anything.
-    """
     entry = _SHARED_CODE_ENTRY.replace("75326-9", "75327-9")
     body = f"""
   <component><section><title>No code at all</title>{_SHARED_CODE_ENTRY}</section></component>
@@ -2377,12 +1872,6 @@ def test_a_code_less_section_still_claims_its_own_parked_entries(tmp_path: Path)
 
 
 def test_a_padded_reference_value_still_names_its_cell(tmp_path: Path) -> None:
-    """Both sides strip, or the mirror reports its own drift as loss.
-
-    The parser strips before it resolves a reference, so a ``value=" #id "``
-    resolves there; this side must read the same citation rather than see no
-    ``#`` and call the entry lost.
-    """
     body = _procedures(
         '<text><paragraph ID="proc-1">Medication reconciliation</paragraph></text>',
         _cites(1, " #proc-1 ", "A"),
@@ -2397,16 +1886,6 @@ def test_a_padded_reference_value_still_names_its_cell(tmp_path: Path) -> None:
 
 
 def test_a_section_the_parser_never_walked_parks_nothing(tmp_path: Path) -> None:
-    """Asking the parser's walk, rather than restating it.
-
-    The first version of this predicate restated the rule — "parent is a
-    component under a structuredBody" — and diverged from the parser in both
-    directions. A document nesting a second ``<structuredBody>`` inside a
-    section has children whose parent chain satisfies that test and which the
-    parser's anchored path never reaches: they parked nothing, and took the
-    copy earned by the section that did. Whichever came first won, which is
-    exactly the order-dependence this was supposed to end.
-    """
     entry = """
     <entry><observation classCode="OBS" moodCode="EVN">
       <code code="75326-9" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2443,13 +1922,6 @@ def test_a_section_the_parser_never_walked_parks_nothing(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("container", ["table", "thead", "tbody", "tfoot", "list", "caption"])
 def test_no_narrative_container_is_one_of_its_own_cells(tmp_path: Path, container: str) -> None:
-    """Each name in the list, not just the one that had a test.
-
-    Only ``table`` was pinned, so five of the six could have been deleted with
-    the suite still green. An ID on any of them names the whole arrangement —
-    or, for a caption, labels it — and an entry citing that is citing the
-    section's prose by another route.
-    """
     body = _procedures(
         f"""<text><{container} ID="whole"><tbody><tr>
         <td>Continue lisinopril and recheck blood pressure in three months.</td>
@@ -2463,13 +1935,6 @@ def test_no_narrative_container_is_one_of_its_own_cells(tmp_path: Path, containe
 
 
 def test_a_table_row_is_one_statement_and_may_be_cited(tmp_path: Path) -> None:
-    """``<tr>`` is not a container of everything — it is one row.
-
-    It was on the exclusion list, and that reported loss for narrative the
-    record demonstrably holds: the same document, with the ID moved one level
-    down to the ``<td>``, read preserved. A row is the granularity of an
-    ``<item>``, and the rule is about elements that hold EVERY cell.
-    """
     body = _procedures(
         """<text><table><tbody>
         <tr ID="proc-1"><td>Appendectomy</td><td>2019-04-02</td></tr>
@@ -2483,13 +1948,6 @@ def test_a_table_row_is_one_statement_and_may_be_cited(tmp_path: Path) -> None:
 
 
 def test_a_cell_wrapped_in_another_named_cell_is_one_statement(tmp_path: Path) -> None:
-    """One word cannot preserve three entries by wearing three labels.
-
-    Keying the pool by name stopped a repeated name answering twice, and left
-    nesting open: three ids around one word minted three claims against the
-    single word the record holds. Only the innermost name over any given words
-    is a cell.
-    """
     body = _procedures(
         '<text><content ID="a1"><content ID="a2">'
         '<content ID="a3">Appendectomy</content></content></content></text>',
@@ -2528,14 +1986,6 @@ _NESTED_CELLS = [
 def test_a_cell_is_wrapped_at_any_depth_not_only_by_its_parent(
     tmp_path: Path, narrative: str
 ) -> None:
-    """Depth is not a way to buy a second preservation of one word.
-
-    The rule above was written with ``other in node``, which asks lxml whether
-    ``other`` is a direct CHILD. A table puts a ``<td>`` between the row and
-    the cell — and making a row citable is what the round before this one did —
-    so the canonical arrangement minted two preservations against one word.
-    A false clean bill, which this ledger's bias forbids above all.
-    """
     body = _procedures(
         f"<text>{narrative}</text>",
         _cites(1, "#a1", "A") + _cites(3, "#a3", "C"),
@@ -2553,14 +2003,6 @@ def test_a_cell_is_wrapped_at_any_depth_not_only_by_its_parent(
 def test_an_entry_citing_the_cell_that_holds_its_word_is_credited(
     tmp_path: Path, narrative: str
 ) -> None:
-    """The other direction, and the one a real document takes.
-
-    Dropping the outer name from the pool stopped two entries splitting one
-    word, and it also stopped ONE entry citing its own row — the ordinary
-    arrangement, where no double credit is even possible. The record holds
-    the word; the ledger called it unsupported. A name over a word is an
-    address for it, not a competing claim on it.
-    """
     body = _procedures(f"<text>{narrative}</text>", _cites(1, "#a1", "A"))
     path = _write(tmp_path, body=body)
     record = parse_document(path)
@@ -2600,16 +2042,6 @@ def test_one_entry_naming_a_word_by_two_addresses_makes_one_claim(
 
 
 def test_an_entry_claiming_two_cells_spends_both_or_neither(tmp_path: Path) -> None:
-    """All of them and not any, and the difference is visible in the totals.
-
-    An entry citing two cells that finds one is an entry half of whose account
-    is missing, and it must not keep the half it found: that half is a claim
-    the next entry to name it would have been owed. Three cells, three entries
-    — one naming a cell that is already taken alongside a free one, and one
-    naming that free cell alongside another. Spending greedily lets the first
-    take what the second needed, and reads three preserved where the document
-    supports two.
-    """
     two_cells = """
     <entry><procedure classCode="PROC" moodCode="EVN">
       <id root="feedface-proc-0000-0000-00000000090{n}"/>
@@ -2636,13 +2068,6 @@ def test_an_entry_claiming_two_cells_spends_both_or_neither(tmp_path: Path) -> N
 
 
 def test_every_level_of_a_nested_arrangement_is_an_address(tmp_path: Path) -> None:
-    """Row, cell, content: three names over one word, and one claim.
-
-    Two levels cannot tell a rule that keeps the NEAREST enclosing cell from
-    one that keeps the OUTERMOST, nor one that walks the whole chain from one
-    that stops after a step — at two levels those are the same answer. Both
-    mistakes are live at three, and both mint a second credit for one word.
-    """
     narrative = (
         '<table><tbody><tr ID="a1"><td ID="a2">'
         '<content ID="a3">Appendectomy</content></td></tr></tbody></table>'
@@ -2660,13 +2085,6 @@ def test_every_level_of_a_nested_arrangement_is_an_address(tmp_path: Path) -> No
 def test_two_cells_inside_one_named_cell_are_still_two_statements(
     tmp_path: Path,
 ) -> None:
-    """Which end of the nesting answers, pinned.
-
-    A rule keeping the OUTERMOST name instead of the innermost satisfies every
-    other test here — one preserved and one unsupported reads the same either
-    way round — and is wrong: two cells over two different words, wrapped in
-    one named cell, are two statements the record holds both of.
-    """
     body = _procedures(
         '<text><table><tbody><tr><td ID="c1">'
         '<content ID="x1">Colonoscopy</content>'
@@ -2683,14 +2101,6 @@ def test_two_cells_inside_one_named_cell_are_still_two_statements(
 def test_the_reading_does_not_turn_on_which_entry_is_listed_first(
     tmp_path: Path, row_first: bool
 ) -> None:
-    """One document's content has one reading.
-
-    Served in the order the section lists them, an entry citing a whole row
-    takes every cell under it and starves the entries that cite those cells by
-    name — so these same three entries over these same two words read two
-    preserved or one, decided by nothing but which came first. Both ends are
-    tried now, and the answer is the same either way round.
-    """
     row = _cites(1, "#row1", "A")
     cells = _cites(2, "#cell-a", "B") + _cites(3, "#cell-b", "C")
     body = _procedures(
@@ -2715,14 +2125,6 @@ def test_the_reading_does_not_turn_on_which_entry_is_listed_first(
 def test_a_parsed_entry_does_not_take_the_cell_its_sibling_needs(
     tmp_path: Path,
 ) -> None:
-    """A parsed entry's evidence is its object, so it asks the cells for nothing.
-
-    Both entries here name the same cell, and only one of them was taken apart
-    into the record. If the parsed one is allowed to claim the cell as well it
-    takes the only one there is, and the sibling that has nothing else to show
-    reads as lost — a preservation moved from the entry that needed it to the
-    entry that did not.
-    """
     body = """
   <component><section>
     <code code="11450-4" codeSystem="2.16.840.1.113883.6.1"/>
@@ -2780,15 +2182,6 @@ _CHAINED = {
 def test_entries_whose_claims_overlap_in_a_chain_read_the_same_either_way(
     tmp_path: Path, order: tuple[str, ...]
 ) -> None:
-    """Ties are not a licence to fall back on document order.
-
-    Serving the narrowest claim first fixed the case where one entry asked for
-    more than the others. It did nothing when they all ask for the SAME
-    number: three entries over four cells, each naming two, chained so that
-    each overlaps its neighbour — every demand is two, the sort is stable, and
-    the section's listing order decided the answer again. The order is decided
-    by the content now: how much is asked for, then the names it is asked by.
-    """
     body = _procedures(
         "<text>"
         + "".join(f'<content ID="x{i}">Word{i}</content>' for i in range(1, 5))
@@ -2809,15 +2202,6 @@ def test_entries_whose_claims_overlap_in_a_chain_read_the_same_either_way(
 def test_one_entry_reaching_into_two_rows_does_not_kill_them_both(
     tmp_path: Path,
 ) -> None:
-    """The narrowest claim is not always the one to serve first.
-
-    Two rows of three cells, an entry citing each row, and one entry naming a
-    single cell from each. That last claim is the smallest, and serving it
-    first takes a cell out of both rows and leaves neither row-citing entry
-    able to complete — one preservation where the record holds every word and
-    an assignment for two plainly exists. Both ends are tried now, and the
-    reading is whichever honours more entries.
-    """
     body = _procedures(
         "<text><table><tbody>"
         '<tr ID="r1"><td ID="a1">A1</td><td ID="a2">A2</td><td ID="a3">A3</td></tr>'
@@ -2879,13 +2263,9 @@ def _credited(section: object) -> int:
 
 
 def _most_honestly_creditable(section: object) -> int:
-    """The most entries a disjoint assignment of these cells could ever credit.
-
-    Brute force over every subset, deliberately: it is the SPECIFICATION the
-    ledger's rule is measured against, written independently of it, and a
-    slower oracle is the point. An entry naming a cell this narrative does not
-    define claims nothing and can never be credited.
-    """
+    """The most entries any disjoint assignment of cited cells could credit --
+    the brute-force specification the ledger's own heuristic is measured
+    against."""
     covers = ledger._section_anchors(section)  # type: ignore[arg-type]
     demands = []
     for entry in section.findall("{urn:hl7-org:v3}entry"):  # type: ignore[attr-defined]
@@ -2904,19 +2284,8 @@ def _most_honestly_creditable(section: object) -> int:
 
 
 def test_the_ledger_never_credits_more_than_the_cells_could_honour() -> None:
-    """The one property the whole instrument rests on, checked against a brute force.
-
-    Settling entries against cells is set packing, and this ledger's rule is a
-    heuristic over it — it may credit FEWER entries than an optimal assignment
-    would, and says so. What it must never do is credit MORE, because every
-    extra credit is a preservation that no assignment of the surviving cells
-    supports: an invented one. Reported once as a measurement, this is now
-    asked on every run.
-
-    Only the ceiling is asserted. How OFTEN the rule falls short of it is a
-    few cases in a thousand, and an assertion about that on a few hundred
-    would be a coin toss dressed as a check.
-    """
+    """The ledger may credit fewer entries than an optimal assignment, never more
+    (RULES.md 57), checked here against brute force."""
     rng = random.Random(20260902)
     for _ in range(400):
         section, _ = _random_section(rng)
@@ -2929,15 +2298,6 @@ def test_the_ledger_never_credits_more_than_the_cells_could_honour() -> None:
 
 
 def test_the_order_a_document_writes_its_references_in_changes_nothing() -> None:
-    """``<reference>`` children are a set of names, not a sequence.
-
-    The settlement breaks a tie between two entries asking for the same amount
-    by the names they ask BY, and it has to compare those names as a set: an
-    entry writing ``#b`` before ``#a`` is naming what an entry writing ``#a``
-    before ``#b`` names. Comparing the raw lists instead reads the two as
-    different claims and reorders the settlement around a difference the
-    document does not have.
-    """
     rng = random.Random(4711)
     for _ in range(200):
         section, _ = _random_section(rng)
@@ -2953,12 +2313,6 @@ def test_the_order_a_document_writes_its_references_in_changes_nothing() -> None
 
 
 def test_a_reference_without_a_hash_names_no_cell(tmp_path: Path) -> None:
-    """``value="proc-1"`` is not a citation, and the parser agrees.
-
-    ``_inline_narrative_references`` resolves only a ``#``-prefixed value, so
-    a reference without one reaches the record carrying nothing. Crediting the
-    entry for it would credit it to narrative the record never took.
-    """
     body = _procedures(
         '<text><paragraph ID="proc-1">Medication reconciliation</paragraph></text>',
         """
@@ -2976,12 +2330,6 @@ def test_a_reference_without_a_hash_names_no_cell(tmp_path: Path) -> None:
 
 
 def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:
-    """The counterweight: the rule must not collapse cells that are separate.
-
-    A rule keeping only what nothing else contains would be satisfied by
-    keeping nothing, and by keeping one. Two cells side by side over two
-    different words are two preservations, and stay two.
-    """
     body = _procedures(
         '<text><content ID="a1">Colonoscopy</content>'
         '<content ID="a3">Appendectomy</content></text>',
@@ -2994,12 +2342,6 @@ def test_two_cells_that_wrap_nothing_are_two_statements(tmp_path: Path) -> None:
 
 
 def test_a_comment_in_the_narrative_is_not_a_cell(tmp_path: Path) -> None:
-    """lxml gives a comment a callable tag, and asking it for a name raises.
-
-    The guard against it had no test, so deleting it did not fail the suite —
-    it made the ledger raise ``ValueError: Invalid input tag`` on any document
-    whose narrative carries a comment, which is ordinary in exported XML.
-    """
     body = _procedures(
         '<text><!-- generated by the exporter --><paragraph ID="proc-1">Med rec</paragraph></text>',
         _cites(1, "#proc-1", "A"),
@@ -3011,12 +2353,6 @@ def test_a_comment_in_the_narrative_is_not_a_cell(tmp_path: Path) -> None:
 
 
 def test_a_bare_hash_is_a_citation_that_cannot_resolve(tmp_path: Path) -> None:
-    """``#`` names no cell, so it fails its entry like ``#never-defined``.
-
-    Filtering it out instead let an entry carrying it be credited on its other
-    citation — and this commit's own argument is that the two are equally
-    unresolvable.
-    """
     body = _procedures(
         '<text><paragraph ID="proc-1">Med rec</paragraph></text>',
         """

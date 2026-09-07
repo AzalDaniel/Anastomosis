@@ -1,16 +1,12 @@
 """The Windows smoke test's coming-alive waits, tested off Windows.
+The step needs a Windows runner with WebView2, but its FAILURE MESSAGE
+does not (#270): a release gate once went red with "Timeout 30000ms
+exceeded" and nothing else, giving a reader no way to tell a hung
+bridge from a slow one.
 
-The step itself needs a Windows runner with WebView2 and cannot run here. Its
-FAILURE MESSAGE can, and that is the part #270 was about: a release gate went
-red with "Timeout 30000ms exceeded" and nothing else, on a commit that passed
-on re-run, and the message gave a reader no way to tell a hung bridge from a
-slow one.
-
-So the waiting and the reporting are separated from the browser driving, and
-the pieces that decide what an operator reads are exercised against stubs. What
-still cannot be tested here — that the real WebView2 comes alive inside these
-budgets — is exercised by the Windows job on this PR, which is the only place
-it ever could be.
+The waiting and reporting are separated from the browser driving, so
+what an operator reads is exercised against stubs; whether the real
+WebView2 comes alive is exercised only by the Windows job.
 """
 
 from __future__ import annotations
@@ -91,7 +87,7 @@ def test_a_timeout_names_the_signal_that_never_arrived(smoke: ModuleType) -> Non
 def test_a_bridge_that_lives_but_never_answers_is_a_different_failure(
     smoke: ModuleType,
 ) -> None:
-    """A hung info() round-trip and a hung bridge used to be the same message."""
+    """A hung info() round-trip and a hung bridge are distinct failure messages."""
     page = _StubPage(succeed=1)
     with pytest.raises(smoke.SmokeFailure) as excinfo:
         smoke._await_liveness(page)

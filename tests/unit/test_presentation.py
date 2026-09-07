@@ -82,7 +82,7 @@ def test_transit_map_markers_survive_print_to_cp1252_console() -> None:
 
 
 def test_unicode_render_would_crash_a_cp1252_console() -> None:
-    # Demonstrates the bug the fallback prevents (the default render is Unicode).
+    # Confirms what the fallback prevents: the default render is Unicode.
     transit = plan_route("tebra", DestinationRegistry.load())
     rendered = transit.render()
     assert "✓" in rendered  # the default keeps the pretty marker
@@ -115,13 +115,10 @@ def test_glyphs_dataclass_is_frozen() -> None:
 
 
 def test_as_typed_keeps_what_a_person_can_see() -> None:
-    """The whole escape sequence goes, not just its first byte.
-
-    An arrow key is ESC [ A — removing the ESC alone would leave ``[A`` in a
-    filename, which is the same defect wearing fewer bytes. Sequences are
-    swept as units, whatever mode the terminal was in, and plain text in any
-    script passes through untouched.
-    """
+    """The whole escape sequence goes, not just its first byte: an arrow
+    key is ESC [ A, and removing the ESC alone would leave ``[A`` in a
+    filename. Sequences are swept as units, whatever mode the terminal
+    was in, and plain text in any script passes through untouched."""
     from anastomosis.core.presentation import as_typed
 
     cases = {
@@ -140,13 +137,11 @@ def test_as_typed_keeps_what_a_person_can_see() -> None:
 
 
 def test_as_typed_guards_every_prompt_the_product_asks() -> None:
-    """The seven guided prompts and the destination wizard all read through it.
-
-    The sweep only protects call sites that use it; this pins the two modules
-    that read free-typed answers to the one door, so an eighth prompt added
-    without the sweep shows up here as a missing anchor rather than as an
-    escape sequence in somebody's mapping id.
-    """
+    """The sweep only protects call sites that use it, so this pins the
+    two modules that read free-typed answers — the guided prompts and the
+    destination wizard — to the one door, so a new prompt added without
+    the sweep shows up here as a missing anchor, not an escape sequence
+    in somebody's mapping id."""
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[2] / "src" / "anastomosis"

@@ -1,22 +1,11 @@
 """not_carried has to reach a human, not just qa_report.json (#297).
 
-``settle_qa`` puts ``not_carried`` on the QA :class:`StageEvent`'s counts dict
-whenever it is nonzero — #271's "never green-with-nothing-said" rule — but
-neither frontend used to say what the number meant. The CLI's QA line stopped
-at pass/warn/fail, and the GUI's generic key-dump rendered the bare key as
-"not carried N", which told an operator nothing about what N counted. Both
-surfaces now read the count in the same words qa_report.json already knew: N
-facts the record holds landed nowhere but the record summary, not the visit
-charts.
-
-Mirrors #225's ``test_delivery_shortfall.py`` on purpose: same shape of bug (a
-count a stage already had, invisible past its own report), same fix (print it
-only when nonzero, on both surfaces), same test structure (a CLI-line recorder
-plus a GUI-event capture, run through the real formatting code — never a
-reimplementation of it).
-
-Counts only, as everywhere: no fact name crosses into an event, a log, or a
-line here or anywhere upstream of qa_report.json.
+``settle_qa`` puts ``not_carried`` on the QA :class:`StageEvent`'s counts
+dict whenever nonzero (#271's "never green-with-nothing-said" rule); both
+frontends must read it in qa_report.json's own words — N facts landed
+nowhere but the record summary, not the charts. Mirrors #225's shape:
+print only when nonzero, on both surfaces, through the real formatting
+code. Counts only: no fact name crosses into an event, log or line here.
 """
 
 from __future__ import annotations

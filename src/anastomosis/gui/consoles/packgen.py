@@ -24,10 +24,8 @@ __all__ = ["PackgenConsole"]
 class PackgenConsole(WizardConsole):
     """The pack-from-samples wizard backend."""
 
-    # The operation family this console owns; stamped on every event so only the
-    # pack-from-samples wizard page consumes them (the per-page flow guard).
-    # The event STAGE stays "packgen"/"pack_init"; the FLOW is the page-owning
-    # family name.
+    # Stamped on every event so only this wizard page consumes them; STAGE
+    # stays "packgen"/"pack_init", FLOW is the page-owning family name.
     _FLOW = "pack_init"
     _STAGE = "packgen"
 
@@ -41,32 +39,8 @@ class PackgenConsole(WizardConsole):
     ) -> dict[str, object]:
         """Learn a DRAFT template pack from sample PDFs (the wizard's backend).
 
-        A thin adapter over the shared
-        :func:`anastomosis.core.packinit.run_pack_init` — the SAME analyze →
-        confirm → emit flow the CLI's ``anast pack init`` runs. Validate the
-        pack name, collect the sample PDFs, harvest + analyze them, render the
-        PHI-safe :meth:`PackAnalysis.summary_lines` digest, and — only with
-        ``confirmed_distinct_patients`` checked (the CLI's interactive
-        same-patient guard, ported as a required checkbox) — emit the draft and
-        return its name, path, trusted content hash and ``DRAFT.md`` text for
-        display.
-
-        ``out_dir`` defaults to ``None``, which the shared core reads as the
-        per-user pack directory. That is not a cosmetic default: a relative
-        ``packs/`` was resolved against whatever directory the app happened to
-        be launched from, so the wizard reported a written layout that the
-        Charts and Migrate choosers then could not offer.
-
-        Without the confirmation this REFUSES (``ok: False``, ``error:
-        ConfirmationRequired``) and writes nothing — the same guard the CLI
-        enforces with ``typer.confirm``. The single-sample text-suppression
-        behavior is inherited from ``summary_lines`` (the draft never echoes
-        per-patient text).
-
-        PHI rule: ``summary`` carries only static template text (recurring
-        across distinct samples) and counts; sample paths are never echoed (the
-        count is). Returns JSON-safe data; never raises.
-        """
+        Adapter over :func:`run_pack_init` (28); confirmed emits the draft,
+        else refuses ``ConfirmationRequired``. ``out_dir=None`` uses the per-user dir (36)."""
         try:
             from anastomosis.core.output import typed_path
             from anastomosis.core.packinit import PackInitCommand, run_pack_init
@@ -89,17 +63,8 @@ class PackgenConsole(WizardConsole):
     ) -> dict[str, object]:
         """Map a :class:`PackInitResult` to the wizard's JSON-safe dict.
 
-        Shared by the sync :meth:`pack_init` and the async worker so both
-        present an identical surface. The PHI-free validation errors
-        (``InvalidPackName`` / ``NoSamplesFound``) return the bare code; the
-        refusal carries the summary + caveat so the operator can confirm;
-        success carries the pack path + ``DRAFT.md``. An analyze/emit failure
-        (``error`` is an :func:`exc_tag` type name) ALSO emits a ``pack_init``
-        ``error`` event (the sync controller's loud-failure contract) — but only
-        when ``emit_failure`` is set. The async worker passes
-        ``emit_failure=False`` because IT emits the single ``packgen`` error
-        event on its own channel; the gate prevents a double, stage-mismatched
-        error event on the async path.
+        Shared by the sync and async paths. ``emit_failure=False`` (async)
+        skips the sync path's own error event, avoiding a double emission.
         """
         if result.error in {"InvalidPackName", "NoSamplesFound"}:
             return {"ok": False, "error": result.error}
@@ -115,10 +80,8 @@ class PackgenConsole(WizardConsole):
         if result.ok:
             return {
                 "ok": True,
-                # The identity the Charts and Migrate choosers will offer, and
-                # the exact directory + hash a later run binds to. The wizard
-                # names the layout it wrote rather than only its path, because
-                # the name is what the operator has to pick on the next screen.
+                # The identity Charts/Migrate will offer, and the exact dir+hash
+                # a later run binds to; named, since that's what's picked next.
                 "pack": result.pack_name,
                 "pack_dir": str(result.pack_dir),
                 "content_hash": result.content_hash,
@@ -145,12 +108,8 @@ class PackgenConsole(WizardConsole):
     ) -> dict[str, object]:
         """Run :meth:`pack_init` on a daemon thread (the GUI stays responsive).
 
-        :class:`~anastomosis.gui.consoles.wizard.WizardConsole` owns the busy
-        guard, the events and the stashing; this method only supplies the pack
-        step to run. The same-patient semantics match the sync path:
-        ``confirmed=False`` analyzes and stops at ``ConfirmationRequired`` with
-        the summary + caveat, so the JS can use the async path for BOTH wizard
-        steps. Never raises.
+        :class:`WizardConsole` owns the busy guard/events/stashing; this
+        supplies only the pack step. Same confirm semantics as the sync path.
         """
 
         def _run() -> dict[str, object]:
@@ -175,8 +134,7 @@ class PackgenConsole(WizardConsole):
     def last_pack_result(self) -> dict[str, object]:
         """The most recent :meth:`pack_init_async` result, for the wizard to fetch.
 
-        Either the summary + caveat for a ``ConfirmationRequired`` checkpoint or
-        the pack path + ``DRAFT.md`` for a written draft. PHI-safe (static
-        template text, counts, pack config).
+        Summary + caveat for ``ConfirmationRequired``, else the pack path +
+        ``DRAFT.md``. PHI-safe (template text, counts, config).
         """
         return self._last_result()

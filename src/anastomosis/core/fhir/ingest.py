@@ -118,10 +118,8 @@ def _patient(resource: dict[str, Any]) -> Patient:
     communication = resource.get("communication", [])
     return Patient(
         id=resource["id"],
-        # The reading half of the middle-name rule in `export._patient`: when the
-        # extension carries a middle name, this patient had NO given name, so
-        # `name.given[0]` is the middle name and must not be read as the given
-        # one. Without the guard the round-trip moves the name between fields.
+        # Reading half of export's middle-name rule: an extension middle name
+        # means no given name, so `given[0]` must not be read as given_name.
         given_name=None if "middle_name" in fields else (given[0] if given else None),
         middle_name=fields.get("middle_name", given[1] if len(given) > 1 else None),
         family_name=name.get("family"),
@@ -155,10 +153,8 @@ def _patient(resource: dict[str, Any]) -> Patient:
             )
             for t in resource.get("telecom", [])
         ],
-        # And the reading half of the address rule: the extension is present
-        # only when some address was missing its first line, and it holds the
-        # list verbatim. `address_list` above reads `line[0]` as line1, which is
-        # right for every ordinary address and wrong for exactly those.
+        # Reading half of the address rule: the extension holds the address
+        # list verbatim only when some address's first line was empty.
         addresses=(
             [Address.model_validate(a) for a in fields["addresses"]]
             if "addresses" in fields
@@ -414,20 +410,16 @@ def _coverage(resource: dict[str, Any]) -> Coverage:
     )
 
 
-#: The FHIR types :func:`~anastomosis.core.fhir.export.to_bundle` writes one
-#: canonical Practitioner out as: a clinician, a person related to the patient,
-#: and a system that generated a document. All three come back into the one
-#: collection they left from — reading only the first would type the record
-#: correctly on the way out and lose two thirds of its people on the way back.
+#: The three FHIR types :func:`~anastomosis.core.fhir.export.to_bundle` turns
+#: a canonical Practitioner into; all three read back, or two thirds of the
+#: record's people would be lost on the way back.
 _ACTOR_TYPES = frozenset({"Practitioner", "RelatedPerson", "Device"})
 
 
 def _actors(bundle: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every resource that came from a canonical Practitioner, in BUNDLE order.
-
-    Not read off the by-type grouping: that would return the clinicians, then
-    the relatives, then the devices, and a record whose people came back
-    regrouped is not the record that was written.
+    """Every resource from a canonical Practitioner, in bundle order — not
+    grouped by type, which would return all clinicians, then all relatives,
+    then all devices, not the record that was written.
     """
     return [
         entry["resource"]
@@ -547,9 +539,7 @@ def from_bundle(bundle: dict[str, Any]) -> PatientRecord:
             setattr(record, name, [model.model_validate(item) for item in items])
     meta = extras.get("__record__")
     if meta:
-        # Only the extensions. A bundle written before #405 also carries an
-        # "id" here; it is the exporting run's own instance bookkeeping, never
-        # anything the source said, so restoring it would import one machine's
-        # transient value into another's record for no one's benefit.
+        # Only extensions restored: a record id here (pre-#405 bundles) is
+        # the exporting run's own bookkeeping, never source-stated (RULES.md 8).
         record.extensions = meta["extensions"]
     return record

@@ -1,20 +1,8 @@
 """Delivery error taxonomy for the browser upload engine.
 
-The engine's retry, abort, and terminal-state decisions are driven by which
-of these an operation raises:
-
-* :class:`TransientDeliveryError` — retryable (a flaky selector, a slow
-  page, a dropped session); the state machine routes it to ``RETRY_WAIT``.
-* :class:`PermanentDeliveryError` — not retryable; the item fails for good.
-* :class:`WrongPatientError` — a patient-safety event; the engine aborts
-  the *entire run*, not just the item.
-* :class:`IllegalTransitionError` — a programming error in the state
-  machine; loud by design (an illegal transition must never pass silently).
-
-PHI rule: the *message* on any of these exceptions MUST NOT contain a
-patient-derived value (name, DOB, address, identifier). Callers log
-``exc_tag(exc)`` — the exception *type* name — never ``str(exc)``; the
-ledger persists ``last_error_type``/``error_type`` as type names only.
+Which of these an operation raises drives the engine's retry, abort, and
+terminal-state decisions; each class below says which. PHI: never
+``str(exc)`` in a message or log, ``exc_tag(exc)`` only (2).
 """
 
 from __future__ import annotations
@@ -41,12 +29,8 @@ class PermanentDeliveryError(DeliveryError):
 
 
 class WrongPatientError(PermanentDeliveryError):
-    """A patient-safety event: the destination chart is the wrong patient.
-
-    The engine aborts the entire run when this is raised — never just the
-    one item. Filing into the wrong chart is the failure this subsystem
-    exists to prevent, so it stops everything.
-    """
+    """The destination chart is the wrong patient; aborts the entire run,
+    never just the item (48)."""
 
 
 class IllegalTransitionError(DeliveryError):

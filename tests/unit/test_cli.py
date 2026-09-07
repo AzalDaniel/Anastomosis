@@ -123,8 +123,8 @@ def test_pipeline_run_end_to_end_with_qa(tmp_path: Path, monkeypatch: pytest.Mon
 def test_pipeline_run_no_upload_manifest_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: without --upload-manifest, no manifest line and no file (the
-    flag is additive — a default run is unchanged)."""
+    """Without --upload-manifest, no manifest line and no file: the flag
+    is additive, so a default run is unchanged."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     out = tmp_path / "charts"
@@ -366,8 +366,8 @@ def test_destination_list_shows_tebra() -> None:
     assert result.exit_code == 0, result.output
     assert "tebra" in result.output
     assert "not available" in result.output, "a route's state reads as words"
-    # The registry's own names stay reachable for anyone who needs to know
-    # WHICH interface is involved — they are just no longer the default.
+    # The registry's own names stay reachable, verbose-only, for anyone who
+    # needs to know WHICH interface is involved.
     detailed = runner.invoke(app, ["destination", "list", "--verbose"])
     assert detailed.exit_code == 0, detailed.output
     assert "unverified" in detailed.output
@@ -604,8 +604,7 @@ def test_destination_init_unknown_pack_is_clean_error(tmp_path: Path) -> None:
 
 
 def test_unknown_explicit_source_prints_message(tmp_path: Path) -> None:
-    """Regression: an unknown --source must exit 2 WITH its message — never
-    silently (the refactor's error reporter originally had no else branch)."""
+    """An unknown --source must exit 2 WITH its message, never silently."""
     result = runner.invoke(
         app,
         ["pipeline", "run", str(FIXTURE), "--out", str(tmp_path / "o"), "--source", "bogus"],
@@ -618,8 +617,8 @@ def test_unknown_explicit_source_prints_message(tmp_path: Path) -> None:
 def test_explicit_source_does_not_print_detected_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: 'Detected source' announces auto-detection only — an
-    operator who typed --source already knows (the original behavior)."""
+    """'Detected source' announces auto-detection only — an operator who
+    typed --source already knows."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF (render extra)")
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     result = runner.invoke(

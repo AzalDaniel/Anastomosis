@@ -1,13 +1,10 @@
-"""Tests for the shared atomic-write helper (core/atomic.py).
+"""Tests for the shared atomic-write helper (core/atomic.py, rule 14).
 
-The property under test in every failure case: a write that fails must never
-leave a stray ``.NAME.<pid>.tmp`` file behind, and must never leave a partial
-file at the target either — the tmp+os.replace+unlink-on-failure shape every
-write site in the codebase now shares.
-
-A run that is *killed* unwinds nothing, so it does leave its temp behind. The
-other half of the property is that the next write to the same target reaps it,
-and that it reaps only the temps whose writer is provably gone.
+A write that fails must never leave a stray ``.NAME.<pid>.tmp`` or a
+partial target file (tmp+os.replace+unlink-on-failure). A run that is
+*killed* unwinds nothing and does leave its temp behind — the other half
+is that the next write to the same target reaps it, and reaps only the
+temps whose writer is provably gone (rule 15).
 """
 
 from __future__ import annotations
@@ -138,13 +135,10 @@ def test_atomic_write_text_mode_sets_owner_only_permissions(tmp_path: Path) -> N
 def test_a_killed_writers_temp_is_reaped_by_the_next_write(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The failure the except-handler cannot reach: SIGKILL inside the window.
-
-    Nothing unwinds, so the temp stays; and because its name carries the dead
-    run's pid, a rerun picks a different name, replaces the target and hands
-    the operator a directory that looks complete with a half-written chart
-    hidden in it. The rerun itself has to be what clears it.
-    """
+    """SIGKILL inside the window is the failure the except-handler cannot
+    reach: nothing unwinds, so the temp stays, and a rerun (which picks a
+    different name from its own pid) must be what clears it — otherwise
+    the directory looks complete with a half-written chart hidden in it."""
     target = tmp_path / "Chart_0001.pdf"
     child = subprocess.Popen(
         [sys.executable, "-c", _KILLED_WRITER, str(target)],
@@ -207,14 +201,10 @@ def test_a_temp_whose_pid_will_not_parse_is_left_alone(tmp_path: Path) -> None:
 
 
 def test_a_pid_too_large_to_signal_keeps_the_file_and_the_write(tmp_path: Path) -> None:
-    """``OverflowError`` is not an ``OSError``.
-
-    ``int()`` takes any run of digits a filename offers, and ``os.kill`` raises
-    on converting one too large for a C int — a class the first version of the
-    liveness probe did not catch, so it escaped the sweep and took the caller's
-    write with it. A courtesy that cannot answer must cost neither the file nor
-    the write.
-    """
+    """``OverflowError`` is not an ``OSError``: ``int()`` takes any run of
+    digits a filename offers, and ``os.kill`` raises converting one too
+    large for a C int. A courtesy that cannot answer must cost neither the
+    file nor the write."""
     target = tmp_path / "report.json"
     huge = tmp_path / f".{target.name}.{2**70}.tmp"
     huge.write_text("someone else's file", encoding="utf-8")
@@ -226,15 +216,11 @@ def test_a_pid_too_large_to_signal_keeps_the_file_and_the_write(tmp_path: Path) 
 
 
 def test_a_pid_alive_under_another_uid_keeps_its_file() -> None:
-    """``PermissionError`` means alive, not gone.
-
-    A pid running under another uid answers EPERM rather than "no such
-    process". Reading that as dead would delete the temp of a live writer we
-    merely lack permission to probe — the exact over-clean this sweep must
-    never do, and a mutation flipping only this branch passes the rest of the
-    suite. Asserted by making the kernel give that answer rather than by
-    finding a process that happens to produce it: as root, nothing does.
-    """
+    """``PermissionError`` means alive, not gone: a pid under another uid
+    answers EPERM rather than "no such process", and reading that as dead
+    would delete a live writer's temp we merely lack permission to probe.
+    Asserted by making the kernel give that answer, since as root no real
+    process does."""
     from anastomosis.core import atomic
 
     with mock.patch.object(atomic.os, "kill", side_effect=PermissionError):
@@ -242,13 +228,10 @@ def test_a_pid_alive_under_another_uid_keeps_its_file() -> None:
 
 
 def test_a_platform_with_no_liveness_probe_reaps_nothing(tmp_path: Path) -> None:
-    """The non-POSIX early return is load-bearing, not defensive padding.
-
-    ``os.kill(pid, 0)`` on Windows does not ask whether a process is alive — it
-    calls TerminateProcess. With no question available to ask, every temp stays.
-    Deleting the guard passes the whole suite on Linux, so this pins it by
-    faking the platform rather than by needing a Windows runner.
-    """
+    """The non-POSIX early return is load-bearing: ``os.kill(pid, 0)`` on
+    Windows calls TerminateProcess rather than asking if a process is
+    alive, so with no question to ask, every temp must stay. Pinned by
+    faking the platform, not by needing a Windows runner."""
     from anastomosis.core import atomic
 
     with mock.patch.object(atomic.os, "name", "nt"):
@@ -256,18 +239,11 @@ def test_a_platform_with_no_liveness_probe_reaps_nothing(tmp_path: Path) -> None
 
 
 def test_a_bracket_in_a_chart_name_is_not_a_glob_pattern(tmp_path: Path) -> None:
-    """A patient's chart name is data the sweep matches on, not a pattern.
-
+    """A patient's chart name is data the sweep matches on, not a pattern:
     ``safe_name`` keeps ``[`` and ``]``, and an unescaped bracket makes the
-    glob ask a different question than the one intended — matching another
-    chart's temps, or silently none at all.
-
-    Asserted against the PATTERN rather than against a deletion, because
-    deletion is POSIX-only: `_writer_is_gone` has no liveness probe to offer on
-    Windows and keeps every temp there, so an end-to-end assertion would pass
-    on Linux and fail on Windows while saying nothing about the escaping. The
-    escaping is what is wrong on both.
-    """
+    glob ask the wrong question — matching another chart's temps, or none
+    at all. Asserted against the PATTERN, not a deletion, since deletion
+    is POSIX-only and would say nothing about the escaping on Windows."""
     import glob as globmod
 
     target = tmp_path / "Chart_[A-Z].pdf"

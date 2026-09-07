@@ -1,23 +1,9 @@
-"""The shared application/command layer.
-
-The CLI (:mod:`anastomosis.cli`) and the GUI (:mod:`anastomosis.gui.controller`)
-are *adapters*: they parse operator intent (flags / a JS payload), build one of
-the command objects here, and present the :class:`CommandResult`. All
-orchestration policy — which deliverers run, against which directories, in what
-order — lives here exactly once, so the same intent produces identical backend
-state regardless of which frontend issued it.
-
-Design notes:
-
-* :func:`run_pipeline_command` wraps the frontend-free pipeline core
-  (:func:`anastomosis.pipeline.run_pipeline`) and then runs the requested
-  deliveries through the single :func:`deliver_outputs` implementation.
-* :func:`deliver_outputs` does NOT print or emit — it returns structured
-  :class:`DeliveryOutcome`\\ s. Presentation (the CLI's Rich lines, the GUI's
-  progress events) stays in each adapter, so each frontend keeps its exact,
-  test-pinned output while sharing the orchestration.
-* :func:`get_toolkit_info` consolidates the extras/sources/packs probe that
-  ``anast info`` and the GUI dashboard header both need.
+"""The shared application/command layer: the CLI and the GUI are adapters
+that parse operator intent, build one of the command objects here, and
+present the :class:`CommandResult`. All orchestration policy lives here
+once. :func:`run_pipeline_command` wraps the pipeline core and runs
+requested deliveries through :func:`deliver_outputs`, which returns
+structured :class:`DeliveryOutcome`\\ s and never prints or emits.
 """
 
 from __future__ import annotations
@@ -51,20 +37,16 @@ __all__ = [
 
 DeliveryKind = Literal["archive", "bundle", "ccda"]
 
-# The canonical deliverer order — archive, then bundle, then ccda — matching the
-# order both frontends historically ran them in (preserves CLI line order and
-# the GUI's per-deliverer event order).
+# The canonical deliverer order — archive, then bundle, then ccda — shared by
+# both frontends so CLI line order and GUI per-deliverer event order agree.
 _DELIVERY_ORDER: dict[str, int] = {"archive": 0, "bundle": 1, "ccda": 2}
 
 
 @dataclass(frozen=True)
 class DeliveryCommand:
     """One requested delivery: a kind and the directory it writes into.
-
-    The adapter chooses ``out_dir``: the CLI uses the operator's
-    ``--archive/--bundle/--ccda`` path; the GUI uses a sibling subdirectory of
-    the run's output dir (``<out>/archive`` etc.).
-    """
+    The adapter chooses ``out_dir`` — the CLI an operator-given path, the
+    GUI a sibling subdirectory of the run's output dir."""
 
     kind: DeliveryKind
     out_dir: Path
@@ -127,18 +109,10 @@ class CommandResult:
 
 @dataclass(frozen=True)
 class PatientSummary:
-    """A per-patient roll-up of a completed run — for LOCAL display only.
-
-    Unlike :class:`DeliveryOutcome` (counts only), this carries
-    patient-identifying values — ``display_name`` and ``birth_date`` — so a
-    frontend can show the operator *which* patients a run produced and how many
-    notes each yielded. Those values are PHI: they ride the command layer's
-    return value for direct on-screen display and must NEVER be emitted as
-    progress events or written to any log (the event/log stream stays
-    count-only). ``documents`` is the number of chart PDFs the engine actually
-    rendered (or verified) for the patient; ``encounters`` is how many the
-    source carried.
-    """
+    """A per-patient roll-up of a completed run, for LOCAL display only
+    (2): unlike :class:`DeliveryOutcome`, this carries PHI
+    (``display_name``, ``birth_date``) for direct on-screen display and
+    must never be emitted as a progress event or logged."""
 
     patient_id: str
     display_name: str
@@ -148,14 +122,9 @@ class PatientSummary:
 
 
 def summarize_patients(result: PipelineResult) -> list[PatientSummary]:
-    """Per-patient roll-up (name, DOB, #encounters, #rendered docs), in ingest order.
-
-    Joins the canonical records with the render result's per-document
-    ``patient_id`` attribution, so a frontend can render which patients the run
-    processed without re-deriving anything. Pure data transformation; carries
-    PHI (names/DOB) for LOCAL display only — callers must never log it or put it
-    on an event. Order follows ``result.records`` (the stable ingest order).
-    """
+    """Per-patient roll-up (name, DOB, #encounters, #rendered docs), in
+    ingest order (2): carries PHI for LOCAL display only, callers must
+    never log it or put it on an event."""
     docs_by_patient: dict[str, int] = {}
     for doc in result.render_result.documents:
         docs_by_patient[doc.patient_id] = docs_by_patient.get(doc.patient_id, 0) + 1
@@ -179,12 +148,9 @@ def deliver_outputs(
     charts_dir: Path,
     deliveries: tuple[DeliveryCommand, ...],
 ) -> dict[str, DeliveryOutcome]:
-    """Run the requested deliverers once, in canonical order; return outcomes.
-
-    No printing, no events — the adapter presents the returned outcomes. Each
-    deliverer reads the rendered chart PDFs out of ``charts_dir`` and writes
-    into its command's ``out_dir``.
-    """
+    """Run the requested deliverers once, in canonical order; return
+    outcomes. No printing, no events — the adapter presents them. Each
+    deliverer reads the rendered chart PDFs out of ``charts_dir``."""
     from anastomosis.core.output import OutputPathError, validate_output_target
     from anastomosis.deliver.ccda_export import ArtifactNotDelivered
     from anastomosis.pipeline import PipelineError
@@ -242,8 +208,8 @@ def _run_deliveries(
         elif dc.kind == "bundle":
             from anastomosis.deliver.bundle import BundleDeliverer
 
-            # Single-pass per-patient attribution (was an O(patients x pdfs)
-            # re-filter of every chart for every patient).
+            # Single-pass per-patient attribution, not an O(patients x pdfs)
+            # re-filter of every chart for every patient.
             written = BundleDeliverer().deliver_records(
                 result.records, charts_dir, dc.out_dir, qa_report=result.qa_report
             )
@@ -351,29 +317,11 @@ def _write_pipeline_manifest(
     *,
     route: RoutePlan | None = None,
 ) -> None:
-    """Write the upload manifest and emit the PHI-safe ``manifest`` stage event.
-
-    The manifest carries demographics, so it lands ONLY in the hardened
-    ``charts_dir`` (the writer enforces that); the emitted event carries the item
-    COUNT only — never a name, DOB, or path.
-
-    ``pack`` is the pack this run rendered through — the run resolved it before
-    rendering, so a manifest written here always names a real pack — and is what
-    lets the later ``anast upload`` run L3 against the header fields that pack
-    declares.
-
-    ``route`` and the gates derived here are the bundle's REVIEWED context: what
-    this run was preparing for, and what it checked first. An executor refuses
-    on them (:func:`~anastomosis.deliver.browser.gates.assert_deliverable`), so
-    they are written at the one moment both are actually known — after QA, from
-    the run's own result, rather than re-derived by whoever opens the folder
-    next.
-
-    The event's counts come from what the WRITER wrote, not from the documents
-    handed to it: counting the rendered charts announced ``0 item(s)`` over a
-    manifest holding two source documents, which is the same silence #374 was
-    filed about, one line further along.
-    """
+    """Write the upload manifest into the hardened ``charts_dir`` and emit
+    the PHI-safe ``manifest`` stage event — item COUNT only, never a name,
+    DOB, or path (2). ``route``/gates are written here, the one moment
+    both are known (after QA). The event's count comes from what the
+    WRITER wrote, not from the documents handed to it (#374)."""
     from anastomosis.deliver.browser.gates import RunGates
     from anastomosis.deliver.browser.persist import write_upload_manifest
     from anastomosis.pipeline import STAGE_MANIFEST, StageEvent
@@ -399,41 +347,22 @@ def _write_pipeline_manifest(
 
 # --- toolkit info (shared by `anast info` and the GUI dashboard header) ---------
 
-# The extras both frontends show, in display order, each with the modules that
-# have to be importable for it to be usable at all.
+# The extras both frontends show, in display order, each with the modules
+# that have to be importable for it to be usable at all — names must match
+# what pyproject.toml actually declares.
 #
-# These names are the ones `pyproject.toml` actually declares. They drifted:
-# `render-qa` was listed here and has never been an extra (pymupdf ships inside
-# `render`), so `pip install "anastomosis[render-qa]"` warned and installed
-# nothing; `deliver-browser` is real and was never mentioned.
-#
-# `gui` names a BACKEND alongside the wrapper. `import webview` succeeds on a
-# machine with neither GTK nor Qt bindings, and pywebview then raises on launch
-# — so probing the wrapper alone reported the desktop app as ready on a machine
-# where `anast gui` could not start. WHICH backend that is depends on the
-# platform, so `_gui_requirement` answers for the one we are running on.
+# `gui` names a BACKEND alongside the wrapper: `import webview` succeeds
+# with neither GTK nor Qt present, and pywebview only raises on launch, so
+# probing the wrapper alone cannot tell readiness. `_gui_requirement`
+# answers for the platform actually running.
 
 
 def _gui_requirement(platform_name: str) -> tuple[str, ...]:
-    """The wrapper plus the drawing backend pywebview would load *here*.
-
-    pywebview picks its backend by platform, so a probe naming one platform's
-    backend is wrong on the others: `gi|qtpy` was hard-coded, and a Windows or
-    macOS install that draws the window perfectly well — GTK and Qt neither
-    installed nor wanted there — reported the desktop app as unavailable.
-
-    Windows draws through WinForms/WebView2 via pythonnet (`clr`) and macOS
-    through Cocoa via PyObjC (`objc`); pywebview depends on those
-    unconditionally on those platforms, so `pip install "anastomosis[gui]"`
-    has already brought them and their presence is fair evidence. GTK and Qt
-    are the Linux/OpenBSD pair, either will do and pywebview picks — but pip
-    installs neither alongside pywebview, which is why the wrapper alone is no
-    evidence there.
-
-    Still only evidence: the Edge WebView2 Runtime a Windows machine also needs
-    is an OS component, not an importable module, so no probe of this shape can
-    see it. `anast doctor` remains the command that actually tries things.
-    """
+    """The wrapper plus drawing backend pywebview loads on
+    ``platform_name``: Windows (``clr``) and macOS (``objc``) install it
+    unconditionally with the ``gui`` extra, so presence is fair evidence;
+    Linux/OpenBSD (``gi|qtpy``) does not, so absence is not. Still only
+    evidence: ``anast doctor`` is what actually tries things."""
     if platform_name == "win32":
         return ("webview", "clr")
     if platform_name == "darwin":
@@ -470,15 +399,10 @@ class PackInfo:
 
 @dataclass(frozen=True)
 class SourceInfo:
-    """One source adapter's state for the info surface.
-
-    The twin of :class:`PackInfo`, and it exists for the same reason: an
-    adapter carries something a name-and-description tuple has nowhere to put.
-    A pack declares which sections a run may switch; a source declares which of
-    its render-selection rules a run may switch off, and both surfaces need to
-    OFFER those choices rather than wait to be told a name that turns out to be
-    wrong.
-    """
+    """One source adapter's state for the info surface, the twin of
+    :class:`PackInfo`: a source declares which of its render-selection
+    rules a run may switch off, so both surfaces can OFFER those choices
+    rather than wait to be told a name that turns out wrong."""
 
     name: str
     #: What a person should read instead of ``name``, falling back to it.
@@ -501,16 +425,11 @@ class ToolkitInfo:
 
 
 def _module_available(module: str) -> bool:
-    """Is this module importable, without importing it?
-
-    ``__import__`` was the test, which meant asking "is pymupdf installed" cost
-    105 ms of executing pymupdf, and asking about the GUI wrapper ran a
-    toolkit probe inside a read-only status command. ``find_spec`` answers the
-    same question by looking, at roughly no cost.
-
-    A dotted name still imports its PARENT package (that is how ``find_spec``
-    resolves one), so a missing parent raises rather than returning None.
-    """
+    """Is this module importable, without importing it — ``find_spec``
+    looks rather than runs the module's own import side effects, at
+    roughly no cost. A dotted name still imports its PARENT package (how
+    ``find_spec`` resolves one), so a missing parent raises rather than
+    returning ``None``."""
     from importlib.util import find_spec
 
     try:
@@ -527,14 +446,11 @@ def _extra_available(modules: tuple[str, ...]) -> bool:
 
 
 def _source_infos() -> list[SourceInfo]:
-    """Every registered adapter, as the pickers and ``anast info`` read it.
-
-    ``getattr``, though the protocol declares ``display``: the registry is
-    open, and an adapter registered by code this repository never type-checked
-    is exactly the case a fallback exists for. It reads as its own id, which is
-    what every adapter read as before. ``selection_rules`` is read the same way
-    for the same reason, and answers empty for a source that has none.
-    """
+    """Every registered adapter, as the pickers and ``anast info`` read
+    it. ``getattr`` for ``display`` (falling back to the adapter's own id)
+    since the registry is open to code this repository never
+    type-checked; ``selection_rules`` answers empty for a source with
+    none."""
     from anastomosis.sources import available_sources, selection_rules
 
     return [
@@ -552,14 +468,10 @@ def _source_infos() -> list[SourceInfo]:
 
 
 def _pack_infos() -> list[PackInfo]:
-    """Every layout a run form may offer, with why an unavailable one is not.
-
-    The trust store is passed so a layout the operator taught (it lands in the
-    per-user pack directory) is discovered here at its confirmed hash and can
-    be SELECTED on the run forms this feeds. Without it every learned layout
-    reported unavailable and only the built-ins were ever offered — a run form
-    that cannot name the layout the app just said it wrote.
-    """
+    """Every layout a run form may offer, with why an unavailable one is
+    not. The trust store is passed so an operator-taught layout is
+    discovered here at its confirmed hash and can be selected on the run
+    forms this feeds."""
     from anastomosis.reconstruct import discover_packs
     from anastomosis.reconstruct.packtrust import default_pack_trust
 

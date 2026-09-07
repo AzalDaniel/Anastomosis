@@ -1,16 +1,6 @@
-"""GUI web-asset tests — offline guarantee, one document, design system, packaging.
-
-The desktop GUI's html/css/js/fonts ship bundled and must be network-free (the
-archive's offline rule applies — fonts are LOCAL files served under a strict
-``font-src 'self'`` CSP). These tests scan the shipped assets for network
-references, check the CSS parses, confirm the app is ONE document with four
-views (DESIGN_LANGUAGE §7/§9), pin the Porcelain & Oxblood token sheet to its
-real values, hold the anti-slop ledger (§12) to what it removed, and confirm a
-built wheel actually contains ``gui/web`` and the fonts (the registry.yaml
-precedent).
-
-Behaviour lives in ``tests/gui_e2e`` (the pages driven in a real browser); these
-are the static guarantees that must hold before a browser is ever opened.
+"""Static guarantees for the shipped GUI assets — offline, one document,
+design-system pinned, packaged. Browser behaviour lives in
+``tests/gui_e2e``; these hold before a browser is ever opened.
 """
 
 from __future__ import annotations
@@ -72,12 +62,9 @@ def test_all_assets_exist() -> None:
 
 
 def test_the_gui_is_exactly_one_document() -> None:
-    """Five pages became four views inside one document (§7).
-
-    The legacy pages are DELETED, not merely unlinked: a stray wizard.html would
-    still be reachable, would re-race the bridge, and would re-parse everything
-    the single document exists to parse once.
-    """
+    """The legacy pages are DELETED, not merely unlinked (§7): a stray
+    wizard.html would still be reachable, re-race the bridge, and re-parse
+    everything the single document exists to parse once."""
     pages = sorted(path.name for path in WEB.glob("*.html"))
     assert pages == ["index.html"], f"the GUI must ship exactly one document, found {pages}"
 
@@ -196,19 +183,9 @@ def test_app_css_carries_the_components() -> None:
 
 
 def test_the_design_language_names_every_token_and_no_others() -> None:
-    """The doc and the sheet describe the same system, checked both ways.
-
-    This test exists because the document went stale in exactly the way a
-    document does: its §1 table still gave `--ground` as 0.18 and
-    `--brand-bright` as 0.56 long after both moved, and its whole §2 rested on
-    a backdrop layer that had been deleted. A prose file nothing checks becomes
-    a second, wrong source of truth — and this one carries measured accessibility
-    floors, so being wrong about it is not cosmetic.
-
-    Both directions matter. A token the document does not mention is a
-    decision nobody wrote down; a token the document names that the sheet does
-    not define is advice for a system that no longer exists.
-    """
+    """The doc and the sheet must name the same tokens, checked both ways:
+    an omitted token is an undocumented decision, and a token the document
+    names that the sheet does not define is stale advice."""
     sheet = _read("tokens.css")
     doc = (Path(__file__).resolve().parents[2] / "docs/design/DESIGN_LANGUAGE.md").read_text(
         encoding="utf-8"
@@ -216,8 +193,8 @@ def test_the_design_language_names_every_token_and_no_others() -> None:
     # A letter has to follow the dashes, or markdown's own `---` table rules
     # read as a token name.
     defined = set(re.findall(r"^\s+(--[a-z][a-z0-9-]*):", sheet, re.M))
-    # The removal ledger's whole job is naming things that no longer exist, so
-    # the "stale" direction stops where it starts.
+    # The removal ledger documents removed tokens, so the "stale" check
+    # stops before that section.
     live = doc.split("## 12.", 1)[0]
     named = set(re.findall(r"(--[a-z][a-z0-9-]*)", live))
 
@@ -284,11 +261,7 @@ def test_the_anti_slop_ledger_stays_removed() -> None:
 
 def _css_rules(css: str) -> list[tuple[str, str]]:
     """Every ``selector { body }`` pair in a stylesheet, comments stripped.
-
-    Enough of a parser for these checks: the sheet has no nesting and no at-rule
-    bodies containing braces other than the rules inside them, which this simply
-    reads as rules of their own.
-    """
+    Assumes no nesting and no at-rule bodies containing extra braces."""
     bare = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
     return [
         (selector.strip().split("{")[-1].strip(), body)
@@ -297,14 +270,9 @@ def _css_rules(css: str) -> list[tuple[str, str]]:
 
 
 def test_only_the_view_nav_wears_the_pill() -> None:
-    """A sliding pill means "peer destinations", and there is one such control.
-
-    A binary setting is a switch and one-of-N is a chooser, so the pill radius
-    is allowed on the nav (and its two internal layers), on the switch track and
-    the progress bar — round-ended shapes, not pills — and nowhere else. The
-    check this replaces gathered the same lines and then asserted they contained
-    the string it had just filtered them by, so it passed on any selector.
-    """
+    """A sliding pill signals "peer destinations": one control wears it. A
+    switch (binary) and the progress bar are round-ended, not pills; the
+    pill radius appears on the nav and nowhere else."""
     allowed = {
         ".segment-toggle",
         ".segment-goo",
@@ -327,13 +295,9 @@ def test_only_the_view_nav_wears_the_pill() -> None:
 
 
 def test_every_control_clears_the_hit_target_floor() -> None:
-    """44px on the short axis, declared — not left to whatever the padding gives.
-
-    Every one of these was measured under the floor in a real browser, nine of
-    them under WCAG 2.5.8's 24px AA minimum. The floors are asserted here so a
-    later padding change cannot quietly walk them back; the browser sweep in
-    tests/gui_e2e proves they actually render.
-    """
+    """44px on the short axis, declared explicitly, not left to padding —
+    WCAG 2.5.8 requires a 24px AA minimum. The browser sweep in
+    tests/gui_e2e confirms these floors actually render."""
     css = _read("app.css")
     rules = dict(_css_rules(css))
     for selector in (
@@ -350,13 +314,9 @@ def test_every_control_clears_the_hit_target_floor() -> None:
 
 
 def test_machine_shaped_fields_opt_in_to_the_mono_face() -> None:
-    """Mono is for strings read character by character, and it is opt-in.
-
-    The default is the body face, so a new field is safe by omission; a path or
-    an identifier says so with a class. The base rule is wrapped in :where() on
-    purpose — its attribute selectors would otherwise outrank a single class and
-    the opt-in would be silently ignored, which is exactly what happened first.
-    """
+    """Mono is opt-in (for strings read character by character); the base
+    rule wraps in :where() on purpose — its attribute selectors would
+    otherwise outrank a single opt-in class."""
     css = _read("app.css")
     assert '.field :where(input[type="text"]' in css, "the base rule lost its :where()"
     assert ".field .is-path, .field .is-id, .field .is-endpoint {" in css
@@ -384,13 +344,7 @@ def test_machine_shaped_fields_opt_in_to_the_mono_face() -> None:
 
 
 def test_a_count_is_coloured_only_when_it_asks_for_something() -> None:
-    """Colour is earned; success and zero are not states worth shouting about.
-
-    This replaces a check on the counter grid's template areas, which existed
-    because two tiles once shared a cell. There is no grid now — a value display
-    is a number over its name with no container — so the collision it guarded
-    against cannot happen, and what is worth guarding is the colour rule.
-    """
+    """Colour is earned: success and zero states are never coloured."""
     css = _read("app.css")
     coloured = dict(
         re.findall(r'\.value\[data-signal="(\w+)"\] \.value-n \{ color: var\((--\w+)\);', css)
@@ -455,7 +409,6 @@ def test_index_ships_the_four_views_and_their_nav() -> None:
 
 
 def test_the_gooey_filter_is_declared_once_for_the_whole_app() -> None:
-    """The filter defs used to be re-declared (and re-registered) per page."""
     text = _read("index.html")
     assert text.count('filter id="gooey"') == 1
     assert "feColorMatrix" in text and "feGaussianBlur" in text
@@ -488,11 +441,9 @@ def test_nothing_navigates_the_document() -> None:
 
 
 def test_one_event_dispatcher_lives_in_the_shell() -> None:
-    """One `window.anastEvent`, in shell.js, routing by flow (§7).
-
-    Each page used to define its own, filtered to its own flow — which is what
-    orphaned a run's event stream the moment the operator changed page.
-    """
+    """One `window.anastEvent`, in shell.js, routing by flow (§7) — a
+    second dispatcher per page would orphan a run's event stream when the
+    operator changes page."""
     shell = _read("shell.js")
     assert "window.anastEvent = function anastEvent" in shell
     assert "BY_FLOW[event.flow]" in shell, "the dispatcher no longer routes by flow"
@@ -505,12 +456,10 @@ def test_one_event_dispatcher_lives_in_the_shell() -> None:
 
 @pytest.mark.parametrize(("script", "flow"), VIEW_SCRIPTS)
 def test_each_view_registers_the_flow_it_owns(script: str, flow: str) -> None:
-    """Flow scoping: the dispatcher hands an event to the ONE view that owns it.
-
-    Two views emit identical stage/progress/done/error kinds (a Charts rebuild
-    and a migration), so the flow registration is what stops one finishing the
-    other's run.
-    """
+    """Flow scoping: the dispatcher hands an event to the one view that
+    owns it. Charts and Migrate emit identical stage/progress/done/error
+    kinds, so flow registration is what stops one run finishing the
+    other's."""
     text = _read(script)
     assert f'"{flow}"' in text, f"{script} does not name its {flow!r} flow"
     assert "registerView" in text or "registerFlow" in text, f"{script} registers nothing"
@@ -538,12 +487,8 @@ def test_the_run_form_is_built_once_and_composed_twice() -> None:
 
 
 def test_uploads_drives_only_through_the_controller() -> None:
-    """Filing is wired live, but ONLY through the controller seam.
-
-    Driving is SAFE because the JS goes only through the controller — it must
-    never reach into the upload record's write surface, so the controller stays
-    the single owner of every write.
-    """
+    """Filing is wired live, but only through the controller seam: the JS
+    must never reach the upload record's write surface directly."""
     js = _read("console.js")
     html = _read("index.html")
     assert "upload_start" in js and "upload_stop" in js
@@ -612,15 +557,13 @@ def test_charts_keeps_its_freshness_notice_and_section_matrix() -> None:
 
 
 def test_the_handoff_carries_context_from_migrate_to_uploads() -> None:
-    """The wizard used to end by telling the operator to retype what it knew."""
     html = _read("index.html")
     migrate, uploads = _read("wizard.js"), _read("console.js")
     assert 'id="migrate-continue"' in html
     assert 'Shell.showView("uploads"' in migrate
     assert "uploads-assistant" in uploads
-    # The handoff travels ONLY as showView's context. It used to be written to a
-    # shell-global as well, which Uploads read on every arrival — so the offer
-    # never expired and kept reverting fields the operator had retyped since.
+    # Shell.store() would resurrect a stale global; the handoff must travel
+    # only as showView's context argument.
     for source, name in ((migrate, "wizard.js"), (uploads, "console.js")):
         assert "Shell.store(" not in source, f"{name} brought the handoff global back"
 
@@ -678,16 +621,8 @@ def test_wheel_contains_gui_web_and_fonts(tmp_path: Path) -> None:
 
 def test_every_styled_class_is_one_the_app_actually_puts_on_an_element() -> None:
     """A class selector nothing ever names is a rule that will never fire.
-
-    Four had accumulated (``.tnum``, ``.counter-value``, ``.state-count``,
-    ``.result-id``), each a dead name inside a rule whose other selectors were
-    live — so deleting the rules would have taken working styling with them, and
-    nothing said which half was dead. This is the check that says so.
-
-    Classes built at runtime (``log-row--${kind}``) count as named: the test
-    looks for the literal name first, then for the template-literal prefix the
-    markup interpolates into.
-    """
+    Classes built at runtime (``log-row--${kind}``) count as named: match
+    the literal name, or the template-literal prefix the markup uses."""
     css = "\n".join(_read(name) for name in ASSETS if name.endswith(".css"))
     markup = "\n".join(_read(name) for name in ASSETS if not name.endswith(".css"))
     # Strip comments so a class named only in prose does not count as used, and
@@ -777,20 +712,9 @@ def _labelled_elements() -> list[tuple[str, str, str, str]]:
 
 
 def test_every_aria_label_sits_on_something_that_can_carry_one() -> None:
-    """A label on a bare `div` is a label nothing is obliged to read.
-
-    Five panels shipped as `<div aria-label="...">` with no role — the progress
-    frame on Charts and the four proposal/result panels on Teach. ARIA prohibits
-    `aria-label` on the `generic` role, so the name is dropped: Chromium happens
-    to keep it in its own tree, which is exactly why this was invisible, but
-    nothing requires an assistive technology to expose it and several do not.
-    They carry `role="group"` now, verified through Chromium's accessibility
-    tree by CDP: `generic` before, `group` after, the name intact either way.
-
-    axe found ONE of the five. The other four ship `hidden`, and a rule that
-    only runs on what is visible under-reports by design — so this counts them
-    from the markup, where being hidden makes no difference.
-    """
+    """ARIA prohibits `aria-label`/`aria-labelledby` on the `generic` role:
+    the name is silently dropped. Checked from the markup rather than a
+    live accessibility tree, so a `hidden` panel is covered too."""
     unnamed = [
         (tag, ident, label)
         for tag, ident, role, label in _labelled_elements()
@@ -803,13 +727,9 @@ def test_every_aria_label_sits_on_something_that_can_carry_one() -> None:
 
 
 def test_the_activity_strip_lives_inside_a_landmark() -> None:
-    """The strip floats above the shell, so it is outside `<main>` by design.
-
-    Content outside every landmark is content a screen-reader user reaches only
-    by walking the whole document — axe's `region` rule, and the one violation
-    left on all four views. An `<aside>` is what this actually is: available
-    everywhere, related to the run in view without being part of it.
-    """
+    """The strip floats above the shell, outside `<main>` by design. It
+    needs its own landmark (`<aside>`) so a screen-reader user can reach
+    it, rather than walking the whole document to find loose content."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     strip = html.index('id="log-strip"')
     opened = html.rindex("<aside", 0, strip)

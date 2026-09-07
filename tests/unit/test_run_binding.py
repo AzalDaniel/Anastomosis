@@ -1,14 +1,12 @@
 """Destination-bound runs: immutable profiles, the run manifest, and the refusal.
 
-The binding only earns its keep if it BREAKS. So the centre of this file is
-three tests that each change exactly one input under a prepared output folder —
-a pack's bytes, a learned mapping's bytes, the destination's declared version —
-and prove the next run into that folder refuses and names the profile that
-moved. A test that only walks the happy path has not tested a refusal.
-
-Around those: the profiles are frozen and content-addressed, the manifest is
-deterministic and PHI-free, and the state machine refuses an unbound folder, a
-drifted one, and an illegal move.
+The binding only earns its keep if it BREAKS: three tests each change one
+input under a prepared output folder (a pack's bytes, a learned mapping's
+bytes, the destination's declared version) and prove the next run into
+that folder refuses and names the profile that moved. Around those: the
+profiles are frozen and content-addressed, the manifest is deterministic
+and PHI-free, and the state machine refuses an unbound folder, a drifted
+one, and an illegal move.
 """
 
 from __future__ import annotations
@@ -87,11 +85,9 @@ def fake_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _bump_destination_version(monkeypatch: pytest.MonkeyPatch, name: str, version: str) -> None:
     """Make the registry report ``name`` at a different product version.
-
-    Patched on the class, so BOTH readers see it: ``plan_route``'s registry load
-    inside ``run_migration`` and ``capture_destination_profile``'s. A version
-    that moved for one and not the other would prove nothing.
-    """
+    Patched on the class so BOTH readers see it (``plan_route``'s registry
+    load inside ``run_migration``, and ``capture_destination_profile``'s) —
+    a version moved for one and not the other would prove nothing."""
     base = DestinationRegistry.load()
     entry = base.entries[name].model_copy(update={"version": version})
     bumped = DestinationRegistry(entries={**base.entries, name: entry})
@@ -389,7 +385,7 @@ def test_break_the_destination_rerun_refuses_naming_the_destination(
     assert "source profile changed" not in message
     assert read_run_manifest(out) == bound
 
-    # --rebind is the explicit way to say the earlier artifacts no longer stand.
+    # --rebind is the explicit way to say the earlier artifacts do not stand.
     run_migration(
         MigrationCommand(
             export_dir=PF_FIXTURE,
@@ -654,14 +650,10 @@ def test_resolve_pack_is_the_one_render_mode_to_pack_answer() -> None:
 def test_an_external_pack_survives_the_step_that_never_saw_pack_dir(
     tmp_path: Path, fake_chromium: None
 ) -> None:
-    """The review's blocker: a `--pack-dir` migration could never be uploaded.
-
-    `migrate` profiles the layout with the operator's `--pack-dir` list; the
-    upload that follows has no such list, so re-running discovery there found
-    nothing, recorded no hash, and refused — telling the operator to restore
-    inputs that were never touched. The manifest records where the render read
-    from, and the later step asks its question there.
-    """
+    """`migrate` profiles the layout with the operator's `--pack-dir` list;
+    the later upload step has no such list, so it must ask the manifest
+    where the render actually read from, not re-run discovery with nothing
+    to discover against."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.core.upload_command import check_run_binding
 
@@ -735,9 +727,8 @@ def test_the_upload_folder_below_a_bound_run_is_still_checked(
     tmp_path: Path, fake_chromium: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`anast upload -o <out>/charts` is a documented habit for the upload
-    manifest, and it used to walk straight past the binding check: no run
-    manifest in that folder, one PHI-free "not bound" line, every chart filed
-    unchecked. The run manifest is one level up and is found there."""
+    manifest: the binding check must still find the run manifest one level
+    up rather than reporting a PHI-free "not bound" and filing unchecked."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.core.upload_command import check_run_binding
 
@@ -788,9 +779,9 @@ def test_the_manifest_never_writes_the_export_path(tmp_path: Path, fake_chromium
 
 
 def test_a_second_upload_still_reaches_verified(tmp_path: Path, fake_chromium: None) -> None:
-    """A folder already at `delivered` — a `--no-verify` upload followed by a
-    full one — used to make the first transition raise inside a shared `try`,
-    swallowing it and stranding the run one state short of the truth forever."""
+    """A folder already at `delivered` — a `--no-verify` upload followed by
+    a full one — must not strand the run one state short of the truth: the
+    first transition's raise must not be swallowed by a shared `try`."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.core.upload_command import record_upload_state
 

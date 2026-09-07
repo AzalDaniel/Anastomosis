@@ -104,12 +104,11 @@ def test_ensure_builtin_adapters_is_idempotent() -> None:
 
 
 def test_available_sources_lazily_registers_builtins_in_fresh_process() -> None:
-    """The production entry point: a bare ``from anastomosis.sources import
-    available_sources`` call, with no other module having imported an
-    adapter first, must still resolve all four built-ins. Runs in a clean
-    subprocess — this file's own registry-clearing fixture (and whatever
-    other tests already ran in-process) would otherwise mask a regression
-    where ``available_sources()`` stopped triggering the lazy load."""
+    """The production entry point: a bare
+    ``from anastomosis.sources import available_sources`` call, with
+    no adapter imported first, must resolve all four built-ins. Runs
+    in a clean subprocess, since this file's registry-clearing fixture
+    would otherwise mask a regression here."""
     script = textwrap.dedent("""
         from anastomosis.sources import available_sources
         print(",".join(sorted(a.name for a in available_sources())))

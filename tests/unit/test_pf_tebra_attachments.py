@@ -1,14 +1,10 @@
 """A document row finds the file it names, or admits it could not.
 
-A `patient-documents` row is a pointer: it carries a document's name, type and
-size, and a storage id naming the file that IS the document. Before this the
-pointer was mapped and the file was never looked for — five attachments in a
-real export, among them a 7-page clinical PDF, reached the output as nothing at
-all, with no trace anywhere that they had existed.
-
-These cover both halves of the fix: the file is found wherever the export put
-it, and a row whose file is genuinely missing says so instead of shipping an
-artifact that claims a document it has not got.
+A `patient-documents` row is a pointer: it carries a document's name, type
+and size, and a storage id naming the file that IS the document. These
+cover both halves: the file is found wherever the export put it, and a row
+whose file is genuinely missing says so instead of shipping an artifact
+that claims a document it has not got.
 """
 
 from __future__ import annotations
@@ -52,19 +48,11 @@ def test_a_document_row_resolves_to_the_file_it_names(export: Path) -> None:
 
 
 def test_an_extensionless_blob_still_reports_its_pages(export: Path) -> None:
-    """The shape a real export actually has.
-
-    Attachments are written into ``binary-content/`` under the storage GUID with
-    no extension — all 9,955 of them in the export this was measured against —
-    and the type is stated in the row's ``OriginalFileExtension`` instead. The
-    finder already copes (it indexes by stem) and so does the media type (it
-    reads that column first), but the page count keyed on the stored file's
-    suffix, so it matched nothing and every attachment in a real export came
-    back with no page count — including the PDFs, which are most of them.
-
-    Renaming the fixture blob is the whole test: same bytes, same row, the one
-    difference being the thing a real export does differently.
-    """
+    """A real export writes attachments into ``binary-content/`` under the
+    storage GUID with no extension (all 9,955 of them, measured), typed by
+    the row's ``OriginalFileExtension`` instead — the finder indexes by
+    stem and the media type reads that column, so the page count must also
+    resolve by stem, not by the stored file's suffix."""
     blob = export / BLOB
     blob.rename(blob.with_suffix(""))
 
@@ -76,12 +64,10 @@ def test_an_extensionless_blob_still_reports_its_pages(export: Path) -> None:
 
 
 def test_a_blob_the_row_does_not_call_a_pdf_reports_no_pages(export: Path) -> None:
-    """The other half: the declared type is believed when it says 'not a PDF'.
-
-    Real exports carry HL7 v2 messages, JPEGs, legacy Office documents and video
-    in the same extensionless ``binary-content/`` folder. None of those has a
-    page count, and reaching for one would only produce a warning per file.
-    """
+    """The declared type is believed when it says 'not a PDF': real exports
+    carry HL7 v2 messages, JPEGs, legacy Office documents and video in the
+    same extensionless folder, none of which has a page count to reach
+    for."""
     blob = export / BLOB
     blob.rename(blob.with_suffix(""))
     table = export / "patient-documents.tsv"
@@ -95,13 +81,10 @@ def test_a_blob_the_row_does_not_call_a_pdf_reports_no_pages(export: Path) -> No
 
 
 def test_the_recorded_path_stays_inside_the_export(export: Path) -> None:
-    """A chart travels to another EHR. The operator's directory does not go too.
-
-    The render index already records chart filenames rather than absolute paths;
-    an attachment is the same. `binary-content/<id>.pdf` locates the file
-    relative to the export the operator chose, and says nothing about the
-    machine that read it.
-    """
+    """A chart travels to another EHR; the operator's directory does not:
+    like the render index's chart filenames, `binary-content/<id>.pdf`
+    locates the file relative to the export, saying nothing about the
+    machine that read it."""
     (document,) = _documents(export)
 
     assert document.path is not None
@@ -113,12 +96,9 @@ def test_the_recorded_path_stays_inside_the_export(export: Path) -> None:
 def test_a_row_whose_file_is_missing_keeps_its_metadata_and_claims_nothing_else(
     export: Path,
 ) -> None:
-    """An export can arrive without its blobs. That is a smaller loss than a lie.
-
-    The row's own columns still ride through to the preserved-fields narrative,
-    so nothing about the document disappears — but the artifact claims no path,
-    no digest and no page count, because it has none of them.
-    """
+    """An export can arrive without its blobs — a smaller loss than a lie:
+    the row's own columns still ride to the preserved-fields narrative, but
+    the artifact claims no path, digest or page count it does not have."""
     (export / BLOB).unlink()
 
     (document,) = _documents(export)
@@ -131,12 +111,9 @@ def test_a_row_whose_file_is_missing_keeps_its_metadata_and_claims_nothing_else(
 
 
 def test_two_files_with_one_name_resolve_to_neither(export: Path) -> None:
-    """Ambiguity is never guessed past.
-
-    Two candidate files for one document id means the export cannot say which
-    belongs in this patient's chart. Attaching the wrong scan to the wrong
-    record is the failure this tool exists to prevent, so it attaches neither.
-    """
+    """Ambiguity is never guessed past: two candidate files for one document
+    id means the export cannot say which belongs in this chart, so neither
+    is attached rather than risking the wrong scan on the wrong record."""
     duplicate = export / "elsewhere" / Path(BLOB).name
     duplicate.parent.mkdir()
     shutil.copy(export / BLOB, duplicate)

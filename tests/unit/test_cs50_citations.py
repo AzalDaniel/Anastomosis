@@ -1,17 +1,12 @@
-"""The per-file citation stamper is idempotent and never breaks a stamped file.
+"""The per-file citation stamper is idempotent and never breaks a
+stamped file: ``tools/cs50_citations.py`` re-applies the per-file
+AI-assistance disclosure for an academic-submission branch. Three
+properties matter, since the script rewrites every authored file:
 
-``tools/cs50_citations.py`` re-applies the per-file AI-assistance disclosure
-for an academic-submission branch (the product repo carries attribution in
-DESIGN.md). Three properties matter, because the script rewrites every
-authored file in the tree:
-
-* **Idempotence** — a second run leaves every file byte-identical, so it is
-  safe to re-run after a rebase.
-* **Position** — a Python shebang and an HTML doctype must stay on line 1,
-  and a module docstring must remain the module's first *statement* (a
-  comment above it does not displace it).
-* **Line length** — every rendered comment form must fit the repo's
-  100-column limit, or the stamped tree fails its own lint gate.
+* **Idempotence** — a second run leaves every file byte-identical.
+* **Position** — a shebang/doctype stays on line 1; a module docstring
+  remains the first *statement*.
+* **Line length** — every rendered comment fits the repo's 100 columns.
 """
 
 from __future__ import annotations

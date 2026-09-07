@@ -1,31 +1,13 @@
 """US Core R4 resources → canonical :class:`PatientRecord` objects.
 
-This maps *standard* FHIR R4 / US Core resources — the shape a certified EHR's
-Bulk-Data ``$export`` or ``Patient/$everything`` produces — into the canonical
-model. It is deliberately NOT the inverse of this project's own exporter
-(:func:`anastomosis.core.fhir.ingest.from_bundle`), which reads the
-``urn:anastomosis:*`` round-trip extensions; arbitrary vendors do not emit
-those. Everything here reads the public US Core codings (LOINC, ICD-10-CM,
-SNOMED CT, RxNorm, CVX) and US Core extensions.
-
-Design rules:
-
-* **Lossless.** A resource field the mapper does not lift into a typed slot is
-  preserved verbatim under a ``fhir_r4:`` namespaced key in the owning object's
-  ``extensions``; whole resource types with no canonical home (e.g. Procedure)
-  are preserved under the record's ``extensions``. Nothing from the source is
-  silently dropped.
-* **Deterministic.** No clocks, no randomness, no set iteration — output order
-  follows the input order, so the same bundle always yields byte-identical
-  records.
-* **Defensive reads.** Vendor exports vary; every accessor tolerates a missing
-  or differently-shaped field rather than raising, so one malformed resource
-  cannot abort a whole patient. (The adapter raises only on the two structural
-  failures that would otherwise lose data silently: a bundle with no Patient at
-  all, and DANGLING resources it cannot attribute — see
-  :class:`AmbiguousUnanchoredError`. A resource with no patient reference at
-  all is not dangling: it is bundle-level and rides ``fhir_r4:shared``.)
-"""
+Maps *standard* FHIR R4 / US Core resources — not the inverse of
+:func:`anastomosis.core.fhir.ingest.from_bundle`, which reads
+``urn:anastomosis:*`` extensions arbitrary vendors don't emit. Lossless:
+an unlifted field rides ``fhir_r4:``-namespaced ``extensions`` (rule 63).
+Deterministic: input order drives output order. Defensive: every accessor
+tolerates a missing/malformed field, except two structural failures — no
+Patient at all, and a dangling, unattributable resource
+(:class:`AmbiguousUnanchoredError`)."""
 
 from __future__ import annotations
 
@@ -130,25 +112,19 @@ _HANDLED = frozenset(
 
 def _strip_version(text: str) -> str:
     """A reference with a trailing ``/_history/<version>`` removed.
-
-    ``Patient/x/_history/2`` is a version-specific reference to the SAME logical
-    resource as ``Patient/x``; taking the last path segment without this would
-    read the version number as the id (and so lose the join).
-    """
+    ``Patient/x/_history/2`` names the SAME logical resource as
+    ``Patient/x``; taking the last path segment without this would read
+    the version number as the id and lose the join."""
     head, sep, _version = text.rpartition("/_history/")
     return head if sep and head else text
 
 
 def _ref_id(ref: Any) -> str | None:
     """The bare id from a FHIR reference dict (``{"reference": "Patient/x"}``).
-
-    Strips a ``ResourceType/`` prefix, a ``urn:uuid:`` prefix, a full URL, or a
-    ``/_history/<version>`` suffix, leaving the logical id used to join
-    resources within the bundle. A reference carrying only a logical
-    ``identifier`` (no ``reference`` string) has no bundle-local id at all and
-    yields None — it is resolved against Patient.identifier separately, by
-    :func:`_resolve_patient`.
-    """
+    Strips a ``ResourceType/`` prefix, ``urn:uuid:``, a full URL, or a
+    ``/_history/<version>`` suffix. A reference with only a logical
+    ``identifier`` (no ``reference`` string) yields ``None`` — resolved
+    against ``Patient.identifier`` separately, by :func:`_resolve_patient`."""
     if not isinstance(ref, dict):
         return None
     value = ref.get("reference")
@@ -174,15 +150,11 @@ def _ref_type(text: str) -> str | None:
 
 
 def _patient_ref(resource: dict[str, Any]) -> dict[str, Any] | None:
-    """The reference NODE this resource hangs off, across the US Core patient
-    reference fields — or None when the resource names no patient at all.
-
-    Returns the node rather than an id because the two failure modes downstream
-    are different: a node whose target is missing is a DANGLING reference (the
-    resource belongs to somebody the data does not contain), while no node at
-    all means the resource is bundle-level (a PractitionerRole, a Provenance, a
-    Medication). :func:`_resolve_patient` tells them apart.
-    """
+    """The reference NODE this resource hangs off (US Core patient
+    reference fields), or ``None`` when it names no patient at all. A node
+    (not an id) because the two failure modes differ downstream: a missing
+    target is DANGLING, no node at all is bundle-level;
+    :func:`_resolve_patient` tells them apart."""
     for field in ("patient", "subject", "beneficiary"):
         node = resource.get(field)
         if isinstance(node, dict) and (node.get("reference") or node.get("identifier")):
@@ -194,13 +166,9 @@ def _patient_identifier_index(
     patients: list[dict[str, Any]],
 ) -> dict[tuple[str | None, str], str | None]:
     """``(system, value) -> patient id`` over every Patient.identifier.
-
-    Each identifier is indexed twice — under its own system, for a reference
-    that names one, and under a system-less key, for a reference that gives only
-    a value. A key two patients share maps to None: an ambiguous identifier
-    anchors nothing, because guessing between two patients is exactly the
-    misattribution this module refuses.
-    """
+    Indexed twice per identifier (its own system, and system-less) so a
+    reference giving only a value still resolves. A key two patients share
+    maps to ``None``: ambiguous, so it anchors nobody rather than guess."""
     index: dict[tuple[str | None, str], str | None] = {}
     for patient in patients:
         pid = str(patient["id"])
@@ -225,19 +193,11 @@ def _resolve_patient(
     patient_ids: frozenset[str],
     by_identifier: dict[tuple[str | None, str], str | None],
 ) -> tuple[str | None, bool]:
-    """Resolve one patient-reference node to ``(patient id, dangling)``.
-
-    Three outcomes, and the third is why this returns a pair:
-
-    * ``(pid, False)`` — the node names a patient present in the data.
-    * ``(None, True)`` — the node names a PATIENT-shaped target that is absent.
-      The resource belongs to somebody who is not here: a dangling reference.
-    * ``(None, False)`` — the node anchors nobody the data can name, and does
-      not claim to: no node at all, a typed reference to a non-patient subject
-      (a Group, a Device), or a logical ``identifier`` matching no (or several)
-      Patient.identifier. These are bundle-level, not dangling, so they never
-      block a load.
-    """
+    """Resolve one patient-reference node to ``(patient id, dangling)``:
+    ``(pid, False)`` when the node names a present patient; ``(None,
+    True)`` when it names a PATIENT-shaped target that is absent
+    (dangling); ``(None, False)`` when it anchors nobody and does not
+    claim to (no node, a non-patient subject, or an unresolved identifier)."""
     if node is None:
         return None, False
     text = node.get("reference")
@@ -249,9 +209,8 @@ def _resolve_patient(
         return None, ref_type is None or ref_type == "Patient"
     ident = node.get("identifier")
     if isinstance(ident, dict) and ident.get("value"):
-        # A reference that names a system must match THAT system: two assigning
-        # authorities can issue the same value, so matching across them would be
-        # a guess. A reference with no system matches on the value alone.
+        # A reference naming a system must match THAT system (two assigning
+        # authorities can share a value); one with no system matches on value alone.
         value = str(ident["value"])
         system = ident.get("system")
         return by_identifier.get((str(system), value) if system else (None, value)), False
@@ -259,12 +218,10 @@ def _resolve_patient(
 
 
 def _indexed_codings(concept: Any) -> list[tuple[int, dict[str, Any]]]:
-    """Every ``coding`` entry of a CodeableConcept with its RAW list position.
-
-    A consumed sub-path must name the element a read actually came from, and the
-    dict-filtered view renumbers past a non-dict entry — so the position travels
-    with the coding rather than being recovered by counting afterwards.
-    """
+    """Every ``coding`` entry of a CodeableConcept with its RAW list
+    position. A consumed sub-path must name the element a read actually
+    came from, and a dict-filtered view renumbers past a non-dict entry —
+    so the position travels with the coding, not recovered by counting."""
     if not isinstance(concept, dict):
         return []
     return [(i, c) for i, c in enumerate(concept.get("coding", [])) if isinstance(c, dict)]
@@ -284,12 +241,9 @@ def _code_in_consumed(
     concept: Any, systems: tuple[str, ...], base: str
 ) -> tuple[str | None, set[str]]:
     """``(code, sub-paths read)`` for :func:`_code_in`, rooted at ``base``.
-
-    Only the coding that MATCHED is consumed — its ``system`` (the discriminator
-    this matched on) and its ``code``. The codings scanned past, and the matched
-    coding's own ``display``/``version``, are siblings nothing read: they stay in
-    the residue. A concept that matches nothing consumes nothing.
-    """
+    Only the MATCHED coding's ``system`` and ``code`` are consumed; codings
+    scanned past, and the matched coding's own ``display``/``version``,
+    stay in the residue. A concept matching nothing consumes nothing."""
     for index, coding in _indexed_codings(concept):
         if coding.get("system") in systems and coding.get("code"):
             return str(coding["code"]), {
@@ -305,12 +259,10 @@ def _code_in(concept: Any, systems: tuple[str, ...]) -> str | None:
 
 
 def _concept_text_consumed(concept: Any, base: str) -> tuple[str | None, set[str]]:
-    """``(text, sub-paths read)`` for :func:`_concept_text`, rooted at ``base``.
-
-    ``{base}.text`` when ``text`` supplied the label, else the
-    ``{base}.coding[i].display`` of the one coding that did — never the codings
-    behind a ``text`` this preferred, and never the code beside the display.
-    """
+    """``(text, sub-paths read)`` for :func:`_concept_text`, rooted at
+    ``base``: ``{base}.text`` when ``text`` supplied the label, else
+    ``{base}.coding[i].display`` of the one coding that did — never the
+    codings behind a preferred ``text``, never the code beside a display."""
     if not isinstance(concept, dict):
         return None, set()
     if concept.get("text"):
@@ -338,12 +290,9 @@ def _ref_id_consumed(ref: Any, base: str) -> tuple[str | None, set[str]]:
 
 def _status_active_consumed(resource: dict[str, Any], field: str) -> tuple[bool, set[str]]:
     """``(active, sub-paths read)`` for a clinical-status CodeableConcept.
-
-    Only a coding that SAYS active is consumed. ``False`` is this lift finding no
-    such coding, so whatever code is actually there (``resolved``, ``refuted``,
-    ``entered-in-error``) was never lifted and must stay in the residue —
-    dropping it would silently reverse the record's clinical meaning.
-    """
+    Only a coding that SAYS active is consumed; ``False`` means this lift
+    found no such coding, so whatever code is actually there stays in the
+    residue — dropping it would silently reverse clinical meaning."""
     concept = resource.get(field)
     for index, coding in _indexed_codings(concept):
         if coding.get("code") == "active":
@@ -397,24 +346,11 @@ _STRUCTURAL = frozenset({"resourceType", "id", "subject", "patient", "beneficiar
 
 
 def _residual(resource: dict[str, Any], consumed: frozenset[str]) -> dict[str, Any]:
-    """Every resource element the builder did not consume, namespaced.
-
-    The per-field half of the lossless guarantee (mirrors pf_tebra's ``_ext``):
-    a FHIR element the mapper does not lift into a typed slot is preserved
-    verbatim under ``fhir_r4:<element>`` rather than dropped. This matters most
-    for status/verification fields a vendor may set — ``Condition.
-    verificationStatus``, ``Observation.status``, ``AllergyIntolerance.
-    criticality`` — whose loss would silently *reverse* a record's clinical
-    meaning (a refuted diagnosis migrating as active, a retracted value as real).
-
-    ``consumed`` names whole elements (``"birthDate"``) and/or exact sub-paths
-    inside one (``"name[0].family"`` — the C-CDA exporter's relative-path
-    convention, at the index the mapper actually read). An element named only by
-    sub-paths is **partially** consumed: what the mapper read is pruned out and
-    the rest is preserved, so a sibling the mapper never touched
-    (``name[0].prefix``, a vendor's own ``extension`` entry) cannot ride out on
-    the coat-tails of one it did.
-    """
+    """Every resource element the builder did not consume, namespaced
+    ``fhir_r4:<element>`` (mirrors pf_tebra's ``_ext``) — matters most for
+    status/verification fields whose loss would reverse clinical meaning.
+    ``consumed`` names whole elements or exact sub-paths; a sub-path-only
+    element is partially consumed, so an untouched sibling never rides out."""
     skip = consumed | _STRUCTURAL
     out: dict[str, Any] = {}
     for key, value in resource.items():
@@ -462,20 +398,11 @@ def _us_core_url(suffix: str) -> str:
 
 
 def _race_ethnicity(resource: dict[str, Any], suffix: str) -> tuple[list[str], set[str]]:
-    """The US Core race/ethnicity displays, plus the sub-paths this lift READ.
-
-    Returns ``(values, consumed)``. ``consumed`` names only what was actually
-    read — the wrapper's ``url`` (the discriminator this matched on) and, inside
-    it, either the whole ``text`` sub-extension or the ``url`` +
-    ``valueCoding.display`` of each ombCategory that supplied a value. Every
-    sibling the lift did not read (the ombCategory codings behind a ``text`` the
-    lift preferred, a ``detailed`` sub-extension, the ``valueCoding.code``
-    itself) stays unconsumed and rides ``fhir_r4:extension``.
-
-    A lift that yields NOTHING consumes nothing — a vendor-shaped entry carrying
-    the race url with a plain ``valueString`` and no sub-extensions is preserved
-    whole rather than marked read and dropped.
-    """
+    """US Core race/ethnicity displays, plus the sub-paths READ:
+    ``(values, consumed)``. ``consumed`` names only the wrapper ``url`` and,
+    inside it, the whole ``text`` or each contributing ombCategory's
+    ``url``+``valueCoding.display`` — never a sibling the lift didn't read.
+    A lift yielding nothing consumes nothing."""
     url = _us_core_url(suffix)
     for index, ext in enumerate(resource.get("extension", [])):
         if not isinstance(ext, dict) or ext.get("url") != url:
@@ -500,12 +427,10 @@ def _race_ethnicity(resource: dict[str, Any], suffix: str) -> tuple[list[str], s
 
 
 def _named(entry: Any) -> bool:
-    """Whether a HumanName entry actually carries a name to migrate.
-
-    A leading ``{}`` (or a use-only) entry is a placeholder some exports emit;
-    selecting it would migrate a NAMELESS patient while the real name sat one
-    index further on — nothing lost, but every typed slot empty.
-    """
+    """Whether a HumanName entry actually carries a name to migrate. A
+    leading ``{}`` (or a use-only) entry is a placeholder some exports
+    emit; selecting it would migrate a nameless patient while the real
+    name sat one index further on."""
     return isinstance(entry, dict) and bool(
         entry.get("family") or any(g for g in entry.get("given", []) if g)
     )
@@ -561,13 +486,10 @@ def _patient(resource: dict[str, Any], source_file: str | None) -> Patient:
     addresses = [_address(a) for a in resource.get("address", []) if isinstance(a, dict)]
     race, race_paths = _race_ethnicity(resource, "race")
     ethnicity, ethnicity_paths = _race_ethnicity(resource, "ethnicity")
-    # `name` and `extension` are consumed only in PART: the sub-paths below are
-    # what this function reads, and _residual preserves the rest (HumanName.use/
-    # prefix/period, a second name, a non-US-Core extension, the race codings the
-    # lift did not read). The name sub-paths follow the SELECTED entry's index,
-    # and the given/suffix indices are RAW list positions while the reads above
-    # filter empty entries; a degenerate empty entry can therefore only duplicate
-    # a value into the residue, never drop one.
+    # `name`/`extension` are consumed only in PART; _residual preserves what
+    # these sub-paths miss. Indices are RAW list positions while the reads
+    # above filter empty entries, so a degenerate entry only duplicates into
+    # the residue, never drops a value.
     consumed = {
         "birthDate",
         "gender",
@@ -621,9 +543,8 @@ def _practitioner(resource: dict[str, Any], source_file: str | None) -> Practiti
     name_index = next((i for i, n in enumerate(names) if isinstance(n, dict)), None)
     name: dict[str, Any] = names[name_index] if name_index is not None else {}
     given = [g for g in name.get("given", []) if g]
-    # `name` and `identifier` are consumed only in PART: a second name entry, the
-    # selected entry's prefix/suffix/use/period, the given entries past the first,
-    # and every non-NPI identifier are siblings this lift never reads.
+    # `name`/`identifier` are consumed only in PART — a second name entry,
+    # extra given names, and every non-NPI identifier stay in the residue.
     consumed: set[str] = set()
     if name_index is not None:
         consumed |= {f"name[{name_index}].family", f"name[{name_index}].text"}
@@ -667,10 +588,8 @@ def _facility(resource: dict[str, Any], source_file: str | None) -> Facility:
         system = tel.get("system")
         telecom[system] = tel.get("value")
         telecom_at[system] = index
-    # Only the address elements printed on a header, and only the two telecom
-    # entries that supplied phone/fax, are read: an address district/country/
-    # period, a third address line, a second address, an email or url entry, and
-    # every telecom use/rank are siblings that stay in the residue.
+    # Only header-printed address elements, and the two telecom entries that
+    # supplied phone/fax, are read; everything else stays in the residue.
     line_indices = [i for i, ln in enumerate(raw_lines) if ln][:2]  # the two that land
     consumed = {
         "name",
@@ -698,21 +617,17 @@ def _facility(resource: dict[str, Any], source_file: str | None) -> Facility:
     )
 
 
-# The exact sub-paths the two reference lifts below read. The consumed-path
-# bookkeeping in :func:`_encounter` must name the same elements those lifts
-# navigate, so the paths live beside the navigation rather than apart from it.
+# The exact sub-paths the two reference lifts below read, kept beside the
+# navigation so :func:`_encounter`'s consumed-path bookkeeping can't drift from it.
 _PROVIDER_REF_PATH = "participant[0].individual.reference"
 _FACILITY_REF_PATH = "location[0].location.reference"
 
 
 def _encounter_provider_id(resource: dict[str, Any]) -> str | None:
-    """The Practitioner id an Encounter's FIRST participant cites, or None.
-
-    Shared by :func:`_encounter` and the reference pre-pass in
-    :func:`records_from_resources`, so the two can never disagree about which
-    Practitioner a record cites — a disagreement would drop the resource from
-    both the typed slot and the bundle-level key.
-    """
+    """The Practitioner id an Encounter's FIRST participant cites, or
+    None. Shared by :func:`_encounter` and the reference pre-pass in
+    :func:`records_from_resources`, so the two can never disagree about
+    which Practitioner a record cites."""
     participants = resource.get("participant", [])
     return _ref_id(participants[0].get("individual")) if participants else None
 
@@ -760,12 +675,9 @@ def _encounter(
         facility_id=facility_id,
         sections=notes.get(resource["id"], []),
         diagnosis_ids=diagnosis_ids,
-        # status, the full period (end), and any reasonCode/type beyond the
-        # first ride along; the typed fields capture the primary elements.
-        # class/participant/location/diagnosis are consumed only in PART: a
-        # participant's type and period, a second participant or location, a
-        # location's own status/period/physicalType, and a diagnosis use/rank
-        # are elements nothing above reads.
+        # status, period.end, and extra reasonCode/type entries ride along;
+        # class/participant/location/diagnosis are consumed only in PART
+        # (a participant's type/period, a second entry, a diagnosis rank).
         extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
@@ -774,12 +686,10 @@ def _encounter(
 def _observations(
     resource: dict[str, Any], patient_id: str, source_file: str | None
 ) -> list[Observation]:
-    """One resource → one or more canonical observations (BP-style panels split).
-
-    A component-bearing Observation with no top-level value (the US Core blood
-    pressure shape) expands to one canonical Observation per component, so the
-    systolic/diastolic LOINCs land as discrete vitals the packs render.
-    """
+    """One resource → one or more canonical observations (BP-style panels
+    split). A component-bearing Observation with no top-level value (the
+    US Core blood-pressure shape) expands to one Observation per
+    component, so systolic/diastolic land as discrete vitals."""
     consumed: set[str] = set()
     category = ObservationCategory.OTHER
     for cat_index, cat in enumerate(resource.get("category", [])):
@@ -812,12 +722,10 @@ def _observations(
         consumed.add(effective_path)
 
     def _value_unit(node: dict[str, Any]) -> tuple[str | None, str | None, set[str]]:
-        """``(value, unit, sub-paths read)``, the paths RELATIVE to ``node``.
-
-        Only the value[x] shape that supplied the value is consumed, so a sibling
-        value[x] a vendor also set — or a Quantity's system/comparator — is never
-        dropped alongside it.
-        """
+        """``(value, unit, sub-paths read)``, the paths RELATIVE to
+        ``node``. Only the value[x] shape that supplied the value is
+        consumed, so a sibling value[x] a vendor also set — or a
+        Quantity's system/comparator — is never dropped alongside it."""
         qty = node.get("valueQuantity")
         if isinstance(qty, dict):
             value = _num_str(qty.get("value"))
@@ -845,12 +753,11 @@ def _observations(
         if isinstance(comp, dict)
     ]
     top_value, top_unit, top_paths = _value_unit(resource)
-    # Emit the panel's own value when it has one, AND every component (the US
-    # Core BP shape is a value-less panel + systolic/diastolic components; a
-    # panel may legitimately carry both). Component ids are index-qualified so
-    # two components sharing a LOINC never collide. The emissions are settled
-    # before the residue is computed: an element counts as consumed only once it
-    # has actually LANDED on an observation this returns.
+    # Emit the panel's own value when it has one, AND every component (US
+    # Core BP is a value-less panel + systolic/diastolic components; a panel
+    # may carry both). Component ids are index-qualified so two components
+    # sharing a LOINC never collide; an element counts as consumed only once
+    # it has actually landed on an observation this returns.
     emitted: list[tuple[str, Any, str | None, str | None, Any]] = []
     panel_code_landed = False
     if top_value is not None:
@@ -936,12 +843,9 @@ def _condition(resource: dict[str, Any], patient_id: str, source_file: str | Non
         stopped=stopped,
         recorded_at=recorded_at,
         active=active,
-        # verificationStatus (refuted/entered-in-error), category, severity,
-        # bodySite, note, etc. are preserved so meaning is never reversed — and
-        # so is a clinicalStatus that does NOT read active: `active=False` is
-        # this lift finding no active coding, so the code that IS there
-        # (`resolved`, `remission`) was never lifted and must stay whole. The
-        # codings beside the ones ICD-10/SNOMED matched stay too.
+        # verificationStatus, category, severity, bodySite, etc. are preserved
+        # (never reverse clinical meaning), along with the codings ICD-10/SNOMED
+        # didn't match.
         extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
@@ -950,21 +854,17 @@ def _condition(resource: dict[str, Any], patient_id: str, source_file: str | Non
 def _medication(
     resource: dict[str, Any], patient_id: str, source_file: str | None
 ) -> MedicationStatement:
-    """A canonical med-list entry from a MedicationRequest or MedicationStatement.
-
-    US Core conveys the active medication list chiefly as MedicationRequest; the
-    canonical :class:`MedicationStatement` is the list the chart renders, so both
-    map here. The originating FHIR resourceType is recorded in extensions (the
-    request/statement distinction), and status/intent/requester/etc. ride along
-    via the residual catch-all.
-    """
+    """A canonical med-list entry from a MedicationRequest or
+    MedicationStatement — US Core conveys the active list chiefly as the
+    former, but the canonical :class:`MedicationStatement` is what the
+    chart renders, so both map here. The originating resourceType rides
+    in extensions."""
     concept = resource.get("medicationCodeableConcept", {})
     display_name, consumed = _concept_text_consumed(concept, "medicationCodeableConcept")
     rxnorm, rxnorm_paths = _code_in_consumed(concept, _RXNORM, "medicationCodeableConcept")
     consumed |= rxnorm_paths
-    # Whichever of the two dosage spellings the vendor used, and only its FIRST
-    # entry's `text`: a second dosage line, and the route/timing/doseAndRate
-    # beside the sig, are elements nothing here reads.
+    # Whichever dosage spelling the vendor used, only its FIRST entry's
+    # `text`; a second line and the route/timing/doseAndRate beside it stay.
     dosage_key = "dosageInstruction" if resource.get("dosageInstruction") else "dosage"
     dosage = resource.get("dosageInstruction") or resource.get("dosage") or []
     sig = dosage[0].get("text") if dosage and isinstance(dosage[0], dict) else None
@@ -1044,10 +944,9 @@ def _allergy(
         severity=severity,
         onset=onset,
         active=active,
-        # criticality (read only as the severity fallback), verificationStatus,
-        # type, recordedDate, note are preserved rather than dropped — as are
-        # the category entries, manifestation codings, reaction onset/note and a
-        # non-active clinicalStatus code that no lift above reads.
+        # criticality (severity fallback), verificationStatus, type,
+        # recordedDate, note, category, manifestation codings, and a
+        # non-active status code all stay in the residue.
         extensions=_residual(resource, frozenset(consumed)),
         provenance=_prov(source_file, resource["id"]),
     )
@@ -1157,9 +1056,8 @@ def _goal(resource: dict[str, Any], patient_id: str, source_file: str | None) ->
         consumed.add("startDate")
     active = resource.get("lifecycleStatus") in ("active", "accepted", "in-progress")
     if active:
-        # A lifecycleStatus outside that set (`cancelled`, `entered-in-error`) is
-        # never lifted: dropping it would migrate an abandoned goal as merely
-        # inactive, which is the same meaning reversal a status field always is.
+        # A lifecycleStatus outside that set is never lifted: dropping it
+        # would migrate an abandoned goal as merely inactive.
         consumed.add("lifecycleStatus")
     return Goal(
         id=resource["id"],
@@ -1218,16 +1116,11 @@ def _decode_attachment(attachment: dict[str, Any]) -> str | None:
 
 
 def _note_section(docref: dict[str, Any]) -> NoteSection | None:
-    """A narrative DocumentReference → a NARRATIVE NoteSection carrying TEXT only.
-
-    Both text/html and text/plain attachments are carried as plain text
-    (text/html is down-converted via ``html_to_text``) and never as
-    ``NoteSection.html``. The packs render ``.html`` with Jinja ``| safe``;
-    because this lane ingests arbitrary external EHR exports, external markup is
-    deliberately kept out of that trusted slot — the clinical text is preserved,
-    the (untrusted) markup is not re-emitted into a rendered chart. Binary
-    content (PDF etc.) becomes a DocumentArtifact, not a note.
-    """
+    """A narrative DocumentReference → a NARRATIVE NoteSection carrying
+    TEXT only, never ``.html``: packs render ``.html`` with Jinja
+    ``| safe``, and this lane ingests arbitrary external markup that must
+    not reach that trusted slot. Binary content (PDF etc.) becomes a
+    DocumentArtifact instead."""
     title = _concept_text(docref.get("type"))
     for content in docref.get("content", []):
         attachment = content.get("attachment") if isinstance(content, dict) else None
@@ -1282,14 +1175,11 @@ def _artifact(
 def _note_encounter(
     docref: dict[str, Any], section: NoteSection, patient_id: str, source_file: str | None
 ) -> Encounter:
-    """A synthetic encounter carrying a note whose ``context.encounter`` was
-    absent or dangling — so the narrative still renders and is never dropped.
-
-    Common in a ``$export`` slice (the DocumentReference's encounter is omitted
-    or points outside the slice). The docref's own ``date`` becomes the date of
-    service; its other top-level fields ride the encounter extensions. The id is
-    namespaced (``docref:<id>``) so it cannot collide with a real Encounter id.
-    """
+    """A synthetic encounter for a note whose ``context.encounter`` was
+    absent or dangling, so the narrative still renders. Common in an
+    ``$export`` slice. The docref's own ``date`` becomes the date of
+    service; the id is namespaced (``docref:<id>``) so it never collides
+    with a real Encounter id."""
     return Encounter(
         id=f"docref:{docref['id']}",
         patient_id=patient_id,
@@ -1308,28 +1198,20 @@ def _note_encounter(
 
 
 def _safe_resource_type(value: Any) -> str:
-    """A ``resourceType`` in the shape that is safe to echo to an operator.
-
-    A resourceType is schema, not patient data — but it arrives from a file this
-    module does not author, and anything at all can sit in that slot. Only a
-    plain FHIR type name is echoed; every other shape reads as ``"unknown"``, so
-    a crafted export cannot smuggle patient text into a message or a log line.
-    """
+    """A ``resourceType`` in the shape safe to echo to an operator: only a
+    plain FHIR type name, else ``"unknown"`` — the file this reads is not
+    authored by this module, so a crafted export cannot smuggle patient
+    text into a message or log line."""
     text = str(value)
     return text if text.isascii() and text.isalpha() and len(text) <= 64 else "unknown"
 
 
 class AmbiguousUnanchoredError(SourceDataError, ValueError):
-    """Resources reference a patient the data does not contain, and the data
-    describes more than one patient.
-
-    Attaching them to an arbitrary record would misattribute one patient's data
-    to another; dropping them would breach the lossless guarantee. Neither is
-    acceptable, so the load is refused. The message names the resource TYPES and
-    their counts — schema names and counts, never a resource id or any
-    patient-derived value (:func:`_safe_resource_type` holds that line even for
-    a resourceType a vendor filled with something else).
-    """
+    """Resources reference a patient the data does not contain, and the
+    data describes more than one patient — attaching them would
+    misattribute, dropping them would breach losslessness, so the load
+    refuses. The message names resource TYPES and counts only, never an
+    id or patient-derived value (:func:`_safe_resource_type`)."""
 
     def __init__(self, counts: dict[str, int]) -> None:
         safe: Counter[str] = Counter()
@@ -1348,38 +1230,11 @@ class AmbiguousUnanchoredError(SourceDataError, ValueError):
 def records_from_resources(
     resources: list[dict[str, Any]], *, source_file: str | None = None
 ) -> Iterator[PatientRecord]:
-    """Group flat FHIR resources into one :class:`PatientRecord` per Patient.
-
-    Accepts the resources from a Bundle's ``entry[].resource`` or the lines of a
-    Bulk-Data ``$export`` NDJSON set (already parsed). Yields one record per
-    Patient, in the order the patients appear. Raises :class:`ValueError` only
-    when there is no Patient at all (the loud structural failure the lossless
-    guarantee requires); a per-resource oddity is tolerated, not fatal.
-
-    A resource the grouping cannot attach to a record goes to one of two homes,
-    and telling them apart is the difference between a refusal and an ordinary
-    load (:func:`_resolve_patient`):
-
-    * **Dangling** — the resource names a patient that is NOT in the data (a
-      broken reference, or an out-of-scope ``$export`` slice). It belongs to
-      somebody. With a single patient it is preserved under that record's
-      ``extensions["fhir_r4:unanchored"]``; with several there is no record it
-      can be attributed to without guessing, so the load is refused
-      (:class:`AmbiguousUnanchoredError`) — omitting it would be a silent drop,
-      attaching it would misattribute one patient's data to another.
-    * **Patient-less** — the resource names no patient at all (PractitionerRole,
-      Provenance, Medication, a Group-subject Observation). It is bundle-level,
-      exactly like the Practitioner/Location/Organization resources records
-      attach by reference, so it is preserved under
-      ``extensions["fhir_r4:shared"]`` on EVERY record — no attribution is
-      claimed by that key, nothing is dropped, and an ordinary multi-patient
-      bundle is never refused over it.
-
-    ``fhir_r4:shared`` also carries the reference resources themselves when no
-    record cites them: a Practitioner, Location or Organization that no
-    patient-anchored Encounter names reaches no typed slot, and that key is the
-    bundle-level home the lossless guarantee requires for it.
-    """
+    """Group flat FHIR resources into one :class:`PatientRecord` per
+    Patient, in order; raises only when there is no Patient at all. An
+    absent-patient reference is DANGLING (preserved on its one patient, or
+    refused when several could be it); a no-patient reference is
+    bundle-level, on EVERY record's ``extensions["fhir_r4:shared"]``."""
     patients = [r for r in resources if r.get("resourceType") == "Patient" and r.get("id")]
     if not patients:
         raise ValueError("no Patient resource found in the FHIR data")
@@ -1395,9 +1250,8 @@ def records_from_resources(
         if r.get("resourceType") in ("Location", "Organization") and r.get("id")
     }
 
-    # Group everything patient-scoped up front (single pass). DocumentReferences
-    # are kept raw and partitioned per record in _assemble (notes vs artifacts,
-    # attached vs synthetic), where the patient's encounter ids are known.
+    # Group everything patient-scoped up front (single pass); DocumentReferences
+    # are partitioned per record in _assemble, where encounter ids are known.
     by_patient: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     docrefs_by_patient: dict[str, list[dict[str, Any]]] = defaultdict(list)
     dangling: list[dict[str, Any]] = []
@@ -1418,10 +1272,9 @@ def records_from_resources(
             continue
         by_patient[pid][rtype].append(resource)
 
-    # Which reference resources a record will actually attach, decided from the
-    # PATIENT-ANCHORED encounters alone and through the same two lifts _encounter
-    # uses. An encounter that never becomes a typed record (a dangling one) cites
-    # nobody, so the Practitioner it names is uncited and must be preserved.
+    # Which reference resources a record actually attaches, decided from
+    # PATIENT-ANCHORED encounters via the same two lifts _encounter uses —
+    # a dangling encounter cites nobody, so its Practitioner stays uncited.
     cited_providers: set[str] = set()
     cited_facilities: set[str] = set()
     for groups in by_patient.values():
@@ -1432,11 +1285,9 @@ def records_from_resources(
             facility = _encounter_facility_id(encounter)
             if facility is not None:
                 cited_facilities.add(facility)
-    # An uncited Practitioner/Location/Organization reaches neither a typed slot
-    # nor any extensions key on its own, so it rides the bundle-level key beside
-    # the patient-less resources. Bundle order, and only the entries the records
-    # themselves draw on (an id shadowed by a later duplicate is not one), so
-    # nothing is duplicated into shared and nothing cited lands there.
+    # An uncited Practitioner/Location/Organization rides the bundle-level
+    # key beside the patient-less resources, in bundle order, only for the
+    # entries the records themselves draw on.
     for resource in resources:
         rid = resource.get("id")
         if (practitioners.get(rid) is resource and rid not in cited_providers) or (
@@ -1444,10 +1295,8 @@ def records_from_resources(
         ):
             shared.append(resource)
 
-    # Dangling resources are preserved only when there is exactly one patient to
-    # attribute them to (see the docstring); with several, neither attaching nor
-    # omitting them is safe, so the load is refused. Bundle-level resources are
-    # never part of that decision — they claim no patient in the first place.
+    # Dangling resources are preserved only with exactly one patient to
+    # attribute them to; with several, the load is refused instead of guessing.
     sole_patient = patients[0]["id"] if len(patients) == 1 else None
     if dangling and sole_patient is None:
         raise AmbiguousUnanchoredError(dict(Counter(str(r.get("resourceType")) for r in dangling)))
@@ -1476,11 +1325,10 @@ def _assemble(
     shared: list[dict[str, Any]],
 ) -> PatientRecord:
     patient_id = patient_res["id"]
-    # Partition this patient's DocumentReferences. A narrative note whose
-    # context.encounter resolves attaches to that encounter (its other top-level
-    # fields ride note_meta); a note with no/dangling encounter gets a synthetic
-    # encounter so the narrative still renders and is never dropped; binary
-    # content becomes a DocumentArtifact.
+    # Partition this patient's DocumentReferences: a narrative note whose
+    # context.encounter resolves attaches to that encounter; one with no/
+    # dangling encounter gets a synthetic encounter; binary content becomes
+    # a DocumentArtifact.
     encounter_ids = {r["id"] for r in grp.get("Encounter", []) if r.get("id")}
     notes_for_enc: dict[str, list[NoteSection]] = defaultdict(list)
     note_meta: dict[str, Any] = {}
@@ -1494,9 +1342,8 @@ def _assemble(
             if artifact is not None:
                 artifacts.append(artifact)
             else:
-                # Neither renderable narrative nor binary (empty/whitespace/
-                # undecodable content): preserve the whole resource so its
-                # status/type/date are never silently dropped.
+                # Neither renderable narrative nor binary (empty/undecodable
+                # content): preserve the whole resource so nothing is dropped.
                 leftover_docrefs.append(docref)
             continue
         enc_id = _ref_id((docref.get("context", {}).get("encounter") or [{}])[0])

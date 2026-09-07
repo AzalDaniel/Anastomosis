@@ -1,37 +1,11 @@
-"""The reference in-memory destination: test double and future --dry-run target.
+"""The reference in-memory destination: test double and future --dry-run seed.
 
 :class:`FakeDestination` implements the whole :class:`Destination` protocol
-without performing any I/O, so the upload engine can be driven end to end —
-including failure, retry, wrong-patient, and kill-and-resume paths — against a
-fully deterministic destination. It is also the seed of the eventual
-``--dry-run`` destination: a real run that resolves patients and scans for
-duplicates but never actually files anything.
-
-Two behaviors model the properties the engine's safety guarantees rely on:
-
-* **Uploaded fingerprints become visible to the scanner.** After a successful
-  upload the item's fingerprint is added to that destination patient's
-  existing-docs set, so a *resumed* run's duplicate scan finds a document that
-  landed just before a crash — exactly the double-file defense kill-and-resume
-  tests exercise. Sharing the ``existing`` mapping across two FakeDestination
-  instances simulates the destination's own persistence across the crash.
-* **``crash_after`` raises mid-run.** After N successful uploads the driver
-  raises :class:`FakeCrash` to stand in for process death, so a test can kill a
-  run partway and then resume it on a fresh ledger.
-
-Optional read-back (``readable=True``): the double additionally implements the
-:class:`~anastomosis.destinations.base.MetadataReader` and
-:class:`~anastomosis.destinations.base.DocumentReader` capability protocols, so
-the L0-L6 verifier's post-upload checks (L5 metadata, L6 round-trip) can run
-against it. A successful upload stores the item's bytes keyed by the
-destination doc id; ``read_back`` returns them, ``read_metadata`` reports their
-size and (via the ``page_counts`` knob, since the fake never parses a PDF) page
-count. The ``corrupt_readback`` knob makes ``read_back`` return altered bytes
-for chosen item keys — the L6 fail path.
-
-PHI rule: this double stores only opaque ids, fingerprints, item keys, and the
-synthetic document bytes a test wrote — no patient-derived values — and never
-logs.
+with no I/O and full determinism, so the engine's failure, retry,
+wrong-patient and kill-and-resume paths can be driven end to end. Sharing
+``existing`` across two instances simulates a destination's own persistence
+across a crash. ``readable=True`` adds the reader protocols so L5/L6 can
+run. PHI: only opaque ids, fingerprints and synthetic bytes; never logs (2).
 """
 
 from __future__ import annotations
@@ -52,17 +26,10 @@ __all__ = ["FakeCrash", "FakeDestination"]
 
 
 class FakeCrash(KeyboardInterrupt):
-    """Simulated process death raised by the driver after ``crash_after`` uploads.
-
-    Deliberately a :class:`BaseException` (via :class:`KeyboardInterrupt`), NOT
-    a :class:`DeliveryError` or other ``Exception``. A real process kill is not
-    a catchable delivery failure: the engine's "unknown exception => retry"
-    handler only catches :class:`Exception`, so a ``BaseException`` sails
-    straight through it and out of the run — exactly as a SIGKILL/Ctrl-C would,
-    leaving the in-flight item mid-``UPLOADING`` for :meth:`TrackingDB.recover`
-    to rewind. (The plan text wrote ``FakeCrash(RuntimeError)``; a RuntimeError
-    would be swallowed by the transient-retry catch and could never reproduce a
-    kill, so it is modeled as a BaseException instead — see report.)
+    """Simulated process death after ``crash_after`` uploads: a
+    :class:`BaseException`, not a :class:`DeliveryError`, so the engine's
+    exception-retry handler (which catches only ``Exception``) lets it
+    through like a real kill, leaving the item mid-``UPLOADING``.
     """
 
 
@@ -99,10 +66,8 @@ class FakeDestination:
     ) -> None:
         # canonical patient_id -> destination_patient_id
         self._known_patients = dict(known_patients)
-        # destination_patient_id -> fingerprints already filed. Held by
-        # REFERENCE (not copied) so passing the SAME dict to a resumed run's
-        # destination makes uploads that landed pre-crash visible to the
-        # resumed scanner — the property the kill-and-resume defense relies on.
+        # destination_patient_id -> fingerprints filed; held by REFERENCE
+        # (not copied) so a resumed destination sees fingerprints filed pre-crash.
         self._existing: dict[str, set[str]] = existing if existing is not None else {}
         # item_key -> remaining transient failures before upload succeeds.
         self._transient_remaining: dict[str, int] = (
@@ -111,15 +76,12 @@ class FakeDestination:
         self._permanent_failures = set(permanent_failures or set())
         self._wrong_patient_ids = set(wrong_patient_ids or set())
         self._crash_after = crash_after
-        # Crash on what would have been the Nth successful upload, BEFORE the
-        # destination commits anything — the not-landed kill variant, whose
-        # resume must RE-UPLOAD (vs. crash_after, whose resume must NOT).
+        # Crashes BEFORE the destination commits: the not-landed kill variant,
+        # whose resume must RE-UPLOAD (crash_after's resume must not).
         self._crash_before = crash_before
         self._echo_wrong_size_keys = set(echo_wrong_size_keys or set())
-        # When readable, the double also implements MetadataReader +
-        # DocumentReader: upload() stores the item's bytes so a verifier's
-        # L5/L6 post-checks can read them back. The fake never parses a PDF, so
-        # the page count it reports is supplied per destination_doc_id.
+        # readable=True additionally stores upload() bytes so L5/L6 read-back
+        # can resolve them; page counts come from the page_counts knob.
         self._readable = readable
         self._page_counts = dict(page_counts) if page_counts else {}
         self._corrupt_readback = set(corrupt_readback or set())
@@ -188,9 +150,8 @@ class FakeDestination:
             raise TransientDeliveryError
 
         if self._crash_before is not None and self._successful_uploads + 1 >= self._crash_before:
-            # Stand in for process death BEFORE the destination commits the
-            # bytes: nothing recorded, nothing visible to the scanner — the
-            # resumed run must re-upload this document.
+            # Nothing recorded yet, so nothing is visible to the scanner:
+            # resume must re-upload this document.
             self._crash_before = None
             raise FakeCrash
 
@@ -204,8 +165,8 @@ class FakeDestination:
             # are about to hand back, so the verifier's read-back resolves them.
             self._stored[f"doc-{item.item_key}"] = (item.item_key, item.file_path.read_bytes())
         if self._crash_after is not None and self._successful_uploads >= self._crash_after:
-            # Stand in for process death AFTER the upload has landed, so the
-            # resumed run must rely on the duplicate scan to avoid re-filing.
+            # Landed already: resume must rely on the duplicate scan, not
+            # re-upload.
             self._crash_after = None
             raise FakeCrash
 
@@ -219,29 +180,19 @@ class FakeDestination:
 
     # --- MetadataReader / DocumentReader (only when readable=True) ---
     #
-    # The two reader methods are bound onto the instance in __init__ ONLY when
-    # readable=True (see _enable_reader), so the optional-capability protocols
-    # detect the fake honestly: an isinstance() check against
-    # MetadataReader/DocumentReader (both runtime_checkable, hasattr-based) is
-    # True for a readable fake and False for a plain one — exactly as a real
-    # reader vs. non-reader pack would behave. The verifier's L5/L6 must SKIP a
-    # plain fake, not crash on it, so the methods must be genuinely absent.
+    # Bound onto the instance only when readable=True, so isinstance() against
+    # the runtime_checkable reader protocols reflects real capability — L5/L6
+    # must SKIP a plain fake, not crash on it.
 
     def _enable_reader(self) -> None:
-        # Bind the public reader names onto the instance, so hasattr (and thus
-        # isinstance against the runtime_checkable reader protocols) is True
-        # only for a readable fake.
         self.read_metadata = self._read_metadata
         self.read_back = self._read_back
 
     def _read_metadata(
         self, patient: DestinationPatient, destination_doc_id: str
     ) -> Mapping[str, str | int]:
-        """Destination-reported metadata for a stored document.
-
-        Reports the stored byte size and, when the test supplied one via
-        ``page_counts`` (keyed by destination_doc_id), the page count — the
-        fake never parses a PDF, so an unsupplied count is simply omitted.
+        """Reports the stored byte size and, when supplied via
+        ``page_counts``, the page count (the fake never parses a PDF).
         """
         _item_key, data = self._stored[destination_doc_id]
         meta: dict[str, str | int] = {"size_bytes": len(data)}
@@ -253,8 +204,7 @@ class FakeDestination:
         """Return the stored bytes — altered when this item is in ``corrupt_readback``."""
         item_key, data = self._stored[destination_doc_id]
         if item_key in self._corrupt_readback:
-            # A destination that mangled the document into unreadable garbage:
-            # the round-trip hash differs AND the bytes no longer parse as a
-            # PDF, so L6 fails (neither byte-identity nor the reprocessed tier).
+            # Mangled bytes: the round-trip hash differs and the bytes fail
+            # to parse as a PDF, so L6 fails both tiers.
             return b"corrupted-not-a-pdf"
         return data

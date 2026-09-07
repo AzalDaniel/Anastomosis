@@ -208,21 +208,12 @@ def test_bundle_qa_slice_isolates_each_patient(
 def test_bundle_qa_slice_carries_the_record_summarys_verdict(
     tmp_path: Path, records: list[PatientRecord]
 ) -> None:
-    """The whole-patient page's verdict rides in the bundle that holds the page.
-
-    A record summary grades a chart rather than a visit, so its row carries the
-    PATIENT id where an encounter row carries an encounter id — the same
-    stand-in the upload manifest and the export's encounter check use. Slicing
-    on the record's encounter ids alone dropped exactly that row: an ordinary
-    export put three rows in ``charts/qa_report.json`` and two in the bundle,
-    and a patient whose whole chart is a scan got a well-formed report with no
-    rows at all beside the only page it carries. An empty report reads as
-    "nothing to say" rather than "the verdict for this page is missing" (#399).
-
-    The two patients here are deliberately in one report: a row keyed on ONE
-    patient's id must not reach the OTHER patient's bundle, which is the
-    isolation the sibling test above holds for encounter rows.
-    """
+    """Contract: a record-summary row carries the PATIENT id where an
+    encounter row carries an encounter id, so slicing on encounter ids
+    alone must not drop it — an empty QA report would read as "nothing
+    to say" rather than "the verdict for this page is missing" (#399).
+    Isolation still holds: a row keyed on ONE patient's id must not
+    reach the OTHER patient's bundle."""
     out = tmp_path / "bundles"
     docs: list[DocumentQA] = [
         DocumentQA(
@@ -281,12 +272,10 @@ def test_bundle_handles_missing_pdfs(tmp_path: Path, records: list[PatientRecord
 
 
 def test_bundle_budgets_the_copied_chart_name(tmp_path: Path) -> None:
-    """A renderer-length chart name must be DELIVERED, not warned about.
-
-    Unbudgeted, ``pdfs/<617-char name>.pdf`` under a bundle directory blows the
-    Windows path budget; the copy fails, the deliverer logs "pdf copy failed"
-    and continues, and the operator hands over a bundle with a chart missing.
-    """
+    """A renderer-length chart name must be DELIVERED, not warned
+    about: unbudgeted, ``pdfs/<617-char name>.pdf`` under a bundle
+    directory blows the Windows path budget, so the copy would fail
+    and the operator would hand over a bundle with a chart missing."""
     from datetime import date
 
     from anastomosis.core.model import Encounter, Patient, PatientRecord
@@ -387,13 +376,11 @@ def test_a_bundle_carries_the_documents_its_charts_reference(tmp_path: Path) -> 
 
 
 def test_a_bundle_without_the_carried_attachments_still_delivers(tmp_path: Path) -> None:
-    """Conservation belongs to the run, so this reports rather than refuses.
-
-    `pipeline._carry_attachments` knows the export and stops a run whose
-    attachments did not all arrive. A charts directory with none means it was
-    assembled without that step — the bundle says so and delivers the charts,
-    rather than putting a precondition on a public entry point.
-    """
+    """Conservation belongs to the run, so this reports rather than
+    refuses: a charts directory with no attachments means it was
+    assembled without `_carry_attachments`'s step, and the bundle
+    delivers the charts rather than putting a precondition on a public
+    entry point."""
     records = list(get_source("pf-tebra").load(FIXTURE))
     charts = tmp_path / "charts"
     charts.mkdir()
@@ -405,15 +392,12 @@ def test_a_bundle_without_the_carried_attachments_still_delivers(tmp_path: Path)
 
 
 def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) -> None:
-    """Every document a record names gets its own slot in the bundle.
-
-    The names cannot collide outright — `_attachments_for` reads them from one
-    directory, and a directory cannot hold two files with one name. What CAN
-    collide is the DELIVERED name, because it is budgeted to fit the bundle's
-    path depth and two long names can be cut to the same thing. That case
-    raises through the shared ledger rather than filing one scan over another;
-    this pins the ordinary case, where both simply land.
-    """
+    """Every document a record names gets its own slot in the bundle:
+    names cannot collide outright (one directory, one name each), but
+    the DELIVERED name is budgeted to fit the bundle's path depth, so
+    two long names can be cut to the same thing. That case raises
+    through the shared ledger; this pins the ordinary case, where both
+    simply land."""
     landing = tmp_path / "attachments"
     landing.mkdir()
     (landing / "referral.pdf").write_bytes(b"%PDF-1.4 one\n")
@@ -447,22 +431,15 @@ _DATA_ABSENT_REASON_EXT = "http://hl7.org/fhir/StructureDefinition/data-absent-r
 def test_the_two_artifact_fixture_resolves_through_the_real_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Driven through the real CLI, the two-artifact fixture (one embedded
-    B64 2-page PDF, one ``<reference>``d 1-page PDF, one patient, no
-    encounters): both attachments land on disk (#372/#380), and now each
-    DocumentReference's ``url`` resolves to one of them from ``bundle.json``'s
-    own directory, with ``size`` and ``hash`` matching what is actually there.
-    RED on main: both Attachments carried contentType only, url/size/hash all
-    ``None``.
+    """Contract: driven through the real CLI over the two-artifact
+    fixture (one embedded B64 2-page PDF, one ``<reference>``d 1-page
+    PDF, one patient, no encounters), each DocumentReference's ``url``
+    resolves to a landed file in ``bundle.json``'s own directory, with
+    ``size``/``hash`` matching what is actually there (#372/#380).
 
-    Chromium is stubbed the way the sibling end-to-end test over this same
-    fixture stubs it. The subject here is what the bundle SAYS about the
-    documents beside it, not whether a browser is installed: the unit lanes
-    have no Chromium, and a whole-patient view is still rendered for this
-    patient, so leaving the real renderer in place made the run exit 1 on
-    ``RendererUnavailable`` before the assertions were ever reached. The CLI,
-    the pipeline and the bundle deliverer all still run for real.
-    """
+    Chromium is stubbed (as the sibling end-to-end test stubs it)
+    since the unit lanes have no browser; the CLI, pipeline and bundle
+    deliverer all still run for real."""
     import base64
     import hashlib
 
@@ -597,15 +574,11 @@ def test_two_artifacts_naming_one_file_reuse_one_measurement_object(tmp_path: Pa
 
 
 def test_a_document_whose_file_did_not_land_says_so_plainly(tmp_path: Path) -> None:
-    """Entered for real: the charts directory carries only ONE of the two
-    documents this record names. The bundle still delivers — conservation of
-    the FULL export belongs to the run
-    (see ``test_a_bundle_without_the_carried_attachments_still_delivers``) —
-    but the DocumentReference for the file that did not land says so
-    explicitly, in the field a FHIR consumer already knows to check for
-    absent data, rather than shipping silent nulls indistinguishable from
-    "nobody checked".
-    """
+    """The charts directory carries only ONE of the two documents this
+    record names; the bundle still delivers, but the DocumentReference
+    for the file that did not land says so explicitly, in the field a
+    FHIR consumer already checks for absent data, rather than shipping
+    silent nulls indistinguishable from "nobody checked"."""
     from anastomosis.core.model import DocumentArtifact, Patient
 
     charts = tmp_path / "charts"

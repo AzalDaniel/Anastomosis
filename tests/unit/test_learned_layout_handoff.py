@@ -1,16 +1,11 @@
-"""The layout you taught it: from the Teach step to a run that uses it.
+"""The layout you taught it: from the Teach step to a run that uses it —
+where the draft lands, what confirming it grants, whether the choosers
+offer it afterwards from a different working directory, and what a run
+does when the layout is missing, edited, or untrusted.
 
-Teaching a document layout used to end at "the draft layout was written to
-packs/acme_soap". The next two screens could not offer it — discovery never
-looked at a relative ``packs/``, and would not have executed its ``context.py``
-if it had — so the operator confirmed one layout and then ran a different one.
-These tests walk that whole handoff: where the draft lands, what confirming it
-grants, whether the choosers offer it afterwards and from a different working
-directory, and what a run does when the layout is missing, edited, or untrusted.
-
-Everything here is synthetic: sample PDFs are drawn with PyMuPDF from invented
-patients, the chart fixture is the checked-in synthetic export, and the user
-home is the per-test temporary one the suite's conftest installs.
+Synthetic: sample PDFs are drawn with PyMuPDF from invented patients, the
+chart fixture is the checked-in synthetic export, and the user home is
+the per-test temporary one the suite's conftest installs.
 """
 
 from __future__ import annotations
@@ -108,12 +103,9 @@ def _available(controller: GuiController) -> dict[str, dict[str, object]]:
 def test_the_draft_lands_in_the_user_home_not_the_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The destination is a property of the operator, not of the process's CWD.
-
-    ``out_dir`` defaulted to a relative ``packs``, so where a taught layout went
-    depended on where the app was launched from — and where discovery looked
-    later did not depend on that at all.
-    """
+    """The destination is a property of the operator, not the process's
+    CWD: a relative default would depend on where the app launched from,
+    while discovery looks somewhere fixed regardless."""
     workdir = tmp_path / "somewhere-else"
     workdir.mkdir()
     monkeypatch.chdir(workdir)
@@ -141,13 +133,10 @@ def test_an_explicit_destination_is_still_honored(tmp_path: Path) -> None:
 
 
 def test_confirming_the_teach_is_what_trusts_the_code_it_wrote(tmp_path: Path) -> None:
-    """The confirmed step records the hash of the bytes it just wrote.
-
-    The trust review is not skipped — the hash gate is still the only thing that
-    lets a learned ``context.py`` run — but the consent is taken where the
-    operator gave it, rather than demanded again on a later screen that never
-    offered the layout in the first place.
-    """
+    """The confirmed step records the hash of the bytes it just wrote:
+    the hash gate is still the only thing that lets a learned
+    ``context.py`` run, but consent is taken where the operator gave
+    it, not demanded again on a later screen."""
     written = Path(str(_teach(tmp_path)["pack_dir"]))
 
     assert default_pack_trust().is_trusted(written, pack_content_hash(written))
@@ -192,12 +181,9 @@ def test_a_taught_layout_is_offered_by_both_run_forms(tmp_path: Path) -> None:
 def test_a_fresh_process_in_a_fresh_directory_still_offers_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Restart coverage: a new controller, asked from a different CWD.
-
-    The Teach runs in one directory and the question is asked from another, by a
-    controller that shares nothing with the one that wrote the pack — which is
-    all "the app was restarted" means to this layer.
-    """
+    """Restart coverage: Teach runs in one directory, and a new
+    controller sharing nothing with it is asked from another — which is
+    all "the app was restarted" means at this layer."""
     taught_from = tmp_path / "launched-here"
     taught_from.mkdir()
     monkeypatch.chdir(taught_from)
@@ -255,12 +241,9 @@ def test_a_migration_prepares_through_the_layout_that_was_taught(
 def test_a_deleted_layout_refuses_the_run_rather_than_falling_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A layout that is gone stops the run. It never becomes the neutral one.
-
-    Silently rendering somebody's charts through a layout they did not choose is
-    the same false completion as the one this issue names, moved to where it
-    costs more.
-    """
+    """A layout that is gone stops the run rather than silently falling
+    back to a neutral one and rendering charts through a layout the
+    operator never chose."""
     import shutil
 
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
@@ -279,12 +262,9 @@ def test_a_deleted_layout_refuses_the_run_rather_than_falling_back(
 def test_an_edited_layout_is_refused_until_it_is_confirmed_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Editing ``context.py`` un-trusts the pack — for the choosers and the run.
-
-    This is the trust review the issue insists on keeping: consent was given for
-    a specific set of bytes, and whoever changed them afterwards did not have
-    it.
-    """
+    """Editing ``context.py`` un-trusts the pack, for the choosers and
+    the run alike: consent was given for a specific set of bytes, and
+    whoever changed them afterwards did not have it."""
     monkeypatch.setattr(chromium, "ChromiumRenderer", _FakeChromium)
     _teach(tmp_path)
     context = user_packs_dir() / LEARNED / "context.py"
@@ -332,13 +312,10 @@ def test_the_pipeline_refuses_an_untrusted_layout_loudly(
 
 
 def test_a_learned_pack_is_never_executed_without_a_trust_store(tmp_path: Path) -> None:
-    """No store, no execution — the hash is the only thing that authorizes it.
-
-    A caller that checks no trust store cannot show the code is the code that
-    was confirmed, so the pack is diagnosed rather than imported. The planted
-    ``context.py`` writes a file if it ever runs, so this is evidence and not an
-    inference from the diagnosis text.
-    """
+    """No store, no execution — the hash is the only proof of
+    authorization; an untrusted pack is diagnosed, never imported. The
+    planted ``context.py`` writes a tripwire file if it ever runs, so
+    this is evidence, not an inference from the diagnosis text."""
     planted = user_packs_dir() / "planted_layout"
     planted.mkdir(parents=True)
     (planted / "pack.yaml").write_text(
@@ -363,13 +340,9 @@ def test_a_learned_pack_is_never_executed_without_a_trust_store(tmp_path: Path) 
 
 
 def test_the_install_self_check_asks_only_about_the_shipped_layouts(tmp_path: Path) -> None:
-    """A user layout shadowing a built-in name cannot fail the asset check.
-
-    Shadowing is a documented thing an operator may do, and the self-check's
-    question is whether the SHIPPED files are present and readable. Asking it of
-    a directory the operator owns turned one legitimate choice into a reported
-    broken install.
-    """
+    """A user layout shadowing a built-in name cannot fail the asset
+    check: the self-check asks only whether the SHIPPED files are
+    present and readable, never about a directory the operator owns."""
     shadow = user_packs_dir() / "generic_soap"
     shadow.mkdir(parents=True)
     (shadow / "pack.yaml").write_text("name: generic_soap\n", encoding="utf-8")
@@ -382,13 +355,10 @@ def test_the_install_self_check_asks_only_about_the_shipped_layouts(tmp_path: Pa
 
 
 def test_upload_verification_re_reads_a_trusted_learned_layout(tmp_path: Path) -> None:
-    """L3 reads header fields from the learned layout that rendered the charts.
-
-    The pack is not copied into the output tree, so the upload side re-discovers
-    it by the name the manifest recorded. It carries executable code, so it
-    loads only while it still matches the hash the Teach recorded — trusted, it
-    is read; edited, L3 skips rather than reading a layout nobody confirmed.
-    """
+    """L3 reads header fields from the learned layout that rendered the
+    charts: the pack is not copied into the output tree, so the upload
+    side re-discovers it by name and loads it only while it still
+    matches the hash the Teach recorded."""
     from anastomosis.core.upload_command import _verification_pack
 
     _teach(tmp_path)
@@ -406,12 +376,10 @@ def test_upload_verification_re_reads_a_trusted_learned_layout(tmp_path: Path) -
 
 
 def test_trust_pack_consent_does_not_reach_the_user_dir(tmp_path: Path) -> None:
-    """--trust-pack names the --pack-dir packs; an edited learned layout is
-    re-trusted by one act only, re-confirming a Teach.
-
-    The review's probe: an operator consenting to a VENDOR pack must not
-    silently re-trust — and execute — whatever bytes now sit in their user
-    dir under a taught layout's name."""
+    """--trust-pack names the --pack-dir packs; an edited learned layout
+    is re-trusted only by re-confirming a Teach — an operator consenting
+    to a VENDOR pack must not silently re-trust whatever bytes now sit
+    in their user dir under a taught layout's name."""
     _teach(tmp_path)
     context = user_packs_dir() / LEARNED / "context.py"
     context.write_text(context.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")

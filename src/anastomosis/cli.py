@@ -15,14 +15,10 @@ Installed as both ``anast`` (everyday) and ``anastomosis`` (formal).
     anast gui           open the desktop app
 """
 
-# NB: this module's docstring is the top-level ``anast --help`` text
-# (``help=__doc__`` below), so it stays byte-identical to the command listing —
-# the facade note lives here in a comment instead. This module keeps the Typer
-# app objects, the top-level ``info``/``gui``/``doctor`` commands, and the
-# pipeline machinery + presentation helpers the command groups share; the
-# command bodies live in :mod:`anastomosis.cli_commands` and are imported at the
-# BOTTOM of this file so their ``@<app>.command(...)`` decorators register
-# against the already-defined apps here (the late-import facade split).
+# This module's docstring is the top-level `anast --help` text (`help=__doc__`
+# below); the Typer apps, top-level commands, and shared pipeline/presentation
+# helpers live here, while command bodies live in `cli_commands` and import at
+# the BOTTOM so their decorators register against the apps defined above.
 
 from __future__ import annotations
 
@@ -44,30 +40,20 @@ if TYPE_CHECKING:
     from anastomosis.pipeline import StageEvent
 
 
-# NB: ``_make_destination`` is re-published from THIS module as a wrapper around
-# :func:`anastomosis.deliver.browser.attach.attach_destination` — a genuine,
-# mypy-visible module attribute (a real ``def``, NOT a bare import alias) so
-# long-standing tests that
-# ``monkeypatch.setattr("anastomosis.cli._make_destination", ...)`` keep working,
-# and the moved ``anast upload`` command resolves it LATE through this module
-# (``_cli._make_destination``) so that patch is honored. The implementation lives
-# in ``deliver.browser.attach`` so the GUI never needs to import the CLI to reach
-# it. The import is INSIDE the body (not at module top) because
-# ``anastomosis.deliver.browser`` eagerly pulls in the whole upload-engine
-# package on import; every other ``anast`` command pays nothing for it.
+# A real function (not a bare import alias) so
+# `monkeypatch.setattr("anastomosis.cli._make_destination", ...)` keeps
+# working and `anast upload` resolves it late through this module. Lazy
+# import: `deliver.browser` eagerly pulls in the whole upload-engine package.
 def _make_destination(cdp_url: str, loaded: object) -> object:
     from anastomosis.deliver.browser.attach import attach_destination
 
     return attach_destination(cdp_url, loaded)
 
 
-# The API route's twin of the seam above: ``anast upload --fhir URL`` builds its
-# destination through ``_cli._make_fhir_destination`` (resolved LATE, same as the
-# browser seam), so ``monkeypatch.setattr(cli, "_make_fhir_destination", ...)``
-# drives the whole upload flow with no FHIR server. The implementation lives in
-# ``deliver.fhir_api.attach`` for the same reason as its browser counterpart, and
-# the import is lazy for the same reason too (``deliver.fhir_api`` pulls in the
-# client + destination modules at package import).
+# The FHIR twin of the seam above: `anast upload --fhir URL` resolves its
+# destination late through `_cli._make_fhir_destination`, so a monkeypatch
+# drives the flow with no live FHIR server; the import is lazy for the same
+# reason as `deliver.browser`.
 def _make_fhir_destination(
     base_url: str,
     *,
@@ -88,11 +74,9 @@ def _make_fhir_destination(
 app = typer.Typer(
     name="anast",
     help=__doc__,
-    # Typer's built-in no-args help short-circuits inside argument parsing, before
-    # any callback runs. Turning it OFF lets bare ``anast`` reach the callback
-    # below (``invoke_without_command``), which offers a person at a terminal the
-    # guided session — and prints this exact help page, with the same exit code,
-    # for every non-interactive caller.
+    # OFF so bare `anast` reaches the callback below
+    # (`invoke_without_command`), which offers a terminal session or, for any
+    # non-interactive caller, this exact help page and exit code.
     no_args_is_help=False,
     rich_markup_mode="rich",
 )
@@ -108,11 +92,9 @@ console = Console()
 
 
 def _glyphs() -> Glyphs:
-    """Status glyphs safe for the live console (ASCII on a non-UTF-8 stream).
-
-    Resolved per call against ``console.file`` (lazily ``sys.stdout``) so it
-    reflects the actual terminal — a CP-1252 Windows console gets ASCII instead
-    of a :class:`UnicodeEncodeError` mid-output.
+    """Status glyphs safe for the live console (ASCII on a non-UTF-8
+    stream), resolved per call against ``console.file`` so a CP-1252 Windows
+    console gets ASCII instead of a :class:`UnicodeEncodeError` mid-output.
     """
     return terminal_glyphs(console.file)
 
@@ -136,17 +118,14 @@ def main(
     ),
 ) -> None:
     """Lossless medical-records migration — platform-agnostic and physician-friendly."""
-    # Install the redacting log handler for every ``anast`` command (the root
-    # logger otherwise falls back to an unredacted lastResort handler). Wired
-    # here at the entry point, never at import time; the call is idempotent.
+    # The redacting log handler installs here, at the entry point (never at
+    # import time); the call is idempotent.
     configure_logging(logging.WARNING)
     if ctx.invoked_subcommand is not None:
         return
-    # Bare ``anast``. A person at a terminal gets the guided session; every other
-    # caller — a pipe, a script, CI — gets exactly the help page and exit code
-    # this has always printed, so nothing can hang on a prompt it cannot answer.
-    # The whole guide lives in cli_commands.guide, imported only on this path so
-    # no command (and no ``--help``) pays for it.
+    # A terminal gets the guided session; a pipe/script/CI gets the help page
+    # and exit code, so nothing hangs on a prompt it cannot answer. The guide
+    # imports only on this path so no command pays for it.
     from anastomosis.cli_commands.guide import is_interactive_terminal, run_guide
 
     if not is_interactive_terminal(console):
@@ -155,10 +134,8 @@ def main(
     raise typer.Exit(code=run_guide(console))
 
 
-#: What each optional install actually lets a person do. `anast info` answers
-#: "can this computer do the thing I want", so it names the thing, not the
-#: Python extra that carries it — the extra's own name still prints beside it
-#: for a support request.
+#: What each optional install lets a person do, named by the CAPABILITY not
+#: the Python extra — the extra's own name still prints beside it for support.
 CAPABILITY_NAMES = {
     "render": "Building and double-checking charts",
     "deliver-browser": "Filing charts through a browser",
@@ -168,12 +145,9 @@ CAPABILITY_NAMES = {
 
 
 def _print_source(source: SourceInfo) -> None:
-    """One export format, and the visits it would keep out of the charts.
-
-    A source that applies selection rules names them here with the word that
-    switches one off, because ``--include`` accepts those names and nothing
-    else — a flag whose vocabulary is written down nowhere is a flag nobody can
-    type. Rule names and labels only; no export has been read at this point.
+    """One export format and the visits it would exclude, naming each rule
+    by the word ``--include`` accepts — a flag whose vocabulary is written
+    nowhere is a flag nobody can type. No export has been read yet.
     """
     ident = f" [dim]({source.name})[/dim]" if source.display != source.name else ""
     console.print(f"  export format [cyan]{source.display}[/cyan]{ident}: {source.description}")
@@ -194,18 +168,13 @@ def info() -> None:
         what = CAPABILITY_NAMES.get(extra, extra)
         named = f"{what} [dim]({extra})[/dim]" if what != extra else what
         if available:
-            # "installed", not "ready". This line knows what is present, not
-            # whether it works: `render` reads as installed on a machine where
-            # Playwright never downloaded its browser and every chart fails.
-            # `anast doctor` is the command that actually tries things, and the
-            # closing line below says so rather than letting this one imply it.
+            # "installed", not "ready": `render` can read installed while
+            # Playwright's browser never downloaded. `anast doctor` verifies.
             console.print(f"  [green]{what}[/green]: installed [dim]({extra})[/dim]")
         else:
             console.print(f"  [dim]{named}[/dim]: not available on this computer")
-    # The name a person reads leads; the id they would type at `--from` or
-    # `--pack`, or quote to support, is the dim caption. It used to be the only
-    # thing here, because there was nowhere for a registration to declare a
-    # readable name (#164).
+    # The readable name leads; the id typed at `--from`/`--pack` is the dim
+    # caption (#164).
     for source in toolkit.sources:
         _print_source(source)
     for pack in toolkit.packs:
@@ -238,17 +207,11 @@ def gui_cmd(
     try:
         launch(debug=debug)
     except Exception as exc:
-        # Not RuntimeError. The shell raises RuntimeError when pywebview itself
-        # is absent, but pywebview raises its OWN WebViewException — bases
-        # (Exception, BaseException, object) — when it is installed and has
-        # neither a GTK nor a Qt backend to draw with. That is the likeliest way
-        # this fails, and catching RuntimeError made the handler dead code for
-        # it: `anast gui` was the only command in the CLI that answered with a
-        # Rich stack dump instead of the hint written for exactly this.
-        #
-        # Both halves are printed: the exception says what is missing, and the
-        # line under it says what to install. Escaped so Rich renders the
-        # literal "anastomosis[gui]" rather than reading [gui] as a style tag.
+        # Not RuntimeError: the shell raises that when pywebview itself is
+        # absent, but pywebview's own WebViewException (bases Exception,
+        # BaseException, object) is what it raises with no GTK/Qt backend to
+        # draw with — the likelier failure. Escaped so Rich renders literal
+        # "anastomosis[gui]" rather than reading [gui] as a style tag.
         console.print(f"[red]{escape(str(exc))}[/red]")
         console.print(f"Install the desktop parts with: {escape('pip install anastomosis[gui]')}")
         raise typer.Exit(code=1) from None
@@ -280,24 +243,17 @@ def doctor_cmd() -> None:
 
 
 # --- shared pipeline machinery ---------------------------------------------
-#
-# The pipeline mechanics live in :mod:`anastomosis.pipeline` (frontend-free, so
-# the GUI drives the same code). This CLI wrapper consumes that core and keeps
-# every console message and exit code byte-identical to before the extraction.
-# The command groups in :mod:`anastomosis.cli_commands` reach these helpers (and
-# ``console``/``_glyphs``) late through this module so the monkeypatch seams the
-# tests rely on keep working.
+# Pipeline mechanics live in :mod:`anastomosis.pipeline` (frontend-free); this
+# wrapper keeps console output and exit codes byte-identical to before the
+# extraction. `cli_commands` reaches these helpers late so test monkeypatch
+# seams keep working.
 
 
 def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[StageEvent], None]:
-    """Build the stage-event → Rich-line translator both run paths share.
-
-    Translates the structured :class:`~anastomosis.pipeline.StageEvent`\\ s back
-    into the exact lines the CLI prints — the detect/reconstruct/QA lines —
-    parameterized by the operator's ``source`` (a typed ``--source`` /
-    ``--from`` suppresses the "Detected source" announcement) and the
-    ``charts_dir`` the reconstruct line names. ``anast migrate`` reuses this so
-    its rendering stays byte-aligned with ``anast pipeline run``.
+    """Contract: translates :class:`~anastomosis.pipeline.StageEvent`\\ s
+    into the exact lines the CLI prints, parameterized by ``source`` (typed
+    ``--source``/``--from`` suppresses "Detected source") and ``charts_dir``.
+    Shared by ``anast migrate`` for byte-aligned output.
     """
     from anastomosis.pipeline import (
         STAGE_DETECT,
@@ -317,11 +273,8 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 console.print(f"Detected source: [cyan]{event.detail}[/cyan]")
         elif event.stage == STAGE_RECONSTRUCT:
             failed = event.counts["failed"]
-            # "skipped" here means "already on disk", so on a first run it reads
-            # as "nothing was left out" — and encounters the source's own
-            # selection rules excluded were invisible. They get their own
-            # number, and only when there are any: a run that left nothing out
-            # should not have to say so on every line.
+            # "skipped" means "already on disk"; excluded-by-selection gets
+            # its own number, shown only when nonzero.
             excluded = event.counts.get("excluded", 0)
             console.print(
                 f"[green]{event.counts['rendered']} rendered[/green], "
@@ -335,9 +288,8 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 console.print(f"[yellow]QA skipped[/yellow]: {event.detail.split(': ', 1)[-1]}")
                 return
             fail = event.counts["fail"]
-            # not_carried rides the counts dict only when it is nonzero (see
-            # settle_qa's "only when there is something to say" rule) — a run
-            # that abbreviates nothing gets the line it always had (#297).
+            # not_carried rides the counts dict only when nonzero (settle_qa);
+            # a run that abbreviates nothing gets the line it always had (#297).
             not_carried = event.counts.get("not_carried", 0)
             console.print(
                 f"QA: [green]{event.counts['pass']} pass[/green], "
@@ -359,10 +311,8 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
                 f"{arrow} upload_manifest.json"
             )
         elif event.stage == STAGE_INGEST:
-            # The ordinary ingest line stays silent (the original printed
-            # none) — but rows held back with no patient to own them are the
-            # run's honesty, and a run that quarantined anything must not
-            # read as green until someone has looked.
+            # The ordinary ingest line stays silent; a quarantined row is the
+            # run's honesty and must not read as green until reviewed.
             if quarantined := event.counts.get("quarantined", 0):
                 console.print(
                     f"[yellow]{quarantined} row(s) quarantined — no patient to "
@@ -373,13 +323,10 @@ def _make_event_printer(*, source: str | None, charts_dir: Path) -> Callable[[St
 
 
 def _run_command(cmd: PipelineCommand) -> None:
-    """Run a :class:`PipelineCommand`, rendering its events as the CLI always has.
-
-    The structured :class:`~anastomosis.pipeline.StageEvent`\\ s are translated
-    back into the exact Rich lines the CLI printed before the
-    :mod:`anastomosis.pipeline` extraction, then the delivery outcomes are
-    printed in archive→bundle→ccda order; :class:`PipelineError` becomes the
-    same ``console.print`` + ``typer.Exit`` it raised inline.
+    """Run a :class:`PipelineCommand`, rendering its :class:`StageEvent`\\ s
+    as the exact Rich lines the CLI printed before the pipeline extraction,
+    then delivery outcomes in archive->bundle->ccda order;
+    :class:`PipelineError` becomes the same ``console.print`` + ``typer.Exit``.
     """
     from anastomosis.core.commands import run_pipeline_command
     from anastomosis.pipeline import PipelineError
@@ -399,13 +346,10 @@ def _run_command(cmd: PipelineCommand) -> None:
 
 
 def _print_source_reading(reading: tuple[str, ...]) -> None:
-    """Print the source ledger's account of the load, when the source kept one.
-
-    The sentences arrive composed (``ledger.physician_reading`` — chart
-    vocabulary, PHI-free by construction), so this only frames them: a heading
-    that says what the block is, and the pointer to ``loss_ledger.json`` where
-    the construct-by-construct account went. Silent for sources that keep no
-    ledger, so every other adapter's output is unchanged.
+    """Print the source ledger's account, when the source kept one — the
+    sentences arrive PHI-free and pre-composed; this only frames them with a
+    heading and a pointer to ``loss_ledger.json``. Silent for sources with no
+    ledger.
     """
     if not reading:
         return
@@ -429,11 +373,9 @@ def _print_delivery(outcome: DeliveryOutcome) -> None:
             f"Bundles: [green]{counts['patients']} patients[/green] {arrow} {outcome.out_dir}"
         )
     elif outcome.kind == "ccda":
-        # The documents ride beside the patient count because their ABSENCE is
-        # what #373 looked like from here: a green "2 patients" over a directory
-        # holding neither of the scans those two charts were made of. A count of
-        # zero prints nothing — most exports carry no attachments, and a
-        # standing "0 documents" would teach an operator to stop reading it.
+        # The document count rides beside the patient count because its
+        # ABSENCE is what #373 looked like; zero prints nothing (most exports
+        # carry no attachments).
         docs = counts.get("documents", 0)
         attached = f", {_plural(docs, 'document', 'documents')}" if docs else ""
         console.print(
@@ -448,12 +390,9 @@ def _plural(count: int, one: str, many: str) -> str:
 
 
 def _print_shortfall(outcome: DeliveryOutcome) -> None:
-    """Say what this delivery could not file — and only when there is something.
-
-    Under the success line rather than folded into it: a chart that did not
-    reach the patient it belongs to is not another statistic about a run that
-    worked, and reading it as one is how it gets missed. Silent when both
-    counts are zero, which is every ordinary run.
+    """Say what this delivery could not file, only when there is something —
+    under the success line, since folding it in is how a missing chart gets
+    read as a statistic instead of a problem. Silent on an ordinary run.
     """
     counts = outcome.counts
     where = {"archive": "the archive", "bundle": "the bundles"}.get(outcome.kind, "it")
@@ -512,15 +451,10 @@ def _includes_or_exit(
 
 
 def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> None:
-    """Render a :class:`PipelineError` as the exact lines the CLI used to print.
-
-    Switches on the error's structured ``kind`` (not message prose) and
-    reproduces the original line per kind byte-for-byte, so the existing CLI
-    tests ("Could not identify", "unavailable", per-encounter failure lines)
-    keep passing unchanged. The newer operator-input kinds (``bad_output``,
-    ``bad_section``, ``bad_selection``, ``bad_source``, ``bad_destination``)
-    print their PHI-safe message; ``qa_failed`` prints nothing extra (its
-    summary already rode the QA event).
+    """Render a :class:`PipelineError` as the CLI's original lines, switching
+    on the structured ``kind`` (not message prose). ``bad_output``/
+    ``bad_section``/``bad_selection``/``bad_source``/``bad_destination``
+    print the PHI-safe message; ``qa_failed`` prints nothing extra.
     """
     from rich.markup import escape as _escape
 
@@ -541,51 +475,41 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
         diagnosis = message.split(": ", 1)[1]
         console.print(f"[red]Pack {pack!r} unavailable:[/red] {diagnosis}")
     elif exc.kind == "render_failed":
-        # The reconstruct summary line already printed (the RECONSTRUCT event);
-        # now the per-encounter (id, type) detail lines, exactly as before.
+        # The reconstruct summary line already printed (the RECONSTRUCT
+        # event); these are the per-encounter (id, type) detail lines.
         for encounter_id, exc_type in exc.failed:
             console.print(f"  [red]failed[/red] encounter {encounter_id} ({exc_type})")
     elif exc.kind == "qa_failed":
         # A QA failure printed only its summary line (the QA event) before
-        # exiting; no extra error line is emitted here — matching the original.
+        # exiting; no extra error line here.
         return
     else:
-        # bad_source / bad_output / bad_section / bad_selection / generic:
-        # print the PHI-safe message. Exit code 2 (operator input), per the
-        # CLI's exit-code contract — except conservation_failed, which lands
-        # here too and carries exit 1: a seam that lost work is the run's
-        # failure, not the operator's input.
+        # bad_source/bad_output/bad_section/bad_selection/generic: print the
+        # PHI-safe message at exit 2 (operator input) — except
+        # conservation_failed, which lands here too at exit 1: lost work is
+        # the run's failure, not the operator's.
         console.print(f"[red]{_escape(message)}[/red]")
 
 
 # --- retained live seam: the selector validator for `destination init --validate` --
-#
-# ``_make_validator`` stays DEFINED here (like ``_make_destination`` above) even
-# though its only caller — ``destination init`` — moved to
-# :mod:`anastomosis.cli_commands.destination`. Long-standing wizard tests do
-# ``monkeypatch.setattr(cli, "_make_validator", ...)``; the moved command
-# resolves it LATE through this module (``_cli._make_validator``) so the patch is
-# honored. Playwright is imported only here (lazily, via ``connect_over_cdp``).
+# `_make_validator` stays defined here (like `_make_destination`) even though
+# its only caller moved to `cli_commands.destination`: wizard tests
+# monkeypatch `cli._make_validator`, resolved late through this module.
+# Playwright imports only here, lazily.
 
 
 def _make_validator(cdp_url: str) -> object:
-    """Build the live selector validator for ``--validate`` (the SEAM tests mock).
-
-    Attaches over CDP (loopback-only, validated) to the browser the operator
-    launched and logged into, wraps its first page in the
-    :class:`PlaywrightPageAdapter`, and returns a
-    :class:`~anastomosis.destinations.wizard.CdpSelectorValidator`. Tests
-    monkeypatch this whole function so the validation flow needs no browser.
-    Playwright is imported only here (lazily, via ``connect_over_cdp``).
+    """Build the live selector validator for ``--validate`` (the seam tests
+    mock). Attaches over CDP (loopback-only) to the operator's browser,
+    wraps its first page in :class:`PlaywrightPageAdapter`, and returns a
+    :class:`~anastomosis.destinations.wizard.CdpSelectorValidator`.
     """
     from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
     from anastomosis.destinations.browserpack import PlaywrightPageAdapter
     from anastomosis.destinations.wizard import CdpSelectorValidator
 
-    # The operator has their EHR open; drive its existing context/page. This is
-    # the interactive `destination init --validate` one-shot — the Playwright
-    # driver is reaped at process exit (the upload path owns explicit teardown via
-    # run_upload_command's release()). We never close the operator's context/page.
+    # Drives the operator's existing EHR context/page; this one-shot leaves
+    # teardown to process exit (the upload path owns explicit release()).
     _playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
     context = browser.contexts[0]
     page = context.pages[0]
@@ -593,16 +517,12 @@ def _make_validator(cdp_url: str) -> object:
 
 
 # --- command registration (the facade split) --------------------------------
-#
-# The command bodies live in focused modules under ``cli_commands``. Importing
-# them HERE — after the Typer apps and the shared helpers above are defined —
-# runs their module-level ``@<app>.command(...)`` decorators, registering each
-# command against the already-defined app (the standard late-import pattern).
-# The import ORDER fixes the help order of the direct ``app`` commands
-# (info/gui/doctor are defined above; migrate/upload then archive/bundle
-# register below in that order), so ``# isort: off`` pins it against the
-# alphabetiser. The modules are imported for this side effect only (hence F401)
-# and sit below the app definitions (hence E402).
+# Command bodies live under ``cli_commands``; importing them HERE (after the
+# Typer apps and shared helpers above) runs their ``@<app>.command(...)``
+# decorators against the already-defined app. Import ORDER fixes help order
+# (info/gui/doctor above; migrate/upload/archive/bundle below), so
+# ``# isort: off`` pins it against the alphabetiser; F401/E402 mark the
+# side-effect-only import.
 # isort: off
 from anastomosis.cli_commands import pipeline  # noqa: E402, F401
 from anastomosis.cli_commands import migrate  # noqa: E402, F401
@@ -615,10 +535,8 @@ from anastomosis.cli_commands import packsrc  # noqa: E402, F401
 
 
 if __name__ == "__main__":
-    # Under ``python -m anastomosis.cli`` this file runs as ``__main__`` — a
-    # second module instance whose Typer apps the command modules never see
-    # (they register on ``anastomosis.cli``). Delegate to the canonical
-    # instance so both invocation forms expose the same command set.
+    # Under ``python -m anastomosis.cli`` this file runs as ``__main__``, a
+    # second instance the command modules never see; delegate to the canonical one.
     from anastomosis.cli import app as _canonical_app
 
     _canonical_app()

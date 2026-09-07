@@ -1,30 +1,12 @@
-"""Pins the advanced CodeQL setup and the inline-suppression policy.
+"""Pins the advanced CodeQL setup and the inline-suppression policy:
+the workflow's triggers/permissions/pinned-SHA actions, the config's
+``security-extended`` suite with NO repo-wide exclusions, and every
+``# codeql[...]`` suppression's own-line placement, PHI rationale, and
+match against SECURITY.md's named files.
 
-Three invariants live here, each a property of the committed files (not a
-record of how they came to be):
-
-* The advanced workflow (``.github/workflows/codeql.yml``) triggers on push,
-  pull request, and a schedule; the analyzing job holds ``security-events:
-  write`` so its SARIF can upload; and every third-party action is pinned to a
-  full 40-hex commit SHA (never a floating tag). The alert-mutating dismissal
-  step can run only after accepted code is pushed to ``main``.
-* The config (``.github/codeql/codeql-config.yml``) selects the
-  ``security-extended`` suite (which ships the built-in ``AlertSuppression.ql``
-  query that honors inline ``# codeql[...]`` comments — no extra pack needed)
-  and declares NO repo-wide exclusions — no ``query-filters`` and no
-  ``paths`` / ``paths-ignore``. Coverage is full-tree; suppression is per-site.
-* Every ``# codeql[...]`` suppression in the scanned tree sits alone on its own
-  line (CodeQL only honors it there), carries a ``PHI-BY-DESIGN`` or
-  ``PHI-FREE-BY-CONSTRUCTION`` rationale within the lines just above it, and
-  lives in a file that SECURITY.md's "Code scanning & suppression policy
-  (auditable)" section names — with the set matching exactly in both directions,
-  so a new suppression cannot land without amending the policy and a retired
-  policy entry cannot outlive its suppression.
-
-The scanned tree is ``src/`` plus the audit tools under ``docs/``. Those tools
-are run by hand against real charts, which is precisely why a suppression there
-needs the same audit trail as one in shipped code: an unwatched corner is where
-a silenced alert would actually hide.
+Scanned tree: ``src/`` plus the audit tools under ``docs/`` — those
+run by hand against real charts, so a suppression there needs the
+same audit trail as shipped code.
 """
 
 from __future__ import annotations
@@ -160,14 +142,11 @@ def _codeql_action_pins() -> dict[str, tuple[str, str]]:
 
 
 def test_codeql_init_and_analyze_share_one_version() -> None:
-    """``init`` and ``analyze`` are two steps of ONE CodeQL Action release, and
-    the Action rejects a run where they disagree. Dependabot tracks each
-    `uses:` line as an independent dependency — that gap is exactly how a
-    weekly batch once bumped `analyze` alone and left `init` a version
-    behind, because the ecosystem's PR limit was already spent on other
-    updates by the time `init`'s turn came. This is a property of the
-    committed file, checked directly, rather than something inferred from how
-    the two pins arrived here."""
+    """``init`` and ``analyze`` are two steps of ONE CodeQL Action
+    release, and the Action rejects a run where they disagree.
+    Dependabot tracks each `uses:` line as an independent dependency,
+    so nothing else keeps the two SHAs in sync — a property of the
+    committed file, checked directly."""
     pins = _codeql_action_pins()
     assert "init" in pins and "analyze" in pins, (
         "codeql.yml must declare both a github/codeql-action/init and a "
@@ -206,15 +185,11 @@ def test_init_step_references_config_file() -> None:
 
 
 def test_the_suppression_mechanism_is_actually_wired_up() -> None:
-    """A `# codeql[...]` comment only clears an alert if this step runs.
-
-    The suite computes the suppression into the SARIF and code scanning ignores
-    it; `advanced-security/dismiss-alerts` is what reads it back and dismisses
-    the alert through the API. Six suppressions sat in `src/` doing nothing
-    because that step was missing, so the tests below — which check that every
-    suppression is well formed and documented — were all passing over a control
-    that did not exist. This is the one that would have caught it.
-    """
+    """A `# codeql[...]` comment only clears an alert if this step
+    runs: the suite computes the suppression into the SARIF, and
+    `advanced-security/dismiss-alerts` is what reads it back and
+    dismisses the alert through the API — the other suppression tests
+    check well-formedness, never that this control exists at all."""
     doc = _load_yaml(CODEQL_WORKFLOW)
     steps = [step for job in doc.get("jobs", {}).values() for step in job.get("steps", [])]
 

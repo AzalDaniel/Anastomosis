@@ -1,21 +1,12 @@
 """The Microsoft Store packaging lane, tested off Windows.
 
-``makeappx.exe`` ships with the Windows SDK and the package it produces can
-only be built on a Windows runner, so the one integration proof — a real
-``makeappx pack`` over the real Nuitka layout — lives in the packaging
-workflow and nowhere else. It cannot be moved here.
-
-Everything the packing DECIDES can be, and is: which version quad the manifest
-carries, what the manifest says once its placeholders are filled, which
-``makeappx.exe`` is chosen out of several installed SDKs, what the staged
-package root contains, and the exact argv. Plus the three refusals the lane
-turns on — no SDK, a dist that is not the built layout, a placeholder nobody
-substituted — because each of those is a build that must stop rather than a
-package that reaches Partner Center wrong.
-
-The last section pins the workflow wiring: the MSIX is packed from the build
-that already happened, and it rides beside the installer into both the CI
-artifact and the GitHub release.
+``makeappx.exe`` needs a Windows runner, so the one integration proof (a
+real ``makeappx pack`` over a real Nuitka layout) lives in the packaging
+workflow only. Everything the packing DECIDES is tested here instead: the
+version quad, the rendered manifest, which SDK's ``makeappx.exe`` is
+chosen, the staged package root, the exact argv, the three refusals (no
+SDK, a bad dist, an unsubstituted placeholder), and that the MSIX packs
+from a build that already happened.
 """
 
 from __future__ import annotations
@@ -46,12 +37,10 @@ NS = {
 
 
 def _load(name: str) -> ModuleType:
-    """Load a packaging script by path.
-
-    They are build scripts, not modules of the installed package, and importing
-    one must not require Windows — the same route ``test_smoke_windows_liveness``
-    takes to the installer smoke test.
-    """
+    """Load a packaging script by path: these are build scripts, not
+    modules of the installed package, and importing one must not require
+    Windows — the same route ``test_smoke_windows_liveness`` takes to the
+    installer smoke test."""
     spec = importlib.util.spec_from_file_location(name, PACKAGING / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -77,12 +66,9 @@ def rendered(msix: ModuleType) -> ET.Element:
 
 
 def _built_dist(root: Path) -> Path:
-    """A stand-in for what build_windows.py leaves under ``dist/``.
-
-    One file per exe plus a companion, which is all the staging cares about —
-    the real dists are ~2600 files each and copying a tree is the same call
-    whether the tree is two files or two thousand.
-    """
+    """A stand-in for what build_windows.py leaves under ``dist/``: one
+    file per exe plus a companion is all the staging cares about, since
+    copying a tree is the same call at two files or two thousand."""
     dist = root / "dist"
     for name, exe in (("Anastomosis", "Anastomosis.exe"), ("anast", "anast.exe")):
         (dist / name).mkdir(parents=True)
@@ -114,13 +100,10 @@ def test_quad_version_normalises_to_four_numeric_parts(
 
 
 def test_the_package_and_the_exes_inside_it_carry_the_same_quad(msix: ModuleType) -> None:
-    """One build, one version.
-
-    Nuitka stamps ``build_windows.py``'s quad into both exes; the manifest
-    around them carries this one. If the two normalisations ever diverge, a
-    package would claim a version its own binaries deny — so they are asserted
-    equal against the live package version rather than trusted to stay in step.
-    """
+    """Nuitka stamps ``build_windows.py``'s quad into both exes and the
+    manifest carries this one; if the two normalisations diverge, a package
+    would claim a version its own binaries deny, so both are asserted
+    against the live package version."""
     import anastomosis
 
     build_windows = _load("build_windows")
@@ -308,12 +291,9 @@ def test_find_makeappx_refuses_when_no_sdk_is_installed(msix: ModuleType, tmp_pa
 def test_stage_refuses_a_dist_that_is_not_the_built_layout(
     msix: ModuleType, tmp_path: Path
 ) -> None:
-    """Half a build is not a build.
-
-    The CLI dist missing its exe means build_windows.py did not finish, and
-    packing it would produce a Store submission that installs an app whose
-    command line is not there.
-    """
+    """Half a build is not a build: the CLI dist missing its exe means
+    build_windows.py did not finish, and packing it would submit an app
+    whose command line is not there."""
     dist = _built_dist(tmp_path)
     (dist / "anast" / "anast.exe").unlink()
     with pytest.raises(SystemExit) as excinfo:
@@ -405,12 +385,9 @@ def _step_index(steps: list[dict[str, Any]], marker: str) -> int:
 
 
 def test_the_msix_is_packed_from_the_build_that_already_happened() -> None:
-    """One Nuitka build, two artifacts.
-
-    Building twice would double a forty-minute job and let the installer and
-    the Store package drift apart — so the packing step must come after the
-    build and must not run a build of its own.
-    """
+    """One Nuitka build, two artifacts: building twice would double a
+    forty-minute job and let the installer and Store package drift apart,
+    so packing must come after the build and never run one of its own."""
     steps = _workflow()["jobs"]["build"]["steps"]
     build = _step_index(steps, "build_windows.py")
     pack = _step_index(steps, "build_msix.py")

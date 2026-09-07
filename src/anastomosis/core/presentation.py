@@ -1,17 +1,9 @@
-"""Console glyphs — and the brand palette — that survive non-UTF-8 terminals.
-
-Windows' legacy console code pages (CP-1252, CP-437, …) cannot encode the
-status dingbats and arrow the CLI likes to print — ``✓`` (U+2713), ``✗``
-(U+2717) and ``→`` (U+2192). Writing one of those to such a stream raises
-:class:`UnicodeEncodeError` and aborts the command mid-output. This module
-centralizes the glyph set so any text frontend picks the Unicode glyphs on a
-UTF-8 stream and a plain-ASCII fallback everywhere else — the same decision in
-one place, rather than each call site guessing.
-
-It carries the text surfaces' half of the design language's color tokens for the
-same reason: one definition of "oxblood" and "porcelain", not one per frontend —
-and, for the same reason again, the one question every text frontend has to ask
-before it draws anything for a person: is anybody there.
+"""Console glyphs and brand palette that survive non-UTF-8 terminals: a
+Windows legacy code page cannot encode ``✓``/``✗``/``→`` and raises
+:class:`UnicodeEncodeError` mid-output, so this module is the one place
+that picks the Unicode glyphs on a UTF-8 stream and an ASCII fallback
+elsewhere. It also carries the text surfaces' color tokens and the one
+question every text frontend must ask before drawing: is anybody there.
 """
 
 from __future__ import annotations
@@ -48,24 +40,11 @@ class Glyphs:
 
 @dataclass(frozen=True)
 class Palette:
-    """The CLI's colors, named so the TERMINAL resolves them.
-
-    Every value here is an ANSI name or an attribute, never an absolute one.
-    The GUI can use the design language's ``oklch`` tokens directly because it
-    draws its own dark ground; a terminal application cannot. The background
-    belongs to the person running it, and the only colors readable against
-    whatever they chose are the ones their terminal maps itself — a light
-    theme's ``yellow`` is a dark mustard, a dark theme's is bright, and both
-    are legible because the theme's author made them so.
-
-    Measured against white, the truecolor tokens this replaced ran from
-    1.13 : 1 (primary text) through 1.65 : 1 (an attention line) to 2.90 : 1
-    (a refusal). Not a tuning problem: the brand oxblood was 8.30 : 1 on white
-    and 2.53 : 1 on black, so no single absolute palette can serve both grounds.
-
-    Color is never the only signal — the words carry the meaning, and these
-    only reinforce it.
-    """
+    """The CLI's colors, named so the TERMINAL resolves them: every value
+    is an ANSI name or attribute, never an absolute one, since only the
+    terminal's own theme knows what is legible against the background its
+    owner chose. Color is never the only signal; the words carry the
+    meaning."""
 
     #: Identity: the mark and the thing being answered. Weight, not hue —
     #: ``red`` is the refusal color and identity must not borrow it.
@@ -110,14 +89,10 @@ _UTF8_ALIASES = frozenset({"utf8", "utf8sig"})
 
 
 def terminal_glyphs(stream: object) -> Glyphs:
-    """Return the glyph set safe to write to ``stream``.
-
-    ``stream`` is anything exposing an ``encoding`` attribute — a text stream
-    such as ``sys.stdout``, or a Rich ``Console``'s ``.file``. A UTF-8 encoding
-    yields :data:`UNICODE_GLYPHS`; a missing or non-UTF-8 encoding (a CP-1252
-    Windows console, a pipe with no declared encoding) yields the portable
-    :data:`ASCII_GLYPHS`, so the glyphs never raise :class:`UnicodeEncodeError`.
-    """
+    """The glyph set safe to write to ``stream`` (anything exposing an
+    ``encoding`` attribute): UTF-8 yields :data:`UNICODE_GLYPHS`, a
+    missing or other encoding yields the portable :data:`ASCII_GLYPHS`,
+    so the glyphs never raise :class:`UnicodeEncodeError`."""
     encoding = getattr(stream, "encoding", None)
     if not encoding:
         return ASCII_GLYPHS
@@ -126,23 +101,11 @@ def terminal_glyphs(stream: object) -> Glyphs:
 
 
 def terminal_colour_depth(console: Any) -> str:
-    """How much colour this console can actually deliver: truecolor, 256, none.
-
-    Asked of three things, because they are three different questions and rich
-    answers them separately. Whether a person is there is ``isatty`` on the
-    stream, never ``is_terminal`` — ``FORCE_COLOR`` and ``TTY_COMPATIBLE`` make
-    that one lie, for the reasons :func:`attached_to_a_terminal` sets out.
-    Whether they asked for plain output is ``console.no_color``, because
-    ``NO_COLOR=1`` leaves ``color_system`` still reporting ``"256"`` and
-    branching on depth alone would walk straight past it. Only then does depth
-    mean anything.
-
-    ``"standard"`` and ``"windows"`` come back as ``"none"``. Sixteen colours
-    cannot hold the mark's ramp: every stop quantises onto ANSI 9, which is
-    ``bright_red`` — this product's refusal colour — and identity does not
-    borrow the colour that means "this failed". That rung draws what it draws
-    today, in weight alone.
-    """
+    """How much colour this console can deliver: truecolor, 256, or none.
+    ``isatty``, never ``is_terminal`` (:func:`attached_to_a_terminal`),
+    decides if a person is there; ``console.no_color`` catches
+    ``NO_COLOR=1``, which ``color_system`` alone would miss.
+    ``"standard"``/``"windows"`` come back ``"none"``."""
     if not attached_to_a_terminal(getattr(console, "file", None)):
         return "none"
     if getattr(console, "no_color", False):
@@ -152,22 +115,11 @@ def terminal_colour_depth(console: Any) -> str:
 
 
 def attached_to_a_terminal(stream: Any) -> bool:
-    """Whether ``stream`` is really a terminal — asked of the stream itself.
-
-    Never of anything that reports colour capability. ``FORCE_COLOR`` and
-    ``TTY_COMPATIBLE`` make Rich answer ``is_terminal`` True for a plain file
-    (``typer/rich_utils.py`` sets them up), and both are exported by ordinary
-    tooling — CI images, ``just``/``make`` wrappers, terminal multiplexers.
-    With one of them set, ``anast > log`` from a shell used to open the guided
-    session, write the menu into the log file, and then block on a question
-    nobody could see.
-
-    Whether output can carry colour and whether a person is reading it are
-    different questions with different answers; letting the first stand in for
-    the second is what made an unattended run hang. Two callers ask it now —
-    the guided session's gate and the greeting mark's — and one wrong copy of
-    this is one too many.
-    """
+    """Whether ``stream`` is really a terminal — asked of the stream
+    itself, never of anything reporting colour capability. ``FORCE_COLOR``/
+    ``TTY_COMPATIBLE``, exported by ordinary CI/build tooling, make Rich's
+    ``is_terminal`` answer True for a plain piped file, which would hang
+    an unattended run on a prompt nobody can see."""
     try:
         return bool(stream is not None and stream.isatty())
     except (AttributeError, OSError, ValueError):
@@ -188,13 +140,8 @@ _INJECTED = re.compile(
 
 
 def as_typed(raw: str) -> str:
-    """``raw`` with everything the terminal injected removed.
-
-    A prompt read in canonical mode hands back whatever bytes arrived before
-    Enter, and an arrow key arrives as ``ESC [ A`` — invisible on screen once
-    the terminal has interpreted its own echo, but three real characters in the
-    answer, on their way into a filename or a format id. Pastes carry the same
-    risk with more variety. What a person can see is what this keeps: printable
-    text, with every escape sequence and control byte removed whole.
-    """
+    """``raw`` with everything the terminal injected removed: an arrow key
+    arrives as ``ESC [ A``, invisible on screen but three real characters
+    on their way into a filename. What a person can see is what this
+    keeps."""
     return _INJECTED.sub("", raw)

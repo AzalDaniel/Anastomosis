@@ -1,15 +1,11 @@
 """The vendor's header lies about ``patient-contacts``; the rows do not.
 
 Two independent real v9 exports ship this table with another schema's
-five-column header — while every data row has the 15 cells the vendor's own
-dictionary documents. The loader read that as an unquoted-tab corruption and
-stopped the entire migration on line 2 (#279), telling the operator to "fix
-the export" — by hand, against PHI they must not edit.
-
-The repair is a registered defect, not a tolerance: table name, exact
-anomalous header, and uniform reference-width rows must all agree, or the
-refusal stands exactly as before. Every test here is a synthetic fixture with
-``feedface-`` guids and invented names.
+five-column header, while every data row has the 15 cells the vendor's own
+dictionary documents (#279) — never a tolerance the loader guesses past.
+The repair is a registered defect: table name, exact anomalous header,
+and uniform reference-width rows must all agree, or the refusal stands.
+Synthetic fixtures: ``feedface-`` guids and invented names.
 """
 
 from __future__ import annotations

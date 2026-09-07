@@ -1,11 +1,7 @@
 """Source adapters: each module here turns one vendor's export into
-canonical :class:`~anastomosis.core.model.PatientRecord` objects.
-
-Adapters follow the brain-like modularity rule: isolated, individually
-versioned, registered through :mod:`anastomosis.sources.base`, and loaded
-defensively — a broken adapter reports a diagnosis instead of taking the
-toolkit down.
-"""
+canonical :class:`~anastomosis.core.model.PatientRecord` objects, registered
+through :mod:`anastomosis.sources.base`. See :mod:`anastomosis.sources.learned`
+for how a taught (non-built-in) adapter is discovered defensively."""
 
 from .base import (
     SelectionRule,

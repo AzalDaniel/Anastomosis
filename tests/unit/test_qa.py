@@ -290,14 +290,10 @@ def _day_in(zone: str) -> date:
 
 @pytest.mark.parametrize("zone", _FAR_APART_ZONES)
 def test_staleness_reads_the_day_the_pack_rendered_in(tmp_path: Path, zone: str) -> None:
-    """A render-day stamp is stale where the chart was rendered, not where the
-    operator is sitting.
-
-    The packs stamp their "as of" dates in the pack's timezone, so a check
-    reading the host's day agreed with them only by luck of geography: one
-    byte-identical chart, carrying its own render-day stamp, warned on a machine
-    twelve hours west and passed on one in the practice's own zone.
-    """
+    """A render-day stamp is stale where the chart was rendered, not where
+    the operator is sitting: the packs stamp "as of" dates in the pack's
+    timezone, so reading the host's day agrees only by luck of geography —
+    the same chart can warn on one machine and pass on another."""
     stamp = _day_in(zone).strftime("%B %d, %Y")
     record = _record()
     pdf = make_pdf(tmp_path / "m.pdf", [*GOOD_LINES, f"Current Medications (as of {stamp})"])
@@ -355,16 +351,11 @@ def test_the_pipeline_hands_qa_the_clock_the_engine_renders_in(
 def test_pymupdf_open_called_once_per_document_per_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every engine check shares one PDF open per document: the runner primes a
-    per-document snapshot cache, so pymupdf.open fires exactly once for the whole run
-    over one document instead of once per check.
-
-    Counted on the pymupdf module itself rather than through `qa.checks`, which
-    no longer holds it as an attribute — the import moved inside the one
-    function that opens a PDF so that an install without the `render` extra can
-    still import the archive deliverer. A function-local import resolves through
-    `sys.modules`, so patching the module is what the checks actually see.
-    """
+    """Every engine check shares one PDF open per document: the runner
+    primes a per-document snapshot cache, so pymupdf.open fires exactly
+    once per document, not once per check. Counted on the pymupdf module
+    itself, not `qa.checks` — the import is function-local, resolving
+    through `sys.modules`, which is what patching the module reaches."""
     import pymupdf
 
     pdf = make_pdf(tmp_path / "good.pdf", GOOD_LINES)  # created BEFORE the counter
@@ -397,17 +388,10 @@ def test_bare_ctx_without_primed_cache_falls_back_to_opening(tmp_path: Path) -> 
 
 def test_snapshot_cache_serves_each_documents_own_text(tmp_path: Path) -> None:
     """A context primed on one PDF must return a SECOND PDF's own text when
-    asked about it, not the first document's pages under a new name.
-
-    Before the fix, ``_SnapshotCache`` kept a single slot and served whatever
-    it first extracted for every path asked afterward. Nothing in today's
-    runner trips this — one context grades exactly one document per QA run —
-    but #392 asks a second document (the whole-record summary) of a context
-    already primed on the per-encounter chart, and a single-slot cache would
-    silently hand it the first document's words and report a pass on the
-    wrong bytes. Assert on word counts, not on ``is not None``: a stale-cache
-    bug still returns *a* string.
-    """
+    asked about it, not the first document's pages under a new name — #392
+    asks a second document (the whole-record summary) of a context already
+    primed on the per-encounter chart. Assert on word counts, not
+    ``is not None``: a stale-cache bug still returns *a* string."""
     from anastomosis.qa import checks as qa_checks
     from anastomosis.qa.base import QAContext
 
@@ -473,21 +457,10 @@ def test_record_without_identity_anchors_warns(tmp_path: Path) -> None:
 
 
 def test_a_chart_for_a_different_patient_does_not_pass_the_wrong_chart_check() -> None:
-    """The one check whose entire job is to catch a misfiled chart.
-
-    It matched the patient NAME with the value-boundary predicate, so a chart
-    for "Mary-Ann Li-Wong" verified clean against a record for "Ann Li" — a
-    different patient's chart, marked verified. The identity module keeps a
-    separate name-boundary family precisely because intra-name joiners have to
-    count as embedding, and both sibling verifiers (the L2/L3/L6 delivery
-    verifier and the browser pack) already used it.
-
-    The docstring above `_present` claimed the predicate "cannot drift into a
-    substring-loose variant in one place and not another". Nothing enforced
-    that, and it had already drifted, so the claim is now a test.
-
-    Every name here is invented.
-    """
+    """The one check whose entire job is to catch a misfiled chart: matching
+    a patient NAME must use the identity module's own boundary-anchored
+    name predicate, shared with every sibling verifier (rule 84) — never
+    the looser VALUE predicate. Every name here is invented."""
     from anastomosis.qa.checks import _date_present, _name_present, _present
 
     other_patients_chart = "Chart for Mary-Ann Li-Wong. DOB 01-02-1980. Visit 05-10-2023."
@@ -506,12 +479,11 @@ def test_a_chart_for_a_different_patient_does_not_pass_the_wrong_chart_check() -
 
 
 def test_qa_matches_a_name_the_same_way_every_other_verifier_does() -> None:
-    """One family per kind of field, across all three consumers.
-
-    A comment is not a mechanism. This reads the imports off the syntax tree,
-    so a fourth consumer — or a regression in one of these three — shows up
-    here rather than as a chart filed under the wrong patient.
-    """
+    """One family per kind of field, shared across all three consumers (rule
+    84). A comment is not a mechanism: this reads the imports off the
+    syntax tree, so a fourth consumer, or a regression in one of these
+    three, shows up here rather than as a chart filed under the wrong
+    patient."""
     import ast
     from pathlib import Path
 
@@ -572,8 +544,8 @@ def test_note_body_passes_when_the_note_is_on_the_page(tmp_path: Path) -> None:
 def test_note_body_fails_when_the_note_is_gone_but_everything_else_is_there(
     tmp_path: Path,
 ) -> None:
-    """The exact chart that used to pass every check: identity, vitals, dates and
-    the section HEADINGS all present, the bodies all absent."""
+    """A chart with identity, vitals, dates and every section HEADING
+    present, but the bodies all absent — every other check passes clean."""
     pdf = make_pdf(tmp_path / "hollow.pdf", [*GOOD_LINES, "SUBJECTIVE", "PLAN"])
     report = _qa_note(pdf)
     verdict, findings = _result(report, "note_body")
@@ -582,9 +554,8 @@ def test_note_body_fails_when_the_note_is_gone_but_everything_else_is_there(
         "the subjective section is not on the document",
         "the plan section is not on the document",
     ]
-    # The document as a whole must not pass — that is the bug.
     assert not report.ok
-    # And every OTHER check still passes, which is why this went unnoticed.
+    # Only note_body catches this; the other per-section checks all pass.
     for check in ("data_integrity", "layout_pagination", "vitals_loinc"):
         assert _result(report, check)[0] is Verdict.PASS
 
@@ -632,26 +603,19 @@ def test_an_addendum_is_verified_like_a_section(tmp_path: Path) -> None:
 
 
 def test_an_encounter_with_no_narrative_passes_and_says_it_was_vacuous(tmp_path: Path) -> None:
-    """Not every encounter carries a note. Having nothing to verify is a pass,
-    not a warning — the check must not become noise on ordinary charts.
-
-    But it says so. A bare pass over a check that found nothing to check reads,
-    in a report, exactly like a pass over a chart it verified, which is how a
-    run that dropped a record came back with five green lines under it.
-    """
+    """Not every encounter carries a note. Having nothing to verify is a
+    pass, not a warning — the check must not become noise on ordinary
+    charts. But it says so: a bare pass reads, in a report, exactly like a
+    verified chart, which is how a dropped record could pass unnoticed."""
     verdict, findings = _result(_qa(make_pdf(tmp_path / "plain.pdf", GOOD_LINES)), "note_body")
     assert verdict is Verdict.PASS
     assert findings == ["this encounter carries no narrative to verify"]
 
 
 def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
-    """A section the operator disabled is absent on purpose.
-
-    Caught by the gate rather than by inspection: `addenda` is a declared flag
-    in the bundled packs, so a GUI run with it off rendered charts without the
-    addendum and this check called every one of them a loss — turning a
-    deliberate choice into a failed run.
-    """
+    """A section the operator disabled is absent on purpose: `addenda` is a
+    declared flag in the bundled packs, and turning it off must not read
+    as a lost section — a deliberate choice, not a failed run."""
     record = _record()
     record.encounters[0].addenda = [Addendum(text="Corrected: the ache is on the RIGHT shoulder.")]
     pdf = make_pdf(tmp_path / "no_addendum.pdf", GOOD_LINES)
@@ -668,14 +632,10 @@ def test_a_section_switched_off_is_not_reported_missing(tmp_path: Path) -> None:
 def test_a_vital_on_no_encounter_is_caught_by_the_check_the_others_cannot_be(
     tmp_path: Path,
 ) -> None:
-    """The gap the external audit walked straight through.
-
-    Every other check starts from what the encounter claims, so a record whose
-    observations name no encounter gives them nothing to compare and they all
-    pass. The audit's probe found exactly that: eight vitals in the record, a
-    chart carrying none of them, five green ticks. So this asserts the two
-    facts together — the old checks still pass, and the new one does not.
-    """
+    """Every other check starts from what the encounter claims, so a record
+    whose observations name no encounter gives them nothing to compare,
+    and they all pass silently. This asserts the gap directly: the
+    existing checks still pass, and this one does not."""
     record = _record()
     record.observations[0].encounter_id = None
     pdf = make_pdf(tmp_path / "silent.pdf", GOOD_LINES)
@@ -688,13 +648,10 @@ def test_a_vital_on_no_encounter_is_caught_by_the_check_the_others_cannot_be(
 
 
 def test_an_observation_naming_a_visit_that_is_not_there_fails(tmp_path: Path) -> None:
-    """Worse than the unattached case, because it looks attached.
-
-    The value names an encounter, so nothing about it reads as orphaned — and
-    the encounter does not exist, so no chart renders it either. Caught for
-    every category, not just vitals: a lab result pointing at a visit this
-    record does not have is broken whatever it measures.
-    """
+    """Worse than the unattached case, because it looks attached: the value
+    names an encounter, so nothing reads as orphaned, yet the encounter
+    does not exist and no chart renders it. Caught for every category, not
+    just vitals."""
     record = _record()
     record.observations[1].encounter_id = "feedface-dead-0000-0000-00000000beef"
     record.observations[1].category = ObservationCategory.LABORATORY
@@ -708,14 +665,10 @@ def test_an_observation_naming_a_visit_that_is_not_there_fails(tmp_path: Path) -
 
 
 def test_a_social_history_observation_on_no_encounter_is_not_a_finding(tmp_path: Path) -> None:
-    """The normal case, and the reason this check is narrow.
-
-    A smoking status is a fact about the patient rather than something measured
-    at an appointment, and the C-CDA linker leaves it unattached on purpose.
-    Reporting it would put a finding on the chart of every patient ever asked
-    about tobacco — and a check that fires on the ordinary case is one an
-    operator stops reading, which costs more than it catches.
-    """
+    """The normal case, and the reason this check is narrow: a smoking
+    status is a fact about the patient, not something measured at an
+    appointment, and the C-CDA linker leaves it unattached on purpose. A
+    check that fires on the ordinary case is one an operator stops reading."""
     record = _record()
     record.observations.append(
         Observation(
@@ -851,20 +804,11 @@ def test_the_whole_patient_report_grades_a_vital_against_its_own_page(tmp_path: 
 
 
 def test_the_whole_patient_report_names_every_check_the_neutral_path_does() -> None:
-    """A check must never fall out of a whole-patient report unnoticed.
-
-    That grading runs the document-generic checks and records the
-    encounter-scoped ones as skipped-with-reason, and its own docstring promises
-    the report shows the same check set as the neutral path. Nothing enforced it,
-    so when `note_body` was registered it landed in neither table and was
-    silently omitted from every whole-patient report — the exact thing the
-    promise ruled out. Registering a check is now enough to be reminded to place
-    it.
-
-    The tables are shared, so this guards BOTH whole-patient populations at once:
-    the ccda-standard migration's per-patient view and the record summaries every
-    pack-mode bundle now carries.
-    """
+    """A check must never fall out of a whole-patient report unnoticed:
+    every registered check must land in either the document-generic table
+    or the encounter-scoped-skip table, never both — the tables are shared,
+    guarding both the ccda-standard migration's per-patient view and
+    pack-mode's record summaries."""
     from anastomosis.qa.wholepatient import DOC_GENERIC_CHECKS, ENCOUNTER_SCOPED_SKIPS
 
     placed = set(DOC_GENERIC_CHECKS) | set(ENCOUNTER_SCOPED_SKIPS)
@@ -952,8 +896,8 @@ def test_coverage_passes_when_the_chart_carries_the_record(tmp_path: Path) -> No
 
 
 def test_coverage_fails_when_a_carried_kind_reaches_no_page(tmp_path: Path) -> None:
-    """The #239 shape: the record holds five kinds, the page holds none of them,
-    and before this check every verdict was green."""
+    """#239: the record holds five kinds, the page holds none of them — the
+    check must fail, not read as a clean whole-patient report."""
     pdf = make_pdf(tmp_path / "empty.pdf", GOOD_LINES)  # header + vitals only
     verdict, findings, _ = _coverage(pdf, _covered_record(), carries=ALL_KINDS)
     assert verdict is Verdict.FAIL
@@ -1061,12 +1005,10 @@ def test_a_declared_render_day_stamp_is_not_a_stale_date(tmp_path: Path) -> None
 
 
 def test_one_more_stamp_than_declared_still_warns(tmp_path: Path) -> None:
-    """The reason this is a count and not an exemption.
-
-    A pack that declares one stamp and prints four has a template calling now()
-    somewhere it should not — the exact defect this check exists for. Exempting
-    the pack outright would have traded a useless warning for a blind check.
-    """
+    """The reason this is a count and not an exemption: a pack that
+    declares one stamp and prints four has a template calling now()
+    somewhere it should not. Exempting the pack outright would trade a
+    useless warning for a blind check."""
     stamp = date.today().strftime("%B %d, %Y")
     pdf = make_pdf(
         tmp_path / "m.pdf",
@@ -1087,17 +1029,11 @@ def test_a_pack_that_declares_nothing_still_warns_on_the_first_stamp(tmp_path: P
 
 
 def test_each_printed_date_counts_once_per_accepted_spelling() -> None:
-    """One printed date is one stamp, whichever spelling the pack used.
-
-    The counter unions match POSITIONS rather than summing per-spelling hits.
-    Measured: with today's spelling set no two of them can match the same
-    printed date anyway — the boundary rule keeps "8/29/2026" out of
-    "08/29/2026" and "Aug 29, 2026" out of "August 29, 2026" — so the union is
-    defensive rather than load-bearing, and this test does not pretend
-    otherwise. What it does pin is the arithmetic a false warning would come
-    from: each spelling is one stamp, two printed dates are two, and a run of
-    digits that merely contains today is none.
-    """
+    """One printed date is one stamp, whichever spelling the pack used: the
+    counter unions match POSITIONS rather than summing per-spelling hits.
+    Pins the arithmetic a false warning would come from — each spelling is
+    one stamp, two printed dates are two, and a run of digits merely
+    containing today is none."""
     from anastomosis.core.timeutil import all_date_spellings
     from anastomosis.qa.checks import _render_day_occurrences
 

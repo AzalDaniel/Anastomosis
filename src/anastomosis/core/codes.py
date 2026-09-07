@@ -1,14 +1,8 @@
-"""Terminology data: the LOINC vital-sign map, pain answer codes, BMI math.
-
-Codes live here as plain data so every adapter, template pack, and the FHIR
-exporter agree on one spelling of each concept. Units are the UCUM codes US
-ambulatory exports chart in by convention — adapters override them when a
-source declares its own.
-
-Each vital's PRIMARY LOINC is the one PF/Tebra exports chart against. Modern
-C-CDA / Synthea editions legitimately chart some vitals under newer LOINC
-siblings, so those ride along as ``aliases`` that resolve to the same vital
-kind (dual-map, old code first).
+"""Terminology data: the LOINC vital-sign map, pain answer codes, BMI math
+— plain data so every adapter, template pack and the FHIR exporter agree
+on one spelling. Each vital's PRIMARY LOINC is what PF/Tebra charts
+against; a modern C-CDA/Synthea sibling LOINC rides as an ``alias``
+resolving to the same vital kind, primary code first.
 """
 
 from __future__ import annotations
@@ -114,12 +108,9 @@ PAIN_LA_TO_LEVEL: Mapping[str, int] = MappingProxyType(
 
 
 def pain_display(value: str | None) -> str | None:
-    """Convert a pain answer code or numeric string to its 0-10 display value.
-
-    Strips an optional ``LOINC:`` prefix, translates a known LA answer code
-    to its number, accepts a raw 0-10 numeric, else falls back to the raw
-    value (lossless).
-    """
+    """A pain answer code or numeric string as its 0-10 display value:
+    strips an optional ``LOINC:`` prefix, translates a known LA code,
+    accepts a raw 0-10 numeric, else returns the raw value (lossless)."""
     if not value:
         return None
     s = str(value).strip()

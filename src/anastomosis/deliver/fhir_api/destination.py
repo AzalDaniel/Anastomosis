@@ -1,40 +1,11 @@
 """A FHIR R4 ``DocumentReference`` pusher implementing the Destination protocol.
 
-:class:`FhirApiDestination` is the API counterpart to a browser destination
-pack: it files a reconstructed chart's PDFs into a FHIR R4 server as
-``DocumentReference`` resources, and it implements the same
-:class:`~anastomosis.destinations.base.Destination` protocol the upload engine
-drives — plus the optional :class:`MetadataReader` and :class:`DocumentReader`
-capabilities, so the :class:`~anastomosis.deliver.verify.LayeredVerifier` gets
-its L5 (metadata cross-check) and L6 (round-trip read-back) for free.
-
-Identifier-system reuse (load-bearing for the patient match): the resolver
-searches ``Patient?identifier={system}|{value}`` using the **exact** identifier
-systems :mod:`anastomosis.core.fhir.export` writes
-(:data:`~anastomosis.core.fhir.export.IDENTIFIER_SYSTEMS`), so a chart exported
-by this toolkit and re-homed through this destination round-trips on the same
-system URIs. When the canonical patient has no identifier at all, the resolver
-falls back to a demographic search (``family`` + ``given`` + ``birthdate``).
-Exactly one match resolves; multiple matches are a hard
-:class:`PermanentDeliveryError` (filing against a guessed patient is the
-wrong-patient failure the whole subsystem exists to prevent); zero matches
-return ``None`` — or, with ``create_missing_patients``, POST a new ``Patient``
-built by the existing export code and use the created id.
-
-Patient resource construction reuses ``export._patient`` verbatim (the lossless
-extensions tail and identifier systems come along), with the resource ``id``
-dropped before the POST so the server assigns its own.
-
-Size rule: a ``DocumentReference`` carries the PDF *inside* the JSON body, so
-filing one costs several times the file in memory (read + base64 + serialized
-request). :class:`FhirApiDestination` therefore refuses an oversized item
-BEFORE reading it, raising :class:`PayloadTooLarge`; the bound is the
-``max_payload_bytes`` constructor argument. Streaming the bytes as a ``Binary``
-resource is the tracked longer-term path (docs/PLAN.md, "Open work").
-
-PHI rule: every log line and every raised message carries counts, opaque ids,
-HTTP statuses, and ``exc_tag`` type names only — never an identifier value, a
-name, a DOB, a token, or a URL.
+:class:`FhirApiDestination` files a chart's PDFs as ``DocumentReference``
+resources, plus the optional :class:`MetadataReader`/:class:`DocumentReader`
+capabilities that give the verifier L5/L6 for free. The resolver searches by
+the export identifier systems first, else demographics; one match resolves,
+multiple is a hard error, zero returns ``None`` (or creates a ``Patient``).
+The payload preflight is RULES.md 43; the same-origin URL check is RULES.md 42.
 """
 
 from __future__ import annotations
@@ -69,23 +40,15 @@ _LOINC_SYSTEM = export.LOINC
 _PDF_MIME = "application/pdf"
 
 _MIB = 1024 * 1024
-# Largest single document this route will inline. Measured: building the
-# resource for a 32 MiB PDF peaks ~139 MiB (~4.3x — the bytes, their base64
-# form, and the serialized request all live at once), so an unbounded item is
-# an out-of-memory risk on the operator's own machine and a request most
-# servers would reject anyway. 50 MiB is far above any chart this toolkit
-# renders while keeping that multiple bounded; a destination that accepts more
-# gets it via ``max_payload_bytes``.
+# Measured: a 32 MiB PDF peaks ~139 MiB inline (bytes + base64 + request);
+# 50 MiB stays far above any chart this toolkit renders while keeping that
+# multiple bounded. A destination that accepts more sets ``max_payload_bytes``.
 _MAX_PAYLOAD_BYTES = 50 * _MIB
 
 
 class PayloadTooLarge(PermanentDeliveryError):
-    """One item's document exceeds the route's inline-payload bound.
-
-    Permanent, not transient: retrying re-reads the same oversized file. The
-    message names the opaque ``item_key`` and the limit — never a filename
-    (chart filenames embed the patient name and date of service) and never a
-    patient value.
+    """An item exceeds the inline-payload bound (RULES.md 43): permanent, and
+    the message never names the filename.
     """
 
 
@@ -115,22 +78,12 @@ class _NoopSession:
         return self._alive
 
 
-#: Which of a patient's identifiers to look them up in the destination by, best
-#: first. The search takes ONE identifier, so this decides which patient value
-#: is sent — and :meth:`FhirClient.get` puts search params in the query string,
-#: which reaches the destination's access log and any proxy between. That is a
-#: different exposure surface from a request body, and not one this tool can
-#: clean up afterwards, so the SSN is the last resort rather than a coin toss.
-#:
-#: Before this was a list, the search used the FIRST identifier that mapped to a
-#: known system, so the order the SOURCE DOCUMENT happened to list them in chose
-#: it. Measured across the shipped fixtures, that meant a source GUID for
-#: pf-tebra and oracle-ehi, an MRN for fhir-r4 — and the patient's SSN for
-#: c-cda, whose first ``v3:id`` carries the SSN OID.
-#:
-#: The source GUID leads because on a re-run into a destination this tool has
-#: written to, it is the exact identity this tool recorded. The destination's
-#: own record numbers come next.
+#: Which of a patient's identifiers to search the destination by, best first.
+#: The search takes ONE identifier, and :meth:`FhirClient.get` puts it in the
+#: query string, which reaches the destination's access log and any proxy
+#: between — so the SSN is the last resort, not a coin toss. The source GUID
+#: leads because a re-run into a destination this tool wrote to matches its
+#: own recorded identity.
 _SEARCH_IDENTIFIER_ORDER: tuple[IdentifierKind, ...] = (
     IdentifierKind.SOURCE_GUID,
     IdentifierKind.MRN,
@@ -138,39 +91,24 @@ _SEARCH_IDENTIFIER_ORDER: tuple[IdentifierKind, ...] = (
     IdentifierKind.OTHER,
 )
 
-#: The one kind that is NOT reached for unless an operator asks. It sat at the
-#: end of the order above, so a patient carrying only an SSN had it put in a
-#: URL query string — and that reaches the destination's access log and every
-#: proxy between, which is not somewhere this tool can clean up afterwards.
-#:
-#: The question #232 left open was whether an SSN should ever be a search
-#: parameter, and the honest reading of the trade is that it is the operator's
-#: to make, not one to inherit by default. Off, a patient with nothing else
-#: simply is not found: with --create-patients that is a duplicate chart, which
-#: is visible and recoverable, and without it the item is skipped and reported.
-#: On (``--search-by-ssn``), the SSN is the last resort it used to be, for a
-#: destination that really does hold its patients under nothing else.
+#: Reached only with ``--search-by-ssn``: an SSN in a URL query string reaches
+#: the destination's access log and every proxy between (#232). Off, an
+#: SSN-only patient is simply not found — a visible, recoverable duplicate
+#: with ``--create-patients``, or a skipped, reported item without it.
 _SSN_SEARCH_KIND = IdentifierKind.SSN
 
 
 def _has_usable_ssn(patient: Patient) -> bool:
-    """Does this patient carry an SSN with something in it?
-
-    The distinction that matters when nothing else was searchable: an SSN this
-    run declines to send is an identity withheld, while a blank identifier is
-    an identity the source never gave.
+    """Does this patient carry a nonblank SSN — distinct from a blank
+    identifier the source never gave?
     """
     return any(i.kind is _SSN_SEARCH_KIND and i.value for i in patient.identifiers)
 
 
 def _search_identifier(patient: Patient, *, allow_ssn: bool = False) -> Identifier | None:
-    """The identifier to search the destination by, or None to fall back.
-
-    Best kind first, and within a kind the one the source listed first — an
-    adapter that emits two MRNs still gets the same answer every run. The SSN
-    is reached only with ``allow_ssn``, and only after everything else, so
-    turning it on changes the answer for exactly the patients who carry
-    nothing better.
+    """The identifier to search by, or ``None`` to fall back: best kind
+    first, source order within a kind, SSN only with ``allow_ssn`` and
+    only last.
     """
     order = (*_SEARCH_IDENTIFIER_ORDER, _SSN_SEARCH_KIND) if allow_ssn else _SEARCH_IDENTIFIER_ORDER
     for kind in order:
@@ -233,16 +171,10 @@ class FhirApiDestination:
     # --- PatientResolver ---
 
     def resolve(self, patient: Patient) -> DestinationPatient | None:
-        """Find the destination's record for ``patient`` (never a guess).
-
-        Searches by identifier first (the export identifier-system convention),
-        falling back to a demographic search only when the patient carries no
-        identifier at all. A patient carrying ONLY an SSN is not that patient:
-        without ``search_by_ssn`` there is nothing this run will search on, and
-        it resolves to nothing rather than to a name-and-DOB match. Exactly one
-        match resolves; multiple is a hard error; zero returns ``None`` unless
-        ``create_missing_patients`` is set, which POSTs a new Patient and
-        returns its id.
+        """Find the destination's record for ``patient``, never a guess:
+        identifier first, demographics only when none exist; SSN-only
+        resolves to nothing without ``search_by_ssn``. Zero matches creates
+        a Patient when ``create_missing_patients`` is set.
         """
         found = self._find(patient)
         if found is not None:
@@ -259,11 +191,8 @@ class FhirApiDestination:
         """
         params, matched_on = self._search_params(patient)
         if not params:
-            # Nothing to search ON. Issuing the GET anyway would ask the server
-            # for every Patient it holds, and the multi-match refusal below
-            # would then report "matched 4,000 records" — true, useless, and
-            # hiding the actual reason. PHI-safe: matched_on names why, never a
-            # patient value.
+            # Issuing the GET anyway would ask for every Patient the server
+            # holds; matched_on names why, never a patient value.
             logger.info("no destination search is possible: %s", "; ".join(matched_on))
             return None
         bundle = self._client.get("Patient", params)
@@ -275,37 +204,24 @@ class FhirApiDestination:
             )
         if len(ids) == 1:
             return DestinationPatient(destination_patient_id=ids[0], matched_on=matched_on)
-        # PHI-BY-DESIGN: ``matched_on`` is the NAME of the field(s) the search
-        # used ("identifier" / "family_name" / "given_name" / "birth_date"),
-        # never a patient value — the field-name-not-value logging discipline.
-        # See SECURITY.md, "Code scanning & suppression policy (auditable)".
+        # PHI-BY-DESIGN: matched_on is a field NAME, never a value (SECURITY.md).
         # codeql[py/clear-text-logging-sensitive-data]
         logger.info("no destination patient matched on %s", matched_on)
         return None
 
     def _search_params(self, patient: Patient) -> tuple[dict[str, str], tuple[str, ...]]:
-        """Build the Patient search params + the matched-on field names (PHI-safe).
-
-        Identifier search uses ``{system}|{value}`` with the export systems, on
-        the identifier :data:`_SEARCH_IDENTIFIER_ORDER` prefers rather than
-        whichever one happens to be first (see that constant). The demographic
-        fallback uses family/given/birthdate; a missing birth_date there is
-        still searched (FHIR ANDs only the params present), and the matched_on
-        names reflect exactly which params were sent.
+        """Patient search params + matched-on field names (PHI-safe):
+        identifier via :data:`_SEARCH_IDENTIFIER_ORDER`, else family/given/
+        birthdate (FHIR ANDs only the params present).
         """
         chosen = _search_identifier(patient, allow_ssn=self._search_by_ssn)
         if chosen is not None:
             system = export.IDENTIFIER_SYSTEMS[chosen.kind.value]
             return {"identifier": f"{system}|{chosen.value}"}, ("identifier",)
         if not self._search_by_ssn and _has_usable_ssn(patient):
-            # Carries an identity, just not one this run will put in a URL.
-            # Demographics is NOT the answer here: that fallback exists for a
-            # patient the source gave no identity at all, and letting a
-            # withheld SSN reach it would trade a query-string exposure for a
-            # name-and-DOB match on a stranger — the failure this subsystem
-            # exists to prevent, and the worse of the two. A patient whose only
-            # identifier entry is BLANK is a different case: the source gave
-            # nothing, so the fallback below is right for them.
+            # Demographics is not the answer here: it exists for a patient the
+            # source gave no identity at all, and falling back for a withheld
+            # SSN would trade query-string exposure for a name/DOB guess.
             return {}, ("identifier withheld (SSN only; --search-by-ssn is off)",)
         params: dict[str, str] = {}
         matched: list[str] = []
@@ -323,11 +239,8 @@ class FhirApiDestination:
         return params, tuple(matched)
 
     def _create_patient(self, patient: Patient) -> DestinationPatient:
-        """POST a new Patient built by the export code; return the created id.
-
-        Reuses ``export._patient`` so the resource carries the same identifier
-        systems and lossless extensions tail a normal export would. The
-        resource ``id`` is dropped so the server assigns its own.
+        """POST a Patient via ``export._patient`` (same identifier systems and
+        extensions tail); the resource id is dropped so the server assigns one.
         """
         resource = export._patient(patient, PatientRecord(patient=patient))
         resource.pop("id", None)
@@ -340,16 +253,10 @@ class FhirApiDestination:
     # --- BannerCheck ---
 
     def current_patient_matches(self, expected: Patient) -> bool:
-        """API-mode wrong-patient defense: re-read the Patient and compare.
-
-        Reads ``Patient/{id}`` (the id resolved for this item is not carried
-        here, so the banner re-resolves ``expected`` to the same id the engine
-        used) and checks family name (case-insensitive) AND birthDate. A
-        missing birthDate on either side is a fail-closed ``False`` — the
-        verification cannot be completed, so it is treated as a mismatch.
-
-        Uses the search-only ``_find`` (never the creating ``resolve``): a
-        verification step must not create the record it verifies.
+        """Re-read the Patient and compare family name (case-insensitive) and
+        birthDate; a missing birthDate on either side fails closed. Uses the
+        search-only ``_find``, never ``resolve``: verification must not
+        create the record it verifies.
         """
         resolved = self._find(expected)
         if resolved is None:
@@ -364,20 +271,9 @@ class FhirApiDestination:
     # --- ExistingDocsScanner ---
 
     def existing_fingerprints(self, patient: DestinationPatient) -> set[str]:
-        """Fingerprints already filed for this patient (the duplicate defense).
-
-        Lists ``DocumentReference?subject=Patient/{id}`` and reads each entry's
-        ``content[0].attachment.title`` — the same field the driver writes — so
-        a document filed on a prior (possibly crashed) run is found and skipped.
-
-        EVERY page. A FHIR search returns a searchset the SERVER pages, and
-        advertises the continuation as ``Bundle.link[relation="next"]``. Reading
-        only the first page means a patient with more documents than the
-        server's page size has fingerprints this scan cannot see — so a resumed
-        run re-files a chart already in their record, which is the one thing
-        this scan exists to prevent. A patient with 21 documents behind a
-        20-per-page server had exactly one invisible fingerprint, and it was the
-        most recently filed one: the likeliest to be the crashed run's.
+        """Fingerprints already filed for this patient (the duplicate defense):
+        ``content[0].attachment.title`` across EVERY result page — a partial
+        scan would miss fingerprints and let a resumed run re-file a chart.
         """
         fingerprints: set[str] = set()
         path: str | None = "DocumentReference"
@@ -394,9 +290,8 @@ class FhirApiDestination:
             if next_url is None:
                 break
             if pages >= _MAX_SCAN_PAGES:
-                # Loudly, not quietly: a truncated scan is indistinguishable
-                # from a clean one, and the consequence of the difference is a
-                # doubled chart. Count only — never a patient id.
+                # A truncated scan is indistinguishable from a clean one, and
+                # the difference is a doubled chart — refuse loudly instead.
                 raise PermanentDeliveryError(
                     f"the existing-document scan did not finish after {pages} pages; "
                     "refusing to file rather than risk duplicating this chart"
@@ -408,12 +303,9 @@ class FhirApiDestination:
     # --- UploadDriver ---
 
     def upload(self, item: UploadItem, patient: DestinationPatient) -> UploadReceipt:
-        """File ``item`` as a ``DocumentReference`` and return the receipt.
-
-        Builds the resource (status current, LOINC type, subject, tz-aware UTC
-        date, base64 PDF attachment carrying the fingerprint as its title and
-        the size as ``attachment.size``), POSTs it, and reports the created id
-        plus the echoed attachment size when the server returns a body.
+        """File ``item`` as a ``DocumentReference``; return the receipt with
+        the created id and the echoed attachment size, when the server
+        returns one.
         """
         resource = self._document_reference(item, patient)
         body, created_id = self._client.post("DocumentReference", resource)
@@ -426,15 +318,10 @@ class FhirApiDestination:
     def _document_reference(
         self, item: UploadItem, patient: DestinationPatient
     ) -> dict[str, object]:
-        # Refuse an oversized document BEFORE it is read: the read, its base64
-        # form, and the serialized request all coexist, so the peak is several
-        # times the file. Checking first is what keeps that bounded.
         self._check_payload_size(item)
-        # attachment.hash is deliberately OMITTED: FHIR R4 defines it as the
-        # SHA-1 of the data, but the upload ledger standardizes on sha256, so a
-        # SHA-1 here would be a second, conflicting digest. The fingerprint
-        # (sha256-derived) rides in the title instead; the round-trip read-back
-        # (L6) re-hashes with sha256.
+        # attachment.hash is omitted: FHIR defines it as SHA-1, but the upload
+        # ledger standardizes on sha256, so the fingerprint rides in the title
+        # instead and L6 re-hashes with sha256.
         data = base64.b64encode(item.file_path.read_bytes()).decode("ascii")
         return {
             "resourceType": "DocumentReference",
@@ -463,19 +350,8 @@ class FhirApiDestination:
         }
 
     def _check_payload_size(self, item: UploadItem) -> None:
-        """Raise :class:`PayloadTooLarge` when ``item`` exceeds the bound.
-
-        The bound is measured against the file's ACTUAL size on disk, and only
-        that: the bytes this route is about to read, base64-encode, and
-        serialize are the bytes that set the memory peak. ``item.size_bytes``
-        comes from the upload manifest and is advisory — a stale manifest that
-        UNDERSTATES the file must not wave it past (the stat catches that), and
-        one that OVERSTATES a small file must not refuse a chart this route can
-        perfectly well deliver. The message reports the measured size, so what
-        the operator is told is what was actually weighed.
-
-        Ordering is load-bearing: this runs BEFORE the read, which is the whole
-        point of a preflight.
+        """Raises :class:`PayloadTooLarge` above the bound, measured on disk
+        rather than the manifest's advisory size (RULES.md 43).
         """
         size = item.file_path.stat().st_size
         if size <= self._max_payload_bytes:
@@ -494,11 +370,9 @@ class FhirApiDestination:
     def read_metadata(
         self, patient: DestinationPatient, destination_doc_id: str
     ) -> Mapping[str, str | int]:
-        """The destination's metadata for a filed document: size when present.
-
-        Reads ``DocumentReference/{id}`` and reports ``attachment.size`` when
-        the server stored it. Page count is not a FHIR attachment field, so it
-        is simply omitted — L5 then checks only what is present.
+        """A filed document's ``attachment.size`` when the server stored it;
+        page count is omitted (not a FHIR attachment field) and L5 checks
+        only what is present.
         """
         resource = self._client.get(f"DocumentReference/{destination_doc_id}")
         attachment = _first_attachment(resource)
@@ -511,14 +385,9 @@ class FhirApiDestination:
     # --- DocumentReader (optional capability -> L6) ---
 
     def read_back(self, patient: DestinationPatient, destination_doc_id: str) -> bytes:
-        """Read the stored document's bytes back for the L6 round-trip.
-
-        Prefers inline ``attachment.data`` (base64). When the attachment is
-        stored by reference (``attachment.url``), the URL is followed ONLY when
-        it is same-origin with the configured base URL — a cross-origin
-        attachment URL is refused (it could redirect the read-back at an
-        attacker-controlled host carrying the bearer token). A non-conforming
-        attachment is a hard error rather than a silent empty read.
+        """The stored document's bytes for the L6 round-trip: inline
+        ``attachment.data`` first, else a same-origin ``attachment.url``
+        (RULES.md 42). Neither present is a hard error.
         """
         resource = self._client.get(f"DocumentReference/{destination_doc_id}")
         attachment = _first_attachment(resource)
@@ -531,17 +400,8 @@ class FhirApiDestination:
         raise PermanentDeliveryError("DocumentReference attachment has neither data nor url")
 
     def _same_origin_path(self, url: str, what: str) -> tuple[str, dict[str, str]]:
-        """A server-supplied URL, checked and turned into (path, params).
-
-        Same-origin rule: the URL must share the base URL's scheme, host and
-        port. A relative path resolves against the base. This is the same
-        reasoning that makes the client refuse redirects — the Authorization
-        header must never travel to a host the operator did not configure — and
-        it applies to every URL the SERVER chooses, which is both a
-        by-reference attachment and a search's `next` page link.
-
-        ``what`` names the URL in the refusal, so the operator is told which one
-        pointed off-origin.
+        """A server-supplied URL, checked same-origin and turned into
+        ``(path, params)`` (RULES.md 42); ``what`` names it in the refusal.
         """
         from urllib.parse import parse_qsl, urlsplit
 
@@ -584,9 +444,8 @@ class FhirApiDestination:
         raise PermanentDeliveryError("by-reference attachment returned no data")
 
 
-#: How many search pages the duplicate scan will walk before refusing. A server
-#: whose `next` link never terminates would otherwise loop forever; at typical
-#: page sizes this is tens of thousands of documents for one patient.
+#: Search pages the duplicate scan walks before refusing — a server whose
+#: `next` link never terminates would otherwise loop forever.
 _MAX_SCAN_PAGES = 200
 
 
@@ -594,11 +453,8 @@ _MAX_SCAN_PAGES = 200
 
 
 def _next_page_url(bundle: Mapping[str, object]) -> str | None:
-    """The searchset's continuation link, or None on the last page.
-
-    Shape-tolerant like its siblings here: a server that answers with something
-    other than a list of link objects gets treated as "no more pages", not a
-    crash — but the caller's page cap is what stops a malformed `next` looping.
+    """The searchset's continuation link, or ``None`` on the last page —
+    shape-tolerant; the caller's page cap is what stops a malformed `next`.
     """
     links = bundle.get("link")
     if not isinstance(links, list):

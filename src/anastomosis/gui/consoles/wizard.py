@@ -1,19 +1,12 @@
-"""What the two teach wizards do identically, in one place.
+"""Contract: what the two teach wizards (pack-from-samples, learn-a-source)
+share — run the core command on a daemon worker, stash the result, close
+with one terminal event.
 
-Both wizards — learn a template pack from sample PDFs, learn a new source
-format from one example export — have different domain logic and share a
-choreography: run the core command on a daemon worker, stash the result dict
-for the wizard to fetch, and close the run with one terminal event.
-
-The rule worth having in one place is which event that is. Both wizards stop
-halfway ON PURPOSE: they analyze, then refuse with ``ConfirmationRequired`` so
-a person can confirm what was found before anything is written. That refusal is
-the wizard's ordinary middle step, not a failure, so it closes the run with
-``done`` — and the JS fetches the stashed result on ``done`` to render the
-summary for confirming. Emitting it as ``error`` would route the normal path
-through the failure branch and the operator would never see the summary they
-are meant to approve. Written out twice, that rule could drift in one wizard
-and the tests would still pass; here it cannot.
+Both stop halfway on purpose: they analyze, then refuse with
+``ConfirmationRequired`` so a person confirms before anything writes. That
+refusal closes as ``done`` (not ``error``), or the JS's failure branch would
+hide the summary the operator must approve. Kept in one place so this rule
+cannot drift between the two wizards.
 """
 
 from __future__ import annotations
@@ -32,10 +25,8 @@ __all__ = ["WizardConsole"]
 class WizardConsole:
     """Base for the two teach-wizard console backends.
 
-    Subclasses set :attr:`_FLOW` (the operation family stamped on every event,
-    so only the owning wizard page consumes them) and :attr:`_STAGE` (the event
-    stage the JS routes on), then call :meth:`_submit_step` with a callable that
-    runs their core command and returns the wizard's JSON-safe dict.
+    Subclasses set :attr:`_FLOW`/:attr:`_STAGE`, then call
+    :meth:`_submit_step` with a callable running their core command.
     """
 
     #: The operation family this console owns (the per-page flow guard).
@@ -46,21 +37,15 @@ class WizardConsole:
     def __init__(self, emit: Callable[[dict[str, object]], None], jobs: GuiJobRunner) -> None:
         self._emit = emit
         self._jobs = jobs
-        # The most recent async run's result dict, held for the wizard to fetch
-        # once the terminal event lands. PHI-safe (the subclass's result mapper
-        # decides what goes in); empty until the first async run.
+        # Held for the wizard to fetch once the terminal event lands; PHI-safe
+        # (the subclass's result mapper decides what goes in).
         self._last: dict[str, object] = {}
 
     def _submit_step(self, run: Callable[[], dict[str, object]]) -> dict[str, object]:
         """Run one wizard step on a daemon thread and close it with one event.
 
-        Acquires the busy flag SYNCHRONOUSLY before returning, so two quick
-        clicks cannot both get ``{"started": True}``. Returns ``{"ok": True,
-        "started": True}`` immediately, or ``{"ok": False, "error": "Busy"}`` if
-        a run is already in flight. ``run`` executes on the worker; whatever it
-        returns is stashed for :meth:`_last_result` and routed to the terminal
-        event per the module docstring. Never raises: a crash in ``run`` is
-        stashed and emitted as an error with its exception TYPE name only.
+        Acquires the busy flag synchronously; returns ``{"started": True}``
+        or ``{"error": "Busy"}``. Never raises: a crash emits an error TYPE name.
         """
 
         def _worker() -> None:

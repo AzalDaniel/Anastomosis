@@ -1,16 +1,11 @@
 """E2E validation of the packgen layout learner — the honesty loop for M3.
 
-Renders the synthetic ``pf_tebra_v9`` encounters through the ``generic_soap``
-pack with REAL Chromium (reusing the golden render path), runs
-:func:`anastomosis.packgen.analyze` over the resulting PDFs, and asserts the
-learner re-discovers ``generic_soap``'s ground-truth design — the four SOAP
-section headings from the pack template, Letter page geometry, the heading-band
-fill token, and the serif body face.
-
-PHI-safe: the fixture is the repo's synthetic ``feedface-`` PF/Tebra export, so
-every value seen here is synthetic.
-
-Marked ``e2e``; SKIPS cleanly when Playwright/Chromium is unavailable.
+Renders the synthetic ``pf_tebra_v9`` encounters through ``generic_soap``
+with REAL Chromium, runs :func:`anastomosis.packgen.analyze` over the
+PDFs, and asserts the learner re-discovers the pack's ground-truth design:
+the four SOAP headings, Letter page geometry, the heading-band fill token,
+and the serif body face. PHI-safe (synthetic ``feedface-`` fixture); SKIPS
+when Chromium is unavailable.
 """
 
 from __future__ import annotations
@@ -87,12 +82,9 @@ def analysis():  # type: ignore[no-untyped-def]
 
 
 def test_rediscovers_soap_section_headings(analysis) -> None:  # type: ignore[no-untyped-def]
-    """The four SOAP headings appear as HIGH-confidence section candidates.
-
-    "High confidence" = recurring across a clear majority of the six rendered
-    encounters (the simple-note and well-child encounters omit some sections,
-    so counts of 4-6 of 6 are expected, never 1).
-    """
+    """The four SOAP headings appear as HIGH-confidence section candidates:
+    recurring across a clear majority of the six rendered encounters (some
+    omit sections, so counts of 4-6 of 6 are expected, never 1)."""
     by_text = {c.text: c for c in analysis.sections}
     for heading in _SOAP_HEADINGS:
         assert heading in by_text, f"{heading!r} not rediscovered; got {sorted(by_text)}"
@@ -113,16 +105,11 @@ def test_rediscovers_letter_page_geometry(analysis) -> None:  # type: ignore[no-
 
 
 def test_rediscovers_body_font_family_and_eleven_point_level(analysis) -> None:  # type: ignore[no-untyped-def]
-    """The serif body face is recovered, and the 11pt prose level the template
-    sets on ``body`` is present in the type scale.
-
-    NOTE: the single most-voluminous cluster in these short, table-heavy notes
-    is 9.5pt (vitals/payment tables + facility-meta), so the 11pt CSS ``body``
-    rule is NOT the highest-weight cluster. The learner therefore reports 9.5pt
-    as ``body`` — statistically correct for this corpus. We assert the 11pt
-    prose level EXISTS as a regular level rather than that it is the body
-    cluster; this honest distinction is documented in the PR.
-    """
+    """The serif body face is recovered, and the 11pt prose level the
+    template sets on ``body`` is present in the type scale — but not
+    necessarily as the highest-weight cluster: these short, table-heavy
+    notes' most-voluminous cluster is 9.5pt, so the learner reports THAT
+    as ``body``, statistically correctly for this corpus."""
     scale = analysis.type_scale
     assert scale.body_font is not None
     # Cross-platform font-name reality: Chromium maps the pack's generic

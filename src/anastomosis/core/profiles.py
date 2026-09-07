@@ -1,40 +1,10 @@
-"""Immutable, hash-addressed profiles: the exact inputs a run was prepared under.
-
-A migration has three inputs that decide what its artifacts mean, and all three
-can change under the operator between one command and the next:
-
-* the **source** — a built-in adapter, or a learned ``mapping.json`` somebody
-  taught and can hand-edit afterwards;
-* the **destination** — a registry entry whose declared product, version and
-  capabilities decide the route the artifacts were shaped for;
-* the **layout** — the template pack whose ``context.py`` and ``template.html``
-  rendered the chart pages.
-
-Each becomes a frozen profile here, addressed by a SHA-256 over its own
-canonical serialization. Nothing new is hashed that already had a hash: a
-learned mapping's digest is the one ``save_mapping`` records in
-``source_trust.json`` (:func:`~anastomosis.sources.learned.spec.mapping_content_hash`),
-and a pack's is :func:`~anastomosis.reconstruct.packtrust.pack_content_hash`.
-The profile hash is a hash *of those identities*, so a profile changes exactly
-when the thing it names changes.
-
-:class:`RunBinding` is the three together plus the digest over them. What it
-buys is stated in one sentence: a run manifest
-(:mod:`anastomosis.core.runmanifest`) names the exact profile hashes a run was
-prepared under, and a later step over the same output folder recaptures them and
-REFUSES when any one differs — naming which. There is no fallback path and no
-"probably fine": a chart rendered by one layout and filed against another
-destination's expectations is a misattribution, and this is the mechanical stop.
-
-Canonical serialization is the whole contract, so it is pinned rather than
-implied: ``json.dumps(payload, sort_keys=True, separators=(",", ":"),
-ensure_ascii=True)`` over a JSON-only payload, domain-separated by schema
-version and profile kind. No clock, no host, no ordering churn — two captures of
-the same inputs on the same pinned environment produce the same hex.
-
-PHI rule: a profile carries adapter names, destination/vendor identifiers,
-version strings, capability kinds, pack names, and hex digests. Nothing
-patient-derived reaches it, and nothing ever may.
+"""Immutable, hash-addressed profiles for a migration's three inputs
+(source, destination, layout), each a SHA-256 over its own canonical JSON
+serialization (``sort_keys``, no clock, domain-separated by schema version
+and kind). :class:`RunBinding` is the three plus the digest over them, so
+a later step over the same output folder recaptures them and refuses when
+any one differs, naming which (53). PHI: adapter/destination/pack names,
+version strings, capability kinds, hex digests — never a patient value.
 """
 
 from __future__ import annotations
@@ -82,24 +52,16 @@ SOURCE_LEARNED = "learned"
 
 
 class ProfileError(Exception):
-    """A profile could not be captured — loud, PHI-safe, never a silent default.
-
-    Raised only where guessing would be worse than stopping: an unknown source
-    adapter, an unknown destination. A pack or mapping whose bytes cannot be
-    read is a DIFFERENT case — that is recorded as a ``None`` content hash on
-    the profile, which is itself a value the binding compares, so a file that
-    becomes readable (or unreadable) later still shows up as drift.
-    """
+    """A profile could not be captured — loud, PHI-safe, never a silent
+    default. Raised only for an unknown source adapter or destination; an
+    unreadable pack/mapping is different and records a ``None`` content
+    hash instead, itself a value the binding compares as drift."""
 
 
 def _digest(kind: str, payload: Mapping[str, Any]) -> str:
-    """SHA-256 hex over ``payload``'s canonical JSON, domain-separated by ``kind``.
-
-    The prefix pins three things into the digest that the payload itself does
-    not carry: that this is an Anastomosis profile hash, which schema version
-    produced it, and which profile kind it describes. Without the last one, two
-    different profiles that happened to serialize identically would collide.
-    """
+    """SHA-256 hex over ``payload``'s canonical JSON, domain-separated by
+    ``kind`` and schema version: without the kind prefix, two different
+    profiles that serialize identically would collide."""
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     digest = hashlib.sha256()
     digest.update(f"anastomosis.profile\0{PROFILE_SCHEMA_VERSION}\0{kind}\0".encode())
@@ -109,20 +71,10 @@ def _digest(kind: str, payload: Mapping[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class SourceProfile:
-    """WHICH source adapter, and — for a learned one — exactly which mapping.
-
-    A built-in adapter has no content hash: its behavior is the installed
-    package's, which the run manifest pins separately as the pipeline version.
-    A learned adapter's identity is its ``mapping.json`` digest, so editing a
-    reviewed mapping changes this profile and every binding that named it.
-
-    :attr:`taught_for_destination` is the destination the mapping was taught
-    against (``None`` for a mapping taught before any destination was chosen,
-    and for every built-in). It is carried HERE rather than compared elsewhere
-    because it is a property of the mapping, and the refusal it powers — a
-    mapping learned for one destination silently run at another — has to name
-    both ends.
-    """
+    """WHICH source adapter and, for a learned one, exactly which mapping:
+    a built-in has no content hash, a learned adapter's is its
+    ``mapping.json`` digest. :attr:`taught_for_destination` is ``None``
+    for an unbound teach or a built-in (32)."""
 
     name: str
     kind: str
@@ -169,12 +121,9 @@ class SourceProfile:
 
 @dataclass(frozen=True)
 class DestinationCapability:
-    """One declared capability class of a destination: what it is, and how.
-
-    ``slot`` is the registry field (``doc_write_api``/``ccda_import``/
-    ``browser``), ``kind`` its closed-enum value, ``detail`` the vendor-facing
-    specifics (an endpoint description, a destination-pack name).
-    """
+    """One declared capability class of a destination. ``slot`` is the
+    registry field, ``kind`` its closed-enum value, ``detail`` the
+    vendor-facing specifics."""
 
     slot: str
     kind: str
@@ -186,19 +135,11 @@ class DestinationCapability:
 
 @dataclass(frozen=True)
 class DestinationProfile:
-    """WHICH destination product, at WHICH declared version, able to receive what.
-
-    The version is the registry entry's ``version:`` — see
-    :data:`anastomosis.destinations.registry.UNVERSIONED` for the explicit
-    string an entry that declares none records.
-
-    What is deliberately NOT hashed: each capability's ``evidence`` block. The
-    quarterly re-verification ritual bumps a ``verified`` date without changing
-    a single thing about what the destination can receive, and a binding that
-    broke every time somebody re-read a vendor doc page would train operators to
-    ignore it. A changed ``kind`` or ``detail`` IS a changed routing fact and
-    does break the binding.
-    """
+    """WHICH destination product, at WHICH declared version, able to
+    receive what. Deliberately NOT hashed: each capability's ``evidence``
+    block — the quarterly re-verification date changes with no routing
+    fact changing, and a binding that broke on that would train operators
+    to ignore it. A changed ``kind`` or ``detail`` does break it."""
 
     name: str
     display: str
@@ -239,33 +180,11 @@ class DestinationProfile:
 
 @dataclass(frozen=True)
 class LayoutProfile:
-    """WHICH representation rendered the chart pages, at WHICH content hash.
-
-    ``render_mode`` is the operator's choice (``neutral``, ``ccda-standard``, or
-    a pack name); ``pack`` is the template pack it resolved to. The
-    ``ccda-standard`` view renders through HL7's own stylesheet and no Jinja
-    pack at all, so ``pack``/``origin``/``content_hash`` are all ``None`` there
-    — a truthful "no pack was involved", not a lost field.
-
-    ``content_hash`` is :func:`~anastomosis.reconstruct.packtrust.pack_content_hash`
-    verbatim: the same digest over the same ``context.py`` + ``template.html`` +
-    ``pack.yaml`` bytes the trust store gates execution on. A pack that could not
-    be discovered records ``None``, which is a value the binding compares like
-    any other — a pack that appears or disappears between runs is drift. What
-    that digest does NOT cover is what ``packtrust`` does not cover: auxiliary
-    assets beside those three files are unpinned there and unpinned here.
-
-    ``root`` is recorded and deliberately NOT hashed. A later step does not
-    carry the ``--pack-dir`` list the migration was given, so re-running
-    discovery there would fail to find an external pack, record no hash, and
-    report drift for a pack nobody touched — a refusal people learn to ignore,
-    which is worse than no refusal. Recording where the render actually read
-    from lets the later step ask the honest question (do those bytes still hash
-    the same?) at the right place. It stays out of the hash for the same reason
-    the destination's ``evidence`` does: a pack moved to another absolute path
-    is not a pack whose content changed, and a machine-specific path inside the
-    digest would make every binding unportable.
-    """
+    """WHICH representation rendered the chart pages, at WHICH content
+    hash — ``ccda-standard`` uses no Jinja pack, so those fields are
+    truthfully ``None``. ``root`` is recorded but NOT hashed: a moved pack
+    is not a changed one, and :func:`reprofile_layout` needs it to ask the
+    honest question without a ``--pack-dir`` list it never received."""
 
     render_mode: str
     pack: str | None = None
@@ -302,12 +221,9 @@ class LayoutProfile:
 @dataclass(frozen=True)
 class RunBinding:
     """The three profiles a run is bound to, plus the digest over them.
-
-    :attr:`hashes` is the comparison surface — a plain ``{profile name: hex}``
-    map, so a drift check names WHICH profile moved instead of reporting one
-    opaque mismatch. :attr:`binding_hash` folds the three into one value for the
-    manifest's own integrity line.
-    """
+    :attr:`hashes` names WHICH profile moved on drift instead of one
+    opaque mismatch; :attr:`binding_hash` folds all three into the
+    manifest's integrity line."""
 
     source: SourceProfile
     destination: DestinationProfile
@@ -360,18 +276,10 @@ def _opt_int(value: Any) -> int | None:
 
 
 def capture_source_profile(name: str, *, sources_dir: Path | None = None) -> SourceProfile:
-    """Profile the registered source adapter ``name``.
-
-    A learned adapter's mapping digest is read from its saved ``mapping.json``
-    when one is on disk, and recomputed from the in-memory spec otherwise (a
-    mapping saved outside the discoverable directory, or registered for this
-    session only) — both through
-    :func:`~anastomosis.sources.learned.spec.mapping_content_hash`, so the two
-    routes cannot disagree about what a mapping's digest is.
-
-    Raises :class:`ProfileError` for an unknown adapter: a run cannot be bound
-    to a source that does not exist, and defaulting would bind it to nothing.
-    """
+    """Profile the registered source adapter ``name``. A learned adapter's
+    mapping digest is read from disk when saved there, else recomputed via
+    :func:`~anastomosis.sources.learned.spec.mapping_content_hash` so both
+    routes agree. Raises :class:`ProfileError` for an unknown adapter."""
     from anastomosis.sources import get_source
     from anastomosis.sources.learned import LearnedSourceAdapter, user_sources_dir
     from anastomosis.sources.learned.spec import SPEC_FILENAME, mapping_content_hash
@@ -409,11 +317,8 @@ def capture_destination_profile(
     name: str, registry: DestinationRegistry | None = None
 ) -> DestinationProfile:
     """Profile the destination ``name`` from the capability registry.
-
-    Raises :class:`ProfileError` (naming the known destinations, as the registry
-    does) for an unknown name — the same loud refusal ``plan_route`` makes, so a
-    binding can never be taken against a destination nobody declared.
-    """
+    Raises :class:`ProfileError` for an unknown name, naming the known
+    destinations, the same refusal ``plan_route`` makes."""
     from anastomosis.destinations.registry import DestinationRegistry
 
     reg = registry if registry is not None else DestinationRegistry.load()
@@ -442,15 +347,11 @@ def capture_layout_profile(
     allow_external: bool = False,
     trust: PackTrust | None = None,
 ) -> LayoutProfile:
-    """Profile the template pack ``pack`` as it exists on this machine right now.
-
-    ``pack is None`` (the ``ccda-standard`` view) profiles the render mode alone.
-    Discovery uses the SAME defensive walk the renderer uses, so the pack this
-    profiles is the pack that would render — a shadowing user pack included. An
-    undiscoverable or broken pack records a ``None`` content hash and says so in
-    a PHI-free log line rather than raising: refusing here would block a run for
-    a fault the renderer will report far better a moment later.
-    """
+    """Profile ``pack`` as it exists on this machine now, via the SAME
+    discovery walk the renderer uses, so this is the pack that would
+    render. ``pack is None`` profiles the render mode alone; undiscoverable
+    or broken records ``None`` and logs rather than raising, leaving the
+    renderer to report the fault better a moment later."""
     if pack is None:
         return LayoutProfile(render_mode=render_mode)
     from anastomosis.reconstruct.packs import discover_packs
@@ -473,19 +374,11 @@ def capture_layout_profile(
 
 
 def reprofile_layout(profile: LayoutProfile) -> LayoutProfile:
-    """Re-read the content of the layout a manifest already named.
-
-    The manifest supplies the identity AND the place; this asks only whether
-    those same bytes still hash the same. Discovery is not re-run, because the
-    step asking is typically an upload or a delivery, which never received the
-    ``--pack-dir`` list the migration was given: rediscovering would report a
-    vanished pack for one that is exactly where it was, and send the operator
-    to restore inputs nobody changed.
-
-    A manifest written before ``root`` was recorded, or one naming no pack at
-    all, has nothing to re-read here and falls back to discovery — the old
-    behaviour, for the old shape.
-    """
+    """Re-read the content of the layout a manifest already named, asking
+    only whether those bytes still hash the same — never re-running
+    discovery, since the caller (upload/delivery) lacks the migration's
+    ``--pack-dir`` list and would falsely report a vanished pack. Falls
+    back to discovery only when ``root``/``pack`` is unrecorded."""
     from pathlib import Path
 
     from anastomosis.reconstruct.packtrust import pack_content_hash
@@ -526,14 +419,11 @@ def capture_binding(
     sources_dir: Path | None = None,
     layout: LayoutProfile | None = None,
 ) -> RunBinding:
-    """Capture all three profiles for one run — the binding a manifest names.
-
-    ``layout`` is passed by a caller that already knows WHERE the layout is —
-    :func:`~anastomosis.core.runmanifest.recapture_binding` re-reads it at the
-    root the manifest recorded, because discovery from a ``--pack-dir`` list a
-    later step never received would report a vanished pack for one that never
-    moved.
-    """
+    """Capture all three profiles for one run. ``layout`` is passed by a
+    caller that already knows WHERE it is
+    (:func:`~anastomosis.core.runmanifest.recapture_binding` re-reads it
+    at the recorded root) rather than re-discovering it and falsely
+    reporting a vanished pack."""
     return RunBinding(
         source=capture_source_profile(source, sources_dir=sources_dir),
         destination=capture_destination_profile(destination, registry),

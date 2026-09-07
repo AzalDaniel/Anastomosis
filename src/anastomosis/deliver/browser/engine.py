@@ -1,38 +1,11 @@
 """The sequential upload engine: drive items through the state machine.
 
-Given a destination pack, the resumable ledger, and a manifest of
-:class:`UploadItem`, the engine walks each item from ``PENDING`` to exactly
-one terminal state, recording every move in the ledger so a killed run
-resumes exactly where it stopped. This is the single-threaded driver every
-other layer builds on: schedulers and reporters wrap it through the seam
-documented on :meth:`UploadEngine.run` and never bypass the state machine.
-
-Two safety properties shape the design:
-
-* **No double-filing on resume.** An interrupted upload (``UPLOAD_INTERRUPTED``)
-  and a backed-off retry (``RETRY_WAIT``) both re-enter the lifecycle at
-  ``RESOLVING_PATIENT`` — never straight back into ``UPLOADING`` — so the
-  duplicate scan runs *before* any re-send and catches a document that landed
-  just before the crash.
-* **Wrong-patient aborts the whole run.** A banner-readback mismatch is the
-  failure this subsystem exists to prevent, so it fails the item to
-  ``PRE_VERIFY_FAILED`` and stops the loop immediately, recording an abort
-  reason on the run. It is reported through :class:`EngineResult`, not raised
-  out of :meth:`UploadEngine.run`, so the caller gets a clean, inspectable
-  result rather than a crash.
-
-Retry policy: an unexpected exception is treated as transient (the
-conservative choice — retrying a real bug wastes a few attempts, but failing
-a flaky upload permanently loses a chart). ``TransientDeliveryError`` and
-unknown exceptions route to ``RETRY_WAIT`` and back off; once ``attempts``
-(read back from the ledger) reaches ``max_attempts`` the item is ``FAILED``.
-``PermanentDeliveryError`` skips retries and goes to the step-appropriate
-terminal state.
-
-PHI rule: the engine logs item keys, state names, counts, and ``exc_tag``
-type names only — never a patient value, never a receipt extra, never a file
-path (paths can embed a patient name and exist only inside the hardened
-output directory).
+Walks each item from ``PENDING`` to exactly one terminal state, recording
+every move so a killed run resumes exactly where it stopped (51). An
+unrecognised exception retries as transient up to ``max_attempts`` (50); a
+wrong-patient mismatch aborts the whole run via
+:class:`EngineResult.aborted_reason`, never a raise out of :meth:`run` (48).
+PHI: item keys, state names, counts and ``exc_tag`` only (2).
 """
 
 from __future__ import annotations
@@ -62,13 +35,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class EngineResult:
-    """The outcome of one :meth:`UploadEngine.run` call.
-
-    ``counts`` is the ledger's per-state tally at the end of the run (keyed by
-    :class:`UploadState` value). ``aborted_reason`` is set to a type name when
-    the run stopped early for patient safety (a wrong-patient banner), leaving
-    later items unprocessed. ``processed`` is how many items this run actually
-    drove (skips already-terminal rows from a resumed run).
+    """The outcome of one :meth:`UploadEngine.run` call. ``counts`` is the
+    ledger's final per-state tally; ``aborted_reason`` is a type name when
+    a wrong-patient banner stopped the run early; ``processed`` is how
+    many items this call actually drove.
     """
 
     counts: Mapping[str, int]
@@ -77,17 +47,9 @@ class EngineResult:
 
 
 def _ledger_conservation(offered_keys: Sequence[str], known: int) -> Conservation:
-    """The delivered -> filed seam, asked at the only moment it can be asked.
-
-    Every state this engine reports comes from the ledger, so an item that was
-    offered and never got a row is invisible to all of them: the run finishes,
-    the counts add up among the rows that exist, and a chart nobody filed is
-    reported as nothing at all. Enqueue is idempotent and cannot lose a row on
-    any path today — which is the point of checking here rather than trusting
-    it forever.
-
-    Asked right after enqueue rather than at the end: the answer is the same,
-    and the run stops before touching a destination instead of after.
+    """Every offered item must get a ledger row, or it vanishes from every
+    later count; checked right after enqueue so the run stops before
+    touching a destination, not after.
     """
     distinct = len(set(offered_keys))
     return Conservation(
@@ -98,9 +60,8 @@ def _ledger_conservation(offered_keys: Sequence[str], known: int) -> Conservatio
     )
 
 
-# An internal signal raised by _process_one to tell run() to abort the whole
-# run for patient safety. It never escapes run(); the wrong-patient condition
-# is reported through EngineResult.aborted_reason.
+# Internal signal from _process_one telling run() to abort for patient
+# safety; never escapes run() (reported via EngineResult.aborted_reason).
 class _AbortRun(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -139,39 +100,11 @@ class UploadEngine:
         manage_run: bool = True,
         restrict_to_items: bool = False,
     ) -> EngineResult:
-        """Enqueue ``items`` (idempotent) and drive each pending item to a terminal state.
-
-        Items already terminal in the ledger are not re-processed (the
-        resumability guarantee). A wrong-patient banner stops the loop
-        immediately and sets ``aborted_reason`` on the result and the run.
-        ``patients`` maps canonical ``patient_id`` to :class:`Patient`; a
-        missing entry raises :class:`KeyError` (a manifest/records mismatch is
-        a defect, not a skip).
-
-        ``stop``, ``manage_run``, and ``restrict_to_items`` are the
-        parallel-runner seam; all three default to preserving the
-        single-threaded behavior exactly:
-
-        * ``stop`` — an optional cooperative cancel flag. When set (by a sibling
-          worker hitting a wrong-patient abort), the loop stops between items,
-          leaving the rest of this worker's partition PENDING. It is checked
-          only at item boundaries, never mid-item, so an in-flight upload is
-          never half-abandoned. ``None`` (the default) means "never asked to
-          stop" — identical to the original behavior.
-        * ``manage_run`` — whether this engine owns the run's ``finish_run``.
-          ``True`` (the default) keeps the original behavior: on a wrong-patient
-          abort the engine stamps ``finish_run(aborted_reason=...)`` itself.
-          The parallel coordinator passes ``False`` so it can write a single
-          authoritative ``finish_run`` for the shared run after all workers
-          join — several workers stamping the same run row would race.
-        * ``restrict_to_items`` — whether to drive ONLY the items passed in this
-          call. ``False`` (the default) drives every pending item in the ledger
-          (the original behavior: a resumed sequential run picks up everything
-          still owing work). The parallel workers pass ``True`` so each drives
-          only its patient partition — a shared ledger means
-          :meth:`TrackingDB.pending_items` returns every worker's pending rows,
-          and a worker must never reach into a sibling's patient.
-        """
+        """Contract: enqueues ``items``, drives each pending one to a
+        terminal state, skipping terminal ones (resumable). ``patients``
+        maps id to :class:`Patient`, raising :class:`KeyError` on a miss.
+        ``stop``/``manage_run``/``restrict_to_items`` are the parallel-runner
+        seam, defaulted to single-threaded behavior."""
         for item in items:
             self._tracking.enqueue(item)
         offered_keys = [item.item_key for item in items]
@@ -225,10 +158,8 @@ class UploadEngine:
         skiplist: frozenset[str],
     ) -> None:
         """Walk one item to a terminal state, recording every transition.
-
-        Entry states handled: PENDING (skiplist + preflight first), and the
-        resume re-entries RETRY_WAIT and UPLOAD_INTERRUPTED, both of which join
-        the lifecycle at RESOLVING_PATIENT via their legal edges so the
+        PENDING runs skiplist + preflight first; RETRY_WAIT and
+        UPLOAD_INTERRUPTED resume-rejoin at RESOLVING_PATIENT so the
         duplicate scan runs before any re-send.
         """
         state = self._tracking.state_of(item.item_key)
@@ -262,11 +193,9 @@ class UploadEngine:
         self._drive_active(item, patient, run_id)
 
     def _drive_active(self, item: UploadItem, patient: Patient, run_id: str) -> None:
-        """Drive the active lifecycle from RESOLVING_PATIENT to a terminal state.
-
-        Re-entrant on retry: a transient failure routes to RETRY_WAIT, backs
-        off, then loops back here through the legal RETRY_WAIT->RESOLVING_PATIENT
-        edge and starts the lifecycle over (so the duplicate scan re-runs).
+        """Loop RESOLVING_PATIENT to a terminal state; a transient failure
+        re-enters via RETRY_WAIT->RESOLVING_PATIENT so the duplicate scan
+        re-runs on each retry.
         """
         while True:
             try:
@@ -292,48 +221,37 @@ class UploadEngine:
                 raise _AbortRun("WrongPatientError") from exc
 
     def _lifecycle(self, item: UploadItem, patient: Patient, run_id: str) -> bool:
-        """One pass of resolve → dup-scan → pre-verify → upload → post-verify.
-
-        Returns ``True`` when the item reached a terminal state (done — no
-        retry), ``False`` when it routed to RETRY_WAIT (the caller decides
-        whether to retry). A :class:`WrongPatientError` propagates out to the
-        abort handler; any other unexpected exception is treated as transient.
+        """One resolve -> dup-scan -> pre-verify -> upload -> post-verify
+        pass. Returns ``True`` at a terminal state, ``False`` when routed
+        to RETRY_WAIT. :class:`WrongPatientError` propagates to the abort
+        handler; any other exception is treated as transient (50).
         """
         try:
-            # (b) RESOLVING_PATIENT — already entered by the caller.
+            # RESOLVING_PATIENT — already entered by the caller.
             dest_patient = self._dest.resolver.resolve(patient)
             if dest_patient is None:
                 self._to(item, UploadState.PATIENT_NOT_FOUND, run_id)
                 return True
 
-            # (c) VERIFYING_PRE — the wrong-patient banner readback runs FIRST,
-            #     BEFORE the duplicate scan. A chart's existing-docs list must
-            #     never be trusted until the open chart is confirmed to be the
-            #     right patient: a wrong chart that happens to carry this item's
-            #     fingerprint must abort here, not resolve to a clean
-            #     DUPLICATE_AT_DESTINATION with the banner never read.
+            # Banner readback first, before the duplicate scan: an
+            # unconfirmed chart's fingerprint list is never trusted.
             self._to(item, UploadState.VERIFYING_PRE, run_id)
             if not self._dest.banner.current_patient_matches(patient):
                 raise WrongPatientError
 
-            # (d) duplicate scan — the resume double-file defense, trusted only
-            #     now that the banner has confirmed the open chart's identity.
+            # Duplicate scan, trusted only now that the banner confirmed
+            # the open chart's identity (the resume double-file defense).
             if item.fingerprint in self._dest.scanner.existing_fingerprints(dest_patient):
                 self._to(item, UploadState.DUPLICATE_AT_DESTINATION, run_id)
                 return True
 
-            # (e) the rest of the pre-upload verifier ladder (L0-L4). The
-            #     engine's already-resolved dest_patient is threaded in so the
-            #     verifier does not RE-resolve (a second, CREATE-capable resolve
-            #     would POST a duplicate Patient on a create_missing_patients
-            #     destination with a lagging index).
+            # dest_patient is already resolved; reusing it avoids a second,
+            # CREATE-capable resolve that could POST a duplicate patient.
             self._verifier.verify_pre(item, patient, dest_patient)
 
-            # (f) UPLOADING.
             self._to(item, UploadState.UPLOADING, run_id)
             receipt = self._dest.driver.upload(item, dest_patient)
 
-            # (g) VERIFYING_POST — size echo check, then the verifier.
             self._to(item, UploadState.VERIFYING_POST, run_id)
             if (
                 receipt.echoed_size_bytes is not None
@@ -356,7 +274,7 @@ class UploadEngine:
             self._fail_permanent(item, run_id, exc)
             return True
         except Exception as exc:
-            # Unknown failures are treated as transient — failing a flaky
+            # Unrecognised exceptions are transient (50): failing a flaky
             # upload permanently loses a chart, the worse outcome.
             self._to(item, UploadState.RETRY_WAIT, run_id, error_type=exc_tag(exc))
             logger.warning(
@@ -365,11 +283,9 @@ class UploadEngine:
             return False
 
     def _after_retry_wait(self, item: UploadItem, run_id: str) -> bool:
-        """In RETRY_WAIT: give up to FAILED if exhausted, else back off and retry.
-
-        Returns ``True`` to retry (after sleeping the backoff), ``False`` when
-        attempts are exhausted and the item was failed. ``attempts`` is read
-        back from the ledger, which bumps it on every RETRY_WAIT write.
+        """In RETRY_WAIT: gives up to FAILED if ``attempts`` (read from the
+        ledger) is exhausted, else backs off and retries, returning
+        whether it retried.
         """
         attempts = self._attempts(item.item_key)
         if attempts >= self._max_attempts:
@@ -384,11 +300,9 @@ class UploadEngine:
         return True
 
     def _fail_permanent(self, item: UploadItem, run_id: str, exc: Exception) -> None:
-        """Route a permanent failure to the terminal state for the current step.
-
-        PRE_VERIFY_FAILED if verify_pre failed, POST_VERIFY_FAILED if
-        verify_post failed, otherwise FAILED — read from the item's current
-        ledger state so the terminal matches where the failure actually struck.
+        """Routes to PRE_VERIFY_FAILED/POST_VERIFY_FAILED/FAILED, read from
+        the item's current ledger state so the terminal matches where the
+        failure actually struck.
         """
         current = self._tracking.state_of(item.item_key)
         target = {
@@ -406,13 +320,9 @@ class UploadEngine:
     # --- helpers ---
 
     def _preflight_ok(self, item: UploadItem) -> bool:
-        """File exists and its content/size still match the manifest.
-
-        Re-hashes the file through the shared streaming hasher — the same
-        chunking the manifest measured it with — so a mismatch means the render
-        was corrupted or swapped after the manifest was built, never a
-        difference in how the two sites read. A mismatch is a hard preflight
-        fail, never an upload. Logs the item key only, never the path.
+        """File exists and re-hashes to what the manifest recorded, using
+        the same streaming hasher the manifest measured with. Logs the
+        item key only, never the path.
         """
         path = item.file_path
         if not path.exists():

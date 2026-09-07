@@ -1,29 +1,14 @@
 """The harvest: read every text span and vector drawing out of sample PDFs.
 
-PyMuPDF (``pymupdf``) is the only engine — deterministic, fully offline, no
-torch. It is an optional ``render``-extra dependency, imported lazily inside
-:func:`extract_document` so this module imports on a minimal install (the same
-error style the Chromium renderer uses when the extra is absent).
-
-The frozen :class:`Span` / :class:`DrawnRect` / :class:`DocumentSample`
-dataclasses are the input contract for :mod:`anastomosis.packgen.infer`.
-
-A page that is pixels has no text objects to read, and the one real sample set
-this product has been shown was 802 such pages. Passing an OCR worker
-(:func:`anastomosis.packgen.ocr.discover_worker`) turns those pages into
-observations that enter through the SAME :class:`Span` shape, carrying
-``provenance`` and a ``confidence`` so nothing downstream can mistake a
-recognized word for a read one. Without a worker the old refusal stands, and
-its message now says which half is missing.
-
-PHI rule: a sample PDF may be *named after a patient* and its body is
-per-patient data. :class:`DocumentSample` therefore stores an opaque integer
-``index`` — never the file path. :func:`extract_samples` fails loudly on an
-unreadable or encrypted file; the raised exception names the offending
-**path** (the operator needs to know which file), but that path must never be
-*logged* — the distinction is enforced by callers logging :func:`exc_tag`
-plus the sample index only.
-"""
+PyMuPDF is the only engine (deterministic, offline); imported lazily inside
+:func:`extract_document` so a minimal install still imports this module.
+:class:`Span`/:class:`DrawnRect`/:class:`DocumentSample` are the input
+contract for :mod:`anastomosis.packgen.infer`. A page that is pixels has no
+text objects; passing an OCR worker turns it into observations entering
+through the same :class:`Span` shape, carrying ``provenance`` and
+``confidence`` so nothing downstream mistakes a recognized word for a read
+one — without a worker, the refusal stands. PHI: opaque sample index, never
+a path, stored or logged (RULES.md 33)."""
 
 from __future__ import annotations
 
@@ -79,27 +64,18 @@ _RENDER_EXTRA_HINT = "layout learning needs the render extra: pip install 'anast
 
 
 class OcrRequiredError(ValueError):
-    """A page is raster with no extractable text, and no OCR engine is present.
-
-    The refusal that used to be unconditional. Learning a layout from an
-    image-only page without reading it would make a generic-looking draft while
-    silently missing that page — so the harvester still refuses, but only when
-    there is nothing to ask. Hand :func:`extract_document` a worker and the
-    same page becomes a reviewable observation instead.
-
-    The message contains the batch-local sample/page indices and
-    :data:`anastomosis.packgen.ocr.INSTALL_HINT` — never source text, never a
-    path.
-    """
+    """A page is raster with no extractable text and no OCR engine present.
+    Refuses only when there is nothing to ask — hand :func:`extract_document`
+    a worker and the same page becomes a reviewable observation instead. The
+    message carries batch-local sample/page indices and
+    :data:`~anastomosis.packgen.ocr.INSTALL_HINT`, never source text or a path."""
 
 
 class NoExtractableTextError(ValueError):
-    """A sample contains no extractable text and no page needing OCR.
-
-    This is distinct from :class:`OcrRequiredError`: an empty/vector-only PDF
-    cannot be learned from, but it is not an OCR candidate.  Its message is
-    likewise limited to the opaque batch-local sample index.
-    """
+    """A sample contains no extractable text and no page needing OCR —
+    distinct from :class:`OcrRequiredError` (an empty/vector-only PDF isn't
+    an OCR candidate). Message limited to the opaque batch-local sample
+    index."""
 
 
 def _bbox4(rect: Any) -> tuple[float, float, float, float]:
@@ -122,27 +98,11 @@ def _rgb_from_float(triple: Sequence[float] | None) -> int | None:
 
 @dataclass(frozen=True)
 class Span:
-    """One contiguous run of identically-styled text on a page.
-
-    ``provenance`` is the field that keeps the two evidence streams apart, and
-    it travels with the span everywhere the learner takes it — a reader of a
-    span never has to ask a page or a docstring where its text came from:
-
-    * :data:`~anastomosis.packgen.ocr.NATIVE_TEXT` — a real PDF text object.
-      ``font``/``size``/``bold``/``italic``/``color`` are source evidence.
-    * :data:`~anastomosis.packgen.ocr.NATIVE_OR_SYNTHETIC` — a selectable layer
-      floating over a scan. Extraction succeeded; that is not the same as the
-      text being right, and it may itself be somebody else's OCR.
-    * :data:`~anastomosis.packgen.ocr.OCR_OBSERVATION` — recognized from pixels
-      by this run. ``font`` is :data:`OCR_SPAN_FONT`, ``size`` is a measured
-      text HEIGHT rather than a font size, and ``bold``/``italic``/``color``
-      are not evidence at all: the engine recovers none of them. Layout
-      evidence only — never a clinical value.
-
-    ``confidence`` is the engine's own score for a recognized span (``None``
-    for native text, which is not scored). It is a triage signal, not a
-    calibrated probability, and two engines' scores are not comparable.
-    """
+    """Contract: one styled text run, tagged ``provenance``: :data:`NATIVE_TEXT`
+    (real font evidence), :data:`NATIVE_OR_SYNTHETIC` (extracted over a scan,
+    not proof it's right), or :data:`OCR_OBSERVATION` (recognized from pixels:
+    ``font`` is :data:`OCR_SPAN_FONT`, ``size`` a measured height, style fields
+    not evidence; ``confidence`` is the engine's own uncalibrated score)."""
 
     text: str
     font: str
@@ -160,12 +120,10 @@ class Span:
 
 @dataclass(frozen=True)
 class DrawnRect:
-    """One vector rectangle or line from ``page.get_drawings()``.
-
-    Curves are intentionally dropped (a layout learner reads grids and bands,
-    not bezier art); :class:`DocumentSample.dropped_curves` keeps the count so
-    nothing vanishes *silently*.
-    """
+    """One vector rectangle or line from ``page.get_drawings()``. Curves are
+    dropped on purpose (grids and bands, not bezier art);
+    :class:`DocumentSample.dropped_curves` keeps the count so nothing
+    vanishes silently."""
 
     bbox: tuple[float, float, float, float]
     fill_color: int | None  # 0xRRGGBB or None (no fill)
@@ -253,14 +211,10 @@ def _rects_for_page(page: Any, page_index: int) -> tuple[list[DrawnRect], int]:
 
 
 def _ocr_spans(tokens: Sequence[OcrToken], width: float, height: float) -> list[Span]:
-    """Recognized tokens as spans, marked so nothing can mistake them for text.
-
-    ``size`` is the token's measured text height in points, which is enough to
-    rank a heading above body copy and is NOT a font size; ``bold``/``italic``
-    are ``False`` and ``color`` is black because the engine recovers none of
-    them, and :data:`OCR_SPAN_FONT` says so in the one field a reader of the
-    type scale actually looks at.
-    """
+    """Recognized tokens as spans, marked so nothing mistakes them for text.
+    ``size`` is a measured text height (enough to rank a heading, not a font
+    size); ``bold``/``italic``/``color`` are false/black placeholders, and
+    :data:`OCR_SPAN_FONT` says so in the field a type-scale reader checks."""
     return [
         Span(
             text=token.text,
@@ -299,15 +253,10 @@ def _harvest_page(
     height: float,
     worker: TesseractWorker | None,
 ) -> _PageHarvest:
-    """Read one page's native text, then observe whatever of it is pixels.
-
-    The refusal lives here and is now conditional: a page with raster content,
-    no text objects, and NO engine to ask is the case pack generation cannot
-    honestly proceed through. With an engine, the same page becomes an
-    observation — including an observation that found nothing, which is
-    recorded as such rather than being mistaken for a page that was never
-    looked at.
-    """
+    """Reads one page's native text, then observes whatever of it is pixels.
+    Refuses only when raster content has no text objects AND no engine to
+    ask; with an engine, the same page becomes an observation — including
+    one that found nothing, recorded as such rather than as never looked at."""
     native = _spans_for_page(page, page_index, width, height)
     observation = observe_page(
         page,
@@ -335,17 +284,11 @@ def _harvest_page(
 def extract_document(
     pdf_path: Path, index: int, *, ocr: TesseractWorker | None = None
 ) -> DocumentSample:
-    """Harvest one sample PDF into a :class:`DocumentSample`.
-
-    ``index`` is the opaque identifier stored in place of the path. Raises a
-    descriptive error (naming the path, for the operator) on an unreadable or
-    encrypted PDF — losslessness/loud-failure invariant.
-
-    ``ocr`` is the offline observation worker
-    (:func:`anastomosis.packgen.ocr.discover_worker`). ``None`` — the default —
-    keeps the historical behaviour exactly: an image-only page raises
-    :class:`OcrRequiredError` and nothing is recognized.
-    """
+    """Harvests one sample PDF into a :class:`DocumentSample`. ``index`` is
+    the opaque identifier stored in place of the path; raises naming the
+    path (for the operator) on an unreadable or encrypted PDF. ``ocr`` is
+    the offline observation worker; ``None`` means an image-only page
+    raises :class:`OcrRequiredError` and nothing is recognized."""
     try:
         import pymupdf  # render extra.
     except ImportError as exc:  # pragma: no cover - environment-dependent
@@ -400,12 +343,10 @@ def extract_document(
 
 
 def _manifest_pairs(worker: TesseractWorker | None) -> tuple[tuple[str, str], ...]:
-    """The worker's manifest as ordered ``(key, value)`` strings, or empty.
-
-    Strings, and a tuple rather than a dict, because a
-    :class:`~anastomosis.packgen.evidence.LayoutEvidence` is frozen and hashable
-    and gets written verbatim into a pack manifest.
-    """
+    """The worker's manifest as ordered ``(key, value)`` strings, or empty —
+    a tuple, not a dict, because
+    :class:`~anastomosis.packgen.evidence.LayoutEvidence` is frozen/hashable
+    and gets written verbatim into a pack manifest."""
     if worker is None:
         return ()
     return tuple((key, str(value)) for key, value in worker.manifest().items())
@@ -414,31 +355,21 @@ def _manifest_pairs(worker: TesseractWorker | None) -> tuple[tuple[str, str], ..
 def extract_samples(
     pdf_paths: Sequence[Path], *, ocr: TesseractWorker | None = None
 ) -> list[DocumentSample]:
-    """Harvest a batch of sample PDFs, indexed by position.
-
-    Loud on the first unreadable/encrypted file: the raised error names BOTH
-    the sample index (which file in the batch) and the path (so the operator
-    can find it). Callers must log the index and :func:`exc_tag` only — never
-    the path or any span text.
-
-    ``ocr`` is passed through to every sample, so one discovered worker (and
-    therefore one pinned engine version and config hash) covers the batch.
-    """
+    """Harvests a batch of sample PDFs, indexed by position. Loud on the
+    first unreadable/encrypted file: the error names both the sample index
+    and the path, but callers must log the index and :func:`exc_tag`
+    only — never the path or span text. ``ocr`` passes through to every
+    sample so one worker (one pinned engine + config hash) covers the batch."""
     samples: list[DocumentSample] = []
     for index, path in enumerate(pdf_paths):
         try:
             samples.append(extract_document(path, index, ocr=ocr))
         except (NoExtractableTextError, OcrEngineError, OcrRegionError, OcrRequiredError):
-            # These failures already carry a PHI-safe, opaque sample index (and
-            # a page index). Keep their specific type so run_pack_init can
-            # surface exc_tag — the generic wrapper below names the PATH, which
-            # is right for an unreadable file and wrong for a refusal that has
-            # already said everything an operator needs. OcrEngineError is in
-            # this list because the four cases it is raised for — a pixel cap
-            # breached, a non-zero exit, a missing output stream, TSV and hOCR
-            # disagreeing — are facts about the ENGINE, and rewrapping them as
-            # "sample unreadable" told an operator their file was bad when
-            # their installation was.
+            # Keep the specific type (already PHI-safe: index + page only) so
+            # run_pack_init can surface exc_tag; the generic wrapper below
+            # names the PATH, wrong for a refusal that already said enough —
+            # and for OcrEngineError, wrong in substance: those four cases are
+            # facts about the ENGINE, not the sample.
             raise
         except Exception as exc:
             raise ValueError(f"sample #{index} unreadable ({path}): {exc}") from exc

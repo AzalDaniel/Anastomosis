@@ -1,47 +1,11 @@
 """Generic, selector-driven destination pack machinery.
 
-A *browser pack* teaches Anastomosis how to file a reconstructed chart into one
-foreign EHR through its web UI — the route taken when no vendor API and no
-C-CDA import exist (the common case for the practices this tool serves). The
-upload engine (:mod:`anastomosis.deliver.browser.engine`) never touches a
-browser directly: it speaks only to the :mod:`anastomosis.destinations.base`
-protocols. This module implements those protocols *generically*, driven by a
-table of CSS selectors and a small config — so a concrete pack
-(``destinations/tebra``) is data (a ``pack.yaml`` of selector slots), never code.
+A browser pack files a chart into a foreign EHR through its web UI, driven
+by CSS selectors and config (RULES.md 12-13, 27) — a concrete pack is data
+(``destinations/tebra``), never code, driving :class:`PageLike` so the whole
+pack is testable with no Playwright.
 
-The seam to the browser is deliberately thin. :class:`BrowserPackDestination`
-drives a :class:`PageLike` — the minimal page interface this module needs and
-nothing more — so the whole pack is testable against an in-memory fake page
-with no Playwright anywhere. A real Playwright ``Page`` does not match
-``PageLike`` directly; :class:`PlaywrightPageAdapter` wraps one (with a lazy
-import, like :func:`anastomosis.deliver.browser.cdp.connect_over_cdp`).
-
-Three safety properties are baked into the shapes here:
-
-* **No selector is invented.** A pack ships every selector slot marked
-  ``DISCOVER`` until an operator fills it via ``anast destination init``;
-  :meth:`SelectorMap.from_yaml_dict` raises :class:`PackNotReadyError` naming the
-  undiscovered slots, so a half-discovered pack refuses to run rather than
-  guessing the destination's DOM.
-* **Ambiguity is never guessed past.** The resolver matches a patient by an
-  EXACT rendered name AND DOB; zero matches return ``None`` (not found, never a
-  best guess) and MULTIPLE exact matches raise
-  :class:`~anastomosis.deliver.browser.errors.PermanentDeliveryError` — filing
-  against a guessed row is the wrong-patient failure this subsystem exists to
-  prevent.
-* **What the form took is read back.** A pack may describe the upload dialog's
-  own fields (the optional ``upload_*`` slots below), and where it does, the
-  driver does not assume the page accepted what it typed: the document date is
-  read back and must still be the date it was given, and the patient the dialog
-  prefilled must still be the one the chart banner confirmed. Both are
-  permanent failures — a form that would not take a value files the same wrong
-  thing on every retry.
-
-PHI rule (load-bearing): this module NEVER logs search text, banner text, row
-text, or anything typed into or read back from the upload dialog. It logs slot
-*names*, booleans, counts, and ``exc_tag`` type names only — the search term is
-a patient name, the banner and rows carry names and DOBs, and the dialog's
-prefill is a patient name beside a date of service.
+PHI: no search/banner/row/dialog text is logged, only names/counts/booleans.
 """
 
 from __future__ import annotations
@@ -106,21 +70,11 @@ _REQUIRED_SLOTS: tuple[str, ...] = (
     "upload_success_marker",
 )
 
-# Optional selector slots: a pack may leave these unset (empty string) — the
-# driver acts on them only when configured.
-#
-# The first two are navigation — one more click on the way to the form. The
-# rest are the upload FORM itself, and they exist because attaching a file is
-# almost never the whole job: a real filing dialog asks for a display name, a
-# category, a status, a document date and a note, offers a provider to file
-# under, and shows the patient it believes it is filing for. A pack that could
-# not name those fields left them at whatever the portal defaulted to, which is
-# how a chart lands uncategorised, undated and under nobody.
-#
-# Every one of them is OPTIONAL, and that is load-bearing rather than lenient: a
-# pack that leaves them blank must drive exactly the five actions it drove
-# before they existed, so no selectors.yaml already discovered in the field
-# changes behaviour or stops loading.
+# Optional selector slots: a pack may leave these unset — the driver acts on
+# them only when configured. The upload-form slots exist because attaching a
+# file alone leaves a chart uncategorised, undated and under nobody. Optional
+# is load-bearing: a pack leaving them blank drives only the five original
+# actions, so a selectors.yaml discovered before these slots existed still loads.
 _OPTIONAL_SLOTS: tuple[str, ...] = (
     "documents_tab",
     "upload_open_button",
@@ -148,13 +102,10 @@ _FORM_SLOTS: frozenset[str] = frozenset(
     }
 )
 
-# The row-index token a form slot may carry. A dialog that can queue several
-# documents at once numbers its controls per row (``#fileNameInput0``,
-# ``#fileNameInput1``), so a pack writes the row-agnostic ``#fileNameInput{idx}``
-# rather than a row number it does not mean. This engine files ONE document per
-# dialog, so the rendered row is always :data:`_SINGLE_ROW_INDEX`; the token
-# exists so the pack can state the portal's real shape, not so the driver can
-# pretend to a batching flow it does not have.
+# The row-index token a form slot may carry: a multi-document dialog numbers
+# controls per row (``#fileNameInput0``, ``...1``), so a pack writes the
+# row-agnostic ``#fileNameInput{idx}``. This engine files ONE document per
+# dialog, so the rendered row is always :data:`_SINGLE_ROW_INDEX`.
 _ROW_INDEX_TOKEN = "{idx}"  # noqa: S105 — a selector placeholder, not a secret
 _SINGLE_ROW_INDEX = 0
 
@@ -163,10 +114,9 @@ _SINGLE_ROW_INDEX = 0
 class PageLike(Protocol):
     """The thin browser-page seam a browser pack drives — and nothing more.
 
-    A real Playwright ``Page`` does not satisfy this directly (its signatures
-    differ); :class:`PlaywrightPageAdapter` wraps one. Keeping the seam this
-    small is what lets the whole pack be exercised against an in-memory fake
-    page with no Playwright in the test environment.
+    A real Playwright ``Page`` does not satisfy this directly;
+    :class:`PlaywrightPageAdapter` wraps one, so the pack tests against an
+    in-memory fake with no Playwright.
     """
 
     def goto(self, url: str) -> None:
@@ -178,11 +128,9 @@ class PageLike(Protocol):
         ...
 
     def click(self, selector: str, *, nth: int | None = None) -> None:
-        """Click the element matched by ``selector``.
-
-        With ``nth`` given, click the ``nth`` (0-based) element the selector
-        matches rather than the first — the resolver uses it to open the row it
-        actually matched, not row 0.
+        """Click the element matched by ``selector``; with ``nth``, the
+        ``nth`` (0-based) match rather than the first — the resolver uses it
+        to open the row it actually matched, not row 0.
         """
         ...
 
@@ -201,22 +149,18 @@ class PageLike(Protocol):
     def select_option(self, selector: str, value: str, *, by_label: bool = False) -> None:
         """Choose ``value`` in the ``<select>`` matched by ``selector``.
 
-        ``by_label`` matches an option's visible LABEL rather than its value
-        attribute, because the label is usually the only half an operator can
-        read off their own screen — a vendor's option values are often opaque
-        ids. Raises when the select offers no matching option: a dropdown that
-        will not take the configured choice is a structural mismatch, never a
-        field to leave at whatever it happened to default to.
+        ``by_label`` matches the visible LABEL, not the value attribute — a
+        vendor's option values are often opaque ids. Raises when no option
+        matches: a dropdown refusing the configured choice is a structural
+        mismatch, never left at its default.
         """
         ...
 
     def input_value(self, selector: str) -> str:
         """Return the CURRENT value of the form control matched by ``selector``.
 
-        Distinct from :meth:`text_content`, and the distinction is the point: a
-        control's value lives in a DOM property, not in its text. This is the
-        readback verb — the one that turns "we typed it" into "the page took
-        it".
+        Distinct from :meth:`text_content` on purpose: a control's value lives
+        in a DOM property, not its text. This is the readback verb.
         """
         ...
 
@@ -232,13 +176,9 @@ class PageLike(Protocol):
 class PlaywrightPageAdapter:
     """Wrap a real Playwright ``Page`` into :class:`PageLike`.
 
-    The Playwright import is lazy (the adapter is constructed with an already
-    live ``Page``), so this module loads on a machine without the
-    ``deliver-browser`` extra — the same discipline as
-    :func:`anastomosis.deliver.browser.cdp.connect_over_cdp`. The Playwright
-    methods named here differ from ours (``query_selector_all`` returns element
-    handles; ``text_content`` lives on the handle), so the adapter is the only
-    place those signatures are bridged.
+    Constructed with an already-live ``Page``, so this module loads without
+    the ``deliver-browser`` extra. Bridges the signature differences
+    (``query_selector_all`` returns handles; ``text_content`` lives on one).
     """
 
     def __init__(self, page: Any) -> None:
@@ -302,10 +242,8 @@ class PlaywrightPageAdapter:
 class PackNotReadyError(Exception):
     """A pack still carries undiscovered selector slots — it refuses to run.
 
-    Raised by :meth:`SelectorMap.from_yaml_dict` when any required slot is left
-    at the ``DISCOVER`` placeholder the shipped scaffold ships with. The message
-    names every undiscovered slot and the wizard command that fills them, so the
-    failure is actionable rather than a mysterious crash mid-run.
+    Raised by :meth:`SelectorMap.from_yaml_dict`; the message names every
+    undiscovered slot and the wizard command that fills them.
     """
 
     def __init__(self, pack_name: str, undiscovered: tuple[str, ...]) -> None:
@@ -322,12 +260,9 @@ class PackNotReadyError(Exception):
 class SelectorMap:
     """The CSS selectors a browser pack drives, one per UI slot.
 
-    Required slots must all be present and non-empty (a missing required slot is
-    a malformed pack and raises ``KeyError``); optional slots default to the
-    empty string (the driver acts on them only when set). A slot left at the
-    ``DISCOVER`` placeholder makes :meth:`from_yaml_dict` raise
-    :class:`PackNotReadyError` — the shipped scaffold cannot run until the
-    discovery wizard fills it.
+    A missing required slot raises ``KeyError``; optional slots default to
+    empty (acted on only when set). A slot left at ``DISCOVER`` makes
+    :meth:`from_yaml_dict` raise :class:`PackNotReadyError`.
     """
 
     # required
@@ -365,25 +300,11 @@ class SelectorMap:
     def from_yaml_dict(cls, data: dict[str, Any], *, pack_name: str) -> SelectorMap:
         """Build a validated :class:`SelectorMap` from a pack's ``selectors:`` block.
 
-        Validation order (loud, never silent):
-
-        1. Every required slot must be present and a non-empty string — a
-           missing/blank required slot is a malformed pack (``KeyError`` /
-           ``ValueError`` naming the slot).
-        2. Every declared slot must be one this loader knows. A name it does not
-           know is a ``ValueError`` that says which — see below.
-        3. Any slot whose value still starts with ``DISCOVER`` is undiscovered;
-           if any required slot is undiscovered, raise :class:`PackNotReadyError`
-           listing them all and the wizard command (an undiscovered OPTIONAL
-           slot is treated as "skip" — left empty — not a blocker).
-
-        Step 2 exists because the alternative is the quietest failure this file
-        can produce. The loop below reads a CLOSED list of slot names, so a
-        selector written under any other key — a typo, a slot renamed between
-        versions, a field an operator hoped would be honoured — was read by
-        nobody and reported to nobody, and the pack still announced itself
-        ready. An operator who discovered a selector and watched the form field
-        stay empty had no way to find out why.
+        Contract: raises (never silent) if a required slot is missing/blank,
+        if any declared slot name is unknown to this loader (a typo must
+        never read as "ready" while going unhonoured), or lists undiscovered
+        required slots via :class:`PackNotReadyError`. An undiscovered
+        OPTIONAL slot is treated as skipped, not a blocker.
         """
         missing = [s for s in _REQUIRED_SLOTS if s not in data]
         if missing:
@@ -449,13 +370,9 @@ def _unconfigured(pack_name: str, slot: str) -> str:
 def _render_date(fmt: str, value: date) -> str:
     """Render ``value`` through a ``%m/%d/%Y``-style template, from date parts.
 
-    Supports the common ``strftime`` directives a date needs —
-    ``%m``/``%d``/``%Y``/``%y`` (zero-padded) and ``%-m``/``%-d`` (unpadded) —
-    built BY HAND from ``value.month``/``.day``/``.year`` so the result is
-    identical on every platform (the ``date_renderings`` lesson in
-    :mod:`anastomosis.deliver.verify.levels`; ``%-d``/``%-m`` are glibc-only and
-    this runs on Windows CI too). A literal ``%%`` is an escaped percent; any
-    other ``%X`` is passed through unchanged.
+    Supports ``%m``/``%d``/``%Y``/``%y`` (zero-padded) and ``%-m``/``%-d``
+    (unpadded), built BY HAND — never platform ``strftime``, whose
+    ``%-d``/``%-m`` are glibc-only and this runs on Windows CI too.
     """
     out: list[str] = []
     i = 0
@@ -487,22 +404,12 @@ def _date_token(token: str, value: date) -> str:
 def _date_parts(text: str) -> tuple[str, ...]:
     """The numeric runs of ``text``, leading zeros stripped, in order.
 
-    How two renderings of one date are compared when we do not know how the
-    portal chose to write it back: ``"1/19/2023"`` and ``"01/19/2023"`` both
-    reduce to ``("1", "19", "2023")``, so a widget that pads what it was given
-    is not mistaken for one that ignored it. Anything non-numeric is a
-    boundary, so a changed separator or a trailing space still matches — while
-    a changed day, or a day and month swapped, does not. An empty readback
-    reduces to ``()`` and matches nothing, which is the fail-closed answer.
-
-    Known limit, stated rather than papered over: a widget that echoes the date
-    back with a time appended (``"1/19/2023 12:00 AM"``) contributes those
-    digits too, so this refuses an upload it could have allowed. That is the
-    side to be wrong on — the alternative, comparing only the first three runs,
-    would also wave through a form that had quietly replaced the date. Whether
-    any real portal does this cannot be known from here; it wants one
-    authorized run against a staging portal, and a pack that hits it should be
-    fixed by loosening this with that evidence rather than on a guess.
+    Compares two renderings of one date without knowing the portal's own
+    format: ``"1/19/2023"`` and ``"01/19/2023"`` both reduce to
+    ``("1", "19", "2023")``; an empty readback reduces to ``()`` and matches
+    nothing (fail-closed). Known limit: a widget that echoes a time alongside
+    the date makes this refuse an upload it could have allowed — the side to
+    be wrong on, over silently waving through a replaced date.
     """
     return tuple(part.lstrip("0") or "0" for part in re.findall(r"\d+", text))
 
@@ -511,25 +418,13 @@ def _date_parts(text: str) -> tuple[str, ...]:
 class BrowserPackConfig:
     """The non-selector knobs of a browser pack.
 
-    ``patient_search_url`` is the page the resolver navigates to before
-    searching; ``None`` means the operator navigates to the patient list
-    themselves before the run (some EHRs have no stable deep link). ``dob_format``
-    is a ``%m/%d/%Y``-style template rendered from the integer date parts (NEVER
-    platform ``strftime`` — ``%-d``/``%-m`` are glibc-only and this runs on
-    Windows CI too). ``search_by`` selects which fields are typed into the search
-    box; ``result_match`` is fixed to ``exact_name_dob`` in v1 — the SAFE mode
-    that never guesses past an ambiguous result.
-
-    The ``upload_*`` knobs are what the driver types into the upload form's
-    fields, and each stays ``None`` until an operator names it. A ``None``
-    against a slot the pack never discovered changes nothing; a ``None`` against
-    a slot it DID discover is a half-configured pack and refuses, because the
-    pack has said the form demands that field and the config has not said what
-    belongs in it. ``upload_date_format`` is deliberately separate from
-    ``dob_format``: a portal's patient search and its filing dialog need not
-    write a date the same way, and assuming they do types a date the form then
-    silently reformats. ``select_by`` says whether a dropdown choice names an
-    option's visible label or its value attribute.
+    ``patient_search_url`` of ``None`` means the operator navigates to the
+    patient list themselves (some EHRs have no stable deep link).
+    ``dob_format``/``upload_date_format`` are ``%m/%d/%Y``-style templates
+    rendered by hand, never platform ``strftime`` (``%-d``/``%-m`` are
+    glibc-only). They are kept separate: a portal's search and its filing
+    dialog need not write a date the same way. A discovered ``upload_*``
+    slot with a ``None`` config is a half-configured pack and refuses.
     """
 
     name: str
@@ -552,10 +447,9 @@ class BrowserPackConfig:
     def render_upload_date(self, value: date) -> str:
         """Render ``value`` for the upload form's date field.
 
-        The same hand-rolled tokenizer as :meth:`render_dob` — never platform
-        ``strftime`` — against ``upload_date_format``, so the two dates a pack
-        writes can differ in shape without either one going through the
-        platform's locale.
+        The same hand-rolled tokenizer as :meth:`render_dob`, against
+        ``upload_date_format`` — the two dates a pack writes can differ in
+        shape without either going through the platform's locale.
         """
         return _render_date(self.upload_date_format, value)
 
@@ -564,11 +458,10 @@ class BrowserPackDestination:
     """The aggregate :class:`~anastomosis.destinations.base.Destination`, generic.
 
     Built from a :class:`SelectorMap`, a :class:`PageLike`, and a
-    :class:`BrowserPackConfig`; implements every role protocol the engine drives
-    (session/resolver/banner/scanner/driver) by reading and acting on selectors.
-    One instance is both the destination and each of its collaborators — the
-    same single-object pattern :class:`anastomosis.deliver.browser.fake.FakeDestination`
-    uses — so the engine holds one object.
+    :class:`BrowserPackConfig`; implements every role protocol the engine
+    drives, one instance serving as its own session/resolver/banner/scanner/
+    driver — the same single-object pattern as
+    :class:`anastomosis.deliver.browser.fake.FakeDestination`.
     """
 
     def __init__(
@@ -620,13 +513,10 @@ class BrowserPackDestination:
 
     # --- Session ---
     #
-    # In CDP mode Anastomosis attaches to a browser the OPERATOR launched and
-    # logged into; we never own ITS lifecycle. open()/close() are no-ops — the
-    # operator already established the session, and closing the page would end a
-    # session we do not own. Crucially close() is ALSO the manager's per-recycle
-    # hook (it close()s then open()s the session every N uploads), so it must NOT
-    # tear down our Playwright driver — doing that mid-run would kill the CDP
-    # connection. Owned-resource teardown is a SEPARATE one-shot: release().
+    # In CDP mode we attach to a browser the OPERATOR launched; we never own
+    # its lifecycle, so open()/close() are no-ops. close() also doubles as the
+    # manager's per-recycle hook (every N uploads), so it must not tear down
+    # our Playwright driver mid-run. Owned-resource teardown is release().
 
     def open(self) -> None:
         return None
@@ -641,13 +531,10 @@ class BrowserPackDestination:
     def release(self) -> None:
         """Release OUR owned Playwright driver + CDP connection — once, at run end.
 
-        Distinct from :meth:`close` (the manager's per-recycle hook): the upload
-        command calls this exactly once when the whole run finishes. The teardown
-        closure does ``browser.close()`` (which, per Playwright, only DISCONNECTS
-        a ``connect_over_cdp`` browser — the operator's Chrome keeps running) then
-        ``playwright.stop()`` (ends the driver subprocess). NEVER touches the
-        operator's context/page. Best-effort: a teardown hiccup is logged by type
-        and swallowed so it cannot mask the run's outcome.
+        Contract: distinct from :meth:`close` (per-recycle). ``browser.close()``
+        only DISCONNECTS a ``connect_over_cdp`` browser (operator's Chrome
+        keeps running), then ``playwright.stop()`` ends the driver subprocess.
+        Best-effort: a hiccup is logged by type, never masks the run outcome.
         """
         if self._teardown is None:
             return
@@ -664,23 +551,12 @@ class BrowserPackDestination:
     def resolve(self, patient: Patient) -> DestinationPatient | None:
         """Search the destination and return the EXACTLY-matched patient row.
 
-        Navigates to the search URL (when configured), types the search terms,
-        submits, and reads back every result row's rendered text. A row is a
-        match when it contains BOTH the patient's rendered name parts AND the
-        rendered DOB (``result_match=exact_name_dob`` — the only v1 mode):
+        Contract: matches by name AND DOB (``exact_name_dob``, the only v1
+        mode). Zero matches -> ``None``; exactly one -> opens the row and
+        returns a :class:`DestinationPatient` (id = a hash of the row text);
+        more than one -> :class:`PermanentDeliveryError` (RULES.md 12).
 
-        * zero matches -> ``None`` (not found; never a best guess);
-        * exactly one match -> click that row (open the chart for the banner
-          readback) and return a :class:`DestinationPatient` whose id is a hash
-          of the matched row text (a row index is not stable across renders),
-          with ``matched_on=("name", "dob")``;
-        * multiple exact matches -> :class:`PermanentDeliveryError`. Ambiguity is
-          NEVER guessed past: two patients matching the same name AND DOB is a
-          condition only a human can safely resolve, so the item fails
-          permanently rather than risk filing into the wrong chart.
-
-        PHI: logs slot names and the match COUNT only — never the search text or
-        any row text.
+        PHI: logs slot names and the match COUNT only.
         """
         if self._config.patient_search_url is not None:
             self._page.goto(self._config.patient_search_url)
@@ -719,10 +595,8 @@ class BrowserPackDestination:
     def _fill_search(self, patient: Patient) -> None:
         """Type the configured search terms into the search input.
 
-        ``search_by`` chooses what is typed: the name (family + given), the
-        rendered DOB, or both joined by a space. The single search input takes
-        the combined query — packs whose UI splits name and DOB into two boxes
-        are a v2 shape (documented in the wizard guidance). PHI: never logged.
+        ``search_by`` chooses name, DOB, or both (single input; a UI that
+        splits them into two boxes is a v2 shape). PHI: never logged.
         """
         terms = self._search_terms(patient)
         self._page.fill(self._selectors.patient_search_input, terms)
@@ -741,11 +615,9 @@ class BrowserPackDestination:
     def current_patient_matches(self, expected: Patient) -> bool:
         """Read the open chart's banner and confirm it is ``expected``.
 
-        Reads both the banner name and DOB slots; BOTH must carry the expected
-        patient's rendered name parts AND DOB rendering. Any miss returns
-        ``False`` — the engine turns that into a
-        :class:`~anastomosis.deliver.browser.errors.WrongPatientError` and aborts
-        the whole run. PHI: logs the boolean outcome and slot names only.
+        Both name and DOB slots must match; any miss returns ``False`` (the
+        engine raises :class:`~anastomosis.deliver.browser.errors.WrongPatientError`
+        and aborts the run). PHI: logs the boolean outcome and slot names only.
         """
         banner_name = self._page.text_content(self._selectors.patient_banner_name) or ""
         banner_dob = self._page.text_content(self._selectors.patient_banner_dob) or ""
@@ -769,10 +641,9 @@ class BrowserPackDestination:
     def existing_fingerprints(self, patient: DestinationPatient) -> set[str]:
         """Return the document titles/filenames the destination already shows.
 
-        The destination-comparable fingerprint of an existing chart document is
-        the title/filename as the destination renders it (the
-        :attr:`UploadItem.fingerprint` default is the file name). PHI: logs the
-        count only — a document title can embed a patient name.
+        The fingerprint is the title/filename as rendered
+        (:attr:`UploadItem.fingerprint` defaults to the file name). PHI:
+        logs the count only — a document title can embed a patient name.
         """
         texts = self._page.query_selector_all_text(self._selectors.documents_list_item)
         prints = {t.strip() for t in texts if t.strip()}
@@ -784,19 +655,13 @@ class BrowserPackDestination:
     def upload(self, item: UploadItem, patient: DestinationPatient) -> UploadReceipt:
         """File ``item`` into the open chart through the upload UI.
 
-        Step order (the wizard's discovery order, and what the e2e test pins):
-        optional ``documents_tab`` click, optional ``upload_open_button`` click,
-        set the file input, fill whatever upload-form slots the pack discovered
-        (:meth:`_fill_upload_form` — nothing at all when it discovered none),
-        click submit, wait for the success marker. A timeout waiting for the
-        success marker is a
+        Contract: optional tab/open-button clicks, set the file input, fill
+        whatever upload-form slots the pack discovered, submit, wait for the
+        success marker — a timeout there is
         :class:`~anastomosis.deliver.browser.errors.TransientDeliveryError`
-        (retryable — a slow page, not a permanent failure).
-
-        Returns ``UploadReceipt(destination_doc_id=None, echoed_size_bytes=None)``:
-        browser uploads rarely echo a doc id or size, and L6 read-back is the
-        verifier's job — the receipt does not pretend to information the UI did
-        not give. PHI: logs the item key and slot names only.
+        (retryable). Returns a receipt with no doc id or size: browser
+        uploads rarely echo either, and L6 read-back is the verifier's job.
+        PHI: logs the item key and slot names only.
         """
         if self._selectors.documents_tab:
             self._page.click(self._selectors.documents_tab)
@@ -836,28 +701,13 @@ class BrowserPackDestination:
     def _fill_upload_form(self, item: UploadItem) -> None:
         """Fill the upload form's fields, then read back the two that must be right.
 
-        Every slot here is optional and skipped when the pack left it unset, so
-        a pack that discovered none of them still drives exactly the five
-        actions it always drove. The order walks the dialog the way an operator
-        reads it: name, category, status, date, the patient it says it is
-        filing for, provider, note.
+        Every slot is optional and skipped when unset (RULES.md 13). Two are
+        GATES that fail PERMANENTLY, not transiently: the echoed document
+        date must match what was given, and the dialog's prefilled patient
+        must still be who the banner confirmed — asked again from inside the
+        dialog, the only check that can see it disagree with the chart.
 
-        Two of these are not fields but GATES, and both fail PERMANENTLY rather
-        than transiently, because retrying a form that would not take a value
-        just files the same wrong thing again:
-
-        * the date the portal echoes back must be the date it was given — a
-          date widget that quietly ignored the text it was handed would
-          otherwise file a chart under whatever date it was already showing;
-        * the patient the dialog prefilled must still be the patient the banner
-          confirmed. The banner readback happens before the dialog opens; this
-          asks the same question from INSIDE it, after the file is attached and
-          before anything is committed, and it is the only check that can see a
-          dialog disagreeing with the chart behind it.
-
-        PHI: nothing here reaches a log line or an exception message except
-        slot names and booleans. The prefill readback is a patient's name, the
-        note may carry one, and the date is a date of service.
+        PHI: only slot names and booleans reach a log or exception message.
         """
         sel = self._selectors
         if sel.upload_filename_input:
@@ -898,11 +748,9 @@ class BrowserPackDestination:
     def _choose(self, selector: str, label: str | None, *, slot: str) -> None:
         """Pick the configured option in one of the form's dropdowns.
 
-        A dropdown that does not offer the configured choice is a structural
-        mismatch — the portal's option list has changed, or the pack was
-        pointed at the wrong ``<select>`` — and the right answer is to stop,
-        not to leave the field at "Please select" and file anyway. The message
-        names the SLOT and never the choice: a provider's name is a person.
+        A dropdown refusing the configured choice is a structural mismatch —
+        stop, rather than leave it at "Please select" and file anyway. The
+        message names the SLOT, never the choice: a provider's name is a person.
         """
         if label is None:
             raise PermanentDeliveryError(_unconfigured(self.name, slot))
@@ -928,10 +776,9 @@ class BrowserPackDestination:
     def _type_document_date(self, item: UploadItem) -> None:
         """Type the item's date of service, then confirm the form kept it.
 
-        An item with no date of service against a pack that discovered the date
-        field is a refusal, not a blank: the pack has said this portal files
-        documents by date, and a chart filed under the form's default date is
-        misfiled in the way that is hardest to notice later.
+        No date of service against a discovered date field is a refusal, not
+        a blank: a chart filed under the form's default date is misfiled in
+        the way hardest to notice later.
         """
         if item.date_of_service is None:
             raise PermanentDeliveryError(
@@ -951,14 +798,10 @@ class BrowserPackDestination:
     def _check_dialog_patient(self) -> None:
         """Confirm the dialog's prefilled patient is the one the banner confirmed.
 
-        Fails closed in both directions. A readback that does not carry the
-        expected name is the wrong-patient signal the whole subsystem exists
-        for, so it raises the same
-        :class:`~anastomosis.deliver.browser.errors.WrongPatientError` the
-        engine turns a failed banner check into — the run aborts, this item and
-        every item after it. And no confirmed patient to compare against is
-        itself a refusal: the alternative is to file having checked nothing
-        while a discovered slot says a check was expected.
+        Fails closed both ways: a readback naming the wrong patient raises
+        :class:`~anastomosis.deliver.browser.errors.WrongPatientError` (the
+        run aborts); no confirmed patient to compare against is itself a
+        refusal.
         """
         expected = self._verified_patient
         if expected is None:
@@ -1000,23 +843,18 @@ class BrowserPackDestination:
     def _name_present(self, text: str, patient: Patient) -> bool:
         """Whether every declared name FIELD appears in ``text`` contiguously.
 
-        Boundary-anchored through the shared identity predicate
-        (:func:`anastomosis.core.identity.name_parts_present`), so a short name
-        does NOT match embedded in a longer one ("Li" does not match inside
-        "Liang", "Ann" not inside "Joann" or "Mary-Ann"). Each field
-        (family name, given name) is matched as ONE contiguous phrase — a
-        multi-word family name satisfied word-by-word across the row would let
-        a reordered compound surname pass. Empty (no name parts) is a
-        fail-closed ``False``.
+        Boundary-anchored (:func:`anastomosis.core.identity.name_parts_present`,
+        RULES.md 6): each field matches as ONE contiguous phrase, so a
+        multi-word surname cannot pass reordered word-by-word. Empty name
+        parts fail closed to ``False``.
         """
         return name_parts_present(self._name_parts(patient), text)
 
     def _dob_present(self, text: str, patient: Patient) -> bool:
         """Whether the rendered DOB appears in ``text`` as a whole token.
 
-        Boundary-anchored (:func:`anastomosis.core.identity.date_token_present`)
-        so an unpadded DOB does not match inside a longer date run ("1/2/1990"
-        does not satisfy "11/2/1990").
+        Boundary-anchored (:func:`anastomosis.core.identity.date_token_present`,
+        RULES.md 6) so an unpadded DOB does not match inside a longer run.
         """
         dob = self._render_dob(patient)
         if not dob:

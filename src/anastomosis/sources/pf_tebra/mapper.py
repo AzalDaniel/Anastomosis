@@ -1,14 +1,10 @@
 """PF/Tebra join graph → canonical PatientRecords.
 
-The lossless rule, mechanically enforced: every table mapping declares the
-columns it consumes, and **every other non-empty column** lands in the
-target model's ``extensions`` under a ``pf_tebra:`` namespace. A column we
-have never heard of survives the migration by construction.
-
-Source GUIDs become canonical ids verbatim, so cross-references
-(encounter → diagnosis, prescription → medication) carry over without a
-translation table and provenance stays greppable.
-"""
+Every table mapping declares the columns it consumes; every other non-empty
+column lands in ``extensions`` under a ``pf_tebra:`` namespace (rule 63).
+Source GUIDs become canonical ids verbatim, so cross-references (encounter →
+diagnosis, prescription → medication) carry over without a translation
+table."""
 
 from __future__ import annotations
 
@@ -117,14 +113,10 @@ def _b(row: Row, col: str) -> bool:
 
 
 def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
-    """Everything the mapping didn't consume — the lossless catch-all.
-
-    ``prefix`` qualifies the namespaced key for rows that are NOT the model's
-    own source row (a demographics side row, say), so several tables' surplus
-    columns can share one ``extensions`` dict without colliding. A prefix opens
-    its own sub-namespace (``side:``) rather than starting with a table name, so
-    no prefixed key can ever be spelled by an unprefixed column name.
-    """
+    """Everything the mapping didn't consume (rule 63). ``prefix`` opens its
+    own sub-namespace (``side:``) for a row that is not the model's own
+    source row, so surplus columns from several tables can share one
+    ``extensions`` dict without an unprefixed key ever colliding with one."""
     return residual(row, mapped, SOURCE, prefix)
 
 
@@ -199,10 +191,8 @@ class _DemographicsGroups:
         )
 
 
-# Columns `_map_patient` lifts out of ONE demographics side row. A side row is
-# not consumed wholesale by the one column the mapper wants: everything else on
-# it rides `patient.extensions` (see `_side_extensions`). `_KEY_ONLY` is the set
-# for a row the mapper never reads at all — only its join key is accounted for.
+# Columns `_map_patient` lifts from ONE demographics side row; everything else
+# rides `patient.extensions` (`_side_extensions`). `_KEY_ONLY`: join key only.
 _KEY_ONLY = frozenset({_PATIENT_KEY})
 _PINNED_MAPPED = _KEY_ONLY | {"NoteType", "NoteText"}
 _GISO_MAPPED = _KEY_ONLY | {"GenderIdentity", "SexualOrientation"}
@@ -213,20 +203,11 @@ _GISO_TABLE = "patient-gender-identity-sexual-orientation"
 
 
 def _side_extensions(groups: _DemographicsGroups, guid: str) -> dict[str, Any]:
-    """Surplus cells of the demographics SIDE rows, as
-    ``pf_tebra:side:<table>:<row index>:<column>``.
-
-    The ``side:`` segment keeps this namespace disjoint from the demographics
-    row's own ``pf_tebra:<column>`` keys: a future export column literally named
-    ``patient-race:0:FutureColumn`` would otherwise land on the same key as a
-    side-row cell and one would overwrite the other.
-
-    `_map_patient` lifts one or two columns out of each side row (``RaceName``,
-    ``GenderIdentity``, …) and nothing at all out of the rows it never reaches
-    (a second gender-identity row, a superseded guarantor). Both are losses
-    without this catch-all: `_ext` runs on the demographics row only, so a
-    column added beside ``RaceName`` in a future export would vanish.
-    """
+    """Surplus cells of the demographics SIDE rows, namespaced
+    ``pf_tebra:side:<table>:<row index>:<column>`` so a future column can't
+    collide with the demographics row's own ``pf_tebra:<column>`` keys.
+    Catches what `_ext` (demographics row only) would otherwise lose: rows
+    it never reaches at all (a superseded guarantor, say)."""
     out: dict[str, Any] = {}
 
     def keep(table: str, index: int, row: Row, mapped: frozenset[str]) -> None:
@@ -254,9 +235,8 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     guid = _s(row, "PatientPracticeGuid")
     assert guid is not None  # loader guarantees keyed rows; join column required
 
-    # Order within the list is presentation, not identity: which one a
-    # destination is searched by is decided by the destination
-    # (`_SEARCH_IDENTIFIER_ORDER`), not by whichever adapter built the list.
+    # Order here is presentation, not identity: which one a destination
+    # searches by is `_SEARCH_IDENTIFIER_ORDER`'s call, not this list's.
     identifiers = [Identifier(kind=IdentifierKind.SOURCE_GUID, value=guid, system=SOURCE)]
     if ssn := _s(row, "SSN"):
         identifiers.append(Identifier(kind=IdentifierKind.SSN, value=ssn))
@@ -314,9 +294,8 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     )
 
 
-# patient-guarantor.tsv columns consumed here. NOTE the Billing* names and the
-# bare City/State/Zip — this table does NOT share patient-demographics' Address*
-# column names.
+# patient-guarantor.tsv columns consumed here — NOTE the Billing* names and
+# bare City/State/Zip: this table does not share demographics' Address* names.
 _GUARANTOR_MAPPED = frozenset(
     {
         "PatientPracticeGuid",
@@ -398,22 +377,15 @@ _SOAP_COLUMNS = (
     ("Plan", SectionKind.PLAN, "Plan"),
 )
 
-# patient-encounter-diagnoses columns read: EncounterGuid groups the link rows onto
-# their encounter (see map_export's hoist), DiagnosisGuid feeds diagnosis_ids. The
-# table's own PatientPracticeGuid (redundant with the encounter's patient_id) is
-# read by neither — it and any future column ride the encounter's extensions via
-# _map_encounter's per-row `side:` loop, same discipline as the demographics side
-# rows in _side_extensions.
+# patient-encounter-diagnoses columns read: EncounterGuid groups the link
+# rows onto their encounter (map_export), DiagnosisGuid feeds diagnosis_ids;
+# its own PatientPracticeGuid rides the encounter's extensions instead.
 _ENCOUNTER_DX_MAPPED = frozenset({"EncounterGuid", "DiagnosisGuid"})
 
 
 def _note_section(kind: SectionKind, raw: str | None, title: str | None) -> NoteSection:
-    """One SOAP/narrative section: rich HTML for rendering, text shadow for QA.
-
-    ``html`` carries the ``sanitize_soap_html`` output (the rendering path);
-    ``text`` keeps the flattened plain text for search, QA, and plain-text
-    consumers.
-    """
+    """One SOAP/narrative section: rich HTML for rendering (``html``, from
+    ``sanitize_soap_html``), flattened plain text for search/QA (``text``)."""
     sanitized = sanitize_soap_html(raw)
     return NoteSection(
         kind=kind,
@@ -497,20 +469,10 @@ def _is_adult_growth_chart(encounter: Encounter, birth_date: date | None) -> boo
     return age_at(birth_date, encounter.date_of_service) >= _GROWTH_CHART_AGE
 
 
-#: The render-selection rules this adapter applies, in the order it applies
-#: them — an encounter takes the reason of the FIRST rule that claims it, so
-#: the order is part of what the selection report says and is not free to move.
-#:
-#: They were constants: two shapes of encounter this adapter always kept out of
-#: the render, decided once for one practice. They are neither wrong nor
-#: universal — an archivist retaining everything wants the empty visit, and a
-#: paediatric practice that grew up with its patients wants the growth chart —
-#: so each is now a rule a run may switch off by name (``--include``), with
-#: every rule on by default, which is exactly what they were.
-#:
-#: ``reason`` is the string the extension and the selection report already
-#: carried, unchanged: an operator's older reports stay readable against a
-#: newer one.
+#: The render-selection rules this adapter applies, in the order applied —
+#: an encounter takes the reason of the FIRST rule that claims it, so the
+#: order is part of what the selection report says and is not free to move.
+#: ``reason`` is the string an operator's existing reports already carry.
 SELECTION_RULES: tuple[SelectionRule, ...] = (
     SelectionRule(
         name="empty-soap",
@@ -524,15 +486,12 @@ SELECTION_RULES: tuple[SelectionRule, ...] = (
     ),
 )
 
-#: Every rule, applied — what this adapter did before any of them could be
-#: switched off, and what a run with no ``--include`` still does.
+#: Every rule, applied — the default when a run passes no ``--include``.
 DEFAULT_SELECTION: frozenset[str] = frozenset(rule.name for rule in SELECTION_RULES)
 
-#: What each rule actually asks of an encounter. Separate from the declaration
-#: above because the declaration is schema an operator reads and this is the
-#: adapter's own format knowledge. One signature for all of them — the
-#: encounter and the patient's birth date — so the dispatch needs no per-rule
-#: shape; a rule with no use for the date ignores it.
+#: What each rule actually asks of an encounter — separate from the schema
+#: declaration above. One signature for all (encounter, birth date), so a
+#: rule with no use for the date just ignores it.
 _SELECTION_TESTS: dict[str, Callable[[Encounter, date | None], bool]] = {
     "empty-soap": _is_empty_soap,
     "growth-charts": _is_adult_growth_chart,
@@ -543,12 +502,9 @@ def _skip_reason(
     encounter: Encounter, birth_date: date | None, active: frozenset[str]
 ) -> str | None:
     """Why an encounter is excluded from rendering, or ``None`` if it renders.
-
-    ``active`` is the set of rule names this run applies (:data:`SELECTION_RULES`
-    minus whatever it was told to include). A rule that is not active does not
-    run at all, so an encounter it would have claimed reaches the render like
-    any other — not carried as an exclusion with a note saying it was allowed.
-    """
+    ``active`` is this run's rule set (:data:`SELECTION_RULES` minus whatever
+    it included); a rule not active never runs, so its encounters reach the
+    render like any other."""
     for rule in SELECTION_RULES:
         if rule.name in active and _SELECTION_TESTS[rule.name](encounter, birth_date):
             return rule.reason
@@ -654,17 +610,12 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
             value = _s(row, value_col)
             if value is None:
                 continue
-            # EffectiveDate (smoking status) then EffectiveDateFrom
+            # EffectiveDate (smoking status) or EffectiveDateFrom
             # (occupation/industry) — the only two clinical assessment dates
-            # v9 puts on these tables. A third spelling, RecordedDate, used to
-            # sit at the end of this chain and is on no table in the export.
-            #
-            # Education, financial resources and tribal affiliation carry no
-            # assessment date at all, only a LastModified stamp. That stays out
-            # of this chain on purpose: when a row was last edited is not when
-            # the patient was asked, and putting one where the other belongs
-            # would date the answer wrongly rather than leave it undated. The
-            # stamp still rides into extensions, so nothing is lost.
+            # v9 has for these tables. Education, financial resources and
+            # tribal affiliation have none (only LastModified, edit time
+            # rather than ask time, so it stays out of this chain and rides
+            # into extensions instead).
             effective = next(
                 (d for c in ("EffectiveDate", "EffectiveDateFrom") if (d := _dt(row, c))),
                 None,
@@ -684,10 +635,8 @@ def _social_observations(export: Export, guid: str) -> list[Observation]:
 
 
 # patient-med-history is a free-prose block table (HistoryType: social/family/
-# major-events, ReportedHistory: narrative). PastMedicalHistory(kind, text)
-# holds all three losslessly; the PF pack renders the `social` kind. The
-# structured subcategory fields (alcohol, drug use, diet, ...) have no source
-# table in the export.
+# major-events); PastMedicalHistory(kind, text) holds all three. Structured
+# subcategory fields (alcohol, drug use, diet, ...) have no source table here.
 def _past_medical_history(export: Export, guid: str) -> list[PastMedicalHistory]:
     blocks: list[PastMedicalHistory] = []
     for row in _by(export["patient-med-history"], "PatientPracticeGuid").get(guid, []):
@@ -875,10 +824,8 @@ def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
     # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS otherwise
     # (see resolve_display_date).
     display_date = resolve_display_date(transactions, prefix, _dt(row, "DateOfService"))
-    # NumberOfRefills, and only that. A fallback to a bare `Refills` used to sit
-    # here; v9 spells that column on no table, so the fallback could only ever
-    # fire over an export we invented, and having it made the read look like it
-    # tolerated two vendor spellings when there is one (#248).
+    # NumberOfRefills only: v9 has no other spelling, so a `Refills`
+    # fallback would tolerate a spelling that doesn't exist (#248).
     refills = clean_numeric(row.get("NumberOfRefills"))  # -1 sentinel → None
     return Prescription(
         id=guid,
@@ -920,30 +867,19 @@ _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
 # Quaternary→3, Other→99 extend the primary/secondary/tertiary benefit ordering.
 _BENEFIT_ORDER = {"primary": 0, "secondary": 1, "tertiary": 2, "quaternary": 3, "other": 99}
 
-# superbill-insurances columns a WINNING join actually reads (see _matched_row):
-# the PIPG/plan-name join keys and the PlanType value they resolve. Every other
-# column rides the coverage's extensions via `residual` below — but only onto
-# the row's OWN patient (see `_own_row`), because the name tiers match across
-# patients. A row that wins no coverage of its own has NOTHING read from it; see
-# `unjoined`, which keeps only its PatientPracticeGuid as the placement key.
+# superbill-insurances columns a WINNING join reads (see _matched_row): the
+# PIPG/plan-name keys and the PlanType value. Everything else rides the won
+# coverage's extensions via `residual`, but only from the row's OWN patient
+# (see `_own_row`); a row that wins nothing is handled by `unjoined`.
 _SUPERBILL_JOINED_MAPPED = frozenset({"PatientInsurancePlanGuid", "PlanName", "PlanType"})
 
 
 class _PlanTypeLookup:
-    """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...) three-tier join.
-
-    PF displays the TYPE from superbill-insurances.PlanType — NOT from
-    patient-insurances, which only carries the generic "Medical" coverage
-    type. Resolve by PatientInsurancePlanGuid first, then lowercased plan
-    name, then payer name. The plan-name "(PPO)" regex is the last-resort
-    fallback only.
-
-    superbill-insurances is read in FULL (never sliced by a foreign key — see
-    _FOREIGN_KEYS), so a row's home is decided here rather than by
-    _check_key_closure: `residual` parks a row's surplus columns on the coverage
-    its join actually won, and `unjoined` hands back every row whose join won
-    nothing, for the caller to preserve non-attributingly instead of dropping.
-    """
+    """The PF insurance TYPE (HMO/PPO/EPO/POS/Medicare/...), three-tier join:
+    exact plan guid, then lowercased plan name, then payer name. PF displays
+    this from superbill-insurances.PlanType, never the generic "Medical"
+    type patient-insurances carries. Read in full, never sliced by a
+    foreign key — `residual`/`unjoined` below decide each row's home."""
 
     def __init__(self, superbill_rows: list[Row]) -> None:
         self._by_pipg: dict[str, Row] = {}
@@ -981,17 +917,11 @@ class _PlanTypeLookup:
         return match.group(1).upper() if match else None
 
     def _own_row(self, ins_row: Row) -> Row | None:
-        """The matched row, but only when it belongs to the SAME patient.
-
-        The TYPE a tier resolves is a fact about the PLAN — "Evergreen Basic is
-        an HMO" is true for everyone on it — so `resolve` may legitimately read
-        another patient's row to learn it. Every other column of that row is a
-        fact about THAT patient (their practice guid, their superbill guid), and
-        the plan-name and payer-name tiers match across patients by
-        construction: two patients on one plan resolve to whichever row was
-        indexed first. So the surplus columns may only ever be read from the
-        row's own patient, or one patient's identifiers land in another's chart.
-        """
+        """The matched row, but only when it belongs to the SAME patient. A
+        tier's TYPE is a fact about the PLAN, so `resolve` may read another
+        patient's row for it — but every OTHER column is that patient's own,
+        and the name/payer tiers match across patients by construction, so
+        reading them here would leak one patient's fields into another's."""
         row = self._matched_row(ins_row)
         if row is None:
             return None
@@ -1008,13 +938,10 @@ class _PlanTypeLookup:
         return _ext(row, _SUPERBILL_JOINED_MAPPED, prefix="side:superbill-insurances:")
 
     def unjoined(self, insurance_rows: list[Row], superbill_rows: list[Row]) -> list[Row]:
-        """Superbill rows no patient's coverage consumed.
-
-        Consumed means `_own_row` — a row that only lent its TYPE to another
-        patient had nothing else read from it, so it is still unjoined and still
-        has to be preserved for its own patient. Counting a cross-patient TYPE
-        read as consumption would drop the row from the export entirely.
-        """
+        """Superbill rows no patient's coverage consumed. `_own_row` is what
+        counts as consumed: a row that only lent its TYPE to another patient
+        still has to be preserved for its own — counting a cross-patient TYPE
+        read as consumption would drop it from the export entirely."""
         used = {
             id(matched)
             for ins_row in insurance_rows
@@ -1073,11 +1000,9 @@ def _map_family_history(export: Export, guid: str) -> list[FamilyMemberHistory]:
 _IMMUNIZATION_MAPPED = frozenset(
     {"PatientPracticeGuid", "ImmunizationGuid", "Vaccine", "Lot", "Type", "Comments"}
 )
-# The date column was previously three guessed spellings read in turn, none of
-# which a v9 export has, so every immunization came back undated. It is
-# VaccinationOrEffectiveDate. One real name beats three inferred ones: if a
-# future export spells it differently the date goes missing visibly, rather
-# than a guess quietly happening to match.
+# One real column name beats three inferred spellings: none of the other
+# candidates exist in v9, so a future export spelling this differently goes
+# missing visibly instead of a guess quietly happening to match.
 _IMM_DATE_COL = "VaccinationOrEffectiveDate"
 
 
@@ -1119,17 +1044,11 @@ _HEALTH_CONCERN_MAPPED = frozenset(
 
 
 def _map_health_concern(row: Row, patient_id: str) -> Goal:
-    """A health concern, which carries a goal's four facts and so reuses Goal.
-
-    ``HealthConcernNote`` is the row's own free text, and it fills the chart's
-    DESCRIPTION column — the same column ``Goal`` fills for the Goals section
-    directly below it. A concern may instead point at a diagnosis or an allergy
-    (``DiagnosisGuid`` / ``PatientAllergyGuid``, both optional in v9), and which
-    of the note and that record's own name Practice Fusion printed is not
-    something the dictionary settles; those guids ride into ``extensions`` whole
-    rather than being resolved here on a guess. Like ``patient-goals`` the table
-    has no guid of its own, so provenance points at the owning patient.
-    """
+    """A health concern: carries a goal's four facts, so reuses ``Goal``.
+    ``HealthConcernNote`` fills DESCRIPTION. It may instead point at a
+    diagnosis or allergy (``DiagnosisGuid``/``PatientAllergyGuid``); those
+    guids ride into ``extensions`` whole rather than resolved here on a
+    guess. No guid of its own, so provenance points at the owning patient."""
     return Goal(
         patient_id=patient_id,
         description=_s(row, "HealthConcernNote"),
@@ -1154,15 +1073,10 @@ _SCREENING_EVENT_MAPPED = frozenset(
 
 
 def _map_screening_event(row: Row) -> ScreeningEvent:
-    """One clinical-worksheet event — what the chart calls Screenings /
-    Interventions / Assessments.
-
-    ``IsNegated`` is read rather than left to ``extensions`` because it inverts
-    the meaning of the row: an event the clinician marked as not performed,
-    rendered beside the ones that were, would tell the reader the opposite of
-    what happened. Everything the section does not print — the event's category,
-    status, reason and result codes, the due/start/end times — rides along.
-    """
+    """One clinical-worksheet event (Screenings / Interventions /
+    Assessments). ``IsNegated`` is read, not left to ``extensions``: it
+    inverts the row's meaning (an event marked not-performed rendered
+    beside ones that were would say the opposite of what happened)."""
     return ScreeningEvent(
         id=_s(row, "EncounterEventGuid") or "",
         patient_id=_s(row, "PatientPracticeGuid") or "",
@@ -1230,19 +1144,11 @@ def _map_facilities(export: Export) -> list[Facility]:
 
 
 def _self_keyed(rows: list[Row]) -> str | None:
-    """The column that identifies each row of a directory table, if there is one.
-
-    A practice-level reference table — the lab vendors, the pharmacies, the
-    provider profiles — is keyed by its OWN id and referenced BY patient rows: a
-    prescription names a ``PharmacyGuid``, a lab result names a ``LabGuid``.
-    Such a column is a ``*Guid`` that is present, non-empty and DISTINCT on
-    every row. Uniqueness is what separates a directory from a link table that
-    merely mentions an id many times.
-
-    Deliberately a shape test rather than a list of table names: a real export
-    carries 85 tables and the four that broke this were only the four that
-    happened to be in one. A rule that reads the data holds for the next one.
-    """
+    """The column that identifies each row of a directory table, if there is
+    one: present, non-empty, and DISTINCT on every row — what separates a
+    directory (lab vendors, pharmacies, provider profiles) from a link table.
+    A shape test, not a table name list, so a rule that reads the data holds
+    for tables not yet seen."""
     if not rows:
         return None
     for column in rows[0]:
@@ -1256,11 +1162,9 @@ def _self_keyed(rows: list[Row]) -> str | None:
 
 def _patient_scoped_guids(export: Export) -> frozenset[str]:
     """Every ``*Guid`` column that appears in a table carrying a patient key.
-
-    A column that names a patient's row somewhere in the export names one
-    everywhere. That is what lets a table with no patient column of its own
-    still be patient data.
-    """
+    A column that names a patient's row somewhere names one everywhere —
+    what lets a table with no patient column of its own still be patient
+    data."""
     scoped: set[str] = set()
     for rows in export.values():
         if rows and "PatientPracticeGuid" in rows[0]:
@@ -1269,14 +1173,10 @@ def _patient_scoped_guids(export: Export) -> frozenset[str]:
 
 
 def _names_a_patient(rows: list[Row], own_key: str, patient_scoped: frozenset[str]) -> bool:
-    """Whether a would-be directory points back into patient scope.
-
-    A directory may be keyed by itself; it may not name a patient's record. The
-    table that broke this was ``patient-insurance-eligibilities``: no patient
-    column, a unique guid of its own, so it read as practice-level — and its
-    ``PatientInsurancePlanGuid`` is the very column that keys each patient's
-    coverage. Classified as a directory it was copied whole into every record.
-    """
+    """Whether a would-be directory points back into patient scope: a
+    directory may be keyed by itself, but may not name a patient's record
+    (``patient-insurance-eligibilities`` does, through
+    ``PatientInsurancePlanGuid``, despite having no patient column)."""
     for column in rows[0]:
         if column == own_key or not column.endswith("Guid"):
             continue
@@ -1286,25 +1186,11 @@ def _names_a_patient(rows: list[Row], own_key: str, patient_scoped: frozenset[st
 
 
 def _reference_tables(export: Export) -> dict[str, list[Row]]:
-    """Unmapped tables that describe the PRACTICE, not any one patient.
-
-    These have no patient column because they are not patient rows, so demanding
-    a patient key of them is a category error — and it is the one that stopped
-    the adapter opening a real Practice Fusion export at all: `labs`,
-    `pharmacies`, `provider-profiles` and `users` are part of the standard
-    export, and the run refused every one of them.
-
-    They are carried whole into every record's extensions, which is what
-    `providers` and `facilities` — the two practice-level tables the mapper
-    already knew about — have always done. A record has to stand alone: the
-    bundle is one directory per patient, so a prescription naming a pharmacy
-    travels with the pharmacy it names.
-
-    A table that merely LOOKS practice-level is not carried: one that names a
-    patient's record through a foreign key is patient data whatever its own
-    columns say, and falls through to :func:`_unmapped_tables`, which has no
-    patient key to attribute it by and so refuses the run. Loud beats broadcast.
-    """
+    """Unmapped tables describing the PRACTICE, not any patient (`labs`,
+    `pharmacies`, `provider-profiles`, `users`): no patient column, carried
+    whole into every record's extensions like `providers`/`facilities`. One
+    that merely LOOKS practice-level but names a patient falls instead to
+    :func:`_unmapped_tables`, which refuses for want of a key."""
     patient_scoped = _patient_scoped_guids(export)
     found: dict[str, list[Row]] = {}
     for table in sorted(set(export) - set(KNOWN_TABLES)):
@@ -1331,12 +1217,10 @@ _INDIRECT_JOINS: dict[str, tuple[str, str]] = {
 
 
 def _join_owners(parent_rows: list[Row], join_col: str) -> dict[str, frozenset[str]]:
-    """Each populated ``join_col`` value -> the set of patients whose parent rows carry it.
-
-    The value, not just its existence: an indirect join resolves only when this
-    set has exactly one member. A parent row whose own patient key is blank
-    contributes nothing (it cannot vouch for an owner it does not name).
-    """
+    """Each populated ``join_col`` value → the set of patients whose parent
+    rows carry it. The value, not just its existence: a join resolves only
+    when this set has exactly one member; a parent row with a blank patient
+    key contributes nothing."""
     owners: dict[str, set[str]] = {}
     for row in parent_rows:
         key = _s(row, join_col)
@@ -1358,12 +1242,10 @@ def _held(table: str, buckets: dict[str, list[Row]]) -> list[QuarantinedRows]:
 def _partition_direct(
     table: str, rows: list[Row], patient_guids: frozenset[str]
 ) -> tuple[dict[str, list[Row]], list[QuarantinedRows]]:
-    """Split a ``PatientPracticeGuid``-keyed table into attributable and held rows.
-
-    Every row lands in exactly one place: on its named patient, or in
-    quarantine under the precise way its key failed. Nothing is guessed and
-    nothing is dropped — conservation by construction, pinned by tests.
-    """
+    """Split a ``PatientPracticeGuid``-keyed table into attributable and
+    held rows. Every row lands in exactly one place — its named patient, or
+    quarantine under the precise way its key failed; conservation by
+    construction, pinned by tests."""
     grouped: dict[str, list[Row]] = {}
     buckets: dict[str, list[Row]] = {}
     for row in rows:
@@ -1387,13 +1269,10 @@ def _partition_joined(
     owners_by_key: dict[str, frozenset[str]],
     patient_guids: frozenset[str],
 ) -> tuple[dict[str, list[Row]], list[QuarantinedRows]]:
-    """Resolve a declared indirect join row by row — exactly one owner, or held.
-
-    Zero owners is a dangling key and several owners is an ambiguity; both
-    quarantine, because broadcasting a row to every candidate or picking the
-    first is a misfiled chart. The reasons name schema (columns and tables),
-    never a key's value.
-    """
+    """Resolve a declared indirect join row by row — exactly one owner, or
+    held. Zero owners is a dangling key, several is an ambiguity; both
+    quarantine rather than broadcast to every candidate or guess the first.
+    Reasons name schema only, never a key's value."""
     grouped: dict[str, list[Row]] = {}
     buckets: dict[str, list[Row]] = {}
     for row in rows:
@@ -1430,27 +1309,11 @@ def _log_quarantined(quarantined: list[QuarantinedRows]) -> None:
 def _unmapped_tables(
     export: Export, patient_guids: frozenset[str], reference: dict[str, list[Row]] | None = None
 ) -> tuple[dict[str, dict[str, list[Row]]], list[QuarantinedRows]]:
-    """Account for EVERY table the mapper does not consume — losslessly.
-
-    Returns ``({patient_guid: {table_name: [rows verbatim]}}, quarantined)``.
-    A table with a ``PatientPracticeGuid`` column is PARTITIONED: rows naming a
-    known patient land in that patient's ``extensions``; rows whose key is blank
-    or names nobody are quarantined with the rest of the table intact. A table
-    in :data:`_INDIRECT_JOINS` resolves each row through its declared join, and
-    only an exactly-one-owner resolution attributes — zero or several owners
-    quarantine the row. The old behavior refused a 369,094-row table over 695
-    dangling rows (#280); the new one preserves the attributable majority and
-    holds the broken few where an operator can see them.
-
-    ``reference`` names the practice-level tables :func:`_reference_tables`
-    recognised; they are carried at record scope instead and so are not orphans.
-
-    A table with NO path to a patient — no key column, no declared join, no
-    practice-level identity — still refuses the run
-    (:class:`UnsupportedTablesError`): failing closed beats silently discarding
-    clinical data, and beats guessing a join nobody vouched for. Empty tables
-    are ignored (nothing to lose).
-    """
+    """Account for EVERY table the mapper does not consume, losslessly (rule
+    66, #280). Returns ``({patient_guid: {table: [rows]}}, quarantined)``: a
+    ``PatientPracticeGuid``-keyed table is partitioned; an
+    :data:`_INDIRECT_JOINS` table resolves per row, one owner only; a table
+    with no path to a patient refuses (:class:`UnsupportedTablesError`)."""
     by_patient: dict[str, dict[str, list[Row]]] = {}
     quarantined: list[QuarantinedRows] = []
     no_path: list[str] = []
@@ -1477,20 +1340,15 @@ def _unmapped_tables(
     return by_patient, quarantined
 
 
-# Every KNOWN table the mapper reads by slicing a per-key grouping, with the key
-# column and the parent whose ids that key must name. superbill-insurances,
-# providers, and facilities are deliberately absent: they are read in full, not
-# sliced by an owning record, so no row of theirs can be orphaned.
+# Every KNOWN table the mapper reads by slicing a per-key grouping, with the
+# key column and the parent whose ids that key must name. superbill-insurances,
+# providers, and facilities are absent: they are read in full, not sliced, so
+# no row of theirs can be orphaned.
 #
-# The two encounter child tables below — patient-encounter-observations and
-# patient-encounter-events — are keyed on the PATIENT, not the encounter, so a
-# row whose EncounterGuid names no encounter in this export lands on the patient
-# and is refused by nothing. It is not lost (it still narrates to the loss
-# ledger), but nothing renders it either, because both sections are drawn per
-# encounter. v9 types EncounterGuid non-nullable on both tables, so this needs a
-# malformed export to happen at all; key them on the encounter and a real export
-# missing one encounter row would fail the whole patient instead of one section.
-# That trade is why they sit here, and it is a chart gap, not data loss.
+# patient-encounter-observations/-events are keyed on the PATIENT, not the
+# encounter: a dangling EncounterGuid lands on the patient and renders in no
+# section (a chart gap, not data loss) rather than failing the whole patient
+# over one malformed row.
 _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
     # patient-demographics is the patient table itself, so the only way one of
     # its rows fails is a MISSING key — which would drop that whole patient.
@@ -1529,14 +1387,11 @@ _FOREIGN_KEYS: tuple[tuple[str, str, str], ...] = (
 
 
 def _check_key_closure(export: Export, known: dict[str, frozenset[str]]) -> None:
-    """Refuse KNOWN-table rows whose foreign key names no record in the export.
-
-    The counterpart to :func:`_unmapped_tables` for the tables the mapper DOES
-    map: those are read by slicing a grouping with the owning record's guid, so
-    a row with a missing or dangling key is grouped once and never read again —
-    a silent drop of clinical data. Failing closed (:class:`OrphanRowsError`) is
-    the same stance an orphan table gets. Counts only; no row value is read out.
-    """
+    """Refuse KNOWN-table rows whose foreign key names no record in the
+    export — the counterpart to :func:`_unmapped_tables` for tables the
+    mapper DOES map, read by slicing a grouping once so a dangling key would
+    otherwise vanish silently. Fail-closed (:class:`OrphanRowsError`); counts
+    only, no row value read out."""
     orphans: dict[str, int] = {}
     for table, column, parent in _FOREIGN_KEYS:
         keys = known[parent]
@@ -1555,12 +1410,10 @@ _HASH_BLOCK = 1 << 20
 
 
 def _sha256(path: Path) -> str | None:
-    """The file's digest, or None if it cannot be read.
-
-    An unreadable attachment leaves the artifact pointing at nothing rather than
-    carrying a digest of nothing, so the chart never claims to have verified a
-    file it could not open.
-    """
+    """The file's digest, or None if it cannot be read — an unreadable
+    attachment leaves the artifact pointing at nothing rather than a digest
+    of nothing, so the chart never claims to have verified a file it
+    couldn't open."""
     digest = hashlib.sha256()
     try:
         with path.open("rb") as handle:
@@ -1573,23 +1426,11 @@ def _sha256(path: Path) -> str | None:
 
 
 def _page_count(path: Path, mime_type: str) -> int | None:
-    """Pages in a PDF attachment; None for anything else, or an unreadable one.
-
-    A scanned record's page count is the difference between a chart that says
-    "7 pages attached" and one that silently shows the first. Non-PDF
-    attachments have no page count to give, and a PDF that will not open is
-    reported as unknown rather than as zero — zero would read as "nothing here".
-
-    Which attachments are PDFs is decided by the type the export declares, not
-    by the stored file's name. A real export writes every attachment into
-    ``binary-content/`` under its storage GUID with no extension at all — all
-    9,955 of them in the export this was measured against — and states the type
-    in the row's ``OriginalFileExtension`` instead, which is exactly why
-    :func:`_mime_type` reads that column first. Keying on the filename meant the
-    suffix test never matched, so every attachment in a real export reported no
-    page count, the PDFs included. The synthetic fixture names its one blob
-    ``.pdf``, so nothing here ever noticed.
-    """
+    """Pages in a PDF attachment; ``None`` for anything else, or an
+    unreadable one — never 0, which would read as "nothing here". PDF-ness
+    is decided by the declared type, not the filename: a real export writes
+    every attachment (9,955 of them, verified) into ``binary-content/`` with
+    no extension, stating the type in ``OriginalFileExtension`` instead."""
     if mime_type != "application/pdf":
         return None
     try:
@@ -1603,12 +1444,9 @@ def _page_count(path: Path, mime_type: str) -> int | None:
 
 
 def _mime_type(row: Row, blob: Path | None) -> str:
-    """The attachment's media type, from its extension.
-
-    The export states the original extension; the resolved file's own suffix is
-    the fallback for a row that omits it. `application/octet-stream` — "some
-    bytes, no idea what kind" — is what is left when neither says.
-    """
+    """The attachment's media type, from its extension: the export's stated
+    extension first, the resolved file's own suffix as fallback, else
+    ``application/octet-stream`` when neither says."""
     suffix = _s(row, "OriginalFileExtension") or (blob.suffix if blob else None)
     if not suffix:
         return "application/octet-stream"
@@ -1617,16 +1455,11 @@ def _mime_type(row: Row, blob: Path | None) -> str:
 
 
 def _map_document(row: Row, guid: str, attachments: Attachments | None) -> DocumentArtifact:
-    """One `patient-documents` row, with its file located if the export has it.
-
-    A v9 `patient-documents` row has no id of its own — `DocumentStorageGuid`
-    names both the file and the row, so it is the identity. A row whose file is
-    not in the export keeps every
-    column it carries — they ride in `extensions` to the preserved-fields
-    narrative — but claims no path, no digest and no page count, because it has
-    none. An artifact that named a file it could not produce would be worse than
-    one that admits it has only the metadata.
-    """
+    """One `patient-documents` row, with its file located if the export has
+    it. `DocumentStorageGuid` names both the file and the row. A row whose
+    file is missing keeps every column (`extensions`) but claims no path,
+    digest, or page count — an artifact naming a file it can't produce is
+    worse than one admitting it has only metadata."""
     storage = _s(row, "DocumentStorageGuid") or ""
     blob = attachments.find(storage) if attachments else None
     mime_type = _mime_type(row, blob)
@@ -1649,15 +1482,11 @@ def _map_document(row: Row, guid: str, attachments: Attachments | None) -> Docum
 def _unjoined_superbills(
     plan_types: _PlanTypeLookup, export: Export, patient_guids: frozenset[str]
 ) -> dict[str, list[Row]]:
-    """The superbill-insurances rows that joined no coverage, grouped per patient.
-
-    These are placed by their OWN PatientPracticeGuid, so a row whose guid is
-    blank or names nobody in this export has no home and would vanish here.
-    superbill-insurances sits outside _check_key_closure (it is read in full,
-    never sliced), so this is the only place that can catch it — a KNOWN
-    table's row, so it keeps the fail-closed :class:`OrphanRowsError` stance
-    rather than the unmapped tables' quarantine. Counts only — never a guid.
-    """
+    """Superbill-insurances rows that joined no coverage, grouped by their
+    OWN PatientPracticeGuid. Outside :func:`_check_key_closure` (read in
+    full, never sliced), so this is the only place that can catch a
+    dangling one — fail-closed (:class:`OrphanRowsError`) like a KNOWN
+    table's row, not the unmapped tables' quarantine."""
     unjoined_rows = plan_types.unjoined(
         export["patient-insurances"], export["superbill-insurances"]
     )
@@ -1674,29 +1503,14 @@ def map_export(
     on_quarantine: Callable[[list[QuarantinedRows]], None] | None = None,
     selection: frozenset[str] = DEFAULT_SELECTION,
 ) -> Iterator[PatientRecord]:
-    """Join the loaded tables into one PatientRecord per patient.
+    """Join the loaded tables into one PatientRecord per patient. Without
+    ``attachments`` rows still map, with metadata but no file. ``on_quarantine``
+    always fires (empty list included) before the first record yields,
+    resetting a stateful caller and letting an early-stopping consumer see
+    the whole accounting."""
 
-    ``attachments`` is :func:`~anastomosis.sources.pf_tebra.loader.find_attachments`
-    over the same export directory — the files the ``patient-documents`` rows
-    point at. Without it the rows still map, carrying their metadata and no
-    file; the adapter always passes it.
-
-    ``selection`` is the set of :data:`SELECTION_RULES` this run applies. It
-    defaults to all of them — the behaviour every caller had before the rules
-    became per-run options — and a run that drops one renders the encounters
-    that rule was keeping out.
-
-    ``on_quarantine`` receives the rows :func:`_unmapped_tables` held back —
-    ALWAYS, empty list included, so a caller keeping state (the adapter) is
-    reset by a clean load rather than left showing the previous export's
-    quarantine. It fires before the first record is yielded: the partition is
-    settled up front, so a consumer that stops early still saw the whole
-    accounting.
-    """
-
-    # Losslessness: account for every table the mapper does not consume, and for
-    # every mapped table's foreign keys, before producing any record (so a
-    # refusal happens cleanly, before partial output).
+    # Losslessness: account for every table and foreign key before producing
+    # any record, so a refusal happens before partial output.
     patient_guids = _ids(export["patient-demographics"], _PATIENT_KEY)
     reference_tables = _reference_tables(export)
     unmapped_by_patient, quarantined = _unmapped_tables(export, patient_guids, reference_tables)
@@ -1731,10 +1545,8 @@ def map_export(
     practitioners = _map_practitioners(export)
     facilities = _map_facilities(export)
     plan_types = _PlanTypeLookup(export["superbill-insurances"])
-    # superbill-insurances is read in full (never sliced by a foreign key — see
-    # _FOREIGN_KEYS), so a row that joins no coverage at all is found here, once,
-    # rather than through _check_key_closure; preserved per patient below instead
-    # of being dropped (see _PlanTypeLookup.unjoined).
+    # superbill-insurances is read in full (never sliced — see _FOREIGN_KEYS),
+    # so a row joining no coverage is caught here once, not via _check_key_closure.
     unjoined_superbill_by_patient = _unjoined_superbills(plan_types, export, patient_guids)
 
     encounters_by_patient = _by(export["patient-encounters"], "PatientPracticeGuid")
@@ -1773,11 +1585,9 @@ def map_export(
         seen_guids.add(guid)
         patient = _map_patient(demo_row, demo_groups)
 
-        # The render SELECTION (see _skip_reason) keeps the shapes of encounter
-        # this run's ACTIVE rules claim out of `encounters` — by default the
-        # empty-SOAP and adult-growth-chart ones, as always. Losslessness:
-        # rather than dropping them, the skipped ones are stashed in
-        # `extensions` so nothing vanishes.
+        # The render SELECTION (_skip_reason) keeps some encounter shapes out
+        # of `encounters` (empty-SOAP, adult-growth-chart, by default); the
+        # skipped ones are stashed in `extensions` rather than dropped.
         all_encounters = [
             _map_encounter(row, addenda_by_encounter, encounter_dx_by_encounter)
             for row in encounters_by_patient.get(guid, [])
@@ -1809,10 +1619,8 @@ def map_export(
         for table_name, table_rows in reference_tables.items():
             record_extensions[f"{SOURCE}:practice:{table_name}"] = table_rows
 
-        # A superbill-insurances row whose PIPG/plan-name/payer-name join won no
-        # coverage: non-attributing (it fed no typed object), so it lands on the
-        # record rather than a specific Coverage. _KEY_ONLY keeps only the
-        # PatientPracticeGuid that placed it here; every other column survives.
+        # A superbill row whose join won no coverage is non-attributing (fed
+        # no typed object); _KEY_ONLY here keeps only the placement guid.
         if unjoined_superbill := unjoined_superbill_by_patient.get(guid, []):
             record_extensions[f"{SOURCE}:unjoined_superbill_insurances"] = [
                 _ext(row, _KEY_ONLY) for row in unjoined_superbill

@@ -1,36 +1,16 @@
 """The offline OCR observation worker — Tesseract CLI, pinned and airgapped.
 
-Fifty-three sample PDFs, 802 pages, zero natively extractable words: the one
-real sample set this product has been shown is pixels. :mod:`.extract` refuses
-such a page loudly (:class:`~anastomosis.packgen.extract.OcrRequiredError`) and
-that refusal stays — it is now conditional on there being no engine to ask.
-This module is the engine adapter that makes the other half possible.
-
-What it produces is an OBSERVATION, never a reading. The distinction is carried
-in the data (:data:`OCR_OBSERVATION` rides every token and every span derived
-from one), not in this docstring: OCR geometry may suggest lines, columns,
-bands and page breaks; OCR text may never fill a clinical field. A high-risk
-value needs an independent structured source or a human. ``docs/audits/
-learned-source/OCR_DECISION.md`` is the decision record this implements.
-
-Offline is enforced, not promised. The subprocess is handed an EXPLICIT
-environment built from nothing — no inherited ``*_PROXY``, no inherited
-``TESSDATA_PREFIX`` unless the operator named one — the invocation passes only
-local file paths, and :class:`OcrConfig` carries ``allow_network`` which may
-only ever be ``False`` (a ``True`` is refused at construction). Tesseract is
-also told ``OMP_THREAD_LIMIT=1`` and given a finite timeout and a finite pixel
-cap, per the decision record's resource profile.
-
-Absence of the binary is a REFUSAL, never a crash and never a silent skip:
-:func:`discover_worker` returns ``None`` and the caller says what to install.
-
-PHI rule: token text is a protected observation. Nothing in this module logs,
-and the manifest / warnings it returns carry versions, hashes, counts and
-integers only — never a token, never an input path. Tesseract's own hOCR
-embeds the image filename it was given, which is why the caller renders to a
-fixed, non-descriptive temporary name and why the raw hOCR is parsed and
-dropped rather than retained.
-"""
+Produces an OBSERVATION, never a reading (RULES.md 34;
+``docs/audits/learned-source/OCR_DECISION.md`` is the decision record).
+Offline is enforced: the subprocess gets an EXPLICIT environment built
+from nothing (no inherited proxy or tessdata), :class:`OcrConfig`'s
+``allow_network`` may only be ``False``, and the invocation is
+resource-capped per the decision record's profile. Absence of the binary
+is a refusal (:func:`discover_worker` returns ``None``), never a crash or
+a silent skip. PHI: nothing here logs; the manifest carries only
+versions, hashes and counts — never a token or an input path (hOCR
+embeds the image filename it was given, so the caller renders to a
+fixed, non-descriptive name)."""
 
 from __future__ import annotations
 
@@ -132,13 +112,10 @@ class OcrUnavailableError(RuntimeError):
 
 
 class OcrEngineError(RuntimeError):
-    """The engine ran and did not produce a usable observation.
-
-    A timeout, a non-zero exit, a missing output file, or TSV and hOCR
-    disagreeing about how many words were read. Every one of those is a review
-    item, never a partial success — the message carries counts and exit codes
-    only, never recognized text and never an input path.
-    """
+    """The engine ran and did not produce a usable observation: a timeout, a
+    non-zero exit, a missing output file, or TSV/hOCR disagreeing on word
+    count. Never a partial success; the message carries counts and exit
+    codes only, never recognized text or an input path."""
 
 
 # --------------------------------------------------------------------------- #
@@ -148,17 +125,11 @@ class OcrEngineError(RuntimeError):
 
 @dataclass(frozen=True)
 class OcrConfig:
-    """Every knob of the invocation, fixed up front and hashed.
-
-    Defaults are the decision record's resource profile: 216 DPI (3 x 72-point
-    PDF units), a 25-megapixel page cap, one page per process with
-    ``OMP_THREAD_LIMIT=1``, and a 60-second page deadline. ``allow_network`` is
-    part of the schema so the manifest can state it, and may only be ``False``.
-
-    ``min_confidence`` SELECTS layout candidates; it never deletes evidence.
-    Tokens below it are still returned, flagged, and counted (see
-    :attr:`OcrPageResult.below_confidence`).
-    """
+    """Every knob of the invocation, fixed up front and hashed. Defaults
+    are the decision record's resource profile (216 DPI, 25-megapixel
+    cap, 60s deadline). ``allow_network`` may only be ``False``.
+    ``min_confidence`` SELECTS candidates; it never deletes evidence —
+    tokens below it are still returned, flagged, and counted."""
 
     language: str = "eng"
     dpi: int = 216
@@ -196,13 +167,10 @@ class OcrConfig:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def dpi_for(self, width_pt: float, height_pt: float) -> int:
-        """The DPI to render at, reduced deterministically to fit the cap.
-
-        The rule is recorded rather than implicit: scale so that
-        ``width_px * height_px <= max_pixels``, floor at 1 DPI, and never
-        exceed the configured DPI. A caller that gets back a smaller number
-        knows the page was downsampled and by how much.
-        """
+        """The DPI to render at, reduced deterministically to fit the cap:
+        scale so ``width_px * height_px <= max_pixels``, floor at 1 DPI,
+        never exceed the configured DPI. A smaller returned number means
+        the page was downsampled, and by how much."""
         area_in2 = max((width_pt / _PT_PER_IN) * (height_pt / _PT_PER_IN), 1e-9)
         cap_dpi = int((self.max_pixels / area_in2) ** 0.5)
         return max(1, min(self.dpi, cap_dpi))
@@ -210,13 +178,9 @@ class OcrConfig:
 
 @dataclass(frozen=True)
 class PageImage:
-    """The one raster a recognition ran against, and how to get back to points.
-
-    ``clip_pt`` is the region's box in the PDF page's own coordinate frame;
-    ``dpi_x``/``dpi_y`` and that box are the whole transform, so a pixel box
-    maps back to page points with no hidden state. ``bytes_sha256`` pins the
-    exact pixels the observation describes.
-    """
+    """The one raster a recognition ran against, and how to get back to
+    points. ``clip_pt`` plus ``dpi_x``/``dpi_y`` is the whole transform (no
+    hidden state); ``bytes_sha256`` pins the exact pixels described."""
 
     page_index: int
     region_id: str
@@ -246,14 +210,10 @@ class PageImage:
 @dataclass(frozen=True)
 class OcrToken:
     """One recognized word, with its geometry in both frames and its score.
-
-    ``text`` is a protected observation: it may be shown to a reviewer beside
-    the image, and it may never be logged or promoted into a clinical field.
-    ``confidence_kind`` names the scale so two engines' numbers are never
-    compared as if they shared a calibration; ``confidence`` is nullable
-    because an engine without a documented score must report ``None`` rather
-    than a fabricated one.
-    """
+    ``text`` is a protected observation: shown to a reviewer, never logged
+    or promoted into a clinical field. ``confidence_kind`` keeps two
+    engines' scores from being compared as if calibrated; ``confidence``
+    is ``None`` rather than a fabricated score when an engine has none."""
 
     text: str
     bbox_px: BBox
@@ -271,12 +231,9 @@ class OcrToken:
 @dataclass(frozen=True)
 class OcrPageResult:
     """Everything one recognition produced, including what it did not keep.
-
-    ``tokens`` holds EVERY token the engine returned, low-scoring ones
-    included; ``below_confidence`` counts how many fall under the configured
-    selection threshold, so a filtered candidate list always has a stated
-    reason and a number. ``warnings`` are PHI-free strings.
-    """
+    ``tokens`` holds EVERY token, low-scoring ones included;
+    ``below_confidence`` counts how many fall under the selection
+    threshold. ``warnings`` are PHI-free strings."""
 
     tokens: tuple[OcrToken, ...]
     page_image: PageImage
@@ -294,13 +251,11 @@ class OcrPageResult:
 
 
 def above_threshold(tokens: Sequence[OcrToken], config: OcrConfig) -> list[OcrToken]:
-    """The tokens a layout learner may use, by the ONE selection predicate.
-
-    Selection, never deletion: the caller keeps the full token list and records
-    how many fell below. An engine that reports no score at all is kept — a
-    missing score is not a low one, and fabricating a number to compare it
-    against is exactly what the decision record forbids.
-    """
+    """The tokens a layout learner may use, by the ONE selection
+    predicate — selection, never deletion: the caller keeps the full list
+    and records how many fell below. A missing score is not a low one, so
+    an unscored token is kept rather than fabricating a number to compare
+    it against."""
     return [
         token
         for token in tokens
@@ -314,15 +269,11 @@ def above_threshold(tokens: Sequence[OcrToken], config: OcrConfig) -> list[OcrTo
 
 
 def find_tesseract() -> Path | None:
-    """The Tesseract executable to use, or ``None`` when there is none.
-
-    An operator-named :data:`TESSERACT_EXE_ENV` wins and is NOT searched for on
-    PATH — naming a path that does not exist is an operator error worth
-    surfacing as "no engine" rather than silently falling back to whatever the
-    PATH happens to hold. Otherwise ``shutil.which`` resolves it, and the
-    result is made absolute so the invocation never depends on the child's
-    working directory.
-    """
+    """The Tesseract executable to use, or ``None``. An operator-named
+    :data:`TESSERACT_EXE_ENV` wins and is NOT searched for on PATH — a
+    nonexistent named path surfaces as "no engine", not a silent PATH
+    fallback. Otherwise ``shutil.which`` resolves it, made absolute so the
+    invocation never depends on the child's working directory."""
     named = os.environ.get(TESSERACT_EXE_ENV)
     if named:
         candidate = Path(named)
@@ -332,12 +283,9 @@ def find_tesseract() -> Path | None:
 
 
 def discover_worker(config: OcrConfig | None = None) -> TesseractWorker | None:
-    """The OCR worker for this machine, or ``None`` when no engine is present.
-
-    ``None`` is the whole point: the caller turns it into a refusal that names
-    what to install (:data:`INSTALL_HINT`), rather than crashing or — far
-    worse — quietly producing a pack with the raster pages missing.
-    """
+    """The OCR worker for this machine, or ``None`` — the caller turns
+    that into a refusal naming what to install (:data:`INSTALL_HINT`),
+    rather than crashing or quietly producing a pack with pages missing."""
     exe = find_tesseract()
     if exe is None:
         return None
@@ -348,13 +296,10 @@ def discover_worker(config: OcrConfig | None = None) -> TesseractWorker | None:
 
 
 def _explicit_env(config: OcrConfig, tessdata: str | None) -> dict[str, str]:
-    """The child's ENTIRE environment, built from nothing.
-
-    Nothing is inherited: no ``*_PROXY``, no ``TESSDATA_PREFIX`` the operator
-    did not name, no locale that could re-order output. ``OMP_THREAD_LIMIT=1``
-    is the decision record's concurrency control. On Windows ``SystemRoot`` is
-    required for the process to start at all, so it is the one passthrough.
-    """
+    """The child's ENTIRE environment, built from nothing: no ``*_PROXY``,
+    no unnamed ``TESSDATA_PREFIX``, no locale that could re-order output.
+    ``OMP_THREAD_LIMIT=1`` is the decision record's concurrency control;
+    ``SystemRoot`` is passed through because Windows needs it to start."""
     env = {"OMP_THREAD_LIMIT": str(config.thread_count), "LC_ALL": "C"}
     if tessdata:
         env["TESSDATA_PREFIX"] = tessdata
@@ -366,12 +311,10 @@ def _explicit_env(config: OcrConfig, tessdata: str | None) -> dict[str, str]:
 
 
 class TesseractWorker:
-    """A pinned, offline Tesseract CLI invocation, one page image at a time.
-
-    Constructed with an absolute executable path; probes ``--version`` once so
-    a broken or non-Tesseract binary refuses immediately rather than at the
-    first page. The version string it read is part of every result's manifest.
-    """
+    """A pinned, offline Tesseract CLI invocation, one page image at a
+    time. Probes ``--version`` once so a broken binary refuses immediately
+    rather than at the first page; the version string is part of every
+    result's manifest."""
 
     def __init__(self, exe: Path, config: OcrConfig | None = None) -> None:
         self.exe = exe
@@ -381,12 +324,10 @@ class TesseractWorker:
 
     @property
     def tessdata_source(self) -> str:
-        """Where language data came from — an operator pin, or the default.
-
-        The decision record wants a hash-pinned, immutable tessdata directory.
-        This records WHICH case applied so a pack never implies a pin it does
-        not have; ``engine-default`` means the engine's own compiled-in path.
-        """
+        """Where language data came from — an operator pin, or the
+        default. The decision record wants a hash-pinned tessdata
+        directory; this records which case applied so a pack never
+        implies a pin it does not have."""
         return "operator-pinned" if self.tessdata else "engine-default"
 
     def manifest(self) -> dict[str, object]:
@@ -431,15 +372,11 @@ class TesseractWorker:
         )
 
     def recognize(self, png_bytes: bytes, page_image: PageImage) -> OcrPageResult:
-        """Recognize one page image and return its observation.
-
-        The image is written under a FIXED, non-descriptive filename in a
-        private temporary directory: Tesseract's hOCR embeds the input path in
-        the page title, so the name must carry nothing sample-derived. Both TSV
-        and hOCR are requested in one pass (the decision record's default), and
-        the two are cross-checked — a disagreement about how many words were
-        read is an :class:`OcrEngineError`, not a quietly-preferred stream.
-        """
+        """Recognizes one page image and returns its observation. The image
+        is written under a FIXED, non-descriptive filename (Tesseract's
+        hOCR embeds the input path in the page title). TSV and hOCR are
+        both requested and cross-checked; a disagreement about word count
+        is an :class:`OcrEngineError`, not a quietly-preferred stream."""
         pixels = page_image.width_px * page_image.height_px
         if pixels > self.config.max_pixels:
             raise OcrEngineError(
@@ -468,11 +405,9 @@ class TesseractWorker:
                     timeout=self.config.timeout_seconds,
                 )
             except subprocess.TimeoutExpired:
-                # The deadline is one of the four engine faults this class
-                # promises to raise as its own, and it was the one that did
-                # not: TimeoutExpired escaped, was rewrapped a layer up as
-                # "sample unreadable", and told an operator their document was
-                # bad when their engine had hung.
+                # One of the four engine faults this class promises to raise
+                # as its own, so a hung engine is never rewrapped upstream as
+                # "sample unreadable".
                 raise OcrEngineError(
                     f"OCR engine exceeded the {self.config.timeout_seconds}s page deadline"
                 ) from None
@@ -547,11 +482,9 @@ class _TsvRow:
 
 def _parse_tsv(raw: str) -> list[_TsvRow]:
     """Every non-blank word row of a Tesseract TSV, in engine order.
-
-    Blank-text rows carry no observation (Tesseract emits them for empty
-    detections with ``conf`` -1); they are dropped here and the hOCR side drops
-    the same ones, which is what makes the two counts comparable.
-    """
+    Blank-text rows (``conf`` -1) carry no observation and are dropped
+    here; the hOCR side drops the same ones, keeping the two counts
+    comparable."""
     rows: list[_TsvRow] = []
     for line in raw.splitlines()[1:]:  # first line is the header
         fields = line.split("\t")
@@ -576,18 +509,11 @@ def _parse_tsv(raw: str) -> list[_TsvRow]:
 
 
 def _parse_hocr_line_sizes(raw: str) -> list[float]:
-    """One ``x_size`` (pixels) per non-blank word, in the same order as the TSV.
-
-    hOCR is requested alongside the TSV because the TSV has no size evidence at
-    all: ``x_size`` is Tesseract's own estimate of the line's text height, and
-    it is the only thing in either stream from which a type scale can be built.
-
-    Only ``<span>`` elements carry it, and Tesseract emits exactly two kinds of
-    them — a line-ish container (``ocr_line``, ``ocr_header``, ``ocr_caption``,
-    ``ocr_textfloat``) and ``ocrx_word`` — so a word takes the ``x_size`` of
-    the most recent container. Blank words are skipped on both sides, which is
-    what makes the TSV and hOCR counts comparable.
-    """
+    """One ``x_size`` (pixels) per non-blank word, in TSV order — the TSV
+    alone has no size evidence at all. Only ``<span>`` elements carry it, in
+    two kinds (a line-ish container, or ``ocrx_word``), so a word takes the
+    most recent container's ``x_size``. Blank words are skipped on both
+    sides, keeping the two counts comparable."""
     sizes: list[float] = []
     current = 0.0
     for match in _HOCR_SPAN_RE.finditer(raw):
@@ -601,13 +527,10 @@ def _parse_hocr_line_sizes(raw: str) -> list[float]:
 
 
 def _token(row: _TsvRow, size_px: float, page_image: PageImage) -> OcrToken:
-    """One TSV row plus its hOCR line height as a provenance-carrying token.
-
-    ``size_pt`` is a HEIGHT in points, not a font size: Tesseract recovers no
-    face, weight or color, and the decision record is explicit that a scanned
-    page's original rendering system is not recoverable. It is enough to rank a
-    heading above body text, which is all a layout learner asks of it.
-    """
+    """One TSV row plus its hOCR line height as a provenance-carrying
+    token. ``size_pt`` is a HEIGHT in points, not a font size — Tesseract
+    recovers no face, weight or color — but it is enough to rank a
+    heading above body text, which is all a layout learner asks of it."""
     bbox_px: BBox = (
         float(row.left),
         float(row.top),

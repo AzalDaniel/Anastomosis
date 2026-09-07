@@ -1,21 +1,12 @@
-"""An empty state may not deny what the record holds.
+"""An empty state may not deny what the record holds: both built-in
+packs select by ENCOUNTER, so a section finds nothing whenever its
+facts belong to another visit or none at all (#239) — read, to the
+person holding the chart, as a statement about the patient.
 
-Both built-in packs select by ENCOUNTER, so a section finds nothing whenever the
-facts of its family belong to another visit — or to no visit at all, which is
-the 78% case issue #239 measured over the supplied C-CDA corpus. Practice Fusion
-then printed "No vitals recorded"; generic_soap dropped the section without a
-word. Neither is a lie about the visit and both read, to the person holding the
-chart, as a statement about the patient.
-
-So an encounter-scoped empty state now scopes its claim to the visit and says
-how many of that family the record holds elsewhere, pointing at the record
-summary in the bundle that carries them. When the record holds none either, the
-original sentence is simply true and stands unchanged — which is the other half
-of every test here, because a notice that fires on the ordinary chart is a
-notice people learn to skip.
-
-Counts only, never values: these numbers reach a rendered chart, a golden
-snapshot and this file, and a measurement is the chart.
+An encounter-scoped empty state scopes its claim to the visit and says
+how many of that family the record holds elsewhere. When the record
+holds none either, the original sentence stands unchanged. Counts
+only, never values: a measurement is the chart.
 """
 
 from __future__ import annotations

@@ -1,10 +1,8 @@
-"""Direct tests for GuiJobRunner — the single owner of the async-job
-choreography that used to be hand-rolled five times in the controller.
-
-The controller-level tests exercise the runner through the public methods
-(busy guards, spawn failures, terminal events); these pin the runner's own
-contract in isolation so a future consumer can rely on it without reading
-the controller.
+"""Direct tests for GuiJobRunner, the single owner of the async-job
+choreography. The controller-level tests exercise the runner through its
+public methods (busy guards, spawn failures, terminal events); these pin
+the runner's own contract in isolation so a future consumer can rely on
+it without reading the controller.
 """
 
 from __future__ import annotations
@@ -105,18 +103,11 @@ def test_worker_exception_becomes_error_event_never_raises() -> None:
 
 
 def test_a_base_exception_still_reports_before_it_kills_the_thread() -> None:
-    """A run that started must always end with something the operator can see.
-
-    The upload engine models process death as a BaseException on purpose (see
-    FakeCrash) so its "unknown exception, retry" handler cannot swallow a kill.
-    That is right for the engine and left the GUI with a run that emitted
-    `start` and then nothing at all, forever — #117's "no terminal upload event
-    landed; events=[{'state': 'start'}]", reproduced exactly.
-
-    Caught, reported, re-raised: telling the operator is not the same as
-    pretending it did not happen, so the thread still dies and the guard still
-    releases.
-    """
+    """A run that started must always end with something the operator can
+    see (#117): the upload engine models process death as a BaseException
+    on purpose (see FakeCrash), so it must be caught, reported, AND
+    re-raised — telling the operator is not pretending it did not happen,
+    so the thread still dies and the guard still releases."""
     emit = _RecordingEmit()
     runner = GuiJobRunner(emit)
     raised: list[str] = []

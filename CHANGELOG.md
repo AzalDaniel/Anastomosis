@@ -15,6 +15,22 @@ issue and fixed in its own pull request.
 
 ### Added
 
+- **The rulebook and the safety net for the refactor toward the eighth alpha.**
+  Before any code moves, four things every later slice is measured against:
+  `docs/RULES.md` (87 settled rules, one sentence each, forty of them rescued
+  from docstrings so the prose can go without a requirement going with it),
+  `docs/AUDIT_LEDGER.md` (one row per file and function that earned a look,
+  a merge map per slice, the confirmed duplicate pairs, and fourteen findings
+  that are defects rather than refactor work), a short `CLAUDE.md`, and six
+  skills under `.claude/skills/`. The tools: `tools/snapshot.py` drives the
+  real `anast` CLI over the five committed fixtures and fails on any byte of
+  difference in what each run writes, `tools/prose_gate.py` ratchets comment
+  volume down (it may shrink, never grow), `tools/guard_count.py` pins the
+  floor on distinct `#NNN` regression references in `tests/` at 72, and
+  `tools/ast_equal.py` proves a change touched nothing but prose. `core/clock.py`
+  is the `SOURCE_DATE_EPOCH` seam that makes two runs byte-comparable; nine
+  stamping sites route through it. Nothing a user can see changes. (#415)
+
 - **A clinical fact keeps the id its source gave it, so a bundle is the same
   bundle twice.** Every `Condition`, `AllergyIntolerance`, `MedicationStatement`,
   `Immunization` and `Observation` took `AnastBase.id`'s `uuid4` default, which
@@ -562,6 +578,20 @@ issue and fixed in its own pull request.
   one `write_fhir_bundle` mechanic both personas already shared. (#382)
 
 ### Changed
+
+- **The prose sweep: the code says less and means the same.** Every docstring
+  and comment under `src/` and `tests/` went through one decision: a rule
+  goes to `docs/RULES.md`, a contract stays under five lines, a story goes.
+  Not one line of code moved (`tools/ast_equal.py` proves the code AST of
+  all 150 source files and 162 test files identical), every deliverable of
+  the five fixtures is byte-identical (`tools/snapshot.py`), the corpus pin
+  is unmoved and the guard count holds at 72. Source prose 18,773 → 9,693
+  lines (ratio 0.404 → 0.259), test prose 13,299 → 9,200, 1,749 over-cap
+  docstrings → 118, 294 history phrases → 5. Twenty-three rules the prose
+  alone carried are now rules 88 to 110; the two pack `context.py` files
+  keep their bytes because a pack's layout hash covers them. The prose
+  ratchet now follows a docstring by its owner's name instead of its line
+  number, and `tools/ast_equal.py` refuses to compare an empty tree.
 
 - **Third-party pack code no longer runs with the desktop user's authority.**
   An external or taught pack's `context.py` could read any file the operator

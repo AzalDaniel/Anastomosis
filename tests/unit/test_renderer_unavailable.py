@@ -1,16 +1,12 @@
 """A machine that cannot render says so once, with the remedy.
+`ChromiumRenderer.__init__` raises with the sentence naming what to
+install. Catching the exception per encounter and keeping only its
+TYPE would answer with six copies of
 
-`ChromiumRenderer.__init__` raises with the sentence that names what to
-install. The engine caught every exception per encounter and kept only the
-exception TYPE, so a base install answered:
+    render failed for encounter id:d47f4012d088 (RuntimeError)
 
-    render failed for encounter id:d47f4012d088 (RuntimeError)   x6
-
-six times, and threw away the one line that said what to do. The PHI rule is
-right for an exception that may carry patient data; it should not erase the
-renderer's own deterministic install hint. And the condition is a property of
-the MACHINE, not of any one chart, so reporting it per encounter was wrong
-whatever the message said.
+and no line saying what to do — a property of the MACHINE, reported
+once, not per encounter.
 """
 
 from __future__ import annotations
@@ -28,18 +24,11 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
 
 class _NoRenderer:
-    """A renderer this machine cannot build.
-
-    NOT an import-denying meta_path hook, which was the first attempt here and
-    is the wrong mechanism: `playwright` is already in `sys.modules` by the time
-    this file runs in a full-suite pass, and a cached module never reaches a
-    finder. The deny silently did nothing, these tests launched REAL Chromium
-    instances and never closed them, and the browser was broken for every test
-    after — `bundled Chromium: Error`, and 21 further tests skipped.
-
-    Substituting the class the engine actually constructs is the pattern the
-    rest of this suite uses, and it touches no global state.
-    """
+    """A renderer this machine cannot build: substitutes the class the
+    engine actually constructs (the pattern the rest of this suite
+    uses), rather than an import-denying meta_path hook — `playwright`
+    is already in `sys.modules` by the time this file runs in a
+    full-suite pass, so a finder would never see the deny."""
 
     def __init__(self, **kwargs: object) -> None:
         raise RendererUnavailable("ImportError")
@@ -86,13 +75,10 @@ def test_a_base_install_fails_once_not_once_per_chart(no_renderer: None, tmp_pat
 
 
 def test_the_message_carries_no_third_party_text() -> None:
-    """The remedy is OURS. Playwright's own message is not under our control,
-    and forwarding an uncontrolled string is how something unexpected reaches a
-    console — so the exception TYPE goes through and the prose does not.
-
-    Pinned on the constructor's contract: it takes a type NAME, so there is no
-    parameter through which a library sentence could arrive.
-    """
+    """The remedy is OURS: Playwright's own message is not under our
+    control, so only the exception TYPE goes through, never its prose.
+    Pinned on the constructor's contract — it takes a type NAME, so no
+    parameter can carry a library sentence."""
     message = str(RendererUnavailable("ModuleNotFoundError"))
     assert message.count("ModuleNotFoundError") == 1
     assert message.endswith(INSTALL_HINT)

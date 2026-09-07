@@ -1,24 +1,12 @@
 """A practice's own directories are not patient rows, and must not be refused.
 
-The adapter's losslessness rule had two categories: an unmapped table whose
-rows carry a patient key is preserved into that patient's extensions, and one
-whose rows cannot be attributed to anybody is refused, because failing closed
-beats dropping clinical data.
-
-Both are right. The taxonomy was missing a third case. `labs`, `pharmacies`,
-`provider-profiles` and `users` are part of the standard Practice Fusion
-export and have no patient column because they are not patient rows — they are
-the practice's directories, keyed by their own id and referenced BY patient
-rows: a prescription names a PharmacyGuid, a lab result names a LabGuid.
-Demanding a patient key of a directory is a category error, and the result was
-that the adapter refused every real export it was written for:
-
-    UnsupportedTablesError: export contains unmapped tables that cannot be
-    attributed to a patient (no PatientPracticeGuid column): ['labs',
-    'pharmacies', 'provider-profiles', 'users']
-
-The fixture now carries all four, so the lane exercises the format the adapter
-actually meets rather than a subset that happened to avoid the bug.
+Three categories of unmapped table: a patient-keyed row is preserved into
+that patient's extensions; a row attributable to nobody is refused
+(failing closed beats dropping data); and a practice directory (`labs`,
+`pharmacies`, `provider-profiles`, `users`) is keyed by its OWN id and
+referenced BY patient rows (a prescription names a PharmacyGuid), so it
+carries no patient column and must not be refused for lacking one. The
+fixture carries all four, exercising the real export's shape.
 """
 
 from __future__ import annotations
@@ -54,12 +42,9 @@ def test_the_standard_export_tables_no_longer_refuse_the_run() -> None:
 
 
 def test_each_record_carries_the_directories_its_rows_reference() -> None:
-    """A record has to stand alone — the bundle is one directory per patient.
-
-    Same choice `providers` and `facilities` have always made: the practice's
-    tables are attached whole to every record, so a prescription naming a
-    pharmacy travels with the pharmacy it names.
-    """
+    """A record has to stand alone: same choice `providers` and
+    `facilities` make, the practice's directory tables are attached whole
+    to every record, so a prescription naming a pharmacy travels with it."""
     records = list(get_source("pf-tebra").load(FIXTURE))
 
     for record in records:
@@ -80,12 +65,9 @@ def test_a_table_with_no_patient_key_and_no_identity_is_still_refused() -> None:
 
 
 def test_a_table_pointing_at_patients_this_export_lacks_is_quarantined_not_refused() -> None:
-    """A patient key naming somebody absent is not a directory — it is an orphan.
-
-    Since #280 an orphan no longer takes the run down with it: the row is held
-    in quarantine (verbatim, with the reason) and the migration proceeds. It
-    still lands on NO patient — held is not guessed.
-    """
+    """A patient key naming somebody absent is not a directory but an
+    orphan (#280): the row is held in quarantine, verbatim, with the
+    reason, and lands on NO patient — held is not guessed."""
     export = read_export(FIXTURE)
     stray = {"PatientPracticeGuid": "feedface-dead-0000-0000-00000000beef"}
     export["stray-rows"] = [stray]
@@ -102,12 +84,10 @@ def test_a_table_pointing_at_patients_this_export_lacks_is_quarantined_not_refus
 
 
 def test_a_directory_is_recognised_by_its_shape_not_by_its_name() -> None:
-    """A real export has 85 tables; the four that broke this were one export's four.
-
-    So the rule reads the data: a `*Guid` column that is present, non-empty and
-    DISTINCT on every row. Uniqueness is what separates a directory from a link
-    table that merely mentions an id many times.
-    """
+    """The rule reads the data, not a table name: a `*Guid` column that is
+    present, non-empty and DISTINCT on every row. Uniqueness is what
+    separates a directory from a link table that merely mentions an id
+    many times."""
     assert _self_keyed([{"WidgetGuid": "a"}, {"WidgetGuid": "b"}]) == "WidgetGuid"
     assert _self_keyed([{"WidgetGuid": "a"}, {"WidgetGuid": "a"}]) is None, "repeated: a link table"
     assert _self_keyed([{"WidgetGuid": "a"}, {"WidgetGuid": ""}]) is None, "a blank key is no key"
@@ -130,14 +110,11 @@ def test_a_table_with_a_patient_key_is_never_read_as_a_directory() -> None:
 
 
 def test_a_directory_that_names_a_patient_record_joins_to_its_one_owner() -> None:
-    """The #234 shape: no patient column, a unique guid of its own, and a foreign
-    key into patient scope. Classified as a directory it was copied whole into
-    EVERY record — 773 rows x 2,167 patients on the real export. Refusing was
-    the first fix; #280 finishes it: the join is DECLARED (_INDIRECT_JOINS),
-    and a row resolving to exactly one known patient lands on that patient —
-    never broadcast, never guessed. The join's failure modes are pinned in
-    test_pf_quarantine.py.
-    """
+    """The #234/#280 shape: no patient column, a unique guid of its own,
+    and a foreign key into patient scope — a declared join
+    (_INDIRECT_JOINS), never broadcast to every record. A row resolving to
+    exactly one known patient lands on that patient. Failure modes are
+    pinned in test_pf_quarantine.py."""
     export = read_export(FIXTURE)
     plan_row = export["patient-insurances"][0]
     plan = plan_row["PatientInsurancePlanGuid"]
@@ -177,15 +154,11 @@ def test_the_five_real_practice_directories_are_still_carried() -> None:
 
 
 def test_a_directory_referenced_BY_patient_rows_is_still_a_directory() -> None:
-    """Being named by patient rows is what a directory is FOR — it must not be
-    mistaken for being patient data.
-
-    On the real export ``PharmacyGuid``, ``LabGuid`` and ``CareTeamProfileGuid``
-    all appear in patient-keyed tables, because prescriptions name pharmacies and
-    results name labs. A rule that looked at a table's own key as though it were
-    a foreign key would refuse three of the five genuine directories and stop the
-    migration cold.
-    """
+    """Being named by patient rows is what a directory is FOR, not a sign
+    it is patient data: ``PharmacyGuid``, ``LabGuid`` and
+    ``CareTeamProfileGuid`` all appear in patient-keyed tables, and a rule
+    that read a table's own key as a foreign key would refuse three of the
+    five genuine directories."""
     export = read_export(FIXTURE)
     patient = export["patient-demographics"][0]["PatientPracticeGuid"]
     pharmacy = export["pharmacies"][0]["PharmacyGuid"]
@@ -222,12 +195,10 @@ def test_a_patient_foreign_key_is_caught_even_when_it_is_not_named_Patient() -> 
 
 
 def test_a_patient_named_key_is_caught_even_when_no_patient_table_carries_it() -> None:
-    """The two halves of the rule cover different misses.
-
-    The cross-table check needs the foreign key to appear in some patient-keyed
-    table. A second-order table can name a patient's record through a column that
-    appears nowhere else — the name is the only signal left, so it is kept.
-    """
+    """The two halves of the rule cover different misses: the cross-table
+    check needs the foreign key in some patient-keyed table, but a
+    second-order table can name a patient through a column found nowhere
+    else — there the name is the only signal left, so it is kept."""
     export = read_export(FIXTURE)
     export["consent-eligibilities"] = [
         {

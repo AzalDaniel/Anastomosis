@@ -1,23 +1,12 @@
-"""Per-patient bundle deliverer — Responder persona.
+"""Per-patient bundle deliverer.
 
-When a practice gets a record request, the deliverable is a packet for ONE
-patient: the FHIR R4 Bundle (machine-readable lossless export), the rendered
-chart PDFs, and the QA report sliced down to that patient's documents. No
-search index, no cross-patient navigation — one patient per directory, ready
-to hand over.
+One patient per directory: the FHIR R4 Bundle, that patient's rendered
+chart PDFs, and the QA report sliced to their documents. No search index,
+no cross-patient navigation.
 
-Layout::
-
-    out_dir/<patient_id>/
-      bundle.json        — FHIR R4 Bundle (collection)
-      pdfs/*.pdf         — only this patient's rendered charts
-      qa_report.json     — sliced QA report (only this patient's docs)
-      README.txt         — what this bundle is, when, PHI applies
-
-PHI hygiene: the directory is created via
-:func:`anastomosis.core.output.secure_output_dir` (0700 + PHI warning README).
-Logging emits counts and ids only.
-"""
+Layout: ``out_dir/<patient_id>/{bundle.json, pdfs/*.pdf, qa_report.json,
+README.txt}``. Directory hardened via ``secure_output_dir`` (RULES.md 18);
+logging emits counts and ids only (RULES.md 2)."""
 
 from __future__ import annotations
 
@@ -48,13 +37,9 @@ __all__ = ["BundleDeliverer", "BundleResult"]
 
 logger = logging.getLogger(__name__)
 
-# Room kept free under each patient directory for its deepest child, a copied
-# chart at ``pdfs/<chart>.pdf``. That name is itself budgeted now
-# (``budgeted_copy_name``), so the reserve holds the room a budgeted child
-# needs to stay DISTINCT — the fixed wrapper plus the shortest distinct name
-# ``budgeted_name`` can return, its hash tag — not a guess at a plausible
-# chart filename (the renderer's can run to ~617 characters, which no reserve
-# could have covered anyway).
+# Reserve = the fixed wrapper (``/pdfs/`` + ``.pdf``) plus a budgeted name's
+# shortest distinct form (its hash tag) — not a guess at a plausible chart
+# filename, which can run to ~617 characters.
 _PDF_CHILD_RESERVE = len("/pdfs/") + HASH_TAG_CHARS + len(".pdf")
 
 
@@ -91,17 +76,13 @@ class BundleResult:
     out_dir: Path
     bundle_path: Path
     pdf_paths: list[Path] = field(default_factory=list)
-    #: The source's own documents for this patient — the scans and lab reports
-    #: their charts reference. Separate from ``pdf_paths``, which is charts this
-    #: run rendered: a request for a patient's record is answered with both, and
-    #: one list covering them would hide either going missing.
+    #: Source documents (scans, lab reports) the charts reference — separate
+    #: from ``pdf_paths`` so either going missing is never hidden by the other.
     attachment_paths: list[Path] = field(default_factory=list)
     qa_report_path: Path | None = None
     readme_path: Path | None = None
-    #: Charts the render index named for this patient that were not on disk
-    #: when the bundle was built. A record request answered without a chart the
-    #: run says it rendered is exactly the silent loss this tool exists to end,
-    #: so the number travels with the result instead of being filtered away.
+    #: Charts the render index named for this patient but were not on disk
+    #: when built — travels with the result rather than being filtered away.
     missing_count: int = 0
 
 
@@ -121,19 +102,11 @@ class BundleDeliverer:
         *,
         qa_report: QAReport | None = None,
     ) -> list[BundleResult]:
-        """Deliver a bundle per record, attributing each patient's charts
-        strictly by ``patient_id`` via the engine's persisted render index
-        (never by name prefix — two patients sharing both names must never
-        cross-attribute). ``pdfs_dir`` is the engine's ``render_index.json``
-        sidecar; when it is missing every patient's PDF list is empty —
-        bundles render without charts and the absence is logged loudly.
-        Bundle has no per-patient ``unattributed`` slot (it's per-patient by
-        definition), so it never guesses.
+        """Deliver a bundle per record.
 
-        The per-run claimed-name ledger lives here, at the scope that has more
-        than one patient in it: two ids that sanitize to one directory name
-        would otherwise merge two patients into a single bundle.
-        """
+        Charts attribute strictly by ``patient_id`` (RULES.md 11), never by
+        name prefix; a missing index means an empty, loudly-logged PDF list.
+        The per-run claimed-name ledger lives here, where patients can collide."""
         render_index = RenderIndex.load(pdfs_dir)
         missing: dict[str, int] = {}
         if pdfs_dir is None or not pdfs_dir.is_dir():
@@ -142,11 +115,8 @@ class BundleDeliverer:
             logger.warning("no render index; bundle will deliver without chart PDFs")
             pdfs_lookup = {}
         else:
-            # Split rather than filtered. This was one comprehension with an
-            # `if ... .is_file()` on the end, so a chart the index named and
-            # that was not there vanished with no branch, no log line, and no
-            # count — and the per-patient INFO line below then reported the
-            # post-filter number as though it were the whole truth.
+            # Tracked separately (not filtered away) so a missing chart is
+            # counted, not silently absorbed into the per-patient PDF count.
             pdfs_lookup = {}
             for record in records:
                 found: list[Path] = []
@@ -167,9 +137,8 @@ class BundleDeliverer:
                     )
                 pdfs_lookup[record.patient.id] = found
                 missing[record.patient.id] = absent
-        # The attachments the run carried, looked up per record. No index is
-        # needed, unlike the charts above: a chart's filename carries no patient
-        # id, but a document is named BY the record that owns it.
+        # No index needed here, unlike the charts above: a document is named
+        # BY the record that owns it, not by a filename with no patient id.
         landing = (pdfs_dir / ATTACHMENTS_DIRNAME) if pdfs_dir is not None else None
         attachments_lookup = {
             record.patient.id: _attachments_for(record, landing) for record in records
@@ -201,36 +170,15 @@ class BundleDeliverer:
     ) -> BundleResult:
         """Deliver ONE patient's bundle into ``out_dir``.
 
-        ``attachments`` is ``(artifact id, source file)`` pairs — the shape
-        :func:`_attachments_for` returns — so the copy step below can measure
-        what it wrote and hand the FHIR bundle a name it can trust, rather
-        than the bundle re-deriving one from ``DocumentArtifact.path`` on its
-        own and possibly naming a file the copy never produced.
-
-        ``missing_count`` is how many charts the caller's index named for this
-        patient and could not find; it rides the result so the run summary can
-        report it. A standalone call has nothing to reconcile against and gets
-        the default 0.
-
-        ``claimed_dirs`` is the per-run ledger of delivered directory name ->
-        the record that claimed it, threaded in by :meth:`deliver_records`; a
-        second, DIFFERENT id claiming a name raises rather than merging two
-        patients into one bundle, and so does a second, different RECORD under
-        the same id. A standalone call gets a fresh ledger — a single record
-        cannot collide with itself.
-        """
+        ``attachments`` is ``(artifact id, source file)`` pairs (see
+        :func:`_attachments_for`). ``claimed_dirs`` is the per-run name ledger
+        from :meth:`deliver_records`; omitted, a fresh ledger cannot collide."""
         out = secure_output_dir(out_dir)
-        # Budgeted against the directory this bundle is written into, so a long
-        # source id cannot produce a patient directory the filesystem refuses,
-        # with room reserved for the deepest child (``pdfs/<chart>.pdf``).
+        # Budgeted so a long source id cannot produce a directory the
+        # filesystem refuses; room reserved for the deepest child (pdfs/*.pdf).
         pid = budgeted_name(record.patient.id, "unknown", parent=out, reserve=_PDF_CHILD_RESERVE)
-        # The record is the claim's witness because a patient id is not
-        # guaranteed unique: an adapter that yields one record per source
-        # DOCUMENT hands two records for a patient with two of them, and the
-        # exist_ok directory below would then hold the second document's bundle
-        # over the first while the run reported two patients. The pipeline folds
-        # those into one record before delivery; this is what makes a regression
-        # loud rather than silent.
+        # The record is the witness: a patient id is not guaranteed unique,
+        # so two records under one id would otherwise merge silently here.
         claim_delivered_name(
             claimed_dirs if claimed_dirs is not None else {},
             pid,
@@ -241,28 +189,21 @@ class BundleDeliverer:
         patient_dir = out / pid
         patient_dir.mkdir(parents=True, exist_ok=True)
 
-        # The source's own documents — what the charts reference. A record
-        # request answered without them hands over notes that cite scans the
-        # bundle does not contain. Copied BEFORE the FHIR bundle below: the
-        # record alone cannot say what name a document lands under, so the
-        # bundle needs what this copy measured, not the other way round.
+        # Copied before the FHIR bundle: the record alone can't say what name
+        # a document lands under, so the bundle needs what this copy measured.
         attachment_paths, landed_attachments = self._copy_attachments(
             attachments or [], patient_dir
         )
 
-        # FHIR R4 Bundle — the machine-readable rendition (the shared deliverer
-        # mechanic; its PHI-BY-DESIGN rationale lives there). Carries what was
-        # just measured above, so every DocumentReference resolves to a real
-        # file beside it.
+        # Carries what was just measured above, so every DocumentReference
+        # resolves to a real file beside it.
         bundle_path = write_fhir_bundle(record, patient_dir, landed_attachments)
 
         # PDFs — copied (never moved) so the caller's working tree is intact.
         pdf_paths = self._copy_pdfs(record.patient, pdfs or [], patient_dir)
 
-        # QA slice — only this patient's documents.
         qa_path = self._write_qa_slice(record, patient_dir, qa_report)
 
-        # README — what/why/PHI.
         readme_path = self._write_readme(record.patient.id, patient_dir)
 
         logger.info(
@@ -287,15 +228,9 @@ class BundleDeliverer:
     # --- internals ----------------------------------------------------------
 
     def _copy_pdfs(self, patient: Patient, pdfs: list[Path], patient_dir: Path) -> list[Path]:
-        # ``pdfs`` is the index-attributed list assembled by
-        # :meth:`deliver_records` (already filtered by patient_id via the
-        # render index) or supplied directly by a caller that did the same.
-        #
-        # The DESTINATION name is budgeted (copy_claimed_chart): renderer
-        # chart names run to ~617 characters, and an over-MAX_PATH copy used to
-        # fail into the warn-and-continue below — a chart silently missing from
-        # a delivered bundle. Naming is deliberately outside that warn path, so
-        # a destination that cannot be named distinctly raises instead.
+        # ``pdfs`` is already filtered by patient_id (index or caller). Naming
+        # is deliberately outside the warn-and-continue path: an unnameable
+        # destination raises rather than silently missing from the bundle.
         if not pdfs:
             return []
         target_dir = patient_dir / "pdfs"
@@ -316,24 +251,11 @@ class BundleDeliverer:
     def _copy_attachments(
         self, attachments: list[tuple[str, Path]], patient_dir: Path
     ) -> tuple[list[Path], dict[str, DeliveredAttachment]]:
-        """Copy this patient's source documents into the bundle's own slot, and
-        measure what each landed as for the FHIR rendition beside it.
+        """Copy this patient's source documents; measure each for the FHIR
+        rendition beside it (same budget-claim-copy sequence as the charts).
 
-        Same budget-claim-copy sequence as the charts above, and the same
-        reason for claiming: two documents resolving to one delivered name
-        would file one patient's scan over another's rather than fail.
-
-        Two artifact ids that name the SAME source file (a document the
-        record references twice) still make one entry each in the returned
-        list — one per ARTIFACT, the same accounting the archive's own
-        attachment copier uses — but the disk and the hash are not doubled:
-        the copy is idempotent (the destination is the same bytes either
-        time, and ``claim_delivered_name`` already treats a re-claim by the
-        same source name as the no-op it is), and
-        :func:`~anastomosis.deliver._shared.measured_attachment` recognizes
-        the second artifact by its source name and reuses the first's
-        measurement rather than re-hashing a file already measured once.
-        """
+        Two artifact ids naming ONE file each get a list entry, but the copy
+        and hash are not doubled (:func:`measured_attachment` reuses the first)."""
         if not attachments:
             return [], {}
         target_dir = patient_dir / ATTACHMENTS_DIRNAME
@@ -361,15 +283,9 @@ class BundleDeliverer:
     def _is_this_patients(doc: DocumentQA, record: PatientRecord) -> bool:
         """Whether a graded row belongs in ``record``'s bundle.
 
-        The row names the visit it graded, and a whole-patient page has none:
-        the record summary — the one page in a scan-only patient's bundle —
-        carries the PATIENT id in that slot, the same stand-in the upload
-        manifest and the export's own encounter check use where a document
-        covers a chart rather than a visit. Selecting on the record's encounter
-        ids alone therefore dropped exactly the row a reader most needs, and an
-        empty report reads as "nothing to say" rather than "the verdict for
-        this page is missing" (#399).
-        """
+        A whole-patient page has no visit id; it carries the PATIENT id in
+        that slot instead. Encounter ids alone dropped that row, turning a
+        missing verdict into a false "nothing to say" (#399)."""
         return doc.encounter_id == record.patient.id or doc.encounter_id in {
             encounter.id for encounter in record.encounters
         }
@@ -410,9 +326,8 @@ class BundleDeliverer:
 
     def _write_readme(self, patient_id: str, patient_dir: Path) -> Path:
         target = patient_dir / "README.txt"
-        # PHI-BY-DESIGN: the per-bundle README names its patient id; same
-        # secure_output_dir hardening as write_fhir_bundle (_shared.py); see
-        # SECURITY.md.
+        # PHI-BY-DESIGN: the README names its patient id; caller already
+        # hardened the directory (RULES.md 18). See SECURITY.md.
         # codeql[py/clear-text-storage-sensitive-data]
         atomic_write_text(
             target,
@@ -426,21 +341,11 @@ class BundleDeliverer:
 
 
 def _attachments_for(record: PatientRecord, landing: Path | None) -> list[tuple[str, Path]]:
-    """The ``(artifact id, file)`` pairs ``landing`` holds for this record, in
-    the order it names them.
+    """``(artifact id, file)`` pairs ``landing`` holds for this record.
 
-    The id travels alongside the file — not just the file — so the copy step
-    downstream can tell the FHIR bundle which ``DocumentArtifact`` each
-    delivered name belongs to. Two artifacts naming the SAME file both appear
-    here, each under its own id; :meth:`BundleDeliverer._copy_attachments`
-    copies that file once and gives both ids the one measurement.
-
-    A document the record names but the charts directory does not hold is left
-    out rather than guessed at. Conservation belongs to the run —
-    ``pipeline._carry_attachments`` knows the export and stops a run whose
-    attachments did not all arrive — so reaching here means the directory was
-    assembled without that step or edited after it.
-    """
+    The id travels with the file so the copy step can tell the FHIR bundle
+    which ``DocumentArtifact`` each name belongs to. A name the record gives
+    but ``landing`` does not hold is left out, never guessed at."""
     if landing is None or not landing.is_dir():
         return []
     found: list[tuple[str, Path]] = []

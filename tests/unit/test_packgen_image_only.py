@@ -96,14 +96,11 @@ def test_extract_samples_preserves_ocr_exception_type(tmp_path: Path) -> None:
 def test_pack_init_refuses_a_textless_sample_without_writing_a_pack(
     tmp_path: Path,
 ) -> None:
-    """A flat raster carrying no text at all cannot become a pack either way.
-
-    With an offline engine installed the page IS observed — and the observation
-    is empty, because there is nothing on it. With no engine the page is
-    refused unread. Both roads end in a refusal and an empty output directory;
-    only the exception type says which happened, and the frontend surfaces that
-    type rather than a message.
-    """
+    """A flat raster carrying no text at all cannot become a pack either
+    way: with an offline engine installed the page IS observed empty;
+    with no engine it is refused unread. Both roads end in a refusal and
+    an empty output directory — only the exception TYPE says which
+    happened, and the frontend surfaces that type, not a message."""
     samples = tmp_path / "samples"
     samples.mkdir()
     _write_pdf(samples / "image-only.pdf", ["image"])

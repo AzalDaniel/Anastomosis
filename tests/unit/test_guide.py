@@ -1,16 +1,10 @@
-"""The guided session bare ``anast`` opens on a terminal.
-
-Four things are pinned here, in the order they can hurt someone:
-
-* **A script never sees a prompt.** Non-interactive stdin gets exactly the help
-  page (and exit code) ``anast`` has always printed — CI cannot hang.
-* **The gathered answers reach the real command.** Each flow is driven with
-  scripted keystrokes and the execution seam is inspected, so a renamed option
-  or a dropped argument fails here rather than in a clinic.
-* **Refusals stay honest.** A bad path is refused and asked again; Ctrl-C before
-  anything runs says nothing was changed and exits 130.
-* **The register holds.** The guide's own copy is linted for the engineering
-  vocabulary ``docs/design/COPY_MAP.md`` bans, and for exclamation marks.
+"""The guided session bare ``anast`` opens on a terminal — four things
+pinned here, in the order they can hurt someone: a script never sees a
+prompt (non-interactive stdin gets the help page and exit code); the
+gathered answers reach the real command through an inspected dispatch
+seam; refusals stay honest (a bad path is asked again, Ctrl-C exits 130
+having changed nothing); and the register holds (linted against
+``docs/design/COPY_MAP.md`` and for exclamation marks).
 """
 
 from __future__ import annotations
@@ -62,13 +56,10 @@ def _drive(
     dispatch_code: int = 0,
     interrupt_at: int | None = None,
 ) -> _Session:
-    """Run the guide with ``answers`` typed at its prompts, dispatch stubbed.
-
-    ``interrupt_at`` raises :class:`KeyboardInterrupt` from that (0-based)
-    prompt instead of answering it — the Ctrl-C a person actually presses.
-    Exhausting the answers raises :class:`EOFError`, so a flow that asks more
-    questions than the script expects fails loudly instead of blocking.
-    """
+    """Runs the guide with ``answers`` typed at its prompts, dispatch
+    stubbed. ``interrupt_at`` raises :class:`KeyboardInterrupt` from that
+    (0-based) prompt instead of answering it. Exhausting the answers
+    raises :class:`EOFError` rather than blocking."""
     session = _Session()
     queue = list(answers)
     asked = 0
@@ -165,13 +156,10 @@ def test_is_interactive_terminal_survives_a_closed_stdin(monkeypatch: pytest.Mon
 def test_a_colour_variable_cannot_make_a_redirected_run_look_interactive(
     monkeypatch: pytest.MonkeyPatch, *, variable: str
 ) -> None:
-    """`anast > log` must not open the guided session, whatever the shell exports.
-
-    Both variables are set by ordinary tooling — CI images, `just`/`make`
-    wrappers, terminal multiplexers — and both make Rich report `is_terminal`
-    for a plain file. With one exported, the session used to start, write its
-    menu into the log file, and block on a question nobody could see.
-    """
+    """`anast > log` must not open the guided session, whatever the shell
+    exports: CI images, `just`/`make` wrappers, and terminal multiplexers
+    all set variables that make Rich report `is_terminal` for a plain
+    file."""
 
     class _Stdin:
         def isatty(self) -> bool:
@@ -384,12 +372,9 @@ def test_flow_5_checks_the_installation(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_the_dispatch_seam_runs_the_real_command(capsys: pytest.CaptureFixture[str]) -> None:
-    """The seam every other test stubs is the genuine article, not a shim.
-
-    ``info`` is the cheapest command that touches no path an operator owns; what
-    matters is that the guide's argument list really reaches a command and comes
-    back with that command's own exit status.
-    """
+    """The seam every other test stubs is the genuine article: ``info``
+    reaches a real command and returns its own exit status, using the
+    cheapest command that touches no path an operator owns."""
     assert guide._dispatch(["info"]) == 0
     assert "anastomosis" in capsys.readouterr().out
 
@@ -531,11 +516,8 @@ COMMAND_TOKENS = frozenset({"pipeline", "pack", "--pack", "--cdp", "--upload-man
 
 def _guide_copy() -> list[str]:
     """Every string literal in guide.py that a person can end up reading.
-
-    Docstrings are excluded: they are written for whoever maintains this file,
-    not for the clinician at the prompt, and they name the commands and options
-    the flows drive. Everything else in the module is copy.
-    """
+    Docstrings are excluded: they name commands and options for whoever
+    maintains this file, not the clinician at the prompt."""
     source = Path(guide.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     docstrings = {
@@ -581,24 +563,10 @@ def test_the_command_token_exemption_carries_no_dead_entries() -> None:
 
 
 def test_the_guide_never_says_the_work_happened_after_a_refusal() -> None:
-    """Exit 0 means "no error", not "the work was done".
-
-    Three commands exit 0 when the operator answers "no" to their own
-    confirmation — `upload`'s shared-machine gate, and both `pack init` and
-    `source init`'s save prompts. `_dispatch` reduces a command to one integer,
-    so across that boundary "declined" and "done" became the same value, and
-    the guide asserted the "done" sentence in the success style immediately
-    after the operator's refusal:
-
-        Save this mapping? [y/N]: n
-        Aborting — refine with --display/--name or edit the example, then re-run.
-
-        Anastomosis now recognizes acmecsv.        <-- nothing was saved
-
-    A false statement of system state, issued right after a refusal, is the
-    worst thing this function can print. The command now records the refusal
-    itself, because only the command knows.
-    """
+    """Exit 0 means "no error", not "the work was done": a command
+    records its own refusal (`core.outcome.declined`) rather than
+    letting `_dispatch`'s single integer collapse "declined" and "done"
+    into the same value."""
     from anastomosis.core.outcome import declined, take_declined
 
     console = Console(file=io.StringIO(), width=100, force_terminal=False)
@@ -624,13 +592,11 @@ def test_the_guide_never_says_the_work_happened_after_a_refusal() -> None:
 
 
 def test_every_operator_decline_records_what_did_not_happen() -> None:
-    """The three exit-0 declines, read off the syntax tree.
-
-    Each is `console.print(...)` then `raise typer.Exit(code=0)` after a
-    `typer.confirm` the operator answered no to. A fourth added later without a
-    `declined(...)` call would silently reintroduce the false success sentence,
-    so this counts them rather than trusting that they are all here.
-    """
+    """The three exit-0 declines, read off the syntax tree: each is
+    `console.print(...)` then `raise typer.Exit(code=0)` after a
+    `typer.confirm` answered no. A fourth added without a
+    `declined(...)` call would reintroduce the false-success sentence
+    uncounted."""
     commands = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "cli_commands"
     total = 0
     for module in ("upload.py", "packsrc.py"):
@@ -664,15 +630,11 @@ def test_every_operator_decline_records_what_did_not_happen() -> None:
 
 
 def test_no_cli_colour_is_an_absolute_value() -> None:
-    """The CLI may only name colours the terminal resolves for itself.
-
-    The GUI can use the design language's tokens because it draws its own dark
-    ground. A terminal application cannot: the background belongs to the person
-    running it. Approximating porcelain in truecolor put primary text at
-    1.13 : 1 on a light theme and a refusal at 2.90 : 1 — and it is not a
-    tuning problem, because the same palette's oxblood measured 8.30 : 1 on
-    white against 2.53 : 1 on black. No absolute set serves both grounds.
-    """
+    """The CLI may only name colours the terminal resolves for itself: a
+    terminal's background belongs to the person running it, unlike the
+    GUI's own dark ground. Truecolor porcelain measured 1.13:1 on light
+    vs 2.90:1 on dark; oxblood measured 8.30:1 on white vs 2.53:1 on
+    black — no absolute set serves both."""
     from dataclasses import fields
 
     from anastomosis.core.presentation import BRAND_PALETTE
@@ -770,14 +732,9 @@ _TYPED = re.compile(
 
 
 def test_every_command_speaks_the_same_register_as_the_guide() -> None:
-    """The sweep landed on the entry point; the subcommands kept their own words.
-
-    `DESIGN_LANGUAGE` §11 holds the CLI to the GUI's register, and the guided
-    session met it while `anast upload --help` was still explaining a
-    "crash-resumable upload engine" driving an "L0-L6 verification ladder" over
-    a "resume-safe ledger". This reads what each command actually prints, so it
-    cannot drift back one docstring at a time.
-    """
+    """`DESIGN_LANGUAGE` §11 holds the CLI to the GUI's register: this
+    reads what each command actually prints, so a subcommand's own
+    docstring cannot drift back to engineering vocabulary unnoticed."""
     # A command's own name is something a person TYPES, not vocabulary they
     # must learn — the same exemption COMMAND_TOKENS makes in the guide. It is
     # derived from the app rather than listed, so renaming a command cannot
@@ -805,20 +762,11 @@ def test_every_command_speaks_the_same_register_as_the_guide() -> None:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-only")
 def test_an_arrow_key_never_reaches_the_answer_on_a_real_pty() -> None:
-    """Issue #330, proved with real keys on a real terminal, both ways.
-
-    A prompt read in canonical mode hands back an arrow key as ``ESC [ A`` —
-    three characters in the answer, on their way into a mapping id. `_read`
-    closes it twice over: readline, where the platform has it, turns those
-    keys into line editing; `as_typed` sweeps whatever still arrives as bytes.
-
-    Both halves are driven here. With readline, Home is a COMMAND — the cursor
-    moves and later typing lands at the front, so the assertion is on what
-    matters (no escape bytes, both typed fragments present), not on an order
-    the editor is entitled to change. With readline blocked — the Windows
-    shape, where the console host would have edited the line long before
-    Python saw it — the sweep alone must deliver exactly what was typed.
-    """
+    """#330, proved with real keys on a real terminal, both ways: an
+    arrow key reads back as ``ESC [ A`` in canonical mode, so `_read`
+    strips it twice over — readline turns it into line editing where the
+    platform has it, and `as_typed` sweeps whatever still arrives as
+    bytes where readline is blocked (the Windows shape)."""
     import pty
     import select
     import time

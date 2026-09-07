@@ -243,14 +243,11 @@ def test_the_override_points_the_viewer_somewhere_else(gui) -> None:
 
 
 def test_the_counters_follow_the_record_the_run_writes(gui) -> None:
-    """A run writes beside the charts, so that is what the counters must read.
-
-    The override is a reading affordance; it cannot move where the engine puts
-    a record (which lives inside the hardened results folder by design). Left
-    in the field, it used to have the progress counters reporting some other
-    record's numbers — or none, since a record that is not there reads as "no
-    progress" rather than as an error.
-    """
+    """A run writes beside the charts, so that is what the counters
+    must read. The override is a reading affordance; it cannot move
+    where the engine puts a record, or the counters would report some
+    other record's numbers (or none, which reads as "no progress"
+    rather than an error)."""
     app = _load(gui)
     app.page.click('[data-view="uploads"] .advanced > summary')
     app.page.fill("#uploads-record", "/synthetic/elsewhere/upload_ledger.sqlite")
@@ -293,12 +290,9 @@ def _ready_to_file(gui):
 
 
 def test_three_clicks_on_start_file_once(gui) -> None:
-    """The most dangerous button in the app used to fire once per click.
-
-    Three rapid clicks sent three `upload_start` calls. The Python side refuses
-    the second and third, so the operator saw a red error banner for a run that
-    was proceeding perfectly normally — and had no way to tell the two apart.
-    """
+    """The most dangerous button in the app must fire once per click:
+    the Python side already refuses extra calls, but the operator would
+    otherwise see a red error banner for a run proceeding normally."""
     app = _ready_to_file(gui)
 
     for _ in range(3):
@@ -328,13 +322,11 @@ def test_start_says_a_run_is_going_and_recovers_when_it_ends(gui) -> None:
 
 
 def test_stop_stays_available_whether_or_not_a_run_is_going(gui) -> None:
-    """Deliberately NOT gated on this page's idea of a live run.
-
-    `upload_stop` already answers `NoRun` when nothing is in flight, so an idle
-    Stop is harmless. A Stop gone unclickable because the page lost track of the
-    run is not: it is the one control for halting a filing run into a live EHR,
-    missing during exactly the emergency it exists for.
-    """
+    """Deliberately NOT gated on this page's idea of a live run:
+    `upload_stop` already answers `NoRun` when nothing is in flight, so
+    an idle Stop is harmless — but Stop going unclickable because the
+    page lost track of the run would hide the one control for halting
+    a filing run into a live EHR."""
     app = _ready_to_file(gui)
     assert not app.page.locator("#uploads-stop").is_disabled()
 

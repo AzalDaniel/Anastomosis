@@ -167,19 +167,11 @@ def test_migrate_ccda_standard_one_view_pdf_per_patient(
 def test_migrate_ccda_standard_counts_a_patient_it_could_not_export(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The route real C-CDA data takes must report its own shortfall.
-
-    A CCD that fails to build is skipped so one bad record cannot sink the
-    batch — but skipped is not the same as unmentioned. This is the surface an
-    operator hands to another EHR, so a patient with no document has to reach
-    the outcome as a number, not as a smaller "patients" count nobody compares
-    against anything.
-
-    Only the deliverer's ``build_ccd`` is broken here: the standard-view
-    renderer binds its own reference, so all three view PDFs still render and
-    the two counts legitimately disagree — which is the case that would have
-    hidden the loss.
-    """
+    """The route real C-CDA data takes must report its own shortfall: a
+    CCD that fails to build is skipped, but must reach the outcome as a
+    number, not a smaller "patients" count nobody compares against
+    anything. Only ``build_ccd`` is broken here, so the standard-view
+    PDFs still render and the two counts legitimately disagree."""
     _patch_chromium(monkeypatch)
     import anastomosis.deliver.ccda_export.deliverer as deliverer_mod
 
@@ -358,14 +350,10 @@ def test_user_migrations_path_under_anastomosis_home(monkeypatch: pytest.MonkeyP
 def test_migrate_pack_and_ccda_standard_share_stage_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both render modes must emit DETECT, INGEST, and MANIFEST in the same
-    order, with the same PHI-safe payload shapes. Both the ccda-standard and
-    the pack path route these emissions through three shared
-    helpers, but ``_run_pack_mode`` still reaches them via
-    ``run_pipeline_command``. This test is the contract that the two paths
-    keep emitting the same events — drift would silently break the CLI/GUI
-    presenters that consume the stream.
-    """
+    """Both render modes must emit DETECT, INGEST, and MANIFEST in the
+    same order with the same PHI-safe payload shapes, routed through
+    three shared helpers — a drift would silently break the CLI/GUI
+    presenters that consume the stream."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     _patch_chromium(monkeypatch)
 
@@ -458,14 +446,11 @@ def test_migrate_pack_and_ccda_standard_share_stage_contract(
 
 
 class _ViewChromium:
-    """A fake renderer that writes a REAL, non-blank Letter PDF carrying the top
-    of the standard C-CDA view (patient header incl. DOB) via point-insertion.
-
-    The whole-patient view is far larger than one insert_textbox can hold — the
-    shared _FakeChromium overflows it into a blank page (which QA correctly
-    fails) — so the QA-stage tests need a renderer that actually places text. The
-    patient DOB (the identity anchor data_integrity checks) lives in the header,
-    so the first lines are enough."""
+    """A fake renderer that writes a REAL, non-blank Letter PDF carrying
+    the top of the standard C-CDA view (patient header incl. DOB) via
+    point-insertion. ``_FakeChromium`` overflows this view's larger
+    text into a blank page, which QA correctly fails — this renderer
+    places real text instead."""
 
     def __init__(self, **kwargs: object) -> None:
         pass
@@ -555,10 +540,8 @@ def test_migrate_ccda_standard_runs_qa_and_writes_report(
 
     # EVERY registered engine check appears per document: the document-generic
     # ones RAN, the encounter-scoped ones are recorded as skipped WITH A REASON,
-    # and none is silently omitted. Derived from the registry rather than listed:
-    # this assertion used to name four checks literally, which meant that when
-    # `note_body` was registered the test kept passing while the report quietly
-    # stopped mentioning it — the test pinned the omission in place.
+    # and none is silently omitted. Derived from the registry, not listed
+    # literally, so a newly registered check cannot go unmentioned unnoticed.
     from anastomosis.qa.base import engine_checks
 
     registered = {check.name for check in engine_checks()}
@@ -604,25 +587,11 @@ def test_migrate_ccda_standard_qa_fail_exits_nonzero(
 def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
     tmp_path: Path,
 ) -> None:
-    """Round-two NIT: the sibling of `pipeline.py`'s #383 blocker, in the
-    ccda-standard migration's own QA stage. Two records share one patient id
-    (`_allocate` keys on it) and render to ONE file; `_run_ccda_standard_qa`
-    used to re-derive `ccda_standard_doc_path(charts, record)` per record,
-    grading that one file on disk twice — two indistinguishable rows for a
-    chart verified exactly once. Fixed by grading `view.by_path`
-    (`render_ccda_standard`'s own writer resolution) instead of re-deriving a
-    second, easier-to-get-wrong path per record.
-
-    The QA stage is entered directly rather than through `run_migration`,
-    because two records under one patient id no longer survive a whole run and
-    should not: #377 folds them into one chart at `load_records`, and past that
-    point #381's manifest writer refuses two items sharing an `item_key` and
-    the C-CDA delivery refuses a pair it cannot tell apart. Each of those is
-    right, each has its own tests, and a test of THIS stage that asserted which
-    of them fires first would be pinning an ordering nobody promised. So the
-    real renderer produces the view and the real QA stage grades it, which is
-    the seam the NIT was in.
-    """
+    """Contract: two records sharing one patient id render to ONE file,
+    so grading must use `view.by_path` (the real writer), never a
+    re-derived path that double-grades one file (#383's sibling). QA
+    runs directly, not via `run_migration`, since #377/#381 already
+    refuse or fold that duplication before QA would ever see it."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.core.migrate import _run_ccda_standard_qa
     from anastomosis.core.model import Patient
@@ -647,16 +616,11 @@ def test_migrate_ccda_standard_qa_grades_one_row_per_rendered_file(
 def test_migrate_ccda_standard_warns_instead_of_failing_when_the_summary_carries_the_vital(
     tmp_path: Path,
 ) -> None:
-    """#392, driven through the OTHER surface that builds a QA context: the
-    ccda-standard migration has no per-encounter documents at all, so the
-    graded document IS the record summary. A vital the linker could not
-    attach to any encounter is checked against the very page being read —
-    carried, so WARN, not the FAIL a record-only inference would have given.
-
-    Uses ``_FakeChromium`` (writes the FULL rendered text, spilling across
-    pages), not ``_ViewChromium`` (truncates to 80 lines) — the vitals section
-    of a standard C-CDA view is not necessarily in the first 80.
-    """
+    """#392: ccda-standard has no per-encounter documents, so a vital
+    the linker could not attach to any encounter is checked against the
+    record summary page itself — carried, so WARN, not FAIL. Uses
+    ``_FakeChromium`` (full text), not ``_ViewChromium`` (truncated to
+    80 lines), since the vitals section may not be in the first 80."""
     pytest.importorskip("pymupdf", reason="needs PyMuPDF")
     from anastomosis.core.migrate import _run_ccda_standard_qa
     from anastomosis.core.model import Encounter, Observation, ObservationCategory, Patient

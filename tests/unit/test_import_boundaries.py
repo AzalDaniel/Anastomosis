@@ -1,16 +1,12 @@
 """Enforce package import boundaries that the architecture relies on.
 
-These tests are quick property checks against ``sys.modules``: they import
-a frontend package in isolation (subprocess, so the test runner's already-
-loaded modules don't bias the result) and assert that no forbidden module
-ended up loaded.
+Quick property checks against ``sys.modules``: import a frontend package
+in isolation (subprocess, so the test runner's already-loaded modules
+don't bias the result) and assert no forbidden module ended up loaded.
 
-Today's only boundary: the GUI must not depend on the CLI. The two are
-peer frontends over a shared core; a GUI-to-CLI dependency is a one-way
-ratchet toward a CLI-shaped GUI, and the lazy CLI import that used to live
-at ``gui/controller.py:_attach_destination`` was exactly such a leak. The
-shared browser-attach code now lives in
-``anastomosis.deliver.browser.attach``; both frontends import it directly.
+Today's only boundary: the GUI must not depend on the CLI (peer frontends
+over a shared core). The shared browser-attach code both import directly
+lives in ``anastomosis.deliver.browser.attach``.
 """
 
 from __future__ import annotations
@@ -55,12 +51,11 @@ def test_gui_does_not_import_cli() -> None:
 
 
 def test_gui_does_not_import_cli_commands() -> None:
-    """``anastomosis.gui`` must not pull any ``anastomosis.cli_commands`` module
-    into ``sys.modules`` either. Each command group (the 0.4.0 CLI facade split)
-    imports ``anastomosis.cli`` at its top for the Typer app objects, so a
-    GUI-to-cli_commands edge would drag the whole CLI in — the same peer-frontend
-    boundary :func:`test_gui_does_not_import_cli` guards, one layer down.
-    """
+    """``anastomosis.gui`` must not pull any ``anastomosis.cli_commands``
+    module into ``sys.modules`` either: each command group imports
+    ``anastomosis.cli`` at its top, so a GUI-to-cli_commands edge would
+    drag the whole CLI in — the same peer-frontend boundary, one layer
+    down."""
     loaded = _modules_after_import("anastomosis.gui")
     leaked = {name for name in loaded if name.startswith("anastomosis.cli_commands")}
     assert not leaked, (
@@ -70,22 +65,11 @@ def test_gui_does_not_import_cli_commands() -> None:
 
 
 def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
-    """``anastomosis.cli`` backs ``anast --help`` / ``doctor`` / ``gui`` — none
-    of which touch a source export or a destination. Each source adapter pulls
-    in ``core.model`` + ``destinations`` + ``yaml``; the browser/FHIR-API
-    attach seams pull in their whole delivery packages. All of that must stay
-    lazy (per-command, inside a function body) so a plain ``anast --help``
-    startup cost doesn't scale with every adapter and destination this toolkit
-    ships.
-
-    ``anastomosis.deliver.fhir_api`` itself (the bare package) is NOT in the
-    forbidden set: ``cli_commands.upload`` imports its ``DEFAULT_TOKEN_ENV``
-    constant from ``.attach`` at module load (a Typer option default, needed
-    at command-definition time), and any submodule import always runs the
-    parent package's ``__init__`` — that package init is deliberately kept to
-    near-nothing (no ``.client``/``.destination`` re-export) so this stays
-    cheap. Its heavy children must still never appear.
-    """
+    """``anastomosis.cli`` backing `--help`/`doctor`/`gui` must not
+    eagerly import any source adapter or destination client (rule 75),
+    each lazy per-command. ``anastomosis.deliver.fhir_api`` itself is
+    exempt (a near-empty package init `cli_commands.upload` needs at
+    module load); its heavy children are not."""
     loaded = _modules_after_import("anastomosis.cli")
     forbidden = {
         "anastomosis.sources.ccda",
@@ -101,12 +85,9 @@ def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
 
 
 def test_cli_does_not_eagerly_import_the_greeting_mark() -> None:
-    """The vessel mark is drawn only for a person at a terminal, so only the
-    guided session's header may reach it. ``anast --help`` and every named
-    command must not pay for the sampled grid, the density ramp, or Rich's
-    live display — the same cold-start rule as the adapters above, applied to
-    the one module whose entire audience is somebody looking at the screen.
-    """
+    """The vessel mark is drawn only for a person at a terminal (rule 75):
+    no named command may pay for the sampled grid, the density ramp, or
+    Rich's live display just by importing the CLI."""
     loaded = _modules_after_import("anastomosis.cli")
     forbidden = {
         "anastomosis.core.vesselmark",
@@ -130,14 +111,11 @@ def test_browser_attach_module_loads_without_playwright_extra() -> None:
 
 
 def test_cli_make_destination_delegates_to_attach_destination() -> None:
-    """Long-standing tests monkeypatch ``anastomosis.cli._make_destination``;
-    that contract still holds with a thin lazy-import wrapper (a plain
-    module-level assignment would force ``anastomosis.cli`` to eagerly import
-    ``anastomosis.deliver.browser.attach``, which pulls in the whole
-    upload-engine package — dead weight for every command that never uploads).
-    The wrapper must delegate straight through to the canonical
-    :func:`attach_destination`, not a stale re-implementation.
-    """
+    """Long-standing tests monkeypatch ``anastomosis.cli._make_destination``,
+    so this stays a thin lazy-import wrapper — never a plain module-level
+    assignment, which would force ``anastomosis.cli`` to eagerly import the
+    whole upload-engine package — and must delegate straight through to
+    the canonical :func:`attach_destination`, not a stale re-implementation."""
     from unittest.mock import patch
 
     from anastomosis.cli import _make_destination
@@ -175,11 +153,10 @@ def test_layered_verifier_public_import_in_fresh_process() -> None:
 
 def test_level_coverage_imports_from_both_sites() -> None:
     """:class:`LevelCoverage` is published in two places for back-compat:
-    its canonical home (:mod:`.verify.types` — a leaf module) and re-export
-    from :mod:`.verify.composite`. Both imports must succeed in a fresh
-    process and resolve to the SAME class object (the alias-identity contract
-    that downstream consumers like the upload reporter rely on).
-    """
+    its canonical home (:mod:`.verify.types`) and a re-export from
+    :mod:`.verify.composite`. Both imports must succeed in a fresh process
+    and resolve to the SAME class object — the alias-identity contract
+    downstream consumers rely on."""
     script = textwrap.dedent("""
         from anastomosis.deliver.verify.composite import LevelCoverage as A
         from anastomosis.deliver.verify.types import LevelCoverage as B
@@ -196,20 +173,11 @@ def test_level_coverage_imports_from_both_sites() -> None:
 
 
 def test_browser_reports_does_not_directly_import_verify_composite() -> None:
-    """The fix-the-cycle constraint: ``browser.reports`` MUST NOT *directly*
-    import from :mod:`.verify.composite`. The cycle emerges when this rule
-    is broken — ``verify.composite`` imports
-    ``browser.errors`` which (via ``browser/__init__.py``) re-enters
-    ``.reports``, and a direct import of ``LevelCoverage`` from
-    ``verify.composite`` then resolves against a partially-initialized
-    module.
-
-    Static check on the source text: a module-level
-    ``from anastomosis.deliver.verify.composite import ...`` line in
-    ``reports.py`` is the regression signal. The canonical home of
-    :class:`LevelCoverage` is :mod:`.verify.types` (a leaf module) and the
-    report writer must reach it that way.
-    """
+    """``browser.reports`` must NOT *directly* import from
+    :mod:`.verify.composite`: that import cycles back through
+    ``browser.errors`` and ``browser/__init__.py`` into ``.reports``
+    itself, resolving ``LevelCoverage`` against a partially-initialized
+    module. Its canonical home is the leaf module :mod:`.verify.types`."""
     from pathlib import Path
 
     reports_src = (

@@ -1,43 +1,12 @@
-"""What the charts in a folder were rendered FROM, byte for byte.
+"""What the charts in a folder were rendered FROM, byte for byte (RULES.md 26).
 
-``render_settings.json`` records the run's *intent*: which layout was named,
-which sections were switched on, which selection rules were let through. It is
-what the operator asked for. It says nothing about the bytes that answered.
+Kept separate from ``render_settings.json`` (intent, whole-value comparable):
+changed settings mean re-run with --force, changed layout bytes mean the run
+is not trustworthy. ``files`` is measured before the render; ``templates``
+is what Jinja actually read during it — :func:`swapped_templates` names any
+mismatch (a template edited mid-batch).
 
-That gap is real and it is quiet. A layout's ``template.html`` can be edited
-after the charts were reviewed and the next run into the same folder reports
-``0 rendered, 6 skipped``, exit 0 — the charts on disk came from bytes nobody is
-looking at any more, and nothing on disk can name them. The content-hash trust
-gate (:mod:`anastomosis.reconstruct.packtrust`) does not close it either: it
-covers ``context.py``, ``template.html`` and ``pack.yaml``, so an edited asset
-passes it untouched, and a re-trusted pack passes it by design.
-
-So a render run writes a second record beside the settings — this module's
-:data:`RENDER_PROVENANCE_NAME` — carrying the pack's identity (name, origin, the
-same content hash the trust gate checked) and a sha256 for every file under the
-pack root. Two files rather than one, deliberately:
-
-* they answer different questions. Settings are what a person chose and can
-  choose again; provenance is what the machine used and cannot be chosen. A
-  reader looking for either should not have to step over the other;
-* settings are compared by whole-value equality, and a folder written by an
-  older build has no provenance in it. Folding hundreds of digests into that
-  comparison would refuse a re-run into every directory that already exists,
-  over a key that was never there;
-* they fail differently. Changed settings mean "these charts answer a different
-  question, re-run with --force". Changed layout bytes mean "the thing that
-  produced these charts is not the thing you are holding now" — which is a
-  review, not a flag.
-
-Two digests per template, on purpose. ``files`` is measured once, before the
-render; ``templates`` is what the Jinja loader actually handed the compiler
-during it (:class:`RecordingLoader`). They must agree, and
-:func:`swapped_templates` names any that do not — a template edited *while* a
-batch was rendering means some charts came from one layout and some from
-another, which is precisely the thing this file exists to make unsayable.
-
-PHI: pack-relative paths, hex digests, a pack name and an origin word. A pack
-root is operator-chosen configuration; nothing patient-derived reaches here.
+PHI: pack-relative paths, hex digests, a pack name and origin word only.
 """
 
 from __future__ import annotations
@@ -94,11 +63,9 @@ _SKIPPED_DIRS = frozenset({"__pycache__"})
 def _digest(path: Path) -> str:
     """Streamed sha256 of one file, or :data:`UNREADABLE`.
 
-    Streamed in the same chunk size as :mod:`anastomosis.core.hashutil` so a
-    pack carrying a large asset never has to be resident all at once. That
-    module's :func:`~anastomosis.core.hashutil.hash_and_size` is not reused
-    directly because the size is not wanted here and the unreadable case is a
-    recorded value rather than a raise.
+    Streamed in :mod:`anastomosis.core.hashutil`'s chunk size so a large
+    asset is never resident all at once; the unreadable case is a recorded
+    value here, not a raise, so ``hash_and_size`` is not reused directly.
     """
     digest = hashlib.sha256()
     try:
@@ -113,22 +80,13 @@ def _digest(path: Path) -> str:
 def pack_file_digests(root: Path) -> dict[str, str]:
     """Every file under ``root``, as ``{pack-relative posix path: sha256}``.
 
-    The whole tree, not the three files the trust hash covers: the assets a
-    layout embeds (a logo, a stylesheet, a partial) are as much a part of what a
-    chart looks like as the template is, and they are exactly what the trust
-    hash cannot see. Sorted, so the record is deterministic; ``__pycache__``
-    left out because loading the pack creates it.
-
-    Symlinked directories are FOLLOWED. ``rglob`` does not follow them — it
-    classifies a symlink-to-directory as a file and then the ``is_file`` guard
-    drops it — so a pack whose ``assets`` is a link had its whole subtree
-    absent from this record, and editing a logo through it changed nothing
-    here. That is the exact claim this function exists to make. A template
-    reached through such a link loads anyway, so it would also have been
-    recorded as read while absent from the tree, which reads as a mid-batch
-    swap. Following costs a cycle risk on a looping link, which ``os.walk``
-    does not guard; the walk below therefore tracks the real directories it
-    has entered.
+    Contract: the WHOLE tree (not just the trust-hashed three files), sorted,
+    ``__pycache__`` excluded. Symlinked directories are FOLLOWED — ``rglob``
+    treats a symlink-to-dir as a file and drops its subtree, which would make
+    an asset edited through a linked directory invisible here while a
+    template reached through it still renders, reading as a mid-batch swap.
+    The walk tracks real (device, inode) pairs to guard the cycle risk
+    following introduces.
     """
     digests: dict[str, str] = {}
     seen: set[tuple[int, int]] = set()
@@ -167,10 +125,9 @@ def _dir_identity(path: Path) -> tuple[int, int] | None:
 class RenderProvenance:
     """The layout a render run used, named by its bytes.
 
-    :attr:`templates` is filled in AFTER the render from the
-    :class:`RecordingLoader`, so a value built before the run carries an empty
-    one; everything else is measured up front, because the re-run guard has to
-    answer before any rendering happens.
+    :attr:`templates` is filled in AFTER the render; a value built before
+    carries an empty one. Everything else is measured up front, since the
+    re-run guard must answer before rendering starts.
     """
 
     pack: str
@@ -182,10 +139,9 @@ class RenderProvenance:
     def identity(self) -> dict[str, Any]:
         """The half two runs are compared by: who the layout is and what it holds.
 
-        :attr:`templates` is deliberately out. It records which of :attr:`files`
-        the renderer reached for, which depends on what the batch contained — a
-        run that rendered nothing read no template — and a re-run guard that
-        refused over that would be refusing over the input data, not the layout.
+        :attr:`templates` is deliberately out: it depends on what the batch
+        contained, so comparing it would refuse over the input data, not
+        the layout.
         """
         return {
             "pack": self.pack,
@@ -216,16 +172,11 @@ class RenderProvenance:
 def pack_provenance(pack: LoadedPack, origin: str) -> RenderProvenance:
     """Measure the layout a run is about to render through.
 
-    Takes the LOADED pack rather than its :class:`~anastomosis.reconstruct.packs.PackStatus`:
-    a status that did not load has no layout to name and the caller has already
-    refused the run over it, so an optional return here would be a ``None`` no
-    caller could ever see.
-
-    The content hash is the same
-    :func:`~anastomosis.reconstruct.packtrust.pack_content_hash` the trust gate
-    computed, read again rather than threaded through the loader — it is three
-    small files, and one function owning the definition is what keeps the number
-    in this record comparable to the number in the trust store.
+    Takes the LOADED pack, not its ``PackStatus`` — a status that failed to
+    load has no layout to name, and the caller has already refused the run.
+    The content hash is recomputed via
+    :func:`~anastomosis.reconstruct.packtrust.pack_content_hash`, the same
+    one the trust gate used, so the two numbers stay comparable.
     """
     from anastomosis.reconstruct.packtrust import pack_content_hash
 
@@ -240,24 +191,13 @@ def pack_provenance(pack: LoadedPack, origin: str) -> RenderProvenance:
 class RecordingLoader(FileSystemLoader):
     """A Jinja file loader that remembers the bytes it handed the compiler.
 
-    The engine renders through ``FileSystemLoader``, so a template's ``include``
-    and ``extends`` reach files the pack manifest never names. This subclass
-    records every one of them by pack-relative name and sha256, which is how the
-    provenance record can say what the render actually READ rather than only
-    what was lying next to it.
-
-    The digest is taken over the file's BYTES, re-read from the path Jinja
-    resolved. Re-encoding the decoded source is not the same thing and was the
-    first shape of this: Jinja opens templates in text mode, so universal
-    newline translation turns a CRLF file into LF before we ever see it, and
-    the re-encoded digest then disagreed with :func:`pack_file_digests`'s
-    binary one for every CRLF template — which is every template a Teach
-    writes on Windows, and every shipped template in a checkout with
-    ``core.autocrlf``. The run would render all its charts and then refuse
-    with "the layout changed while this batch was rendering" about a file
-    nobody touched. This repo has met that translation twice before
-    (``tools/phi_scan.py`` normalizes for it; ``sourcelearn`` was fixed for
-    it), which is two reasons not to meet it a third time.
+    Records every template Jinja resolves (``include``/``extends`` reach
+    files the pack manifest never names) by pack-relative name and sha256,
+    so provenance can say what the render actually READ. The digest is taken
+    over the file's BYTES, re-read from the resolved path — Jinja opens
+    templates in text mode, and re-encoding the decoded source would
+    disagree with :func:`pack_file_digests`'s binary digest for any CRLF
+    template.
     """
 
     def __init__(self, root: Path) -> None:

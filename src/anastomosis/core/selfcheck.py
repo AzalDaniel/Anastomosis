@@ -1,20 +1,9 @@
-"""Bundled-asset self-check (one source of truth for the CLI, the GUI, and CI).
-
-Verifies that every data asset the toolkit ships is present, non-empty, and
-readable from wherever the code runs — a source checkout, an installed wheel, or
-a frozen ``--onedir`` build. The Windows packaging CI runs ``anast doctor``
-against the FROZEN executable so a missing asset (or an un-bundled Chromium)
-fails the build instead of shipping a broken installer; operators run it to
-diagnose an install. Each check resolves the asset through the SAME accessor the
-app uses at runtime, so it catches a path that the freezer failed to bundle.
-
-PHI rule: this touches only shipped, non-patient assets. A check's ``detail`` is
-a count / "ok" / "skipped" / an exception TYPE name — never anything
-patient-derived (and never a raw traceback).
-
-The bundled-Chromium check is REQUIRED in a frozen build (where the render extra
-must be present) and OPTIONAL otherwise (a minimal install without the render
-extra skips it cleanly).
+"""Bundled-asset self-check, one source of truth for the CLI, the GUI and
+CI (``anast doctor``): every shipped data asset is present, non-empty and
+readable, resolved through the SAME accessor the app uses at runtime so a
+path the freezer failed to bundle is caught. PHI: a check's ``detail`` is
+a count/"ok"/"skipped"/exception TYPE name, never patient-derived. The
+bundled-Chromium check is required in a frozen build, optional otherwise.
 """
 
 from __future__ import annotations
@@ -70,15 +59,10 @@ def _check_registry() -> AssetCheck:
 
 
 def _check_tebra_pack() -> AssetCheck:
-    """The BUNDLED tebra browser-pack scaffold (its ``pack.yaml``), specifically.
-
-    Resolves the built-in pack by its package path
-    (``importlib.resources.files("anastomosis.destinations") / "tebra"`` — the
-    same anchor the registry uses for its packaged data) and loads THAT exact
-    directory, NOT through the user-pack-override-respecting precedence. A
-    user-supplied ``tebra`` pack must not mask a missing built-in: this check
-    fails iff the BUNDLED pack is absent/broken, even when a user pack exists.
-    """
+    """The BUNDLED tebra browser-pack scaffold, specifically: resolved by
+    package path and loaded directly, NOT through user-pack-override
+    precedence, so a user-supplied ``tebra`` pack can never mask a missing
+    built-in."""
     try:
         from importlib.resources import files
 
@@ -163,10 +147,8 @@ def _check_fonts() -> AssetCheck:
     try:
         from anastomosis.gui.shell import _WEB_DIR
 
-        # Every face the GUI ships. Fraunces was bundled later and never added
-        # here, so `doctor` reported all-clear while never looking at it — a
-        # missing display face would have shown up as a silent fallback in the
-        # app rather than as a failed check.
+        # Every face the GUI ships; a face missing from this tuple never
+        # fails doctor and shows up only as a silent fallback in the app.
         fonts = ("FrauncesVF.woff2", "MonaSansVF.woff2", "JetBrainsMonoVF.woff2")
         bad = []
         for name in fonts:
@@ -210,12 +192,9 @@ def _check_archive_assets() -> AssetCheck:
 
 
 def _check_chromium(*, frozen: bool) -> AssetCheck:
-    """The bundled Playwright Chromium (the render path).
-
-    Resolves ``chromium.executable_path`` WITHOUT launching the browser and
-    confirms the binary exists. Required in a frozen build (the render extra must
-    be bundled); skipped cleanly in a minimal install that lacks the extra.
-    """
+    """The bundled Playwright Chromium: resolves ``executable_path``
+    without launching the browser. Required in a frozen build; skipped
+    cleanly in a minimal install lacking the render extra."""
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:

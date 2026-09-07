@@ -1,23 +1,8 @@
-"""Time handling for clinical source data.
-
-EHI exports are full of temporal traps this module exists to absorb:
-
-* **Sentinel dates.** Practice Fusion / Tebra TSVs spell "no value" as
-  ``1/1/0001 12:00:00 AM`` (the SQL min-date). A sentinel parsed as a real
-  date puts nonsense on a chart, so parsing returns ``None`` for year-1 dates.
-* **Mixed formats.** A single export mixes several timestamp spellings
-  (ISO, US slash-dates with and without 12-hour clocks, C-CDA ``TS`` blobs).
-  :func:`parse_dt` recognizes all of them; an *unrecognized* non-empty value
-  raises instead of vanishing — silent data loss is never acceptable here.
-* **The naive-UTC convention.** Source database timestamps arrive naive but
-  mean UTC, while charts must show practice-local wall-clock time. To keep a
-  naive datetime from ever traveling through the pipeline (ruff's DTZ rules
-  enforce this), :func:`parse_dt` attaches a timezone at the parse boundary,
-  and :func:`to_local` converts via :mod:`zoneinfo` — the IANA database, not
-  hand-rolled DST math. The DST-oracle test in ``tests/unit/test_timeutil.py``
-  sweeps US transitions across two decades to prove zoneinfo agrees with the
-  predecessor's hand-rolled rule everywhere that rule was correct.
-"""
+"""The one date parser for vendor text (67): sentinel dates return ``None``,
+mixed formats (ISO, US slash-dates, C-CDA ``TS`` blobs) are recognized, and
+an unrecognized non-empty value raises rather than vanishing. Naive input
+is taken as UTC (67); :func:`to_local` converts via :mod:`zoneinfo`, the
+IANA database, never hand-rolled DST math."""
 
 from __future__ import annotations
 
@@ -44,13 +29,12 @@ _FORMATS = (
     "%m/%d/%Y",  # 3/14/2019              (DOB-style)
 )
 
-# An HL7 v3 / C-CDA TS is a run of digits whose LENGTH is its precision:
-# "2023", "202305", "20230510", ... through "20230510150405", optionally with
-# fractional seconds and an offset. strptime cannot be trusted with these.
-# Its %m/%d/%H/%M/%S each match one OR TWO digits, so a 10-digit hour-precision
-# value does not fail — it re-segments. "2023051015" came back as 2023-05-01,
-# nine days wrong, with no exception and no ledger entry. Reading the fields by
-# position is what makes a length we do not handle raise instead of guess.
+# An HL7 v3 / C-CDA TS is a run of digits whose LENGTH is its precision
+# ("2023" through "20230510150405"), optionally with fractional seconds and
+# an offset. strptime cannot be trusted with these: its %m/%d/%H/%M/%S each
+# match one OR TWO digits, so a 10-digit hour-precision value silently
+# re-segments into the wrong date instead of failing. Reading fields by
+# position makes a length this does not handle raise instead of guess.
 _HL7_TS = re.compile(
     r"(?P<year>\d{4})(?P<month>\d{2})?(?P<day>\d{2})?"
     r"(?P<hour>\d{2})?(?P<minute>\d{2})?(?P<second>\d{2})?"
@@ -111,27 +95,11 @@ def _parse_raw(text: str) -> datetime | None:
 
 
 def is_zero_sentinel(value: str | None) -> bool:
-    """True for a value that names no year at all — a run of nothing but zeros.
-
-    A vendor's "0" (or "00000000", or any other length) is one notch further
-    than the year-1 SQL sentinel :func:`parse_dt` already absorbs: year-1 at
-    least names a year, however bogus; an all-zero run names none, so it names
-    no instant. This is NOT consulted by :func:`parse_dt` itself — that
-    function is shared with every row-based adapter (``sources/_rowutil.
-    clean_dt``/``clean_date``, read by pf_tebra and oracle_ehi, and the
-    learned adapter's own ``parse_date``/``parse_datetime`` transform verbs),
-    and a TSV cell holding a bare "0" states something a loud failure needs to
-    surface, not a vendor's spelling for "no date". The C-CDA parser's own
-    ``_ts``/``_ts_date`` readers consult this directly, on the value they read
-    off the document, before it ever reaches :func:`parse_dt` — the one place
-    this specific vendor quirk is actually known.
-
-    ``2023-13-45`` still raises: it names a year and gets the rest wrong,
-    which is "the source said something we could not read", not "the source
-    said nothing". NOT matched, and so still raising through the normal
-    unrecognized-format path: ``0.0``, ``-0``, ``0000-00-00``, the letter
-    ``O`` — each holds at least one character that is not ``0``.
-    """
+    """Contract: true for a value naming no year at all, one notch past the
+    year-1 sentinel :func:`parse_dt` already absorbs (67). NOT consulted by
+    :func:`parse_dt` itself (a bare "0" in a row-based adapter must still
+    raise); only the C-CDA ``_ts`` readers call this directly.
+    ``2023-13-45`` still raises: it names a year, just an unreadable one."""
     if value is None:
         return False
     text = value.strip()
@@ -139,14 +107,10 @@ def is_zero_sentinel(value: str | None) -> bool:
 
 
 def parse_dt(value: str | None, *, assume: tzinfo = UTC) -> datetime | None:
-    """Parse a source timestamp into an aware :class:`datetime`.
-
-    Naive inputs get ``assume`` attached (default UTC — the EHI database
-    convention); inputs carrying their own offset keep it. Returns ``None``
-    for empty values and year-1 sentinels; raises :exc:`ValueError` for a
-    non-empty value in a format this module has never seen, so new source
-    quirks surface in QA instead of disappearing.
-    """
+    """Parse a source timestamp into an aware :class:`datetime` (67). Naive
+    inputs get ``assume`` attached (default UTC); an offset carried in the
+    input is kept. ``None`` for empty values and year-1 sentinels; raises
+    :exc:`ValueError` for an unrecognized non-empty value."""
     if value is None:
         return None
     text = value.strip()
@@ -173,23 +137,11 @@ def parse_date(value: str | None) -> date | None:
 
 
 def all_date_spellings(value: date) -> set[str]:
-    """Every chart spelling a pack might render ``value`` as — the SINGLE source
-    of truth shared by the L2/L3 delivery verifier (``deliver.verify.levels``) and
-    the QA ``DataIntegrityCheck`` (``qa.checks``).
-
-    Packs declare no canonical date format: different packs, and different fields
-    within one pack, render a date as ``%m/%d/%Y``, ``%B %d, %Y``, dash-separated,
-    or unpadded variants. A caller asserts that *at least one* spelling is present
-    rather than guessing which the pack used. The two call sites historically kept
-    independent copies of this set and silently diverged (a missing unpadded
-    ``M-D-YYYY`` made verify accept a chart the QA check then rejected, blocking a
-    correct chart); routing both through this one function makes that class of
-    drift impossible.
-
-    The unpadded ``%-m``/``%-d`` forms are built BY HAND from the integer parts —
-    those strftime codes are glibc-only and absent on Windows, where ruff
-    (DTZ/portability) and ``mypy --strict`` also run.
-    """
+    """Every chart spelling a pack might render ``value`` as, shared by the
+    L2/L3 delivery verifier and the QA integrity check so they can never
+    diverge on which spelling counts as present. Unpadded ``%-m``/``%-d``
+    forms are built by hand: those strftime codes are glibc-only, absent
+    on Windows."""
     return {
         # numeric, padded and unpadded, slash and dash
         f"{value.month:02d}/{value.day:02d}/{value.year}",

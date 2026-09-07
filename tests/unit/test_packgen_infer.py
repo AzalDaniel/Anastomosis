@@ -1,14 +1,12 @@
 """Unit tests for the packgen statistics (infer.py).
 
-No Chromium: a small set of synthetic 'sample' PDFs is built directly with
-PyMuPDF. The samples deliberately SHARE static labels ("SUBJECTIVE", "DOB:")
-at fixed positions while carrying DIFFERING fake patient values
-("Synthia Example" / "Maxwell Sample"), so the static-vs-variable split, the
-type-scale clustering, the column grid, and the PHI property can all be
-asserted against known ground truth.
-
-All values are synthetic (example-style names, 555 phones, feedface ids); no
-patient-derived data appears anywhere.
+No Chromium: a small set of synthetic 'sample' PDFs is built directly
+with PyMuPDF. The samples deliberately SHARE static labels
+("SUBJECTIVE", "DOB:") at fixed positions while carrying DIFFERING fake
+patient values, so the static-vs-variable split, the type-scale
+clustering, the column grid, and the PHI property can all be asserted
+against known ground truth. All values are synthetic; no patient-derived
+data appears anywhere.
 """
 
 from __future__ import annotations
@@ -43,12 +41,10 @@ _PATIENTS = [
 
 
 def _build_sample(path: Path, name: str, dob: str, complaint: str) -> None:
-    """A synthetic note sharing the static frame, differing only in values.
-
-    Static (every sample, fixed positions): the "SUBJECTIVE" heading band, the
-    "DOB:"/"Provider:" labels, the footer. Variable: the patient name, dob, and
-    complaint text.
-    """
+    """A synthetic note sharing the static frame, differing only in
+    values: static (every sample, fixed positions) is the "SUBJECTIVE"
+    heading band, the "DOB:"/"Provider:" labels, and the footer; variable
+    is the patient name, dob, and complaint text."""
     doc = pymupdf.open()
     page = doc.new_page(width=_W, height=_H)
     # Heading band (grey fill) + bold heading — the section-heading signal.

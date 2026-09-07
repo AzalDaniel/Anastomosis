@@ -1,15 +1,11 @@
 """Prescription status resolution from transaction history.
 
 ``prescription-transactions.tsv`` records every status transition of a
-script ("Order Sent" → "Verified" → "Dispensed"…). Charts print a single
-resolved label, so transitions collapse by priority.
-
-Transaction descriptions collapse to one display label by priority (see
-_ESCRIPT_PRIORITY): dispensing overrides cancellation overrides Verified;
-refills, changes, and clarifications never override Verified. The
-label/priority tables were derived empirically against ~12,900 real
-PF/Tebra transaction records.
-"""
+script ("Order Sent" → "Verified" → "Dispensed"…); charts print one
+resolved label, collapsed by priority (:data:`_ESCRIPT_PRIORITY`):
+dispensing overrides cancellation overrides Verified, and refills, changes
+and clarifications never override Verified. The tables were derived
+empirically against ~12,900 real PF/Tebra transaction records."""
 
 from __future__ import annotations
 
@@ -20,9 +16,8 @@ from anastomosis.core.timeutil import to_local
 
 __all__ = ["resolve_display_date", "resolve_prefix", "resolve_status", "script_prefix"]
 
-# Practices charting on Practice Fusion are US/Eastern; the predecessor hard-
-# rolled UTC→Eastern. We converge on the IANA zone
-# via core.timeutil.to_local (zoneinfo) — same wall-clock result, DST-correct.
+# Practices charting on Practice Fusion are US/Eastern; to_local (zoneinfo)
+# keeps the wall clock DST-correct across the year.
 _DISPLAY_TZ = "America/New_York"
 
 # Transaction description (lowercased) → (prefix, status_label).
@@ -49,9 +44,8 @@ _ESCRIPT_LABEL_MAP: dict[str, tuple[str, str]] = {
     "prior authorization request received": ("ESCRIPT", "PRIOR AUTH REQUESTED"),
 }
 
-# Priority ranking when one prescription has multiple transactions. Highest
-# wins: dispensing > cancellation > Verified; refills/changes/clarifications
-# (10) DO NOT override Verified (50).
+# Highest number wins when a prescription has multiple transactions;
+# refills/changes/clarifications (10) never override Verified (50).
 _ESCRIPT_PRIORITY: dict[str, int] = {
     "DISPENSED": 100,
     "PARTIALLY DISPENSED": 95,
@@ -62,7 +56,6 @@ _ESCRIPT_PRIORITY: dict[str, int] = {
     "VERIFIED": 50,  # baseline "order sent"
     "PRINTED": 48,
     "RECORDED": 45,
-    # The following never override VERIFIED (lower priority):
     "CHANGE REQUEST APPROVED": 10,
     "CHANGE REQUEST DENIED": 10,
     "REFILL REQUEST APPROVED": 10,
@@ -111,15 +104,12 @@ def _resolve_via_label_map(
 
 def resolve_status(transactions: list[PrescriptionTransaction]) -> str | None:
     """Collapse a transaction history to one display label (uppercased).
-
     _ESCRIPT_LABEL_MAP (keyed on TransactionDescription) is primary; the
-    Status-word fallback runs only when no description matched (so VERIFIED
-    still beats a refill, which the map ranks at 10).
-    """
+    Status-word fallback runs only when no description matched, so VERIFIED
+    still beats a refill (ranked 10 in the map)."""
     resolved = _resolve_via_label_map(transactions)
     if resolved is not None:
         return resolved[1]
-    # Fallback on the clean Status word when no description matched.
     best: str | None = None
     best_rank = 0
     for tx in transactions:
@@ -159,12 +149,10 @@ def resolve_display_date(
     prefix: str,
     fallback: datetime | None,
 ) -> datetime | None:
-    """The date the escript line shows.
-
-    For ESCRIPT: the earliest "Order sent" transaction datetime, converted to
-    practice-local (Eastern) time. For SCRIPT or when no Order-sent txn exists:
-    the prescription DoS (``fallback``), used as-is.
-    """
+    """The date the escript line shows: for ESCRIPT, the earliest "Order
+    sent" transaction, converted to practice-local (Eastern) time; for
+    SCRIPT, or when no Order-sent transaction exists, the prescription DoS
+    (``fallback``) as-is."""
     if prefix == "ESCRIPT":
         order_sent: datetime | None = None
         for tx in transactions:

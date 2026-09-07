@@ -1,26 +1,5 @@
-"""Output-directory hygiene (security backlog: output hygiene, M1).
-
-Everything the pipeline writes — archives, rendered PDFs, QA reports,
-delivery manifests — lands in a directory created here, so two guarantees
-hold everywhere:
-
-* **Restricted permissions**, tightened per platform to the smallest set of
-  principals that can still run the tool. Reconstructed charts are PHI; a
-  world-readable archive directory is a breach waiting to happen.
-
-  * POSIX: ``chmod 0o700`` — owner-only.
-  * Windows NTFS: inheritance is removed and access is restricted to the
-    current user + SYSTEM + Administrators, mirroring the semantics CPython
-    gives ``mkdir(0o700)`` on Windows (and the OpenSSH-for-Windows
-    convention). Applied via ``icacls`` with literal SIDs, so no localisation
-    of account names and no ``pywin32`` dependency.
-  * Filesystems without ACLs (FAT32/exFAT) cannot be hardened; the operator
-    gets a one-line warning and must rely on profile ACLs / disk encryption.
-
-* **A PHI warning README** in every output root, so a folder found on disk
-  months later explains itself before someone syncs it to a cloud drive. The
-  README lands regardless of whether permission hardening succeeded.
-"""
+"""Output-directory hygiene: creates and hardens every directory the
+pipeline writes into (18)."""
 
 from __future__ import annotations
 
@@ -44,22 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 class OutputPathError(Exception):
-    """An output path cannot become a directory (it, or an ancestor, is a file).
-
-    Raised *before* any backend work so the operator gets a clean message
-    instead of a ``FileExistsError``/``NotADirectoryError`` traceback from deep
-    in the render/delivery code. Callers map it to a clean exit (code 2).
-    """
+    """An output path (or an ancestor) is a file, not a directory. Raised
+    before any backend work, so the operator gets a clean message instead
+    of a raw ``FileExistsError``/``NotADirectoryError``; callers map it to
+    exit code 2."""
 
 
 def clean_typed_path(raw: str) -> str:
-    """Normalise a path as a person actually supplies one.
-
-    Windows Explorer's "Copy as path" wraps the path in double quotes, which is
-    the ordinary way to get a path on Windows 11 — and a pasted field keeps the
-    quotes and any stray spaces. Neither is a path anybody meant to type, and
-    left alone both produce a folder that does not exist.
-    """
+    """Strip the quotes and stray spaces a pasted path carries (Windows
+    Explorer's "Copy as path" wraps it in double quotes); left alone, both
+    produce a folder that does not exist."""
     cleaned = raw.strip()
     for quote in ('"', "'"):
         if len(cleaned) >= 2 and cleaned[0] == quote and cleaned[-1] == quote:
@@ -69,25 +42,16 @@ def clean_typed_path(raw: str) -> str:
 
 
 def typed_path(raw: str) -> Path:
-    """A Path from a string a person typed or pasted into a field.
-
-    Every frontend field that names a folder or a file goes through here, so the
-    quote-wrapping rule above is a property of the app rather than of whichever
-    screen someone remembered to apply it on. `tests/unit/test_gui_console_paths.py`
-    holds that line: it walks each console's AST and refuses a bare `Path(arg)`.
-    """
+    """A Path from a string a person typed or pasted into a field: every
+    such frontend field must go through here, never a bare ``Path(arg)``."""
     return Path(clean_typed_path(raw))
 
 
 def require_output_dir(raw: str) -> Path:
-    """Turn a user-supplied output location into a Path, refusing a blank one.
-
-    ``Path("")`` is ``Path(".")``, so a blank value does not fail — it silently
-    means "here", and charts named after patients land in whatever directory the
-    program happens to be running from, with the run reporting success. The
-    blankness only exists before ``Path()`` sees it, so this has to be called on
-    the raw value at the boundary where the person typed it.
-    """
+    """A user-supplied output location as a Path; refuses a blank one.
+    ``Path("")`` is ``Path(".")``, so unrefused, a blank value would
+    silently write patient charts into the program's own working
+    directory."""
     raw = clean_typed_path(raw)
     if not raw:
         raise OutputPathError(
@@ -98,12 +62,9 @@ def require_output_dir(raw: str) -> Path:
 
 
 def validate_output_target(path: str | Path) -> None:
-    """Raise :class:`OutputPathError` if ``path`` can't be created as a directory.
-
-    ``Path.mkdir(parents=True)`` fails with ``FileExistsError`` when the target
-    itself is a file, and ``NotADirectoryError`` when an ancestor is a file.
-    Both reduce to: the nearest *existing* path component must be a directory.
-    """
+    """Contract: raises :class:`OutputPathError` if ``path`` cannot become a
+    directory — the nearest existing path component is a file, whether
+    that is ``path`` itself or an ancestor."""
     target = Path(path)
     for component in (target, *target.parents):
         if component.exists():
@@ -146,23 +107,18 @@ _SUBPROCESS_TIMEOUT = 10.0  # seconds; whoami/icacls are local and near-instant
 
 
 def _system32_exe(name: str) -> str:
-    """Absolute path to a ``System32`` executable, resolved via ``%SystemRoot%``.
-
-    Locating the interpreter's own system directory instead of trusting PATH
-    is what keeps these calls immune to executable-hijack: an attacker who
-    drops ``whoami.exe`` in the working directory can never be selected.
-    """
+    """Absolute ``System32`` path for ``name``, via ``%SystemRoot%`` — never
+    a PATH lookup, so a hijack binary dropped in the working directory can
+    never be selected."""
     system_root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
     return str(Path(system_root, "System32", name))
 
 
 def _windows_user_sid() -> str | None:
-    """Return the current user's SID via ``whoami /user``, or ``None`` on failure.
-
-    Uses the absolute ``System32\\whoami.exe`` path (no PATH lookup) and reads
-    the first ``S-1-...`` literal out of stdout. Column-header localisation is
-    irrelevant — only the SID token is parsed.
-    """
+    """The current user's SID via ``whoami /user`` (absolute exe path, no
+    PATH lookup), or ``None`` on failure. Only the first ``S-1-...``
+    literal in stdout is parsed; column-header localisation is
+    irrelevant."""
     try:
         completed = subprocess.run(  # noqa: S603 — absolute exe, shell=False, fixed args
             [_system32_exe("whoami.exe"), "/user"],
@@ -177,11 +133,9 @@ def _windows_user_sid() -> str | None:
     return match.group(0) if match else None
 
 
-# SDDL trustee tokens ``icacls /save`` may emit for principals inside the
-# granted set: SYSTEM (``SY``), Administrators (``BA``), and the current user
-# when it is the RID-500 admin account (``LA``) or abbreviated to owner-rights
-# (``OW``). Anything else — ``WD`` Everyone, ``BU`` Users, ``AU`` Authenticated
-# Users, a foreign literal SID — is outside the promise and fails the verify.
+# SDDL trustee tokens icacls may emit for the granted principals (SYSTEM,
+# Administrators, the RID-500 admin, owner-rights); anything else (Everyone,
+# Users, a foreign SID) is outside the promise and fails the verify.
 _ALLOWED_SDDL_ALIASES = frozenset({"SY", "BA", "LA", "OW"})
 
 #: Flag letters an SDDL ACL header may carry between ``D:`` and its first ACE
@@ -194,19 +148,11 @@ _SDDL_ACE_FIELDS = 6
 
 
 def _dacl_section(text: str) -> str | None:
-    """The body of the ``D:`` section of an SDDL string, or ``None``.
-
-    Section markers (``O:`` ``G:`` ``D:`` ``S:``) are located at PAREN DEPTH 0
-    only. A conditional ACE carries its condition inside its own parentheses —
-    ``(XA;;FA;;;WD;(@User.Title=="S:x"))`` — so a naive ``split("S:")`` cuts the
-    DACL in half at a marker that is not a section at all, silently discarding
-    every ACE after the cut while the parse still returns the clean ones. That
-    is a verify that reports ``True`` with an Everyone ACE still on the
-    directory, which is why the depth is tracked rather than assumed.
-
-    ``None`` means no ``D:`` section starts at depth 0 — unverifiable, and the
-    caller fails closed.
-    """
+    """The ``D:`` section body of an SDDL string, or ``None`` if none starts
+    at paren depth 0. Depth-tracked, not a naive ``split("S:")``: a
+    conditional ACE can embed ``S:`` inside its own condition, and a naive
+    split would silently drop every ACE after the cut while still reporting
+    success. ``None`` means unverifiable; the caller fails closed."""
     depth = 0
     start: int | None = None
     for index, char in enumerate(text):
@@ -225,18 +171,10 @@ def _dacl_section(text: str) -> str | None:
 
 
 def _parse_dacl_aces(section: str) -> list[tuple[str, str]] | None:
-    """``(ace type, trustee)`` pairs from a DACL section body, or ``None``.
-
-    The section must be a flag header followed by a plain sequence of
-    ``(...)`` groups and nothing else, each group holding exactly
-    :data:`_SDDL_ACE_FIELDS` semicolon-separated fields. Anything else —
-    stray text between groups, an unterminated group, a group whose body
-    contains ``(`` (a conditional ACE, whose condition may embed ``;`` and
-    quotes and cannot be split on field boundaries), or an extra field (a
-    resource-attribute ACE) — returns ``None``. Refusing to interpret an ACE
-    shape this parser does not fully understand is the point: the caller turns
-    ``None`` into a failed verify, never into "no ACEs found, looks fine".
-    """
+    """Contract: ``(ace type, trustee)`` pairs from a DACL section, or
+    ``None`` for any shape this parser does not fully understand — a
+    conditional ACE, an extra (resource-attribute) field, stray text
+    between groups. ``None`` becomes a failed verify, never "looks fine"."""
     body = section.strip()
     flags = _SDDL_ACL_FLAGS_RE.match(body)
     rest = body[flags.end() :] if flags else body
@@ -259,13 +197,9 @@ def _parse_dacl_aces(section: str) -> list[tuple[str, str]] | None:
 
 
 def _windows_dacl_aces(root: Path) -> list[tuple[str, str]] | None:
-    """Read ``root``'s DACL as ``(ace type, trustee token)`` pairs, or ``None``.
-
-    Uses ``icacls /save`` (SDDL — literal SIDs and locale-independent alias
-    tokens, never localized account names) and parses the ``D:`` section only.
-    ``None`` means the ACL could not be read or parsed; the caller must fail
-    closed — an unverifiable DACL cannot be reported as hardened.
-    """
+    """``root``'s DACL as ``(ace type, trustee token)`` pairs via
+    ``icacls /save`` (SDDL, never localized names), or ``None`` when
+    unreadable/unparsable — the caller must fail closed."""
     icacls = _system32_exe("icacls.exe")
     sddl_path = root / ".anast-acl-verify.sddl"
     try:
@@ -293,33 +227,11 @@ def _windows_dacl_aces(root: Path) -> list[tuple[str, str]] | None:
 
 
 def _harden_windows_acl(root: Path) -> bool:
-    """Restrict ``root`` to the current user + SYSTEM + Administrators (NTFS).
-
-    Reset first, then grant, then strip, then PROVE it — and fail-safe at
-    every step (a failure leaves the directory readable by its owner, never
-    locked out):
-
-    #. ``icacls <root> /reset`` — replace the DACL with the inherited default,
-       clearing any pre-existing EXPLICIT entry. ``/grant:r`` alone replaces
-       only the named trustees' entries and ``/inheritance:r`` removes only
-       inherited ones, so a broad explicit ACE someone (or some sync tool)
-       added earlier would silently survive both.
-    #. ``icacls <root> /grant:r *<user>:(OI)(CI)F *SYSTEM:(OI)(CI)F
-       *Administrators:(OI)(CI)F`` — add the three explicit full-control ACEs
-       while inherited ACEs still exist.
-    #. ``icacls <root> /inheritance:r`` — strip inherited ACEs, leaving only
-       the explicit grants.
-    #. Read the DACL back (:func:`_windows_dacl_aces`) and verify every ACE is
-       an Allow for a trustee inside the granted set. The function's return
-       value is a PROMISE the caller repeats to the operator, so it reflects
-       the directory's actual state, never just the exit codes of the steps.
-
-    Returns ``True`` only when all four steps succeed. A failed reset stops
-    before the grant (inherited permissions remain); a failed grant stops
-    before the strip; a failed strip leaves the grants alongside inheritance;
-    a failed or mismatched verify returns ``False`` even though the steps ran,
-    because the promised state could not be proven.
-    """
+    """Contract: restrict ``root`` to the current user + SYSTEM +
+    Administrators (18) — reset, grant, strip inheritance, then read the
+    DACL back and verify every ACE is an Allow for one of those three.
+    Fails safe at each step (never locks the owner out); ``True`` only
+    when the read-back proves it, not just that the calls exited 0."""
     user_sid = _windows_user_sid()
     if user_sid is None:
         return False
@@ -349,20 +261,10 @@ def _harden_windows_acl(root: Path) -> bool:
 
 
 def secure_output_dir(path: str | Path) -> Path:
-    """Create (or harden) an output directory and return it.
-
-    Idempotent: safe to call on every run, and re-running re-applies the
-    permission hardening (self-healing against sync services that reset ACLs).
-    Permissions are tightened per platform:
-
-    * POSIX — ``chmod 0o700`` (owner-only).
-    * Windows NTFS — inheritance removed, access restricted to the current
-      user + SYSTEM + Administrators (mirrors ``mkdir(0o700)`` on Windows).
-    * Filesystems without ACLs — a single path-free WARNING is logged and the
-      operator must fall back to profile ACLs / full-disk encryption.
-
-    The PHI warning README is written regardless of the hardening outcome.
-    """
+    """Contract: create (or re-harden) ``path`` and return it (18) —
+    idempotent, so re-running self-heals against a sync service resetting
+    ACLs. The PHI warning README is written regardless of whether
+    hardening succeeded."""
     root = Path(path)
     validate_output_target(root)  # clean OutputPathError instead of a raw OSError
     root.mkdir(parents=True, exist_ok=True)

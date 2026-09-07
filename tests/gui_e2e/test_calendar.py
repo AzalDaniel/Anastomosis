@@ -1,16 +1,12 @@
 """The filing calendar: a month you read, not forty-two buttons you cannot press.
 
-Every cell was a ``<button role="gridcell">`` with no click handler and a
-pointer cursor — 42 tab stops between the month arrows and the rest of the
-page, all of them leading nowhere — inside a ``role="grid"`` that had no
-``role="row"`` at all, which reports a row count of zero.
-
-It is a table: seven columns of days, read and not operated. Making the cells
-*do* something was the other way out and it is not available here — a day
-opens nothing, because ``upload_status`` returns one run, so the histogram has
-exactly one day in it. Per-day detail needs a ledger accessor that does not
-exist yet (the same one the calendar's month paging is waiting on, #196). A
-control that looks pressable and is not is worse than a cell.
+A cell must not be a focusable, clickless ``<button role="gridcell">``
+inside a ``role="grid"`` with no ``role="row"`` — it is a table, seven
+columns of days, read and not operated. Making the cells clickable is not
+available here: a day would open nothing, since per-day detail needs a
+ledger accessor that does not exist yet (the same one calendar paging is
+waiting on, #196). A control that looks pressable and is not is worse
+than a cell.
 """
 
 from __future__ import annotations
@@ -54,13 +50,10 @@ def test_the_month_is_not_forty_two_tab_stops(gui) -> None:
 
 
 def test_the_month_reads_as_a_table_of_weeks(gui) -> None:
-    """Six rows of seven under a header row — the structure it always looked like.
-
-    The row wrappers carry `display: contents`, so the cells stay direct
-    children of the CSS grid. That the rows survive into the accessibility tree
-    anyway is the property worth pinning: it is a rendering detail this markup
-    depends on.
-    """
+    """Six rows of seven under a header row: the row wrappers carry
+    `display: contents` so the cells stay direct children of the CSS grid,
+    and the rows must still survive into the accessibility tree despite
+    that."""
     app = _load(gui)
 
     snapshot = app.page.locator(".cal-table").aria_snapshot()
@@ -96,12 +89,9 @@ def test_the_table_is_named_by_the_month_on_screen(gui) -> None:
 
 
 def test_a_day_with_runs_says_what_happened(gui) -> None:
-    """The halo is a colour; the cell has to say the same thing in words.
-
-    The legend that decodes the colours is `aria-hidden`, and stays that way:
-    read aloud it is three adjectives with nothing attached to them. The state
-    belongs on the day it describes.
-    """
+    """The halo is a colour; the cell has to say the same thing in words:
+    the legend that decodes the colours stays `aria-hidden`, since read
+    aloud it is three adjectives attached to nothing."""
     app = _load(gui)
 
     marked = app.page.locator("#uploads-cal-grid .calendar-cell--has-data")
@@ -115,7 +105,8 @@ def test_a_day_with_runs_says_what_happened(gui) -> None:
 
 
 def test_a_badge_no_longer_reads_as_part_of_the_date(gui) -> None:
-    """Day "3" plus a badge of "2" used to compute an accessible name of "32"."""
+    """Day "3" plus a badge of "2" must not compute an accessible name of
+    "32"."""
     app = gui()
     app.show("uploads")
     app.page.evaluate(

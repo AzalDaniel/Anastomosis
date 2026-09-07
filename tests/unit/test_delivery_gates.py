@@ -1,15 +1,12 @@
-"""The route a bundle was prepared for, and the gates it has to have passed.
+"""The route a bundle was prepared for, and the gates it has to have
+passed. Until schema v3 the manifest carried neither the chosen route
+nor a record that the run's gates had passed, so an executor had
+nothing to check against: a bundle rendered with ``--no-qa``, or one
+whose charts were replaced after review, read exactly like a clean
+one.
 
-``anast migrate`` resolves a destination route, renders the charts, verifies
-them, and stops — delivery is a separate step, often on another machine, hours
-later. Until schema v3 the manifest that step reads carried neither the route
-that was chosen nor any record that the run's gates had passed, so an executor
-had nothing to check against: a bundle rendered with ``--no-qa``, or one whose
-charts were replaced after review, read exactly like a clean one.
-
-These tests pin both halves — what a run records, and what an executor refuses.
-Synthetic throughout: ``feedface-`` ids, invented byte strings for the charts,
-everything under ``tmp_path``.
+These tests pin both halves — what a run records, and what an
+executor refuses. Synthetic throughout.
 """
 
 from __future__ import annotations
@@ -79,13 +76,10 @@ def _bundle(
     route: RoutePlan | None = BROWSER_ROUTE,
     gates: RunGates | None = CLEAN_GATES,
 ) -> Path:
-    """One rendered chart plus the manifest that describes it; returns the dir.
-
-    The chart lands INSIDE the output directory, as a real render's does: the
-    manifest stores a basename and re-absolutizes it against that directory on
-    read, so a fixture that rendered elsewhere would be describing a file the
-    reader could never find.
-    """
+    """One rendered chart plus the manifest that describes it; returns
+    the dir. The chart lands INSIDE the output directory, as a real
+    render's does: the manifest stores a basename re-absolutized
+    against that directory on read."""
     out = tmp_path / "charts"
     out.mkdir()
     chart = out / "note.pdf"
@@ -219,7 +213,7 @@ def test_a_route_that_found_no_way_in_refuses(tmp_path: Path) -> None:
 
 
 def test_charts_replaced_after_review_refuse_the_whole_run(tmp_path: Path) -> None:
-    """Not "skip that item": the bundle is no longer the bundle that passed."""
+    """Not "skip that item": the bundle differs from the bundle that passed."""
     out = _bundle(tmp_path)
     manifest = load_upload_manifest(out)
     (out / "note.pdf").write_bytes(b"different-bytes-entirely")
@@ -242,15 +236,11 @@ def test_a_chart_that_vanished_refuses(tmp_path: Path) -> None:
 def test_a_genuinely_older_bundle_warns_but_is_not_refused(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Operators have rendered trees on disk. Stranding them would be a worse
-    failure than the one being fixed — but it is never silent.
-
-    A GENUINELY older manifest: one that declares a version before gates
-    existed. This test used to build a version-3 file with its gates stripped
-    and call that the old case, which is the one shape an editor can produce
-    on purpose — so it stood in for the grandfather clause while actually
-    exercising the bypass. The two are separate tests now.
-    """
+    """Operators have rendered trees on disk; stranding them would be
+    worse than the failure being fixed — but never silently. A
+    GENUINELY older manifest declares a version before gates existed,
+    distinct from a current-version file with gates stripped (the
+    bypass the sibling test below covers)."""
     out = _bundle(tmp_path)
     path = out / MANIFEST_NAME
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -267,13 +257,11 @@ def test_a_genuinely_older_bundle_warns_but_is_not_refused(
 
 
 def test_a_current_manifest_with_its_gates_nulled_is_a_defect(tmp_path: Path) -> None:
-    """The bypass the grandfather clause was accidentally covering.
-
-    Both writers always record route and gates, so a file that DECLARES this
-    version and carries nulls is not an old tree — it was written incompletely
-    or edited. Reading it as "no gate record" would hand an executor the one
-    branch it is allowed to walk past, which is the whole gate, undone by one
-    token."""
+    """The bypass the grandfather clause was accidentally covering:
+    both writers always record route and gates, so a file that
+    DECLARES this version with nulls was written incompletely or
+    edited, not old — reading it as "no gate record" would hand an
+    executor the one branch it is allowed to walk past."""
     out = _bundle(tmp_path)  # a real gated write, so the file really is v3
     path = out / MANIFEST_NAME
     payload = json.loads(path.read_text(encoding="utf-8"))

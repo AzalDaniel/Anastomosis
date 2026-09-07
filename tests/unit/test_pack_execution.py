@@ -1,20 +1,11 @@
 """What a non-built-in pack's ``context.py`` is handed when it runs.
 
-Before :mod:`anastomosis.reconstruct.packexec`, a pack that arrived by email and
-was pointed at with ``--pack-dir`` executed with the desktop user's full
-authority: it could read any file the operator could read, write one anywhere,
-open a socket, and spawn a process — all at import, before a single chart was
-rendered. Nothing said so, and nothing had chosen it.
-
-These tests are written as hostile packs (synthetic, under ``tmp_path``) that
-try exactly those things, and assert both halves: the pack comes back
-unavailable with a diagnosis naming what it asked for, AND the side effect it
-was reaching for never happened.
-
-What is deliberately NOT asserted here is that a determined attacker is
-contained — a restricted globals mapping is not a CPython sandbox, and
-``packexec``'s own docstring says so. The property under test is that the
-obvious capabilities are gone and their absence is loud.
+A pack pointed at with ``--pack-dir`` must not execute with the desktop
+user's full authority: no reading an arbitrary file, writing one
+anywhere, opening a socket, or spawning a process. These hostile packs
+(synthetic, under ``tmp_path``) try exactly those things, and both halves
+are asserted: unavailable with a diagnosis naming the ask, AND no side
+effect. Not asserted: containment against a determined attacker (rule 23).
 """
 
 from __future__ import annotations
@@ -262,13 +253,11 @@ def test_the_allowlist_admits_no_process_level_module(denied: str) -> None:
 
 
 def test_the_packs_package_root_does_not_hand_back_pathlib() -> None:
-    """The allowlist entry was the package root, and a submodule match let a
-    pack write one import and get `pathlib.Path` — arbitrary read and write —
-    straight back, while the table below still truthfully said `pathlib` was
-    not on it. A capability reachable in one import is not withheld, whatever
-    the table says; the entry is the single context module the Teach delegates
-    to.
-    """
+    """A submodule match on the allowlist entry (the package root) must
+    not resolve to `pathlib.Path` itself — arbitrary read and write —
+    while the table still truthfully says `pathlib` is not on it: a
+    capability reachable through one import is not withheld, whatever the
+    table says."""
     import types
 
     module = types.ModuleType("hostile")

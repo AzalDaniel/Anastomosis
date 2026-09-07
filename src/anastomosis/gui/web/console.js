@@ -188,10 +188,10 @@
     const meta = el("uploads-meta");
     meta.innerHTML = "";
     const kinds = Object.keys(status.error_type_histogram || {}).length;
-    // These two are NOT the same measurement and used to look like it: the
-    // first counts rows in the filing record, the second counts PDFs in the
-    // results folder. On a normal run they differ, and an operator seeing 8
-    // beside 7 with no explanation is owed one.
+    // These two are NOT the same measurement: the first counts rows in the
+    // filing record, the second counts PDFs in the results folder. On a
+    // normal run they differ, and an operator seeing 8 beside 7 with no
+    // explanation is owed one.
     metaValue(meta, String(status.total || 0), "Charts in the record");
     if (READY_TO_FILE !== null) metaValue(meta, String(READY_TO_FILE), "PDFs in the folder");
     metaValue(meta, String(kinds), "Kinds of error", kinds > 0 ? "attention" : null);
@@ -247,12 +247,7 @@
     const [y, m] = started.split("-").map((s) => parseInt(s, 10));
     CAL.year = y;
     CAL.month = m - 1;
-    // ONE run, counted once, on the day it started.
-    //
-    // The finish day used to add a second tally, so a run that started and
-    // finished the same day showed a badge of "2" — under a legend whose green
-    // dot reads "Filed", next to counters correctly reading "57 Filed". The
-    // badge counts RUNS; nothing about it was ever a chart count.
+    // ONE run, counted once, on the day it started — the badge counts RUNS, never charts.
     CAL.histogram[started] = run.aborted_reason
       ? { pending: 0, done: 0, errors: 1 }
       : { pending: 0, done: 1, errors: 0 };
@@ -430,9 +425,9 @@
     }
   }
 
-  // Two cuts, and until now neither was mentioned: this view paints at most
-  // MAX_SEARCH_ROWS, and the controller had already capped what it sent. A
-  // ledger of three thousand became fifty rows with nothing saying so.
+  // Two cuts this note explains: this view paints at most MAX_SEARCH_ROWS,
+  // and the controller had already capped what it sent — a ledger of three
+  // thousand can become fifty rows with nothing else saying so.
   function countNote(shown, filtered) {
     const capped = ITEM_KEYS.length < PENDING_TOTAL;
     const cut = shown > MAX_SEARCH_ROWS;
@@ -464,11 +459,8 @@
     const outDir = el("uploads-results-dir").value.trim();
     const browser = el("uploads-browser").value.trim();
     const assistant = el("uploads-assistant").value.trim();
-    // The same check the other three views use. This view had its own copy,
-    // which is how the two drifted: it named ALL THREE fields when one was
-    // blank, sending an operator who had filled in two of them hunting for the
-    // browser connection — which ships prefilled AND sits inside a closed
-    // "Advanced" disclosure, so it was both correct and invisible.
+    // The same check the other three views use: the browser connection ships
+    // prefilled AND sits inside a closed "Advanced" disclosure, so it needs naming too.
     if (
       !Shell.requireFields([
         [outDir, "the results folder", "uploads-results-dir"],
@@ -566,18 +558,11 @@
   // The Migrate handoff: the destination's filing assistant and the folder the
   // charts were written to, so nothing is typed twice.
   //
-  // Only ever what this arrival was handed. `onEnter` runs on EVERY arrival at
-  // this view, and the handoff also used to live in a shell-global that was
-  // never cleared — so an operator who retargeted these two fields by hand for
-  // a second batch, looked at another view and came back had them silently
-  // reverted to the migration's, and "Start filing" then drove the wrong folder
-  // into the wrong destination. Overwriting a field the operator can see is
-  // also worth a line in the strip.
+  // Only ever what this arrival was handed: `onEnter` runs on EVERY arrival
+  // at this view. Overwriting a field the operator can see is also worth a line in the strip.
   function onEnter(handoff) {
-    // The record is what this view is FOR, so arriving reads it. It used to
-    // take a click on "Show what has been filed", which meant the screen an
-    // operator came to after a migration was a form and three hidden panels.
-    // Advisory: a folder with no record simply leaves the empty states up.
+    // The record is what this view is FOR, so arriving reads it. Advisory:
+    // a folder with no record simply leaves the empty states up.
     if (!handoff) {
       void onRefresh({ quiet: true });
       return;

@@ -1,40 +1,16 @@
-"""The GUI controller: the JS-API bridge, with no webview import anywhere.
+"""Contract: the GUI controller is the JS-API bridge, with no webview import
+anywhere — pywebview exposes its methods as ``window.pywebview.api.<method>``;
+:mod:`anastomosis.gui.shell` is the only place webview is touched.
 
-This is the headless half of the GUI. pywebview exposes an object's methods to
-the browser as ``window.pywebview.api.<method>`` and JSON-serializes their
-return values; this controller IS that object, but it imports nothing from
-pywebview, so the whole surface is unit-testable against a recording fake sink
-(see ``tests/unit/test_gui_controller.py``). The shell
-(:mod:`anastomosis.gui.shell`) is the only place webview is touched: it
-constructs the controller, wires a sink that marshals events into
-``window.evaluate_js("anastEvent(...)")``, and opens the window.
+A thin facade: async choreography lives in
+:class:`~anastomosis.gui.jobs.GuiJobRunner`, the five operator surfaces in
+:mod:`anastomosis.gui.consoles`, shared constants in
+:mod:`anastomosis.gui.shared`.
 
-Architecture: this class is a thin FACADE. The async-job choreography lives in
-:class:`~anastomosis.gui.jobs.GuiJobRunner`; the operator surfaces live in the
-:mod:`anastomosis.gui.consoles` package (upload, packgen, source, and the
-pipeline/migration run flows sharing a
-:class:`~anastomosis.gui.consoles.runs.SummaryStore`); the pure shared constants
-and serializers live in the leaf :mod:`anastomosis.gui.shared`. The controller
-constructs one of each, keeps the light read-only queries, and delegates every
-moved method one-to-one. Its public method surface is unchanged.
-
-Contract for every public method:
-
-* return a **JSON-safe dict** (the browser receives it directly);
-* **never raise** — every exception is caught and converted to
-  ``{"ok": False, "error": exc_tag(exc)}`` plus an ``error`` event, because the
-  GUI must never see a Python traceback;
-* emit only PHI-safe events (counts, stage names, ids, exception type names) —
-  output paths the operator chose are echoed back to them, but rendered
-  filenames never are (count summaries only).
-
-Long-running work (``run_pipeline``) runs synchronously in
-:meth:`GuiController.run_pipeline` and is also offered as a fire-and-forget
-daemon thread via :meth:`GuiController.run_pipeline_async`, guarded by a
-``busy`` flag so a second concurrent run is rejected rather than racing the
-first. pywebview's ``evaluate_js`` is thread-safe, so the sink adapter (owned by
-the shell) is free to be called from the worker thread; the controller just
-emits.
+Every public method returns a JSON-safe dict, never raises (an exception
+becomes ``{"ok": False, "error": exc_tag(exc)}`` plus an error event), and
+emits only PHI-safe events — operator-chosen paths are echoed back, rendered
+filenames never are.
 """
 
 from __future__ import annotations
@@ -70,23 +46,16 @@ __all__ = ["EventSink", "GuiController"]
 
 logger = logging.getLogger(__name__)
 
-# Local destination selectors older than this (relative to the registry's
-# freshest evidence date) are flagged stale — the quarterly re-verification
-# window the registry documents. Surfaced as a dismissible dashboard toast.
+# Local selectors older than this vs. the registry's freshest evidence are
+# flagged stale (the quarterly re-verification window); a dismissible toast.
 _STALE_DAYS = 90
 
 
 def _attach_destination(cdp_url: str, loaded: object) -> object:
     """Build the live browser destination for an upload run (the Playwright seam).
 
-    Delegates to :func:`anastomosis.deliver.browser.attach.attach_destination`
-    — the ONE place a CDP attach over Playwright happens — WITHOUT depending
-    on ``anastomosis.cli``. The caller has already validated the loopback
-    gate. This is kept a SEPARATE module-level function so the GUI tests can
-    ``monkeypatch.setattr(controller, "_attach_destination",
-    lambda cdp, loaded: FakeDestination(...))`` and drive the whole upload
-    flow with no browser. The import is lazy so the controller loads
-    cleanly without the ``deliver-browser`` extra.
+    Delegates to :func:`anastomosis.deliver.browser.attach.attach_destination`;
+    module-level so tests monkeypatch it, lazily imported (no ``deliver-browser`` extra needed).
     """
     from anastomosis.deliver.browser.attach import attach_destination
 
@@ -96,9 +65,8 @@ def _attach_destination(cdp_url: str, loaded: object) -> object:
 class EventSink(Protocol):
     """Where the controller posts events; the shell adapts this to the window.
 
-    The single method takes a JSON-safe event dict (see
-    :mod:`anastomosis.gui.events`). Tests pass a recording fake; the shell
-    passes an adapter that calls ``window.evaluate_js("anastEvent(...)")``.
+    Takes a JSON-safe event dict (:mod:`anastomosis.gui.events`); tests pass
+    a recording fake, the shell an ``evaluate_js`` adapter.
     """
 
     def emit(self, event: dict[str, object]) -> None: ...
@@ -107,27 +75,17 @@ class EventSink(Protocol):
 class GuiController:
     """The plain-Python brain behind the GUI window (a facade over the consoles)."""
 
-    # The controller's own read-only queries (info/doctor/detect/routes/
-    # destination_status/pack_freshness) are page-agnostic request/response
-    # calls: their authoritative failure delivery is the SYNCHRONOUS return dict
-    # the caller awaits, not an event. They are not one of the five run flows a
-    # page owns, so their defensive error events carry this distinct "query"
-    # flow — no page's flow guard renders it (the return value already did),
-    # which is exactly right: a read-query error never gets mistaken by a page
-    # for one of its own run's terminal events (the per-flow guard).
+    # Read-only queries fail via their SYNCHRONOUS return, not an event; this
+    # flow value keeps their defensive error events out of any page's flow guard.
     _QUERY_FLOW = "query"
 
     def __init__(self, sink: EventSink) -> None:
         self._sink = sink
-        # The async-job choreography (busy guard + spawn/release/error) lives
-        # in GuiJobRunner — one owner instead of five hand-rolled copies.
-        # Sync busy-guarded paths contend on the SAME guard via
-        # _acquire/_release below.
+        # Async-job choreography (busy guard + spawn/release/error) lives here, one
+        # owner instead of five hand-rolled copies; sync paths share it via _acquire/_release.
         self._jobs = GuiJobRunner(self._emit)
-        # The five operator surfaces: each takes the controller's emit + the
-        # shared job runner, so every entry (sync or async) contends on the
-        # SAME busy guard. The two run flows share one SummaryStore for the
-        # keyed per-patient roll-up.
+        # Each surface shares the controller's emit + job runner, so every entry
+        # contends on the SAME busy guard; the two run flows share one SummaryStore.
         self._summary_store = SummaryStore()
         self._upload = UploadConsole(self._emit, self._jobs)
         self._packgen = PackgenConsole(self._emit, self._jobs)
@@ -138,9 +96,8 @@ class GuiController:
     def _emit(self, event: dict[str, object]) -> None:
         """Emit through the sink, swallowing sink failures.
 
-        The controller's contract is never-raise: a broken evaluate_js (a
-        closed window, a JS error) must not kill the pipeline thread or
-        escape to the caller. Sink failures are logged as type names only.
+        A broken ``evaluate_js`` must never kill the worker thread; failures
+        are logged as type names only.
         """
         try:
             self._sink.emit(event)
@@ -152,14 +109,8 @@ class GuiController:
     def gui_config(self) -> dict[str, object]:
         """The Python-canonical constants the browser UI mirrors.
 
-        The frontends used to hand-mirror these (``console.js`` hard-coded
-        ``DEFAULT_MAX_ATTEMPTS``; ``app.js`` hard-coded the stage rail), risking
-        the two copies drifting apart. The JS keeps same-valued fallbacks
-        for the api-less browser preview and refreshes from this endpoint on
-        load; ``tests/unit/test_frontend_constants.py`` pins the fallbacks to
-        these values so neither side can drift alone. PHI-free by
-        construction (retry budget, the record's filename, stage names, state-group names). Never
-        raises.
+        JS keeps same-valued fallbacks, refreshed here on load; drift-pinned
+        by ``test_frontend_constants.py``. PHI-free. Never raises.
         """
         return {
             "ok": True,
@@ -172,9 +123,8 @@ class GuiController:
     def info(self) -> dict[str, object]:
         """Toolkit status for the dashboard header and the run form.
 
-        Wraps the shared :func:`anastomosis.core.commands.get_toolkit_info` (the
-        same data ``anast info`` renders). PHI-free by construction — versions,
-        names, booleans.
+        Wraps :func:`anastomosis.core.commands.get_toolkit_info`; PHI-free
+        (versions, names, booleans).
         """
         try:
             from anastomosis.core.commands import get_toolkit_info
@@ -199,10 +149,8 @@ class GuiController:
                         "display": pack.display,
                         "available": pack.available,
                         "origin": pack.origin,
-                        # The exact directory a run naming this layout will bind
-                        # to. Three origins can answer to one name, and after a
-                        # Teach the operator is entitled to see which one they
-                        # are about to select.
+                        # The exact directory a run naming this layout binds to;
+                        # three origins can answer to one name; Teach shows which.
                         "root": pack.root,
                         "sections": pack.sections,
                     }
@@ -215,14 +163,8 @@ class GuiController:
     def doctor(self) -> dict[str, object]:
         """Bundled-asset self-check for the dashboard (install health).
 
-        Wraps the SAME shared core
-        (:func:`anastomosis.core.selfcheck.check_bundled_assets`) the CLI's
-        ``anast doctor`` runs, so the two frontends report identical install
-        health. On success returns ``{"ok": bool, "checks": [{name, ok, detail},
-        ...]}``; on the never-raise failure path returns ``{"ok": False, "error":
-        <type>}`` (no ``checks`` key), so a caller must branch on ``ok`` before
-        reading ``checks``. PHI-free (asset names + counts / type-name details
-        only). Never raises.
+        Wraps :func:`anastomosis.core.selfcheck.check_bundled_assets`; on
+        failure returns ``{"ok": False, "error": <type>}`` with no ``checks`` key. Never raises.
         """
         try:
             from anastomosis.core.selfcheck import check_bundled_assets
@@ -236,18 +178,10 @@ class GuiController:
             return self._fail("doctor", exc)
 
     def last_run_summary(self, summary_id: str | None = None) -> dict[str, object]:
-        """A run's per-patient detail, for LOCAL dashboard display, by summary id.
+        """Contract: a run's per-patient detail for LOCAL display, by ``summary_id``.
 
-        The async run path returns immediately with ``{"started": True}`` and
-        streams PHI-safe COUNTS back as events; the per-patient roll-up (display
-        name, DOB, #encounters, #notes) is held in the SummaryStore, keyed by the
-        ``summary_id`` the ``done`` event carries, for the dashboard/wizard to
-        fetch by that id. Keying by id (not a single slot) means a rapid second
-        run cannot erase or replace the first run's detail before its UI reads it.
-        These values are PHI by design — returned for direct on-screen display on
-        the operator's own machine, NEVER emitted as events or written to any log.
-        Returns ``{"ok": True, "patients": [...]}``; the list is empty for an
-        unknown or missing id. Never raises.
+        PHI by design (name, DOB, counts) — on-screen only, NEVER emitted
+        or logged. Keyed in :class:`SummaryStore` by the ``done`` event's id.
         """
         return {"ok": True, "patients": self._summary_store.get(summary_id)}
 
@@ -265,10 +199,8 @@ class GuiController:
     def routes(self, destination: str | None = None) -> dict[str, object]:
         """The transit-map data for every registry entry, or just one.
 
-        Mirrors the CLI's ``destination route`` data path
-        (:func:`plan_route` over the packaged registry) but returns structured
-        JSON for the GUI to draw, not a fixed-width text map. An unknown
-        ``destination`` is a clean ``{"ok": False, ...}``, never a traceback.
+        Mirrors the CLI's ``destination route`` path (:func:`plan_route`) as
+        structured JSON; an unknown ``destination`` fails clean, never a traceback.
         """
         try:
             from anastomosis.deliver.router import plan_route
@@ -287,17 +219,8 @@ class GuiController:
     def destination_status(self, name: str) -> dict[str, object]:
         """The wizard's per-destination view: transit map + browser-pack readiness.
 
-        Combines the router's transit map (:func:`plan_route`) with the browser
-        pack's discovery status (:func:`load_destination_pack`) so the wizard can
-        tell a browser-route operator whether the pack is ``ready`` (selectors
-        discovered) or still ``needs-discovery`` (run ``anast destination init``).
-        ``pack`` is ``None`` for destinations with no browser pack at all (the
-        common case — most route by API or C-CDA). An unknown destination is a
-        clean ``{"ok": False, ...}``, never a traceback.
-
-        PHI rule: returns destination names, capability kinds, evidence dates,
-        pack names, and booleans only — nothing patient-derived.
-        """
+        Combines :func:`plan_route` with :func:`load_destination_pack`'s status;
+        ``pack`` is ``None`` with no browser pack. PHI-free."""
         try:
             from anastomosis.deliver.router import plan_route
             from anastomosis.destinations.registry import DestinationRegistry
@@ -315,22 +238,11 @@ class GuiController:
             return self._fail("destination_status", exc)
 
     def pack_freshness(self) -> dict[str, object]:
-        """Vendor-change detection: which destinations' local selectors are stale.
+        """Contract: which destinations' local browser-pack selectors are
+        stale against the registry's freshest evidence (vendor-change detection).
 
-        For every registry destination that has a discovered browser pack (a
-        user ``selectors.yaml`` exists), compare that file's modification date
-        against the registry entry's freshest evidence date. When the local
-        selectors predate the evidence by more than :data:`_STALE_DAYS` days,
-        they were validated against a now-superseded understanding of the
-        vendor's UI — the dashboard raises a dismissible toast advising
-        ``anast destination init --validate``.
-
-        Returns ``{"ok": True, "stale": [...], "checked": N}`` where each stale
-        entry carries the destination name, the selectors date, the evidence
-        date, and the gap in days — counts/dates/names only, never PHI. A
-        destination with no discovered pack is simply not checked (nothing to
-        compare); it never appears in either list.
-        """
+        Stale when ``selectors.yaml`` predates the newest ``verified`` date
+        by more than :data:`_STALE_DAYS` days. Names/dates/counts only."""
         try:
             from anastomosis.destinations.loader import (
                 BrowserPackError,
@@ -353,9 +265,8 @@ class GuiController:
                 if selectors_date is None:
                     continue  # selectors undiscovered (built-in scaffold) — not aged
                 checked += 1
-                # Stale when the local selectors were generated more than the
-                # window BEFORE the latest verified evidence: a vendor change
-                # the evidence may already reflect but the local pack predates.
+                # Stale when local selectors predate the evidence by more than
+                # the window — a vendor change the evidence may reflect but the pack does not.
                 gap = (evidence_date - selectors_date).days
                 if gap > _STALE_DAYS:
                     stale.append(
@@ -395,9 +306,8 @@ class GuiController:
     def _upload_stop(self) -> threading.Event | None:
         """The in-flight upload's cooperative stop flag, or None (read-only view).
 
-        A read-only window onto the UploadConsole's stop-event state (a
-        pre-existing test asserts this is ``None`` after a spawn failure). The
-        console owns the flag; upload_stop() drives it.
+        A read-only window onto ``UploadConsole``'s state; the console owns
+        the flag, ``upload_stop()`` drives it.
         """
         return self._upload._upload_stop
 
@@ -442,11 +352,10 @@ class GuiController:
     # --- internals ----------------------------------------------------------
 
     def _pack_readiness(self, transit: TransitMap) -> dict[str, object] | None:
-        """Resolve a transit map's browser-pack readiness (used by destination_status).
+        """Resolve a transit map's browser-pack readiness.
 
-        Delegates to the MigrationConsole, which owns the readiness helper (the
-        browser-route domain). Kept callable here because ``destination_status``
-        uses it and a test drives it directly.
+        Delegates to ``MigrationConsole``, which owns the readiness helper;
+        kept callable here for ``destination_status`` and its own test.
         """
         return self._migration._pack_readiness(transit)
 
@@ -466,19 +375,16 @@ class GuiController:
     def busy(self) -> bool:
         """True while a long-running job holds the busy guard.
 
-        The shell's ``closing`` handler reads this to veto a window close while
-        a run is in flight, so a mid-run close can't interrupt an in-flight
-        PDF/ledger write. Delegates to the one busy guard the job runner owns.
+        The shell's ``closing`` handler reads this to veto a close mid-run.
+        Delegates to the job runner's one guard.
         """
         return self._jobs.busy
 
     def join_active_job(self, timeout: float | None = None) -> bool:
         """Wait up to ``timeout`` seconds for the active job's worker to finish.
 
-        Returns ``True`` if no job is active or it finished in time, ``False``
-        if a worker is still running. The shell's close barrier uses the veto
-        (see ``busy``); this is the join surface the barrier's fallback path
-        (and its tests) rely on. Delegates to the job runner.
+        Returns whether it finished. Delegates to the job runner; the
+        shell's close-barrier fallback (and its tests) rely on this surface.
         """
         return self._jobs.join(timeout)
 
@@ -486,9 +392,8 @@ class GuiController:
 def _freshest_evidence(entry: DestinationEntry) -> date | None:
     """The newest ``verified`` date across an entry's cited capabilities, or None.
 
-    A destination's evidence ages at the rate of its freshest citation: re-
-    verifying any one capability resets the clock. Browser ``pack`` capabilities
-    carry no evidence (their proof is canary fixtures), so they do not count.
+    Browser ``pack`` capabilities carry no evidence (proof is canary
+    fixtures), so they never count toward this.
     """
     dates: list[date] = []
     for cap in (
@@ -505,10 +410,8 @@ def _freshest_evidence(entry: DestinationEntry) -> date | None:
 def _selectors_mtime_date(loaded: object) -> date | None:
     """The UTC modification date of a discovered ``selectors.yaml``, or None.
 
-    A ready pack's selectors came from a discovered overlay file
-    (``selectors_source``); a built-in scaffold with no overlay has no aged
-    artifact (its slots are still the DISCOVER placeholder), so it returns None
-    and is not freshness-checked.
+    A built-in scaffold with no discovered overlay (slots still DISCOVER)
+    has no aged artifact, so this returns None and skips the freshness check.
     """
     if not getattr(loaded, "ready", False):
         return None
@@ -526,17 +429,11 @@ def _selectors_mtime_date(loaded: object) -> date | None:
 
 
 class GuiApi:
-    """The pywebview ``js_api`` surface: a thin facade over a :class:`GuiController`.
+    """Contract: the pywebview ``js_api`` facade — exposes only the
+    async/busy-guarded run methods and read-only queries the front end calls.
 
-    It exposes ONLY the async/busy-guarded run methods and the light read-only
-    queries the front end actually calls (the exact set ``gui/web/*.js`` uses).
-    The controller ALSO has synchronous heavy methods — ``run_pipeline``,
-    ``run_migration``, ``pack_init``, ``source_init`` — and ``doctor`` (which can
-    start Playwright in the bundled-asset check). Those are kept for tests and
-    internal use, but they would block the single pywebview bridge thread and
-    freeze the UI if a page invoked them. Binding THIS facade (not the raw
-    controller) as ``js_api`` makes them un-callable from JS by construction.
-    """
+    Excludes the controller's synchronous heavy methods, so a page can
+    never freeze the bridge thread."""
 
     def __init__(self, controller: GuiController) -> None:
         self._c = controller

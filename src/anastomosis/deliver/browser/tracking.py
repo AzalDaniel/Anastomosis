@@ -1,35 +1,12 @@
 """The crash-resumable upload ledger (M2 item 10): WAL-mode SQLite.
 
-A browser upload run is long and crash-prone, so the ground truth for "what
-has happened to every item" lives in a durable ledger, not in process
-memory. Kill the process at any point — a power cut, an OOM, a Ctrl-C — and
-:meth:`TrackingDB.recover` rewinds the few mid-flight items to a safe state
-and the run continues exactly where it stopped, never re-filing a chart.
-
-Two tables carry the truth and one carries history:
-
-* ``runs`` — one row per invocation (so an abort reason is recorded).
-* ``items`` — one row per :class:`UploadItem`, holding its current state.
-* ``transitions`` — append-only audit trail; every state change writes a
-  row, so the full history of an item is reconstructable after the fact.
-
-Durability: ``journal_mode=WAL`` survives a hard kill mid-write, and
-``synchronous=FULL`` is chosen deliberately over the faster NORMAL — this is
-a safety-critical ledger and its volume is tiny (a few rows per uploaded
-file), so paying for every fsync is the right trade.
-
-Concurrency: the parallel workers (a later PR) drive this from several
-threads. SQLite connection objects are not safe to share across threads, so
-each thread gets its own connection via :class:`threading.local`; the small
-``busy_timeout`` covers the brief lock contention WAL still allows on write.
-
-PHI rule (enforced by schema, not just discipline): there is NO column for a
-patient name, DOB, or address anywhere in this schema. ``file_path`` may
-embed a name-derived filename, which is why the DB file MUST live inside the
-same hardened ``0o700`` directory (``secure_output_dir``) as the files it
-tracks — that directory's parent is the PHI boundary. ``last_error_type``
-and ``error_type`` store exception *type* names only (``exc_tag``), never
-exception messages.
+:meth:`TrackingDB.recover` rewinds mid-flight items to a safe state on a
+killed run, so it continues without re-filing a chart. ``runs``, ``items``
+and an append-only ``transitions`` audit trail; ``synchronous=FULL`` (45)
+and one SQLite connection per thread are both deliberate.
+PHI: no column for a name, DOB or address; ``file_path`` may embed one,
+so the DB lives inside the hardened dir it tracks files in (45), and
+``last_error_type``/``error_type`` store exception type names only.
 """
 
 from __future__ import annotations
@@ -54,12 +31,10 @@ from .states import (
 
 __all__ = ["TrackingDB"]
 
-# States an item can be picked up from on a resumed run (work still owed,
-# nothing in flight). UPLOAD_INTERRUPTED is included so resume drives it back
-# through the duplicate scan; RETRY_WAIT so a backed-off item is retried.
-#: How many keys go into one ``IN (...)`` clause. SQLite's default bound-
-#: parameter ceiling is 999; a real run offers thousands of items, so the
-#: membership query is chunked rather than assuming the batch is small.
+# States an item can be picked up from on resume: UPLOAD_INTERRUPTED
+# re-enters the duplicate scan; RETRY_WAIT retries after backoff.
+#: Keys per ``IN (...)`` clause: SQLite's default bound-parameter ceiling
+#: is 999, and a real run offers thousands of items.
 _IN_CHUNK = 500
 
 _PENDING_STATES: tuple[UploadState, ...] = (
@@ -68,14 +43,12 @@ _PENDING_STATES: tuple[UploadState, ...] = (
     UploadState.RETRY_WAIT,
 )
 
-# The error_type stamped on audit rows written by the privileged recovery
-# path (which intentionally bypasses validate_transition — see ``recover``).
+# error_type stamped by the privileged recovery path, which bypasses
+# validate_transition (see recover()).
 _RECOVERY_TAG = "CrashRecovery"
 
-# The items.state CHECK list is derived from the UploadState enum so the schema
-# and the enum can never drift: a raw SQL write of an unknown state is refused at
-# the database boundary, rather than surfacing later (far from the cause) when
-# UploadState(row["state"]) raises during a read.
+# Derived from UploadState so schema and enum can never drift: an unknown
+# state is refused at the DB boundary, not later on read.
 _STATE_LITERALS = ", ".join(f"'{s.value}'" for s in UploadState)
 
 _SCHEMA = f"""
@@ -136,34 +109,24 @@ CREATE TRIGGER IF NOT EXISTS transitions_no_update
 
 
 def _now() -> str:
-    """A timezone-aware UTC timestamp (DTZ rule: never a naive datetime).
-
-    Deliberately NOT routed through :mod:`anastomosis.core.clock`: this is the
-    resumable ledger's own ordering key (``latest_run_id`` sorts ``runs`` by
-    ``started_at DESC``, ``run_id`` — a random uuid4 — only as its tiebreak), so
-    two runs whose wall-clock froze to the same instant would make the wrong
-    one look latest. Every other stamp in this repo records a fact for later
-    reading; this one is also a comparison the ledger relies on staying
-    monotonic across process invocations.
+    """A timezone-aware UTC timestamp (DTZ rule: never a naive datetime);
+    the one exception to routing through :mod:`core.clock`, because this
+    ordering key must stay monotonic across runs, not reproducible (20).
     """
     return datetime.now(tz=UTC).isoformat()
 
 
 class TrackingDB:
     """The resumable upload ledger backed by one WAL-mode SQLite file.
-
-    ``db_path``'s parent is the PHI boundary: the caller places it inside a
-    :func:`anastomosis.core.output.secure_output_dir` (``0o700``), alongside
-    the files it tracks. Connections are per-thread; close with
-    :meth:`close` or use the instance as a context manager.
+    ``db_path``'s parent is the PHI boundary (45). Connections are
+    per-thread; close with :meth:`close` or use as a context manager.
     """
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
         self._local = threading.local()
-        # One-time schema setup. executescript() manages its own transaction
-        # (it COMMITs any pending one first), so it runs outside the explicit
-        # BEGIN/COMMIT bracket _connection() provides for normal writes.
+        # executescript() manages its own transaction (COMMITs any pending
+        # one first), outside _connection()'s explicit BEGIN/COMMIT.
         self._conn().executescript(_SCHEMA)
 
     # --- connection management (one connection per thread) ---
@@ -173,15 +136,9 @@ class TrackingDB:
         if conn is None:
             conn = sqlite3.connect(self._db_path, isolation_level=None, timeout=30.0)
             conn.row_factory = sqlite3.Row
-            # busy_timeout is set FIRST (journal_mode takes a file lock) and
-            # sized for the worst case, not the average: with synchronous=FULL
-            # every commit fsyncs the WAL, and on a slow CI disk a burst of
-            # write transactions can keep one thread queued well past 5s
-            # (seen twice on windows-latest: 'database is locked' under a
-            # 4-thread hammer). Production writes are seconds apart, so a
-            # generous timeout costs nothing there and removes the starvation
-            # window entirely. The connect(timeout=) and the pragma are kept
-            # in agreement (driver-level and library-level handlers).
+            # Set FIRST (journal_mode takes a file lock); sized for the
+            # worst case, not the average — synchronous=FULL fsyncs every
+            # commit, and a slow CI disk under contention needs headroom.
             conn.execute("PRAGMA busy_timeout=30000")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
@@ -191,17 +148,13 @@ class TrackingDB:
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
-        """Run a body inside one explicit transaction on this thread's conn.
-
-        ``isolation_level=None`` puts the driver in autocommit mode, so we
-        bracket multi-statement writes with explicit BEGIN/COMMIT and roll
-        back on any error — a transition's UPDATE and its audit INSERT are
-        all-or-nothing.
+        """Run a body inside one explicit transaction on this thread's
+        connection (autocommit mode otherwise): a transition's UPDATE and
+        its audit INSERT are all-or-nothing.
         """
         conn = self._conn()
-        # BEGIN IMMEDIATE takes the write lock up front, so concurrent writers
-        # queue on busy_timeout instead of deadlocking on a lock upgrade (the
-        # classic WAL multi-writer "database is locked" trap).
+        # BEGIN IMMEDIATE takes the write lock up front, so writers queue
+        # on busy_timeout instead of deadlocking on a lock upgrade.
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
@@ -265,17 +218,9 @@ class TrackingDB:
         return self._require_state(self._conn(), item_key)
 
     def count_known(self, item_keys: Sequence[str]) -> int:
-        """How many of ``item_keys`` the ledger actually holds a row for.
-
-        The closing question at the delivered -> filed seam: an item enqueued
-        for a run and then absent from the ledger has left the accounting, and
-        nothing downstream would notice — the counts report on the rows that
-        exist, so a row that never existed is invisible to every one of them.
-
-        Chunked because SQLite caps the number of bound parameters in one
-        statement, and a real run offers thousands of items. Duplicate keys in
-        the argument count once, which is what the caller means: the question
-        is how many DISTINCT offered items the ledger knows.
+        """How many of the DISTINCT ``item_keys`` the ledger holds a row
+        for — an item enqueued and then absent has left the accounting.
+        Chunked: SQLite caps bound parameters per statement.
         """
         keys = sorted(set(item_keys))
         if not keys:
@@ -284,9 +229,8 @@ class TrackingDB:
         found = 0
         for start in range(0, len(keys), _IN_CHUNK):
             chunk = keys[start : start + _IN_CHUNK]
-            # The only interpolation is a run of literal "?" placeholders, one
-            # per key in the chunk; the keys themselves bind as parameters —
-            # the same shape (and the same suppression) as ``pending_items``.
+            # The only interpolation is literal "?" placeholders; the keys
+            # themselves bind as parameters (same shape as pending_items).
             placeholders = ", ".join("?" for _ in chunk)
             sql = f"SELECT COUNT(*) AS n FROM items WHERE item_key IN ({placeholders})"  # noqa: S608
             row = conn.execute(sql, chunk).fetchone()
@@ -294,11 +238,8 @@ class TrackingDB:
         return found
 
     def attempts_of(self, item_key: str) -> int:
-        """Return the retry-attempt count of ``item_key`` (raises ``KeyError``).
-
-        The count is bumped by the ledger itself on every RETRY_WAIT write,
-        so it stays durable across resumed runs — the engine's retry budget
-        survives a crash.
+        """Return the retry-attempt count of ``item_key`` (raises
+        ``KeyError``); durable across resumed runs.
         """
         row = (
             self._conn()
@@ -318,17 +259,10 @@ class TrackingDB:
         error_type: str | None = None,
         destination_doc_id: str | None = None,
     ) -> None:
-        """Move ``item_key`` to ``new_state`` and append an audit row.
-
-        Validates the transition (loud failure on an illegal move), then
-        performs the UPDATE and the ``transitions`` INSERT in one
-        transaction. Bumps ``attempts`` when ``new_state`` is RETRY_WAIT;
-        sets ``claimed_by = run_id`` for non-terminal states and NULL for
-        terminal ones. Raises ``KeyError`` for an unknown ``item_key``.
-
-        Does NOT fence on ``claimed_by``: two runs may legally advance the
-        same item in sequence. Same-item exclusivity is the scheduler's
-        job (batch/parallel PR), not the ledger's.
+        """Contract: validates the transition, then writes the UPDATE and
+        the audit INSERT in one transaction; raises ``KeyError`` for an
+        unknown ``item_key``. Does not fence on ``claimed_by`` —
+        same-item exclusivity is the scheduler's job, not the ledger's.
         """
         with self._connection() as conn:
             current = self._require_state(conn, item_key)
@@ -359,19 +293,9 @@ class TrackingDB:
             self._record_transition(conn, item_key, run_id, current, new_state, error_type)
 
     def recover(self, run_id: str) -> dict[str, int]:
-        """Rewind every mid-flight item to a safe state on a resumed run.
-
-        Applies :data:`CRASH_RECOVERY` to each item currently in a
-        recoverable active state and returns counts keyed by the recovered-to
-        state value.
-
-        Two of these recovery edges (RESOLVING_PATIENT -> PENDING and
-        UPLOADING -> UPLOAD_INTERRUPTED) are deliberately NOT in
-        :data:`LEGAL_TRANSITIONS`: the forward graph never lets work flow
-        backward, but recovery must. So recovery is a distinct, privileged
-        code path that bypasses :func:`validate_transition` while STILL
-        writing the same audit rows (stamped ``error_type='CrashRecovery'``),
-        so the rewind is fully traceable.
+        """Rewind every mid-flight item via :data:`CRASH_RECOVERY`, counts
+        keyed by the recovered-to state; bypasses :func:`validate_transition`
+        deliberately (51) but still writes the audit row for traceability.
         """
         counts: dict[str, int] = {}
         with self._connection() as conn:
@@ -430,13 +354,8 @@ class TrackingDB:
         ]
 
     def pending_count(self) -> int:
-        """How many items still owe work — the same states :meth:`pending_items`
-        returns, counted rather than listed.
-
-        Here and not in the caller: a reader that decided for itself which
-        states count as pending would be a second definition, free to drift
-        from this one. A caller showing a truncated list needs the true total
-        to say so honestly.
+        """How many items still owe work — :meth:`pending_items`'s states,
+        counted so a truncated list can report its true total honestly.
         """
         placeholders = ", ".join("?" for _ in _PENDING_STATES)
         row = (
@@ -460,10 +379,8 @@ class TrackingDB:
     # --- read accessors (for reports — counts/ids/type names only) ---
 
     def latest_run_id(self) -> str | None:
-        """The most-recent run id (by ``started_at``), or None if there are none.
-
-        The upload console shows one current run; this resolves it without the
-        caller reaching into the ledger's connection. Log-safe (a run id only).
+        """The most-recent run id (by ``started_at``), or ``None``. The
+        upload console shows one current run; log-safe (a run id only).
         """
         row = (
             self._conn()
@@ -473,12 +390,9 @@ class TrackingDB:
         return row["run_id"] if row is not None else None
 
     def run_info(self, run_id: str) -> dict[str, str | None]:
-        """Return the ``runs`` row for ``run_id`` (raises ``KeyError`` if absent).
-
-        Exposes the run's destination, timestamps, and abort reason for the
-        report writer without reaching into the ledger's privates. Every value
-        is log-safe: a destination name, ISO timestamps, and an abort *type*
-        name (never a patient value).
+        """The ``runs`` row for ``run_id`` (raises ``KeyError`` if
+        absent): destination, timestamps, and abort *type* name — every
+        value log-safe.
         """
         row = (
             self._conn()
@@ -499,12 +413,8 @@ class TrackingDB:
         }
 
     def error_type_histogram(self, run_id: str) -> dict[str, int]:
-        """Count audit transitions by ``error_type`` for one run.
-
-        Reads the append-only ``transitions`` table and tallies the non-null
-        ``error_type`` values (exception *type* names only — the schema stores
-        nothing else there) for ``run_id``. Surfaces the failure-shape mix in
-        a run report without exposing any item detail.
+        """Count audit transitions by ``error_type`` (exception type names
+        only) for one run — the failure-shape mix, with no item detail.
         """
         rows = (
             self._conn()
@@ -518,10 +428,8 @@ class TrackingDB:
         return {row["error_type"]: row["n"] for row in rows}
 
     def attempts_histogram(self) -> dict[int, int]:
-        """Count items by their durable ``attempts`` value (counts only).
-
-        Keyed by attempt count, valued by how many items have it — a histogram
-        of how hard each item was to land, for the run report.
+        """Count items by their durable ``attempts`` value: how hard each
+        item was to land, for the run report.
         """
         rows = (
             self._conn()

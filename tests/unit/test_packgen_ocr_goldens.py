@@ -1,18 +1,11 @@
-"""The OCR layout-evidence goldens: eight synthetic cases, two metric families.
+"""The OCR layout-evidence goldens: eight synthetic cases (short, long,
+empty, multiline, table, attachment, pagination, font fallback), with
+visual similarity measured SEPARATELY from semantic fidelity so
+neither can waive the other.
 
-The decision record names the fixture set a learned style pack has to clear
-before a human approves it — short, long, empty, multiline, table, attachment,
-pagination and font fallback — and requires that visual similarity be measured
-SEPARATELY from semantic fidelity, so neither can waive the other. These tests
-are that gate.
-
-Every page is drawn by ``_ocr_pages`` and then rasterized, so the PDF handed to
-the worker genuinely has no text objects: this exercises the real Tesseract
-binary against real pixels. No sample PDF is checked in; nothing here is
-patient-derived.
-
-Regenerate with ``python tools/regen_ocr_goldens.py`` — deliberately, in a
-commit that intends the change.
+Every page is drawn by ``_ocr_pages`` and rasterized — real Tesseract
+against real pixels, no text objects, no sample PDF checked in.
+Regenerate with ``python tools/regen_ocr_goldens.py``, deliberately.
 """
 
 from __future__ import annotations
@@ -117,12 +110,10 @@ def test_fixture_page_still_draws_what_the_golden_scored(
 def test_semantic_fidelity_clears_its_own_threshold(
     case: OcrCase, golden: dict[str, object], tmp_path: Path
 ) -> None:
-    """Did the engine read the words the page was drawn with?
-
-    Reported and gated on its own. A page can score perfectly here and still
-    have every word in the wrong place, which is why the visual test exists
-    beside it and neither is allowed to stand in for the other.
-    """
+    """Did the engine read the words the page was drawn with? Reported
+    and gated on its own — a page can score perfectly here and still
+    have every word in the wrong place, which is why the visual test
+    exists beside it."""
     recorded = golden["cases"][case.key]  # type: ignore[index]
     floor = golden["thresholds"]["semantic_min_ratio"]  # type: ignore[index]
     truth, observed, _boxes, refusal = _observe(case, tmp_path)
@@ -139,14 +130,11 @@ def test_semantic_fidelity_clears_its_own_threshold(
 def test_visual_geometry_clears_its_own_thresholds(
     case: OcrCase, golden: dict[str, object], tmp_path: Path
 ) -> None:
-    """Did it put them where they were drawn?
-
-    Two numbers, because the overlap metric has a ceiling near 0.55 by
-    construction — a native word box spans the font's ascender-to-descender
-    metric while a recognized box hugs the ink — and the centre offset does
-    not. The blank page measures neither, and reports so rather than passing by
-    default.
-    """
+    """Did it put them where they were drawn? Two numbers, since the
+    overlap metric has a ceiling near 0.55 by construction (native vs.
+    recognized boxes measure differently) while the centre offset does
+    not. A blank page measures neither, and reports so rather than
+    passing by default."""
     recorded = golden["cases"][case.key]  # type: ignore[index]
     thresholds = golden["thresholds"]
     truth, _observed, boxes, _refusal = _observe(case, tmp_path)
@@ -169,13 +157,10 @@ def test_visual_geometry_clears_its_own_thresholds(
 def test_recorded_words_match_on_the_engine_that_produced_them(
     case: OcrCase, golden: dict[str, object], tmp_path: Path
 ) -> None:
-    """Exact-match the recorded transcript — on the SAME engine version only.
-
-    The decision record refuses to promise byte-identical output across engine
-    versions or operating systems, so a different version is compared against
-    the threshold tests above and its exact transcript is not asserted. On the
-    version that produced the golden, drift is a diff.
-    """
+    """Exact-match the recorded transcript — on the SAME engine version
+    only: the decision record refuses to promise byte-identical output
+    across engine versions or operating systems, so a different
+    version is compared against the threshold tests above instead."""
     if _WORKER is None or _WORKER.engine_version != golden["engine_version"]:
         pytest.skip(f"golden baseline is {golden['engine_version']}; this host differs")
     recorded = golden["cases"][case.key]  # type: ignore[index]
@@ -184,13 +169,10 @@ def test_recorded_words_match_on_the_engine_that_produced_them(
 
 
 def test_the_blank_page_is_a_refusal_and_not_an_empty_success(tmp_path: Path) -> None:
-    """A rasterized blank page recognizes as nothing, and nothing is refused.
-
-    This is the distinction the whole feature turns on. Asking the engine and
-    getting no words is not the same as never asking: the page was observed,
-    the observation was empty, and a sample with no text at all still cannot be
-    learned from — so it raises rather than emitting a pack with a hole in it.
-    """
+    """A rasterized blank page recognizes as nothing, and nothing is
+    refused: the page was observed and the observation was empty, but
+    a sample with no text at all still cannot be learned from, so it
+    raises rather than emitting a pack with a hole in it."""
     blank = next(case for case in CASES if case.key == "empty")
     native = draw_pdf(blank, tmp_path / "blank.pdf")
     raster = rasterize(native, tmp_path / "blank.raster.pdf")

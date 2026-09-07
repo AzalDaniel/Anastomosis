@@ -1,30 +1,12 @@
-"""Learn a source format from one example file (the authoring half of W2).
-
-The interpreter (:mod:`anastomosis.sources.learned.interpreter`) *executes* a
-mapping; this module *proposes* one. Given a single example export it:
-
-1. detects the file format and a stable column fingerprint
-   (:func:`detect_format`);
-2. profiles each column LOCALLY — counts, distinctness, an inferred type, and a
-   PHI-safe masked shape — never echoing a raw value (:func:`profile_columns`);
-3. ranks canonical target fields for each column through a pluggable
-   :class:`CandidateScorer` (the alpha's :class:`FuzzyNameScorer` uses name
-   similarity + a shipped synonym table + type affinity — no ML, no network);
-4. assembles the operator's confirmed choices into a validated
-   :class:`~anastomosis.sources.learned.spec.MappingSpec`, round-trips it
-   against the example to PROVE no column is silently dropped, and saves it.
-
-The scorer is a Protocol seam: a future local-embedding or schema-only hosted
-scorer slots in here with no change to the wizard or interpreter. None ship in
-the alpha — the deterministic matcher plus the mandatory human-confirm step is
-the whole safety story.
-
-PHI (the load-bearing rule of this module): inference runs entirely locally and
-NO patient value ever leaves it — not to a log, not to an event, not into the
-analysis summary. The only strings that surface are column NAMES, inferred type
-labels, counts, and masked shapes. The mask allow-lists the separators it keeps
-rather than deny-listing the characters it hides, so a script nobody thought of
-is masked rather than shown.
+"""Learn a source format from one example file: the interpreter
+(:mod:`anastomosis.sources.learned.interpreter`) *executes* a mapping,
+this module *proposes* one — detect format, profile columns locally,
+score canonical targets via a pluggable :class:`CandidateScorer`, then
+round-trip the confirmed :class:`~anastomosis.sources.learned.spec.MappingSpec`
+against the example to prove no column drops (29), and save it. PHI (2):
+inference is local and no patient value ever leaves it — only column
+names, inferred types, counts, and masked shapes surface, the mask
+allow-listing kept separators rather than deny-listing hidden characters.
 """
 
 from __future__ import annotations
@@ -95,12 +77,10 @@ _BINARY_SIGNATURES = (b"%PDF-", b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 
 def _reject_non_tabular_source(path: Path) -> bytes:
     """Fail closed for files that cannot be a flat learned-source export.
-
-    Suffixes are a useful first gate, but content decides extensionless input.
-    In particular, an XML C-CDA with an arbitrary suffix must never fall through
-    the CSV sniffer as a one-column "table". Diagnostics intentionally identify
-    only the file and format class, never its contents.
-    """
+    Suffixes are a first gate, but content decides extensionless input —
+    an XML C-CDA must never fall through the CSV sniffer as a one-column
+    "table". Diagnostics name only the file and format class, never its
+    contents."""
     if path.suffix.lower() in _UNSUPPORTED_STRUCTURED_SUFFIXES:
         raise MappingError(f"source example {path} is not a supported flat structured export")
     try:
@@ -506,14 +486,10 @@ def _chosen(
 
 
 def _decided_confidence(analysis: SourceAnalysis, source: str, target: str) -> float:
-    """The confidence a saved mapping records for one column's decision.
-
-    The scorer's number describes the scorer's own pick. A reviewer who chose
-    a DIFFERENT target for the column made that number meaningless for what is
-    actually saved — writing it into MAPPING.md would show a low "confidence"
-    beside a field a person deliberately chose. A confirmed override is 1.0;
-    an accepted suggestion keeps the score that proposed it.
-    """
+    """The confidence a saved mapping records for one column's decision:
+    1.0 for a confirmed override (the scorer's number described its own
+    pick, not the reviewer's different choice), else the score that
+    proposed the accepted suggestion."""
     suggested = next((s for s in analysis.suggestions if s.source_path == source), None)
     if suggested is None or suggested.target_path != target:
         return 1.0
@@ -521,14 +497,10 @@ def _decided_confidence(analysis: SourceAnalysis, source: str, target: str) -> f
 
 
 def _refused_review(exc: ValidationError, mapping_id: str) -> MappingError:
-    """A bad review, refused in this package's one error type.
-
-    The same door `load_spec` already guards, for the same reason: pydantic's
-    own rendering appends ``input_value=`` — the whole assembled dict — to
-    every line, and no message leaving this module may carry that. ``loc`` and
-    ``msg`` are the safe halves: field paths, and the validators' own
-    sentences, which name columns, targets and roles but never a value.
-    """
+    """A bad review, refused in this package's one error type (2):
+    pydantic's own rendering appends ``input_value=``, the whole
+    assembled dict, so only ``loc``/``msg`` — field paths and validator
+    sentences, never a value — leave this module."""
     said = "; ".join(
         f"{'.'.join(str(part) for part in err['loc']) or 'spec'}: {err['msg']}"
         for err in exc.errors(include_input=False, include_url=False)
@@ -548,18 +520,11 @@ def build_mapping(
     now: datetime | None = None,
     destination_binding: DestinationBinding | None = None,
 ) -> MappingSpec:
-    """Assemble a reviewed :class:`MappingSpec` from confirmed decisions.
-
-    ``decisions`` maps a source column to ``(target_path, transform)``; when
-    omitted, the analysis suggestions are accepted as-is. Columns with no
-    decision (and no suggestion) are recorded as ``unmapped_source_fields`` —
+    """Assemble a reviewed :class:`MappingSpec` from confirmed decisions
+    (63): unmapped columns are recorded as ``unmapped_source_fields``,
     still preserved in ``extensions`` by the interpreter, never dropped.
-
-    ``destination_binding`` records the destination the operator chose BEFORE
-    teaching, pinned by its profile hash. ``None`` leaves the mapping unbound —
-    it runs at any destination, which is what every mapping taught before this
-    existed does.
-    """
+    ``destination_binding`` pins the destination chosen before teaching
+    (32) by its profile hash; ``None`` leaves the mapping unbound."""
     chosen = _chosen(analysis, decisions)
     reserved = {k for k in (analysis.patient_key, analysis.encounter_key) if k is not None}
     unmapped = [c for c in analysis.fmt.columns if c not in chosen and c not in reserved]
@@ -568,12 +533,9 @@ def build_mapping(
             "cannot build a mapping without a patient_key — confirm one in the wizard"
         )
     try:
-        # The per-FIELD validators fire in this comprehension — an unknown
-        # target, a verb with the wrong arity — so it stands inside the same
-        # door as the whole-spec model validators below. The first translation
-        # covered only the second half, and a review picking `const:` before
-        # typing its wording escaped as raw ValidationError, `input_value=`
-        # and all.
+        # The per-FIELD validators (unknown target, wrong verb arity) fire in
+        # this comprehension, so it must stand inside the same door (2) as the
+        # whole-spec model validators below.
         field_mappings = [
             FieldMapping(
                 source_path=source,
@@ -633,17 +595,11 @@ def _faithfully_mapped(spec: MappingSpec) -> set[str]:
 
 
 def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
-    """Apply ``spec`` to its example and prove no UN-mapped value is dropped.
-
-    Checking column *names* is not enough — a row-grain mismatch can collapse a
-    populated column to a single last-value-wins cell while the column name is
-    still "present". So this verifies per VALUE: every distinct, populated value
-    of every un-mapped, non-key column must survive verbatim in some record's
-    ``extensions``. A column whose values are not all preserved is reported (and
-    the wizard refuses to save). Mapped columns are the operator's explicit
-    transform choice (a sentinel or ``const`` may legitimately null a cell), so
-    they are trusted; the lossless guarantee is about the columns left un-mapped.
-    """
+    """Apply ``spec`` to its example and prove no un-mapped value is
+    dropped (29): column NAMES are not enough (a row-grain mismatch can
+    collapse one to a last-value-wins cell), so every distinct value of
+    every un-mapped, non-key column must survive verbatim in
+    ``extensions``. Mapped columns are the operator's trusted choice."""
     adapter = LearnedSourceAdapter(spec)
     try:
         records = list(adapter.load(example))
@@ -681,19 +637,11 @@ def round_trip(spec: MappingSpec, example: Path) -> RoundTripReport:
 
 
 def _atomic_write(path: Path, text: str, mode: int) -> None:
-    """Write ``text`` to ``path`` atomically and owner-only (temp + os.replace).
-
-    Encoded here and written as BYTES, which is not a style preference. This
-    helper writes ``mapping.json``, and the trust record beside it stores a
-    sha256 of the string that was passed in — so the bytes that land on disk
-    have to be that string and nothing else. Text mode with the default
-    ``newline`` translates every ``\n`` to ``\r\n`` on Windows, which meant
-    the digest described a file that had never existed: verification hashes
-    what it reads, and on Windows that never matched. Every freshly saved
-    mapping reported itself as edited since review, so the one warning that
-    exists to catch a real post-review edit fired on all of them and told an
-    operator nothing.
-    """
+    """Write ``text`` to ``path`` atomically and owner-only (14; a fork of
+    :mod:`anastomosis.core.atomic`). Written as BYTES, not text mode: the
+    trust record stores a sha256 of the exact string passed in, and text
+    mode's newline translation on Windows would hash a file that never
+    existed."""
     tmp = path.with_name(f".{path.name}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
@@ -760,13 +708,10 @@ def _mapping_markdown(spec: MappingSpec) -> str:
 
 
 def save_mapping(spec: MappingSpec, base_dir: Path) -> Path:
-    """Persist a reviewed mapping under ``base_dir/<mapping_id>/`` (owner-only).
-
-    Refuses to write unless ``spec.human_reviewed`` is set — the data-only trust
-    gate. Writes ``mapping.json`` (atomic, 0600), a human-readable ``MAPPING.md``,
-    and a ``source_trust.json`` content hash that later WARNS (never blocks) if
-    the mapping is hand-edited after review.
-    """
+    """Persist a reviewed mapping under ``base_dir/<mapping_id>/``
+    (owner-only, 29): refuses unless ``spec.human_reviewed`` is set.
+    Writes ``mapping.json``, ``MAPPING.md``, and a ``source_trust.json``
+    hash that later WARNS, never blocks, on a hand-edit after review."""
     if not spec.human_reviewed:
         raise MappingError("refusing to save a mapping that was not human-reviewed")
     target_dir = base_dir / spec.mapping_id

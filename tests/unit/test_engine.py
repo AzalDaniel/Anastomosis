@@ -98,8 +98,8 @@ def _same_day_record(*encounter_ids: str) -> PatientRecord:
     )
 
 
-#: Three ids agreeing on the first eight characters after the hyphens come out
-#: — the width the allocator used to suffix with, and stop.
+#: Three ids agreeing on the first eight characters after the hyphens come
+#: out — the width the allocator suffixes with.
 _PREFIX_TWINS = (
     "feedface-0000-0000-0000-00000000000a",
     "feedface-0000-0000-0000-00000000000b",
@@ -108,18 +108,11 @@ _PREFIX_TWINS = (
 
 
 def test_same_day_charts_never_share_a_file(pack: LoadedPack, tmp_path: Path) -> None:
-    """Every encounter gets its own chart, however alike the ids are.
-
-    The suffix was the id's first eight characters, applied once, with no check
-    that the suffixed name was free either — so the third same-day visit landed
-    on the second and took it with it. Nothing raised: the run reported
-    "3 rendered, 0 failed", QA passed every file it could find, and one chart
-    was simply gone.
-
-    Prefix-identical ids are the normal case, not a corner: sequential
-    Millennium ``ENCNTR_ID``s share long prefixes by construction, and every
-    GUID in this repo's own pf_tebra fixture starts ``feedface``.
-    """
+    """Every encounter gets its own chart, however alike the ids are: the
+    allocator must check the suffixed name is free too, not just apply a
+    fixed id-prefix suffix once. Prefix-identical ids are the normal
+    case, not a corner: sequential Millennium ``ENCNTR_ID``s share long
+    prefixes, as does every ``feedface`` GUID in this repo's fixtures."""
     record = _same_day_record(*_PREFIX_TWINS)
     result = _engine(pack, FakeFactory()).run([record], tmp_path / "out")
 
@@ -128,17 +121,16 @@ def test_same_day_charts_never_share_a_file(pack: LoadedPack, tmp_path: Path) ->
     assert len({p.name for p in result.rendered}) == len(_PREFIX_TWINS), (
         "two encounters share one file — one chart was overwritten"
     )
-    # The count in the report and the files on disk are the same number. That
-    # equality is the whole claim; it was false before.
+    # The count in the report and the files on disk must be the same number.
     assert len(list((tmp_path / "out").glob("*.pdf"))) == len(_PREFIX_TWINS)
 
 
 def test_the_render_index_maps_each_chart_to_exactly_one_encounter(
     pack: LoadedPack, tmp_path: Path
 ) -> None:
-    """The sidecar exists so a chart is never misattributed, so it has to be
-    injective — one filename, one encounter. It was the index's own last-wins
-    merge that turned the overwrite into a clean-looking run."""
+    """The sidecar exists so a chart is never misattributed, so it must
+    be injective — one filename, one encounter — never a last-wins merge
+    that could turn an overwrite into a clean-looking run."""
     out = tmp_path / "out"
     record = _same_day_record(*_PREFIX_TWINS)
     _engine(pack, FakeFactory()).run([record], out)
@@ -167,16 +159,11 @@ def test_two_encounters_sharing_an_id_still_get_a_chart_each(
 def test_a_chart_that_cannot_be_named_is_reported_not_overwritten(
     pack: LoadedPack, tmp_path: Path
 ) -> None:
-    """When the id itself stops separating charts, the run says so.
-
-    The allocator can build three names from one id — bare, short suffix, full
-    suffix — so it takes a FOURTH encounter on that same id to exhaust them.
-    Deeply corrupt input, and the point is what happens then: a chart nothing
-    can name is a failure, reported and counted and carried by the exit code,
-    not a chart quietly dropped. The rest of the batch still renders, which is
-    what a migration needs — you learn about the one bad record and keep the
-    other several thousand.
-    """
+    """When the id itself stops separating charts, the run says so: the
+    allocator can build three names from one id (bare, short suffix, full
+    suffix), so a FOURTH encounter on that id exhausts them, and a chart
+    nothing can name must be a reported failure, not silently dropped —
+    while the rest of the batch still renders."""
     shared = "feedface-0000-0000-0000-0000000000ff"
     record = _same_day_record(
         shared, shared, shared, shared, "feedface-0000-0000-0000-0000000000fe"

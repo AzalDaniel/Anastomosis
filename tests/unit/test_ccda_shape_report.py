@@ -46,13 +46,10 @@ def tool() -> object:
     ],
 )
 def test_a_patient_value_cannot_leave(tool: object, value: object) -> None:
-    """The vocabulary IS the control.
-
-    Nothing here is rejected by a deny-list of things that look like PHI —
-    that would only catch the spellings someone thought of. It is rejected
-    because a patient's name is not an element name, an OID, a LOINC code or
-    an integer, and those are the only things the whitelist admits.
-    """
+    """The vocabulary IS the control: rejected not by a deny-list of
+    things that look like PHI, but because a patient's name is not an
+    element name, an OID, a LOINC code, or an integer — the only things
+    the whitelist admits."""
     assert tool._safe(value) is False  # type: ignore[attr-defined]
 
 
@@ -88,23 +85,11 @@ def test_a_timestamp_becomes_a_precision_not_a_date(tool: object) -> None:
 
 
 def test_it_counts_the_facts_that_went_nowhere(tool: object, tmp_path: Path) -> None:
-    """The reason to run this at all.
-
-    A document can parse cleanly and still produce a record whose values reach
-    no chart. When this counter was written, all eight of the fixture's
-    observations were attached to no encounter — the defect the external audit
-    reproduced independently — and a report that only counted `observations`
-    would have called that a success.
-
-    Seven of those eight are attached now (#258), and this test is what that
-    fix looks like from the outside. The eighth is a smoking status, which the
-    linker declines to place on a visit on purpose: social history is a fact
-    about the patient, not a measurement taken at an appointment, and hanging
-    it on whichever encounter shares its calendar day would be a guess dressed
-    as a record. So the number to assert is not zero, and pinning it exactly is
-    the point — a counter that only ever says "some" cannot tell a fix from a
-    regression.
-    """
+    """A document can parse cleanly and produce a record whose values
+    reach no chart: seven of the fixture's eight observations attach to
+    an encounter, and the eighth (a smoking status, #258) does not.
+    Pinning that count exactly is the point — "some" cannot tell a fix
+    from a regression."""
     out = tmp_path / "report.json"
     import sys
 

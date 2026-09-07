@@ -1,37 +1,17 @@
 """The statistics: infer a design system from harvested sample spans.
 
-Stdlib only — no numpy, no torch. Every function takes the
-:class:`~anastomosis.packgen.extract.DocumentSample` list produced by
-:mod:`anastomosis.packgen.extract` and returns a frozen, deterministically
-ordered structure. :func:`analyze` aggregates them into :class:`PackAnalysis`,
-the contract the draft-pack emitter builds on.
+Stdlib only, no numpy/torch. Every function takes the
+:class:`~anastomosis.packgen.extract.DocumentSample` list and returns a
+frozen, deterministic structure; :func:`analyze` aggregates them into
+:class:`PackAnalysis`, the emitter's contract. Clustering is simple greedy
+bucketing, not DBSCAN, so an operator can read why a level was inferred.
 
-Clustering is intentionally simple and explainable (sorted greedy bucketing
-within a tolerance), not DBSCAN — a practice operator must be able to read why
-a column or type level was inferred.
-
-PHI rule: the only span text that ever reaches a human-readable summary is the
-*static* text. That used to mean "recurring across a supermajority of samples",
-described as "by construction template labels/headings, not per-patient
-values" — and a count of samples cannot settle who wrote a string. With three
-samples the bar was two, so anything two patients happened to share landed in
-the static set (#200, reproduced).
-
-It now takes two things: a string must be on EVERY sample, and it must own a
-place on the page that nothing else ever occupies. The second is the test
-frequency could not do — a label is printed BY the form and holds its slot on
-every chart, while a value is printed INTO the form and shares its slot with
-whatever the next patient had there. Still a filter rather than a proof: a
-value every sample happens to share, in a fixed cell, has no competitor to
-give it away, which is why the summary is captioned for a person to read
-rather than presented as safe.
-
-CAVEAT: the split assumes samples are DISTINCT patients/encounters — copies
-of one patient's chart make that patient's values recur like template text
-and surface as "static". Distinct patients are not on their own enough
-either; :data:`anastomosis.packgen.emit.SAME_PATIENT_CAVEAT` says why, and the
-wizard restates it.
-"""
+PHI: the only span text reaching a summary is *static* text — on every
+sample AND owning an exclusive page slot (see :func:`infer_static_text`,
+#200); neither test alone is a proof, so the summary stays captioned for
+a person to read. CAVEAT: assumes samples are DISTINCT patients/
+encounters — :data:`anastomosis.packgen.emit.SAME_PATIENT_CAVEAT` says
+why that alone still isn't enough."""
 
 from __future__ import annotations
 
@@ -72,13 +52,9 @@ _SIZE_TOLERANCE = 0.25  # type-scale font-size cluster width
 _COLUMN_TOLERANCE = 1.0  # x0 column-start cluster width
 
 # A section HEADING is recurring when it appears in at least this fraction of
-# samples — a supermajority rather than all of them, because a chart whose
-# allergies section is empty may not print that heading at all.
-#
-# It used to decide the static-text list too, and could not: recurring is a
-# frequency count, and a value two patients share recurs exactly like a label
-# the form prints. That list now asks a question about the page instead (see
-# `infer_static_text`).
+# samples — a supermajority, not all of them, since an empty section's
+# heading may not print at all. `infer_static_text` needs a stricter test
+# than frequency (see there) and does not use this constant.
 _STATIC_FRACTION = 0.6
 
 #: The sentence every OCR-touched artifact carries, verbatim, in every place a
@@ -99,13 +75,10 @@ _MAX_COLUMNS = 6
 
 
 def _normalize(text: str) -> str:
-    """Collapse whitespace and strip — the canonical form text is compared in.
-
-    Matches the golden tooling's normalization so a heading recurs identically
-    regardless of intra-span whitespace. One definition, shared with the
-    native/OCR duplicate test in :mod:`anastomosis.packgen.evidence`, so a
-    string recurs identically whichever stream produced it.
-    """
+    """Collapse whitespace and strip — matches the golden tooling's
+    normalization and the native/OCR duplicate test in
+    :mod:`anastomosis.packgen.evidence`, so a string recurs identically
+    regardless of source or intra-span whitespace."""
     return normalized_text(text)
 
 
@@ -147,14 +120,11 @@ class TypeScale:
 
 
 def _cluster_styles(spans: Sequence[Span]) -> list[tuple[str, float, bool, int]]:
-    """Group spans into (font, size, bold) clusters with weighted counts.
-
-    Two spans share a cluster when font + bold match and their sizes are within
-    :data:`_SIZE_TOLERANCE`. Each span is weighted by its character count, so a
-    one-word 13pt title does not out-vote a paragraph of 11pt body when picking
-    the most-used (body) cluster. The reported size is the count-weighted mean,
-    rounded to 0.1pt.
-    """
+    """Groups spans into (font, size, bold) clusters with weighted counts.
+    Two spans share a cluster when font+bold match and sizes are within
+    :data:`_SIZE_TOLERANCE`; each is weighted by character count, so a
+    one-word title doesn't out-vote a paragraph of body text when picking
+    the most-used (body) cluster. Reported size is the weighted mean."""
     # key -> [total_weight, weighted_size_sum] grouped first by exact size, then
     # merged across the tolerance below.
     exact: dict[tuple[str, float, bool], int] = Counter()
@@ -190,16 +160,11 @@ def _collapse_bucket(bucket: list[tuple[float, int]]) -> tuple[float, int]:
 
 
 def infer_type_scale(samples: Sequence[DocumentSample]) -> TypeScale:
-    """Cluster every span into (font, size, bold) levels and guess roles.
-
-    Roles: the most-used cluster is ``body``; clusters *larger* than body are
-    ``h1``/``h2``/``h3`` by descending size (capped at three, the rest fall to
-    the nearest); clusters smaller than body are ``small``. Bold clusters at or
-    below body size that are not the body itself are also treated as headings
-    (the section-band case: bold 10.5pt headings under 11pt body) and take the
-    next available h-role — the "repeated bold spans → section heading
-    taxonomy" heuristic.
-    """
+    """Clusters spans into (font, size, bold) levels and guesses roles:
+    the highest-weight cluster is ``body``; larger ones are h1/h2/h3 by
+    descending size (capped at three); smaller ones are ``small``. A bold
+    cluster at or below body size, not body itself, is also a heading
+    (10.5pt bold under 11pt body) and takes the next h-role."""
     all_spans = [span for sample in samples for span in sample.spans]
     clusters = _cluster_styles(all_spans)
     if not clusters:
@@ -246,15 +211,11 @@ def infer_type_scale(samples: Sequence[DocumentSample]) -> TypeScale:
 
 @dataclass(frozen=True)
 class SectionCandidate:
-    """A recurring heading-level string — a likely pack section heading.
-
-    ``provenance`` is where the spans behind it came from: real text objects,
-    a text layer floating over a scan, this run's OCR, or
-    :data:`~anastomosis.packgen.evidence.MIXED_EVIDENCE` when more than one
-    stream contributed. A heading recognized from pixels is a layout
-    hypothesis, and the emitted pack has to be able to say so per section
-    rather than about itself as a whole.
-    """
+    """A recurring heading-level string — a likely section heading.
+    ``provenance`` is where its spans came from (real text, a floating
+    layer, this run's OCR, or MIXED_EVIDENCE for more than one stream) —
+    a recognized heading is a hypothesis, and the pack says so per
+    section."""
 
     text: str  # normalized
     role: str  # the type-scale role the span carried ("h1"/"h2"/"h3")
@@ -278,20 +239,11 @@ def _style_role(scale: TypeScale) -> dict[tuple[str, float, bool], str]:
 
 
 def infer_section_taxonomy(samples: Sequence[DocumentSample]) -> list[SectionCandidate]:
-    """Recurring heading-level texts → the pack's section-heading taxonomy.
-
-    A heading-level span is one whose (font, size, bold) cluster carries an
-    h-role in the inferred type scale. A candidate is kept when its normalized
-    text recurs across at least ``ceil(0.6 * N)`` samples. That drops any
-    per-patient heading no two charts happen to share, which is a smaller
-    claim than dropping per-patient headings — see :func:`infer_static_text`
-    for what counting samples can and cannot settle.
-
-    With a SINGLE sample everything recurs trivially (threshold 1), so every
-    heading is returned flagged low-confidence (``count == 1``). More samples
-    sharpen the static/per-patient split — this is documented and is why the
-    e2e validation renders several encounters.
-    """
+    """Recurring heading-level texts → the section-heading taxonomy, kept
+    when a text recurs across >= ``ceil(0.6 * N)`` samples — a smaller
+    claim than dropping every per-patient heading (:func:`infer_static_text`).
+    A SINGLE sample makes everything recur trivially (threshold 1),
+    flagged via ``count == 1``."""
     scale = infer_type_scale(samples)
     style_role = _style_role(scale)
     heading_roles = _heading_roles(scale)
@@ -352,20 +304,11 @@ def _slot(span: Span) -> tuple[int, int, int]:
 
 
 def _exclusive_slots(samples: Sequence[DocumentSample]) -> set[str]:
-    """Texts that OWN a place on the page: some slot where, across every
-    sample, nothing else was ever printed.
-
-    This is the content test a frequency count cannot do. A field label is
-    printed by the form, so its slot holds the same string on every chart. A
-    value is printed into the form, so its slot holds whatever that patient's
-    data put there — and two patients who share a value are then visibly
-    competing for a slot with everyone who does not.
-
-    It is a filter, not a proof. A value every single sample happens to share,
-    sitting in a fixed cell, has no competitor to give it away and still gets
-    through — which is why the emitted list stays quarantined and captioned for
-    the operator to read rather than treated as safe.
-    """
+    """Texts that OWN a page slot nothing else was ever printed in — the
+    test frequency alone cannot do. A label is printed BY the form and
+    holds its slot on every chart; a value is printed INTO the form and
+    shares its slot with the next patient's. Not a proof: a shared value
+    in a fixed cell has no competitor and still gets through."""
     occupants: dict[tuple[int, int, int], set[str]] = {}
     for sample in samples:
         for span in sample.spans:
@@ -376,30 +319,11 @@ def _exclusive_slots(samples: Sequence[DocumentSample]) -> set[str]:
 
 
 def infer_static_text(samples: Sequence[DocumentSample]) -> list[str]:
-    """The label vocabulary (``"DOB:"``, ``"Provider:"``) — text that belongs to
-    the FORM rather than to a patient — minus section headings.
-
-    Two tests, and a string has to pass both:
-
-    * it appears in EVERY sample, not a supermajority of them. The 0.6 rule
-      that used to decide this alone put the bar at two of three, so any value
-      two patients shared — a common diagnosis, an ethnicity — was promoted to
-      template chrome and written into the pack (#200, reproduced). The section
-      taxonomy still uses the supermajority, and should: a heading can be
-      legitimately absent from a chart whose section is empty, while a label
-      that is not on every chart is not this form's furniture.
-    * it OWNS a place on the page (:func:`_exclusive_slots`) — some slot where
-      nothing else was ever printed across the whole sample set. That is the
-      part frequency cannot do: it distinguishes the string the form prints
-      from the string printed INTO the form at that spot.
-
-    Neither test is a proof of authorship, and together they are still not one:
-    a value every sample happens to share, in a fixed cell, has no competitor
-    to give it away. What they do is take the count of samples out of a job it
-    was never able to do. The output stays quarantined and captioned for the
-    operator (see ``UNPLACED.txt`` and ``STATIC_LIST_NOTE``), because the last
-    word on whether a string belongs to a patient is a person's.
-    """
+    """The label vocabulary (``"DOB:"``, ``"Provider:"``), minus section
+    headings. Two tests, both required: on EVERY sample, not a
+    supermajority (the 0.6 bar let a two-patient value through, #200);
+    and it OWNS an exclusive page slot (:func:`_exclusive_slots`).
+    Neither is a proof; output stays quarantined and captioned."""
     seen: dict[str, set[int]] = {}
     for sample in samples:
         for span in sample.spans:
@@ -561,17 +485,11 @@ def _quantile(sorted_values: list[float], q: float) -> float:
 
 
 def infer_page_geometry(samples: Sequence[DocumentSample]) -> PageGeometry:
-    """Modal page width/height; margins from content-bbox quantiles.
-
-    Margins estimate the whitespace frame: left = 5th-percentile span x0, right
-    = page width - 95th-percentile span x1, top = 5th-percentile span y0,
-    bottom = page height - 95th-percentile span y1. Quantiles (not min/max)
-    shrug off the occasional full-bleed rule or stray glyph.
-
-    Mixed page sizes across samples: the MODAL geometry wins and minority
-    sizes are ignored (an operator mixing Letter and A4 samples gets the
-    majority's page; the wizard surfaces the inferred geometry for review).
-    """
+    """Modal page width/height; margins from content-bbox quantiles: left
+    = 5th-pct span x0, right = width - 95th-pct x1, top = 5th-pct y0,
+    bottom = height - 95th-pct y1 (quantiles, not min/max, shrug off a
+    stray glyph). Mixed page sizes: the MODAL geometry wins; minority
+    sizes are ignored."""
     sizes = Counter(size for sample in samples for size in sample.page_sizes)
     if not sizes:
         return PageGeometry(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -674,23 +592,11 @@ class PackAnalysis:
     evidence: LayoutEvidence = field(default_factory=LayoutEvidence)
 
     def summary_lines(self) -> list[str]:
-        """One-screen digest: counts, roles, geometry, and the STATIC text.
-
-        Static means "recurred across a supermajority of the samples", which is
-        a frequency count and not a proof of authorship. A value two patients
-        share recurs, classifies as static, and prints here (#200) — so this
-        digest is not the "no values shown" summary the CLI header calls it,
-        and the header says so now.
-
-        What frequency does settle: a value appearing in exactly one sample is
-        per-patient and is excluded upstream, so it can never surface here. The
-        tests assert that property, which is narrower than it reads.
-
-        SINGLE-SAMPLE runs break that property at the source: with one sample
-        the recurrence threshold is 1, so per-patient values classify as
-        "static". In that case NO span text is printed at all — counts,
-        roles, and geometry only, with a loud warning line.
-        """
+        """One-screen digest: counts, roles, geometry, and the STATIC
+        text. Section headings use the supermajority test, so a shared
+        value can still surface here — hence the caption. A SINGLE
+        sample breaks even that (threshold 1): nothing is printed,
+        counts and geometry only."""
         geom = self.page_geometry
         lines = [
             f"samples analyzed: {self.sample_count}"
@@ -735,17 +641,11 @@ class PackAnalysis:
         return lines
 
     def evidence_lines(self) -> list[str]:
-        """The provenance block: page classes, OCR counts, held conflicts.
-
-        Empty when no page was recognized — an all-native batch has nothing to
-        disclose. Otherwise it opens with the sentence that governs everything
-        the recognized half of this pack is allowed to be used for, because a
-        summary a person reads is where that has to appear, not only in a file
-        they may not open.
-
-        Counts and integers only: a conflict is a disagreement about a VALUE,
-        so its text is never quoted here or anywhere else.
-        """
+        """The provenance block: page classes, OCR counts, held
+        conflicts. Empty when no page was recognized; otherwise opens
+        with the sentence governing what the recognized half of this
+        pack may be used for. Counts and integers only — a conflict is
+        about a VALUE, so its text is never quoted here."""
         evidence = self.evidence
         if not evidence.review_required:
             return []

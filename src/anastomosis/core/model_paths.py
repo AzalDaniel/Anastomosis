@@ -1,30 +1,10 @@
-"""The closed set of canonical target paths a learned mapping may write to.
-
-A learned source mapping (:mod:`anastomosis.sources.learned`) is *data*: it says
-"source column X fills canonical field Y". For that to be safe — no embedded
-code, no arbitrary attribute writes — "field Y" must be drawn from a CLOSED,
-known enumeration rather than an open dotted-path the interpreter ``setattr``\\s
-blindly. This module is that enumeration.
-
-Two kinds of target paths exist:
-
-* **scalar paths** — derived by walking :class:`Patient` / :class:`Encounter`
-  ``model_fields`` and keeping only the scalar leaves (``str`` / date / number /
-  bool), e.g. ``patient.family_name`` or ``encounter.chief_complaint``. Deriving
-  them from the model means a field added to the canonical model becomes
-  mappable automatically, and a field *renamed* breaks the
-  ``test_model_paths`` coverage assertions loudly rather than silently dropping
-  a mapping target.
-* **assembled paths** — a small curated set the interpreter has explicit
-  construction logic for, because the canonical shape is a list or nested model
-  rather than a scalar: the single-address parts, the typed phone/email
-  telecom slots, the SSN/MRN/PRN identifier slots, and the note-section bodies.
-
-Everything OUTSIDE this set is never a mapping target; an unmapped source column
-is preserved in the owning object's ``extensions`` instead (the lossless rule).
-
-PHI: this module handles field *names* only (never patient values) and is pure —
-introspection of the pydantic models, no I/O.
+"""The closed set of canonical target paths a learned mapping may write to
+(30) — never an open dotted-path the interpreter ``setattr``\\s blindly.
+Scalar paths are derived from :class:`Patient`/:class:`Encounter`
+``model_fields`` directly, so a renamed field breaks coverage loudly rather
+than silently dropping a target; assembled paths are a small curated set
+for the list/nested shapes (address, telecom, identifiers, note sections).
+PHI: field *names* only, never values; pure introspection, no I/O.
 """
 
 from __future__ import annotations

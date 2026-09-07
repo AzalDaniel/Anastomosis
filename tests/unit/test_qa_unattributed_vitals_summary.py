@@ -1,23 +1,11 @@
-"""#392: a vital carried by the rendered summary is on a chart.
+"""#392: a vital carried by the rendered summary is on a chart. Five
+vitals with no encounter link stay record-level, but the whole-patient
+record summary (#239) carries them — so `UnattributedVitalsCheck` must
+not grade them as being on no chart at all.
 
-The shape driven on the owner's real Summary of Care: one encounter whose
-`effectiveTime` is `nullFlavor` (no date of service), and a vitals organizer
-whose five component observations each carry their own dated
-`effectiveTime`. `_link_measurements_to_encounters` correctly declines to
-guess a date for the encounter, so none of the five vitals is a candidate for
-it and all five stay record-level — but the bundle's whole-patient record
-summary (#239) carries the whole record, and the five values ARE on it.
-
-`UnattributedVitalsCheck` used to grade that as "on no encounter, so it is on
-no chart" — false since #239, because the record summary is exactly the chart
-those five values reached. This file drives the fix synthetically: the same
-shape (one undated encounter, N vitals with no encounter link), a real
-`ReconstructionEngine` render through `FakeChromium`, and the real QA stage —
-never the owner's actual export, which stays PHI and out of the test tree.
-
-Reuses `_engine()` from `test_qa_no_encounters.py` (a real engine over the
-built-in neutral pack) rather than re-declaring it, so this file and that one
-can never quietly grade against two different pack configurations.
+Driven synthetically with a real `ReconstructionEngine` through
+`FakeChromium` and the real QA stage; reuses `_engine()` from
+`test_qa_no_encounters.py`.
 """
 
 from __future__ import annotations
@@ -85,12 +73,10 @@ def _kareo_shaped_record() -> PatientRecord:
 def test_the_kareo_shaped_record_passes_qa_with_the_vitals_warned_not_failed(
     tmp_path: Path, rendered: None
 ) -> None:
-    """The reproduction, synthetically: FAILS before the fix (2 documents FAIL
-    on `unattributed_vitals`, `gates.qa` reads `fail`, `assert_deliverable`
-    refuses). After the fix: 0 fail, `gates.qa` reads `pass` because
-    `QAReport.ok` only counts FAILs — a WARN never blocks it — and
-    `assert_deliverable` accepts.
-    """
+    """2 documents FAIL on `unattributed_vitals` would read `gates.qa`
+    as `fail` and refuse delivery; instead 0 fail and `gates.qa` reads
+    `pass`, since `QAReport.ok` only counts FAILs and a WARN never
+    blocks it."""
     record = _kareo_shaped_record()
     engine = _engine()
     out = tmp_path / "charts"

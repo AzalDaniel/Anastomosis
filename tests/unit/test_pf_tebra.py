@@ -82,7 +82,7 @@ def test_lossless_extensions_carry_unmapped_columns(records: dict[str, PatientRe
 def _export_with_extra_table(
     dst: Path, table: str, header: list[str], rows: list[list[str]]
 ) -> Path:
-    """Copy the fixture and drop in one extra TSV — used to exercise unmapped tables."""
+    """Copy the fixture and drop in one extra TSV, to exercise unmapped tables."""
     shutil.copytree(FIXTURE, dst)
     lines = ["\t".join(header), *("\t".join(row) for row in rows)]
     (dst / f"{table}.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -455,7 +455,7 @@ def test_allergy_reaction_link_surplus_columns_preserved(tmp_path: Path) -> None
     ext = penicillin.extensions
     assert ext["pf_tebra:side:patient-allergy-reactions:0:ZZExtraColumn"] == "SENTINEL-0"
     assert ext["pf_tebra:side:patient-allergy-reactions:1:ZZExtraColumn"] == "SENTINEL-1"
-    # ReactionSnomedCode was dropped before this fix; now preserved too.
+    # Preserved alongside the sentinels (rule 63).
     assert ext["pf_tebra:side:patient-allergy-reactions:0:ReactionSnomedCode"] == "247472004"
     assert "pf_tebra:side:patient-allergy-reactions:0:Reaction" not in ext  # mapped, not duplicated
     assert penicillin.reactions == ["Hives", "Anaphylaxis"]  # structural mapping unchanged
@@ -878,14 +878,10 @@ def test_social_observation_prefers_clinical_effective_date() -> None:
     assert obs[0].effective_at == parse_dt("2021-03-15")  # EffectiveDate, not RecordedDate
     assert obs[0].extensions["pf_tebra:RecordedDate"] == "2023-09-01"  # not lost
 
-    # And with ONLY the administrative date, the observation goes undated.
-    #
-    # This used to assert the opposite — that RecordedDate was the last-resort
-    # fallback — which was a rule invented here rather than read from the
-    # vendor: `RecordedDate` is a column on no table in the v9 export, so the
-    # fallback could only ever fire over a row we made up (#247). An undated
-    # observation is the honest answer, and the surplus column still rides into
-    # extensions, so choosing not to date it costs nothing.
+    # And with ONLY the administrative date, the observation goes undated:
+    # `RecordedDate` is a column on no table in the real v9 export, so a
+    # fallback to it could only ever fire over a row nobody vends (#247).
+    # The surplus column still rides into extensions either way.
     only_recorded = {
         "patient-smokingstatus": [
             {
@@ -923,13 +919,11 @@ def _fixture_with_second_patient_on_p1s_plan(dst: Path) -> Path:
 
 
 def test_shared_plan_name_does_not_carry_another_patients_row(tmp_path: Path) -> None:
-    """Two patients on one plan: neither may receive the other's identifiers.
-
-    The plan-name and payer-name tiers match across patients by construction —
-    only the first superbill row per plan name is indexed — so before this was
-    scoped, P1's PatientPracticeGuid and SuperbillGuid rode onto P3's Coverage
-    and into P3's exported bundle.
-    """
+    """Two patients on one plan: neither may receive the other's
+    identifiers. The plan-name and payer-name tiers match across patients
+    by construction (only the first superbill row per plan name is
+    indexed), so the join must stay scoped or P1's guids ride onto P3's
+    Coverage."""
     export = _fixture_with_second_patient_on_p1s_plan(tmp_path / "export")
     records = {record.patient.id: record for record in get_source("pf-tebra").load(export)}
 
@@ -984,13 +978,10 @@ def test_unjoined_superbill_row_with_no_home_patient_refuses(tmp_path: Path) -> 
 
 
 def test_the_adapter_reads_the_real_v9_column_names() -> None:
-    """The fixture is the only thing pinning the adapter's column contract, so a
-    name invented there is invisible: the suite agrees with the fixture and
-    nobody checks the fixture against the vendor (#247).
-
-    These rows carry ONLY real v9 spellings. Each field below came back empty
-    before, and the allergy key refused the run outright.
-    """
+    """The fixture is the only thing pinning the adapter's column contract
+    (#247): a name invented there is invisible, since the suite agrees
+    with the fixture and nobody checks it against the vendor. These rows
+    carry ONLY real v9 spellings."""
     from anastomosis.sources.pf_tebra.mapper import (
         _map_allergy,
         _map_document,

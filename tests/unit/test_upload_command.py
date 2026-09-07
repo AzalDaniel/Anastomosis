@@ -77,7 +77,7 @@ def _counts(out_dir: Path) -> dict[str, int]:
 
 
 def test_default_max_attempts_is_three() -> None:
-    # The single retry budget both frontends share (they previously diverged 3/4).
+    # The single retry budget both frontends share.
     assert DEFAULT_MAX_ATTEMPTS == 3
 
 
@@ -241,14 +241,11 @@ def _verifiable_patient() -> Patient:
 
 
 def _write_verifiable_manifest(root: Path, lines: list[str], *, pack: str | None = None) -> Path:
-    """Write a manifest of ONE real PDF carrying ``lines`` into ``root``.
-
-    The PDF is a genuine (PyMuPDF-rendered) chart so L0/L1 pass and L2 reads its
-    page-1 text; the patient demographics ride the manifest so the verifier sees
-    the same canonical patient the engine resolves. ``pack`` names the template
-    pack the manifest records, and the record carries the encounter whose date of
-    service ``_GOOD_LINES`` renders — together, what L3 verifies against.
-    """
+    """Write a manifest of ONE real (PyMuPDF-rendered) PDF carrying
+    ``lines`` into ``root``, so L0/L1 pass and L2 reads its page-1 text;
+    the patient demographics ride the manifest so the verifier sees the
+    same canonical patient. ``pack`` names the template pack the manifest
+    records, together with what L3 verifies against."""
     import pymupdf
 
     root.mkdir(parents=True, exist_ok=True)
@@ -280,11 +277,9 @@ def _coverage(report_path: Path) -> dict[str, dict[str, object]]:
 
 def _edit_manifest(root: Path, mutate: Callable[[dict[str, Any]], None]) -> Path:
     """Rewrite ``root``'s manifest after ``mutate`` edits its parsed JSON.
-
-    Editing the written file (rather than the inputs) is what isolates the level
-    under test: the PDF and its hash are untouched, so only the field the edit
-    changed can decide the outcome.
-    """
+    Editing the written file, not the inputs, isolates the level under
+    test: the PDF and its hash are untouched, so only the edited field can
+    decide the outcome."""
     path = root / MANIFEST_NAME
     data = json.loads(path.read_text(encoding="utf-8"))
     mutate(data)
@@ -340,11 +335,10 @@ def test_verify_is_the_safe_default_and_no_verify_is_an_explicit_opt_out(tmp_pat
 
 # --- the manifest's own record drives L3 and L1's exact page count ----------
 #
-# The upload path used to skip both: nothing threaded a pack, an encounter, or
-# an expected page count, so L3 had nothing to check and L1 checked only the
-# floor. These drive the SAME artifacts the migrate-path verifier tests drive (a
-# real PDF + a readable FakeDestination) through `run_upload_command`, and read
-# the outcome off the run report's coverage table — the operator-visible claim.
+# These drive the SAME artifacts the migrate-path verifier tests drive (a
+# real PDF + a readable FakeDestination) through `run_upload_command`, and
+# read the outcome off the run report's coverage table — the operator-visible
+# claim.
 
 
 def test_v2_manifest_runs_l3_against_the_pack_it_records(tmp_path: Path) -> None:
@@ -382,9 +376,10 @@ def test_v2_manifest_without_a_dos_fails_l3_loudly(tmp_path: Path) -> None:
 
 
 def test_v2_expected_page_mismatch_fails_the_item(tmp_path: Path) -> None:
-    """L1's EXACT page check runs on the upload path: an item whose rendered page
-    count no longer matches what the render run recorded fails, even though its
-    bytes are intact (L0 passes — only the declared count disagrees)."""
+    """L1's EXACT page check runs on the upload path: an item whose
+    rendered page count mismatches what the render run recorded fails,
+    even though its bytes are intact (L0 passes — only the declared count
+    disagrees)."""
     pytest.importorskip("pymupdf", reason="verify needs PyMuPDF (the render extra)")
     out = _write_verifiable_manifest(tmp_path / "out", _GOOD_LINES, pack="generic_soap")
     # Only the declared count is changed; sha256/size still describe the file, so

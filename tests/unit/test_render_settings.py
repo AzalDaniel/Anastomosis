@@ -1,19 +1,12 @@
 """Charts already in a folder must answer the question the run is asking.
 
-The idempotent skip decided on `target.exists()` alone — not the pack, not the
-section flags, not anything about what produced the file. So re-running with a
-section switched OFF into a folder that already held charts reported
-
-    0 rendered, 6 skipped, 0 failed        exit 0
-
-and left every chart carrying the section. Those flags are how an operator
-SUPPRESSES content, so the run said "done, and verified" while the output was
-precisely what they were trying not to produce. Archive or upload that folder
-and the suppression never happened at all.
-
-QA did not catch it, and in one case confirmed the wrong answer: `vitals_loinc`
-self-disables when the flag says off, so `--section vitals=off` over an existing
-directory yielded charts WITH vitals and a green `vitals_loinc` pass.
+The idempotent skip must not decide on `target.exists()` alone — not the
+pack, not the section flags, nothing about what produced the file:
+re-running with a section switched OFF into a folder that already holds
+charts must not report "done, and verified" while every chart still
+carries the suppressed section. QA alone cannot catch this: a
+self-disabling check like `vitals_loinc` reads the flag, not the file,
+and passes clean over stale content.
 """
 
 from __future__ import annotations

@@ -1,19 +1,12 @@
-"""What the source's own selection rules left out is visible in the output.
+"""What the source's own selection rules left out is visible in the
+output. `patient-encounters.tsv` holds 8 rows; six render, two are
+excluded by `_skip_reason` (an empty SOAP note, an adult growth
+chart) — sound rules, but an operator reconciling 8 rows against 6
+charts must find the gap explained, not conclude the tool lost them.
 
-`tests/fixtures/pf_tebra_v9/patient-encounters.tsv` holds 8 encounter rows. Six
-render; the other two are excluded by `_skip_reason` — an empty SOAP note and an
-adult growth chart. Both rules are sound (for the practice that asked for them;
-`test_selection_options` covers switching one off). What was not was the
-reporting: the
-run said `6 rendered, 0 skipped, 0 failed`, and "skipped" in that line means
-"the file was already on disk", so on a first run it reads as "nothing was left
-out". A plain `pipeline run` wrote no artifact recording the exclusions at all —
-they survived only inside a C-CDA loss narrative and a JSON blob nested in a
-FHIR Patient resource, neither of which `pipeline run` produces.
-
-An operator reconciling 8 source rows against 6 charts had nothing in the output
-to explain the gap, and the obvious conclusion — that the tool lost them — was
-wrong but reasonable.
+A plain `pipeline run` writes no artifact recording an exclusion:
+"skipped" in its summary line already means "already on disk", so a
+first run would read as "nothing was left out".
 """
 
 from __future__ import annotations

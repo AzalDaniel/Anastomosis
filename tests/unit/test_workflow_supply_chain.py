@@ -1,23 +1,11 @@
-"""Pins the CI supply-chain hardening posture: float-free action pins, secret
-isolation between build and release, and a Dependabot cooldown.
+"""Pins the CI supply-chain hardening posture.
 
-Invariant, replacing the older "third-party pinned by SHA, first-party stays
-on major tags" convention: EVERY action this repo runs — ``actions/checkout``
-and the rest of first-party ``actions/*`` included — is pinned to a full
-40-hex commit SHA. A major-version tag (``v6``, ``v4``...) is a moving
-target a maintainer can repoint at will; only a commit SHA is immutable. A
-trailing ``# vX`` comment still names the version for humans.
-
-It also pins the secret-isolation boundary this hardening pass drew: the
-jobs that attach a release or publish a package run under a dedicated GitHub
-Environment (``release`` / ``pypi``), so whatever a future signing step needs
-is never reachable from a build/test job — and the per-push build jobs that
-must stay outside that boundary (they run project code, or run on every
-ordinary push) carry no environment at all.
-
-And it pins the Dependabot config: both ecosystems this repo depends on
-(``github-actions``, ``pip``) are covered with a cooldown, so a release cut
-yesterday cannot reach us today.
+Every action, first-party included, is pinned to a full 40-hex commit SHA
+(a major-version tag is a moving target; a trailing ``# vX`` comment names
+it for humans). Release/publish jobs run under a dedicated GitHub
+Environment (``release``/``pypi``), unreachable from a build/test job. Both
+Dependabot ecosystems (``github-actions``, ``pip``) carry a cooldown so a
+release cut yesterday cannot reach us today.
 """
 
 from __future__ import annotations
@@ -79,12 +67,9 @@ def test_every_workflow_parses() -> None:
 
 
 def test_every_action_pinned_to_a_full_commit_sha() -> None:
-    """No `uses:` line — first-party `actions/*` included — rides a tag.
-
-    A version tag such as `v6` can be force-moved by the action's own
-    maintainers to point at different code without a single line of this
-    repo changing; a commit SHA cannot.
-    """
+    """No `uses:` line — first-party `actions/*` included — rides a tag: a
+    version tag can be force-moved by the action's own maintainers; only a
+    commit SHA is immutable."""
     offenders: list[str] = []
     for path in sorted(WORKFLOW_DIR.glob("*.yml")):
         for ref, pin in _uses_refs(path):
@@ -97,16 +82,11 @@ def test_every_action_pinned_to_a_full_commit_sha() -> None:
 
 
 def test_upload_and_download_artifact_are_version_consistent_across_workflows() -> None:
-    """``actions/upload-artifact`` and ``actions/download-artifact`` each
-    appear at more than one call site (release.yml and windows-package.yml
-    both write in one job and read in another), so the risk this guards is
-    not upload matching download — their current majors are v7 and v8, on
-    purpose, per the artifact format compatibility the vendor's own docs
-    establish — it is one of the two actions getting bumped at some call
-    sites and not others, the same way `.github/workflows/codeql.yml`'s
-    `init`/`analyze` split once happened. Every `uses:` line for a given
-    action, across every workflow file, must carry the same SHA and the same
-    version comment."""
+    """Every `uses:` line for `actions/upload-artifact` and
+    `actions/download-artifact`, across every workflow file, must carry the
+    same SHA and version comment. The risk is not upload/download mismatched
+    majors (v7/v8 is correct, per the vendor's own compatibility docs) — it
+    is one call site bumped and another not."""
     pins: dict[str, set[tuple[str, str]]] = {"upload": set(), "download": set()}
     action_names = {
         "actions/upload-artifact": "upload",
@@ -136,9 +116,8 @@ def test_upload_and_download_artifact_are_version_consistent_across_workflows() 
 
 
 def test_no_stale_first_party_tags_convention_comment() -> None:
-    """Regression guard: the old convention this repo used to document —
-    'first-party actions/* stay on major tags' — must not creep back in
-    alongside a pin that no longer follows it."""
+    """The retired 'first-party actions/* stay on major tags' convention
+    must not creep back into a comment beside a pin that contradicts it."""
     for path in sorted(WORKFLOW_DIR.glob("*.yml")):
         text = path.read_text(encoding="utf-8")
         assert "stay on major tags" not in text, (
@@ -228,13 +207,10 @@ def test_dependabot_covers_both_ecosystems_with_a_cooldown() -> None:
 
 
 def test_dependabot_groups_every_update_within_each_ecosystem() -> None:
-    """Every update within an ecosystem lands in ONE group, covering the whole
-    ecosystem with a single `*` pattern. `open-pull-requests-limit` is what
-    silently split `github/codeql-action/init` from `.../analyze` — with five
-    other github-actions PRs already open, the matching `init` bump for #305's
-    `analyze` bump never got opened at all. A single group cannot half-open:
-    Dependabot either proposes the whole batch as one PR or none of it, so the
-    limit can no longer cut a version-matched pair in half."""
+    """Every update within an ecosystem lands in ONE group via a `*`
+    pattern: `open-pull-requests-limit` can otherwise silently split a
+    version-matched pair into separate PRs (#305). A single group proposes
+    the whole batch or none of it."""
     data = _load(DEPENDABOT_YML)
     updates = data.get("updates") or []
     by_ecosystem = {u.get("package-ecosystem"): u for u in updates}
@@ -249,18 +225,10 @@ def test_dependabot_groups_every_update_within_each_ecosystem() -> None:
 
 
 def test_the_build_backend_does_not_ride_with_the_rest_of_the_pip_batch() -> None:
-    """hatchling is excluded from the `pip` group, and that is not a silencing.
-
-    The backend has no `ignore` — a bare one would stop its security updates
-    and a scoped one never fired against a two-sided bound — so every release
-    is proposed, and the bound guard below refuses the ones measured to emit
-    core-metadata 2.5. Inside the group that red is contagious: a single
-    Dependabot commit lands whole or not at all, so #389's ruff floor and
-    Nuitka pin sat behind a hatchling bump that could never merge. Excluding
-    the backend gives it its own pull request to close by hand and leaves the
-    batch mergeable, while the `*` pattern above still covers everything else
-    in one PR.
-    """
+    """hatchling is excluded from the `pip` group so a release the bound
+    below refuses cannot block the whole batch (#389): it still gets
+    proposed, in its own pull request, while `*` still covers everything
+    else in one."""
     updates = _load(DEPENDABOT_YML).get("updates") or []
     pip = next(u for u in updates if u.get("package-ecosystem") == "pip")
     groups = pip.get("groups") or {}
@@ -273,20 +241,11 @@ def test_the_build_backend_does_not_ride_with_the_rest_of_the_pip_batch() -> Non
 
 
 def test_the_installer_lane_does_not_rebuild_on_every_source_merge() -> None:
-    """The Windows installer is built on a schedule and for releases, not per merge.
-
-    A Nuitka standalone build plus the installer smoke test took 63 minutes of
-    windows-latest when it was last measured, on the scarcest runner class and
-    out of the same pool every pull request's test matrix draws on. Watching
-    `src/anastomosis/**` spent that on every ordinary source merge — four in
-    one evening, for an artifact nobody downloaded — and the queue that built
-    up was paid for by the pull requests waiting behind it.
-
-    So the path filter watches only what decides the frozen layout, the
-    nightly build is the canary for everything else, and a tag still builds
-    unconditionally. Re-adding a source path here is a real decision with a
-    real bill; this test is where it gets made deliberately.
-    """
+    """The Windows installer builds on a schedule and for a release tag, not
+    per source merge: the Nuitka build plus installer smoke test costs about
+    an hour of windows-latest, the scarcest runner class, shared with every
+    pull request's own test matrix. Re-adding `src/anastomosis/**` to the
+    path filter here is a deliberate decision to make, not a side effect."""
     triggers = _load(WINDOWS_YML)[_ON]
     push = triggers["push"]
     assert "src/anastomosis/**" not in push.get("paths", []), (
@@ -312,20 +271,9 @@ def _ignore_conditions(ecosystem: str) -> list[dict[str, Any]]:
 
 def test_no_ignore_condition_silences_a_security_update() -> None:
     """An `ignore` entry must name `update-types`, and every type must be a
-    `version-update:` one.
-
-    Ignore conditions apply to Dependabot SECURITY updates as well as version
-    updates, and this repository has no second advisory path — no pip-audit
-    lane, no OSV scan, nothing that reads a published CVE. So a bare
-    `- dependency-name: playwright`, written to keep routine churn out of the
-    weekly batch, also stops the PR that would have told us a browser
-    automation library shipped a fix for a known exploit, and stops it
-    silently. Naming only `version-update:` types is what keeps the two apart:
-    a security update is not a version-update type, so it still opens.
-
-    This is the guard for a mistake that is easy to make and invisible once
-    made — the config keeps working, and the thing that stopped happening
-    never announces itself."""
+    `version-update:` one: this repo has no other advisory path (no
+    pip-audit lane, no OSV scan), so a bare ignore also silences that
+    dependency's SECURITY updates, invisibly."""
     for ecosystem in ("github-actions", "pip"):
         for condition in _ignore_conditions(ecosystem):
             name = condition.get("dependency-name", "<unnamed>")
@@ -345,22 +293,11 @@ def test_no_ignore_condition_silences_a_security_update() -> None:
 
 
 def test_every_ignored_pip_dependency_is_actually_pinned() -> None:
-    """A pip `ignore` is only defensible for a version this repo PINS itself.
-
-    Each ignore exists because a bump needs work Dependabot cannot do:
-    playwright's pin governs the rendering goldens and the bundled Chromium
-    together, pywebview's governs whether the frozen Windows exe can import at
-    all, and hatchling decides the core-metadata version the published wheel
-    carries. An ignored name with no pin behind it is an ignore that has
-    drifted off the reason it was written — routine churn suppressed for a
-    package nothing was protecting.
-
-    Both places count, and the first version of this test only knew about one.
-    It read `packaging/constraints.txt` alone, so adding the hatchling ignore
-    failed it — correctly, in the sense that the rule was violated, and wrongly,
-    in the sense that hatchling IS pinned, just in `[build-system] requires`
-    where a build backend belongs. A guard that is right about the principle
-    and wrong about where to look is still wrong."""
+    """A pip `ignore` is defensible only for a version this repo pins
+    itself: playwright's governs the rendering goldens, pywebview's whether
+    the frozen Windows exe imports at all, hatchling's the wheel's
+    core-metadata version. Checked against both `packaging/constraints.txt`
+    and `[build-system] requires`, since a build backend is pinned there."""
     import tomllib
 
     pinned = {
@@ -382,23 +319,11 @@ def test_every_ignored_pip_dependency_is_actually_pinned() -> None:
 
 
 def test_no_workflow_runs_twice_for_one_commit() -> None:
-    """A workflow with a `pull_request` trigger may only push-trigger on main.
-
-    Both `ci.yml` and `codeql.yml` listed `claude/**` under `push` while also
-    triggering on `pull_request`. Every branch here opens a pull request, so
-    each commit fired the whole matrix twice against the same SHA — measured on
-    PR #331 as run 33355245691 and run 33355224110, both green, 24 check runs
-    where 12 carried all the signal.
-
-    The duplicates are not free and not only slow. Each check run is a webhook
-    and a row that anything watching the pull request then reads back, and this
-    account's GitHub API quota is per-user and shared across every session and
-    every repository — so a workflow that says everything twice spends someone
-    else's budget to do it.
-
-    Stated as a rule rather than a pin on two filenames, so a third workflow
-    added later cannot reintroduce it quietly.
-    """
+    """A workflow with a `pull_request` trigger may only push-trigger on
+    main: every branch here opens a pull request, so any other push branch
+    fires the whole matrix twice against the same SHA, doubling the check
+    runs this account's shared GitHub API quota serves (#331). A rule, not
+    a pin on two filenames."""
     for path in sorted(WORKFLOW_DIR.glob("*.yml")):
         triggers = _load(path).get(True) or _load(path).get("on") or {}
         if not isinstance(triggers, dict) or "pull_request" not in triggers:
@@ -414,33 +339,16 @@ def test_no_workflow_runs_twice_for_one_commit() -> None:
 
 
 def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
-    """`[build-system] requires` may not admit a hatchling that emits metadata 2.5.
+    """Contract: `[build-system] requires` must exclude every hatchling
+    release measured to emit core-metadata 2.5 (1.30.0, 1.32.0) — release.yml
+    admits only 2.1-2.4 out of the built wheel, so a bad backend fails the
+    release build before the irreversible publish upload — and must keep the
+    PEP 639 floor (>=1.27, excluding 1.25.0). Checked against the file, not
+    an installed hatchling: PEP 517 builds the backend in an isolated
+    environment, so it is not importable at test time.
 
-    That line decides which backend builds the wheel, and the core-metadata
-    version a hatchling release emits oscillates. The publish path refuses 2.5
-    — release.yml reads Metadata-Version out of the built wheel and admits 2.1
-    through 2.4 only — so a bad backend fails the release BUILD. That gate is
-    ours, and it exists because the failure used to land one step later, at
-    the irreversible upload: twine refused 2.5 outright on the real 0.7.0
-    publish, after a tag existed and a version number had been spent. The
-    twine inside the pinned publish action accepts 2.5 now; the gate stays,
-    because 2.4 is what every path accepts and it carries PEP 639
-    license-files identically. Either way the release workflow only runs on a
-    tag, so this test is what catches a bad bound BEFORE one is spent.
-
-    Measured by reading DEFAULT_METADATA_VERSION out of each release, most
-    recently on 2026-08-31 against Dependabot's proposal of `>=1.32.0,<1.33`,
-    and checked against pypa/hatch's own release history on 2026-09-03:
-
-        1.27.0 -> 2.4    1.29.0 -> 2.4    1.30.1 -> 2.4    1.31.0 -> 2.4
-        1.30.0 -> 2.5    1.32.0 -> 2.5
-
-    Asserted against the FILE rather than against an installed hatchling, and
-    that is deliberate: PEP 517 builds the backend in an isolated environment,
-    so hatchling is not importable at test time on any machine or in CI. A test
-    that asked the environment would skip everywhere and prove nothing — the
-    exact vacuous guard this suite exists to prevent. The bound is the artifact
-    a person controls, so the bound is what is checked.
+    Measured release -> metadata-version, most recently against pypa/hatch's
+    own history: 1.27.0/1.29.0/1.30.1/1.31.0 -> 2.4; 1.30.0/1.32.0 -> 2.5.
     """
     import tomllib
 
@@ -454,13 +362,9 @@ def test_the_build_backend_bound_excludes_the_measured_bad_releases() -> None:
             f"[build-system] requires admits hatchling {bad}, which emits "
             "core-metadata 2.5 and fails the publish upload"
         )
-    # The floor is load-bearing too, and in the other direction. Below 1.27,
-    # hatchling parses `license-files` only in its legacy table form and
-    # SILENTLY ignores the list form this project uses — producing a wheel with
-    # no dist-info/licenses/ at all, which is a licence-compliance failure that
-    # looks like a successful build. Asserting the bound merely contains a good
-    # release does not catch a floor that has been dropped; asserting it
-    # excludes a bad one does.
+    # Below 1.27, hatchling silently drops `license-files` in list form,
+    # producing a wheel with no dist-info/licenses/ — a compliance failure
+    # that looks like a successful build.
     assert not backend.specifier.contains(Version("1.25.0")), (
         "[build-system] requires admits a hatchling below the PEP 639 floor, "
         "which ships a wheel carrying none of the third-party licence texts it "

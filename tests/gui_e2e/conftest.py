@@ -1,30 +1,11 @@
-"""The GUI behaviour lane: the shipped app, driven the way an operator does.
+"""The GUI behaviour lane: the shipped app, driven the way an operator
+does, over ``file://`` in headless Chromium with pywebview replaced by
+a stub generated from :class:`~anastomosis.gui.controller.GuiApi`
+(``stub.py``). Assertions are behavioural, never pixel-diffs.
 
-Everything under ``tests/gui_e2e`` loads the REAL bundled asset
-(``anastomosis/gui/web/index.html`` — the same file
-:func:`anastomosis.gui.shell.launch` points the window at) over ``file://`` in
-headless Chromium, with the pywebview bridge replaced by a stub generated from
-the real :class:`~anastomosis.gui.controller.GuiApi` surface (see ``stub.py``).
-Nothing here renders a pixel-diff: the assertions are behavioural — which
-controller method a click issues, what the DOM says after an event sequence,
-and whether the app logged a console error doing it.
-
-The GUI is ONE document with four views, so the fixture opens one page and the
-tests switch views through the nav, exactly as an operator does. A view switch
-must never be a document navigation: :meth:`GuiPage.show` asserts nothing
-reloaded, so the SPA guarantee is checked on every single switch the lane makes.
-
-Why a stub and not the live controller: pywebview is not installed in CI (and
-would need a display), the heavy run methods are deliberately unreachable from
-JS, and a canned bridge lets a test drive states a real run cannot reach on
-demand (a stale filing assistant, an aborted upload, a late-attaching bridge).
-The seam is kept honest by generating the stub's surface from ``GuiApi`` and by
-building every pushed event with the REAL constructors in
-:mod:`anastomosis.gui.events` — a rename on either side fails this lane.
-
-Console discipline: every load and interaction is recorded, and the ``gui``
-fixture FAILS the test on teardown if the page logged an error or threw. A
-normal operator path must be silent; anything else is a finding.
+One document, four views: :meth:`GuiPage.show` asserts nothing
+reloaded on every switch. The ``gui`` fixture FAILS the test on
+teardown if the page logged a console error or threw.
 """
 
 from __future__ import annotations
@@ -56,13 +37,10 @@ _BOOT_MARKER = "window.__anastBootMarker"
 
 
 class GuiPage:
-    """The opened GUI plus the seam handles a test needs.
-
-    Thin on purpose: ``page`` is the ordinary Playwright handle (locators,
-    clicks, keyboard), and the extras are the four things this app's seam adds
-    — what the page asked the controller for, what the controller pushes back,
-    which view is on screen, and what the console said about it.
-    """
+    """The opened GUI plus the seam handles a test needs: ``page`` is
+    the ordinary Playwright handle, and the extras are this app's own
+    seam — what it asked the controller for, what the controller
+    pushed back, which view is on screen, and what the console said."""
 
     def __init__(self, page: Page) -> None:
         self.page = page
@@ -88,33 +66,26 @@ class GuiPage:
         return args
 
     def emit(self, event: dict[str, object]) -> None:
-        """Push a controller event into the page, as the shell's sink does.
-
-        The shell marshals each event dict into a single
-        ``window.anastEvent(<json>)`` call; this is that call, with the payload
-        crossing as JSON so the page cannot see anything the real sink would not
-        serialize. Build ``event`` with :mod:`anastomosis.gui.events`.
-        """
+        """Push a controller event into the page, as the shell's sink
+        does: a single ``window.anastEvent(<json>)`` call, the payload
+        crossing as JSON so the page sees nothing the real sink would
+        not serialize. Build ``event`` with :mod:`anastomosis.gui.events`."""
         self.page.evaluate("event => window.anastEvent(event)", event)
         # Let the handler's own async work (a last_run_summary fetch) settle.
         self.page.wait_for_timeout(80)
 
     def attach_bridge(self) -> None:
-        """Install the bridge NOW, replaying pywebview's late attach.
-
-        Used with ``bridge="late"``: the app has already bootstrapped without an
-        api and painted its offline notice; this installs
-        ``window.pywebview.api`` and fires ``pywebviewready``, which is what the
-        real bridge does when it wins the race after DOM ready.
-        """
+        """Install the bridge NOW, replaying pywebview's late attach —
+        used with ``bridge="late"`` after the app has bootstrapped
+        without an api. Installs ``window.pywebview.api`` and fires
+        ``pywebviewready``, as the real bridge does after DOM ready."""
         self.page.evaluate("window.__installAnastBridge()")
         self.page.wait_for_timeout(200)
 
     # --- the chooser -------------------------------------------------------
-    # A one-of-N picker is a button plus a listbox now, not a <select>, so
-    # `select_option` no longer applies. These drive it the way a person does —
-    # open it, then click a row — which is the point of replacing the native
-    # control: its popup was drawn by the OS and invisible to this browser.
+    # A one-of-N picker is a button plus a listbox, not a <select>: these
+    # drive it the way a person does — open it, then click a row — since its
+    # popup would otherwise be drawn by the OS and invisible to this browser.
     def choices(self, trigger: str) -> list[str]:
         """The labels a person can read in this chooser, in order."""
         return [
@@ -224,18 +195,11 @@ def _browser() -> Iterator[Browser]:
 
 @pytest.fixture
 def gui(_browser: Browser) -> Iterator[Any]:
-    """Open the bundled GUI over ``file://`` with the bridge stub installed.
-
-    ``gui(bridge=..., canned=..., reduced_motion=...)`` returns a
-    :class:`GuiPage`. ``bridge`` is
-    one of ``stub.BRIDGE_READY`` (default), ``BRIDGE_LATE`` (install it yourself
-    with :meth:`GuiPage.attach_bridge`) or ``BRIDGE_NONE`` (the plain-browser
-    preview). ``canned`` overrides individual API returns.
-
-    On teardown every opened page must have a clean console: a normal path that
-    logs an error is a finding, so the fixture fails the test rather than
-    leaving the test author to remember an assertion.
-    """
+    """Open the bundled GUI over ``file://`` with the bridge stub
+    installed. ``gui(bridge=..., canned=..., reduced_motion=...)``
+    returns a :class:`GuiPage`; ``bridge`` is ``BRIDGE_READY``
+    (default), ``BRIDGE_LATE``, or ``BRIDGE_NONE``. Fails the test on
+    teardown if any opened page logged a console error."""
     opened: list[tuple[Any, GuiPage]] = []
 
     def _open(

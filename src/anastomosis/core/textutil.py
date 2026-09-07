@@ -1,27 +1,10 @@
 """Text cleaning for source export cells and note HTML.
 
-Three jobs:
-
-* **Cell hygiene** — TSV/CSV dumps encode "no value" several ways
-  (``\\N`` MySQL null escapes, literal ``NULL``, ``-1`` in numeric columns).
-  :func:`clean_cell` / :func:`clean_numeric` normalize all of them to ``None``
-  so sentinels can never masquerade as clinical values downstream.
-* **Note HTML → text** — source note bodies arrive as HTML fragments.
-  :func:`html_to_text` extracts readable text with paragraph structure
-  preserved, using the stdlib parser (never regex-over-HTML), dropping
-  script/style content outright. This feeds plain-text consumers (search, QA,
-  addendum bodies).
-* **Note HTML → rich HTML** — :func:`sanitize_soap_html` is the rendering path:
-  it *preserves* the source's semantic HTML and only repairs it (TSV-exported
-  ``\\n`` → ``<br>``, empty-block strip, ``pf-rich-text`` wrap) so a chart
-  renders the way the source authored it.
-* **Text → filesystem name** — :func:`safe_name` is the ONE definition of a
-  filesystem-safe file/directory component (renderer filenames, archive and
-  bundle patient directories, C-CDA export filenames), and
-  :func:`budgeted_name` is the ONE definition of "…and it still fits inside
-  the full path a writer is about to build". Delivered layouts depend on
-  their exact output, so every writer shares them rather than re-deriving the
-  same regex and the same length arithmetic.
+Four jobs: cell hygiene (:func:`clean_cell`/:func:`clean_numeric` normalize
+null sentinels to ``None``); HTML notes to plain text (:func:`html_to_text`,
+stdlib parser, never regex-over-HTML); semantic HTML repaired for rendering
+(:func:`sanitize_soap_html`); and the one filesystem-name definition (17) —
+:func:`safe_name`/:func:`budgeted_name`.
 """
 
 from __future__ import annotations
@@ -72,12 +55,9 @@ def clean_numeric(value: str | None) -> str | None:
 
 
 def format_phone(raw: str | None) -> str | None:
-    """Normalize a US phone number to ``(XXX) XXX-XXXX`` where possible.
-
-    Ten digits (or eleven with a leading 1) get the standard chart format;
-    anything else is returned stripped-but-unchanged — a partial number is
-    still information, and losing it would violate the lossless guarantee.
-    """
+    """Normalize a US phone number to ``(XXX) XXX-XXXX``. Ten digits (or
+    eleven with a leading 1) get that format; anything else returns
+    stripped-but-unchanged — a partial number is still information."""
     if raw is None:
         return None
     digits = re.sub(r"\D", "", raw)
@@ -88,50 +68,27 @@ def format_phone(raw: str | None) -> str | None:
     return clean_cell(raw)
 
 
-# Everything outside the safe set collapses to a single underscore. ASCII
-# letters/digits plus ``_`` and ``-`` are the intersection of what POSIX and
-# Windows accept unquoted, so a name built from this set never needs escaping
-# and never escapes its slot (no ``/``, no ``..``, no drive letters).
+# ASCII letters/digits, `_`, `-`: the POSIX/Windows-safe intersection, so a
+# name from this set never needs escaping or escapes its slot.
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
-#: Longest component :func:`safe_name` will hand back. Windows' per-component
-#: limit is 255 and POSIX ``NAME_MAX`` is usually 255 too; 200 leaves room for
-#: the suffixes writers append (``.html``, ``.xml``, a collision tag) while
-#: staying far enough under both that an unbounded source id cannot produce a
-#: component the filesystem refuses (``ENAMETOOLONG`` / ``FileNotFoundError``).
+#: Longest component :func:`safe_name` returns; 200 stays under Windows'/
+#: POSIX's ~255 component limit with room for suffixes writers append.
 MAX_NAME_CHARS = 200
-#: Longest FULL path :func:`budgeted_name` will let a writer build. Windows'
-#: classic ``MAX_PATH`` is 260 including the drive and the NUL terminator, and
-#: long-path support is opt-in per machine; 240 keeps a delivered tree openable
-#: by Explorer and by tools that still use the ANSI APIs.
+#: Longest full path :func:`budgeted_name` allows; 240 keeps a delivered tree
+#: openable under Windows' 260-char ``MAX_PATH`` without long-path support.
 MAX_PATH_CHARS = 240
-#: Hex characters of sha256 appended when — and only when — a value is cut.
-#: Public because it is also the SHORTEST distinct name :func:`budgeted_name`
-#: can return, which is exactly what a writer must reserve room for when it
-#: budgets a directory against the children it will write underneath.
-#: 16 hex = 64 bits. The tag is the ONLY thing keeping two cut ids apart, and a
-#: collision files one patient's chart on top of another's, so the width is
-#: chosen against the birthday bound rather than for looks: at 8 hex (32 bits)
-#: a delivery of 10k same-prefix ids collides with probability ~1.2% and 100k
-#: with ~69%; at 16 hex the same 100k sits below 3e-10.
+#: Hex characters of sha256 appended when a value is cut (17); also the
+#: shortest name :func:`budgeted_name` can return, which a caller reserves
+#: room for. Chosen against the birthday bound, not for looks.
 HASH_TAG_CHARS = 16
 
 
 def _hash_tagged(cleaned: str, limit: int) -> str:
-    """``cleaned`` cut to ``limit`` characters, the cut tagged with its hash.
-
-    A value already within ``limit`` is returned **byte-identical** — the whole
-    point, since every delivered filename and directory in the archive, the
-    bundle, and the C-CDA export is built from these components and must not
-    move. Only a value that has to be cut gets ``-<16 hex of sha256>`` appended,
-    hashing the ORIGINAL (uncut) value so two ids differing only past the cut
-    still land on different names: a silent collision here would file one
-    patient's chart on top of another's.
-
-    Raises :class:`ValueError` when ``limit`` cannot even hold the hash tag —
-    there is no safe name to return, and inventing a colliding one is the
-    failure mode this whole function exists to prevent.
-    """
+    """Contract: ``cleaned`` cut to ``limit`` chars, tagged with
+    ``-<HASH_TAG_CHARS hex of sha256>`` of the ORIGINAL value when cut, so
+    two ids differing only past the cut still land on different names (17).
+    Raises :class:`ValueError` when ``limit`` cannot hold the tag."""
     if len(cleaned) <= limit:
         return cleaned
     if limit < HASH_TAG_CHARS:
@@ -145,43 +102,19 @@ def _hash_tagged(cleaned: str, limit: int) -> str:
 
 
 def safe_name(value: str | None, fallback: str) -> str:
-    """A filesystem-safe file/directory component, or ``fallback`` if nothing survives.
-
-    Runs of unsafe characters collapse to one ``_`` and leading/trailing ``_``
-    are trimmed, so ``feedface-`` GUIDs (the synthetic fixture prefix) and any
-    plain ASCII id pass through unchanged while an exotic value cannot escape
-    its slot. An empty/blank input — or one made entirely of unsafe characters —
-    yields ``fallback`` rather than an empty name.
-
-    The result is never longer than :data:`MAX_NAME_CHARS`: a longer value is
-    cut and tagged with ``-<16 hex of sha256>`` (see :func:`_hash_tagged`), so an
-    unbounded source id cannot produce a component the filesystem rejects. A
-    value at or under the cap is returned exactly as before this bound existed.
-
-    Load-bearing: this is the single definition behind rendered chart filenames
-    (:mod:`anastomosis.reconstruct.engine`), archive/bundle patient directories,
-    and C-CDA export filenames. Changing it renames delivered output.
-    """
+    """Contract: a filesystem-safe name, ``fallback`` if nothing survives,
+    never longer than :data:`MAX_NAME_CHARS` (cut and tagged past that, see
+    :func:`_hash_tagged`). The one definition behind every delivered
+    filename (17); changing it renames delivered output."""
     cleaned = _UNSAFE_NAME_RE.sub("_", (value or "").strip()).strip("_")
     return _hash_tagged(cleaned or fallback, MAX_NAME_CHARS)
 
 
 def media_type_suffix(media_type: str | None) -> str:
-    """A file extension for bytes a source declared as ``media_type``.
-
-    Naming a file, not typing it: whatever the source declared stays on the
-    artifact's ``mime_type`` verbatim, and this is only what the bytes are
-    called on disk. A media type nothing maps to gets NO suffix rather than a
-    plausible one — a scan announced as a PDF it may not be is worse than one
-    whose filename admits the document said nothing.
-
-    Shared by the C-CDA reader (naming an embedded artifact it carries out of a
-    document) and the C-CDA deliverer (naming the sidecar it writes beside the
-    delivered document). Two derivations would let the deliverer write
-    ``<id>.pdf`` while the document referenced ``<id>`` — a chart with a
-    reference pointing at nothing, which is #373's failure wearing a different
-    hat.
-    """
+    """A file extension for ``media_type``: names the bytes on disk, does
+    not type them (``mime_type`` stays verbatim). An unmapped type gets no
+    suffix, never a guessed one. Shared by the C-CDA reader and deliverer so
+    a reference never names a differently-suffixed artifact (#373)."""
     if not media_type:
         return ""
     return mimetypes.guess_extension(media_type.split(";")[0].strip()) or ""
@@ -195,29 +128,11 @@ def budgeted_name(
     suffix: str = "",
     reserve: int = 0,
 ) -> str:
-    """:func:`safe_name`, cut further so ``parent/<name><suffix>`` stays inside
-    :data:`MAX_PATH_CHARS`.
-
-    ``suffix`` (``".html"``, ``".xml"``, …) is *budgeted* but NOT appended: the
-    caller composes the final name exactly as it does with :func:`safe_name`, so
-    a page's filename and the link written to it can share one call site.
-    ``reserve`` is budgeted the same way, for a component that is a DIRECTORY:
-    it is the room the caller needs left over for the deepest child it will
-    write underneath (an archive patient directory reserves its
-    ``encounters/<id>.html`` page). Without it a maximal directory name would
-    fit while none of its contents did.
-
-    ``parent`` is measured as the writer will use it — pass the real output
-    directory (the deliverers pass the
-    :func:`~anastomosis.core.output.secure_output_dir` result), not a display
-    form of it.
-
-    A component that already fits is returned unchanged, so short ids — every
-    real one — keep their delivered names. When the parent is so deep that not
-    even a hash tag fits, this raises rather than returning a name that could
-    collide; the caller's writer fails loudly instead of quietly filing two
-    charts as one.
-    """
+    """Contract: :func:`safe_name`, cut further so ``parent/<name><suffix>``
+    stays inside :data:`MAX_PATH_CHARS`. ``suffix``/``reserve`` are budgeted
+    but not appended — for a suffix the caller adds, for a directory the
+    room its deepest child needs. ``parent`` must be the real output path.
+    Raises when even a hash tag would not fit."""
     name = safe_name(value, fallback)
     # +1 for the separator the caller's ``parent / name`` will insert.
     room = MAX_PATH_CHARS - len(str(parent)) - 1 - len(suffix) - reserve
@@ -233,10 +148,9 @@ def budgeted_name(
     return _hash_tagged(name, room)
 
 
-# Paragraph-level tags separate with a blank line; remaining block tags
-# (list items, divs, table rows...) get a single line break. Table cells get
-# a space so adjacent cells never fuse ("height64in" hides values from
-# boundary-anchored QA matching).
+# Paragraph tags get a blank-line break, other block tags a single break;
+# table cells get a space so adjacent cells never fuse ("height64in" would
+# hide values from boundary-anchored matching, 6).
 _PARA_TAGS = frozenset({"p", "blockquote", "table", "h1", "h2", "h3", "h4", "h5", "h6"})
 _BLOCK_TAGS = _PARA_TAGS | frozenset({"div", "br", "hr", "li", "ul", "ol", "tr", "section"})
 _CELL_TAGS = frozenset({"td", "th"})
@@ -279,13 +193,9 @@ class _TextExtractor(HTMLParser):
 
 
 def html_to_text(html: str | None) -> str | None:
-    """Extract readable text from an HTML note fragment.
-
-    Block-level tags become line breaks, runs of blank lines collapse to one
-    blank line, entities are decoded, and script/style bodies are dropped.
-    Plain text input passes through unharmed. Returns ``None`` when nothing
-    readable remains.
-    """
+    """Extract readable text from an HTML note fragment: block tags become
+    line breaks, entities decode, script/style bodies drop, plain text
+    passes through unharmed. ``None`` when nothing readable remains."""
     if html is None:
         return None
     extractor = _TextExtractor()
@@ -296,22 +206,20 @@ def html_to_text(html: str | None) -> str | None:
     return text or None
 
 
-# Empty filler blocks PF leaves behind — stripped so a blank <p></p> never
+# Empty filler blocks PF leaves behind, stripped so a blank <p></p> never
 # renders as a stray gap.
 _EMPTY_BLOCK_PATTERNS = (
     r"<p[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</p>",
     r"<div[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</div>",
     r"<h([1-6])[^>]*>\s*(?:&nbsp;|&#160;|<br\s*/?>)?\s*</h\1>",
 )
-# A stray \n that is NOT immediately adjacent to a block tag boundary becomes a
-# <br> — inline line breaks (e.g. numbered injection
-# sites) must survive into the rendered chart.
+# A stray \n not adjacent to a block tag boundary becomes a <br>, so inline
+# line breaks survive into the rendered chart.
 _STRAY_NEWLINE_RE = re.compile(r"\n(?!</(p|div|ul|ol|li|h[1-6])>)(?!<(p|div|ul|ol|li|h[1-6])[ >])")
 
 
-# Tags whose CONTENT is dropped too (the body never reaches the renderer).
-# Anything in this set is a known XSS or info-disclosure carrier in the
-# local-Chromium PDF render context, so we strip both the tag and its body.
+# Tags whose CONTENT is dropped too: a known XSS/info-disclosure carrier in
+# the local-Chromium render context, so both tag and body are stripped.
 _DROP_CONTENT_TAGS = frozenset(
     {
         "script",
@@ -335,10 +243,8 @@ _DROP_CONTENT_TAGS = frozenset(
         "applet",
     }
 )
-# Tags that pass through. Chosen to cover what clinical SOAP HTML legitimately
-# carries (paragraphs, line breaks, inline emphasis, lists, headings, tables);
-# everything outside this set is dropped, but its TEXT children still flow
-# through, so unrecognized wrappers degrade gracefully instead of disappearing.
+# Tags that pass through, chosen to cover legitimate clinical SOAP HTML;
+# anything else is dropped but its TEXT children still flow through.
 _ALLOWED_TAGS = frozenset(
     {
         "p",
@@ -382,16 +288,15 @@ _ALLOWED_TAGS = frozenset(
         "col",
     }
 )
-# The only attribute we let through on any allowed tag. The PF/generic SOAP
-# templates style on class hooks (e.g. ``pf-rich-text``); they do not consume
-# style/href/src/event handlers from source HTML, and admitting any of those
-# is exactly the XSS surface this sanitizer exists to close.
+# The only attribute let through: PF/generic SOAP templates style on class
+# hooks only, and admitting style/href/src/event handlers is the XSS surface
+# this sanitizer closes.
 _ALLOWED_ATTRS = frozenset({"class"})
 # Void elements among _ALLOWED_TAGS — no closing tag emitted.
 _VOID_ALLOWED = frozenset({"br", "hr", "col"})
-# Full HTML5 void-element set — drop-content tags that fall in here have no
-# end-tag in source, so they must NOT enter drop mode (or we silently swallow
-# everything after them). Sources: html.spec.whatwg.org/#void-elements.
+# Full HTML5 void-element set (html.spec.whatwg.org/#void-elements):
+# drop-content tags here have no end-tag in source, so they must not enter
+# drop mode or everything after them is silently swallowed.
 _HTML5_VOID = frozenset(
     {
         "area",
@@ -413,39 +318,11 @@ _HTML5_VOID = frozenset(
 
 
 class _SoapHtmlSanitizer(HTMLParser):
-    """Stdlib-only allowlist sanitizer for clinical SOAP-note HTML.
-
-    Built on :class:`html.parser.HTMLParser` (same parser :func:`html_to_text`
-    already uses) so behavior matches the rest of this module rather than
-    introducing a fresh tokenizer with its own quirks. The output is whatever
-    fragment of the input survived the allowlist; the wrapper
-    :func:`sanitize_soap_html` then layers the PF-specific repairs
-    (``\\n``→``<br>``, empty-block strip, ``pf-rich-text`` wrap) on top.
-
-    Three behaviors, ordered by safety contribution:
-
-    1. **Drop-content tags** (script/style/iframe/object/embed/etc.) are
-       removed *along with their body* — the body would otherwise become
-       visible text after the open/close tags are stripped, which is worse
-       than the original (a stored ``alert(1)`` literal in a chart).
-    2. **Non-allowlist tags** are removed but their text children survive
-       (an unrecognized ``<font color="red">x</font>`` collapses to ``x``,
-       not nothing) so unknown markup degrades visibly, not silently.
-    3. **Allowlist tags** pass through with only :data:`_ALLOWED_ATTRS`;
-       everything else (event handlers like ``onclick``, URL-bearing attrs
-       like ``href``/``src``/``formaction``, ``style``) is stripped at the
-       attribute level. Entity references are preserved verbatim
-       (``convert_charrefs=False``) so the existing empty-block regex can
-       still match ``&nbsp;`` fillers downstream.
-
-    This is a *defense-in-depth* boundary for a local-Chromium render
-    context, not a general web sanitizer; it makes no claim against
-    mutation-XSS that exploits parser disagreement between
-    :class:`HTMLParser` and Chromium. The strongest empirical guarantee is
-    that an adversarial fixture rendered through the full pipeline produces
-    a PDF whose extracted text contains *no* injected payload — exercised
-    by the integration tests in this PR.
-    """
+    """Contract: stdlib-only allowlist, defense-in-depth for the
+    local-Chromium renderer, not a general web sanitizer. Drop-content tags
+    lose their body too; non-allowlist tags lose the tag but keep their
+    text; allowlist tags keep only :data:`_ALLOWED_ATTRS`.
+    :func:`sanitize_soap_html` layers PF's repairs on top."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
@@ -473,27 +350,18 @@ class _SoapHtmlSanitizer(HTMLParser):
         self_closing: bool,
     ) -> None:
         if tag in _DROP_CONTENT_TAGS:
-            # Void drop tags (<embed>, <input>, <link>, <meta>, ...) have no
-            # closing tag in source, so they MUST NOT enter drop mode — doing
-            # so would silently swallow everything that follows. They contain
-            # no body anyway, so dropping the tag itself is the complete fix.
+            # Void drop tags have no closing tag in source, so must not enter
+            # drop mode (it would swallow everything after); no body anyway.
             if tag in _HTML5_VOID or self_closing:
                 return
             self._drop_depth += 1
             return
         if self._drop_depth or tag not in _ALLOWED_TAGS:
             return
-        # When every attribute on the input tag is in _ALLOWED_ATTRS the
-        # attribute filter is a no-op, and we can emit the source's original
-        # tag text verbatim (preserving e.g. ``<br/>`` vs ``<br>`` vs
-        # ``<br />``). This is what keeps benign clinical HTML byte-identical
-        # round-tripping through the sanitizer — critical for the PF/Tebra
-        # e2e goldens. The fallback reconstructs from the parsed attr list
-        # whenever something had to be filtered — or whenever the source open
-        # tag spans multiple lines (a pretty-printed EHR export wrapping a
-        # long attribute list): emitting the multi-line source verbatim would
-        # let the downstream stray-newline regex inject ``<br>`` *inside* the
-        # open tag, corrupting it. Reconstruction collapses to a single line.
+        # When every attribute is already allowed, emit the source tag
+        # verbatim (byte-identical for the PF/Tebra e2e goldens) unless it
+        # spans multiple lines, which would let the stray-newline regex
+        # inject <br> inside the tag — reconstruct on one line instead.
         if all(name and name.lower() in _ALLOWED_ATTRS for name, _ in attrs):
             original = self.get_starttag_text()
             if original is not None and "\n" not in original:
@@ -552,28 +420,11 @@ class _SoapHtmlSanitizer(HTMLParser):
 
 
 def sanitize_soap_html(raw_html: str | None) -> str:
-    """Allowlist-clean PF semantic HTML, then apply the PF rendering repairs.
-
-    Adds a :class:`_SoapHtmlSanitizer` allowlist pass at the front so
-    script/style/event handlers/non-allowlist URL attributes cannot reach the
-    local-Chromium PDF renderer (the section is templated with Jinja's
-    ``| safe``, autoescape off, *by design* — exactly so legitimate inline
-    formatting survives, which is exactly why an allowlist is required).
-
-    For benign HTML that only uses allowlisted tags + attributes — e.g. PF's
-    fixture content (``<p>``, ``<br>``, no attrs) — the sanitizer's output
-    is character-equivalent to the input, so the existing repairs
-    (``\\n``→``<br>``, empty-block strip, ``pf-rich-text`` wrap) behave
-    identically and the e2e goldens are byte-identical.
-
-    The EHI TSV export converts ``<br>`` to ``\\n`` — we restore them so line
-    breaks within inline content render correctly in the browser. Output is
-    HTML intended for ``autoescape=False`` rendering, wrapped in
-    ``pf-rich-text``.
-
-    This is the *rendering* path; :func:`html_to_text` remains the plain-text
-    path for search/QA/addendum bodies.
-    """
+    """Allowlist-clean PF semantic HTML via :class:`_SoapHtmlSanitizer`
+    (needed because the section renders with Jinja's ``| safe``, autoescape
+    off, by design), then apply the PF repairs (TSV ``\\n``→``<br>``,
+    empty-block strip, ``pf-rich-text`` wrap). The rendering path;
+    :func:`html_to_text` is the plain-text one."""
     if not raw_html:
         return ""
     text = str(raw_html).strip()

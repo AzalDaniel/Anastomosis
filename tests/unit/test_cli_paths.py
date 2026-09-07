@@ -1,16 +1,9 @@
-"""A CLI option that names a path refuses a blank one, on every command.
-
-`--out ""` used to mean "here": Typer types the option as `Path`, so `Path("")`
-became `Path(".")` before the command body existed, `validate_output_target`
-saw a directory that exists, and the run wrote patient-named PDFs into whatever
-directory the operator launched from — hardening that directory to 0700
-underneath them and reporting success. The fix for that (#123) had reached the
-GUI door only.
-
-These tests hold two lines. The first is that every option which can name an
-output still refuses a blank value; the parametrised list is the audit's own
-inventory, so an option added later without a parser shows up as a gap here
-rather than in someone's working directory.
+"""A CLI option that names a path refuses a blank one, on every command
+(#123): Typer types the option as `Path`, so an unparsed `Path("")`
+resolves to `Path(".")` and `validate_output_target` would find that
+directory real, writing patient-named PDFs wherever the operator launched
+from. The parametrised list is the audit's own inventory, so an option
+added later without a parser shows up as a gap here.
 """
 
 from __future__ import annotations
@@ -78,12 +71,10 @@ def test_a_pasted_windows_path_works_on_the_cli_too(tmp_path: Path) -> None:
 
 
 def _options_missing_a_parser(source: str) -> list[str]:
-    """Option flags declared with a `Path` type and no `parser=`.
-
-    A `Path`-typed option is the exact shape that swallows a blank value, so
-    every one of them has to name a parser. Read off the syntax tree rather
-    than a grep, because these declarations wrap across lines.
-    """
+    """Option flags declared with a `Path` type and no `parser=`: this is
+    the exact shape that swallows a blank value, so each one must name a
+    parser. Read off the syntax tree, not a grep, since these declarations
+    wrap across lines."""
     missing: list[str] = []
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.Subscript):

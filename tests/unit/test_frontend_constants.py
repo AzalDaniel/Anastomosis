@@ -1,11 +1,10 @@
 """Pin frontend/backend constant parity.
 
-The browser UI used to hand-mirror backend constants;
-``GuiController.gui_config()`` is the Python-canonical source the JS refreshes
-from on load. The JS keeps same-valued FALLBACKS for the api-less browser
-preview — these tests pin (a) each fallback to its Python constant, so
-neither side can drift alone, and (b) the ``gui_config()`` payload itself
-to the canonical values and complete coverage.
+``GuiController.gui_config()`` is the Python-canonical source the JS
+refreshes from on load; the JS keeps same-valued FALLBACKS for the
+api-less browser preview. These tests pin (a) each fallback to its Python
+constant, so neither side can drift alone, and (b) the ``gui_config()``
+payload itself to the canonical values and complete coverage.
 """
 
 from __future__ import annotations
@@ -101,13 +100,9 @@ def test_gui_api_exposes_gui_config() -> None:
 
 
 def test_frontend_backend_record_filename_does_not_drift() -> None:
-    """The JS fallback record filename must equal the Python ``LEDGER_NAME``.
-
-    The console derives "the record this run writes" from the results folder,
-    so a drifted filename would have the counters polling a file the engine
-    never writes — reported as "no progress" rather than as an error, because a
-    record that is not there simply has nothing to say.
-    """
+    """The JS fallback record filename must equal the Python
+    ``LEDGER_NAME``: a drift would have the counters polling a file the
+    engine never writes, reported as "no progress" rather than an error."""
     source = _CONSOLE_JS.read_text(encoding="utf-8")
     match = re.search(r'^\s*let LEDGER_NAME\s*=\s*"([^"]+)"\s*;', source, re.MULTILINE)
     assert match is not None, "console.js no longer declares a LEDGER_NAME fallback"
