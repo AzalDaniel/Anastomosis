@@ -101,31 +101,16 @@ def test_the_one_row_the_vendor_document_did_not_mean() -> None:
     assert "InteractionReason" in vendor["patient-drug-alert-overrides"]
 
 
-# Which v9 table each of the mapper's column allowlists is about. The mapper
-# keeps these as bare frozensets next to the function that reads them, so the
-# table they belong to is knowledge the module does not write down — this dict
-# writes it down, and the test below makes it impossible to add a set without
-# saying which table it reads.
+# Which v9 table each of the mapper's SIDE-ROW allowlists is about: frozensets
+# whose table the module does not write down, so this dict does, and the test
+# below makes it impossible to add one silently. A `RowTable` needs no entry.
 _ALLOWLIST_TABLES = {
-    "_ALLERGY_MAPPED": "patient-allergy",
-    "_DEMOGRAPHICS_MAPPED": "patient-demographics",
-    "_DIAGNOSIS_MAPPED": "patient-diagnoses",
     "_ENCOUNTER_DX_MAPPED": "patient-encounter-diagnoses",
-    "_ENCOUNTER_MAPPED": "patient-encounters",
     "_ETHNICITY_MAPPED": "patient-ethnicity",
     "_GISO_MAPPED": "patient-gender-identity-sexual-orientation",
-    "_GOAL_MAPPED": "patient-goals",
-    "_GUARANTOR_MAPPED": "patient-guarantor",
-    "_HEALTH_CONCERN_MAPPED": "patient-health-concerns",
-    "_IMMUNIZATION_MAPPED": "patient-immunizations",
-    "_INSURANCE_MAPPED": "patient-insurances",
-    "_MEDICATION_MAPPED": "patient-medications",
-    "_OBSERVATION_MAPPED": "patient-encounter-observations",
     "_PINNED_MAPPED": "pinned-notes",
-    "_PRESCRIPTION_MAPPED": "patient-prescriptions",
     "_RACE_MAPPED": "patient-race",
     "_REACTION_MAPPED": "patient-allergy-reactions",
-    "_SCREENING_EVENT_MAPPED": "patient-encounter-events",
     "_SUPERBILL_JOINED_MAPPED": "superbill-insurances",
 }
 
@@ -140,6 +125,21 @@ def _allowlists() -> dict[str, frozenset[str]]:
     }
 
 
+def _consumed_by_table() -> dict[str, tuple[str, frozenset[str]]]:
+    """Every allowlist: the v9 table it reads and the columns it consumes."""
+    from anastomosis.sources._rowutil import RowTable
+    from anastomosis.sources.pf_tebra import mapper
+
+    tables = {
+        name: (value.file.removesuffix(".tsv"), value.consumed)
+        for name in dir(mapper)
+        if isinstance(value := getattr(mapper, name), RowTable)
+    }
+    return tables | {
+        name: (_ALLOWLIST_TABLES[name], columns) for name, columns in _allowlists().items()
+    }
+
+
 def test_every_column_the_mapper_reads_is_one_the_vendor_publishes() -> None:
     """Stronger than checking the fixture: a column the mapper reads but
     no fixture table carries is invisible to the header check —
@@ -148,20 +148,19 @@ def test_every_column_the_mapper_reads_is_one_the_vendor_publishes() -> None:
     bare `Refills`, a name no v9 table has at all."""
     vendor = _vendor()
     wrong: dict[str, list[str]] = {}
-    for name, columns in _allowlists().items():
-        table = _ALLOWLIST_TABLES[name]
+    for name, (table, columns) in _consumed_by_table().items():
+        assert table in vendor, f"{name} claims a table v9 does not have: {table}"
         invented = sorted(c for c in columns if c not in vendor[table])
         if invented:
             wrong[f"{name} ({table})"] = invented
     assert wrong == {}, f"the mapper reads columns v9 does not define: {wrong}"
 
 
-def test_a_new_allowlist_has_to_say_which_table_it_reads() -> None:
-    """Otherwise the check above quietly stops covering the newest code:
-    the mapper's allowlists are module-level frozensets with no table
-    attached, so the correspondence lives in this file, and a stale one
-    fails open — the worst way for a guard to fail."""
+def test_every_table_the_mapper_reads_is_covered_by_that_check() -> None:
+    """Otherwise the check above quietly stops covering the newest code, and a
+    stale mapping fails open — the worst way for a guard to fail."""
     assert set(_allowlists()) == set(_ALLOWLIST_TABLES)
-    vendor = _vendor()
-    for name, table in _ALLOWLIST_TABLES.items():
-        assert table in vendor, f"{name} claims a table v9 does not have: {table}"
+    covered = {table for table, _ in _consumed_by_table().values()}
+    assert len(_consumed_by_table()) == 24, "17 field tables plus seven side-row allowlists"
+    for table in covered:
+        assert table in _vendor(), f"the mapper reads a table v9 does not have: {table}"
