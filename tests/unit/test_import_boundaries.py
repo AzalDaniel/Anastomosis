@@ -1,12 +1,6 @@
-"""Enforce package import boundaries that the architecture relies on.
-
-The GUI must not depend on the CLI: peer frontends over a shared core,
-checked by importing a package in a clean subprocess (so the runner's
-loaded modules cannot bias it) and reading ``sys.modules``. The shared
-browser-attach code both import lives in ``deliver.browser.attach``.
-
-``core/`` must import nothing outward (rule 76), read off the syntax tree
-because the edges it guards are lazy ones inside functions.
+"""Package import boundaries, checked two ways: a clean subprocess reading
+``sys.modules`` (so the runner's own imports cannot bias it) for what loads
+eagerly, and the syntax tree for rule 76's lazy in-function edges.
 """
 
 from __future__ import annotations
@@ -37,11 +31,8 @@ def _modules_after_import(target: str) -> set[str]:
 
 
 def test_gui_does_not_import_cli() -> None:
-    """``anastomosis.gui`` must not pull ``anastomosis.cli`` (or its private
-    helpers) into ``sys.modules`` at import time. The bridge for the
-    upload-attach seam is :mod:`anastomosis.deliver.browser.attach` —
-    importing the GUI must NEVER transitively load the CLI.
-    """
+    """Importing the GUI never loads the CLI (rule 107): the upload-attach
+    seam they share is :mod:`anastomosis.deliver.browser.attach`."""
     loaded = _modules_after_import("anastomosis.gui")
     forbidden = {"anastomosis.cli"}
     leaked = forbidden & loaded
@@ -53,11 +44,8 @@ def test_gui_does_not_import_cli() -> None:
 
 
 def test_gui_does_not_import_cli_commands() -> None:
-    """``anastomosis.gui`` must not pull any ``anastomosis.cli_commands``
-    module into ``sys.modules`` either: each command group imports
-    ``anastomosis.cli`` at its top, so a GUI-to-cli_commands edge would
-    drag the whole CLI in — the same peer-frontend boundary, one layer
-    down."""
+    """The same boundary one layer down: every command group imports
+    ``anastomosis.cli`` at its top, so a GUI edge to one drags in the CLI."""
     loaded = _modules_after_import("anastomosis.gui")
     leaked = {name for name in loaded if name.startswith("anastomosis.cli_commands")}
     assert not leaked, (
@@ -67,11 +55,9 @@ def test_gui_does_not_import_cli_commands() -> None:
 
 
 def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
-    """``anastomosis.cli`` backing `--help`/`doctor`/`gui` must not
-    eagerly import any source adapter or destination client (rule 75),
-    each lazy per-command. ``anastomosis.deliver.fhir_api`` itself is
-    exempt (a near-empty package init `cli_commands.upload` needs at
-    module load); its heavy children are not."""
+    """No source adapter or destination client loads just by importing the
+    CLI (rule 75); each is lazy per command. ``deliver.fhir_api``'s own
+    near-empty init is exempt, its heavy children are not."""
     loaded = _modules_after_import("anastomosis.cli")
     forbidden = {
         "anastomosis.sources.ccda",
@@ -88,8 +74,7 @@ def test_cli_does_not_eagerly_import_source_adapters_or_destinations() -> None:
 
 def test_cli_does_not_eagerly_import_the_greeting_mark() -> None:
     """The vessel mark is drawn only for a person at a terminal (rule 75):
-    no named command may pay for the sampled grid, the density ramp, or
-    Rich's live display just by importing the CLI."""
+    no named command pays for the grid, the ramp or Rich's live display."""
     loaded = _modules_after_import("anastomosis.cli")
     forbidden = {
         "anastomosis.core.vesselmark",
@@ -101,23 +86,17 @@ def test_cli_does_not_eagerly_import_the_greeting_mark() -> None:
 
 
 def test_browser_attach_module_loads_without_playwright_extra() -> None:
-    """The attach module is a thin shell — importing the module must not
-    require the optional ``deliver-browser`` extra. The Playwright imports
-    live INSIDE :func:`attach_destination` so installing without the extra
-    keeps the CLI and GUI loadable.
-    """
+    """Playwright is imported inside :func:`attach_destination`, so an install
+    without the ``deliver-browser`` extra still loads the CLI and GUI."""
     loaded = _modules_after_import("anastomosis.deliver.browser.attach")
-    # Importing the module alone must not pull playwright in.
     assert "playwright" not in loaded
     assert "playwright.sync_api" not in loaded
 
 
 def test_cli_make_destination_delegates_to_attach_destination() -> None:
-    """Long-standing tests monkeypatch ``anastomosis.cli._make_destination``,
-    so this stays a thin lazy-import wrapper — never a plain module-level
-    assignment, which would force ``anastomosis.cli`` to eagerly import the
-    whole upload-engine package — and must delegate straight through to
-    the canonical :func:`attach_destination`, not a stale re-implementation."""
+    """A thin lazy-import wrapper that delegates straight to
+    :func:`attach_destination`. A module-level assignment instead would make
+    importing the CLI load the whole upload engine."""
     from unittest.mock import patch
 
     from anastomosis.cli import _make_destination
@@ -134,19 +113,13 @@ def test_cli_make_destination_delegates_to_attach_destination() -> None:
 
 # --- public verification imports (circular-import regression) --------------
 #
-# A circular import between ``deliver.verify.composite`` and
-# ``deliver.browser.reports`` can hide from a full-suite run because the
-# test runner's import order happens to load the modules in a safe sequence
-# first. A FRESH process can hit the cycle and fail; the subprocess tests
-# below run each public import in its own interpreter so the cycle cannot
-# be masked by prior imports of the test suite.
+# The suite's own import order can mask a cycle between verify.composite and
+# browser.reports; each test below imports in a fresh interpreter instead.
 
 
 def test_layered_verifier_public_import_in_fresh_process() -> None:
-    """``from anastomosis.deliver.verify import LayeredVerifier`` must succeed
-    in a clean interpreter — no circular import between
-    :mod:`.verify.composite` and :mod:`.browser.reports`.
-    """
+    """The public import succeeds in a clean interpreter: no cycle between
+    :mod:`.verify.composite` and :mod:`.browser.reports`."""
     loaded = _modules_after_import("anastomosis.deliver.verify")
     assert "anastomosis.deliver.verify.composite" in loaded
     # Best-effort sanity: the leaf types module is loaded too.
