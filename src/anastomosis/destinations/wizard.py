@@ -25,6 +25,7 @@ __all__ = [
     "SLOT_GUIDANCE",
     "CdpSelectorValidator",
     "SelectorValidator",
+    "attach_selector_validator",
     "registry_overlay_snippet",
     "write_selectors",
 ]
@@ -86,6 +87,19 @@ class CdpSelectorValidator:
 
     def count(self, selector: str) -> int:
         return len(self._page.query_selector_all_text(selector))
+
+
+def attach_selector_validator(cdp_url: str) -> SelectorValidator:
+    """Contract: attach over CDP to the operator's open browser (loopback
+    only) and return a :class:`CdpSelectorValidator` over its first page.
+    Playwright imports here, so nothing pays for it at module load; the
+    one-shot leaves teardown to process exit."""
+    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
+    from anastomosis.destinations.browserpack import PlaywrightPageAdapter
+
+    _playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
+    page = browser.contexts[0].pages[0]
+    return CdpSelectorValidator(PlaywrightPageAdapter(page))
 
 
 def _render_selectors_yaml(

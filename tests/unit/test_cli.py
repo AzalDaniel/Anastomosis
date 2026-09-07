@@ -420,8 +420,8 @@ def test_destination_list_shows_pack_column_needs_discovery() -> None:
 
 # --- anast destination init (the selector-discovery wizard) -----------------
 
-import anastomosis.cli as cli  # noqa: E402
 import anastomosis.destinations.loader as dest_loader  # noqa: E402
+import anastomosis.destinations.wizard as wizard  # noqa: E402
 from anastomosis.destinations.browserpack import SelectorMap  # noqa: E402
 from anastomosis.destinations.loader import load_destination_pack  # noqa: E402
 
@@ -493,7 +493,7 @@ def test_destination_init_loaded_pack_is_then_ready(
 def test_destination_init_validate_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_dir = tmp_path / "out"
     validator = _FakeValidator(found={f"#{slot}" for slot in _ALL_SLOTS})
-    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    monkeypatch.setattr(wizard, "attach_selector_validator", lambda cdp_url: validator)
     answers = "\n".join(_good_selectors()[slot] for slot in _ALL_SLOTS) + "\n"
     result = runner.invoke(
         app,
@@ -522,7 +522,7 @@ def test_destination_init_validate_not_found_then_reentered(
     out_dir = tmp_path / "out"
     # Only the canonical selectors validate; a first wrong paste matches 0.
     validator = _FakeValidator(found={f"#{slot}" for slot in _ALL_SLOTS})
-    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    monkeypatch.setattr(wizard, "attach_selector_validator", lambda cdp_url: validator)
     # For the FIRST slot, paste a bad selector first, then the good one.
     lines: list[str] = ["#WRONG", _good_selectors()[_ALL_SLOTS[0]]]
     lines += [_good_selectors()[slot] for slot in _ALL_SLOTS[1:]]
@@ -554,7 +554,7 @@ def test_destination_init_validate_explicit_accept_unvalidated(
     out_dir = tmp_path / "out"
     # Nothing validates: every selector matches 0 elements.
     validator = _FakeValidator(found=set())
-    monkeypatch.setattr(cli, "_make_validator", lambda cdp_url: validator)
+    monkeypatch.setattr(wizard, "attach_selector_validator", lambda cdp_url: validator)
     # First slot: 3 wrong tries, then "y" to accept unvalidated. Remaining
     # slots: 3 tries each + "y" accept. Optionals could be skipped (blank), but
     # blanks short-circuit before validation, so leave them blank.

@@ -1,11 +1,11 @@
 """`anast upload` CLI driver tests — exercisable with NO browser/Chromium.
 
 Both delivery routes have their live seam monkeypatched: BROWSER's
-``cli._make_destination`` to :class:`FakeDestination` (the CDP loopback
-validation and ``.ready`` gate still run for real), and API's
-``cli._make_fhir_destination`` the same way (the https-or-loopback
-gate runs for real, and the bearer token comes from the ENVIRONMENT,
-never argv). Synthetic data only.
+``attach.attach_destination`` to :class:`FakeDestination` (the CDP loopback
+validation and the pack-readiness gate still run for real), and API's
+``attach_fhir_destination`` the same way (the https-or-loopback gate runs for
+real, and the bearer token comes from the ENVIRONMENT, never argv). Synthetic
+data only.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-import anastomosis.cli as cli
+import anastomosis.deliver.browser.attach as browser_attach
+import anastomosis.deliver.fhir_api.attach as fhir_attach
 from anastomosis.cli import app
 from anastomosis.core.model import Patient, PatientRecord
 from anastomosis.deliver.browser.fake import FakeDestination
@@ -28,6 +29,17 @@ from anastomosis.destinations.browserpack import SelectorMap
 from anastomosis.reconstruct.engine import RenderedDoc
 
 runner = CliRunner()
+
+
+def _attach_seam(monkeypatch: pytest.MonkeyPatch, make: object) -> None:
+    """Point the BROWSER route's live attach seam at ``make``."""
+    monkeypatch.setattr(browser_attach, "attach_destination", make)
+
+
+def _fhir_seam(monkeypatch: pytest.MonkeyPatch, make: object) -> None:
+    """Point the API route's live attach seam at ``make``."""
+    monkeypatch.setattr(fhir_attach, "attach_fhir_destination", make)
+
 
 LOOPBACK = "http://127.0.0.1:9222"
 DEST = "testdest"
@@ -127,7 +139,7 @@ def _ledger_states(out_dir: Path) -> dict[str, int]:
 def test_happy_path_all_completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
 
     result = _invoke(out_dir, pack_root, "--no-verify")  # drive test; stub PDFs
 
@@ -160,21 +172,15 @@ def test_resume_no_double_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     # First run: crash after 1 successful upload (FakeCrash is a BaseException
     # that sails out of the engine — exactly a process kill).
-    monkeypatch.setattr(
-        cli,
-        "_make_destination",
-        lambda cdp, loaded: FakeDestination(_known(), existing=shared, crash_after=1),
+    _attach_seam(
+        monkeypatch, lambda cdp, loaded: FakeDestination(_known(), existing=shared, crash_after=1)
     )
     first = _invoke(out_dir, pack_root, "--no-verify")  # drive/resume test; stub PDFs
     # The crash propagated out of the run (no clean exit).
     assert first.exit_code != 0
 
     # Second run: resume against the SAME ledger + shared destination store.
-    monkeypatch.setattr(
-        cli,
-        "_make_destination",
-        lambda cdp, loaded: FakeDestination(_known(), existing=shared),
-    )
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known(), existing=shared))
     second = _invoke(out_dir, pack_root, "--no-verify")
 
     counts = _ledger_states(out_dir)
@@ -199,7 +205,7 @@ def test_skiplist_item_skipped_never_uploaded(
     skip.write_text("enc-1\n", encoding="utf-8")  # exclude the second encounter
 
     dest = FakeDestination(_known())
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: dest)
+    _attach_seam(monkeypatch, lambda cdp, loaded: dest)
 
     result = _invoke(out_dir, pack_root, "--skiplist", str(skip), "--no-verify")
 
@@ -219,10 +225,8 @@ def test_wrong_patient_aborts_exit_1(tmp_path: Path, monkeypatch: pytest.MonkeyP
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
     # The FIRST patient triggers a banner mismatch -> the run aborts.
-    monkeypatch.setattr(
-        cli,
-        "_make_destination",
-        lambda cdp, loaded: FakeDestination(_known(), wrong_patient_ids={PATS[0]}),
+    _attach_seam(
+        monkeypatch, lambda cdp, loaded: FakeDestination(_known(), wrong_patient_ids={PATS[0]})
     )
 
     result = _invoke(out_dir, pack_root)
@@ -254,10 +258,8 @@ def test_failed_items_no_abort_exit_1(tmp_path: Path, monkeypatch: pytest.Monkey
     # Read the manifest to learn the item_keys, then fail every upload.
     items, _patients = read_upload_manifest(resolve_manifest_root(out_dir))
     fail_keys = {item.item_key for item in items}
-    monkeypatch.setattr(
-        cli,
-        "_make_destination",
-        lambda cdp, loaded: FakeDestination(_known(), permanent_failures=fail_keys),
+    _attach_seam(
+        monkeypatch, lambda cdp, loaded: FakeDestination(_known(), permanent_failures=fail_keys)
     )
 
     result = _invoke(out_dir, pack_root, "--no-verify")
@@ -286,7 +288,7 @@ def test_non_loopback_cdp_exit_2_seam_never_called(
         called["n"] += 1
         return FakeDestination(_known())
 
-    monkeypatch.setattr(cli, "_make_destination", _spy)
+    _attach_seam(monkeypatch, _spy)
     result = runner.invoke(
         app,
         [
@@ -312,7 +314,7 @@ def test_non_loopback_cdp_exit_2_seam_never_called(
 def test_missing_port_cdp_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
     result = runner.invoke(
         app,
         [
@@ -345,7 +347,7 @@ def test_warning_surfaced_and_prompt_no_aborts(
         called["n"] += 1
         return FakeDestination(_known())
 
-    monkeypatch.setattr(cli, "_make_destination", _spy)
+    _attach_seam(monkeypatch, _spy)
     # NO --yes; answer "n" to the attach confirmation.
     result = runner.invoke(
         app,
@@ -366,7 +368,7 @@ def test_not_ready_pack_exit_2_names_wizard(
 ) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _scaffold_pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
 
     result = _invoke(out_dir, pack_root)
 
@@ -384,7 +386,7 @@ def test_missing_manifest_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     pack_root = _pack_dir(tmp_path)
     out_dir = tmp_path / "empty"
     out_dir.mkdir()
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
 
     result = _invoke(out_dir, pack_root)
     assert result.exit_code == 2, result.output
@@ -395,7 +397,7 @@ def test_malformed_manifest_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     (out_dir / "upload_manifest.json").write_text("{not json", encoding="utf-8")
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
 
     result = _invoke(out_dir, pack_root)
     assert result.exit_code == 2, result.output
@@ -435,7 +437,7 @@ def test_no_verify_flag_threads_into_command(
 ) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
     captured = _capture_cmd(monkeypatch)
 
     result = _invoke(out_dir, pack_root, "--no-verify")
@@ -448,7 +450,7 @@ def test_no_verify_flag_threads_into_command(
 def test_verify_defaults_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out_dir = _write_manifest(tmp_path)
     pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
     captured = _capture_cmd(monkeypatch)
 
     result = _invoke(out_dir, pack_root)  # no flag — the SAFE default is on
@@ -479,7 +481,7 @@ def test_manifest_found_under_charts_subdir(
         )
     write_upload_manifest(docs, records, charts)
     pack_root = _pack_dir(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known(2)))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known(2)))
 
     result = _invoke(out_dir, pack_root, "--no-verify")  # drive test; stub PDFs
     assert result.exit_code == 0, result.output
@@ -489,7 +491,7 @@ def test_manifest_found_under_charts_subdir(
 # --- (12) the FHIR API route ------------------------------------------------
 #
 # Same command, same engine, same ledger — only the pre-flight and the attach
-# seam differ. Every test here patches ``cli._make_fhir_destination``, so no
+# seam differ. Every test here patches ``attach_fhir_destination``, so no
 # request is ever made; the https-or-loopback gate and the env-var token
 # resolution run for real.
 
@@ -502,9 +504,9 @@ def _fhir_spy(
     monkeypatch: pytest.MonkeyPatch, dest: FakeDestination | None = None
 ) -> list[dict[str, object]]:
     """Patch the API attach seam, recording the endpoint config it
-    receives. Mirrors the browser route's ``cli._make_destination``
-    monkeypatch: the seam is resolved LATE through ``cli``, so patching
-    the attribute here is what the command actually calls."""
+    receives. Mirrors the browser route's ``attach_destination`` patch: the
+    command imports the seam inside its body, so patching the attribute here
+    is what it actually calls."""
     calls: list[dict[str, object]] = []
     made = dest if dest is not None else FakeDestination(_known())
 
@@ -525,7 +527,7 @@ def _fhir_spy(
         )
         return made
 
-    monkeypatch.setattr(cli, "_make_fhir_destination", _spy)
+    _fhir_seam(monkeypatch, _spy)
     return calls
 
 
@@ -566,7 +568,7 @@ def test_both_routes_exit_2_and_no_seam_is_touched(
         browser_calls["n"] += 1
         return FakeDestination(_known())
 
-    monkeypatch.setattr(cli, "_make_destination", _browser_spy)
+    _attach_seam(monkeypatch, _browser_spy)
     fhir_calls = _fhir_spy(monkeypatch)
 
     result = runner.invoke(
@@ -610,7 +612,7 @@ def test_half_specified_browser_route_exit_2(
     """The browser route needs BOTH --to and --cdp; half of it is a usage error,
     never a run that guesses the missing half."""
     out_dir = _write_manifest(tmp_path)
-    monkeypatch.setattr(cli, "_make_destination", lambda cdp, loaded: FakeDestination(_known()))
+    _attach_seam(monkeypatch, lambda cdp, loaded: FakeDestination(_known()))
 
     result = runner.invoke(app, ["upload", str(out_dir), *partial])
 

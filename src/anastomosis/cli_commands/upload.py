@@ -1,12 +1,11 @@
 """``anast upload`` — drive the resumable upload engine over ONE delivery route.
 
-See :mod:`anastomosis.cli_commands` for the split/registration rationale. Both
-attach seams are resolved LATE through the ``cli`` module — the browser route's
-``_cli._make_destination`` (Playwright over CDP) and the API route's
-``_cli._make_fhir_destination`` (FHIR R4 over HTTPS) — so
-``monkeypatch.setattr(cli, "_make_destination", ...)`` and
-``monkeypatch.setattr(cli, "_make_fhir_destination", ...)`` keep driving this
-command with no browser and no server.
+See :mod:`anastomosis.cli_commands` for the split/registration rationale. Each
+route builds its destination through the seam that owns it —
+:func:`~anastomosis.deliver.browser.attach.attach_destination` (Playwright over
+CDP) and :func:`~anastomosis.deliver.fhir_api.attach.attach_fhir_destination`
+(FHIR R4 over HTTPS), both imported inside the command body — so patching
+either one drives this command with no browser and no server.
 
 Exactly ONE route runs per invocation: ``--to PACK --cdp URL`` (browser) or
 ``--fhir URL`` (API). Only the pre-flight differs — the loopback gate, the
@@ -243,8 +242,7 @@ def upload_cmd(
         _cli.console.print(f"[red]{_escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from None
 
-    # 3. The route's own pre-flight, then its attach seam, both resolved LATE
-    #    through the cli module so the monkeypatch seams hold; both return a
+    # 3. The route's own pre-flight, then its attach seam. Both seams return a
     #    Destination, so step 5 below is route-agnostic.
     attach: Callable[[], object]
     if fhir is not None:
@@ -264,7 +262,9 @@ def upload_cmd(
         base_url = fhir  # rebound as a plain str for the closure below
 
         def _attach_api() -> object:
-            return _cli._make_fhir_destination(
+            from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
+
+            return attach_fhir_destination(
                 base_url,
                 bearer_token=bearer_token,
                 create_missing_patients=create_patients,
@@ -306,7 +306,9 @@ def upload_cmd(
                 raise typer.Exit(code=2) from None
 
         def _attach_browser() -> object:
-            return _cli._make_destination(cdp_url, loaded)
+            from anastomosis.deliver.browser.attach import attach_destination
+
+            return attach_destination(cdp_url, loaded)
 
         attach = _attach_browser
 
