@@ -224,32 +224,19 @@
     Shell.announce(text);
   }
 
-  // A run asked for but not yet begun. The click answers straight away, but the
-  // last run's patient table is a RESULT and stays until this run has its own —
-  // so a submit the controller refuses puts the result box back and leaves the
-  // finished run alone. See onRun.
-  let pendingRun = null;
-
-  function askForRun() {
-    const box = el("migrate-result");
-    pendingRun = { hidden: box.hidden, text: box.textContent };
-    showResult("Rebuilding…");
-  }
-
-  function abandonRun() {
-    if (!pendingRun) return;
-    const box = el("migrate-result");
-    if (pendingRun.hidden) box.hidden = true;
-    else showResult(pendingRun.text);
-    pendingRun = null;
-  }
-
-  function beginRun() {
-    if (!pendingRun) return;
-    pendingRun = null;
-    Shell.clearPatients(el("migrate-patients"), el("migrate-patients-body"));
-    Shell.renderReading(el("migrate-reading"), []);
-  }
+  // What the click moves here is the result box, and a refused submit puts it
+  // back exactly as it was — hidden if it was hidden. See onRun.
+  const RUN = Shell.pendingRun({
+    patients: "migrate-patients",
+    patientsBody: "migrate-patients-body",
+    reading: "migrate-reading",
+    save: () => ({ hidden: el("migrate-result").hidden, text: el("migrate-result").textContent }),
+    answer: () => showResult("Rebuilding…"),
+    restore: (saved) => {
+      if (saved.hidden) el("migrate-result").hidden = true;
+      else showResult(saved.text);
+    },
+  });
 
   async function onRun() {
     if (!hasApi() || !FORM) return;
@@ -272,7 +259,7 @@
       return;
     }
     Shell.hideBanner();
-    askForRun();
+    RUN.ask();
     FORM.setBusy(true);
     try {
       const started = await window.pywebview.api.run_migration_async(
@@ -288,12 +275,12 @@
         v.trustNew
       );
       if (started && started.ok === false) {
-        abandonRun();
+        RUN.abandon();
         FORM.setBusy(false);
         Shell.showBanner(Shell.refusalText(started.error));
       }
     } catch (err) {
-      abandonRun();
+      RUN.abandon();
       FORM.setBusy(false);
       Shell.showBanner(String(err));
     }
@@ -301,7 +288,7 @@
 
 
   function onEvent(event) {
-    beginRun();
+    RUN.begin();
     switch (event.type) {
       case "done":
         FORM.setBusy(false);

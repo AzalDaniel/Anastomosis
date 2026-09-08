@@ -211,8 +211,8 @@
   // the CLI's own words (pipeline.py's settle_qa, #297). settle_qa puts the key
   // on the counts dict only when it is nonzero, so this reads exactly the CLI's
   // "only when there is something to say" rule — silent whenever a chart
-  // abbreviates nothing. Kept in step with app.js's copy: the activity strip
-  // and the Charts rail read the SAME event, and must say the same thing.
+  // abbreviates nothing. The activity strip and the Charts rail read the SAME
+  // event and must say the same thing, so they read it here.
   const COUNT_TEXT = {
     not_carried: (n) => `${n} fact(s) carried by the record summary, not the visit charts`,
   };
@@ -1762,6 +1762,36 @@
   // no patient value can be in them, and this only lays them out. An empty or
   // missing reading hides the box — every source that keeps no ledger leaves
   // the screen exactly as it was.
+  //: A run asked for but not begun. The click has to answer at once — a button
+  //: that answers nothing feels broken — but the last run's results stay until
+  //: this run has its own: `ask` saves what the click moves, `abandon` puts it
+  //: back when the controller refuses to start, and `begin` clears the last
+  //: run's patients and reading. `begin` runs off the run's FIRST EVENT rather
+  //: than at submit time, so a reset arriving late cannot wipe what an earlier
+  //: event already set.
+  function pendingRun(opts) {
+    let pending = null;
+    return {
+      ask(config) {
+        pending = { config, saved: opts.save() };
+        opts.answer();
+      },
+      abandon() {
+        if (!pending) return;
+        opts.restore(pending.saved);
+        pending = null;
+      },
+      begin() {
+        if (!pending) return;
+        const { config } = pending;
+        pending = null;
+        clearPatients(el(opts.patients), el(opts.patientsBody));
+        renderReading(el(opts.reading), []);
+        if (opts.begin) opts.begin(config);
+      },
+    };
+  }
+
   function renderReading(box, lines) {
     if (!box) return;
     box.textContent = "";
@@ -1802,6 +1832,7 @@
     announce,
     setStatus,
     stageLabel,
+    countsText,
     initSegmentToggles,
     displayName,
     nameOf,
@@ -1817,6 +1848,7 @@
     renderPatients,
     clearPatients,
     renderReading,
+    pendingRun,
     refusalText,
     loadPatients,
     renderCalendar,

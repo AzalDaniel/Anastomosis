@@ -130,6 +130,7 @@ def _check_gui_web() -> AssetCheck:
             "shell.js",
             "wizard.js",
             "console.js",
+            "learn.js",
             "packgen.js",
             "source.js",
             "app.css",

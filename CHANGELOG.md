@@ -579,6 +579,32 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **Both Teach modes run on one scaffold in the browser.** `packgen.js` and
+  `source.js` wrote the same two-step gate twice — hold the look button from
+  the click to the run's terminal event, fetch the result the controller
+  stashed, route it, and wrap the analyze click. `gui/web/learn.js` is that
+  gate once; a descriptor carries the stage, the two ids the markup does not
+  spell from the mode name, the two bridge calls, the sentences and the
+  painters. What genuinely differs stays with the mode that owns it: the
+  layout's caveat and its re-ask for the layout lists, and the format's
+  mapping table, its three anchored refusals and its review argument. So does
+  the one behaviour they never shared — an error event banners its own
+  sentence for the layout, which has nothing to point at, and fetches the
+  stash for the format, which does. `anast doctor` asks after the new script
+  by name. Five browser tests close gaps the shared code leaned on and nothing
+  drove: both error paths, a start the controller refuses, the format mode's
+  own missing-field words, and the display name on the wire.
+
+- **The counts and the not-yet-begun run are each spelled out once.**
+  `app.js` carried a byte-identical copy of the shell's `countsText`, its own
+  comment saying so; the activity strip and the Charts rail read the same
+  event and now read it through the same function. Charts and Migrate each
+  wrote out the same ordering rule around a run asked for but not started —
+  the click answers at once, the last run's results stay until this run has
+  its own, and the reset happens on the run's first event so a late reset
+  cannot wipe what an earlier one set. The rule is stated once in the shell
+  now; each view says only what it saves and what it puts back.
+
 - **Teach-a-format and teach-a-layout are one learn capability.** Both flows
   were already analyze → confirm → emit and said so in their own docstrings,
   so `commands/packinit.py` and `commands/source_init_command.py` are now
@@ -622,81 +648,6 @@ issue and fixed in its own pull request.
   and refining it by hand is exactly what `anast source init` prints as the
   next step. The asymmetry was a standing audit finding; it is now a written
   rule with a test on each side.
-
-- **The Practice Fusion pack keeps only what is its own.** `packs/
-  practice_fusion_soap/context.py` was 1,090 lines, and most of them were a
-  view layer any pack rendering a chart would write the same way: the date and
-  time formatters, the vitals LOINC-to-label table with its blood-pressure fold
-  and its two row builders, the record-level groupings, the flowsheet, the
-  entity rows (diagnosis, allergy, concern, screening, immunization, addendum),
-  the guarantor and payment cells, and the pack logo resolver. They live in
-  `reconstruct/packctx.py` now, the surface a pack reaches through the sandbox
-  allowlist, and the pack is 500 lines of what is PF's alone: the ESCRIPT line,
-  the insurance and demographics grids (both read `pf_tebra:`-namespaced
-  columns, so neither may live in a module that must not know a source
-  adapter's namespace), the seventeen social-history sub-categories, the
-  section flags, and the notice a section prints when this layout cannot
-  reconstruct it. The 35-section replica is unchanged, and the committed
-  goldens — page geometry, text layer and every word box — prove it: the
-  rendered PDFs are the same bytes.
-
-  This is the one file the prose sweep skipped, because a pack's layout hash
-  covers every byte of every file in it. That hash therefore moves, once and
-  deliberately: `5b84f853…` becomes `29d72b52…`. Nothing else moves with it.
-  The five snapshot fixtures render through `generic_soap`, whose bytes are
-  untouched, so `tools/snapshot.py` passes without a regenerated baseline —
-  including the `render_provenance.json` and `upload_manifest.json` it
-  captures. The complexity ratchet was re-pinned for exactly the seven blocks
-  that changed file: same rank, same number, one of them three lower, and
-  whole-`src` cyclomatic complexity falls from 7,192 to 7,189.
-
-- **One deliverer writes both file trees.** The offline archive and the
-  per-patient bundle were the same operation written twice: claim a patient
-  directory name against a per-run ledger, copy the documents that patient's
-  record names, write their FHIR bundle, copy the charts the render index
-  attributes to them. What differs is where the directory sits and what sits
-  beside it — a cross-patient search index and HTML pages, or a QA slice and
-  the patient's own README — so that is what `grouping=` now says, as a two-row
-  layout table rather than a flag read in four places. The four budget-claim-copy
-  loops (two per deliverer) are one `copy_claimed_charts` in
-  `deliver/_shared.py`, and the two README mechanisms are one. `BundleResult`
-  survives unchanged as the per-patient row and now rides on `ArchiveResult`,
-  which is how `anast pipeline run --bundle` reports its counts;
-  `anastomosis.deliver.bundle` re-exports from the merged module. Two entry
-  points go: `BundleDeliverer.deliver_records`, and `BundleDeliverer.deliver`,
-  the single-record form that existed so `deliver_records` could pass its own
-  claim ledger into it. Every delivered byte is unchanged — `tools/snapshot.py`
-  passes and the corpus pin has not moved. One behaviour is deliberately
-  unified: a bundle run now logs the same warning the archive already did when
-  a record names a document the charts directory does not hold, where it used
-  to be silent.
-
-- **One FHIR field table, walked in both directions.** `core/fhir/export.py`
-  and `core/fhir/ingest.py` each named the same twelve entities and stated
-  every field's identity twice — model attribute, tail key, converter — so a
-  field added to one side and forgotten on the other simply vanished, which is
-  how two record-level lists came to be dropped (below). The 68 fields that
-  ride the `urn:anastomosis:field:` tail are now one table,
-  `core/fhir/fields.py`: `to_bundle` walks it forward and `from_bundle` walks
-  it backward as its exact inverse. The code systems (LOINC, ICD-10-CM,
-  SNOMED, SSN, NPI) and the canonical-to-FHIR allergy category pairing live
-  there once and `sources/fhir_r4/mapper.py` reads them from it, backwards
-  where it needs the inverse; that mapper keeps its own residual walker, which
-  is the losslessness contract and has no counterpart on either side. Ten
-  things stay as code beside the table because a table has no slot for them:
-  the two-entity Patient resource, the three-way `_actor` dispatch, the
-  double-shipped note, attachment metadata from the deliverer, `_entries`'
-  refusal, the `_urn`/`_ref`/`_unref` codec, `_pref`, the RelatedPerson
-  relationship fallback, the constant `MedicationRequest.status` and the
-  nested FHIR element paths, whose key order is part of the delivered bytes.
-  Every bundle of the five committed fixtures is byte-identical and so is
-  every record read back out of one; `tools/snapshot.py` passes and the corpus
-  pin has not moved. The table is guarded from two sides: a round-trip
-  property test driven by the table itself, so a row added later is covered
-  without touching the test, and a committed literal inventory of the 68 tail
-  keys, which is what catches a row moved on both sides at once. Dead code
-  cut: `sources/fhir_r4/mapper.py`'s `_code_in` had no caller anywhere in
-  `src/`, `tests/` or `tools/`.
 
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
