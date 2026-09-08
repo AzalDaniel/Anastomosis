@@ -31,7 +31,7 @@ from anastomosis.core.model import (
 )
 from anastomosis.pipeline import RECORD_SUMMARY_DIRNAME, PipelineError, run_pipeline
 from anastomosis.qa import Verdict, whole_patient_report
-from anastomosis.qa.wholepatient import DOC_GENERIC_CHECKS, ENCOUNTER_SCOPED_SKIPS
+from anastomosis.qa.wholepatient import WHOLE_PATIENT_SCOPE
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 
@@ -183,7 +183,7 @@ def test_every_document_reports_the_same_check_set(tmp_path: Path, rendered: Non
     _run(out)
     report = json.loads((out / "qa_report.json").read_text(encoding="utf-8"))
     summaries = {p.name for p in (out / RECORD_SUMMARY_DIRNAME).glob("*.pdf")}
-    expected = set(DOC_GENERIC_CHECKS) | set(ENCOUNTER_SCOPED_SKIPS)
+    expected = set(WHOLE_PATIENT_SCOPE)
     for doc in report["documents"]:
         assert {check["check"] for check in doc["checks"]} == expected
         if doc["file"] not in summaries:
@@ -193,7 +193,7 @@ def test_every_document_reports_the_same_check_set(tmp_path: Path, rendered: Non
             for check in doc["checks"]
             if any(finding.startswith("skipped:") for finding in check["findings"])
         }
-        assert skipped == set(ENCOUNTER_SCOPED_SKIPS)
+        assert skipped == {name for name, why in WHOLE_PATIENT_SCOPE.items() if why}
 
 
 def test_the_merged_report_still_sums_what_the_layout_did_not_carry(
@@ -297,7 +297,7 @@ def test_the_summary_batch_declares_every_chartable_kind_carried() -> None:
     # so data_integrity still has an anchor to find.
     assert not anchored.patient.display_name
     assert anchored.patient.birth_date == DOB
-    assert "record_coverage" in DOC_GENERIC_CHECKS
+    assert WHOLE_PATIENT_SCOPE["record_coverage"] is None
     assert set(CHARTABLE_KINDS) == {
         "conditions",
         "allergies",

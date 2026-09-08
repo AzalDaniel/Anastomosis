@@ -129,18 +129,6 @@
       "cc": 16,
       "rank": "C"
     },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_RecordViewIndex": {
-      "cc": 21,
-      "rank": "D"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_RecordViewIndex.build": {
-      "cc": 20,
-      "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_build_flowsheet": {
-      "cc": 17,
-      "rank": "C"
-    },
     "src/anastomosis/packs/practice_fusion_soap/context.py::_coverage_view": {
       "cc": 17,
       "rank": "C"
@@ -148,22 +136,6 @@
     "src/anastomosis/packs/practice_fusion_soap/context.py::_demographics": {
       "cc": 17,
       "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_encounter_vital_rows": {
-      "cc": 12,
-      "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_flowsheet_record_index": {
-      "cc": 11,
-      "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_med_display_name": {
-      "cc": 14,
-      "rank": "C"
-    },
-    "src/anastomosis/packs/practice_fusion_soap/context.py::_payment": {
-      "cc": 22,
-      "rank": "D"
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py::build_context": {
       "cc": 33,
@@ -204,6 +176,34 @@
     "src/anastomosis/qa/checks.py::_note_bodies": {
       "cc": 11,
       "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::RecordViewIndex": {
+      "cc": 21,
+      "rank": "D"
+    },
+    "src/anastomosis/reconstruct/packctx.py::RecordViewIndex.build": {
+      "cc": 20,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::_flowsheet_index": {
+      "cc": 11,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::encounter_vital_rows": {
+      "cc": 12,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::flowsheet": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::medication_display_name": {
+      "cc": 14,
+      "rank": "C"
+    },
+    "src/anastomosis/reconstruct/packctx.py::payment_view": {
+      "cc": 22,
+      "rank": "D"
     },
     "src/anastomosis/sources/ccda/parser.py::_patient": {
       "cc": 14,
@@ -282,7 +282,7 @@
       "rank": "C"
     },
     "src/anastomosis/sources/pf_tebra/mapper.py::map_export": {
-      "cc": 36,
+      "cc": 31,
       "rank": "E"
     }
   },
@@ -328,14 +328,19 @@
       "total": 18
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py": {
-      "avg": 8.7714,
-      "rank": "B",
-      "total": 307
+      "avg": 11.9,
+      "rank": "C",
+      "total": 119
     },
     "src/anastomosis/qa/checks.py": {
       "avg": 5.7059,
       "rank": "B",
       "total": 194
+    },
+    "src/anastomosis/reconstruct/packctx.py": {
+      "avg": 6.7586,
+      "rank": "B",
+      "total": 196
     },
     "src/anastomosis/sources/fhir_r4/__init__.py": {
       "avg": 6.0,
@@ -353,9 +358,9 @@
       "total": 30
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "avg": 5.386,
+      "avg": 5.451,
       "rank": "B",
-      "total": 307
+      "total": 278
     }
   },
   "reference": {
@@ -436,8 +441,8 @@
       "total": 46
     },
     "src/anastomosis/core/atomic.py": {
-      "avg": 2.8571,
-      "total": 20
+      "avg": 2.375,
+      "total": 19
     },
     "src/anastomosis/core/ccda_codes.py": {
       "avg": 4.6667,
@@ -524,8 +529,8 @@
       "total": 54
     },
     "src/anastomosis/core/pdfsnapshot.py": {
-      "avg": 1.6923,
-      "total": 22
+      "avg": 2.0,
+      "total": 28
     },
     "src/anastomosis/core/presentation.py": {
       "avg": 2.1667,
@@ -740,8 +745,8 @@
       "total": 18
     },
     "src/anastomosis/packs/practice_fusion_soap/context.py": {
-      "avg": 8.7714,
-      "total": 307
+      "avg": 11.9,
+      "total": 119
     },
     "src/anastomosis/pipeline.py": {
       "avg": 4.6136,
@@ -776,8 +781,8 @@
       "total": 46
     },
     "src/anastomosis/reconstruct/packctx.py": {
-      "avg": 2.75,
-      "total": 11
+      "avg": 6.7586,
+      "total": 196
     },
     "src/anastomosis/reconstruct/packexec.py": {
       "avg": 2.0,
@@ -796,8 +801,8 @@
       "total": 42
     },
     "src/anastomosis/sources/_rowutil.py": {
-      "avg": 2.2,
-      "total": 11
+      "avg": 2.5385,
+      "total": 33
     },
     "src/anastomosis/sources/base.py": {
       "avg": 1.8462,
@@ -852,8 +857,8 @@
       "total": 74
     },
     "src/anastomosis/sources/oracle_ehi/mapper.py": {
-      "avg": 4.2308,
-      "total": 110
+      "avg": 4.1923,
+      "total": 109
     },
     "src/anastomosis/sources/pf_tebra/__init__.py": {
       "avg": 1.4,
@@ -868,8 +873,8 @@
       "total": 47
     },
     "src/anastomosis/sources/pf_tebra/mapper.py": {
-      "avg": 5.386,
-      "total": 307
+      "avg": 5.451,
+      "total": 278
     }
   },
   "tool": "radon cc -j src"

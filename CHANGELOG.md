@@ -739,6 +739,35 @@ issue and fixed in its own pull request.
 
 ### Fixed
 
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
+
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus
   the installer smoke test took 63 minutes of `windows-latest` when it was
