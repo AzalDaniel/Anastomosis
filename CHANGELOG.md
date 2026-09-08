@@ -579,6 +579,49 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **QA and the verification ladder go flat.** The engine checks were a
+  registry with one writer and one reader: `checks.py` registered seven
+  checks in a loop, `base.py` sorted them back out, and a duplicate-name
+  guard stood between them over a name that could only be written once.
+  `ENGINE_CHECKS` is the seven, in the name order every `qa_report.json`
+  lists them in; the `QACheck` protocol stays, because `run_qa(checks=...)`
+  — the extension point a pack actually uses — is typed with it.
+  `wholepatient.py` stated the same shape twice, one table of the checks a
+  whole-patient document can answer and one of the checks it records as
+  skipped, with only a test holding the pair to covering every check
+  between them; `WHOLE_PATIENT_SCOPE` places each check once, and the run
+  list reads that table by name, so a check nobody has placed raises
+  instead of falling quietly out of the report. The seven L0-L6 levels were
+  classes whose only state was their own level id, and are seven functions;
+  L6's tier-2 identity re-assertion is its own function, so
+  `deliver/verify/levels.py` leaves the complexity baseline with no
+  violating block at all rather than carrying its old C/12 in under a new
+  name. Nothing a check or a level says changed: every level body is
+  AST-identical to the method it replaced, the five fixtures are
+  byte-identical (`tools/snapshot.py`), and a real two-document export
+  writes the same `qa_report.json` to the byte. Neutering each of the seven
+  checks and each of the seven levels in a scratch copy turns a named test
+  red. The corpus pin is unmoved, the guard count holds at 72, and neither
+  gate baseline needed regenerating.
+
+- **Two package `__init__` files stopped re-exporting.** `deliver/browser`
+  eagerly imported thirty-seven names out of eleven submodules and
+  `destinations` twenty-six out of four, so taking one name took all of them:
+  importing `deliver.browser.persist` — the manifest writer `anast upload`
+  reads long after the render run — opened the SQLite ledger, the upload
+  engine, the CDP client and the destination pack adapter along with it.
+  Nothing imported through either package: no `from anastomosis.deliver.browser
+  import ...` and no `from anastomosis.destinations import ...` anywhere in
+  `src`, `tests` or `tools`, and no attribute path through either. Both are
+  now the docstring that states their contract, with no `__getattr__` and no
+  other lazy machinery standing in for the re-exports.
+  `deliver.browser.persist` costs 64 `anastomosis` modules instead of 75 and
+  stops opening `sqlite3`; `deliver.verify` costs 31 instead of 75 and stops
+  opening `sqlite3`, `jinja2` and `lxml` alike. Importing the CLI is unchanged
+  at 20 modules, which was never where this cost sat. Two tests in
+  `tests/unit/test_import_boundaries.py` hold both packages down, each naming
+  the module that leaked and the import that put it back.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the

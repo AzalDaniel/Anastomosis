@@ -17,8 +17,8 @@ from anastomosis.core.clock import now as _clock_now
 from anastomosis.core.model import Encounter, PatientRecord
 from anastomosis.core.output import secure_output_dir
 
-from . import checks as _checks  # registers the engine checks; also primes the shared snapshot
-from .base import CheckResult, QACheck, QAContext, Verdict, engine_checks
+from .base import CheckResult, QACheck, QAContext, Verdict
+from .checks import ENGINE_CHECKS, prime_snapshot_cache
 
 __all__ = ["DocumentQA", "QAReport", "run_qa", "write_report"]
 
@@ -76,7 +76,7 @@ def run_qa(
     ``record_summary_paths`` keys the rendered whole-patient summary by
     ``patient.id``, so a document never gets another patient's summary; a
     patient absent gets ``None`` (nothing rendered, not "declined to check")."""
-    active = checks if checks is not None else engine_checks()
+    active = checks if checks is not None else ENGINE_CHECKS
     report = QAReport()
     for pdf_path, encounter, record in documents:
         ctx = QAContext(
@@ -92,9 +92,7 @@ def run_qa(
                 record_summary_paths.get(record.patient.id) if record_summary_paths else None
             ),
         )
-        # Primes the shared per-document snapshot cache so checks don't each
-        # reopen the file; lazy, so a corrupt PDF fails per-check, never here.
-        _checks.prime_snapshot_cache(ctx)
+        prime_snapshot_cache(ctx)
         doc_qa = DocumentQA(path=pdf_path, encounter_id=encounter.id)
         for check in active:
             try:
