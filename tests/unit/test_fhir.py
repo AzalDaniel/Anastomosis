@@ -7,6 +7,7 @@ nothing changed (provenance excluded: it's local lineage, not exported).
 import base64
 import copy
 import json
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,19 @@ import pytest
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
 from anastomosis.core.fhir import DeliveredAttachment, from_bundle, to_bundle
 from anastomosis.core.fhir.export import FhirExportError, _prune
-from anastomosis.core.model import DocumentArtifact, Patient, PatientRecord, SectionKind
+from anastomosis.core.fhir.fields import TABLES
+from anastomosis.core.model import (
+    Address,
+    AllergyCategory,
+    AllergyIntolerance,
+    DocumentArtifact,
+    Guarantor,
+    Patient,
+    PatientContact,
+    PatientRecord,
+    PrescriptionTransaction,
+    SectionKind,
+)
 from anastomosis.sources import get_source
 from anastomosis.sources.ccda.parser import parse_document
 
@@ -550,3 +563,270 @@ def test_every_clinical_resource_id_is_derived_rather_than_minted() -> None:
     # this says so rather than quietly narrowing what the test proves.
     for kind in ("Observation", "Condition", "AllergyIntolerance", "MedicationStatement"):
         assert first.get(kind), f"no {kind} in the corpus — this test proves less than it claims"
+
+
+# --- the field table is the inventory, and the round trip is its guard -------
+
+#: Values the generic sample below cannot supply: a row whose write rule needs
+#: a particular shape (an empty contentType, a line2-only address), and the
+#: nested models with required fields of their own.
+_SAMPLE_OVERRIDES: dict[str, object] = {
+    "mime_type": "",
+    "addresses": [Address(line2="Suite 400")],
+    "contacts": [PatientContact(name="Next Of Kin", relationship="spouse")],
+    "guarantor": Guarantor(name="Guarantor Name"),
+    "transactions": [PrescriptionTransaction(kind="Sent")],
+    "category": AllergyCategory.FOOD,
+}
+
+_PID = "feedface-0000-4000-8000-00000000f1d0"
+
+
+def _sample(model_cls: type, name: str) -> object:
+    """A distinct value for one canonical field, from the model's own
+    annotation — distinct so a swapped pair of rows cannot pass."""
+    if name in _SAMPLE_OVERRIDES:
+        return _SAMPLE_OVERRIDES[name]
+    annotation = model_cls.model_fields[name].annotation
+    by_type: dict[object, object] = {
+        str | None: f"{name} value",
+        list[str]: [f"{name} value"],
+        int | None: 7,
+        date | None: date(2023, 4, 5),
+        datetime | None: datetime(2023, 4, 5, 6, 7, 8, tzinfo=UTC),
+    }
+    assert annotation in by_type, f"no sample for {model_cls.__name__}.{name}: {annotation}"
+    return by_type[annotation]
+
+
+def _slot(model_cls: type) -> str:
+    """The PatientRecord list that holds this model, read off the record."""
+    for name, field in PatientRecord.model_fields.items():
+        if field.annotation == list[model_cls]:  # type: ignore[valid-type]
+            return name
+    raise AssertionError(f"no PatientRecord list holds {model_cls.__name__}")
+
+
+def _saturated() -> PatientRecord:
+    """One instance of every entity in the table, every tail field set."""
+    record = PatientRecord(patient=Patient(id=_PID))
+    for index, (model_cls, table) in enumerate(TABLES):
+        values = {f.name: _sample(model_cls, f.name) for f in table if f.read}
+        if model_cls is Patient:
+            record.patient = Patient(id=_PID, **values)
+            continue
+        if model_cls is DocumentArtifact:
+            values["title"] = "Chart"  # else the Attachment prunes to nothing
+        if "patient_id" in model_cls.model_fields:
+            values["patient_id"] = _PID
+        item = model_cls(id=f"feedface-0000-4000-8000-{index:012d}", **values)
+        record = record.model_copy(update={_slot(model_cls): [item]})
+    return record
+
+
+def test_every_field_in_the_table_survives_the_round_trip() -> None:
+    """The central guard: for every row of the FHIR field table, a record
+    carrying a value for it comes back carrying the same value. Driven by the
+    table, so a row added later is covered without touching this test.
+    """
+    record = _saturated()
+    rebuilt = from_bundle(to_bundle(record))
+
+    for model_cls, table in TABLES:
+        rows = [f for f in table if f.read]
+        if not rows:
+            continue
+        before = [record.patient] if model_cls is Patient else getattr(record, _slot(model_cls))
+        after = [rebuilt.patient] if model_cls is Patient else getattr(rebuilt, _slot(model_cls))
+        assert len(after) == len(before), model_cls.__name__
+        for original, returned in zip(before, after, strict=True):
+            for row in rows:
+                # Not vacuous: the sample above sets every row, so a value that
+                # came back as None would mean the round trip dropped it.
+                assert getattr(original, row.name) is not None, f"{model_cls.__name__}.{row.name}"
+                assert getattr(returned, row.name) == getattr(original, row.name), (
+                    f"{model_cls.__name__}.{row.name}"
+                )
+
+
+def test_every_record_level_list_survives_the_round_trip() -> None:
+    """The lists that hang off PatientRecord itself, driven by the record's own
+    annotations rather than by the table that carries them — `health_concerns`
+    and `screening_events` were dropped by both sides and no test saw it.
+    """
+    record = PatientRecord(patient=Patient(id=_PID))
+    lists = {
+        name: field
+        for name, field in PatientRecord.model_fields.items()
+        if str(field.annotation).startswith("list[")
+    }
+    for name, field in lists.items():
+        item_cls = field.annotation.__args__[0]  # type: ignore[union-attr]
+        anchored = {"patient_id": _PID} if "patient_id" in item_cls.model_fields else {}
+        record = record.model_copy(update={name: [item_cls(**anchored)]})
+
+    rebuilt = from_bundle(to_bundle(record))
+
+    for name in lists:
+        assert len(getattr(rebuilt, name)) == 1, f"{name} did not survive the bundle"
+
+
+#: Every ``urn:anastomosis:field:`` key `to_bundle` writes, in emission order,
+#: spelled out rather than derived from the table — a row renamed, dropped or
+#: reordered moves both walkers at once, so only a literal catches it.
+_TAIL_KEYS: dict[str, tuple[str, ...]] = {
+    "AllergyIntolerance": ("category", "severity", "reactions"),
+    "Condition": ("acuity",),
+    "Coverage": (
+        "payer",
+        "order_of_benefits",
+        "plan_name",
+        "plan_type",
+        "coverage_type",
+        "group_number",
+        "priority_label",
+        "employer",
+        "relationship_to_insured",
+        "payment_type",
+        "copay",
+        "status_label",
+    ),
+    "DocumentReference": (
+        "artifact",
+        "path",
+        "sha256",
+        "page_count",
+        "pack_name",
+        "encounter_id",
+        "generated_at",
+        "mime_type",
+    ),
+    "Encounter": ("encounter_type", "signed_by_id", "signed_at", "last_modified_at"),
+    "FamilyMemberHistory": ("relation", "diagnosis", "onset_date"),
+    "Immunization": ("source", "vaccine"),
+    "Location": (),
+    "MedicationRequest": (
+        "prefix",
+        "status_label",
+        "refills",
+        "quantity",
+        "medication_id",
+        "display_date",
+        "transactions",
+    ),
+    "MedicationStatement": (
+        "generic_name",
+        "brand_name",
+        "strength",
+        "route",
+        "dose_form",
+        "rxnorm",
+        "display_name",
+        "associated_dx",
+        "last_modified_at",
+        "prescription_ids",
+    ),
+    "Observation": ("value", "unit", "recorded_at", "display"),
+    "Patient": (
+        "sex",
+        "gender_identity",
+        "sexual_orientation",
+        "race",
+        "ethnicity",
+        "mothers_maiden_name",
+        "middle_name",
+        "addresses",
+        "contact_preference",
+        "status",
+        "notes",
+        "contacts",
+        "guarantor",
+    ),
+    "Practitioner": ("credential",),
+}
+
+
+def test_the_tail_carries_exactly_the_inventory_it_is_committed_to() -> None:
+    """The pin the round trip cannot be: both walkers read one table, so a
+    moved row keeps the round trip green while the delivered bundle changes.
+    """
+    from anastomosis.core.fhir.fields import FIELD_NS
+
+    emitted: dict[str, list[str]] = {}
+    for entry in to_bundle(_saturated())["entry"]:
+        resource = entry["resource"]
+        emitted.setdefault(resource["resourceType"], []).extend(
+            x["url"].removeprefix(FIELD_NS)
+            for x in resource.get("extension", [])
+            if x["url"].startswith(FIELD_NS)
+        )
+
+    assert {k: tuple(v) for k, v in emitted.items()} == _TAIL_KEYS
+
+
+# --- the four asymmetries the S-4 audit named --------------------------------
+
+
+def _only(bundle: dict, resource_type: str) -> dict:
+    (resource,) = [
+        e["resource"] for e in bundle["entry"] if e["resource"]["resourceType"] == resource_type
+    ]
+    return resource
+
+
+def test_a_lossy_fhir_projection_never_decides_what_comes_back() -> None:
+    """`sex`, allergy `category` and allergy `severity` are each written twice:
+    once as the FHIR code a foreign system reads, once verbatim in the tail.
+    Only the tail is read back, so a charted value outside FHIR's value set
+    survives while the projection beside it is simply absent.
+    """
+    charted = AllergyIntolerance(
+        id="feedface-0000-4000-8000-0000000000a1",
+        patient_id=_PID,
+        category=AllergyCategory.OTHER,
+        severity="Life-threatening",
+        reactions=["Hives"],
+    )
+    record = PatientRecord(patient=Patient(id=_PID, sex="F"), allergies=[charted])
+
+    bundle = to_bundle(record)
+    allergy = _only(bundle, "AllergyIntolerance")
+    assert "gender" not in _only(bundle, "Patient")  # "F" is not a FHIR gender
+    assert "category" not in allergy  # OTHER has no FHIR allergy category
+    assert "severity" not in allergy["reaction"][0]  # nor is it a FHIR severity
+
+    rebuilt = from_bundle(bundle)
+    assert rebuilt.patient.sex == "F"
+    assert rebuilt.allergies[0].category is AllergyCategory.OTHER
+    assert rebuilt.allergies[0].severity == "Life-threatening"
+
+    # The projection is real, not merely never written: a value FHIR does hold
+    # lands in the standard element as well as the tail.
+    coded = charted.model_copy(update={"category": AllergyCategory.DRUG, "severity": "severe"})
+    bundle = to_bundle(PatientRecord(patient=Patient(id=_PID, sex="female"), allergies=[coded]))
+    assert _only(bundle, "Patient")["gender"] == "female"
+    assert _only(bundle, "AllergyIntolerance")["category"] == ["medication"]
+    assert _only(bundle, "AllergyIntolerance")["reaction"][0]["severity"] == "severe"
+
+
+def test_an_empty_mime_type_comes_back_empty_not_as_a_different_default() -> None:
+    """The two sides defaulted differently: export's model default is
+    `application/pdf`, ingest's read fallback `application/octet-stream`, and
+    `Attachment.contentType` is pruned when empty — so an empty mime type came
+    back as a type the record never claimed. The tail now carries that case.
+    """
+    document = DocumentArtifact(
+        id="feedface-0000-4000-8000-0000000000d1", patient_id=_PID, mime_type="", title="Chart"
+    )
+    record = PatientRecord(patient=Patient(id=_PID), documents=[document])
+
+    bundle = to_bundle(record)
+    assert "contentType" not in _only(bundle, "DocumentReference")["content"][0]["attachment"]
+    assert from_bundle(bundle).documents[0].mime_type == ""
+
+    # A bundle from a foreign system, with neither contentType nor the tail,
+    # still reads as the unknown-binary default rather than guessing PDF.
+    foreign = copy.deepcopy(bundle)
+    docref = _only(foreign, "DocumentReference")
+    docref["extension"] = [x for x in docref["extension"] if not x["url"].endswith(":mime_type")]
+    assert from_bundle(foreign).documents[0].mime_type == "application/octet-stream"

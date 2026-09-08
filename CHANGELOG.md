@@ -579,6 +579,33 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **One FHIR field table, walked in both directions.** `core/fhir/export.py`
+  and `core/fhir/ingest.py` each named the same twelve entities and stated
+  every field's identity twice — model attribute, tail key, converter — so a
+  field added to one side and forgotten on the other simply vanished, which is
+  how two record-level lists came to be dropped (below). The 68 fields that
+  ride the `urn:anastomosis:field:` tail are now one table,
+  `core/fhir/fields.py`: `to_bundle` walks it forward and `from_bundle` walks
+  it backward as its exact inverse. The code systems (LOINC, ICD-10-CM,
+  SNOMED, SSN, NPI) and the canonical-to-FHIR allergy category pairing live
+  there once and `sources/fhir_r4/mapper.py` reads them from it, backwards
+  where it needs the inverse; that mapper keeps its own residual walker, which
+  is the losslessness contract and has no counterpart on either side. Ten
+  things stay as code beside the table because a table has no slot for them:
+  the two-entity Patient resource, the three-way `_actor` dispatch, the
+  double-shipped note, attachment metadata from the deliverer, `_entries`'
+  refusal, the `_urn`/`_ref`/`_unref` codec, `_pref`, the RelatedPerson
+  relationship fallback, the constant `MedicationRequest.status` and the
+  nested FHIR element paths, whose key order is part of the delivered bytes.
+  Every bundle of the five committed fixtures is byte-identical and so is
+  every record read back out of one; `tools/snapshot.py` passes and the corpus
+  pin has not moved. The table is guarded from two sides: a round-trip
+  property test driven by the table itself, so a row added later is covered
+  without touching the test, and a committed literal inventory of the 68 tail
+  keys, which is what catches a row moved on both sides at once. Dead code
+  cut: `sources/fhir_r4/mapper.py`'s `_code_in` had no caller anywhere in
+  `src/`, `tests/` or `tools/`.
+
 - **QA and the verification ladder go flat.** The engine checks were a
   registry with one writer and one reader: `checks.py` registered seven
   checks in a loop, `base.py` sorted them back out, and a duplicate-name
@@ -711,6 +738,26 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus
