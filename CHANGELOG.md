@@ -579,6 +579,37 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The greeting mark arrives and then stops moving.** Bare `anast` drew its
+  entrance in fourteen frames — about two thirds of a second, filling from the
+  foot of the trunk outward — and then kept going: an endless, periodless
+  perfusion field of three incommensurable sine waves that breathed the dots
+  in and out and shifted them along a six-stop colour ramp. It ran until
+  somebody hit a key or eight seconds passed, whichever came first, which
+  meant an unattended terminal sat looking at a moving logo for eight seconds
+  before it was shown the menu. The entrance is now the whole animation. The
+  mark assembles in the same fourteen frames, in the same colours, and the
+  last frame is the settled logo it always was; nothing follows it, so there
+  is no keyboard to put into cbreak, no keystroke to swallow before it
+  answers the next question, and no frame-synchronisation wrapper around the
+  console's writes. Measured on a real 100x40 pty: the menu question used to
+  arrive 8.61 s after the first byte and now arrives at 0.86 s, over 18
+  redraws instead of 174, and the settled mark the run ends on is character
+  for character and stop for stop the one it ended on before. **This is the
+  only visible change in the audit series; everything else in it is
+  byte-identical by contract.** What did not change:
+  a person at a terminal is still greeted, a pipe still gets nothing at all
+  (`isatty()`, never Rich's `is_terminal`), a terminal too narrow for the mark
+  plus a readable text column still gets the plain header, `NO_COLOR` still
+  settles the mark instead of playing it, a CP-1252 console still gets the
+  ASCII ramp, and importing the CLI still never loads the mark or Rich's live
+  display. `core/vesselmark.py` loses 226 lines and its tests 151; the ten
+  tests that went were testing the wave field, the keyboard and the
+  synchronisation wrapper, and nothing they covered survives them. One test
+  arrives to hold something nothing held before: that the entrance reaches a
+  truecolor terminal in the mark's own stops. The prose ratchet records only
+  those two files, so the base branch's own drift is not folded into this
+  slice. (#428)
+
 - **The guided session stops telling you every system is ready to receive
   charts.** `anast` with no arguments offered the thirteen destinations as a
   plain alphabetical list, so Epic — which no filing assistant on this

@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import math
 import os
-import sys
-from contextlib import contextmanager
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 
@@ -29,7 +27,7 @@ from anastomosis.core.presentation import (
 from anastomosis.core.vesselmark_data import DENSITY, LEVELS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
 
     from rich.console import Console
 
@@ -42,12 +40,9 @@ __all__ = [
     "beside",
     "can_draw",
     "frame_levels",
-    "home_stops",
     "mark_levels",
-    "pulse_frame",
     "render",
     "show_greeting",
-    "wave",
 ]
 
 MARK_WIDTH = len(DENSITY[0])
@@ -61,9 +56,10 @@ GUTTER = 2
 #: and the plain header (which wraps gracefully) is printed.
 MIN_TEXT_COLUMNS = 24
 
-#: The entrance, in frames and seconds per frame. Under a second in total: an
-#: identity moment that outlasts the eye's patience is a delay, not a greeting.
-#: What follows the entrance is not bounded the same way — see :func:`_play`.
+#: The entrance, in frames and seconds per frame — the whole animation, and
+#: under a second of it: an identity moment that outlasts the eye's patience
+#: is a delay, not a greeting. Nothing follows it, so there is nothing to
+#: interrupt and no keyboard to read.
 FRAMES = 14
 FRAME_SECONDS = 0.05
 
@@ -196,126 +192,6 @@ def frame_levels(frame: int) -> tuple[tuple[int, ...], ...]:
     return tuple(grid)
 
 
-#: A rectangle of per-cell integers — levels or stops, same shape either way.
-_Grid = tuple[tuple[int, ...], ...]
-
-
-# --- the perfusion field -----------------------------------------------------
-
-#: The anastomosis hub — where the two cut vessels meet the trunk, which is the
-#: thing this product is named for. Derived, not chosen: ``make_vessel.build``
-#: puts it at (0.500, 0.615) of a 1024 canvas, cells are 1024/21 x 1024/11, and
-#: ``sample_matrix`` trims one all-zero row off the top.
-HUB_COL, HUB_ROW = 10.0, 5.265
-
-#: Base pulse, in hertz, and the three temporal ratios riding it. The ratios
-#: are INCOMMENSURABLE on purpose: 0.618 and 1.481 share no small-integer
-#: relation with 1.0, so the superposition has no period and the mark never
-#: repeats itself. That is the whole reason this can loop without looking like
-#: a loop.
-_F0 = 0.85
-_RATIO = (1.000, 0.618, 1.481)
-#: Spatial wavelengths, in the doubled-row world units distance is measured in.
-#: Nyquist-bounded: rows sample every 2 units, so 6.1 gets 3.05 samples per
-#: cycle vertically. Below about 5 it aliases into speckle; above R_MAX no
-#: crest fits inside the mark at all.
-_LAM = (9.0, 6.1, 13.7)
-_AMP = (0.60, 0.28, 0.16)
-#: The glyph gain floor. At the trough a cell keeps 55 % of its settled level,
-#: which is what stops the outline flickering: levels 1 and 2 hold while 3 and
-#: 4 breathe, so the capillary rim carries the silhouette steady.
-_G0 = 0.55
-#: Frames the amplitude takes to come up after the entrance, and the ceiling on
-#: an unwatched greeting.
-#:
-#: The ceiling is a real cost of running continuously and it was measured, not
-#: guessed: the pty test drives ``anast`` for real, and at a 1200-frame cap the
-#: run never reached the menu inside sixty seconds. Nothing was broken — the
-#: mark was perfusing exactly as designed, and the question underneath it was
-#: waiting for the animation to finish. A greeting that holds the prompt is not
-#: alive, it is in the way.
-#:
-#: So: any keystroke ends it instantly, and failing that eight seconds does.
-#: Nobody ever sees it repeat, because the field has no period — eight seconds
-#: is simply the longest this may make somebody wait who typed ``anast`` and
-#: then looked away. Genuinely endless motion needs the mark to live UNDER the
-#: prompt rather than before it, which needs the self-echoing reader in #330;
-#: until that lands, this is where continuous honestly stops.
-_RAMP_IN = 6
-_IDLE_FRAMES = 160
-
-
-def _phase_offset(col: int, row: int) -> float:
-    """A smooth, lattice-free phase shift per cell: two incommensurable
-    plane waves rather than a coordinate hash (white noise looks like
-    static, a smooth field looks like tissue), and it breaks the ring
-    coherence a pure radial term would give, separating a pulse from a
-    sonar ping."""
-    u, v = float(col), 2.0 * row
-    return 0.45 * (0.9 * math.sin(0.70 * u + 1.30 * v) + 0.6 * math.sin(-1.10 * u + 0.53 * v))
-
-
-def wave(col: int, row: int, seconds: float, seed: float = 0.0) -> float:
-    """The field at one cell at one instant, in ``[0, 1]``. The minus sign
-    on time makes crests travel OUTWARD from the hub; the smoothstep turns
-    a machine-reading sine into fast attack, slow decay. ``seed`` shifts
-    where in the endless field a run begins, so nobody sees the same
-    opening twice."""
-    distance = math.hypot(col - HUB_COL, 2.0 * (row - HUB_ROW))
-    phase = _phase_offset(col, row)
-    # The mark is mirror-symmetric about column 10 and distance therefore reads
-    # identically on both cut vessels. Without this term both arms pulse in
-    # lockstep, which is visibly mechanical. It has no seam at the hub.
-    lateral = 0.15 * (col - HUB_COL)
-    raw = 0.0
-    for amp, lam, ratio in zip(_AMP, _LAM, _RATIO, strict=True):
-        angle = math.tau * distance / lam - math.tau * _F0 * ratio * seconds
-        raw += amp * math.sin(angle + phase * ratio + lateral + seed * ratio)
-    unit = 0.5 + 0.5 * raw / 1.04
-    return unit * unit * (3.0 - 2.0 * unit)
-
-
-def _amplitude(frame: int) -> float:
-    """How much of the field reaches the mark at ``frame``: zero through
-    the entrance (the wave's phase runs the whole time, it simply has no
-    reach yet), then smoothstepped up over ``_RAMP_IN`` frames and held.
-    Settling is an exit, taken when somebody presses a key."""
-    if frame < FRAMES:
-        return 0.0
-    ramp = min(1.0, (frame - FRAMES + 1) / _RAMP_IN)
-    return ramp * ramp * (3.0 - 2.0 * ramp)
-
-
-def pulse_frame(frame: int, seed: float = 0.0) -> tuple[_Grid, _Grid]:
-    """One frame of the perfusion, as ``(levels, stops)``: two channels
-    from one scalar, glyph for form and stop for light, so the mark stays
-    complete with colour stripped. At amplitude zero both channels
-    reproduce the settled mark EXACTLY, which the exit relies on."""
-    seconds = frame * FRAME_SECONDS
-    amplitude = _amplitude(frame)
-    levels, stops = [], []
-    for row, home_row in enumerate(mark_levels()):
-        level_row, stop_row = [], []
-        for col, home in enumerate(home_row):
-            if home == 0:
-                level_row.append(0)
-                stop_row.append(0)
-                continue
-            unit = 0.5 + amplitude * (wave(col, row, seconds, seed) - 0.5)
-            gain = _G0 + (1.0 - _G0) * unit
-            level_row.append(max(1, min(home, math.ceil(home * gain))))
-            delta = -1 if unit < 0.25 else (1 if unit > 0.75 else 0)
-            stop_row.append(max(0, min(len(MARK_STOPS) - 1, home + delta)))
-        levels.append(tuple(level_row))
-        stops.append(tuple(stop_row))
-    return tuple(levels), tuple(stops)
-
-
-def home_stops() -> _Grid:
-    """Every cell on the stop its density gives it — the settled colouring."""
-    return mark_levels()
-
-
 def render(
     levels: Sequence[Sequence[int]],
     *,
@@ -410,11 +286,11 @@ def _wrapped(console: Console, lines: Sequence[Text]) -> list[Text]:
 
 
 def _play(console: Console, lines: Sequence[Text], *, unicode_dots: bool) -> None:
-    """Contract: run the greeting and leave the settled mark on screen.
-    Bounded twice: a keystroke ends it (swallowed), or ``_IDLE_FRAMES``
-    settles an unattended terminal; either way the last write is the
-    settled mark. Must never run while a prompt is open — ``Live`` does
-    not coordinate with ``Console.input`` on stdin."""
+    """Contract: run the entrance and leave the settled mark on screen —
+    frame ``FRAMES - 1`` IS that mark, so the last write is no special
+    case. Bounded by ``FRAMES`` alone, under a second, nothing after it
+    and no keyboard to read. Must never run while a prompt is open:
+    ``Live`` does not coordinate with ``Console.input`` on stdin."""
     import time
 
     from rich.console import Group
@@ -424,50 +300,16 @@ def _play(console: Console, lines: Sequence[Text], *, unicode_dots: bool) -> Non
     # the ASCII ramp in 256 colours, and a UTF-8 xterm with NO_COLOR draws
     # braille in none. Encoding and colour depth are different questions.
     palette = _palette(console)
-    seed = _seed()
-
-    def block(levels: Sequence[Sequence[int]], stops: Sequence[Sequence[int]]) -> Group:
-        drawn = render(levels, unicode_dots=unicode_dots, stops=stops, palette=palette)
-        return Group(*beside(drawn, lines))
-
-    original = console.file
-    # rich types `console.file` as IO[str]; the wrapper forwards everything it
-    # does not implement, and only `write` is on rich's hot path. The cast says
-    # that out loud rather than widening the wrapper into a fake file object.
-    #
-    # NOT on a legacy Windows console. There, rich renders through
-    # `legacy_windows_render` and a `LegacyWindowsTerm`, which colours by
-    # calling the console API and passes the plain text down to
-    # `console.file.write` — us. That console has no VT parser, so the two DEC
-    # private sequences the wrapper adds are not ignored, they are PRINTED:
-    # `<-[?2026h` at the head of every frame, twenty times a second. The
-    # synchronisation is a nicety; the garbage would not be.
-    if not console.legacy_windows:
-        console.file = cast("IO[str]", _Synchronised(original))
-    try:
-        with _single_keystrokes(), Live(console=console, auto_refresh=False) as live:
-            for frame in range(_IDLE_FRAMES):
-                live.update(block(*_grid(frame, seed)), refresh=True)
-                time.sleep(FRAME_SECONDS)
-                if _key_pressed():
-                    break
-            live.update(block(mark_levels(), home_stops()), refresh=True)
-    finally:
-        console.file = original
-
-
-def _grid(frame: int, seed: float) -> tuple[_Grid, _Grid]:
-    """The entrance while it lasts, the perfusion after it."""
-    if frame < FRAMES - 1:
-        return frame_levels(frame), home_stops()
-    return pulse_frame(frame, seed)
-
-
-def _seed() -> float:
-    """Where in the endless field this run begins."""
-    import secrets
-
-    return secrets.randbelow(10_000) / 10_000 * math.tau
+    # Every cell on the stop its own density gives it: the mark is coloured
+    # from the moment it arrives, and the colouring never moves.
+    stops = mark_levels()
+    with Live(console=console, auto_refresh=False) as live:
+        for frame in range(FRAMES):
+            drawn = render(
+                frame_levels(frame), unicode_dots=unicode_dots, stops=stops, palette=palette
+            )
+            live.update(Group(*beside(drawn, lines)), refresh=True)
+            time.sleep(FRAME_SECONDS)
 
 
 def _palette(console: Console) -> tuple[str, ...] | None:
@@ -478,71 +320,3 @@ def _palette(console: Console) -> tuple[str, ...] | None:
     if depth == "256":
         return MARK_STOPS_256
     return None
-
-
-class _Synchronised:
-    """DECSET 2026 around each write, so the terminal presents a frame
-    atomically — rich has no support for the mode, and a terminal that
-    does not implement it just ignores the unknown DEC parameter. Both
-    halves go out in one call: tmux freezes a pane for up to a second
-    when a begin is never matched by an end."""
-
-    def __init__(self, file: Any) -> None:
-        self._file = file
-
-    def write(self, text: str) -> int:
-        if not text:
-            return 0
-        return int(self._file.write(f"\x1b[?2026h{text}\x1b[?2026l"))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._file, name)
-
-
-@contextmanager
-def _single_keystrokes() -> Iterator[None]:
-    """Ask the terminal to hand over keys as typed, so the entrance can
-    interrupt before the Enter that would normally deliver one. Ctrl-C
-    still interrupts (cbreak leaves signal generation on); a terminal that
-    will not take the mode change just plays the entrance out."""
-    if sys.platform == "win32":  # pragma: no cover - windows reads keys unbuffered
-        yield
-        return
-    import termios
-    import tty
-
-    try:
-        descriptor = sys.stdin.fileno()
-        saved = termios.tcgetattr(descriptor)
-    except (AttributeError, OSError, ValueError):
-        yield
-        return
-    tty.setcbreak(descriptor)
-    try:
-        yield
-    finally:
-        termios.tcsetattr(descriptor, termios.TCSADRAIN, saved)
-
-
-def _key_pressed() -> bool:
-    """Whether a key has been hit, swallowing it if so: the keystroke was
-    aimed at the entrance, and letting it fall through would answer the
-    next menu question with a character nobody chose."""
-    if sys.platform == "win32":  # pragma: no cover - exercised on the windows leg
-        import msvcrt
-
-        pressed = False
-        while msvcrt.kbhit():
-            msvcrt.getwch()
-            pressed = True
-        return pressed
-    import select
-
-    try:
-        ready, _writable, _failed = select.select([sys.stdin], [], [], 0)
-        if not ready:
-            return False
-        os.read(sys.stdin.fileno(), 4096)
-    except (AttributeError, OSError, ValueError):
-        return False
-    return True
