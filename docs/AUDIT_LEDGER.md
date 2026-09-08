@@ -437,3 +437,46 @@ A mechanical AST classifier put 2,062 of 2,513 tests in the hypothetical column;
 | `tests/` after | ~32,000 | ~50,000 (from 64,002) |
 
 The halving in the owner's brief is metaphor for "everything it does, in as little as a veteran would write". The evidence says the veteran's version of this tool is about a third smaller in code and two-thirds smaller in prose, not half in code, because two of its subsystems are already at the size the problem costs (C-CDA, layout inference, by reference measurement), one is seven times smaller than its reference (the upload engine), and one is already smaller than its reference (QA). What remains large after the slices is large for a reason a row in this ledger names. Where a slice's structural well runs dry before its estimate, the PR says so and stops; that is the rule from `banach-tarski-refactor`, and it is why these numbers are written down before the first cut.
+
+## 15. The final sweep: the files no slice claimed
+
+Sections 4.1–4.10 verdict the files the eleven package auditors reached. Section 6
+maps the rest onto thirteen slices. Twenty-two files, 4,028 lines, fall through both:
+they are in no slice's merge map, and eleven of them carry no verdict row above —
+four are absent from this document entirely, and seven appear only inside a rule
+citation (§12) or a findings list (§8, §9), which names a line, not a disposition.
+
+They were read for this section, not pattern-matched. A grep for these paths
+disagreed with the prose in two places: `base.py` in §4.9 is `qa/base.py`, and
+`sources/base.py` has no row at all; `packs/generic_soap/context.py` does have one
+(§4.8) and the grep missed it.
+
+| path | lines | verdict | reason |
+|---|---|---|---|
+| `__init__.py` | 11 | KEEP | the docstring and `__version__`; nothing else in it. Its "no network on the core path" line is RULES.md 37 |
+| `sources/__init__.py` | 28 | KEEP | a re-export facade over `base`. It omits `QuarantinedRows`, correctly: all five users import that from `sources.base` directly |
+| `sources/_rowutil.py` | 54 | KEEP | §4.2 — already the unification |
+| `sources/base.py` | 169 | KEEP | the adapter contract, the registry, and `_ensure_builtin_adapters`' literal imports, which are each built-in adapter's only static reference and so the reason the frozen Windows build ships them at all |
+| `deliver/__init__.py` | 10 | KEEP | §4.6 — doc-only |
+| `deliver/router.py` | 172 | SIMPLIFY, done here | pure routing logic, no I/O. `_capability_option` took a `field: str` its body never read; both callers passed a literal that went nowhere. Ruff's `ARG` rules are not enabled, so nothing caught it |
+| `deliver/render_index.py` | 168 | KEEP | §4.6 |
+| `deliver/fhir_api/__init__.py` | 12 | KEEP | §4.6 — doc-only |
+| `deliver/fhir_api/attach.py` | 44 | KEEP | §4.5 — the seam itself. Both imports stay inside the function: either would drag the whole browser-upload package in behind `browser.errors` |
+| `deliver/fhir_api/client.py` | 286 | KEEP | stdlib `urllib`, no new dependency; loopback-only http, a `__repr__` that cannot print the token, and one redirect handler that refuses before urllib copies `Authorization` onto a server-named URL |
+| `deliver/fhir_api/destination.py` | 529 | KEEP | §4.6 |
+| `packs/generic_soap/context.py` | 81 | KEEP | §4.8 — and the pack `migrate.py` actually names by default |
+| `packs/practice_fusion_soap/context.py` | 1,090 | SIMPLIFY | §4.8, **owned by S-5**. The one file the prose sweep skipped, to hold the pack layout hash still |
+| `reconstruct/__init__.py` | 28 | KEEP | a re-export facade over `packs` and `packtrust` |
+| `reconstruct/engine.py` | 353 | KEEP, receipt added here | the allocator, the recycle-and-retry lifecycle, the collision widening, and the conservation check. §9 listed its `RenderIndexConflict` branch as unreachable-by-construction and said each such branch gets a test in the slice that touches its file — no slice touches this one, so the receipt is here |
+| `reconstruct/chromium.py` | 71 | KEEP | the one `Renderer` implementation; the Protocol beside it is the seam every test renders through |
+| `reconstruct/packctx.py` | 91 | KEEP | §4.8 — zero static importers, reached only through the sandbox allowlist. **A dead-code pass must exclude it** |
+| `reconstruct/packexec.py` | 200 | KEEP | the pack sandbox. 140 of its lines are the two allowlists, which are data and are the point; its own docstring is honest that it is a loud refusal, not a security boundary |
+| `reconstruct/packtrust.py` | 159 | KEEP | §4.8's merge (the third streaming sha256) landed in S-2; the trust store itself stays |
+| `reconstruct/provenance.py` | 255 | KEEP | §4.8's merge (the fifth digester) landed in S-2; `RecordingLoader` is the only thing that knows which template bytes reached the compiler |
+| `reconstruct/ccda_standard/__init__.py` | 23 | KEEP | doc-only, plus the four re-exports |
+| `reconstruct/ccda_standard/renderer.py` | 194 | KEEP | the neutral render path — `build_ccd` → HL7's pinned `CDA.xsl` under `read_network=False` → PDF. Eight functions, none over 40 lines. This is the path the real export drives |
+
+Twenty KEEP, two SIMPLIFY. One of the two is S-5's. The other is the four lines
+deleted below, which is the whole of what this sweep found to cut: after the prose
+sweep and twelve structural slices, the files nobody claimed are the ones that were
+already the size their problem costs.
