@@ -12,29 +12,29 @@ from __future__ import annotations
 
 from .composite import ALL_LEVELS, LayeredVerifier
 from .levels import (
-    L0FileIntegrity,
-    L1PageAndSize,
-    L2IdentityText,
-    L3HeaderFields,
-    L4Banner,
-    L5Metadata,
-    L6RoundTrip,
     LevelResult,
     LevelStatus,
     fuzzy_contains,
+    l0_file_integrity,
+    l1_page_and_size,
+    l2_identity_text,
+    l3_header_fields,
+    l4_banner,
+    l5_metadata,
+    l6_round_trip,
 )
 
 __all__ = [
     "ALL_LEVELS",
-    "L0FileIntegrity",
-    "L1PageAndSize",
-    "L2IdentityText",
-    "L3HeaderFields",
-    "L4Banner",
-    "L5Metadata",
-    "L6RoundTrip",
     "LayeredVerifier",
     "LevelResult",
     "LevelStatus",
     "fuzzy_contains",
+    "l0_file_integrity",
+    "l1_page_and_size",
+    "l2_identity_text",
+    "l3_header_fields",
+    "l4_banner",
+    "l5_metadata",
+    "l6_round_trip",
 ]

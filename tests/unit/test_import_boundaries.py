@@ -238,3 +238,43 @@ def test_core_imports_nothing_outward() -> None:
         + "; ".join(offenders)
         + ". The command layer lives in commands/, not in the primitives package."
     )
+
+
+# --- the import graph: no package re-exports (rule 75) ---------------------
+#
+# Both package inits are docstring markers, so one submodule costs one.
+# `verify.composite` is absent below: `.persist` needs `VerifyPolicy`, and
+# reaching `verify.types` runs an init with six `LayeredVerifier` callers.
+
+#: Module `.persist` must not load -> the import that would re-introduce it.
+_PERSIST_MUST_NOT_LOAD = {
+    "sqlite3": "anastomosis.deliver.browser.tracking, the ledger",
+    "anastomosis.deliver.browser.engine": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.tracking": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.deliver.browser.cdp": "a re-export in deliver/browser/__init__.py",
+    "anastomosis.destinations.browserpack": "a re-export in destinations/__init__.py",
+}
+
+
+def test_manifest_writer_does_not_load_the_upload_engine() -> None:
+    """Importing the manifest writer loads no SQLite ledger, upload engine, CDP
+    client or pack adapter: one re-export in either init puts them all back."""
+    loaded = _modules_after_import("anastomosis.deliver.browser.persist")
+    leaked = sorted(set(_PERSIST_MUST_NOT_LOAD) & loaded)
+    assert not leaked, (
+        "importing the manifest writer loaded "
+        + "; ".join(f"{name}, re-introduced by {_PERSIST_MUST_NOT_LOAD[name]}" for name in leaked)
+        + ". Import each name from the module that defines it (rule 75)."
+    )
+
+
+def test_verification_ladder_does_not_load_the_sqlite_ledger() -> None:
+    """The ladder verifies bytes, the ledger records upload progress: importing
+    the ladder reaches ``browser.errors`` only, not the package behind it."""
+    loaded = _modules_after_import("anastomosis.deliver.verify")
+    assert "sqlite3" not in loaded, (
+        "importing the verification ladder loaded sqlite3, re-introduced by "
+        "anastomosis.deliver.browser.tracking — the ladder imports "
+        "browser.errors, and a re-export in deliver/browser/__init__.py makes "
+        "that the ledger too (rule 75)."
+    )

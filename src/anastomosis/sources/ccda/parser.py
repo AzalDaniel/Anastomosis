@@ -47,10 +47,12 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    SECTION_BY_CODE,
     SECTION_CODE_UNKNOWN,
     TPL_SEVERITY,
     V3,
     XSI,
+    SectionSpec,
     first_rooted_id,
     identity_from_ii,
     organizer_component_source_id,
@@ -543,10 +545,12 @@ def _fact_id(kind: str, element: _Element | None, source_file: str, position: st
     )
 
 
-def _conditions(section: _Element, patient_id: str, source_file: str) -> list[Condition]:
+def _conditions(
+    section: _Element, spec: SectionSpec, patient_id: str, source_file: str
+) -> list[Condition]:
     out: list[Condition] = []
     for index, entry in enumerate(_entries(section)):
-        act = _find(entry, "v3:act")
+        act = _find(entry, spec.entry_path)
         if act is None:
             continue
         active = _val_attr(act, "v3:statusCode", "code") == "active"
@@ -580,10 +584,12 @@ def _conditions(section: _Element, patient_id: str, source_file: str) -> list[Co
 # --- allergies ---------------------------------------------------------------
 
 
-def _allergies(section: _Element, patient_id: str, source_file: str) -> list[AllergyIntolerance]:
+def _allergies(
+    section: _Element, spec: SectionSpec, patient_id: str, source_file: str
+) -> list[AllergyIntolerance]:
     out: list[AllergyIntolerance] = []
     for index, entry in enumerate(_entries(section)):
-        obs = _find(entry, "v3:act/v3:entryRelationship/v3:observation")
+        obs = _find(entry, f"{spec.entry_path}/v3:entryRelationship/v3:observation")
         if obs is None:
             continue
         value_code = _val_attr(obs, "v3:value", "code")
@@ -616,7 +622,7 @@ def _allergies(section: _Element, patient_id: str, source_file: str) -> list[All
                 category=category,
                 reactions=reactions,
                 severity=severity,
-                onset=_ts_date(_find(entry, "v3:act"), "v3:effectiveTime/v3:low"),
+                onset=_ts_date(_find(entry, spec.entry_path), "v3:effectiveTime/v3:low"),
                 extensions=extensions,
                 provenance=_prov(source_file, _val_attr(obs, "v3:id", "root")),
             )
@@ -627,10 +633,12 @@ def _allergies(section: _Element, patient_id: str, source_file: str) -> list[All
 # --- medications -------------------------------------------------------------
 
 
-def _medications(section: _Element, patient_id: str, source_file: str) -> list[MedicationStatement]:
+def _medications(
+    section: _Element, spec: SectionSpec, patient_id: str, source_file: str
+) -> list[MedicationStatement]:
     out: list[MedicationStatement] = []
     for index, entry in enumerate(_entries(section)):
-        admin = _find(entry, "v3:substanceAdministration")
+        admin = _find(entry, spec.entry_path)
         if admin is None:
             continue
         material = _find(
@@ -664,10 +672,12 @@ def _medications(section: _Element, patient_id: str, source_file: str) -> list[M
 # --- immunizations -----------------------------------------------------------
 
 
-def _immunizations(section: _Element, patient_id: str, source_file: str) -> list[Immunization]:
+def _immunizations(
+    section: _Element, spec: SectionSpec, patient_id: str, source_file: str
+) -> list[Immunization]:
     out: list[Immunization] = []
     for index, entry in enumerate(_entries(section)):
-        admin = _find(entry, "v3:substanceAdministration")
+        admin = _find(entry, spec.entry_path)
         if admin is None:
             continue
         material = _find(admin, "v3:consumable/v3:manufacturedProduct/v3:manufacturedMaterial")
@@ -727,14 +737,14 @@ def _interval_value(value: _Element) -> tuple[str | None, str | None] | None:
 
 def _measurements(
     section: _Element,
+    spec: SectionSpec,
     patient_id: str,
     category: ObservationCategory,
-    organizer_path: str,
     source_file: str,
 ) -> list[Observation]:
     out: list[Observation] = []
     for entry_index, entry in enumerate(_entries(section)):
-        organizer = _find(entry, organizer_path)
+        organizer = _find(entry, spec.entry_path)
         if organizer is None:
             continue
         organizer_id = first_rooted_id(organizer)
@@ -771,10 +781,12 @@ def _measurements(
 # --- social history ----------------------------------------------------------
 
 
-def _social_history(section: _Element, patient_id: str, source_file: str) -> list[Observation]:
+def _social_history(
+    section: _Element, spec: SectionSpec, patient_id: str, source_file: str
+) -> list[Observation]:
     out: list[Observation] = []
     for index, entry in enumerate(_entries(section)):
-        obs = _find(entry, "v3:observation")
+        obs = _find(entry, spec.entry_path)
         if obs is None or _val_attr(obs, "v3:code", "code") != "72166-2":
             continue
         out.append(
@@ -808,11 +820,13 @@ def _encounter_id(id_pair: tuple[str, str | None] | None, source_file: str, inde
     )
 
 
-def _encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
+def _encounters(
+    section: _Element, spec: SectionSpec, patient_id: str, actors: _Actors
+) -> list[Encounter]:
     source_file = actors.source_file
     out: list[Encounter] = []
     for index, entry in enumerate(_entries(section)):
-        enc = _find(entry, "v3:encounter")
+        enc = _find(entry, spec.entry_path)
         if enc is None:
             continue
         code = _find(enc, "v3:code")
@@ -848,11 +862,13 @@ def _entry_performer(enc: _Element, actors: _Actors) -> str | None:
     return actors.add_person(performer, "performer", entity, _ASSIGNED_ENTITY)
 
 
-def _note_encounters(section: _Element, patient_id: str, actors: _Actors) -> list[Encounter]:
+def _note_encounters(
+    section: _Element, spec: SectionSpec, patient_id: str, actors: _Actors
+) -> list[Encounter]:
     source_file = actors.source_file
     out: list[Encounter] = []
     for index, entry in enumerate(_entries(section)):
-        act = _find(entry, "v3:act")
+        act = _find(entry, spec.entry_path)
         if act is None:
             continue
         text = _text_content(_find(act, "v3:text"))
@@ -2050,6 +2066,48 @@ def _record_zero_sentinels(record: PatientRecord, root: _Element) -> None:
         record.patient.extensions[EXT_TS_NO_INSTANT] = counts
 
 
+def _read_section(
+    record: PatientRecord,
+    section: _Element,
+    spec: SectionSpec,
+    patient_id: str,
+    actors: _Actors,
+    path: Path,
+) -> None:
+    """Fold one section of :data:`SECTION_BY_CODE` into ``record``. Nine
+    sections, nine readers: what a statement looks like inside an entry
+    differs section by section (rule 55), so this dispatches on the row
+    rather than parameterising the nine into one."""
+    source_file = actors.source_file
+    if spec.loinc == LOINC_PROBLEMS:
+        record.conditions += _conditions(section, spec, patient_id, source_file)
+    elif spec.loinc == LOINC_ALLERGIES:
+        record.allergies += _allergies(section, spec, patient_id, source_file)
+    elif spec.loinc == LOINC_MEDICATIONS:
+        record.medications += _medications(section, spec, patient_id, source_file)
+    elif spec.loinc == LOINC_IMMUNIZATIONS:
+        record.immunizations += _immunizations(section, spec, patient_id, source_file)
+    elif spec.loinc == LOINC_VITALS:
+        record.observations += _measurements(
+            section, spec, patient_id, ObservationCategory.VITAL_SIGNS, source_file
+        )
+    elif spec.loinc == LOINC_RESULTS:
+        record.observations += _measurements(
+            section, spec, patient_id, ObservationCategory.LABORATORY, source_file
+        )
+    elif spec.loinc == LOINC_SOCIAL:
+        record.observations += _social_history(section, spec, patient_id, source_file)
+    elif spec.loinc == LOINC_ENCOUNTERS:
+        record.encounters += _encounters(section, spec, patient_id, actors)
+    elif spec.loinc == LOINC_NOTES:
+        record.encounters += _note_encounters(section, spec, patient_id, actors)
+        # The documents a C-CDA this toolkit delivered carries beside it. Read
+        # in the Notes section because that is where the export hangs them: a
+        # scanned chart IS the note for the visit it documents, and a second
+        # 34109-9 section would tell a reader the document has two.
+        record.documents += _delivered_artifacts(section, path, patient_id)
+
+
 def parse_document(path: Path) -> PatientRecord:
     """Parse one C-CDA / CCD XML file into a :class:`PatientRecord`.
 
@@ -2090,33 +2148,8 @@ def parse_document(path: Path) -> PatientRecord:
 
     for section in _sections(root):
         loinc = _section_code(section)
-        if loinc == LOINC_PROBLEMS:
-            record.conditions += _conditions(section, pid, source_file)
-        elif loinc == LOINC_ALLERGIES:
-            record.allergies += _allergies(section, pid, source_file)
-        elif loinc == LOINC_MEDICATIONS:
-            record.medications += _medications(section, pid, source_file)
-        elif loinc == LOINC_IMMUNIZATIONS:
-            record.immunizations += _immunizations(section, pid, source_file)
-        elif loinc == LOINC_VITALS:
-            record.observations += _measurements(
-                section, pid, ObservationCategory.VITAL_SIGNS, "v3:organizer", source_file
-            )
-        elif loinc == LOINC_RESULTS:
-            record.observations += _measurements(
-                section, pid, ObservationCategory.LABORATORY, "v3:organizer", source_file
-            )
-        elif loinc == LOINC_SOCIAL:
-            record.observations += _social_history(section, pid, source_file)
-        elif loinc == LOINC_ENCOUNTERS:
-            record.encounters += _encounters(section, pid, actors)
-        elif loinc == LOINC_NOTES:
-            record.encounters += _note_encounters(section, pid, actors)
-            # The documents a C-CDA this toolkit delivered carries beside it.
-            # Read in the Notes section because that is where the export hangs
-            # them: a scanned chart IS the note for the visit it documents, and
-            # a second 34109-9 section would tell a reader the document has two.
-            record.documents += _delivered_artifacts(section, path, pid)
+        if loinc is not None and (spec := SECTION_BY_CODE.get(loinc)) is not None:
+            _read_section(record, section, spec, pid, actors, path)
         # Losslessness: narrative and entries are captured for EVERY
         # section, not only unparsed ones — a structural parser `continue`s
         # past an entry it does not support, so a known section can yield

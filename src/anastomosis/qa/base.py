@@ -1,4 +1,4 @@
-"""The QA check contract and registry.
+"""The QA check contract.
 
 A check is a named object whose ``run(pdf_path, ctx)`` returns a verdict
 plus human-readable findings. Checks never raise for document problems — a
@@ -18,7 +18,7 @@ from typing import Protocol
 
 from anastomosis.core.model import Encounter, PatientRecord
 
-__all__ = ["CheckResult", "QACheck", "QAContext", "Verdict", "engine_checks", "register_check"]
+__all__ = ["CheckResult", "QACheck", "QAContext", "Verdict"]
 
 
 class Verdict(StrEnum):
@@ -82,18 +82,3 @@ class QACheck(Protocol):
     name: str
 
     def run(self, pdf_path: Path, ctx: QAContext) -> CheckResult: ...
-
-
-_REGISTRY: dict[str, QACheck] = {}
-
-
-def register_check(check: QACheck) -> QACheck:
-    if check.name in _REGISTRY:
-        raise ValueError(f"QA check {check.name!r} is already registered")
-    _REGISTRY[check.name] = check
-    return check
-
-
-def engine_checks() -> list[QACheck]:
-    """All registered checks, stable order."""
-    return [_REGISTRY[name] for name in sorted(_REGISTRY)]
