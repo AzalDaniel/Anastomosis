@@ -233,9 +233,33 @@ def xml_digest(path: Path) -> str:
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+def _running_version() -> str:
+    from anastomosis import __version__
+
+    return __version__
+
+
+def _mask_version(text: str) -> str:
+    """The running version stamped into prose deliverables, replaced by a fixed
+    token. A version bump must not read as a changed deliverable; the token
+    keeps its PRESENCE asserted, so a stamp that disappears still fails."""
+    version = _running_version()
+    return text.replace(version, "<version>") if version else text
+
+
 def html_digest(path: Path) -> str:
-    collapsed = _WHITESPACE_RE.sub(" ", path.read_text(encoding="utf-8")).strip()
+    collapsed = _WHITESPACE_RE.sub(" ", _mask_version(path.read_text(encoding="utf-8"))).strip()
     return hashlib.sha256(collapsed.encode("utf-8")).hexdigest()
+
+
+#: Prose deliverables that carry the version the way HTML does; their bytes are
+#: otherwise compared exactly.
+TEXT_SUFFIXES = frozenset({".txt", ".md"})
+
+
+def text_digest(path: Path) -> str:
+    masked = _mask_version(path.read_text(encoding="utf-8"))
+    return hashlib.sha256(masked.encode("utf-8")).hexdigest()
 
 
 # --- PDF normalization ---------------------------------------------------------
@@ -279,6 +303,8 @@ def file_kind(path: Path) -> str:
         return "html"
     if suffix == ".pdf":
         return "pdf"
+    if suffix in TEXT_SUFFIXES:
+        return "text"
     return "other"
 
 
@@ -291,6 +317,8 @@ def digest_for(path: Path, kind: str) -> str:
         return html_digest(path)
     if kind == "pdf":
         return pdf_digest(path)
+    if kind == "text":
+        return text_digest(path)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

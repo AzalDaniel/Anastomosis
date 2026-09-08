@@ -8,4 +8,4 @@ the result to a new EHR, a FHIR endpoint, or a searchable offline archive.
 Local-first: the core pipeline makes no network calls.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
