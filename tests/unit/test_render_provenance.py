@@ -18,8 +18,8 @@ import pytest
 
 import anastomosis.reconstruct.chromium as chromium
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the adapter
+from anastomosis.core.packdirs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR
 from anastomosis.pipeline import PipelineError, run_pipeline
-from anastomosis.reconstruct.packs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR
 from anastomosis.reconstruct.packtrust import pack_content_hash
 from anastomosis.reconstruct.provenance import (
     RENDER_PROVENANCE_NAME,

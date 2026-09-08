@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from anastomosis.qa import QAReport
     from anastomosis.reconstruct.ccda_standard import CCDARenderResult
     from anastomosis.reconstruct.engine import ReconstructionEngine, RenderResult
+    from anastomosis.reconstruct.packs import PackManifest
     from anastomosis.reconstruct.provenance import RenderProvenance
     from anastomosis.sources.base import QuarantinedRows, SourceAdapter
 
@@ -966,47 +967,24 @@ def _render_record_summaries(
     return view
 
 
-def run_pipeline(
-    *,
-    export_dir: Path,
-    out: Path,
-    source: str | None,
+def _resolve_pack_and_guard(
     pack: str,
+    *,
+    out: Path,
     pack_dirs: list[Path] | None,
-    force: bool,
+    trust_new: bool,
     section: list[str] | None,
-    qa: bool,
-    trust_new: bool = False,
-    include: list[str] | None = None,
-    on_event: EventSink | None = None,
-) -> PipelineResult:
-    """Contract: the full pipeline (ingest -> reconstruct -> optional QA),
-    frontend-free. Emits PHI-safe :class:`StageEvent`\\ s through
-    ``on_event``, raises :class:`PipelineError` on failure, and returns
-    state for delivery. ``section``/``include`` override layout and rules."""
-    from anastomosis.core.output import OutputPathError, validate_output_target
+    switched_off: frozenset[str],
+    force: bool,
+) -> tuple[ReconstructionEngine, PackManifest, dict[str, object], RenderProvenance]:
+    """Contract: resolve the layout, refuse an unknown pack or an unknown
+    ``--section``, build the engine, then refuse a folder whose charts were
+    made under other settings or another layout. Returns the engine, the
+    pack's manifest, the settings record to write, and the provenance."""
     from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.chromium import ChromiumRenderer, RendererUnavailable
-    from anastomosis.reconstruct.engine import ReconstructionEngine
+    from anastomosis.reconstruct.engine import build_render_engine
     from anastomosis.reconstruct.packtrust import default_pack_trust
     from anastomosis.reconstruct.provenance import pack_provenance
-
-    emit = on_event or (lambda _event: None)
-
-    # Pre-flight the output dir before any ingest/render work, so a bad path
-    # fails in milliseconds rather than deep in the engine after a long run.
-    try:
-        validate_output_target(out)
-    except OutputPathError as exc:
-        raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
-
-    adapter = resolve_source(export_dir, source)
-    emit(StageEvent(STAGE_DETECT, detail=adapter.name))
-    # Selection choices settle against the resolved source before anything is
-    # read: an unknown rule name is cheap to reject before the export opens.
-    switched_off = _switched_off(adapter, include)
-    rules_report = _selection_rules_report(adapter, switched_off)
-    adapter = with_selection(adapter, switched_off)
 
     dirs = list(pack_dirs or [])
     # The trust store is always consulted, since a learned layout in the
@@ -1037,17 +1015,7 @@ def run_pipeline(
             exit_code=2,
             kind="bad_section",
         )
-    margins = {
-        "top": manifest.page.margin_top,
-        "right": manifest.page.margin_right,
-        "bottom": manifest.page.margin_bottom,
-        "left": manifest.page.margin_left,
-    }
-    engine = ReconstructionEngine(
-        status.pack,
-        lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
-        section_overrides=overrides,
-    )
+    engine = build_render_engine(status.pack, section_overrides=overrides)
     # Before any ingest work: if this folder already holds charts, do they
     # answer the question being asked? Refuse here, not as a silent no-op later.
     settings = _render_settings(pack, engine.section_flags, switched_off)
@@ -1057,6 +1025,57 @@ def run_pipeline(
     # the unavailable case already raised.
     provenance = pack_provenance(status.pack, status.origin)
     _guard_render_provenance(out, provenance, force=force)
+
+    return engine, manifest, settings, provenance
+
+
+def run_pipeline(
+    *,
+    export_dir: Path,
+    out: Path,
+    source: str | None,
+    pack: str,
+    pack_dirs: list[Path] | None,
+    force: bool,
+    section: list[str] | None,
+    qa: bool,
+    trust_new: bool = False,
+    include: list[str] | None = None,
+    on_event: EventSink | None = None,
+) -> PipelineResult:
+    """Contract: the full pipeline (ingest -> reconstruct -> optional QA),
+    frontend-free. Emits PHI-safe :class:`StageEvent`\\ s through
+    ``on_event``, raises :class:`PipelineError` on failure, and returns
+    state for delivery. ``section``/``include`` override layout and rules."""
+    from anastomosis.core.output import OutputPathError, validate_output_target
+    from anastomosis.reconstruct.chromium import RendererUnavailable
+
+    emit = on_event or (lambda _event: None)
+
+    # Pre-flight the output dir before any ingest/render work, so a bad path
+    # fails in milliseconds rather than deep in the engine after a long run.
+    try:
+        validate_output_target(out)
+    except OutputPathError as exc:
+        raise PipelineError(str(exc), exit_code=2, kind="bad_output") from None
+
+    adapter = resolve_source(export_dir, source)
+    emit(StageEvent(STAGE_DETECT, detail=adapter.name))
+    # Selection choices settle against the resolved source before anything is
+    # read: an unknown rule name is cheap to reject before the export opens.
+    switched_off = _switched_off(adapter, include)
+    rules_report = _selection_rules_report(adapter, switched_off)
+    adapter = with_selection(adapter, switched_off)
+
+    engine, manifest, settings, provenance = _resolve_pack_and_guard(
+        pack,
+        out=out,
+        pack_dirs=pack_dirs,
+        trust_new=trust_new,
+        section=section,
+        switched_off=switched_off,
+        force=force,
+    )
 
     records = load_records(adapter, export_dir)
     emit(

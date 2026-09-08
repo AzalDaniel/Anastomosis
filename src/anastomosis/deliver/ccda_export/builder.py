@@ -46,10 +46,12 @@ from anastomosis.core.ccda_codes import (
     OID_SNOMED,
     OID_SSN,
     SDTC,
+    SECTION_BY_CODE,
     SECTION_CODE_UNKNOWN,
     TPL_SEVERITY,
     V3,
     XSI,
+    SectionSpec,
     first_rooted_id,
     organizer_component_source_id,
 )
@@ -80,10 +82,9 @@ __all__ = ["DECLARED_LOSSES", "CcdMeasurement", "DeliveredArtifact", "build_ccd"
 
 logger = logging.getLogger(__name__)
 
-# --- the writer's own namespaces, OIDs and template ids ----------------------
-#
-# Not mirrored anywhere: the parser reads none of these. What both halves DO
-# have to agree on lives in core.ccda_codes, imported above.
+# --- the writer's own namespaces and OIDs ------------------------------------
+# Not mirrored: the parser reads none of these; what both halves must agree on
+# lives in core.ccda_codes, imported above.
 
 NSMAP = {None: V3, "sdtc": SDTC, "xsi": XSI}
 
@@ -520,24 +521,17 @@ def _patient_demographics(role: etree._Element, patient: Patient) -> None:
 # --- section scaffold --------------------------------------------------------
 
 
-def _section(
-    body: etree._Element,
-    loinc: str,
-    title: str,
-    display_name: str,
-    *,
-    template_id: tuple[str, str] | None = None,
-    section_id: tuple[str, str] | None = None,
-) -> etree._Element:
-    """Open a ``<component><section>`` on ``loinc``; return the ``<section>``
-    for entries. ``template_id``/``section_id`` are used only by the loss
-    narrative, the one section this tool must recognize as its own.
-    """
+def _section(body: etree._Element, spec: SectionSpec) -> etree._Element:
+    """Open a ``<component><section>`` for ``spec``; return the ``<section>``
+    for its narrative and entries."""
     section = _el(_el(body, "component"), "section")
-    if template_id is not None:
-        _el(section, "templateId", root=template_id[0], extension=template_id[1])
-    if section_id is not None:
-        _el(section, "id", root=section_id[0], extension=section_id[1])
+    _code_el(section, spec.loinc, spec.display_name)
+    _text_el(section, "title", spec.title)
+    return section
+
+
+def _code_el(section: etree._Element, loinc: str, display_name: str) -> None:
+    """The ``<code>`` naming a section, on the one code system it may use."""
     _el(
         section,
         "code",
@@ -546,8 +540,16 @@ def _section(
         codeSystem=OID_LOINC,
         codeSystemName="LOINC",
     )
-    _text_el(section, "title", title)
-    return section
+
+
+def _entry(section: etree._Element, spec: SectionSpec, **attrs: str | None) -> etree._Element:
+    """Open one ``<entry>`` and the element its statements are made of, stamped
+    with the R2.1 template its row declares. ``attrs`` become its attributes."""
+    node = _el(_el(section, "entry"), spec.entry_tag, **attrs)
+    if spec.entry_template is not None:
+        root, extension = spec.entry_template
+        _el(node, "templateId", root=root, extension=extension)
+    return node
 
 
 def _narrative(section: etree._Element, lines: list[str]) -> None:
@@ -713,13 +715,13 @@ def _carry_preserved(body: etree._Element, preserved: _Preserved) -> None:
 
 
 def _problems(body: etree._Element, conditions: list[Condition], preserved: _Preserved) -> None:
-    section = _section(body, LOINC_PROBLEMS, "Problems", "Problem List")
+    spec = SECTION_BY_CODE[LOINC_PROBLEMS]
+    section = _section(body, spec)
     # The narrative lists every condition; the entries are only the ones the
     # section's own preserved entries do not already state (see _Preserved).
     _narrative(section, [_condition_line(c) for c in conditions])
-    for condition in preserved.own(LOINC_PROBLEMS, conditions):
-        act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
-        _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.3", extension="2015-08-01")
+    for condition in preserved.own(spec.loinc, conditions):
+        act = _entry(section, spec, classCode="ACT", moodCode="EVN")
         _el(act, "code", code="CONC", codeSystem=OID_ACTCLASS)
         # The parser reads `active` from THIS act's statusCode.
         _el(act, "statusCode", code="active" if condition.active else "completed")
@@ -769,11 +771,11 @@ def _condition_line(condition: Condition) -> str:
 def _allergies(
     body: etree._Element, allergies: list[AllergyIntolerance], preserved: _Preserved
 ) -> None:
-    section = _section(body, LOINC_ALLERGIES, "Allergies", "Allergies and Adverse Reactions")
+    spec = SECTION_BY_CODE[LOINC_ALLERGIES]
+    section = _section(body, spec)
     _narrative(section, [a.substance or "Allergy" for a in allergies])
-    for allergy in preserved.own(LOINC_ALLERGIES, allergies):
-        act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
-        _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.30", extension="2015-08-01")
+    for allergy in preserved.own(spec.loinc, allergies):
+        act = _entry(section, spec, classCode="ACT", moodCode="EVN")
         _el(act, "code", code="CONC", codeSystem=OID_ACTCLASS)
         _el(act, "statusCode", code="active" if allergy.active else "completed")
         eff = _el(act, "effectiveTime")
@@ -828,12 +830,11 @@ def _severity(obs: etree._Element, severity: str) -> None:
 def _medications(
     body: etree._Element, medications: list[MedicationStatement], preserved: _Preserved
 ) -> None:
-    section = _section(body, LOINC_MEDICATIONS, "Medications", "History of Medication Use")
+    spec = SECTION_BY_CODE[LOINC_MEDICATIONS]
+    section = _section(body, spec)
     _narrative(section, [m.display_name or "Medication" for m in medications])
-    for med in preserved.own(LOINC_MEDICATIONS, medications):
-        entry = _el(section, "entry")
-        admin = _el(entry, "substanceAdministration", classCode="SBADM", moodCode="EVN")
-        _el(admin, "templateId", root="2.16.840.1.113883.10.20.22.4.16", extension="2014-06-09")
+    for med in preserved.own(spec.loinc, medications):
+        admin = _entry(section, spec, classCode="SBADM", moodCode="EVN")
         _el(admin, "statusCode", code="active" if med.active else "completed")
         period = _el(admin, "effectiveTime", xsi_type="IVL_TS")
         _nullable(period, "low", _ts_date(med.start) if med.start else None)
@@ -878,18 +879,18 @@ def _med_consumable(admin: etree._Element, med: MedicationStatement) -> None:
 def _immunizations(
     body: etree._Element, immunizations: list[Immunization], preserved: _Preserved
 ) -> None:
-    section = _section(body, LOINC_IMMUNIZATIONS, "Immunizations", "History of Immunizations")
+    spec = SECTION_BY_CODE[LOINC_IMMUNIZATIONS]
+    section = _section(body, spec)
     _narrative(section, [i.vaccine or "Immunization" for i in immunizations])
-    for imm in preserved.own(LOINC_IMMUNIZATIONS, immunizations):
+    for imm in preserved.own(spec.loinc, immunizations):
         refused = imm.extensions.get("ccda:negationInd") == "true"
-        admin = _el(
-            _el(section, "entry"),
-            "substanceAdministration",
+        admin = _entry(
+            section,
+            spec,
             classCode="SBADM",
             moodCode="EVN",
             negationInd="true" if refused else "false",
         )
-        _el(admin, "templateId", root="2.16.840.1.113883.10.20.22.4.52", extension="2015-08-01")
         _el(admin, "statusCode", code="completed")
         _nullable(
             admin,
@@ -908,19 +909,17 @@ def _immunizations(
 
 def _measurements(
     body: etree._Element,
-    loinc: str,
-    title: str,
-    display_name: str,
+    spec: SectionSpec,
     organizer_class: str,
     observations: list[Observation],
     preserved: _Preserved,
 ) -> None:
-    section = _section(body, loinc, title, display_name)
+    section = _section(body, spec)
     _narrative(section, [_measurement_line(o) for o in observations])
-    own = preserved.own(loinc, observations)
+    own = preserved.own(spec.loinc, observations)
     if not own:
         return
-    organizer = _el(_el(section, "entry"), "organizer", classCode=organizer_class, moodCode="EVN")
+    organizer = _entry(section, spec, classCode=organizer_class, moodCode="EVN")
     _el(organizer, "statusCode", code="completed")
     # An organizer-level effectiveTime gives the parser a fallback timestamp.
     effs = [o.effective_at for o in own if o.effective_at is not None]
@@ -959,17 +958,15 @@ def _is_smoking_status(obs: Observation) -> bool:
 def _social_history(
     body: etree._Element, observations: list[Observation], preserved: _Preserved
 ) -> None:
-    """Social History (LOINC_SOCIAL, template 2.16.840.1.113883.10.20.22.4.78):
-    only a smoking-status observation gets the structured 72166-2 entry;
+    """Only a smoking-status observation gets the structured 72166-2 entry;
     every other social observation rides the loss narrative instead."""
-    section = _section(body, LOINC_SOCIAL, "Social History", "Social History")
+    spec = SECTION_BY_CODE[LOINC_SOCIAL]
+    section = _section(body, spec)
     _narrative(section, [_measurement_line(o) for o in observations])
-    for obs in preserved.own(LOINC_SOCIAL, observations):
+    for obs in preserved.own(spec.loinc, observations):
         if not _is_smoking_status(obs):
             continue  # non-tobacco social obs → loss narrative, never 72166-2
-        entry = _el(section, "entry")
-        node = _el(entry, "observation", classCode="OBS", moodCode="EVN")
-        _el(node, "templateId", root="2.16.840.1.113883.10.20.22.4.78", extension="2014-06-09")
+        node = _entry(section, spec, classCode="OBS", moodCode="EVN")
         _el(
             node,
             "code",
@@ -1001,11 +998,11 @@ def _encounter_code(node: etree._Element, encounter_type: str | None) -> None:
 
 
 def _encounters(body: etree._Element, encounters: list[Encounter], preserved: _Preserved) -> None:
-    section = _section(body, LOINC_ENCOUNTERS, "Encounters", "History of Encounters")
+    spec = SECTION_BY_CODE[LOINC_ENCOUNTERS]
+    section = _section(body, spec)
     _narrative(section, [e.encounter_type or "Encounter" for e in encounters])
-    for enc in preserved.own(LOINC_ENCOUNTERS, encounters):
-        node = _el(_el(section, "entry"), "encounter", classCode="ENC", moodCode="EVN")
-        _el(node, "templateId", root="2.16.840.1.113883.10.20.22.4.49", extension="2015-08-01")
+    for enc in preserved.own(spec.loinc, encounters):
+        node = _entry(section, spec, classCode="ENC", moodCode="EVN")
         # id @root drives the deterministic encounter id on re-ingest.
         _el(node, "id", root=enc.id)
         _encounter_code(node, enc.encounter_type)
@@ -1022,19 +1019,18 @@ def _encounters(body: etree._Element, encounters: list[Encounter], preserved: _P
 def _notes(
     body: etree._Element, encounters: list[Encounter], preserved: _Preserved
 ) -> etree._Element:
-    """Notes (LOINC_NOTES, code 34109-9): one act per encounter with
-    narrative content; SOAP sections concatenate into one labelled body
-    (declared loss). Returns the section so :func:`_delivered_documents`
-    can hang artifacts off the same one, never a second Notes section.
-    """
-    section = _section(body, LOINC_NOTES, "Notes", "Note")
+    """One act per encounter with narrative content; SOAP sections concatenate
+    into one labelled body (declared loss). Returns the section so
+    :func:`_delivered_documents` can hang artifacts off the same one, never a
+    second Notes section."""
+    spec = SECTION_BY_CODE[LOINC_NOTES]
+    section = _section(body, spec)
     with_notes = [e for e in encounters if e.has_note_content]
     _narrative(section, [e.note_type or "Note" for e in with_notes])
-    for enc in preserved.own(LOINC_NOTES, with_notes):
-        act = _el(_el(section, "entry"), "act", classCode="ACT", moodCode="EVN")
-        _el(act, "templateId", root="2.16.840.1.113883.10.20.22.4.202", extension="2016-11-01")
+    for enc in preserved.own(spec.loinc, with_notes):
+        act = _entry(section, spec, classCode="ACT", moodCode="EVN")
         _el(act, "id", root=enc.id)
-        _el(act, "code", code="34109-9", displayName=enc.note_type, codeSystem=OID_LOINC)
+        _el(act, "code", code=spec.loinc, displayName=enc.note_type, codeSystem=OID_LOINC)
         _text_el(act, "text", _note_body(enc))
         _el(act, "statusCode", code="completed")
         # Notes re-ingest date_of_service from author/time; emit it there.
@@ -1155,16 +1151,20 @@ def _extensions_section(body: etree._Element, record: PatientRecord, delivered: 
     lines = current + _carried_forward(prior_entries, current)
     if not lines:
         return
-    section = _section(
-        body,
-        LOINC_EXTENSIONS,
-        LOSS_NARRATIVE_TITLE,
-        "Note",
-        template_id=(LOSS_NARRATIVE_TEMPLATE_ROOT, LOSS_NARRATIVE_TEMPLATE_VERSION),
-        # A ledger with no readable generation restarts the count at 1; the
-        # counter is provenance, never clinical content, so a reset is not a loss.
-        section_id=(LOSS_NARRATIVE_GENERATION_ROOT, str((generation or 0) + 1)),
+    # Opened here, not through :func:`_section`: the one section that stands for
+    # itself states its stamp and generation counter before its code.
+    section = _el(_el(body, "component"), "section")
+    _el(
+        section,
+        "templateId",
+        root=LOSS_NARRATIVE_TEMPLATE_ROOT,
+        extension=LOSS_NARRATIVE_TEMPLATE_VERSION,
     )
+    # A ledger with no readable generation restarts the count at 1; the counter
+    # is provenance, never clinical content, so a reset is not a loss.
+    _el(section, "id", root=LOSS_NARRATIVE_GENERATION_ROOT, extension=str((generation or 0) + 1))
+    _code_el(section, LOINC_EXTENSIONS, "Note")
+    _text_el(section, "title", LOSS_NARRATIVE_TITLE)
     _narrative(section, lines)
 
 
@@ -1448,18 +1448,14 @@ def build_ccd(
     _immunizations(body, record.immunizations, preserved)
     _measurements(
         body,
-        LOINC_VITALS,
-        "Vital Signs",
-        "Vital Signs",
+        SECTION_BY_CODE[LOINC_VITALS],
         "CLUSTER",
         [o for o in record.observations if o.category == ObservationCategory.VITAL_SIGNS],
         preserved,
     )
     _measurements(
         body,
-        LOINC_RESULTS,
-        "Results",
-        "Relevant Diagnostic Tests and/or Laboratory Data",
+        SECTION_BY_CODE[LOINC_RESULTS],
         "BATTERY",
         [o for o in record.observations if o.category == ObservationCategory.LABORATORY],
         preserved,

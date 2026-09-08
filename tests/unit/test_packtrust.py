@@ -18,7 +18,7 @@ import pytest
 
 import anastomosis.reconstruct.packtrust as packtrust
 from anastomosis.reconstruct import discover_packs
-from anastomosis.reconstruct.packs import _load_pack_snapshot
+from anastomosis.reconstruct.packs import _load_pack
 from anastomosis.reconstruct.packtrust import PackTrust, pack_content_hash, read_pack_snapshot
 
 # A minimal-but-valid external pack whose context.py sets a flag on its own
@@ -152,7 +152,7 @@ def test_snapshot_load_pins_code_against_toctou_swap(tmp_path: Path) -> None:
     snapshot = read_pack_snapshot(pack)
     (pack / "context.py").write_text(_marker_context("SWAPPED"), encoding="utf-8")
 
-    status = _load_pack_snapshot(snapshot, "pack-dir")
+    status = _load_pack(snapshot.root, "pack-dir", snapshot)
     assert status.pack is not None
     assert status.pack.build_context(None, None, None)["marker"] == "ORIGINAL"
 

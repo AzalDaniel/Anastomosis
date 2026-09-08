@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from anastomosis.core.packdirs import ORIGIN_PACK_DIR
 from anastomosis.reconstruct import discover_packs
 from anastomosis.reconstruct.packexec import (
     PACK_ALLOWED_BUILTINS,
@@ -24,7 +25,6 @@ from anastomosis.reconstruct.packexec import (
     PackCapabilityRefused,
     restrict_module,
 )
-from anastomosis.reconstruct.packs import ORIGIN_PACK_DIR
 from anastomosis.reconstruct.packtrust import PackTrust
 
 _PACK_YAML = 'name: {name}\nversion: "0.1"\ndescription: pack-execution probe\n'

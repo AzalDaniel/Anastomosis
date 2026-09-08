@@ -17,6 +17,7 @@ import pytest
 from _render_fakes import write_text_pdf
 from test_ccda_unstructured import _embedded, _pdf, _write
 
+import anastomosis.deliver.browser.attach as browser_attach
 import anastomosis.gui.controller as controller_module
 import anastomosis.reconstruct.chromium as chromium
 from anastomosis.commands.upload_command import DEFAULT_MAX_ATTEMPTS
@@ -1573,8 +1574,8 @@ def test_source_init_async_failure_emits_single_source_error(tmp_path: Path) -> 
 #
 # Mirrors tests/unit/test_cli_upload.py exactly: a manifest written into out_dir,
 # a ready destination pack dir, and the destination SEAM monkeypatched to a
-# FakeDestination so the whole flow drives with no Playwright/Chromium. The seam
-# here is the controller module's _attach_destination (not the CLI's).
+# FakeDestination so the whole flow drives with no Playwright/Chromium. It is
+# the same seam both frontends attach through, `attach.attach_destination`.
 
 _LOOPBACK = "http://127.0.0.1:9222"
 _UPLOAD_DEST = "testdest"
@@ -1689,8 +1690,8 @@ def test_upload_start_drives_to_terminal(tmp_path: Path, monkeypatch: pytest.Mon
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
 
@@ -1741,8 +1742,8 @@ def test_upload_start_failed_items_emit_error_not_done(
     items, _patients = read_upload_manifest(resolve_manifest_root(out_dir))
     fail_keys = {item.item_key for item in items}
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known(), permanent_failures=fail_keys),
     )
 
@@ -1806,8 +1807,8 @@ def test_a_dying_upload_says_so_before_it_dies(
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known(), crash_after=1),
     )
     # The re-raise reaches the thread's excepthook, which pytest turns into a
@@ -1842,7 +1843,7 @@ def test_upload_start_honors_skiplist(tmp_path: Path, monkeypatch: pytest.Monkey
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     dest = FakeDestination(_upload_known())
-    monkeypatch.setattr(controller_module, "_attach_destination", lambda cdp, loaded: dest)
+    monkeypatch.setattr(browser_attach, "attach_destination", lambda cdp, loaded: dest)
 
     sink = _RecordingSink()
     controller = GuiController(sink)
@@ -1881,7 +1882,7 @@ def test_upload_start_rejects_non_loopback_cdp(
         seam_calls["n"] += 1
         return FakeDestination(_upload_known())
 
-    monkeypatch.setattr(controller_module, "_attach_destination", _spy)
+    monkeypatch.setattr(browser_attach, "attach_destination", _spy)
     sink = _RecordingSink()
     controller = GuiController(sink)
     result = controller.upload_start(
@@ -1951,8 +1952,8 @@ def test_upload_start_refuses_when_output_locked(
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
     sink = _RecordingSink()
@@ -2082,8 +2083,8 @@ def test_upload_start_threads_no_verify(tmp_path: Path, monkeypatch: pytest.Monk
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
     captured = _capture_upload_command(monkeypatch)
@@ -2105,8 +2106,8 @@ def test_upload_start_verify_defaults_on(tmp_path: Path, monkeypatch: pytest.Mon
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
     captured = _capture_upload_command(monkeypatch)
@@ -2131,8 +2132,8 @@ def test_upload_start_spawn_failure_releases_busy_and_clears_stop(
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
     monkeypatch.setattr(controller_module.threading, "Thread", _ExplodingThread)
@@ -2370,8 +2371,8 @@ def test_upload_events_all_carry_upload_flow(
     out_dir = _write_upload_manifest(tmp_path)
     pack_root = _upload_pack_dir(tmp_path)
     monkeypatch.setattr(
-        controller_module,
-        "_attach_destination",
+        browser_attach,
+        "attach_destination",
         lambda cdp, loaded: FakeDestination(_upload_known()),
     )
     sink = _RecordingSink()

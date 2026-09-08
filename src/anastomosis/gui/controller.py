@@ -51,17 +51,6 @@ logger = logging.getLogger(__name__)
 _STALE_DAYS = 90
 
 
-def _attach_destination(cdp_url: str, loaded: object) -> object:
-    """Build the live browser destination for an upload run (the Playwright seam).
-
-    Delegates to :func:`anastomosis.deliver.browser.attach.attach_destination`;
-    module-level so tests monkeypatch it, lazily imported (no ``deliver-browser`` extra needed).
-    """
-    from anastomosis.deliver.browser.attach import attach_destination
-
-    return attach_destination(cdp_url, loaded)
-
-
 class EventSink(Protocol):
     """Where the controller posts events; the shell adapts this to the window.
 

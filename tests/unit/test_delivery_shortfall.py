@@ -17,8 +17,7 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapter
 from anastomosis.core.model import PatientRecord
-from anastomosis.deliver.archive import ArchiveDeliverer
-from anastomosis.deliver.bundle import BundleDeliverer
+from anastomosis.deliver.archive import ArchiveDeliverer, BundleResult, Grouping
 from anastomosis.deliver.render_index import RenderEntry, RenderIndex
 from anastomosis.sources import get_source
 
@@ -28,6 +27,10 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 @pytest.fixture
 def records() -> list[PatientRecord]:
     return list(get_source("pf-tebra").load(FIXTURE))
+
+
+def _bundles(records: list[PatientRecord], charts: Path, out: Path) -> list[BundleResult]:
+    return ArchiveDeliverer(grouping=Grouping.BUNDLE).deliver(records, charts, out).patients
 
 
 def _charts(records: list[PatientRecord], charts_dir: Path) -> list[RenderEntry]:
@@ -194,7 +197,7 @@ def test_the_bundle_counts_a_chart_the_index_names_and_that_is_not_there(
     entries = _charts(records, charts)
     (charts / entries[0].pdf).unlink()
 
-    written = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+    written = _bundles(records, charts, tmp_path / "bundles")
 
     assert sum(b.missing_count for b in written) == 1
     owner = [b for b in written if b.patient_id == entries[0].patient_id]
@@ -209,7 +212,7 @@ def test_an_ordinary_delivery_reports_nothing_lost(
     entries = _charts(records, charts)
 
     archive = ArchiveDeliverer().deliver(records, charts, tmp_path / "archive")
-    bundles = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+    bundles = _bundles(records, charts, tmp_path / "bundles")
 
     assert (archive.missing_count, archive.unattributed_count) == (0, 0)
     assert archive.pdf_count == len(entries)

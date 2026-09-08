@@ -14,7 +14,7 @@ import hashlib
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, field, fields
 from datetime import date
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
@@ -56,51 +56,8 @@ DISCOVER_PREFIX = "DISCOVER"
 # PackNotReadyError so the operator knows exactly what to run.
 _WIZARD_HINT = "anast destination init"
 
-# Required selector slots: a pack missing any of these (or leaving any at the
-# DISCOVER placeholder) cannot run. Ordered for the wizard's required-first prompt.
-_REQUIRED_SLOTS: tuple[str, ...] = (
-    "patient_search_input",
-    "patient_search_submit",
-    "patient_result_row",
-    "patient_banner_name",
-    "patient_banner_dob",
-    "documents_list_item",
-    "upload_file_input",
-    "upload_submit",
-    "upload_success_marker",
-)
-
-# Optional selector slots: a pack may leave these unset — the driver acts on
-# them only when configured. The upload-form slots exist because attaching a
-# file alone leaves a chart uncategorised, undated and under nobody. Optional
-# is load-bearing: a pack leaving them blank drives only the five original
-# actions, so a selectors.yaml discovered before these slots existed still loads.
-_OPTIONAL_SLOTS: tuple[str, ...] = (
-    "documents_tab",
-    "upload_open_button",
-    "upload_filename_input",
-    "upload_category_select",
-    "upload_status_select",
-    "upload_date_input",
-    "upload_patient_prefill",
-    "upload_provider_select",
-    "upload_comments_input",
-)
-
-# The subset of optional slots that live inside the upload form. They are the
-# ones the row-index token below is rendered into, and the ones the driver
-# fills/reads rather than clicks.
-_FORM_SLOTS: frozenset[str] = frozenset(
-    {
-        "upload_filename_input",
-        "upload_category_select",
-        "upload_status_select",
-        "upload_date_input",
-        "upload_patient_prefill",
-        "upload_provider_select",
-        "upload_comments_input",
-    }
-)
+# Marks a slot as the upload form's own, on the schema that declares it.
+_FORM = {"form": True}
 
 # The row-index token a form slot may carry: a multi-document dialog numbers
 # controls per row (``#fileNameInput0``, ``...1``), so a pack writes the
@@ -280,13 +237,13 @@ class SelectorMap:
     upload_open_button: str = ""
     # optional — the upload form's own fields. A form slot may carry the
     # ``{idx}`` row-index token; the driver renders it for the row it fills.
-    upload_filename_input: str = ""
-    upload_category_select: str = ""
-    upload_status_select: str = ""
-    upload_date_input: str = ""
-    upload_patient_prefill: str = ""
-    upload_provider_select: str = ""
-    upload_comments_input: str = ""
+    upload_filename_input: str = field(default="", metadata=_FORM)
+    upload_category_select: str = field(default="", metadata=_FORM)
+    upload_status_select: str = field(default="", metadata=_FORM)
+    upload_date_input: str = field(default="", metadata=_FORM)
+    upload_patient_prefill: str = field(default="", metadata=_FORM)
+    upload_provider_select: str = field(default="", metadata=_FORM)
+    upload_comments_input: str = field(default="", metadata=_FORM)
 
     @classmethod
     def required_slots(cls) -> tuple[str, ...]:
@@ -352,6 +309,20 @@ class SelectorMap:
         if undiscovered:
             raise PackNotReadyError(pack_name, tuple(undiscovered))
         return cls(**values)
+
+
+# The slot names, read off the one schema above and nowhere else: required is
+# a field with no default, optional a field with one, and a form slot is one
+# the upload dialog owns rather than the page around it.
+_REQUIRED_SLOTS: tuple[str, ...] = tuple(
+    f.name for f in fields(SelectorMap) if f.default is MISSING
+)
+_OPTIONAL_SLOTS: tuple[str, ...] = tuple(
+    f.name for f in fields(SelectorMap) if f.default is not MISSING
+)
+_FORM_SLOTS: frozenset[str] = frozenset(
+    f.name for f in fields(SelectorMap) if f.metadata.get("form")
+)
 
 
 def _unconfigured(pack_name: str, slot: str) -> str:

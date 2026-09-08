@@ -52,9 +52,26 @@ from anastomosis.core.model import (
     ScreeningEvent,
     SectionKind,
 )
-from anastomosis.core.textutil import clean_numeric, format_phone, html_to_text, sanitize_soap_html
+from anastomosis.core.textutil import (
+    clean_cell,
+    clean_numeric,
+    format_phone,
+    html_to_text,
+    sanitize_soap_html,
+)
 from anastomosis.core.timeutil import age_at
-from anastomosis.sources._rowutil import clean_date, clean_dt, clean_str, group_by, residual
+from anastomosis.sources._rowutil import (
+    FieldMap,
+    RowTable,
+    cell_date,
+    cell_dt,
+    cell_key,
+    clean_date,
+    clean_dt,
+    clean_str,
+    group_by,
+    residual,
+)
 from anastomosis.sources.base import QuarantinedRows, SelectionRule
 
 from .escript import resolve_display_date, resolve_prefix, resolve_status
@@ -107,9 +124,9 @@ _d = clean_date
 _by = group_by
 
 
-def _b(row: Row, col: str) -> bool:
-    value = _s(row, col)
-    return value is not None and value.lower() == "true"
+def _bool(value: str | None) -> bool:
+    text = clean_cell(value)
+    return text is not None and text.lower() == "true"
 
 
 def _ext(row: Row, mapped: frozenset[str], prefix: str = "") -> dict[str, Any]:
@@ -133,30 +150,32 @@ def _ids(rows: list[Row], col: str) -> frozenset[str]:
 
 _PATIENT_KEY = "PatientPracticeGuid"
 
-_DEMOGRAPHICS_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "FirstName",
-        "MiddleName",
-        "LastName",
-        "NameSuffix",
-        "Gender",
-        "BirthDate",
-        "IsActive",
-        "MothersMaidenName",
-        "PreferredLanguage",
-        "Address1",
-        "Address2",
-        "AddressCity",
-        "AddressState",
-        "AddressZipCode",
-        "HomePhone",
-        "MobilePhone",
-        "OfficePhone",
-        "Email",
-        "SSN",
-        "UnPinnedNote",
-    }
+_DEMOGRAPHICS = RowTable(
+    Patient,
+    SOURCE,
+    "patient-demographics.tsv",
+    FieldMap("FirstName", "given_name"),
+    FieldMap("MiddleName", "middle_name"),
+    FieldMap("LastName", "family_name"),
+    FieldMap("NameSuffix", "suffix"),
+    FieldMap("BirthDate", "birth_date", cell_date),
+    FieldMap("Gender", "sex"),
+    FieldMap("PreferredLanguage", "language"),
+    FieldMap("MothersMaidenName", "mothers_maiden_name"),
+    "PatientPracticeGuid",
+    "IsActive",
+    "Address1",
+    "Address2",
+    "AddressCity",
+    "AddressState",
+    "AddressZipCode",
+    "HomePhone",
+    "MobilePhone",
+    "OfficePhone",
+    "Email",
+    "SSN",
+    "UnPinnedNote",
+    provenance_id="PatientPracticeGuid",
 )
 
 _PHONE_COLS = (
@@ -267,52 +286,45 @@ def _map_patient(row: Row, groups: _DemographicsGroups) -> Patient:
     giso_rows = groups.giso.get(guid, [])
     giso = giso_rows[0] if giso_rows else {}
 
-    return Patient(
+    return _DEMOGRAPHICS.build(
+        row,
+        extensions=_side_extensions(groups, guid),
         id=guid,
-        given_name=_s(row, "FirstName"),
-        middle_name=_s(row, "MiddleName"),
-        family_name=_s(row, "LastName"),
-        suffix=_s(row, "NameSuffix"),
-        birth_date=_d(row, "BirthDate"),
-        sex=_s(row, "Gender"),
         gender_identity=_s(giso, "GenderIdentity"),
         sexual_orientation=_s(giso, "SexualOrientation"),
         race=[name for r in groups.race.get(guid, []) if (name := _s(r, "RaceName"))],
         ethnicity=[
             name for r in groups.ethnicity.get(guid, []) if (name := _s(r, "EthnicityName"))
         ],
-        language=_s(row, "PreferredLanguage"),
-        mothers_maiden_name=_s(row, "MothersMaidenName"),
-        status="Active" if _b(row, "IsActive") else "Inactive",
+        status="Active" if _bool(row.get("IsActive")) else "Inactive",
         notes="\n".join(n for n in notes if n) or None,
         identifiers=identifiers,
         telecom=telecom,
         addresses=[address] if any(address.model_dump().values()) else [],
         guarantor=_map_guarantor(groups.guarantor, guid),
-        extensions=_ext(row, _DEMOGRAPHICS_MAPPED) | _side_extensions(groups, guid),
-        provenance=_prov("patient-demographics", guid),
     )
 
 
-# patient-guarantor.tsv columns consumed here — NOTE the Billing* names and
-# bare City/State/Zip: this table does not share demographics' Address* names.
-_GUARANTOR_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "FirstName",
-        "LastName",
-        "BillingPatientRelationshipOption",
-        "BillingPaymentType",
-        "DateOfBirth",
-        "BillingGenderOption",
-        "SSNumber",
-        "Address1",
-        "City",
-        "State",
-        "Zip",
-        "PrimaryPhoneNumber",
-        "SecondaryPhoneNumber",
-    }
+# NOTE the Billing* names and bare City/State/Zip: patient-guarantor.tsv does
+# not share demographics' Address* names. No provenance: it rides the patient.
+_GUARANTOR = RowTable(
+    Guarantor,
+    SOURCE,
+    "patient-guarantor.tsv",
+    FieldMap("BillingPatientRelationshipOption", "relationship_to_patient"),
+    FieldMap("BillingPaymentType", "payment_preference"),
+    FieldMap("DateOfBirth", "birth_date", cell_date),
+    FieldMap("BillingGenderOption", "sex"),
+    FieldMap("SSNumber", "ssn"),
+    "PatientPracticeGuid",
+    "FirstName",
+    "LastName",
+    "Address1",
+    "City",
+    "State",
+    "Zip",
+    "PrimaryPhoneNumber",
+    "SecondaryPhoneNumber",
 )
 
 
@@ -330,13 +342,9 @@ def _map_guarantor(guarantor_by: dict[str, list[Row]], guid: str) -> Guarantor |
         )
         if (phone := format_phone(_s(row, col)))
     ]
-    return Guarantor(
+    return _GUARANTOR.build(
+        row,
         name=name or None,
-        relationship_to_patient=_s(row, "BillingPatientRelationshipOption"),
-        payment_preference=_s(row, "BillingPaymentType"),
-        birth_date=_d(row, "DateOfBirth"),
-        sex=_s(row, "BillingGenderOption"),
-        ssn=_s(row, "SSNumber"),
         address=Address(
             line1=_s(row, "Address1"),
             city=_s(row, "City"),
@@ -344,30 +352,31 @@ def _map_guarantor(guarantor_by: dict[str, list[Row]], guid: str) -> Guarantor |
             postal_code=_s(row, "Zip"),
         ),
         phones=phones,
-        extensions=_ext(row, _GUARANTOR_MAPPED),
     )
 
 
 # --- encounters ---------------------------------------------------------------
 
-_ENCOUNTER_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "EncounterGuid",
-        "DateOfService",
-        "ChiefComplaint",
-        "Subjective",
-        "Objective",
-        "Assessment",
-        "Plan",
-        "SignedByProviderGuid",
-        "SignedDateTimeUtc",
-        "SeenByProviderGuid",
-        "FacilityGuid",
-        "ChartNoteType",
-        "IsSoapNote",
-        "LastModifiedDateTimeUtc",
-    }
+_ENCOUNTER = RowTable(
+    Encounter,
+    SOURCE,
+    "patient-encounters.tsv",
+    FieldMap("DateOfService", "date_of_service", cell_date),  # DateField: calendar date
+    FieldMap("ChiefComplaint", "chief_complaint"),
+    FieldMap("ChartNoteType", "note_type"),
+    FieldMap("SeenByProviderGuid", "provider_id"),
+    FieldMap("FacilityGuid", "facility_id"),
+    FieldMap("SignedByProviderGuid", "signed_by_id"),
+    FieldMap("SignedDateTimeUtc", "signed_at", cell_dt),  # year-1 sentinel -> None
+    FieldMap("LastModifiedDateTimeUtc", "last_modified_at", cell_dt),
+    "PatientPracticeGuid",
+    "EncounterGuid",
+    "Subjective",
+    "Objective",
+    "Assessment",
+    "Plan",
+    "IsSoapNote",
+    provenance_id="EncounterGuid",
 )
 
 _SOAP_COLUMNS = (
@@ -404,7 +413,7 @@ def _map_encounter(
     patient_guid = _s(row, "PatientPracticeGuid")
     assert guid is not None and patient_guid is not None
 
-    is_soap = _b(row, "IsSoapNote")
+    is_soap = _bool(row.get("IsSoapNote"))
     sections: list[NoteSection] = []
     if is_soap:
         for col, kind, title in _SOAP_COLUMNS:
@@ -433,23 +442,15 @@ def _map_encounter(
             _ext(link, _ENCOUNTER_DX_MAPPED, prefix=f"side:patient-encounter-diagnoses:{index}:")
         )
 
-    return Encounter(
+    return _ENCOUNTER.build(
+        row,
+        extensions=dx_extensions,
         id=guid,
         patient_id=patient_guid,
-        date_of_service=_d(row, "DateOfService"),  # DateField: calendar date
-        chief_complaint=_s(row, "ChiefComplaint"),
         encounter_type="SOAP" if is_soap else "SIMPLE",
-        note_type=_s(row, "ChartNoteType"),
-        provider_id=_s(row, "SeenByProviderGuid"),
-        facility_id=_s(row, "FacilityGuid"),
-        signed_by_id=_s(row, "SignedByProviderGuid"),
-        signed_at=_dt(row, "SignedDateTimeUtc"),  # year-1 sentinel → None
-        last_modified_at=_dt(row, "LastModifiedDateTimeUtc"),
         sections=sections,
         addenda=addenda,
         diagnosis_ids=diagnosis_ids,
-        extensions=_ext(row, _ENCOUNTER_MAPPED) | dx_extensions,
-        provenance=_prov("patient-encounters", guid),
     )
 
 
@@ -513,17 +514,20 @@ def _skip_reason(
 
 # --- observations (vitals + BMI auto-calc + social history) -------------------
 
-_OBSERVATION_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "EncounterGuid",
-        "ObservationCodeSystem",
-        "ObservationCode",
-        "Value",
-        "UnitOfObservation",
-        "ObservationDateTimeUtc",
-        "LastModifiedDateTimeUtc",
-    }
+# ObservationSetGuid names the row in provenance but is NOT consumed.
+_OBSERVATION = RowTable(
+    Observation,
+    SOURCE,
+    "patient-encounter-observations.tsv",
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("EncounterGuid", "encounter_id"),
+    FieldMap("UnitOfObservation", "unit"),
+    FieldMap("ObservationDateTimeUtc", "effective_at", cell_dt),
+    FieldMap("LastModifiedDateTimeUtc", "recorded_at", cell_dt),
+    "ObservationCodeSystem",
+    "ObservationCode",
+    "Value",
+    provenance_id="ObservationSetGuid",
 )
 
 
@@ -535,18 +539,12 @@ def _map_observation(row: Row) -> Observation:
     # canonical 0-10 display value.
     if code in _PAIN_LOINCS:
         value = pain_display(value)
-    return Observation(
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        encounter_id=_s(row, "EncounterGuid"),
+    return _OBSERVATION.build(
+        row,
         category=ObservationCategory.VITAL_SIGNS if vital else ObservationCategory.OTHER,
         code=code,
         display=vital.display if vital else None,
         value=value,
-        unit=_s(row, "UnitOfObservation"),
-        effective_at=_dt(row, "ObservationDateTimeUtc"),
-        recorded_at=_dt(row, "LastModifiedDateTimeUtc"),
-        extensions=_ext(row, _OBSERVATION_MAPPED),
-        provenance=_prov("patient-encounter-observations", _s(row, "ObservationSetGuid")),
     )
 
 
@@ -659,17 +657,19 @@ def _past_medical_history(export: Export, guid: str) -> list[PastMedicalHistory]
 
 # --- discrete clinical tables --------------------------------------------------
 
-_DIAGNOSIS_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "DiagnosisGuid",
-        "Diagnosis",
-        "DiagnosisCodeEquivalents",
-        "DiagnosisAcuity",
-        "StartDate",
-        "StopDate",
-        "LastModifiedDateTimeUtc",
-    }
+_DIAGNOSIS = RowTable(
+    Condition,
+    SOURCE,
+    "patient-diagnoses.tsv",
+    FieldMap("DiagnosisGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("Diagnosis", "display"),
+    FieldMap("DiagnosisAcuity", "acuity"),
+    FieldMap("StartDate", "onset", cell_date),
+    FieldMap("StopDate", "stopped", cell_date),
+    FieldMap("LastModifiedDateTimeUtc", "recorded_at", cell_dt),
+    "DiagnosisCodeEquivalents",
+    provenance_id="DiagnosisGuid",
 )
 
 
@@ -679,36 +679,28 @@ def _map_condition(row: Row) -> Condition:
     equivalents = _s(row, "DiagnosisCodeEquivalents") or ""
     icd10 = _ICD10_RE.search(equivalents)
     snomed = _SNOMED_RE.search(equivalents)
-    stopped = _d(row, "StopDate")
-    extensions = _ext(row, _DIAGNOSIS_MAPPED)
-    if equivalents:
-        extensions[f"{SOURCE}:DiagnosisCodeEquivalents"] = equivalents
-    return Condition(
-        id=_s(row, "DiagnosisGuid") or "",
-        patient_id=_s(row, "PatientPracticeGuid") or "",
+    return _DIAGNOSIS.build(
+        row,
+        extensions={f"{SOURCE}:DiagnosisCodeEquivalents": equivalents} if equivalents else {},
         icd10=icd10.group(1) if icd10 else None,
         snomed=snomed.group(1) if snomed else None,
-        display=_s(row, "Diagnosis"),
-        acuity=_s(row, "DiagnosisAcuity"),
-        onset=_d(row, "StartDate"),
-        stopped=stopped,
-        recorded_at=_dt(row, "LastModifiedDateTimeUtc"),
-        active=stopped is None,
-        extensions=extensions,
-        provenance=_prov("patient-diagnoses", _s(row, "DiagnosisGuid")),
+        active=_d(row, "StopDate") is None,
     )
 
 
-_ALLERGY_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "PatientAllergyGuid",
-        "AllergenCategory",
-        "Substance",
-        "Severity",
-        "StartDate",
-        "IsActive",
-    }
+_ALLERGY = RowTable(
+    AllergyIntolerance,
+    SOURCE,
+    "patient-allergy.tsv",
+    FieldMap("PatientAllergyGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("Substance", "substance"),
+    FieldMap("Severity", "severity"),
+    FieldMap("StartDate", "onset", cell_date),
+    FieldMap("IsActive", "active", _bool),
+    "AllergenCategory",
+    provenance_id="PatientAllergyGuid",
+    provenance_key=True,
 )
 
 _ALLERGY_CATEGORIES = {
@@ -731,83 +723,69 @@ def _map_allergy(row: Row, reactions_by_allergy: dict[str, list[Row]]) -> Allerg
         reaction_extensions.update(
             _ext(r, _REACTION_MAPPED, prefix=f"side:patient-allergy-reactions:{index}:")
         )
-    return AllergyIntolerance(
-        id=guid,
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        substance=_s(row, "Substance"),
+    return _ALLERGY.build(
+        row,
+        extensions=reaction_extensions,
         category=_ALLERGY_CATEGORIES.get(
             (_s(row, "AllergenCategory") or "").lower(), AllergyCategory.OTHER
         ),
         reactions=[reaction for r in reaction_rows if (reaction := _s(r, "Reaction"))],
-        severity=_s(row, "Severity"),
-        onset=_d(row, "StartDate"),
-        active=_b(row, "IsActive"),
-        extensions=_ext(row, _ALLERGY_MAPPED) | reaction_extensions,
-        provenance=_prov("patient-allergy", guid),
     )
 
 
-_MEDICATION_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "MedicationGuid",
-        "MedicationName",
-        "StartDate",
-        "StopDate",
-        "Sig",
-        "TradeName",
-        "GenericName",
-        "DoseForm",
-        "Route",
-        "ProductStrength",
-        "MedicationDiscontinuedReasonName",
-        "DisplayLastModifiedDateTimeUtc",
-    }
+_MEDICATION = RowTable(
+    MedicationStatement,
+    SOURCE,
+    "patient-medications.tsv",
+    FieldMap("MedicationGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("GenericName", "generic_name"),
+    FieldMap("TradeName", "brand_name"),
+    FieldMap("ProductStrength", "strength"),
+    FieldMap("Route", "route"),
+    FieldMap("DoseForm", "dose_form"),
+    FieldMap("MedicationName", "display_name"),
+    FieldMap("Sig", "sig"),
+    FieldMap("StartDate", "start", cell_date),
+    FieldMap("StopDate", "stop", cell_date),
+    FieldMap("DisplayLastModifiedDateTimeUtc", "last_modified_at", cell_dt),
+    "MedicationDiscontinuedReasonName",
+    provenance_id="MedicationGuid",
+    provenance_key=True,
 )
 
 
 def _map_medication(row: Row, prescription_ids: list[str]) -> MedicationStatement:
-    guid = _s(row, "MedicationGuid") or ""
-    stop = _d(row, "StopDate")
     discontinued = _s(row, "MedicationDiscontinuedReasonName")
-    return MedicationStatement(
-        id=guid,
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        generic_name=_s(row, "GenericName"),
-        brand_name=_s(row, "TradeName"),
-        strength=_s(row, "ProductStrength"),
-        route=_s(row, "Route"),
-        dose_form=_s(row, "DoseForm"),
-        display_name=_s(row, "MedicationName"),
-        sig=_s(row, "Sig"),
-        start=_d(row, "StartDate"),
-        stop=stop,
-        last_modified_at=_dt(row, "DisplayLastModifiedDateTimeUtc"),
-        active=stop is None and discontinued is None,
+    return _MEDICATION.build(
+        row,
+        active=_d(row, "StopDate") is None and discontinued is None,
         prescription_ids=prescription_ids,
-        extensions=_ext(row, _MEDICATION_MAPPED),
-        provenance=_prov("patient-medications", guid),
     )
 
 
-_PRESCRIPTION_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "PrescriptionGuid",
-        "MedicationGuid",
-        "PrescribingProviderGuid",
-        "DestinationTypeCode",
-        "DateOfService",
-        "MedicationDisplayName",
-        "Sig",
-        "Quantity",
-        "NumberOfRefills",
-    }
+# NumberOfRefills only: v9 has no other spelling, so a `Refills` fallback would
+# tolerate a spelling that doesn't exist (#248). The -1 sentinel reads as None.
+_PRESCRIPTION = RowTable(
+    Prescription,
+    SOURCE,
+    "patient-prescriptions.tsv",
+    FieldMap("PrescriptionGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("MedicationGuid", "medication_id"),
+    FieldMap("PrescribingProviderGuid", "prescriber_id"),
+    FieldMap("Sig", "sig"),
+    FieldMap("Quantity", "quantity"),
+    FieldMap("NumberOfRefills", "refills", clean_numeric),
+    "DestinationTypeCode",
+    "DateOfService",
+    "MedicationDisplayName",
+    provenance_id="PrescriptionGuid",
+    provenance_key=True,
 )
 
 
 def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
-    guid = _s(row, "PrescriptionGuid") or ""
     transactions = sorted(
         (
             PrescriptionTransaction(
@@ -821,46 +799,36 @@ def _map_prescription(row: Row, tx_rows: list[Row]) -> Prescription:
         key=lambda t: (t.at is None, t.at),
     )
     prefix = resolve_prefix(transactions, _s(row, "DestinationTypeCode"))
-    # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS otherwise
-    # (see resolve_display_date).
-    display_date = resolve_display_date(transactions, prefix, _dt(row, "DateOfService"))
-    # NumberOfRefills only: v9 has no other spelling, so a `Refills`
-    # fallback would tolerate a spelling that doesn't exist (#248).
-    refills = clean_numeric(row.get("NumberOfRefills"))  # -1 sentinel → None
-    return Prescription(
-        id=guid,
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        medication_id=_s(row, "MedicationGuid"),
-        prescriber_id=_s(row, "PrescribingProviderGuid"),
+    return _PRESCRIPTION.build(
+        row,
         prefix=prefix,
         status_label=resolve_status(transactions),
-        display_date=display_date,
-        sig=_s(row, "Sig"),
-        refills=refills,
-        quantity=_s(row, "Quantity"),
+        # Display date: Order-sent→Eastern for ESCRIPT, prescription DoS
+        # otherwise (see resolve_display_date).
+        display_date=resolve_display_date(transactions, prefix, _dt(row, "DateOfService")),
         transactions=transactions,
-        extensions=_ext(row, _PRESCRIPTION_MAPPED),
-        provenance=_prov("patient-prescriptions", guid),
     )
 
 
-_INSURANCE_MAPPED = frozenset(
-    {
-        "PatientInsurancePlanGuid",
-        "PatientPracticeGuid",
-        "PayerName",
-        "InsurancePlanName",
-        "InsuranceCoverageType",
-        "RelationshipToInsured",
-        "MemberId",
-        "GroupId",
-        "OrderOfBenefits",
-        "EffectiveFromDate",
-        "EffectiveToDate",
-        "CopayFixedAmount",
-        "InsurancePlanIsActive",
-        "EmployerName",
-    }
+_INSURANCE = RowTable(
+    Coverage,
+    SOURCE,
+    "patient-insurances.tsv",
+    FieldMap("PatientInsurancePlanGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("PayerName", "payer"),
+    FieldMap("InsurancePlanName", "plan_name"),
+    FieldMap("InsuranceCoverageType", "coverage_type"),
+    FieldMap("MemberId", "member_id"),
+    FieldMap("GroupId", "group_number"),
+    FieldMap("EmployerName", "employer"),
+    FieldMap("RelationshipToInsured", "relationship_to_insured"),
+    FieldMap("CopayFixedAmount", "copay", clean_numeric),
+    FieldMap("EffectiveFromDate", "start", cell_date),
+    FieldMap("EffectiveToDate", "end", cell_date),
+    FieldMap("InsurancePlanIsActive", "active", _bool),
+    "OrderOfBenefits",  # ordinal AND printed label
+    provenance_id="PatientInsurancePlanGuid",
 )
 
 _PLAN_TYPE_RE = re.compile(r"\((PPO|HMO|EPO|POS|HDHP|PFFS)\)", re.IGNORECASE)
@@ -951,27 +919,13 @@ class _PlanTypeLookup:
 
 
 def _map_coverage(row: Row, plan_types: _PlanTypeLookup) -> Coverage:
-    plan_name = _s(row, "InsurancePlanName")
     order_label = _s(row, "OrderOfBenefits")
-    return Coverage(
-        id=_s(row, "PatientInsurancePlanGuid") or "",
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        payer=_s(row, "PayerName"),
-        plan_name=plan_name,
+    return _INSURANCE.build(
+        row,
+        extensions=plan_types.residual(row),
         plan_type=plan_types.resolve(row),
-        coverage_type=_s(row, "InsuranceCoverageType"),
-        member_id=_s(row, "MemberId"),
-        group_number=_s(row, "GroupId"),
         order_of_benefits=_BENEFIT_ORDER.get((order_label or "").lower()),
         priority_label=f"{order_label.upper()} PAYER" if order_label else None,
-        employer=_s(row, "EmployerName"),
-        relationship_to_insured=_s(row, "RelationshipToInsured"),
-        copay=clean_numeric(row.get("CopayFixedAmount")),
-        start=_d(row, "EffectiveFromDate"),
-        end=_d(row, "EffectiveToDate"),
-        active=_b(row, "InsurancePlanIsActive"),
-        extensions=_ext(row, _INSURANCE_MAPPED) | plan_types.residual(row),
-        provenance=_prov("patient-insurances", _s(row, "PatientInsurancePlanGuid")),
     )
 
 
@@ -997,147 +951,104 @@ def _map_family_history(export: Export, guid: str) -> list[FamilyMemberHistory]:
     return histories
 
 
-_IMMUNIZATION_MAPPED = frozenset(
-    {"PatientPracticeGuid", "ImmunizationGuid", "Vaccine", "Lot", "Type", "Comments"}
-)
-# One real column name beats three inferred spellings: none of the other
-# candidates exist in v9, so a future export spelling this differently goes
-# missing visibly instead of a guess quietly happening to match.
-_IMM_DATE_COL = "VaccinationOrEffectiveDate"
-
-
-def _map_immunization(row: Row) -> Immunization:
-    administered = _d(row, _IMM_DATE_COL)
-    return Immunization(
-        id=_s(row, "ImmunizationGuid") or "",
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        vaccine=_s(row, "Vaccine"),
-        administered_on=administered,
-        source=_s(row, "Type"),
-        lot_number=_s(row, "Lot"),
-        expires=_d(row, "ExpirationDate"),
-        comment=_s(row, "Comments"),
-        extensions=_ext(row, _IMMUNIZATION_MAPPED | {"ExpirationDate", _IMM_DATE_COL}),
-        provenance=_prov("patient-immunizations", _s(row, "ImmunizationGuid")),
-    )
-
-
-_GOAL_MAPPED = frozenset({"PatientPracticeGuid", "Goal", "StartDate", "IsActive"})
-
-
-def _map_goal(row: Row, patient_id: str) -> Goal:
-    """A care-plan goal. ``patient-goals`` has no guid of its own, so provenance
-    points at the owning patient."""
-    return Goal(
-        patient_id=patient_id,
-        description=_s(row, "Goal"),
-        effective=_d(row, "StartDate"),
-        active=_b(row, "IsActive"),
-        extensions=_ext(row, _GOAL_MAPPED),
-        provenance=_prov("patient-goals", patient_id),
-    )
-
-
-_HEALTH_CONCERN_MAPPED = frozenset(
-    {"PatientPracticeGuid", "HealthConcernNote", "StartDate", "IsActive"}
+# VaccinationOrEffectiveDate is the real v9 name; three inferred spellings were
+# wrong, so an export spelling it differently goes missing visibly.
+_IMMUNIZATION = RowTable(
+    Immunization,
+    SOURCE,
+    "patient-immunizations.tsv",
+    FieldMap("ImmunizationGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("Vaccine", "vaccine"),
+    FieldMap("VaccinationOrEffectiveDate", "administered_on", cell_date),
+    FieldMap("Type", "source"),
+    FieldMap("Lot", "lot_number"),
+    FieldMap("ExpirationDate", "expires", cell_date),
+    FieldMap("Comments", "comment"),
+    provenance_id="ImmunizationGuid",
 )
 
-
-def _map_health_concern(row: Row, patient_id: str) -> Goal:
-    """A health concern: carries a goal's four facts, so reuses ``Goal``.
-    ``HealthConcernNote`` fills DESCRIPTION. It may instead point at a
-    diagnosis or allergy (``DiagnosisGuid``/``PatientAllergyGuid``); those
-    guids ride into ``extensions`` whole rather than resolved here on a
-    guess. No guid of its own, so provenance points at the owning patient."""
-    return Goal(
-        patient_id=patient_id,
-        description=_s(row, "HealthConcernNote"),
-        effective=_d(row, "StartDate"),
-        active=_b(row, "IsActive"),
-        extensions=_ext(row, _HEALTH_CONCERN_MAPPED),
-        provenance=_prov("patient-health-concerns", patient_id),
-    )
-
-
-_SCREENING_EVENT_MAPPED = frozenset(
-    {
-        "PatientPracticeGuid",
-        "EncounterGuid",
-        "EncounterEventGuid",
-        "EventName",
-        "ResultValue",
-        "EventComments",
-        "IsNegated",
-    }
+# patient-goals has no guid of its own, so provenance names the owning patient.
+_GOAL = RowTable(
+    Goal,
+    SOURCE,
+    "patient-goals.tsv",
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("Goal", "description"),
+    FieldMap("StartDate", "effective", cell_date),
+    FieldMap("IsActive", "active", _bool),
+    provenance_id="PatientPracticeGuid",
 )
 
+# A health concern carries a goal's four facts. It may instead point at a
+# diagnosis or allergy (DiagnosisGuid/PatientAllergyGuid), guids that ride into
+# extensions whole rather than being resolved here on a guess.
+_HEALTH_CONCERN = RowTable(
+    Goal,
+    SOURCE,
+    "patient-health-concerns.tsv",
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("HealthConcernNote", "description"),
+    FieldMap("StartDate", "effective", cell_date),
+    FieldMap("IsActive", "active", _bool),
+    provenance_id="PatientPracticeGuid",
+)
 
-def _map_screening_event(row: Row) -> ScreeningEvent:
-    """One clinical-worksheet event (Screenings / Interventions /
-    Assessments). ``IsNegated`` is read, not left to ``extensions``: it
-    inverts the row's meaning (an event marked not-performed rendered
-    beside ones that were would say the opposite of what happened)."""
-    return ScreeningEvent(
-        id=_s(row, "EncounterEventGuid") or "",
-        patient_id=_s(row, "PatientPracticeGuid") or "",
-        encounter_id=_s(row, "EncounterGuid"),
-        name=_s(row, "EventName"),
-        result=_s(row, "ResultValue"),
-        comments=_s(row, "EventComments"),
-        negated=_b(row, "IsNegated"),
-        extensions=_ext(row, _SCREENING_EVENT_MAPPED),
-        provenance=_prov("patient-encounter-events", _s(row, "EncounterEventGuid")),
-    )
+# One clinical-worksheet event (Screenings / Interventions / Assessments).
+# IsNegated is lifted, not left to extensions: an event marked not-performed,
+# rendered beside ones that were, says the opposite of what happened.
+_SCREENING_EVENT = RowTable(
+    ScreeningEvent,
+    SOURCE,
+    "patient-encounter-events.tsv",
+    FieldMap("EncounterEventGuid", "id", cell_key),
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("EncounterGuid", "encounter_id"),
+    FieldMap("EventName", "name"),
+    FieldMap("ResultValue", "result"),
+    FieldMap("EventComments", "comments"),
+    FieldMap("IsNegated", "negated", _bool),
+    provenance_id="EncounterEventGuid",
+)
+
+_ADVANCE_DIRECTIVE = RowTable(
+    AdvanceDirective,
+    SOURCE,
+    "patient-advance-directives.tsv",
+    FieldMap("PatientPracticeGuid", "patient_id", cell_key),
+    FieldMap("Directive", "directive"),
+    FieldMap("DateRecorded", "recorded_at", cell_dt),
+    provenance_id="PatientPracticeGuid",
+)
 
 
 # --- shared actors -------------------------------------------------------------
 
+_PRACTITIONER = RowTable(
+    Practitioner,
+    SOURCE,
+    "providers.tsv",
+    FieldMap("ProviderGuid", "id", cell_key),
+    FieldMap("FirstName", "given_name"),
+    FieldMap("LastName", "family_name"),
+    provenance_id="ProviderGuid",
+)
 
-def _map_practitioners(export: Export) -> list[Practitioner]:
-    return [
-        Practitioner(
-            id=_s(row, "ProviderGuid") or "",
-            given_name=_s(row, "FirstName"),
-            family_name=_s(row, "LastName"),
-            extensions=_ext(row, frozenset({"ProviderGuid", "FirstName", "LastName"})),
-            provenance=_prov("providers", _s(row, "ProviderGuid")),
-        )
-        for row in export["providers"]
-    ]
-
-
-def _map_facilities(export: Export) -> list[Facility]:
-    return [
-        Facility(
-            id=_s(row, "FacilityGuid") or "",
-            name=_s(row, "Name"),
-            address_line1=_s(row, "Address1"),
-            address_line2=_s(row, "Address2"),
-            city=_s(row, "City"),
-            state=_s(row, "State"),
-            postal_code=_s(row, "ZipCode"),
-            phone=format_phone(_s(row, "OfficePhone")),
-            fax=format_phone(_s(row, "OfficeFax")),
-            extensions=_ext(
-                row,
-                frozenset(
-                    {
-                        "FacilityGuid",
-                        "Name",
-                        "Address1",
-                        "Address2",
-                        "City",
-                        "State",
-                        "ZipCode",
-                        "OfficePhone",
-                        "OfficeFax",
-                    }
-                ),
-            ),
-            provenance=_prov("facilities", _s(row, "FacilityGuid")),
-        )
-        for row in export["facilities"]
-    ]
+_FACILITY = RowTable(
+    Facility,
+    SOURCE,
+    "facilities.tsv",
+    FieldMap("FacilityGuid", "id", cell_key),
+    FieldMap("Name", "name"),
+    FieldMap("Address1", "address_line1"),
+    FieldMap("Address2", "address_line2"),
+    FieldMap("City", "city"),
+    FieldMap("State", "state"),
+    FieldMap("ZipCode", "postal_code"),
+    FieldMap("OfficePhone", "phone", format_phone),
+    FieldMap("OfficeFax", "fax", format_phone),
+    provenance_id="FacilityGuid",
+)
 
 
 # --- assembly --------------------------------------------------------------------
@@ -1445,28 +1356,35 @@ def _mime_type(row: Row, blob: Path | None) -> str:
     return guessed or "application/octet-stream"
 
 
+# DocumentDate and the extension `_mime_type` reads are read but unconsumed.
+_DOCUMENT = RowTable(
+    DocumentArtifact,
+    SOURCE,
+    "patient-documents.tsv",
+    FieldMap("DocumentStorageGuid", "id", cell_key),
+    FieldMap("DocumentName", "title"),
+    "PatientPracticeGuid",
+    provenance_id="DocumentStorageGuid",
+    provenance_key=True,
+)
+
+
 def _map_document(row: Row, guid: str, attachments: Attachments | None) -> DocumentArtifact:
     """One `patient-documents` row, with its file located if the export has
     it. `DocumentStorageGuid` names both the file and the row. A row whose
     file is missing keeps every column (`extensions`) but claims no path,
     digest, or page count — an artifact naming a file it can't produce is
     worse than one admitting it has only metadata."""
-    storage = _s(row, "DocumentStorageGuid") or ""
-    blob = attachments.find(storage) if attachments else None
+    blob = attachments.find(_s(row, "DocumentStorageGuid") or "") if attachments else None
     mime_type = _mime_type(row, blob)
-    return DocumentArtifact(
-        id=storage,
+    return _DOCUMENT.build(
+        row,
         patient_id=guid,
-        title=_s(row, "DocumentName"),
         path=attachments.relative(blob) if attachments and blob else None,
         sha256=_sha256(blob) if blob else None,
         mime_type=mime_type,
         page_count=_page_count(blob, mime_type) if blob else None,
         generated_at=_dt(row, "DocumentDate"),
-        extensions=_ext(
-            row, frozenset({"PatientPracticeGuid", "DocumentStorageGuid", "DocumentName"})
-        ),
-        provenance=_prov("patient-documents", storage),
     )
 
 
@@ -1533,8 +1451,8 @@ def map_export(
             preserved,
         )
 
-    practitioners = _map_practitioners(export)
-    facilities = _map_facilities(export)
+    practitioners = _PRACTITIONER.build_all(export["providers"])
+    facilities = _FACILITY.build_all(export["facilities"])
     plan_types = _PlanTypeLookup(export["superbill-insurances"])
     # superbill-insurances is read in full (never sliced — see _FOREIGN_KEYS),
     # so a row joining no coverage is caught here once, not via _check_key_closure.
@@ -1653,26 +1571,13 @@ def map_export(
             ],
             medications=medications,
             prescriptions=prescriptions,
-            immunizations=[_map_immunization(row) for row in imm_by_patient.get(guid, [])],
+            immunizations=_IMMUNIZATION.build_all(imm_by_patient.get(guid, [])),
             family_history=_map_family_history(export, guid),
             past_medical_history=_past_medical_history(export, guid),
-            advance_directives=[
-                AdvanceDirective(
-                    patient_id=guid,
-                    directive=_s(row, "Directive"),
-                    recorded_at=_dt(row, "DateRecorded"),
-                    extensions=_ext(
-                        row, frozenset({"PatientPracticeGuid", "Directive", "DateRecorded"})
-                    ),
-                    provenance=_prov("patient-advance-directives", guid),
-                )
-                for row in ad_by_patient.get(guid, [])
-            ],
-            goals=[_map_goal(row, guid) for row in goals_by_patient.get(guid, [])],
-            health_concerns=[
-                _map_health_concern(row, guid) for row in concerns_by_patient.get(guid, [])
-            ],
-            screening_events=[_map_screening_event(row) for row in events_by_patient.get(guid, [])],
+            advance_directives=_ADVANCE_DIRECTIVE.build_all(ad_by_patient.get(guid, [])),
+            goals=_GOAL.build_all(goals_by_patient.get(guid, [])),
+            health_concerns=_HEALTH_CONCERN.build_all(concerns_by_patient.get(guid, [])),
+            screening_events=_SCREENING_EVENT.build_all(events_by_patient.get(guid, [])),
             coverages=[_map_coverage(row, plan_types) for row in ins_by_patient.get(guid, [])],
             documents=[
                 _map_document(row, guid, attachments) for row in docs_by_patient.get(guid, [])

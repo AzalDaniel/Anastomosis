@@ -22,7 +22,13 @@ from typer.testing import CliRunner
 
 import anastomosis.sources.ccda  # noqa: F401 — registers the adapter
 from anastomosis.cli import app
-from anastomosis.core.ccda_codes import first_rooted_id, organizer_component_source_id
+from anastomosis.core.ccda_codes import (
+    LOINC_RESULTS,
+    SECTION_BY_CODE,
+    SectionSpec,
+    first_rooted_id,
+    organizer_component_source_id,
+)
 from anastomosis.core.conservation import ConservationError
 from anastomosis.core.model import (
     Addendum,
@@ -78,6 +84,7 @@ _PARSER = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=Fals
 
 runner = CliRunner()
 
+CCDA_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ccda"
 PF_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 # A wall-clock instant with a fixed offset (proves tz survives the TS round trip).
 _AT = datetime(2023, 5, 10, 14, 0, 0, tzinfo=timezone(timedelta(hours=-5)))
@@ -304,6 +311,36 @@ def reingested(source: PatientRecord, tmp_path_factory: pytest.TempPathFactory) 
     out = tmp_path_factory.mktemp("ccda") / "doc.xml"
     out.write_bytes(build_ccd(source))
     return parse_document(out)
+
+
+def _entry_stamps(document: bytes, spec: SectionSpec) -> set[tuple[str | None, str | None] | None]:
+    """Every template stamped on the element ``spec`` says its entries open with."""
+    stamps = set()
+    for entry in _entries_under(document, spec.loinc):
+        node = entry.find(f"{{{V3}}}{spec.entry_tag}")
+        assert node is not None, f"{spec.loinc}: no <{spec.entry_tag}> under an <entry>"
+        found = node.findall(f"{{{V3}}}templateId")
+        stamps.add(None if not found else (found[0].get("root"), found[0].get("extension")))
+    return stamps
+
+
+def test_the_entry_template_it_stamps_is_the_reference_documents_own(
+    source: PatientRecord,
+) -> None:
+    """Read off the reference C-CDA's bytes, never off the table: a row and the
+    exporter that reads it agree by construction, so only a third statement can
+    catch an OID or a version that drifts. The two organizer sections are the
+    standing exception — the reference stamps them and this exporter does not."""
+    document = build_ccd(source)
+    reference = (CCDA_FIXTURE / "feedface_ccd.xml").read_bytes()
+    for spec in SECTION_BY_CODE.values():
+        [stated] = _entry_stamps(reference, spec)
+        assert stated is not None, f"{spec.loinc}: the reference stamps no entry template"
+        emitted = _entry_stamps(document, spec)
+        assert emitted, f"{spec.loinc}: the record reached no entry of this section"
+        assert emitted == {stated if spec.entry_template is not None else None}, (
+            f"{spec.loinc} <{spec.entry_tag}> stamps {emitted}; the reference states {stated}"
+        )
 
 
 # --- the round trip, section by section --------------------------------------
@@ -1172,7 +1209,11 @@ def test_the_parsers_derived_id_is_always_one_the_builder_states(
         _ORGANIZER_SECTION.format(orgids=orgids, compids=compids).encode(), _PARSER
     )
     [observation] = _measurements(
-        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+        section,
+        SECTION_BY_CODE[LOINC_RESULTS],
+        "patient-1",
+        ObservationCategory.LABORATORY,
+        "f.xml",
     )
     entry = section.find(f"{{{V3}}}entry")
     stated = _stated_ids(entry)
@@ -1350,7 +1391,11 @@ def test_a_component_that_is_not_an_observation_is_never_derived_for() -> None:
         _PARSER,
     )
     [observation] = _measurements(
-        section, "patient-1", ObservationCategory.LABORATORY, "v3:organizer", "f.xml"
+        section,
+        SECTION_BY_CODE[LOINC_RESULTS],
+        "patient-1",
+        ObservationCategory.LABORATORY,
+        "f.xml",
     )
     assert observation.provenance is not None
     assert observation.provenance.source_id == organizer_component_source_id("1.2.3.4", "LAB1", 0)

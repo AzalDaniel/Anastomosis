@@ -160,8 +160,7 @@ def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -
     from datetime import date
 
     from anastomosis.core.model import Patient, PatientRecord
-    from anastomosis.deliver.archive import ArchiveDeliverer
-    from anastomosis.deliver.bundle import BundleDeliverer
+    from anastomosis.deliver.archive import ArchiveDeliverer, Grouping
 
     def _record(pid: str, dob: date) -> PatientRecord:
         return PatientRecord(
@@ -191,8 +190,10 @@ def test_missing_render_index_never_attributes_pdf_by_filename(tmp_path: Path) -
 
     # Bundle: both patients deliver with zero PDFs (no unattributed slot,
     # never a guess).
-    bundle_results = BundleDeliverer().deliver_records(
-        [rec_a, rec_b], pdfs_dir, tmp_path / "bundles"
+    bundle_results = (
+        ArchiveDeliverer(grouping=Grouping.BUNDLE)
+        .deliver([rec_a, rec_b], pdfs_dir, tmp_path / "bundles")
+        .patients
     )
     for result in bundle_results:
         assert result.pdf_paths == [], (

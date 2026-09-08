@@ -427,22 +427,35 @@ _FLOWS = {
 
 
 def _source_options() -> tuple[tuple[str, str], ...]:
-    """Every export format this installation can read, as (value, label) pairs.
-
-    Read from the SAME registry the commands read, so a format taught through
-    choice 4 shows up here the moment it is saved.
-    """
+    """Every export format this installation can read, as (value, label) pairs,
+    from the SAME registry the commands read — a format taught through choice 4
+    shows up here the moment it is saved."""
     from anastomosis.sources import available_sources
 
     return tuple((adapter.name, adapter.description) for adapter in available_sources())
 
 
+_FILING_READINESS = {  # what the picker says, best first; it offers them in this order
+    "ready": "ready to file charts into",
+    "needs-discovery": "the filing assistant is here but not set up yet",
+    "absent": "no filing assistant yet",
+}
+
+
 def _destination_options() -> tuple[tuple[str, str], ...]:
-    """Every system charts can be moved into, as (value, label) pairs."""
+    """Every system charts can be moved into, as (value, label) pairs, ordered
+    and labelled by how far along its filing assistant is — a system with
+    nothing behind it must not read as ready as one with an assistant."""
+    from anastomosis.destinations.loader import pack_readiness
     from anastomosis.destinations.registry import DestinationRegistry
 
+    ranks = list(_FILING_READINESS)
     entries = DestinationRegistry.load().entries
-    return tuple((name, entries[name].display) for name in sorted(entries))
+    readiness = {name: pack_readiness(name) for name in entries}
+    order = sorted(entries, key=lambda name: (ranks.index(readiness[name]), name))
+    return tuple(
+        (name, f"{entries[name].display}, {_FILING_READINESS[readiness[name]]}") for name in order
+    )
 
 
 def _ask_source_format(console: Console) -> str | None:
