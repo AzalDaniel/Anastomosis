@@ -138,12 +138,12 @@
       "total": 434
     },
     "src/anastomosis/commands/run.py": {
-      "blank": 69,
-      "code": 304,
-      "comment": 71,
-      "docstring": 69,
-      "ratio": 0.315315,
-      "total": 513
+      "blank": 71,
+      "code": 329,
+      "comment": 73,
+      "docstring": 74,
+      "ratio": 0.308824,
+      "total": 547
     },
     "src/anastomosis/commands/runmanifest.py": {
       "blank": 50,
@@ -763,11 +763,11 @@
     },
     "src/anastomosis/gui/__main__.py": {
       "blank": 17,
-      "code": 49,
+      "code": 52,
       "comment": 3,
       "docstring": 19,
-      "ratio": 0.309859,
-      "total": 88
+      "ratio": 0.297297,
+      "total": 91
     },
     "src/anastomosis/gui/consoles/__init__.py": {
       "blank": 3,
@@ -819,11 +819,11 @@
     },
     "src/anastomosis/gui/controller.py": {
       "blank": 89,
-      "code": 275,
-      "comment": 27,
+      "code": 250,
+      "comment": 25,
       "docstring": 96,
-      "ratio": 0.309045,
-      "total": 487
+      "ratio": 0.326146,
+      "total": 460
     },
     "src/anastomosis/gui/events.py": {
       "blank": 10,
@@ -1920,6 +1920,14 @@
       "docstring": 44,
       "ratio": 0.258964,
       "total": 294
+    },
+    "tests/unit/test_installer_assets.py": {
+      "blank": 12,
+      "code": 31,
+      "comment": 0,
+      "docstring": 2,
+      "ratio": 0.060606,
+      "total": 45
     },
     "tests/unit/test_learned_layout_handoff.py": {
       "blank": 110,
@@ -3333,12 +3341,12 @@
   ],
   "packages": {
     "anastomosis": {
-      "blank": 5639,
-      "code": 27359,
+      "blank": 5641,
+      "code": 27362,
       "comment": 3126,
-      "docstring": 6219,
-      "ratio": 0.254604,
-      "total": 42343
+      "docstring": 6224,
+      "ratio": 0.254685,
+      "total": 42353
     },
     "tests.e2e": {
       "blank": 186,
@@ -3365,21 +3373,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 10129,
-      "code": 37828,
+      "blank": 10141,
+      "code": 37859,
       "comment": 2865,
-      "docstring": 5380,
-      "ratio": 0.178955,
-      "total": 56202
+      "docstring": 5382,
+      "ratio": 0.17887,
+      "total": 56247
     }
   },
   "repo": {
-    "blank": 16840,
-    "code": 69057,
+    "blank": 16854,
+    "code": 69091,
     "comment": 6388,
-    "docstring": 12263,
-    "ratio": 0.212649,
-    "total": 104548
+    "docstring": 12270,
+    "ratio": 0.212629,
+    "total": 104603
   },
   "tool": "tools/prose_gate.py"
 }

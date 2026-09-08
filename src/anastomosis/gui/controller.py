@@ -116,36 +116,9 @@ class GuiController:
         (versions, names, booleans).
         """
         try:
-            from anastomosis.commands.run import get_toolkit_info
+            from anastomosis.commands.run import get_toolkit_info, toolkit_payload
 
-            toolkit = get_toolkit_info()
-            return {
-                "ok": True,
-                "version": toolkit.version,
-                "extras": dict(toolkit.extras),
-                "sources": [
-                    {
-                        "name": source.name,
-                        "display": source.display,
-                        "description": source.description,
-                        "selection": source.selection,
-                    }
-                    for source in toolkit.sources
-                ],
-                "packs": [
-                    {
-                        "name": pack.name,
-                        "display": pack.display,
-                        "available": pack.available,
-                        "origin": pack.origin,
-                        # The exact directory a run naming this layout binds to;
-                        # three origins can answer to one name; Teach shows which.
-                        "root": pack.root,
-                        "sections": pack.sections,
-                    }
-                    for pack in toolkit.packs
-                ],
-            }
+            return {"ok": True, **toolkit_payload(get_toolkit_info())}
         except Exception as exc:  # defensive: info() must never raise into JS
             return self._fail("info", exc)
 

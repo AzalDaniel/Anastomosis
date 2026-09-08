@@ -113,12 +113,12 @@ def test_the_gui_self_check_fails_loudly_when_the_toolkit_will_not_answer(
     import anastomosis.commands.run as run_mod
     from anastomosis.gui.__main__ import _self_check_info
 
-    def boom() -> None:
-        raise ModuleNotFoundError("anastomosis.sources.pf_tebra.mapper")
+    def boom(_toolkit: object) -> None:
+        raise AttributeError("PackInfo has no attribute 'origin'")
 
-    monkeypatch.setattr(run_mod, "get_toolkit_info", boom)
+    monkeypatch.setattr(run_mod, "toolkit_payload", boom)
     code = _self_check_info(object())
     out = capsys.readouterr()
     assert code == 1
     assert "toolkit info: raised" in out.out
-    assert "ModuleNotFoundError" in out.err
+    assert "AttributeError" in out.err
