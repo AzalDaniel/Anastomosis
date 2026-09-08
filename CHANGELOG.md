@@ -623,6 +623,81 @@ issue and fixed in its own pull request.
   next step. The asymmetry was a standing audit finding; it is now a written
   rule with a test on each side.
 
+- **The Practice Fusion pack keeps only what is its own.** `packs/
+  practice_fusion_soap/context.py` was 1,090 lines, and most of them were a
+  view layer any pack rendering a chart would write the same way: the date and
+  time formatters, the vitals LOINC-to-label table with its blood-pressure fold
+  and its two row builders, the record-level groupings, the flowsheet, the
+  entity rows (diagnosis, allergy, concern, screening, immunization, addendum),
+  the guarantor and payment cells, and the pack logo resolver. They live in
+  `reconstruct/packctx.py` now, the surface a pack reaches through the sandbox
+  allowlist, and the pack is 500 lines of what is PF's alone: the ESCRIPT line,
+  the insurance and demographics grids (both read `pf_tebra:`-namespaced
+  columns, so neither may live in a module that must not know a source
+  adapter's namespace), the seventeen social-history sub-categories, the
+  section flags, and the notice a section prints when this layout cannot
+  reconstruct it. The 35-section replica is unchanged, and the committed
+  goldens — page geometry, text layer and every word box — prove it: the
+  rendered PDFs are the same bytes.
+
+  This is the one file the prose sweep skipped, because a pack's layout hash
+  covers every byte of every file in it. That hash therefore moves, once and
+  deliberately: `5b84f853…` becomes `29d72b52…`. Nothing else moves with it.
+  The five snapshot fixtures render through `generic_soap`, whose bytes are
+  untouched, so `tools/snapshot.py` passes without a regenerated baseline —
+  including the `render_provenance.json` and `upload_manifest.json` it
+  captures. The complexity ratchet was re-pinned for exactly the seven blocks
+  that changed file: same rank, same number, one of them three lower, and
+  whole-`src` cyclomatic complexity falls from 7,192 to 7,189.
+
+- **One deliverer writes both file trees.** The offline archive and the
+  per-patient bundle were the same operation written twice: claim a patient
+  directory name against a per-run ledger, copy the documents that patient's
+  record names, write their FHIR bundle, copy the charts the render index
+  attributes to them. What differs is where the directory sits and what sits
+  beside it — a cross-patient search index and HTML pages, or a QA slice and
+  the patient's own README — so that is what `grouping=` now says, as a two-row
+  layout table rather than a flag read in four places. The four budget-claim-copy
+  loops (two per deliverer) are one `copy_claimed_charts` in
+  `deliver/_shared.py`, and the two README mechanisms are one. `BundleResult`
+  survives unchanged as the per-patient row and now rides on `ArchiveResult`,
+  which is how `anast pipeline run --bundle` reports its counts;
+  `anastomosis.deliver.bundle` re-exports from the merged module. Two entry
+  points go: `BundleDeliverer.deliver_records`, and `BundleDeliverer.deliver`,
+  the single-record form that existed so `deliver_records` could pass its own
+  claim ledger into it. Every delivered byte is unchanged — `tools/snapshot.py`
+  passes and the corpus pin has not moved. One behaviour is deliberately
+  unified: a bundle run now logs the same warning the archive already did when
+  a record names a document the charts directory does not hold, where it used
+  to be silent.
+
+- **One FHIR field table, walked in both directions.** `core/fhir/export.py`
+  and `core/fhir/ingest.py` each named the same twelve entities and stated
+  every field's identity twice — model attribute, tail key, converter — so a
+  field added to one side and forgotten on the other simply vanished, which is
+  how two record-level lists came to be dropped (below). The 68 fields that
+  ride the `urn:anastomosis:field:` tail are now one table,
+  `core/fhir/fields.py`: `to_bundle` walks it forward and `from_bundle` walks
+  it backward as its exact inverse. The code systems (LOINC, ICD-10-CM,
+  SNOMED, SSN, NPI) and the canonical-to-FHIR allergy category pairing live
+  there once and `sources/fhir_r4/mapper.py` reads them from it, backwards
+  where it needs the inverse; that mapper keeps its own residual walker, which
+  is the losslessness contract and has no counterpart on either side. Ten
+  things stay as code beside the table because a table has no slot for them:
+  the two-entity Patient resource, the three-way `_actor` dispatch, the
+  double-shipped note, attachment metadata from the deliverer, `_entries`'
+  refusal, the `_urn`/`_ref`/`_unref` codec, `_pref`, the RelatedPerson
+  relationship fallback, the constant `MedicationRequest.status` and the
+  nested FHIR element paths, whose key order is part of the delivered bytes.
+  Every bundle of the five committed fixtures is byte-identical and so is
+  every record read back out of one; `tools/snapshot.py` passes and the corpus
+  pin has not moved. The table is guarded from two sides: a round-trip
+  property test driven by the table itself, so a row added later is covered
+  without touching the test, and a committed literal inventory of the 68 tail
+  keys, which is what catches a row moved on both sides at once. Dead code
+  cut: `sources/fhir_r4/mapper.py`'s `_code_in` had no caller anywhere in
+  `src/`, `tests/` or `tools/`.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the
@@ -712,6 +787,35 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus

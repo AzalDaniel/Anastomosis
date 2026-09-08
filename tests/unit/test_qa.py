@@ -22,9 +22,9 @@ from anastomosis.core.model import (  # noqa: E402
 )
 from anastomosis.core.timeutil import to_local  # noqa: E402
 from anastomosis.qa import (  # noqa: E402
+    ENGINE_CHECKS,
     QAReport,
     Verdict,
-    engine_checks,
     run_qa,
     write_report,
 )
@@ -98,17 +98,16 @@ def _result(report: QAReport, check: str) -> tuple[Verdict, list[str]]:
     return result.verdict, result.findings
 
 
-def test_engine_checks_registered() -> None:
-    names = [c.name for c in engine_checks()]
-    assert names == sorted(names)
-    assert set(names) >= {
+def test_engine_checks_are_the_seven_in_the_name_order_reports_use() -> None:
+    assert [c.name for c in ENGINE_CHECKS] == [
         "data_integrity",
         "date_staleness",
         "layout_pagination",
         "note_body",
+        "record_coverage",
         "unattributed_vitals",
         "vitals_loinc",
-    }
+    ]
 
 
 def test_good_document_passes_everything(tmp_path: Path) -> None:
@@ -830,18 +829,12 @@ def test_the_whole_patient_report_grades_a_vital_against_its_own_page(tmp_path: 
 
 
 def test_the_whole_patient_report_names_every_check_the_neutral_path_does() -> None:
-    """A check must never fall out of a whole-patient report unnoticed:
-    every registered check must land in either the document-generic table
-    or the encounter-scoped-skip table, never both — the tables are shared,
-    guarding both the ccda-standard migration's per-patient view and
-    pack-mode's record summaries."""
-    from anastomosis.qa.wholepatient import DOC_GENERIC_CHECKS, ENCOUNTER_SCOPED_SKIPS
+    """A check must never fall out of a whole-patient report unnoticed: the
+    scope table places every engine check, and it is shared by the
+    ccda-standard migration's per-patient view and pack-mode's summaries."""
+    from anastomosis.qa.wholepatient import WHOLE_PATIENT_SCOPE
 
-    placed = set(DOC_GENERIC_CHECKS) | set(ENCOUNTER_SCOPED_SKIPS)
-    registered = {check.name for check in engine_checks()}
-    assert registered - placed == set(), "a registered check named in neither table"
-    assert placed - registered == set(), "a table names a check that is not registered"
-    assert set(DOC_GENERIC_CHECKS).isdisjoint(ENCOUNTER_SCOPED_SKIPS), "run it or skip it, not both"
+    assert set(WHOLE_PATIENT_SCOPE) == {check.name for check in ENGINE_CHECKS}
 
 
 # --- record coverage: did the chart carry the record? ------------------------
@@ -907,7 +900,7 @@ def _coverage(
         [(pdf, record.encounters[0], record)],
         carries=carries,
         omits=omits,
-        checks=[c for c in engine_checks() if c.name == "record_coverage"],
+        checks=[c for c in ENGINE_CHECKS if c.name == "record_coverage"],
     )
     result = report.documents[0].results[0]
     return result.verdict, result.findings, report.not_carried
@@ -1015,7 +1008,7 @@ def _stale(pdf: Path, *, declared: int = 0) -> tuple[Verdict, list[str]]:
     report = run_qa(
         [(pdf, record.encounters[0], record)],
         render_day_stamps=declared,
-        checks=[c for c in engine_checks() if c.name == "date_staleness"],
+        checks=[c for c in ENGINE_CHECKS if c.name == "date_staleness"],
     )
     result = report.documents[0].results[0]
     return result.verdict, result.findings

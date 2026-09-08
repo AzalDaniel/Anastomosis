@@ -31,9 +31,10 @@ from anastomosis.core.model import (
 from anastomosis.core.pdfsnapshot import PdfSnapshot, PdfSnapshotCache
 from anastomosis.core.timeutil import all_date_spellings, to_local
 
-from .base import CheckResult, QAContext, Verdict, register_check
+from .base import CheckResult, QACheck, QAContext, Verdict
 
 __all__ = [
+    "ENGINE_CHECKS",
     "DataIntegrityCheck",
     "DateStalenessCheck",
     "LayoutPaginationCheck",
@@ -46,8 +47,7 @@ __all__ = [
 _PAGE_SIZES = {"Letter": (612.0, 792.0), "A4": (595.0, 842.0)}
 
 # Where the runner stashes the shared per-document snapshot on the (frozen)
-# QAContext. Read via getattr so a bare ctx (a third-party QA pack building its
-# own context) simply has no cache and each check opens the file itself.
+# QAContext; read via getattr, so a bare third-party ctx simply has no cache.
 _CACHE_ATTR = "_qa_page_snapshot"
 
 
@@ -510,13 +510,13 @@ class NoteBodyCheck:
         return CheckResult(self.name, Verdict.WARN if warnings else Verdict.PASS, warnings)
 
 
-for _check in (
+#: Every engine check, name-sorted: the order each report lists them in.
+ENGINE_CHECKS: tuple[QACheck, ...] = (
     DataIntegrityCheck(),
+    DateStalenessCheck(),
     LayoutPaginationCheck(),
     NoteBodyCheck(),
     RecordCoverageCheck(),
     UnattributedVitalsCheck(),
     VitalsLoincCheck(),
-    DateStalenessCheck(),
-):
-    register_check(_check)
+)

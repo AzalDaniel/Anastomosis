@@ -28,37 +28,39 @@ from anastomosis.core.model import (
     Practitioner,
     Prescription,
 )
-from anastomosis.core.model.base import AnastBase
+
+from .fields import (
+    ACTOR,
+    ALLERGY,
+    ALLERGY_CATEGORIES,
+    ARTIFACT,
+    CONDITION,
+    COVERAGE,
+    ENCOUNTER,
+    EXT_NS,
+    EXTRAS_NS,
+    FACILITY,
+    FAMILY_HISTORY,
+    FIELD_NS,
+    ICD10,
+    IDENTIFIER_SYSTEMS,
+    IMMUNIZATION,
+    LOINC,
+    MEDICATION,
+    NPI,
+    OBS_CATEGORY,
+    OBSERVATION,
+    PATIENT,
+    PRESCRIPTION,
+    RECORD_EXTRAS,
+    SNOMED,
+    TELECOM,
+    to_extensions,
+)
 
 __all__ = ["EXT_NS", "FIELD_NS", "DeliveredAttachment", "FhirExportError", "to_bundle"]
 
-EXT_NS = "urn:anastomosis:ext"
-FIELD_NS = "urn:anastomosis:field:"
-EXTRAS_NS = "urn:anastomosis:record-extras"
-
-LOINC = "http://loinc.org"
-ICD10 = "http://hl7.org/fhir/sid/icd-10-cm"
-SNOMED = "http://www.snomed.info/sct"
-SSN = "http://hl7.org/fhir/sid/us-ssn"
-NPI = "http://hl7.org/fhir/sid/us-npi"
-OBS_CATEGORY = "http://terminology.hl7.org/CodeSystem/observation-category"
-
-IDENTIFIER_SYSTEMS = {
-    "ssn": SSN,
-    "mrn": "urn:anastomosis:id:mrn",
-    "prn": "urn:anastomosis:id:prn",
-    "source_guid": "urn:anastomosis:source-guid",
-    "other": "urn:anastomosis:id:other",
-}
-TELECOM = {
-    "phone_home": ("phone", "home"),
-    "phone_mobile": ("phone", "mobile"),
-    "phone_work": ("phone", "work"),
-    "phone_other": ("phone", None),
-    "email": ("email", None),
-}
 _FHIR_GENDERS = {"male", "female", "other", "unknown"}
-_FHIR_ALLERGY_CATEGORY = {"drug": "medication", "food": "food", "environment": "environment"}
 _FHIR_SEVERITIES = {"mild", "moderate", "severe"}
 
 
@@ -82,22 +84,6 @@ def _urn(resource_id: str) -> str:
 
 def _ref(resource_id: str) -> dict[str, str]:
     return {"reference": _urn(resource_id)}
-
-
-def _exts(model: AnastBase, fields: dict[str, Any]) -> list[dict[str, str]]:
-    """The lossless tail: source extensions + canonical fields FHIR can't hold."""
-    out: list[dict[str, str]] = []
-    if model.extensions:
-        # default=str: a future adapter could stash a datetime/Decimal in
-        # extensions, and json.dumps would otherwise raise and lose the whole
-        # record.
-        blob = json.dumps(model.extensions, sort_keys=True, default=str)
-        out.append({"url": EXT_NS, "valueString": blob})
-    for name, value in fields.items():
-        if value is None or value == [] or value == {}:
-            continue
-        out.append({"url": FIELD_NS + name, "valueString": json.dumps(value, default=str)})
-    return out
 
 
 class FhirExportError(Exception):
@@ -148,41 +134,12 @@ def _date(value: Any) -> str | None:
 def _patient(p: Patient, record: PatientRecord) -> dict[str, Any]:
     extras: dict[str, Any] = {
         name: [m.model_dump(mode="json") for m in getattr(record, name)]
-        for name in (
-            "past_medical_history",
-            "advance_directives",
-            "goals",
-        )
+        for name in RECORD_EXTRAS
         if getattr(record, name)
     }
     # Record id omitted deliberately: never a parse-time-minted value (RULES.md 8, #405).
     extras["__record__"] = {"extensions": record.extensions}
-    extension = _exts(
-        p,
-        {
-            "sex": p.sex,
-            "gender_identity": p.gender_identity,
-            "sexual_orientation": p.sexual_orientation,
-            "race": p.race,
-            "ethnicity": p.ethnicity,
-            "mothers_maiden_name": p.mothers_maiden_name,
-            # `name.given` is one ordered list: a middle-name-only patient
-            # would read back as GIVEN "Quimby" without stashing it here.
-            "middle_name": p.middle_name if (p.middle_name and not p.given_name) else None,
-            # `address.line` is ordered too: a line2-only address would read
-            # back as street "Suite 400" without stashing the list verbatim.
-            "addresses": (
-                [a.model_dump(mode="json") for a in p.addresses]
-                if any(a.line2 and not a.line1 for a in p.addresses)
-                else None
-            ),
-            "contact_preference": p.contact_preference,
-            "status": p.status,
-            "notes": p.notes,
-            "contacts": [c.model_dump(mode="json") for c in p.contacts],
-            "guarantor": p.guarantor.model_dump(mode="json") if p.guarantor else None,
-        },
-    )
+    extension = to_extensions(p, PATIENT)
     # `__record__` is set unconditionally above, so this never skips today; it
     # is kept so the extension is not written as a bare "{}" should that change.
     if extras:
@@ -250,15 +207,7 @@ def _encounter(e: Encounter) -> dict[str, Any]:
         {
             "resourceType": "Encounter",
             "id": e.id,
-            "extension": _exts(
-                e,
-                {
-                    "encounter_type": e.encounter_type,
-                    "signed_by_id": e.signed_by_id,
-                    "signed_at": _date(e.signed_at),
-                    "last_modified_at": _date(e.last_modified_at),
-                },
-            ),
+            "extension": to_extensions(e, ENCOUNTER),
             "status": "finished",
             "class": {
                 "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
@@ -350,15 +299,7 @@ def _observation(o: Observation) -> dict[str, Any]:
         {
             "resourceType": "Observation",
             "id": o.id,
-            "extension": _exts(
-                o,
-                {
-                    "value": o.value,
-                    "unit": o.unit,
-                    "recorded_at": _date(o.recorded_at),
-                    "display": None if o.code else o.display,
-                },
-            ),
+            "extension": to_extensions(o, OBSERVATION),
             "status": "final",
             "category": [{"coding": [{"system": OBS_CATEGORY, "code": o.category.value}]}],
             "code": (
@@ -385,7 +326,7 @@ def _condition(c: Condition) -> dict[str, Any]:
         {
             "resourceType": "Condition",
             "id": c.id,
-            "extension": _exts(c, {"acuity": c.acuity}),
+            "extension": to_extensions(c, CONDITION),
             "clinicalStatus": {
                 "coding": [
                     {
@@ -415,14 +356,12 @@ def _allergy(a: AllergyIntolerance) -> dict[str, Any]:
                 }
             )
         ]
-    fhir_category = _FHIR_ALLERGY_CATEGORY.get(a.category.value)
+    fhir_category = ALLERGY_CATEGORIES.get(a.category.value)
     return _prune(
         {
             "resourceType": "AllergyIntolerance",
             "id": a.id,
-            "extension": _exts(
-                a, {"category": a.category.value, "severity": a.severity, "reactions": a.reactions}
-            ),
+            "extension": to_extensions(a, ALLERGY),
             "clinicalStatus": {
                 "coding": [
                     {
@@ -447,21 +386,7 @@ def _medication(m: MedicationStatement) -> dict[str, Any]:
         {
             "resourceType": "MedicationStatement",
             "id": m.id,
-            "extension": _exts(
-                m,
-                {
-                    "generic_name": m.generic_name,
-                    "brand_name": m.brand_name,
-                    "strength": m.strength,
-                    "route": m.route,
-                    "dose_form": m.dose_form,
-                    "rxnorm": m.rxnorm,
-                    "display_name": m.display_name,
-                    "associated_dx": m.associated_dx,
-                    "last_modified_at": _date(m.last_modified_at),
-                    "prescription_ids": m.prescription_ids,
-                },
-            ),
+            "extension": to_extensions(m, MEDICATION),
             "status": "active" if m.active else "stopped",
             "medicationCodeableConcept": {"text": m.display_name or "Unknown"},
             "subject": _ref(m.patient_id),
@@ -476,18 +401,7 @@ def _prescription(rx: Prescription) -> dict[str, Any]:
         {
             "resourceType": "MedicationRequest",
             "id": rx.id,
-            "extension": _exts(
-                rx,
-                {
-                    "prefix": rx.prefix,
-                    "status_label": rx.status_label,
-                    "refills": rx.refills,
-                    "quantity": rx.quantity,
-                    "medication_id": rx.medication_id,
-                    "display_date": _date(rx.display_date),
-                    "transactions": [t.model_dump(mode="json") for t in rx.transactions],
-                },
-            ),
+            "extension": to_extensions(rx, PRESCRIPTION),
             "status": "completed",
             "intent": "order",
             "medicationCodeableConcept": {"text": rx.sig or "Prescription"},
@@ -504,7 +418,7 @@ def _immunization(i: Immunization) -> dict[str, Any]:
         {
             "resourceType": "Immunization",
             "id": i.id,
-            "extension": _exts(i, {"source": i.source, "vaccine": i.vaccine}),
+            "extension": to_extensions(i, IMMUNIZATION),
             "status": "completed",
             "vaccineCode": {"text": i.vaccine or "Unknown"},
             "patient": _ref(i.patient_id),
@@ -522,14 +436,7 @@ def _family_history(f: FamilyMemberHistory) -> dict[str, Any]:
         {
             "resourceType": "FamilyMemberHistory",
             "id": f.id,
-            "extension": _exts(
-                f,
-                {
-                    "relation": f.relation,
-                    "diagnosis": f.diagnosis,
-                    "onset_date": _date(f.onset_date),
-                },
-            ),
+            "extension": to_extensions(f, FAMILY_HISTORY),
             "status": "completed",
             "patient": _ref(f.patient_id),
             "relationship": {"text": f.relation or "unknown"},
@@ -554,23 +461,7 @@ def _coverage(c: Coverage) -> dict[str, Any]:
         {
             "resourceType": "Coverage",
             "id": c.id,
-            "extension": _exts(
-                c,
-                {
-                    "payer": c.payer,
-                    "order_of_benefits": c.order_of_benefits,
-                    "plan_name": c.plan_name,
-                    "plan_type": c.plan_type,
-                    "coverage_type": c.coverage_type,
-                    "group_number": c.group_number,
-                    "priority_label": c.priority_label,
-                    "employer": c.employer,
-                    "relationship_to_insured": c.relationship_to_insured,
-                    "payment_type": c.payment_type,
-                    "copay": c.copay,
-                    "status_label": c.status_label,
-                },
-            ),
+            "extension": to_extensions(c, COVERAGE),
             "status": "active" if c.active else "cancelled",
             "subscriberId": c.member_id,
             "beneficiary": _ref(c.patient_id),
@@ -619,7 +510,7 @@ def _practitioner(p: Practitioner) -> dict[str, Any]:
         {
             "resourceType": "Practitioner",
             "id": p.id,
-            "extension": _exts(p, {"credential": p.credential}),
+            "extension": to_extensions(p, ACTOR),
             "identifier": [{"system": NPI, "value": p.npi}] if p.npi else [],
             "name": _human_name(p),
         }
@@ -637,7 +528,7 @@ def _related_person(p: Practitioner, patient_id: str) -> dict[str, Any]:
         {
             "resourceType": "RelatedPerson",
             "id": p.id,
-            "extension": _exts(p, {"credential": p.credential}),
+            "extension": to_extensions(p, ACTOR),
             "identifier": [{"system": NPI, "value": p.npi}] if p.npi else [],
             "patient": _ref(patient_id),
             "relationship": [{"text": relationship}] if isinstance(relationship, str) else [],
@@ -656,7 +547,7 @@ def _device(p: Practitioner) -> dict[str, Any]:
         {
             "resourceType": "Device",
             "id": p.id,
-            "extension": _exts(p, {"credential": p.credential}),
+            "extension": to_extensions(p, ACTOR),
             "deviceName": ([{"name": p.display_name, "type": "other"}] if p.display_name else []),
         }
     )
@@ -667,7 +558,7 @@ def _location(f: Facility) -> dict[str, Any]:
         {
             "resourceType": "Location",
             "id": f.id,
-            "extension": _exts(f, {}),
+            "extension": to_extensions(f, FACILITY),
             "name": f.name,
             "telecom": [
                 {"system": system, "value": value}
@@ -709,18 +600,7 @@ def _artifact(
         {
             "resourceType": "DocumentReference",
             "id": d.id,
-            "extension": _exts(
-                d,
-                {
-                    "artifact": True,
-                    "path": d.path,
-                    "sha256": d.sha256,
-                    "page_count": d.page_count,
-                    "pack_name": d.pack_name,
-                    "encounter_id": d.encounter_id,
-                    "generated_at": _date(d.generated_at),
-                },
-            ),
+            "extension": to_extensions(d, ARTIFACT),
             "status": "current",
             "type": {"text": d.title or "Document"},
             "subject": _ref(d.patient_id),
