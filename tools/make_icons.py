@@ -51,9 +51,14 @@ _MSIX_ASSETS = _ROOT / "packaging" / "msix-assets"
 # Explorer/taskbar/Start-menu coverage per Windows iconography guidance.
 _ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
-# Inno Setup 6 wizard image baseline sizes (Inno scales for DPI from these).
+# Inno Setup 6 wizard images, one rendition per DPI step it looks for. Given a
+# single file Inno stretches it, and a 164 px banner stretched onto a 200 %
+# display is the softest thing in the product; each of these is rasterised from
+# the SVG master at its own size instead. The 100 % entries keep the original
+# names so the directive still resolves if the list is ever trimmed.
 _WIZARD_SIZE = (164, 314)
 _WIZARD_SMALL_SIZE = (55, 58)
+_DPI_STEPS = ((125, "125"), (150, "150"), (175, "175"), (200, "200"))
 
 # The MSIX logo set, keyed by the filename packaging/AppxManifest.xml.in names.
 # Three is the documented minimum for a packaged desktop app: the medium tile
@@ -123,6 +128,24 @@ def _banner(size: tuple[int, int], mark_px: int) -> PILImage:
     return _flatten(canvas)
 
 
+def _scaled(size: tuple[int, int], percent: int) -> tuple[int, int]:
+    return (round(size[0] * percent / 100), round(size[1] * percent / 100))
+
+
+def _write_wizard_ladder() -> None:
+    """Both wizard images at 100 % and every DPI step Inno Setup looks for."""
+    for base, small, out in (
+        (_WIZARD_SIZE, False, _WIZARD),
+        (_WIZARD_SMALL_SIZE, True, _WIZARD_SMALL),
+    ):
+        for percent, suffix in ((100, ""), *_DPI_STEPS):
+            size = base if percent == 100 else _scaled(base, percent)
+            path = out if not suffix else out.with_name(f"{out.stem}-{suffix}{out.suffix}")
+            mark = min(size) if small else int(size[0] * 0.78)
+            _banner(size, mark).save(path, format="BMP")
+            print(f"wrote {path.relative_to(_ROOT)} {size}")
+
+
 def _write_msix_logos() -> None:
     """The three PNG renditions the Microsoft Store package names.
 
@@ -152,11 +175,7 @@ def main() -> int:
     print(f"wrote {_ICO.relative_to(_ROOT)} ({len(_ICO_SIZES)} sizes)")
 
     _WIZARD.parent.mkdir(parents=True, exist_ok=True)
-    _banner(_WIZARD_SIZE, int(_WIZARD_SIZE[0] * 0.78)).save(_WIZARD, format="BMP")
-    print(f"wrote {_WIZARD.relative_to(_ROOT)} {_WIZARD_SIZE}")
-
-    _banner(_WIZARD_SMALL_SIZE, min(_WIZARD_SMALL_SIZE)).save(_WIZARD_SMALL, format="BMP")
-    print(f"wrote {_WIZARD_SMALL.relative_to(_ROOT)} {_WIZARD_SMALL_SIZE}")
+    _write_wizard_ladder()
 
     _write_msix_logos()
     return 0
