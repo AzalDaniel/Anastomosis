@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import traceback
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -119,7 +120,8 @@ class GuiController:
             from anastomosis.commands.run import get_toolkit_info, toolkit_payload
 
             return {"ok": True, **toolkit_payload(get_toolkit_info())}
-        except Exception as exc:  # defensive: info() must never raise into JS
+        except Exception as exc:  # PHI-free payload: stderr may carry the why
+            traceback.print_exc()
             return self._fail("info", exc)
 
     def doctor(self) -> dict[str, object]:

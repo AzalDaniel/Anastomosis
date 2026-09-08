@@ -603,11 +603,16 @@ def _probe_info(page: Page) -> str:
                 " && window.pywebview.api.info)) return 'info=uncallable';"
                 " const timeout = new Promise(r => setTimeout("
                 " () => r('info=no-answer-in-10s'), 10000));"
+                " const others = await Promise.all(['gui_config', 'doctor'].map("
+                " n => (window.pywebview.api[n] ? window.pywebview.api[n]()"
+                " .then(v => `${n}:${!!(v && v.ok)}`, () => `${n}:rejected`)"
+                " : Promise.resolve(`${n}:absent`))));"
                 " const call = window.pywebview.api.info().then("
                 " v => `info=ok:${!!(v && v.ok)} error:${(v && v.error) || 'none'}`"
                 " + ` keys:${v ? Object.keys(v).length : 0}`,"
                 " e => `info=rejected:${String(e && e.message || e).slice(0, 120)}`);"
-                " return Promise.race([call, timeout]);"
+                " const got = await Promise.race([call, timeout]);"
+                " return `${got} siblings:${others.join(',')}`;"
                 "}"
             )
         )

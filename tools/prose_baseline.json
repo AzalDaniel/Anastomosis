@@ -819,11 +819,11 @@
     },
     "src/anastomosis/gui/controller.py": {
       "blank": 89,
-      "code": 250,
+      "code": 252,
       "comment": 25,
       "docstring": 96,
-      "ratio": 0.326146,
-      "total": 460
+      "ratio": 0.324397,
+      "total": 462
     },
     "src/anastomosis/gui/events.py": {
       "blank": 10,
@@ -3342,11 +3342,11 @@
   "packages": {
     "anastomosis": {
       "blank": 5641,
-      "code": 27362,
+      "code": 27364,
       "comment": 3126,
       "docstring": 6224,
-      "ratio": 0.254685,
-      "total": 42353
+      "ratio": 0.254671,
+      "total": 42355
     },
     "tests.e2e": {
       "blank": 186,
@@ -3383,11 +3383,11 @@
   },
   "repo": {
     "blank": 16854,
-    "code": 69091,
+    "code": 69093,
     "comment": 6388,
     "docstring": 12270,
-    "ratio": 0.212629,
-    "total": 104603
+    "ratio": 0.212624,
+    "total": 104605
   },
   "tool": "tools/prose_gate.py"
 }
