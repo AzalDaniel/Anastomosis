@@ -16,7 +16,9 @@ from __future__ import annotations
 import re
 import textwrap
 from pathlib import Path
+from string import Template
 
+from anastomosis.core.atomic import atomic_write_text
 from anastomosis.core.output import secure_output_dir
 
 from .evidence import AMBIGUOUS, IMAGE_ONLY, MIXED, MIXED_EVIDENCE, LayoutEvidence
@@ -25,6 +27,7 @@ from .infer import OCR_EVIDENCE_CAVEAT, PackAnalysis, PageGeometry, SectionCandi
 from .ocr import NATIVE_OR_SYNTHETIC, NATIVE_TEXT, OCR_OBSERVATION
 
 __all__ = [
+    "DRAFT_TEMPLATES",
     "OCR_EVIDENCE_NAME",
     "SAME_PATIENT_CAVEAT",
     "STATIC_LIST_NOTE",
@@ -35,6 +38,25 @@ __all__ = [
 #: empty one in every pack would train operators to ignore the name — the same
 #: reasoning that keeps ``UNPLACED.txt`` conditional.
 OCR_EVIDENCE_NAME = "OCR_EVIDENCE.md"
+
+#: The markup this module emits, as files: a ``$name`` placeholder cannot
+#: collide with a Jinja delimiter the way a brace can, and a stray one raises.
+_TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+
+#: Every file a draft needs, named so the install self-check can miss none.
+DRAFT_TEMPLATES = (
+    "draft.md",
+    "draft_ocr_section.md",
+    "draft_template.html",
+    "ocr_evidence.md",
+    "unplaced.txt",
+    "unplaced_ocr_note.txt",
+)
+
+
+def _fill(template: str, **values: object) -> str:
+    return Template((_TEMPLATE_DIR / template).read_text(encoding="utf-8")).substitute(values)
+
 
 #: How each provenance reads to a person opening the draft.
 _PROVENANCE_LABELS = {
@@ -477,50 +499,19 @@ def _render_ocr_evidence_file(analysis: PackAnalysis, *, name: str) -> str:
         if evidence.conflicts
         else "- (no native/OCR overlap was found)"
     )
-    return f"""# OCR evidence for DRAFT pack: {name}
-
-{caveat}
-
-## What this pack may be used for
-
-Recognized geometry MAY suggest: text-line and word boxes, block adjacency,
-columns, repeated header/footer bands, table candidates, spacing, and
-page-break evidence.
-
-Recognized text MAY NOT establish: that a value is clinically correct or
-complete; that an observed font, weight, color or page image is the source
-system's own rendering; or that a higher engine score means higher clinical
-reliability. Tesseract writes its text layer glyphless and black — no face,
-weight or color survives recognition, so this draft's typography is a
-destination choice, not a recovered one.
-
-## Page provenance
-
-{classes}
-
-## Observation counts
-
-- Tokens returned by the engine: {evidence.ocr_token_count}
-- Used as layout evidence: {evidence.ocr_accepted_count}
-- Below the confidence threshold (retained as a count, not promoted):
-  {evidence.below_confidence_count}
-- Duplicates of native text (dropped from the layout candidates, counted here):
-  {evidence.duplicate_count}
-- Native/OCR disagreements (BOTH kept; nothing was resolved):
-  {evidence.disagreement_count}
-
-## Held conflicts
-
-Nothing below was resolved. Where the two streams described the same place, the
-native object and the recognized token were both kept and the page was held for
-review. Boxes are in PDF points; no text appears here by design.
-
-{conflicts}
-
-## Engine manifest
-
-{manifest}
-"""
+    return _fill(
+        "ocr_evidence.md",
+        name=name,
+        caveat=caveat,
+        classes=classes,
+        token_count=evidence.ocr_token_count,
+        accepted_count=evidence.ocr_accepted_count,
+        below_count=evidence.below_confidence_count,
+        duplicate_count=evidence.duplicate_count,
+        disagreement_count=evidence.disagreement_count,
+        conflicts=conflicts,
+        manifest=manifest,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -654,127 +645,13 @@ def _render_template_html(analysis: PackAnalysis) -> str:
 
     unplaced_block = _unplaced_comment(_quarantined_text(analysis))
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{{{{ patient_name }}}} — {{{{ dos }}}}</title>
-<style>
-  :root {{
-    --body-font: {{{{ tokens.get('body_font', 'serif') }}}};
-    --mono-font: {{{{ tokens.get('mono_font', 'monospace') }}}};
-    --heading-fill: {{{{ tokens.get('heading_fill', '#f1f1f1') }}}};
-    --body-size: {{{{ tokens.get('body_size', '{body_size:.1f}pt') }}}};
-    --heading-size: {{{{ tokens.get('heading_size', '{heading_size:.1f}pt') }}}};
-  }}
-  body {{ font-family: var(--body-font); font-size: var(--body-size);
-         color: #1a1a1a; margin: 0; }}
-  header {{ border-bottom: 2px solid #1a1a1a; padding-bottom: 8px; margin-bottom: 14px; }}
-  .facility {{ font-size: 13pt; font-weight: bold; }}
-  .facility-meta, .patient-meta {{ font-size: 9.5pt; color: #333; }}
-  h2.section {{ background: var(--heading-fill);
-               font-size: var(--heading-size); text-transform: uppercase;
-               letter-spacing: .04em; padding: 4px 8px; margin: 16px 0 6px;
-               page-break-after: avoid; }}
-  .section-body {{ padding: 0 8px; }}
-  table.vitals {{ border-collapse: collapse; margin: 4px 8px; }}
-  table.vitals td, table.vitals th {{ border: 1px solid #bbb; padding: 3px 8px;
-                                     font-size: 9.5pt; text-align: left; }}
-  .addendum {{ border-left: 3px solid #888; margin: 8px; padding: 4px 10px;
-              font-size: 10pt; }}
-  .addendum-meta {{ color: #555; font-size: 8.5pt; }}
-  footer.sig {{ margin-top: 24px; border-top: 1px solid #1a1a1a; padding-top: 6px;
-               font-size: 10pt; page-break-inside: avoid; }}
-  .unsigned {{ color: #8a5a00; font-weight: bold; }}
-</style>
-</head>
-<body>
-{unplaced_block}<header>
-  {{% if facility %}}
-    <div class="facility">{{{{ facility.name }}}}</div>
-    <div class="facility-meta">
-      {{{{ facility.address_line1 }}}}{{% if facility.address_line2 %}}, {{{{ facility.address_line2 }}}}{{% endif %}},
-      {{{{ facility.city }}}}, {{{{ facility.state }}}} {{{{ facility.postal_code }}}}
-      {{% if facility.phone %}} · Tel {{{{ facility.phone }}}}{{% endif %}}
-      {{% if facility.fax %}} · Fax {{{{ facility.fax }}}}{{% endif %}}
-    </div>
-  {{% endif %}}
-  <div class="patient-meta">
-    <strong>{{{{ patient_name }}}}</strong>
-    {{% if dob %}} · DOB {{{{ dob }}}}{{% endif %}}
-    {{% if age %}} ({{{{ age }}}}){{% endif %}}
-    {{% if patient.sex %}} · {{{{ patient.sex }}}}{{% endif %}}
-    · Date of service: {{{{ dos }}}}
-    {{% if encounter.note_type %}} · {{{{ encounter.note_type }}}}{{% endif %}}
-{label_fragments}
-  </div>
-  {{% if encounter.chief_complaint %}}
-    <div class="patient-meta">Chief complaint: {{{{ encounter.chief_complaint }}}}</div>
-  {{% endif %}}
-</header>
-
-{{% for section in note_sections %}}
-  <h2 class="section">{{{{ section.title or "Note" }}}}</h2>
-  {{# Source note HTML is rendered as authored; print CSS cannot run scripts
-     and Chromium renders with no network access to leak to. #}}
-  <div class="section-body">{{{{ section.html | safe if section.html else section.text }}}}</div>
-{{% endfor %}}
-
-{{% if vitals %}}
-  <h2 class="section">Vitals</h2>
-  <table class="vitals">
-    <tr><th>Measure</th><th>Value</th><th>Unit</th></tr>
-    {{% for v in vitals %}}
-      <tr><td>{{{{ v.display or v.code }}}}</td><td>{{{{ v.value }}}}</td><td>{{{{ v.unit or "" }}}}</td></tr>
-    {{% endfor %}}
-  </table>
-{{% endif %}}
-
-{{% if social_history %}}
-  <h2 class="section">Social history</h2>
-  <table class="vitals">
-    {{% for o in social_history %}}
-      <tr><td>{{{{ o.display }}}}</td><td>{{{{ o.value }}}}</td></tr>
-    {{% endfor %}}
-  </table>
-{{% endif %}}
-
-{{% if coverages %}}
-  <h2 class="section">Payment information</h2>
-  <table class="vitals">
-    <tr><th>Order</th><th>Payer</th><th>Plan</th><th>Type</th><th>Member ID</th></tr>
-    {{% for c in coverages %}}
-      <tr><td>{{{{ c.priority_label or "" }}}}</td><td>{{{{ c.payer or "" }}}}</td>
-          <td>{{{{ c.plan_name or "" }}}}</td><td>{{{{ c.plan_type or c.coverage_type or "" }}}}</td>
-          <td>{{{{ c.member_id or "" }}}}</td></tr>
-    {{% endfor %}}
-  </table>
-{{% endif %}}
-
-{{% if addenda %}}
-  <h2 class="section">Addenda</h2>
-  {{% for addendum in addenda %}}
-    <div class="addendum">
-      {{{{ addendum.text }}}}
-      <div class="addendum-meta">
-        {{{{ addendum.status or "" }}}}{{% if addendum.source %}} · {{{{ addendum.source }}}}{{% endif %}}
-      </div>
-    </div>
-  {{% endfor %}}
-{{% endif %}}
-
-<footer class="sig">
-  {{% if signer and signed_at %}}
-    Electronically signed by {{{{ signer.name }}}}{{% if signer.credential %}}, {{{{ signer.credential }}}}{{% endif %}}
-    on {{{{ signed_at }}}}
-  {{% else %}}
-    <span class="unsigned">UNSIGNED NOTE</span>
-    {{% if provider %}} · Seen by {{{{ provider.name }}}}{{% endif %}}
-  {{% endif %}}
-</footer>
-</body>
-</html>
-"""
+    return _fill(
+        "draft_template.html",
+        body_size=f"{body_size:.1f}",
+        heading_size=f"{heading_size:.1f}",
+        label_fragments=label_fragments,
+        unplaced_block=unplaced_block,
+    )
 
 
 def slot_guard(slot: str) -> str:
@@ -836,36 +713,17 @@ def _render_unplaced_file(quarantined: list[str], evidence: LayoutEvidence) -> s
     """The quarantine file: the strings, and why they need reading. Plain
     text on purpose — not Jinja, YAML or Markdown, so nothing renders or
     imports it; it exists to be read once by a person and then deleted."""
-    note = textwrap.fill(STATIC_LIST_NOTE, width=76)
-    body = "\n".join(_quarantine_line(text, evidence) for text in quarantined)
     ocr_note = (
-        "\nLines marked [OCR] were RECOGNIZED from a page image, not read from\n"
-        "the document. They are layout evidence: treat every character as\n"
-        f"unverified and check it against the original page. See {OCR_EVIDENCE_NAME}.\n"
+        _fill("unplaced_ocr_note.txt", evidence_name=OCR_EVIDENCE_NAME)
         if evidence.review_required
         else ""
     )
-    return (
-        "UNPLACED STATIC TEXT\n"
-        "====================\n\n"
-        "These are raw strings retained from your samples, including static text\n"
-        "and inferred heading candidates. The generator does not reproduce them\n"
-        f"in the working pack files.\n{ocr_note}\n"
-        f"{note}\n\n"
-        "Move what belongs to the form into template.html, then delete this\n"
-        "file. It is the only file in this pack carrying text taken from your\n"
-        "samples, so deleting it is the whole job.\n\n"
-        "--------------------------------------------------------------------\n"
-        f"{body}\n"
+    return _fill(
+        "unplaced.txt",
+        ocr_note=ocr_note,
+        note=textwrap.fill(STATIC_LIST_NOTE, width=76),
+        body="\n".join(_quarantine_line(text, evidence) for text in quarantined),
     )
-
-
-def _comment_safe(text: str) -> str:
-    """Neutralize text for the UNPLACED comment block: ``-->`` would
-    close the comment early, and brace delimiters would be parsed by
-    Jinja even inside an HTML comment. Routes through the same
-    brace-entity escaping as placed labels."""
-    return _escape_html(text).replace("-->", "--&gt;")
 
 
 # --------------------------------------------------------------------------- #
@@ -931,19 +789,18 @@ def _draft_ocr_section(analysis: PackAnalysis) -> str:
     classes = ", ".join(
         f"{label} {count}" for label, count in evidence.class_counts.items() if count
     )
-    return f"""
-## OCR evidence (read this second)
-
-{caveat}
-
-- Sample pages by kind: {classes}
-- Recognized tokens: {evidence.ocr_token_count}
-  ({evidence.ocr_accepted_count} used, {evidence.below_confidence_count} below threshold)
-- Held for review, unresolved: {evidence.duplicate_count} duplicate(s) of native
-  text, {evidence.disagreement_count} native/OCR disagreement(s)
-- Full detail, page classes and the engine manifest: `{OCR_EVIDENCE_NAME}`
-- Strings marked `[OCR]` in `{UNPLACED_NAME}` came from recognition
-"""
+    return _fill(
+        "draft_ocr_section.md",
+        caveat=caveat,
+        classes=classes,
+        token_count=evidence.ocr_token_count,
+        accepted_count=evidence.ocr_accepted_count,
+        below_count=evidence.below_confidence_count,
+        duplicate_count=evidence.duplicate_count,
+        disagreement_count=evidence.disagreement_count,
+        evidence_name=OCR_EVIDENCE_NAME,
+        unplaced_name=UNPLACED_NAME,
+    )
 
 
 def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
@@ -964,7 +821,10 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
     # Same rule as the manifest description: the evidence clause appears only
     # on a harvest that actually asked an engine.
     def _section_line(index: int, c: SectionCandidate) -> str:
-        line = f"- Inferred section {index} — {c.role}, seen in {c.count}/{analysis.sample_count} samples"
+        line = (
+            f"- Inferred section {index} — {c.role}, "
+            f"seen in {c.count}/{analysis.sample_count} samples"
+        )
         if not analysis.evidence.ocr_attempted:
             return line
         return f"{line}, evidence: {_PROVENANCE_LABELS.get(c.provenance, c.provenance)}"
@@ -1001,54 +861,30 @@ def _render_draft_md(analysis: PackAnalysis, *, name: str, display: str) -> str:
         )
     unplaced_note = textwrap.fill(unplaced_note, width=76)
 
-    return f"""# DRAFT pack: {name}
-
-> {display}
-
-**This is a DRAFT, not a finished pack.** It was auto-generated from
-{analysis.sample_count} sample PDF(s) by `anast pack init --from-samples`. The
-layout learner recovers roughly 60-70% of a pack deterministically; the rest
-is a human's job. **Fidelity to your originals is NOT claimed** — treat the
-output as a starting point.
-
-## Same-patient caveat (read this first)
-
-{SAME_PATIENT_CAVEAT}
-{_draft_ocr_section(analysis)}
-## Provenance
-
-- Samples analyzed: {analysis.sample_count}
-- Confidence: {confidence}
-- Page geometry: {geom.width:.0f}x{geom.height:.0f}pt
-  (margins L{geom.margin_left:.0f} R{geom.margin_right:.0f}
-  T{geom.margin_top:.0f} B{geom.margin_bottom:.0f}pt)
-- Emitted page size: `{_page_size_name(geom.width, geom.height)}`{_page_size_note(geom)}
-- Heading-band fill: `{_heading_fill(analysis)}`
-- Body font: `{_body_font(analysis)}`
-- Dropped curves (vector art the harvester skipped): {analysis.dropped_curves}
-- Layout evidence: {_evidence_one_liner(analysis.evidence)}
-
-## Inferred heading sections
-
-{section_lines}
-
-## Sample-text quarantine
-
-{unplaced_note}
-
-{unplaced_lines}
-
-## Next steps
-
-1. **Review side-by-side.** Render a preview (`--render-preview`, or
-   `anast pipeline run … --pack {name} --pack-dir <this dir's parent>` —
-   passing `--pack-dir` opts into trusting this draft's code) and compare
-   the rendered PDF in `preview/` to an original sample.
-2. **Review `UNPLACED.txt`, then edit `template.html`.** Reposition text you
-   keep, wire any inferred heading sections into real loops, and adjust the inlined design
-   tokens (CSS custom properties in `:root`).
-3. **Re-render** and repeat until the preview matches your sample.
-"""
+    return _fill(
+        "draft.md",
+        name=name,
+        display=display,
+        sample_count=analysis.sample_count,
+        same_patient_caveat=SAME_PATIENT_CAVEAT,
+        ocr_section=_draft_ocr_section(analysis),
+        confidence=confidence,
+        width=f"{geom.width:.0f}",
+        height=f"{geom.height:.0f}",
+        margin_left=f"{geom.margin_left:.0f}",
+        margin_right=f"{geom.margin_right:.0f}",
+        margin_top=f"{geom.margin_top:.0f}",
+        margin_bottom=f"{geom.margin_bottom:.0f}",
+        page_size=_page_size_name(geom.width, geom.height),
+        page_size_note=_page_size_note(geom),
+        heading_fill=_heading_fill(analysis),
+        body_font=_body_font(analysis),
+        dropped_curves=analysis.dropped_curves,
+        evidence_line=_evidence_one_liner(analysis.evidence),
+        section_lines=section_lines,
+        unplaced_note=unplaced_note,
+        unplaced_lines=unplaced_lines,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1068,26 +904,25 @@ def emit_draft_pack(analysis: PackAnalysis, *, name: str, display: str, out_dir:
     # indistinguishable from template text. Raw strings stay in the quarantine,
     # but the generated directory still requires the same owner-only handling.
     pack_dir = secure_output_dir(out_dir / name)
-    (pack_dir / "pack.yaml").write_text(
-        _render_pack_yaml(analysis, name=name, display=display), encoding="utf-8"
+    # Atomically (14): a truncated DRAFT.md withholds the same-patient caveat.
+    atomic_write_text(
+        pack_dir / "pack.yaml", _render_pack_yaml(analysis, name=name, display=display)
     )
-    (pack_dir / "template.html").write_text(_render_template_html(analysis), encoding="utf-8")
-    (pack_dir / "context.py").write_text(_CONTEXT_PY, encoding="utf-8")
-    (pack_dir / "DRAFT.md").write_text(
-        _render_draft_md(analysis, name=name, display=display), encoding="utf-8"
-    )
+    atomic_write_text(pack_dir / "template.html", _render_template_html(analysis))
+    atomic_write_text(pack_dir / "context.py", _CONTEXT_PY)
+    atomic_write_text(pack_dir / "DRAFT.md", _render_draft_md(analysis, name=name, display=display))
     # The quarantine, and only when there is something to quarantine: an empty
     # UNPLACED.txt in every pack would train operators to ignore the name.
     quarantined = _quarantined_text(analysis)
     if quarantined:
-        (pack_dir / UNPLACED_NAME).write_text(
-            _render_unplaced_file(quarantined, analysis.evidence), encoding="utf-8"
+        atomic_write_text(
+            pack_dir / UNPLACED_NAME, _render_unplaced_file(quarantined, analysis.evidence)
         )
     # Written only when a page was recognized, for the same reason the
     # quarantine file is conditional: a file that is always there and usually
     # empty is a file nobody reads.
     if analysis.evidence.review_required:
-        (pack_dir / OCR_EVIDENCE_NAME).write_text(
-            _render_ocr_evidence_file(analysis, name=name), encoding="utf-8"
+        atomic_write_text(
+            pack_dir / OCR_EVIDENCE_NAME, _render_ocr_evidence_file(analysis, name=name)
         )
     return pack_dir

@@ -17,7 +17,7 @@ import pytest
 
 pymupdf = pytest.importorskip("pymupdf", reason="packgen needs the render extra")
 
-from anastomosis.commands.packinit import PackInitCommand, run_pack_init  # noqa: E402
+from anastomosis.commands.learn import LearnCommand, run_learn  # noqa: E402
 from anastomosis.packgen.extract import (  # noqa: E402
     NoExtractableTextError,
     OcrRequiredError,
@@ -106,14 +106,16 @@ def test_pack_init_refuses_a_textless_sample_without_writing_a_pack(
     _write_pdf(samples / "image-only.pdf", ["image"])
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="layout", samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True
+        )
     )
 
     assert result.ok is False
     assert result.error in {"OcrRequiredError", "NoExtractableTextError"}
-    assert result.pack_dir is None
-    assert result.draft_md is None
+    assert result.written_dir is None
+    assert result.review_md is None
     assert not (output / "synthetic").exists()
 
 
@@ -132,8 +134,10 @@ def test_pack_init_without_an_engine_names_the_ocr_refusal(
     _write_pdf(samples / "image-only.pdf", ["image"])
     output = tmp_path / "packs"
 
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True)
+    result = run_learn(
+        LearnCommand(
+            kind="layout", samples=[str(samples)], name="synthetic", out_dir=output, confirmed=True
+        )
     )
 
     assert result.ok is False

@@ -1,7 +1,7 @@
 """The learn-a-source wizard backend (the source console).
 
-Marshals :func:`run_source_init_command` into the wizard's JSON dict,
-synchronously and as a busy-guarded daemon job.
+Marshals :func:`anastomosis.commands.learn.run_learn` into the wizard's JSON
+dict, synchronously and as a busy-guarded daemon job.
 
 PHI rule: the proposal carries column names, type labels, counts and
 masked shapes only — never a cell value or the example path.
@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING
 from anastomosis.gui.consoles.wizard import WizardConsole
 
 if TYPE_CHECKING:
-    from anastomosis.commands.source_init_command import SourceInitResult
+    from anastomosis.commands.learn import LearnResult
 
 __all__ = ["SourceConsole"]
 
 
-def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
-    """Marshal a :class:`SourceInitResult` into the learn-a-source wizard's dict.
+def _source_result_dict(result: LearnResult) -> dict[str, object]:
+    """Marshal a :class:`LearnResult` into the learn-a-source wizard's dict.
 
     A pre-analyze failure is the bare ``{"ok": False, "error": <code>}``;
     once analysis succeeds the PHI-safe proposal rides along, plus outcome-specific keys.
@@ -58,8 +58,8 @@ def _source_result_dict(result: SourceInitResult) -> dict[str, object]:
     if result.ok:
         out.update(
             {
-                "mapping_dir": str(result.mapping_dir),
-                "mapping_md": result.mapping_md,
+                "mapping_dir": str(result.written_dir),
+                "mapping_md": result.review_md,
                 "record_count": result.record_count,
                 "unmapped": result.unmapped,
             }
@@ -150,20 +150,18 @@ class SourceConsole(WizardConsole):
     ) -> dict[str, object]:
         """Learn a new structured-export format from one example (wizard backend).
 
-        Mirrors ``anast source init`` via :func:`run_source_init_command`
-        (28, 29). ``destination`` binds a profile hash (32).
+        Mirrors ``anast source init`` via :func:`run_learn` (28, 29).
+        ``destination`` binds a profile hash (32).
         """
         try:
-            from anastomosis.commands.source_init_command import (
-                SourceInitCommand,
-                run_source_init_command,
-            )
+            from anastomosis.commands.learn import LearnCommand, run_learn
             from anastomosis.core.output import typed_path
 
             parsed = _parse_review(review)
 
-            result = run_source_init_command(
-                SourceInitCommand(
+            result = run_learn(
+                LearnCommand(
+                    kind="tabular",
                     example=typed_path(example_path),
                     name=name,
                     display=display,
@@ -197,18 +195,16 @@ class SourceConsole(WizardConsole):
         """
 
         def _run() -> dict[str, object]:
-            from anastomosis.commands.source_init_command import (
-                SourceInitCommand,
-                run_source_init_command,
-            )
+            from anastomosis.commands.learn import LearnCommand, run_learn
             from anastomosis.core.output import typed_path
 
             # Parsed INSIDE the step, not before: a malformed review must
             # surface as this console's ordinary failure dict, which only the step runner catches.
             parsed = _parse_review(review)
             return _source_result_dict(
-                run_source_init_command(
-                    SourceInitCommand(
+                run_learn(
+                    LearnCommand(
+                        kind="tabular",
                         example=typed_path(example_path),
                         name=name,
                         display=display,

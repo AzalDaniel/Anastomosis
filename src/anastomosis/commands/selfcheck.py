@@ -191,6 +191,18 @@ def _check_archive_assets() -> AssetCheck:
     return AssetCheck("archive web assets", True, "anast-index.js + anast.css")
 
 
+def _check_draft_templates() -> AssetCheck:
+    try:
+        from anastomosis.packgen.emit import _TEMPLATE_DIR, DRAFT_TEMPLATES
+
+        missing = [name for name in DRAFT_TEMPLATES if not _readable(_TEMPLATE_DIR / name)]
+    except Exception as exc:
+        return AssetCheck("draft-pack templates", False, type(exc).__name__)
+    if missing:
+        return AssetCheck("draft-pack templates", False, f"missing: {', '.join(missing)}")
+    return AssetCheck("draft-pack templates", True, f"{len(DRAFT_TEMPLATES)} file(s)")
+
+
 def _check_chromium(*, frozen: bool) -> AssetCheck:
     """The bundled Playwright Chromium: resolves ``executable_path``
     without launching the browser. Required in a frozen build; skipped
@@ -229,6 +241,7 @@ def check_bundled_assets() -> SelfCheckResult:
             _check_fonts(),
             _check_synonyms(),
             _check_archive_assets(),
+            _check_draft_templates(),
             _check_chromium(frozen=frozen),
         ]
     )
