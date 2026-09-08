@@ -579,6 +579,70 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **The guided session stops telling you every system is ready to receive
+  charts.** `anast` with no arguments offered the thirteen destinations as a
+  plain alphabetical list, so Epic — which no filing assistant on this
+  computer can file into — read exactly like Tebra, the one destination that
+  ships an assistant, and AdvancedMD was the pre-filled default because the
+  alphabet put it first. All thirteen still appear: the registry is data and
+  nothing was removed from it. Each now carries how far along its filing
+  assistant is ("ready to file charts into", "the filing assistant is here
+  but not set up yet", "no filing assistant yet"), and the ones that can be
+  filed into come first. The three states come from one function,
+  `destinations.loader.pack_readiness`, which is also what `anast destination
+  list` and `anast destination route` print in their Filing assistant column.
+
+- **Template packs and destination packs are discovered by one walk.**
+  `destinations/loader.py` opened by saying it mirrored
+  `reconstruct/packs.py`, and it did: the same `--pack-dir` → user directory →
+  built-in order (rule 21), the same "a directory may BE a pack or CONTAIN
+  packs" rule, and the same three origin names retyped as private copies.
+  There is now one walk in `core/packdirs.py` — enumerating for
+  `discover_packs`, narrowed by name for `load_destination_pack` — and it
+  keeps both readings of the one case where the two differed. Alongside it,
+  `_load_pack_dir` and `_load_pack_snapshot` became one `_load_pack`: they
+  stated the same contract twice (pack.yaml, template.html and context.py all
+  required, each refused by name, the manifest naming the pack), differing
+  only in where the bytes come from. Both context loaders stay as they were —
+  an importlib load off a path and an exec of hash-pinned bytes are different
+  mechanisms, and rule 22 hangs on the second.
+
+- **The browser pack's selector slots are read off the schema that declares
+  them.** `SelectorMap`'s eighteen fields, `_REQUIRED_SLOTS`,
+  `_OPTIONAL_SLOTS` and `_FORM_SLOTS` said the same names three times over;
+  the three sets now come off `dataclasses.fields`, with no default meaning
+  required and a `form` marker naming the seven slots the upload dialog owns.
+  Same names, same order, so the wizard prompts and writes `selectors.yaml`
+  exactly as before. Two tests hold it: one restates all eighteen names and
+  which half each is in, cross-checked against the wizard's own guidance
+  keys; the other says a form slot may carry the `{idx}` row token, which
+  nothing had ever checked.
+
+- **QA and the verification ladder go flat.** The engine checks were a
+  registry with one writer and one reader: `checks.py` registered seven
+  checks in a loop, `base.py` sorted them back out, and a duplicate-name
+  guard stood between them over a name that could only be written once.
+  `ENGINE_CHECKS` is the seven, in the name order every `qa_report.json`
+  lists them in; the `QACheck` protocol stays, because `run_qa(checks=...)`
+  — the extension point a pack actually uses — is typed with it.
+  `wholepatient.py` stated the same shape twice, one table of the checks a
+  whole-patient document can answer and one of the checks it records as
+  skipped, with only a test holding the pair to covering every check
+  between them; `WHOLE_PATIENT_SCOPE` places each check once, and the run
+  list reads that table by name, so a check nobody has placed raises
+  instead of falling quietly out of the report. The seven L0-L6 levels were
+  classes whose only state was their own level id, and are seven functions;
+  L6's tier-2 identity re-assertion is its own function, so
+  `deliver/verify/levels.py` leaves the complexity baseline with no
+  violating block at all rather than carrying its old C/12 in under a new
+  name. Nothing a check or a level says changed: every level body is
+  AST-identical to the method it replaced, the five fixtures are
+  byte-identical (`tools/snapshot.py`), and a real two-document export
+  writes the same `qa_report.json` to the byte. Neutering each of the seven
+  checks and each of the seven levels in a scratch copy turns a named test
+  red. The corpus pin is unmoved, the guard count holds at 72, and neither
+  gate baseline needed regenerating.
+
 - **One seam attaches a destination, not four.** `cli._make_destination` and
   `gui/controller._attach_destination` were byte-identical wrappers around
   `deliver.browser.attach.attach_destination`, and `cli._make_fhir_destination`

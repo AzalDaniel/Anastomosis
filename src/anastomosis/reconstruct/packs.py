@@ -31,13 +31,11 @@ from pydantic import (
 )
 
 from anastomosis.core.model import CHARTABLE_KINDS
+from anastomosis.core.packdirs import ORIGIN_BUILTIN, ORIGIN_PACK_DIR, candidate_pack_dirs
 from anastomosis.reconstruct.packexec import restrict_module
 from anastomosis.reconstruct.packtrust import PackSnapshot, PackTrust, read_pack_snapshot
 
 __all__ = [
-    "ORIGIN_BUILTIN",
-    "ORIGIN_PACK_DIR",
-    "ORIGIN_USER",
     "LoadedPack",
     "PackCoverage",
     "PackManifest",
@@ -49,13 +47,7 @@ __all__ = [
 ]
 
 _BUILTIN_DIR = Path(__file__).resolve().parent.parent / "packs"
-
-#: Where a pack came from, as reported on :class:`PackStatus` and the info
-#: surface. Named because three call sites now branch on the values and a
-#: mistyped literal would silently downgrade a pack's trust handling.
-ORIGIN_BUILTIN = "builtin"
-ORIGIN_PACK_DIR = "pack-dir"
-ORIGIN_USER = "user"
+_PACK_FILE = "pack.yaml"
 
 
 def builtin_pack_names() -> frozenset[str]:
@@ -284,6 +276,9 @@ def _load_context_builder_from_source(
     return cast(ContextBuilder, builder)
 
 
+_TEMPLATE_FILE = "template.html"
+_CONTEXT_FILE = "context.py"
+
 _BuildResult = tuple[PackManifest, Path, ContextBuilder]
 
 
@@ -292,7 +287,6 @@ def _finish_load(
 ) -> PackStatus:
     """Run ``build()`` and turn it into a :class:`PackStatus`, diagnosing defensively.
 
-    Shared tail for :func:`_load_pack_dir` and :func:`_load_pack_snapshot`.
     ``name_cell`` is a one-item mutable cell so ``build`` can update the
     reported name once the manifest parses, including on a later failure.
     """
@@ -326,104 +320,42 @@ def _finish_load(
     )
 
 
-def _load_pack_dir(root: Path, origin: str) -> PackStatus:
+def _load_pack(root: Path, origin: str, snapshot: PackSnapshot | None = None) -> PackStatus:
+    """One pack, read off ``root`` or from a ``snapshot``'s pinned bytes: with
+    a snapshot the manifest parses and ``context.py`` execs from the bytes the
+    trust hash covered, never re-read, so nothing can swap a file between check
+    and exec. ``template.html`` is required here and read at render time."""
     name_cell = [root.name]
+    pinned = snapshot.files if snapshot is not None else None
+
+    def require(relname: str) -> Path:
+        present = relname in pinned if pinned is not None else (root / relname).is_file()
+        if not present:
+            raise FileNotFoundError(f"{relname} not found")
+        return root / relname
 
     def build() -> _BuildResult:
-        manifest_path = root / "pack.yaml"
-        if not manifest_path.is_file():
-            raise FileNotFoundError("pack.yaml not found")
-        manifest = PackManifest.model_validate(
-            yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        manifest_path = require(_PACK_FILE)
+        raw = (
+            pinned[_PACK_FILE].decode("utf-8")
+            if pinned is not None
+            else manifest_path.read_text(encoding="utf-8")
         )
+        manifest = PackManifest.model_validate(yaml.safe_load(raw))
         name_cell[0] = manifest.name
-        template_path = root / "template.html"
-        if not template_path.is_file():
-            raise FileNotFoundError("template.html not found")
-        context_path = root / "context.py"
-        if not context_path.is_file():
-            raise FileNotFoundError("context.py not found")
-        return (
-            manifest,
-            template_path,
-            _load_context_builder(context_path, restricted=origin != ORIGIN_BUILTIN),
+        template_path = require(_TEMPLATE_FILE)
+        context_path = require(_CONTEXT_FILE)
+        restricted = origin != ORIGIN_BUILTIN
+        builder = (
+            _load_context_builder_from_source(
+                pinned[_CONTEXT_FILE], context_path, restricted=restricted
+            )
+            if pinned is not None
+            else _load_context_builder(context_path, restricted=restricted)
         )
+        return manifest, template_path, builder
 
     return _finish_load(name_cell, origin, root, build)
-
-
-def _load_pack_snapshot(snapshot: PackSnapshot, origin: str) -> PackStatus:
-    """Load a pack from its hashed :class:`PackSnapshot` — the trusted-external path.
-
-    Contract: parses and execs from the snapshot's PINNED bytes, never
-    re-read, so what runs is exactly what the trust hash covered.
-    ``context.py`` is pinned to execution; ``template.html``'s presence is
-    checked here but read from disk at render time; other assets are outside
-    the hash. Diagnoses defensively like :func:`_load_pack_dir`.
-    """
-    root = snapshot.root
-    name_cell = [root.name]
-
-    def build() -> _BuildResult:
-        manifest_bytes = snapshot.files.get("pack.yaml")
-        if manifest_bytes is None:
-            raise FileNotFoundError("pack.yaml not found")
-        manifest = PackManifest.model_validate(yaml.safe_load(manifest_bytes.decode("utf-8")))
-        name_cell[0] = manifest.name
-        if snapshot.files.get("template.html") is None:
-            raise FileNotFoundError("template.html not found")
-        context_bytes = snapshot.files.get("context.py")
-        if context_bytes is None:
-            raise FileNotFoundError("context.py not found")
-        # Every caller of this path is a non-built-in origin, so pack code is
-        # always restricted here; the flag is passed rather than assumed so the
-        # two loaders read the same way.
-        builder = _load_context_builder_from_source(
-            context_bytes, root / "context.py", restricted=origin != ORIGIN_BUILTIN
-        )
-        return manifest, root / "template.html", builder
-
-    return _finish_load(name_cell, origin, root, build)
-
-
-def _packs_under(parent: Path, origin: str) -> list[tuple[Path, str]]:
-    """The pack candidates a parent directory offers, as ``(root, origin)``.
-
-    A directory may BE a pack (it holds ``pack.yaml``) or CONTAIN packs. A
-    directory that is neither — absent, a file, empty — contributes nothing;
-    discovery stays defensive about what it is pointed at.
-    """
-    if not parent.is_dir():
-        return []
-    if (parent / "pack.yaml").is_file():
-        return [(parent, origin)]
-    return [
-        (child, origin)
-        for child in sorted(parent.iterdir())
-        if child.is_dir() and (child / "pack.yaml").is_file()
-    ]
-
-
-def _iter_candidate_dirs(
-    pack_dirs: list[Path], *, include_user: bool = True
-) -> list[tuple[Path, str]]:
-    """Every candidate pack root, in precedence order (first name wins).
-
-    Explicit ``--pack-dir`` directories, then the per-user directory a taught
-    layout is written to, then the shipped built-ins.
-    """
-    candidates: list[tuple[Path, str]] = []
-    for parent in pack_dirs:
-        candidates.extend(_packs_under(parent, ORIGIN_PACK_DIR))
-    if include_user:
-        candidates.extend(_packs_under(user_packs_dir(), ORIGIN_USER))
-    if _BUILTIN_DIR.is_dir():
-        candidates.extend(
-            (child, ORIGIN_BUILTIN)
-            for child in sorted(_BUILTIN_DIR.iterdir())
-            if child.is_dir() and (child / "pack.yaml").is_file()
-        )
-    return candidates
 
 
 def discover_packs(
@@ -444,7 +376,13 @@ def discover_packs(
     per-user directory, for the install self-check only.
     """
     results: dict[str, PackStatus] = {}
-    for root, origin in _iter_candidate_dirs(pack_dirs or [], include_user=include_user):
+    candidates = candidate_pack_dirs(
+        pack_dirs or [],
+        user_dir=user_packs_dir() if include_user else None,
+        builtin_dir=_BUILTIN_DIR,
+        manifest=_PACK_FILE,
+    )
+    for root, origin in candidates:
         status = _discover_one(root, origin, allow_external, trust, trust_new)
         seen = results.get(status.name)
         if seen is None:
@@ -474,7 +412,7 @@ def _discover_one(
     its root to its current content hash.
     """
     if origin == ORIGIN_BUILTIN:
-        return _load_pack_dir(root, origin)
+        return _load_pack(root, origin)
     if origin == ORIGIN_PACK_DIR and not allow_external:
         return PackStatus(
             name=root.name,
@@ -487,7 +425,7 @@ def _discover_one(
         # A per-user pack has no consent-only path: only the hash proves the
         # code is what the operator confirmed.
         if origin == ORIGIN_PACK_DIR:
-            return _load_pack_dir(root, origin)
+            return _load_pack(root, origin)
         return PackStatus(
             name=root.name,
             pack=None,
@@ -512,17 +450,17 @@ def _load_trusted_external(
     """Gate one code-bearing candidate on its content hash, then load it if allowed.
 
     Contract: the pack is read ONCE into a :class:`PackSnapshot`; a trusted
-    hash execs those SAME bytes via :func:`_load_pack_snapshot` — no
+    hash execs those SAME bytes via :func:`_load_pack` — no
     swap-between-hash-and-exec window. ``trust_new`` records the hash
     (trust-on-first-use) and proceeds.
     """
     snapshot = read_pack_snapshot(root)
     content_hash = snapshot.content_hash
     if trust.is_trusted(root, content_hash):
-        return _load_pack_snapshot(snapshot, origin)
+        return _load_pack(root, origin, snapshot)
     if trust_new:
         trust.record(root, content_hash)
-        return _load_pack_snapshot(snapshot, origin)
+        return _load_pack(root, origin, snapshot)
     remedy = (
         "re-run with --trust-pack to trust it"
         if origin == ORIGIN_PACK_DIR

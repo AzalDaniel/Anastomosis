@@ -638,7 +638,9 @@ def test_the_run_manifest_carries_no_patient_value(tmp_path: Path, fake_chromium
         "ada@example.com",
         "555-0101",
         "Acute bronchitis",
-        "1985",
+        "1985-03-14",
+        "03/14/1985",
+        "19850314",
     ):
         assert leak not in text, leak
 

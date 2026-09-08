@@ -60,19 +60,13 @@ def _oldest_evidence(entry: object) -> str:
 
 
 def _local_pack_status(name: str) -> str:
-    """Describe whether a discovered browser pack exists locally for ``name``.
+    """What `destination list` and `destination route` print for ``name``'s
+    local pack: present, and whether the wizard has been run, without it ever
+    auto-affecting routing — the registry overlay stays the routing truth."""
+    from anastomosis.destinations.loader import pack_readiness
 
-    Surfaced in `destination list`/`route` so the operator can see a pack is
-    present (and whether the wizard has been run) without it ever auto-affecting
-    routing — the registry overlay stays the single routing truth.
-    """
-    from anastomosis.destinations.loader import BrowserPackError, load_destination_pack
-
-    try:
-        loaded = load_destination_pack(name)
-    except BrowserPackError:
-        return "—"
-    return "ready" if loaded.ready else "needs-discovery"
+    readiness = pack_readiness(name)
+    return "—" if readiness == "absent" else readiness
 
 
 def _route_status(kind: str, *, verbose: bool) -> str:
