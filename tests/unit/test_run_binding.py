@@ -22,6 +22,7 @@ import pytest
 from _render_fakes import write_text_pdf
 
 import anastomosis.reconstruct.chromium as chromium
+from anastomosis.commands.learn import LearnCommand, run_learn
 from anastomosis.commands.migrate import MigrationCommand, resolve_pack, run_migration
 from anastomosis.commands.profiles import (
     SOURCE_BUILTIN,
@@ -53,7 +54,6 @@ from anastomosis.commands.runmanifest import (
     verify_binding,
     write_run_manifest,
 )
-from anastomosis.commands.source_init_command import SourceInitCommand, run_source_init_command
 from anastomosis.destinations.registry import UNVERSIONED, DestinationRegistry
 from anastomosis.pipeline import PipelineError
 
@@ -96,8 +96,9 @@ def _bump_destination_version(monkeypatch: pytest.MonkeyPatch, name: str, versio
 
 def _teach_clinic_csv(destination: str | None = None) -> None:
     """Teach the flat clinic CSV as a learned source in this test's fake home."""
-    result = run_source_init_command(
-        SourceInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
             example=CSV_FIXTURE,
             name="clinic_csv",
             display="Clinic CSV",
@@ -479,9 +480,13 @@ def test_the_cli_refuses_before_it_draws_the_transit_map(tmp_path: Path) -> None
 
 
 def test_teaching_against_an_unknown_destination_refuses_before_analysis() -> None:
-    result = run_source_init_command(
-        SourceInitCommand(
-            example=CSV_FIXTURE, name="clinic_csv", confirmed=True, destination="no_such_ehr"
+    result = run_learn(
+        LearnCommand(
+            kind="tabular",
+            example=CSV_FIXTURE,
+            name="clinic_csv",
+            confirmed=True,
+            destination="no_such_ehr",
         )
     )
     assert result.ok is False

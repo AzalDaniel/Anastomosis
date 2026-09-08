@@ -726,6 +726,47 @@ def test_archive_budgeted_chart_is_not_also_routed_to_unattributed(tmp_path: Pat
     assert len(list((out / "patients" / pid / "pdfs").glob("*.pdf"))) == 1
 
 
+def test_two_charts_that_sanitize_to_one_name_refuse_to_share_a_slot(
+    tmp_path: Path,
+) -> None:
+    """Two indexed charts for ONE patient whose filenames differ only in
+    characters ``safe_name`` folds to ``_`` take one delivered name in
+    ``pdfs/``. Writing both would leave the second's bytes under the first's
+    link; the pass-scoped claim ledger refuses instead."""
+    from datetime import date
+
+    from anastomosis.core.model import Encounter, Patient, PatientRecord
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    pid = "feedface-0000-0000-0000-0000000000aa"
+    record = PatientRecord(
+        patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
+        encounters=[
+            Encounter(
+                id=f"feedface-e000-0000-0000-00000000000{n}",
+                patient_id=pid,
+                date_of_service=date(2023, 5, 10),
+            )
+            for n in (1, 2)
+        ],
+    )
+
+    pdfs_dir = tmp_path / "charts"
+    pdfs_dir.mkdir()
+    names = ("Fixture Ada.pdf", "Fixture+Ada.pdf")
+    for name in names:
+        (pdfs_dir / name).write_bytes(b"%PDF-1.7 fake\n")
+    RenderIndex.from_entries(
+        [
+            RenderEntry(pdf=name, patient_id=pid, encounter_id=enc.id)
+            for name, enc in zip(names, record.encounters, strict=True)
+        ]
+    ).write(pdfs_dir)
+
+    with pytest.raises(DeliveredNameCollision, match="chart"):
+        ArchiveDeliverer().deliver([record], pdfs_dir, tmp_path / "archive")
+
+
 # --- the source's own documents reach the patient (#110) ---------------------
 
 

@@ -19,7 +19,7 @@ from stub import canned_returns
 
 from anastomosis.gui.consoles.packgen import PackgenConsole
 from anastomosis.gui.consoles.source import SourceConsole
-from anastomosis.gui.events import stage_event
+from anastomosis.gui.events import error_event, stage_event
 
 pytestmark = pytest.mark.gui_e2e
 
@@ -566,6 +566,97 @@ def test_repointing_at_another_file_takes_the_proposal_with_it(gui) -> None:
     page.locator("#format-save").dispatch_event("click")
     page.wait_for_timeout(150)
     assert len(app.calls("source_init_async")) == 1, "a save escaped a discarded proposal"
+
+
+def test_the_display_name_each_mode_types_reaches_the_wire(gui) -> None:
+    """The optional display name is the third argument in both modes, and it
+    is the one field a mode could quietly read from the other's box."""
+    app = _open(gui, "layout")
+    app.page.fill("#layout-samples", "/synthetic/samples")
+    app.page.fill("#layout-name", "acme_soap")
+    app.page.fill("#layout-display", "Acme SOAP note")
+    app.page.click("#layout-analyze")
+    app.page.wait_for_timeout(150)
+    assert app.last_args("pack_init_async")[2] == "Acme SOAP note"
+
+    app.page.click('.mode-tab[data-mode="format"]')
+    app.page.wait_for_timeout(120)
+    app.page.fill("#format-example", "/synthetic/export.csv")
+    app.page.fill("#format-name", "acme_csv")
+    app.page.fill("#format-display", "Acme clinic CSV")
+    app.page.click("#format-analyze")
+    app.page.wait_for_timeout(150)
+    assert app.last_args("source_init_async")[2] == "Acme clinic CSV"
+
+
+def test_a_layout_failure_speaks_from_the_event_it_arrived_on(gui) -> None:
+    """Layout mode has no pointed refusal to anchor, so an error event says
+    what it carries — no second bridge call for a sentence already in hand —
+    and the look button comes back so the operator can try again."""
+    app = _open(gui, "layout")
+    page = app.page
+    page.fill("#layout-samples", "/synthetic/samples")
+    page.fill("#layout-name", "acme_soap")
+    page.click("#layout-analyze")
+    page.wait_for_timeout(150)
+    assert page.locator("#layout-analyze").is_disabled()
+
+    app.emit(error_event(PackgenConsole._FLOW, "packgen", "NoSamplesFound"))
+
+    assert app.text("#banner") == ("The samples could not be turned into a layout: NoSamplesFound")
+    assert not app.called("last_pack_result"), "a sentence already in hand cost a fetch"
+    assert not page.locator("#layout-analyze").is_disabled()
+
+
+def test_a_format_failure_speaks_from_the_stashed_result(gui) -> None:
+    """Format mode's refusals point at controls, and only the stashed result
+    carries which ones — so an error event fetches it, and what the operator
+    reads is the stash's error, never the event's bare code."""
+    app = _open(gui, "format")
+    page = _look(app)
+    _stash(app, {"ok": False, "error": "MappingWriteFailed"})
+
+    app.emit(error_event(SourceConsole._FLOW, "source", "OSError"))
+
+    assert app.text("#banner") == (
+        "The example could not be turned into a format: MappingWriteFailed"
+    )
+    assert not page.locator("#format-analyze").is_disabled()
+
+
+def test_a_refused_start_puts_the_step_line_back(gui) -> None:
+    """A controller that refuses to start answers the click itself: the
+    wizard never gets an event, so the banner, the step line and the button
+    are all the synchronous return's to restore."""
+    app = _open(gui, "layout")
+    page = app.page
+    page.evaluate(
+        "() => { window.pywebview.api.pack_init_async ="
+        " () => Promise.resolve({ok: false, error: 'Busy'}); }"
+    )
+    page.fill("#layout-samples", "/synthetic/samples")
+    page.fill("#layout-name", "acme_soap")
+    page.click("#layout-analyze")
+    page.wait_for_timeout(200)
+
+    # `Busy` is one of the shell's own sentences, so the mode's prefix gives way.
+    assert "already working on something else" in app.text("#banner")
+    assert app.text("#layout-step") == "Step 1 of 2 — look at the samples."
+    assert not page.locator("#layout-analyze").is_disabled()
+
+
+def test_a_blank_format_form_says_what_is_missing(gui) -> None:
+    """The format mode's own missing-field sentence, in its own words: an
+    example file and a name, not a samples folder and a layout name."""
+    app = _open(gui, "format")
+
+    app.page.click("#format-analyze")
+    app.page.wait_for_timeout(200)
+
+    assert not app.called("source_init_async"), "a blank form reached the controller"
+    banner = app.text("#banner")
+    assert "example export to learn from" in banner
+    assert "short name for this format" in banner
 
 
 def test_teach_says_what_it_already_knows(gui) -> None:

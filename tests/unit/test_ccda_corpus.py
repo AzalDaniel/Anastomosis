@@ -22,7 +22,7 @@ from tools.ccda_corpus import (
     write_corpus,
 )
 
-from anastomosis.core.ccda_codes import EXT_SECTION_ENTRIES
+from anastomosis.core.ccda_codes import EXT_SECTION_ENTRIES, SECTION_BY_CODE, SectionSpec
 from anastomosis.core.conservation import ConservationError
 from anastomosis.sources import get_source
 from anastomosis.sources.ccda.ledger import (
@@ -47,6 +47,18 @@ _EMAIL = re.compile(r"[\w.+-]+@([\w.-]+)")
 @pytest.fixture(scope="module")
 def corpus() -> list[tuple[str, bytes]]:
     return list(documents(SCALE, seed=7))
+
+
+@pytest.mark.parametrize("spec", SECTION_BY_CODE.values(), ids=lambda spec: spec.loinc)
+def test_the_generator_states_the_section_vocabulary_the_adapter_dispatches_on(
+    spec: SectionSpec,
+) -> None:
+    """A corpus that imported the table it exercises could never disagree with
+    it, so this generator restates the vocabulary and this is the check."""
+    stated = {row.loinc: (row.title, row.display) for row in SECTIONS.values()}
+    assert stated.get(spec.loinc) == (spec.title, spec.display_name), (
+        f"{spec.loinc}: the generator and the adapter name this section differently"
+    )
 
 
 # --- reproducible ------------------------------------------------------------

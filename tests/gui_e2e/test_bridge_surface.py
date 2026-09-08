@@ -26,8 +26,17 @@ pytestmark = pytest.mark.gui_e2e
 # Every `window.pywebview.api.<name>` the shipped scripts call.
 _API_CALL_RE = re.compile(r"pywebview\.api\.([a-z_][a-z0-9_]*)")
 
-#: The shipped scripts: the shell plus one per view (Teach hosts two modes).
-_SCRIPTS = ("shell.js", "app.js", "wizard.js", "console.js", "packgen.js", "source.js")
+#: The shipped scripts: the shell and the teach scaffold, plus one per view
+#: (Teach hosts two modes).
+_SCRIPTS = (
+    "shell.js",
+    "learn.js",
+    "app.js",
+    "wizard.js",
+    "console.js",
+    "packgen.js",
+    "source.js",
+)
 
 
 def test_canned_fixture_covers_the_whole_api_surface() -> None:

@@ -508,3 +508,36 @@ def test_detect_rejects_ambiguous_authored_aliases(tmp_path: Path) -> None:
 
     with pytest.raises(MappingError):
         find_source_file(source, fmt)
+
+
+def test_an_edited_mapping_still_loads_and_says_which_one(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import json
+    import logging
+
+    from anastomosis.commands.learn import LearnCommand, run_learn
+
+    taught = run_learn(
+        LearnCommand(
+            kind="tabular", example=FIXTURE, name="edit_probe", out_dir=tmp_path, confirmed=True
+        )
+    )
+    assert taught.ok, taught.error
+    spec_path = tmp_path / "edit_probe" / "mapping.json"
+    edited = json.loads(spec_path.read_text(encoding="utf-8"))
+    edited["display"] = "Refined By Hand"
+    spec_path.write_text(json.dumps(edited, indent=2) + "\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        specs = discover_learned_specs(tmp_path)
+
+    assert [s.display for s in specs] == ["Refined By Hand"], (
+        "a hand-refined mapping stopped loading. Refining mapping.json and re-running is "
+        "what `anast source init` tells the operator to do, and every load re-validates it "
+        "against the closed target and transform sets; a PACK refuses the same edit (22) "
+        "because its context.py is code the renderer would run. RULES.md 111."
+    )
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("edit_probe" in m and "changed since it was reviewed" in m for m in warned), warned
+    assert not any("Refined By Hand" in m for m in warned), "the warning quoted the edit itself"

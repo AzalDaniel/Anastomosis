@@ -1,4 +1,4 @@
-"""Tests for the per-patient bundle deliverer (Responder persona)."""
+"""Tests for the per-patient bundle grouping (Responder persona)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ import pytest
 
 import anastomosis.sources.pf_tebra  # noqa: F401 — registers the source adapter
 from anastomosis.core.model import PatientRecord
-from anastomosis.deliver.bundle import BundleDeliverer
+from anastomosis.deliver.archive import ArchiveDeliverer, Grouping
+from anastomosis.deliver.archive.archive import BundleResult, _PatientAttachments
 from anastomosis.deliver.render_index import RenderEntry, RenderIndex
 from anastomosis.qa import CheckResult, DocumentQA, QAReport, Verdict
 from anastomosis.sources import get_source
@@ -21,6 +22,38 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pf_tebra_v9"
 @pytest.fixture
 def records() -> list[PatientRecord]:
     return list(get_source("pf-tebra").load(FIXTURE))
+
+
+def _copy_attachments(
+    patient_dir: Path, landing: Path, docs: list[tuple[str, str]]
+) -> _PatientAttachments:
+    """Drive the deliverer's own attachment step over ``(artifact id, filename)``
+    pairs sitting in ``landing``."""
+    from anastomosis.core.model import DocumentArtifact, Patient
+
+    pid = "feedface-0000-4000-8000-000000000382"
+    record = PatientRecord(
+        patient=Patient(id=pid, given_name="Two", family_name="Refs"),
+        documents=[DocumentArtifact(id=doc_id, patient_id=pid, path=name) for doc_id, name in docs],
+    )
+    deliverer = ArchiveDeliverer(grouping=Grouping.BUNDLE)
+    return deliverer._copy_patient_attachments(record, landing, patient_dir)
+
+
+def _bundles(
+    records: list[PatientRecord],
+    pdfs_dir: Path | None,
+    out: Path,
+    *,
+    qa_report: QAReport | None = None,
+    generator: str | None = None,
+) -> list[BundleResult]:
+    """Deliver in the per-patient grouping and hand back one row per patient."""
+    return (
+        ArchiveDeliverer(generator, grouping=Grouping.BUNDLE)
+        .deliver(records, pdfs_dir, out, qa_report=qa_report)
+        .patients
+    )
 
 
 def _fake_pdfs(records: list[PatientRecord], pdfs_dir: Path) -> list[Path]:
@@ -73,8 +106,7 @@ def test_bundle_per_patient_layout(tmp_path: Path, records: list[PatientRecord])
     _fake_pdfs(records, pdfs_dir)
     out = tmp_path / "bundles"
 
-    deliverer = BundleDeliverer(generator="anastomosis test")
-    results = deliverer.deliver_records(records, pdfs_dir, out)
+    results = _bundles(records, pdfs_dir, out, generator="anastomosis test")
     assert len(results) == len(records)
 
     subdirs = sorted(p.name for p in out.iterdir() if p.is_dir())
@@ -133,7 +165,7 @@ def test_bundle_same_name_patients_never_cross_attribute(tmp_path: Path) -> None
         ]
     ).write(pdfs_dir)
 
-    results = BundleDeliverer().deliver_records([rec_a, rec_b], pdfs_dir, tmp_path / "bundles")
+    results = _bundles([rec_a, rec_b], pdfs_dir, tmp_path / "bundles")
     by_pid = {r.patient_id: r for r in results}
     assert [p.name for p in by_pid[rec_a.patient.id].pdf_paths] == [pdf_a.name]
     assert [p.name for p in by_pid[rec_b.patient.id].pdf_paths] == [pdf_b.name]
@@ -151,8 +183,8 @@ def test_bundle_missing_index_skips_pdfs_loudly(
     pdfs_dir.mkdir()
     (pdfs_dir / "Smith_John_05-10-2023_SOAP.pdf").write_bytes(b"%PDF-1.7 unindexed\n")
 
-    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.bundle.bundle"):
-        results = BundleDeliverer().deliver_records(records, pdfs_dir, tmp_path / "bundles")
+    with caplog.at_level(logging.WARNING, logger="anastomosis.deliver.archive.archive"):
+        results = _bundles(records, pdfs_dir, tmp_path / "bundles")
     for r in results:
         assert r.pdf_paths == []
     warnings = [rec.message for rec in caplog.records if "no render index" in rec.message]
@@ -181,9 +213,8 @@ def test_bundle_qa_slice_isolates_each_patient(
             )
     qa_report = QAReport(documents=docs)
 
-    deliverer = BundleDeliverer()
     for record in records:
-        deliverer.deliver(record, None, out, qa_report=qa_report)
+        _bundles([record], None, out, qa_report=qa_report)
 
     seen_ids: set[str] = set()
     for record in records:
@@ -225,9 +256,8 @@ def test_bundle_qa_slice_carries_the_record_summarys_verdict(
     ]
     qa_report = QAReport(documents=docs)
 
-    deliverer = BundleDeliverer()
     for record in records:
-        deliverer.deliver(record, None, out, qa_report=qa_report)
+        _bundles([record], None, out, qa_report=qa_report)
 
     for record in records:
         payload = json.loads(
@@ -242,8 +272,7 @@ def test_bundle_qa_slice_carries_the_record_summarys_verdict(
 
 def test_bundle_no_qa_report_means_no_qa_file(tmp_path: Path, records: list[PatientRecord]) -> None:
     out = tmp_path / "bundles"
-    deliverer = BundleDeliverer()
-    deliverer.deliver(records[0], None, out)
+    _bundles([records[0]], None, out)
     assert not (out / records[0].patient.id / "qa_report.json").exists()
 
 
@@ -257,7 +286,7 @@ def test_bundle_long_patient_id_stays_writable(
     record = records[0].model_copy(update={"patient": patient})
 
     out = tmp_path / "bundles"
-    result = BundleDeliverer().deliver(record, None, out)
+    (result,) = _bundles([record], None, out)
     assert result.out_dir.is_dir()
     assert result.bundle_path.is_file()
     assert len(result.patient_id) < len(long_id)
@@ -265,7 +294,7 @@ def test_bundle_long_patient_id_stays_writable(
 
 def test_bundle_handles_missing_pdfs(tmp_path: Path, records: list[PatientRecord]) -> None:
     out = tmp_path / "bundles"
-    result = BundleDeliverer().deliver(records[0], None, out)
+    (result,) = _bundles([records[0]], None, out)
     assert result.pdf_paths == []
     assert result.bundle_path.is_file()
     assert result.readme_path is not None and result.readme_path.is_file()
@@ -282,23 +311,21 @@ def test_bundle_budgets_the_copied_chart_name(tmp_path: Path) -> None:
     from anastomosis.core.textutil import MAX_PATH_CHARS
 
     pid = "feedface-0000-0000-0000-0000000000aa"
+    enc_id = "feedface-e000-0000-0000-0000000000aa"
     record = PatientRecord(
         patient=Patient(id=pid, family_name="Fixture", given_name="Ada"),
-        encounters=[
-            Encounter(
-                id="feedface-e000-0000-0000-0000000000aa",
-                patient_id=pid,
-                date_of_service=date(2023, 5, 10),
-            )
-        ],
+        encounters=[Encounter(id=enc_id, patient_id=pid, date_of_service=date(2023, 5, 10))],
     )
 
     pdfs_dir = tmp_path / "charts"
     pdfs_dir.mkdir()
     chart = pdfs_dir / f"Fixture_Ada_05-10-2023_{'S' * 200}.pdf"
     chart.write_bytes(b"%PDF-1.7 fake\n")
+    RenderIndex.from_entries(
+        [RenderEntry(pdf=chart.name, patient_id=pid, encounter_id=enc_id)]
+    ).write(pdfs_dir)
 
-    result = BundleDeliverer().deliver(record, [chart], tmp_path / "bundles")
+    (result,) = _bundles([record], pdfs_dir, tmp_path / "bundles")
 
     assert len(result.pdf_paths) == 1
     delivered = result.pdf_paths[0]
@@ -321,18 +348,18 @@ def test_bundle_refuses_two_patient_ids_that_sanitize_alike(tmp_path: Path) -> N
     ]
 
     with pytest.raises(DeliveredNameCollision, match="patient directory"):
-        BundleDeliverer().deliver_records(records, None, tmp_path / "bundles")
+        _bundles(records, None, tmp_path / "bundles")
 
 
-def test_bundle_standalone_deliver_still_works_without_a_ledger(
+def test_a_second_run_into_one_output_dir_reuses_the_same_patient_slot(
     tmp_path: Path, records: list[PatientRecord]
 ) -> None:
-    """``deliver`` is a public single-record entry point: called without the
-    per-run ledger it must behave exactly as before (one record cannot collide
-    with itself), so a caller outside ``deliver_records`` is never broken."""
+    """The claim ledger is per RUN, not per directory: re-delivering one
+    record into a directory that already holds it must land in the same slot
+    and rewrite it, never refuse itself as a collision."""
     out = tmp_path / "bundles"
-    first = BundleDeliverer().deliver(records[0], None, out)
-    again = BundleDeliverer().deliver(records[0], None, out)
+    (first,) = _bundles([records[0]], None, out)
+    (again,) = _bundles([records[0]], None, out)
     assert first.patient_id == again.patient_id
     assert again.bundle_path.is_file()
 
@@ -364,7 +391,7 @@ def test_a_bundle_carries_the_documents_its_charts_reference(tmp_path: Path) -> 
     }
     assert any(expected.values()), "the fixture no longer exercises this path"
 
-    results = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+    results = _bundles(records, charts, tmp_path / "bundles")
 
     by_patient = {r.patient_id: r for r in results}
     for patient_id, names in expected.items():
@@ -385,7 +412,7 @@ def test_a_bundle_without_the_carried_attachments_still_delivers(tmp_path: Path)
     charts = tmp_path / "charts"
     charts.mkdir()
 
-    results = BundleDeliverer().deliver_records(records, charts, tmp_path / "bundles")
+    results = _bundles(records, charts, tmp_path / "bundles")
 
     assert results, "the bundles were still written"
     assert all(r.attachment_paths == [] for r in results)
@@ -405,13 +432,15 @@ def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) 
     patient_dir = tmp_path / "bundle"
     patient_dir.mkdir()
 
-    copied, landed = BundleDeliverer()._copy_attachments(
-        [
-            ("feedface-doc0-0000-0000-000000000001", landing / "referral.pdf"),
-            ("feedface-doc0-0000-0000-000000000002", landing / "labs.pdf"),
-        ],
+    delivered = _copy_attachments(
         patient_dir,
+        landing,
+        [
+            ("feedface-doc0-0000-0000-000000000001", "referral.pdf"),
+            ("feedface-doc0-0000-0000-000000000002", "labs.pdf"),
+        ],
     )
+    copied, landed = delivered.paths, delivered.by_doc
 
     assert sorted(p.name for p in copied) == ["labs.pdf", "referral.pdf"]
     assert {p.read_bytes() for p in copied} == {b"%PDF-1.4 one\n", b"%PDF-1.4 two\n"}
@@ -421,6 +450,33 @@ def test_two_documents_both_land_without_overwriting_each_other(tmp_path: Path) 
     }
     assert landed["feedface-doc0-0000-0000-000000000001"].url == "attachments/referral.pdf"
     assert landed["feedface-doc0-0000-0000-000000000002"].url == "attachments/labs.pdf"
+
+
+def test_two_documents_that_sanitize_to_one_name_refuse_to_share_a_slot(
+    tmp_path: Path,
+) -> None:
+    """The case its sibling above names and does not drive: ``lab report.pdf``
+    and ``lab+report.pdf`` are two files in the charts directory and one
+    delivered name, and the second would overwrite the first's bytes under a
+    reference the bundle still carries. The pass-scoped claim ledger refuses."""
+    from anastomosis.deliver._shared import DeliveredNameCollision
+
+    landing = tmp_path / "attachments"
+    landing.mkdir()
+    (landing / "lab report.pdf").write_bytes(b"%PDF-1.4 one\n")
+    (landing / "lab+report.pdf").write_bytes(b"%PDF-1.4 two\n")
+    patient_dir = tmp_path / "bundle"
+    patient_dir.mkdir()
+
+    with pytest.raises(DeliveredNameCollision, match="attachment"):
+        _copy_attachments(
+            patient_dir,
+            landing,
+            [
+                ("feedface-doc0-0000-0000-000000000001", "lab report.pdf"),
+                ("feedface-doc0-0000-0000-000000000002", "lab+report.pdf"),
+            ],
+        )
 
 
 # --- #382: the bundle's own FHIR rendition names the files beside it ---------
@@ -530,7 +586,7 @@ def test_two_artifacts_naming_one_carried_file_share_one_copy(tmp_path: Path) ->
         ],
     )
 
-    (result,) = BundleDeliverer().deliver_records([record], charts, tmp_path / "bundles")
+    (result,) = _bundles([record], charts, tmp_path / "bundles")
 
     on_disk = list(result.out_dir.glob("attachments/*"))
     assert [p.name for p in on_disk] == ["shared.pdf"], "one file on disk, not a second copy"
@@ -560,13 +616,14 @@ def test_two_artifacts_naming_one_file_reuse_one_measurement_object(tmp_path: Pa
     patient_dir = tmp_path / "bundle"
     patient_dir.mkdir()
 
-    _, landed = BundleDeliverer()._copy_attachments(
-        [
-            ("feedface-doc0-0000-0000-000000000001", landing / "shared.pdf"),
-            ("feedface-doc0-0000-0000-000000000002", landing / "shared.pdf"),
-        ],
+    landed = _copy_attachments(
         patient_dir,
-    )
+        landing,
+        [
+            ("feedface-doc0-0000-0000-000000000001", "shared.pdf"),
+            ("feedface-doc0-0000-0000-000000000002", "shared.pdf"),
+        ],
+    ).by_doc
 
     first = landed["feedface-doc0-0000-0000-000000000001"]
     second = landed["feedface-doc0-0000-0000-000000000002"]
@@ -598,7 +655,7 @@ def test_a_document_whose_file_did_not_land_says_so_plainly(tmp_path: Path) -> N
         ],
     )
 
-    (result,) = BundleDeliverer().deliver_records([record], charts, tmp_path / "bundles")
+    (result,) = _bundles([record], charts, tmp_path / "bundles")
 
     assert result.bundle_path.is_file(), "the bundle still delivers"
     bundle = json.loads(result.bundle_path.read_text())
@@ -648,8 +705,7 @@ def test_two_deliveries_of_one_record_produce_byte_identical_bundle_json(tmp_pat
         ],
     )
 
-    deliverer = BundleDeliverer()
-    (first,) = deliverer.deliver_records([record], charts, tmp_path / "one")
-    (second,) = deliverer.deliver_records([record], charts, tmp_path / "two")
+    (first,) = _bundles([record], charts, tmp_path / "one")
+    (second,) = _bundles([record], charts, tmp_path / "two")
 
     assert first.bundle_path.read_bytes() == second.bundle_path.read_bytes()

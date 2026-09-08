@@ -1,9 +1,9 @@
-"""Unit tests for the shared pack-init command core (commands/packinit.py).
+"""The learn capability's LAYOUT arm (commands/learn.py).
 
-Drives :func:`anastomosis.commands.packinit.run_pack_init` directly — the analyze →
-confirm → emit flow both the CLI and the GUI run. Synthetic 'sample' PDFs are
-built with PyMuPDF (the test_packgen_emit / test_gui_controller pattern), so the
-whole flow is exercised without a browser. All values are synthetic
+Drives :func:`anastomosis.commands.learn.run_learn` with ``kind="layout"``
+directly — the analyze -> confirm -> emit flow both the CLI and the GUI run.
+Synthetic 'sample' PDFs are built with PyMuPDF (the test_packgen_emit pattern),
+so the whole flow is exercised without a browser. All values are synthetic
 (example-style names, never-issued dates); no patient-derived data appears.
 """
 
@@ -13,12 +13,9 @@ from pathlib import Path
 
 import pytest
 
-pymupdf = pytest.importorskip("pymupdf", reason="packinit tests need the render extra (PyMuPDF)")
+pymupdf = pytest.importorskip("pymupdf", reason="the layout arm needs the render extra")
 
-from anastomosis.commands.packinit import (  # noqa: E402
-    PackInitCommand,
-    run_pack_init,
-)
+from anastomosis.commands.learn import LearnCommand, run_learn  # noqa: E402
 
 # Distinct synthetic patients (each value unique → never recurs → never static).
 _PATIENTS = [
@@ -51,29 +48,33 @@ def _packgen_samples(tmp_path: Path, n: int = 4) -> Path:
 
 
 def test_invalid_pack_name() -> None:
-    result = run_pack_init(PackInitCommand(samples=["/anywhere"], name="Bad-Name", confirmed=True))
+    result = run_learn(
+        LearnCommand(kind="layout", samples=["/anywhere"], name="Bad-Name", confirmed=True)
+    )
     assert result.ok is False
     assert result.error == "InvalidPackName"
     assert result.summary == []
-    assert result.pack_dir is None
-    assert result.draft_md is None
+    assert result.written_dir is None
+    assert result.review_md is None
 
 
 def test_never_raises_on_malformed_command() -> None:
     """The "never raises into the caller" contract holds even when a caller
     ignores the type hints (a non-str name, a non-list samples)."""
-    bad_name = run_pack_init(PackInitCommand(samples=["/x"], name="Bad-Name"))
+    bad_name = run_learn(LearnCommand(kind="layout", samples=["/x"], name="Bad-Name"))
     assert bad_name.error == "InvalidPackName"
-    non_str = run_pack_init(PackInitCommand(samples=["/x"], name=123))  # type: ignore[arg-type]
+    non_str = run_learn(LearnCommand(kind="layout", samples=["/x"], name=123))  # type: ignore[arg-type]
     assert non_str.error == "InvalidPackName"
-    no_samples = run_pack_init(PackInitCommand(samples=None, name="ok_name"))  # type: ignore[arg-type]
+    no_samples = run_learn(LearnCommand(kind="layout", samples=None, name="ok_name"))  # type: ignore[arg-type]
     assert no_samples.error == "NoSamplesFound"
 
 
 def test_no_samples_found(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
-    result = run_pack_init(PackInitCommand(samples=[str(empty)], name="acme_soap", confirmed=True))
+    result = run_learn(
+        LearnCommand(kind="layout", samples=[str(empty)], name="acme_soap", confirmed=True)
+    )
     assert result.ok is False
     assert result.error == "NoSamplesFound"
     assert result.sample_count == 0
@@ -82,16 +83,18 @@ def test_no_samples_found(tmp_path: Path) -> None:
 def test_confirmation_required_returns_summary_and_writes_nothing(tmp_path: Path) -> None:
     samples = _packgen_samples(tmp_path)
     out = tmp_path / "packs"
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="acme_soap", out_dir=out, confirmed=False)
+    result = run_learn(
+        LearnCommand(
+            kind="layout", samples=[str(samples)], name="acme_soap", out_dir=out, confirmed=False
+        )
     )
     assert result.ok is False
     assert result.error == "ConfirmationRequired"
     assert result.summary, "the refusal must carry the PHI-safe summary to confirm"
     assert result.caveat
     assert result.sample_count == 4
-    assert result.pack_dir is None
-    assert result.draft_md is None
+    assert result.written_dir is None
+    assert result.review_md is None
     # Nothing was written.
     assert not (out / "acme_soap").exists()
 
@@ -99,8 +102,8 @@ def test_confirmation_required_returns_summary_and_writes_nothing(tmp_path: Path
 def test_confirmation_required_is_phi_safe(tmp_path: Path) -> None:
     """The refusal summary carries static template text only — no patient value."""
     samples = _packgen_samples(tmp_path)
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="acme_soap", confirmed=False)
+    result = run_learn(
+        LearnCommand(kind="layout", samples=[str(samples)], name="acme_soap", confirmed=False)
     )
     blob = " ".join(result.summary)
     for name, dob, complaint in _PATIENTS:
@@ -112,8 +115,9 @@ def test_confirmation_required_is_phi_safe(tmp_path: Path) -> None:
 def test_happy_emits_loadable_draft(tmp_path: Path) -> None:
     samples = _packgen_samples(tmp_path)
     out = tmp_path / "packs"
-    result = run_pack_init(
-        PackInitCommand(
+    result = run_learn(
+        LearnCommand(
+            kind="layout",
             samples=[str(samples)],
             name="acme_soap",
             display="Acme SOAP",
@@ -123,19 +127,19 @@ def test_happy_emits_loadable_draft(tmp_path: Path) -> None:
     )
     assert result.ok is True
     assert result.error is None
-    assert result.pack_dir is not None
-    assert result.pack_dir.is_dir()
-    assert (result.pack_dir / "pack.yaml").is_file()
-    assert (result.pack_dir / "DRAFT.md").is_file()
-    assert result.draft_md and "DRAFT" in result.draft_md
+    assert result.written_dir is not None
+    assert result.written_dir.is_dir()
+    assert (result.written_dir / "pack.yaml").is_file()
+    assert (result.written_dir / "DRAFT.md").is_file()
+    assert result.review_md and "DRAFT" in result.review_md
     assert result.summary
     assert result.sample_count == 4
 
 
 def test_low_confidence_single_sample(tmp_path: Path) -> None:
     samples = _packgen_samples(tmp_path, n=1)
-    result = run_pack_init(
-        PackInitCommand(samples=[str(samples)], name="acme_soap", confirmed=False)
+    result = run_learn(
+        LearnCommand(kind="layout", samples=[str(samples)], name="acme_soap", confirmed=False)
     )
     assert result.error == "ConfirmationRequired"
     assert result.low_confidence is True

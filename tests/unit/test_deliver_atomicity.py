@@ -2,11 +2,11 @@
 
 `core/atomic.py` is the one place the write-then-replace shape lives, so
 every site gets the unlink-on-failure safety net without writing it
-itself. Every final-artifact write in `deliver/`, including copied chart
-PDFs, must go through it: a crash mid-write never leaves a partial PDF
-for a concurrent reader, the same guarantee `reconstruct/engine.py`'s
-render gets from `atomic_replace`. Two tests: one on the shared helpers,
-one reading the syntax tree so a new write site cannot reintroduce the gap.
+itself. Every final-artifact write in `deliver/`, every copied chart PDF
+and every file a taught draft leaves behind must go through it: a crash
+mid-write never leaves a partial file for whoever reads it next, the same
+guarantee `reconstruct/engine.py`'s render gets. Tests on the shared
+helpers, and on the syntax trees so a new write site cannot reopen the gap.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ import pytest
 
 from anastomosis.core.atomic import atomic_copy, atomic_write_bytes, atomic_write_text
 
-DELIVER = Path(__file__).resolve().parents[2] / "src" / "anastomosis" / "deliver"
+SRC = Path(__file__).resolve().parents[2] / "src" / "anastomosis"
+DELIVER = SRC / "deliver"
 
 #: Writes that go straight to the target, by the name of the call.
 RAW_WRITES = frozenset({"write_text", "write_bytes", "copyfile"})
@@ -89,6 +90,17 @@ def test_deliver_writes_only_through_the_atomic_helpers(module: str) -> None:
         + f" — use one of {sorted(ATOMIC)}. A crash partway through leaves a "
         "truncated file where a complete one was, and for a chart page that is "
         "a patient's record, half-written."
+    )
+
+
+def test_the_draft_emitter_writes_only_through_the_atomic_helpers() -> None:
+    raw = _raw_write_calls((SRC / "packgen" / "emit.py").read_text(encoding="utf-8"))
+    assert not raw, (
+        "packgen/emit.py writes straight to its target at "
+        + ", ".join(f"line {line} ({call})" for line, call in raw)
+        + f" — use one of {sorted(ATOMIC)}. A draft is hand-edited, but DRAFT.md "
+        "carries the same-patient caveat: truncated mid-sentence it withholds "
+        "the warning that the draft may hold a patient's own values."
     )
 
 

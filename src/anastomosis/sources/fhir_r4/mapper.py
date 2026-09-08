@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from datetime import date, datetime
 from typing import Any
 
+from anastomosis.core.fhir.fields import ALLERGY_CATEGORIES, ICD10, LOINC, NPI, SNOMED, SSN
 from anastomosis.core.model import (
     AllergyCategory,
     AllergyIntolerance,
@@ -51,15 +52,15 @@ __all__ = ["AmbiguousUnanchoredError", "records_from_resources"]
 SOURCE_SYSTEM = "fhir-r4"
 _EXT = "fhir_r4:"  # extension-key namespace for preserved-but-unmapped fields
 
-# Code systems, with the spelling variants real exports use (SNOMED ships both
-# the ``www.`` and bare hosts; we accept either rather than miss a code).
-_LOINC = ("http://loinc.org",)
-_ICD10 = ("http://hl7.org/fhir/sid/icd-10-cm",)
-_SNOMED = ("http://snomed.info/sct", "http://www.snomed.info/sct")
+# Code systems from the FHIR field table, plus the spelling variants real
+# exports use (SNOMED ships both the ``www.`` and bare hosts; either is read).
+_LOINC = (LOINC,)
+_ICD10 = (ICD10,)
+_SNOMED = ("http://snomed.info/sct", SNOMED)
 _RXNORM = ("http://www.nlm.nih.gov/research/umls/rxnorm", "http://rxnorm.info/sct")
 _CVX = ("http://hl7.org/fhir/sid/cvx",)
-_SSN = ("http://hl7.org/fhir/sid/us-ssn",)
-_NPI = "http://hl7.org/fhir/sid/us-npi"
+_SSN = (SSN,)
+_NPI = NPI
 
 # Smoking-status LOINC (US Core social-history) — categorizes the observation
 # even when a vendor omits the FHIR category coding.
@@ -73,11 +74,9 @@ _OBS_CATEGORY = {
     "screening": ObservationCategory.SCREENING,
 }
 
-# FHIR AllergyIntolerance.category → canonical AllergyCategory.
+# FHIR AllergyIntolerance.category → canonical: the table's pairing, backwards.
 _ALLERGY_CATEGORY = {
-    "medication": AllergyCategory.DRUG,
-    "food": AllergyCategory.FOOD,
-    "environment": AllergyCategory.ENVIRONMENT,
+    fhir: AllergyCategory(canonical) for canonical, fhir in ALLERGY_CATEGORIES.items()
 }
 
 # US Core MRN identifier type code (v2-0203) → canonical MRN.
@@ -241,10 +240,10 @@ def _first_coding(concept: Any) -> tuple[int | None, dict[str, Any]]:
 def _code_in_consumed(
     concept: Any, systems: tuple[str, ...], base: str
 ) -> tuple[str | None, set[str]]:
-    """``(code, sub-paths read)`` for :func:`_code_in`, rooted at ``base``.
-    Only the MATCHED coding's ``system`` and ``code`` are consumed; codings
-    scanned past, and the matched coding's own ``display``/``version``,
-    stay in the residue. A concept matching nothing consumes nothing."""
+    """``(code, sub-paths read)``: the first ``code`` whose ``system`` is one of
+    ``systems``, rooted at ``base``. Only the MATCHED coding's ``system`` and
+    ``code`` are consumed; codings scanned past, its own ``display``/``version``,
+    and a concept matching nothing, stay in the residue."""
     for index, coding in _indexed_codings(concept):
         if coding.get("system") in systems and coding.get("code"):
             return str(coding["code"]), {
@@ -252,11 +251,6 @@ def _code_in_consumed(
                 f"{base}.coding[{index}].code",
             }
     return None, set()
-
-
-def _code_in(concept: Any, systems: tuple[str, ...]) -> str | None:
-    """The first ``code`` whose ``system`` is one of ``systems`` (None if absent)."""
-    return _code_in_consumed(concept, systems, "")[0]
 
 
 def _concept_text_consumed(concept: Any, base: str) -> tuple[str | None, set[str]]:

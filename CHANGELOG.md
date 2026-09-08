@@ -610,6 +610,76 @@ issue and fixed in its own pull request.
   and records `declined`, and every deliverable byte and the C-CDA corpus pin
   are unmoved.
 
+- **Both Teach modes run on one scaffold in the browser.** `packgen.js` and
+  `source.js` wrote the same two-step gate twice — hold the look button from
+  the click to the run's terminal event, fetch the result the controller
+  stashed, route it, and wrap the analyze click. `gui/web/learn.js` is that
+  gate once; a descriptor carries the stage, the two ids the markup does not
+  spell from the mode name, the two bridge calls, the sentences and the
+  painters. What genuinely differs stays with the mode that owns it: the
+  layout's caveat and its re-ask for the layout lists, and the format's
+  mapping table, its three anchored refusals and its review argument. So does
+  the one behaviour they never shared — an error event banners its own
+  sentence for the layout, which has nothing to point at, and fetches the
+  stash for the format, which does. `anast doctor` asks after the new script
+  by name. Five browser tests close gaps the shared code leaned on and nothing
+  drove: both error paths, a start the controller refuses, the format mode's
+  own missing-field words, and the display name on the wire.
+
+- **The counts and the not-yet-begun run are each spelled out once.**
+  `app.js` carried a byte-identical copy of the shell's `countsText`, its own
+  comment saying so; the activity strip and the Charts rail read the same
+  event and now read it through the same function. Charts and Migrate each
+  wrote out the same ordering rule around a run asked for but not started —
+  the click answers at once, the last run's results stay until this run has
+  its own, and the reset happens on the run's first event so a late reset
+  cannot wipe what an earlier one set. The rule is stated once in the shell
+  now; each view says only what it saves and what it puts back.
+
+- **Teach-a-format and teach-a-layout are one learn capability.** Both flows
+  were already analyze → confirm → emit and said so in their own docstrings,
+  so `commands/packinit.py` and `commands/source_init_command.py` are now
+  `commands/learn.py`: one `LearnCommand` carrying the kind, one `LearnResult`,
+  one name refusal against one registry argument, one confirm gate, one place
+  each arm's writer is released from. What genuinely differs stays behind the
+  kind rather than being flattened — one example file against N sample PDFs,
+  the format's per-item review step, three atomic files against six draft
+  files, the pack trust store against `source_trust.json`, the format's
+  in-process `register()`, and the layout's removal of a draft whose hash it
+  could not record. `pack init` and `source init` are unchanged as typed: the
+  whole CLI help surface diffs clean, and so do the wire keys the two GUI
+  wizard pages read. Three fields that were two names for one thing are one —
+  `written_dir`, `review_md`, `learned_name`.
+
+- **The draft pack's markup lives in template files.** `packgen/emit.py` built
+  a Jinja template out of an f-string, so every brace the draft needed was
+  written twice and every brace the f-string needed twice more. `template.html`,
+  `DRAFT.md` with its OCR block, `OCR_EVIDENCE.md` and `UNPLACED.txt` now come
+  from `packgen/templates/` and fill `$name` placeholders, which cannot collide
+  with a Jinja delimiter at all; the `E501` exemption `emit.py` carried for its
+  long markup lines went with them, and `_comment_safe`, which had no caller
+  anywhere, is gone. Every emitted byte is unchanged across a multi-sample
+  draft, a single-sample one, one carrying Jinja delimiters in its sample text
+  and an OCR batch. `anast doctor` asks after the templates now, because a
+  build that dropped them would otherwise refuse only at the end of a teach,
+  after the samples had been read.
+
+- **A half-written draft is not a draft.** The six writers in `emit_draft_pack`
+  went through plain `write_text`; they go through `core/atomic` now, like
+  every other writer rule 14 covers. `DRAFT.md` is the file that tells the
+  operator this draft may hold their own patients' values — the same-patient
+  caveat is its second heading — and a copy that stops mid-sentence withholds
+  that warning while looking complete.
+
+- **A trust hash gates execution, not editing** (new rule 111). A pack whose
+  content hash changed is unavailable because its `context.py` is code the
+  renderer would run; a learned mapping whose `source_trust.json` hash no
+  longer matches still loads and warns by name, because `mapping.json` is data
+  that every load re-validates against the closed target and transform sets,
+  and refining it by hand is exactly what `anast source init` prints as the
+  next step. The asymmetry was a standing audit finding; it is now a written
+  rule with a test on each side.
+
 - **The command layer left the primitives package.** Ten modules under `core/`
   imported downward into `deliver`, `pipeline`, `reconstruct`, `sources`, `qa`,
   `destinations`, `packgen` and `gui`: the command layer living where the
@@ -699,6 +769,35 @@ issue and fixed in its own pull request.
   release carry no gate record at all and are unaffected — they warn. (#350)
 
 ### Fixed
+
+- **Two files whose names sanitize alike could take one delivered slot.** Every
+  deliverer claims each delivered name against a per-pass ledger before it
+  copies, so a second claimant raises rather than writing over the first. That
+  claim had no test: a mutation that dropped it left the whole suite green,
+  which means `lab report.pdf` and `lab+report.pdf` — two files in a charts
+  directory, one delivered name — could have landed as one file the FHIR bundle
+  still carried two references to. Guarded now from both sides, the charts and
+  the carried documents.
+
+- **Two record-level lists never reached a FHIR bundle.** `PatientRecord`
+  carries five lists that FHIR has no resource for, and the exporter stashed
+  three of them on the Patient resource while the importer read the same three
+  back. `health_concerns` and `screening_events` were in neither list, so a
+  Practice Fusion / Tebra export carrying a health concern or a screening
+  worksheet — the adapter populates both — lost it on every archive, bundle
+  and FHIR-API delivery, silently. None of the five committed fixtures carries
+  either, which is why no test and no snapshot saw it. The five lists are one
+  table now, and the new guard walks `PatientRecord`'s own annotations rather
+  than that table, so a sixth list added later is covered the day it lands.
+
+- **A document with an empty mime type came back as a different type.** FHIR
+  prunes an empty `Attachment.contentType`, so nothing distinguished "no type
+  stated" from "type stated as empty"; the exporter's model default is
+  `application/pdf` and the importer's read fallback `application/octet-stream`,
+  and the round trip quietly swapped one for the other. The lossless tail now
+  carries the mime type in exactly that case — no other value's bytes change —
+  and a bundle from a foreign system, which has neither, still reads as
+  `application/octet-stream` rather than guessing PDF.
 
 - **The Windows installer was rebuilt on every source merge, and the queue was
   paid for by everything waiting behind it.** A Nuitka standalone build plus

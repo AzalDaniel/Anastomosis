@@ -983,10 +983,10 @@ def test_the_adapter_reads_the_real_v9_column_names() -> None:
     with the fixture and nobody checks it against the vendor. These rows
     carry ONLY real v9 spellings."""
     from anastomosis.sources.pf_tebra.mapper import (
+        _FACILITY,
+        _IMMUNIZATION,
         _map_allergy,
         _map_document,
-        _map_facilities,
-        _map_immunization,
     )
 
     # patient-allergy / -reactions are keyed on PatientAllergyGuid, not AllergyGuid.
@@ -1014,35 +1014,31 @@ def test_the_adapter_reads_the_real_v9_column_names() -> None:
     assert document.id == storage, "an empty document id is unusable downstream"
 
     # facilities: Name/City/State/ZipCode/OfficePhone/OfficeFax, not the invented spellings.
-    (facility,) = _map_facilities(
+    facility = _FACILITY.build(
         {
-            "facilities": [
-                {
-                    "FacilityGuid": "feedface-0000-0000-0000-00000000f001",
-                    "Name": "Example Family Medicine",
-                    "Address1": "100 Clinic Way",
-                    "City": "Springfield",
-                    "State": "WA",
-                    "ZipCode": "98101",
-                    "OfficePhone": "2065550199",
-                    "OfficeFax": "2065550198",
-                }
-            ]
-        }
+            "FacilityGuid": "feedface-0000-0000-0000-00000000f001",
+            "Name": "Example Family Medicine",
+            "Address1": "100 Clinic Way",
+            "City": "Springfield",
+            "State": "WA",
+            "ZipCode": "98101",
+            "OfficePhone": "2065550199",
+            "OfficeFax": "2065550198",
+        },
     )
     assert facility.name == "Example Family Medicine"
     assert (facility.city, facility.state, facility.postal_code) == ("Springfield", "WA", "98101")
     assert facility.phone == "(206) 555-0199"
 
     # patient-immunizations: the date column was three guessed spellings, all wrong.
-    immunization = _map_immunization(
+    immunization = _IMMUNIZATION.build(
         {
             "PatientPracticeGuid": P1,
             "ImmunizationGuid": "feedface-0000-0000-0000-00000000i001",
             "Vaccine": "Influenza",
             "VaccinationOrEffectiveDate": "10/03/2022",
             "Comments": "Left deltoid",
-        }
+        },
     )
     assert immunization.administered_on == date(2022, 10, 3), "every dose came back undated"
     assert immunization.comment == "Left deltoid"
