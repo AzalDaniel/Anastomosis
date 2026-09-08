@@ -633,11 +633,6 @@ def test_the_run_manifest_carries_no_patient_value(tmp_path: Path, fake_chromium
         "ada@example.com",
         "555-0101",
         "Acute bronchitis",
-        # The date of service, in each shape it could be written. A bare
-        # "1985" is not used: the manifest carries sha256 digests, and
-        # export_dir_id hashes the output path, so a four-digit decimal
-        # needle matches a hex digest by luck roughly once in a few
-        # hundred runs.
         "1985-03-14",
         "03/14/1985",
         "19850314",
