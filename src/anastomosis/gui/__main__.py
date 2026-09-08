@@ -77,9 +77,11 @@ def main() -> None:
 
     configure_logging(logging.WARNING)
 
+    from anastomosis.commands.run import get_toolkit_info
     from anastomosis.gui.shell import launch
 
     try:
+        get_toolkit_info()  # before launch: the bridge must not first-import pydantic
         launch()
     except Exception as exc:  # top-level entry: a user must never see a raw traceback
         # Type name only, never exc's message: it may embed input (RULES.md 2).

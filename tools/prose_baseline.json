@@ -763,11 +763,11 @@
     },
     "src/anastomosis/gui/__main__.py": {
       "blank": 17,
-      "code": 52,
+      "code": 54,
       "comment": 3,
       "docstring": 19,
-      "ratio": 0.297297,
-      "total": 91
+      "ratio": 0.289474,
+      "total": 93
     },
     "src/anastomosis/gui/consoles/__init__.py": {
       "blank": 3,
@@ -1882,12 +1882,12 @@
       "total": 217
     },
     "tests/unit/test_gui_shell.py": {
-      "blank": 55,
-      "code": 118,
+      "blank": 62,
+      "code": 134,
       "comment": 4,
-      "docstring": 31,
-      "ratio": 0.228758,
-      "total": 208
+      "docstring": 33,
+      "ratio": 0.216374,
+      "total": 233
     },
     "tests/unit/test_guide.py": {
       "blank": 153,
@@ -3342,11 +3342,11 @@
   "packages": {
     "anastomosis": {
       "blank": 5641,
-      "code": 27364,
+      "code": 27366,
       "comment": 3126,
       "docstring": 6224,
-      "ratio": 0.254671,
-      "total": 42355
+      "ratio": 0.254657,
+      "total": 42357
     },
     "tests.e2e": {
       "blank": 186,
@@ -3373,21 +3373,21 @@
       "total": 225
     },
     "tests.unit": {
-      "blank": 10141,
-      "code": 37859,
+      "blank": 10148,
+      "code": 37875,
       "comment": 2865,
-      "docstring": 5382,
-      "ratio": 0.17887,
-      "total": 56247
+      "docstring": 5384,
+      "ratio": 0.178844,
+      "total": 56272
     }
   },
   "repo": {
-    "blank": 16854,
-    "code": 69093,
+    "blank": 16861,
+    "code": 69111,
     "comment": 6388,
-    "docstring": 12270,
-    "ratio": 0.212624,
-    "total": 104605
+    "docstring": 12272,
+    "ratio": 0.212599,
+    "total": 104632
   },
   "tool": "tools/prose_gate.py"
 }
