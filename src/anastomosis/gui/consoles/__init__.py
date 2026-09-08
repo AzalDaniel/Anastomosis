@@ -3,9 +3,8 @@
 Each is a small class the controller constructs once and delegates to, so
 the controller stays a thin facade; async choreography lives in
 :mod:`anastomosis.gui.jobs`. No console imports
-:mod:`anastomosis.gui.controller` at module load — the upload console
-resolves its ``_attach_destination`` monkeypatch seam late, from inside the
-worker body, to stay import-cycle-free.
+:mod:`anastomosis.gui.controller` at all — the upload console reaches the
+browser-attach seam directly, so no cycle can form.
 """
 
 from __future__ import annotations

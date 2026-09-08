@@ -40,37 +40,6 @@ if TYPE_CHECKING:
     from anastomosis.pipeline import StageEvent
 
 
-# A real function (not a bare import alias) so
-# `monkeypatch.setattr("anastomosis.cli._make_destination", ...)` keeps
-# working and `anast upload` resolves it late through this module. Lazy
-# import: `deliver.browser` eagerly pulls in the whole upload-engine package.
-def _make_destination(cdp_url: str, loaded: object) -> object:
-    from anastomosis.deliver.browser.attach import attach_destination
-
-    return attach_destination(cdp_url, loaded)
-
-
-# The FHIR twin of the seam above: `anast upload --fhir URL` resolves its
-# destination late through `_cli._make_fhir_destination`, so a monkeypatch
-# drives the flow with no live FHIR server; the import is lazy for the same
-# reason as `deliver.browser`.
-def _make_fhir_destination(
-    base_url: str,
-    *,
-    bearer_token: str | None = None,
-    create_missing_patients: bool = False,
-    search_by_ssn: bool = False,
-) -> object:
-    from anastomosis.deliver.fhir_api.attach import attach_fhir_destination
-
-    return attach_fhir_destination(
-        base_url,
-        bearer_token=bearer_token,
-        create_missing_patients=create_missing_patients,
-        search_by_ssn=search_by_ssn,
-    )
-
-
 app = typer.Typer(
     name="anast",
     help=__doc__,
@@ -489,31 +458,6 @@ def _report_pipeline_error(exc: object, *, source: str | None, pack: str) -> Non
         # conservation_failed, which lands here too at exit 1: lost work is
         # the run's failure, not the operator's.
         console.print(f"[red]{_escape(message)}[/red]")
-
-
-# --- retained live seam: the selector validator for `destination init --validate` --
-# `_make_validator` stays defined here (like `_make_destination`) even though
-# its only caller moved to `cli_commands.destination`: wizard tests
-# monkeypatch `cli._make_validator`, resolved late through this module.
-# Playwright imports only here, lazily.
-
-
-def _make_validator(cdp_url: str) -> object:
-    """Build the live selector validator for ``--validate`` (the seam tests
-    mock). Attaches over CDP (loopback-only) to the operator's browser,
-    wraps its first page in :class:`PlaywrightPageAdapter`, and returns a
-    :class:`~anastomosis.destinations.wizard.CdpSelectorValidator`.
-    """
-    from anastomosis.deliver.browser.cdp import CdpEndpoint, connect_over_cdp
-    from anastomosis.destinations.browserpack import PlaywrightPageAdapter
-    from anastomosis.destinations.wizard import CdpSelectorValidator
-
-    # Drives the operator's existing EHR context/page; this one-shot leaves
-    # teardown to process exit (the upload path owns explicit release()).
-    _playwright, browser = connect_over_cdp(CdpEndpoint(cdp_url))
-    context = browser.contexts[0]
-    page = context.pages[0]
-    return CdpSelectorValidator(PlaywrightPageAdapter(page))
 
 
 # --- command registration (the facade split) --------------------------------

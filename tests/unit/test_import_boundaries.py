@@ -93,22 +93,36 @@ def test_browser_attach_module_loads_without_playwright_extra() -> None:
     assert "playwright.sync_api" not in loaded
 
 
-def test_cli_make_destination_delegates_to_attach_destination() -> None:
-    """A thin lazy-import wrapper that delegates straight to
-    :func:`attach_destination`. A module-level assignment instead would make
-    importing the CLI load the whole upload engine."""
-    from unittest.mock import patch
+#: The two frontend modules that attach a live browser destination. Neither
+#: may own a copy of the flow, and neither may import it at module load.
+_ATTACH_CALLERS = ("cli_commands/upload.py", "gui/consoles/upload.py")
 
-    from anastomosis.cli import _make_destination
 
-    sentinel = object()
-    with patch(
-        "anastomosis.deliver.browser.attach.attach_destination", return_value=sentinel
-    ) as mock_attach:
-        result = _make_destination("http://127.0.0.1:9222", "loaded")
-
-    mock_attach.assert_called_once_with("http://127.0.0.1:9222", "loaded")
-    assert result is sentinel
+def test_both_frontends_attach_through_the_one_seam() -> None:
+    """Rule 107 and 75 together: the CLI and the GUI name
+    :func:`attach_destination` from inside a function body, so one seam owns
+    the CDP flow and importing either frontend still leaves the upload engine
+    unloaded."""
+    root = Path(__file__).resolve().parents[2] / "src" / "anastomosis"
+    for relpath in _ATTACH_CALLERS:
+        path = root / relpath
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_level = {
+            node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module
+        }
+        assert "anastomosis.deliver.browser.attach" not in module_level, (
+            f"{relpath} imports the attach seam at module load; keep it inside the "
+            "function so the upload engine stays unloaded."
+        )
+        named = {
+            node.attr if isinstance(node, ast.Attribute) else node.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute | ast.Name)
+        }
+        assert "attach_destination" in named, (
+            f"{relpath} no longer calls attach_destination: a second copy of the "
+            "CDP-attach flow is a defect, not a style choice."
+        )
 
 
 # --- public verification imports (circular-import regression) --------------

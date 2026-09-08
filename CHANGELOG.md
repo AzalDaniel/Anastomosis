@@ -579,6 +579,37 @@ issue and fixed in its own pull request.
 
 ### Changed
 
+- **One seam attaches a destination, not four.** `cli._make_destination` and
+  `gui/controller._attach_destination` were byte-identical wrappers around
+  `deliver.browser.attach.attach_destination`, and `cli._make_fhir_destination`
+  around its FHIR twin; all three are gone, and both frontends call the seam
+  that owns each flow, imported inside the command body so a bare
+  `import anastomosis.cli` still leaves the upload engine unloaded.
+  `cli._make_validator` moves to
+  `destinations/wizard.attach_selector_validator`, beside the
+  `CdpSelectorValidator` it builds. The margins dict and the
+  `ReconstructionEngine` construction stood twice — in `run_pipeline` and in
+  the pack preview — and are now `reconstruct.engine.build_render_engine`,
+  which reads page size and all four margins off the pack's own manifest so
+  neither caller states paper at all. The two GUI run flows wrote their
+  refusal four times between them; `_refused` says it once. `_paths.out_file`
+  had no caller anywhere and is deleted, and its one-caller `_typed_path`
+  folds into `out_dir`.
+
+  Four long functions split at the steps the audit ledger names, and only
+  there: `upload_cmd`'s two route pre-flights become `_resolve_api_attach`
+  and `_resolve_browser_attach` (D/22 to C/13, and the module's average from
+  12.5 to 6.25 at the same total); `run_pipeline`'s pack resolve and both
+  folder guards become `_resolve_pack_and_guard` (162 lines and C/13 to 118
+  and B/7); `run_upload_command`'s resource wiring becomes
+  `_wire_run_resources` (147 lines and B/9 to 92 and B/6); and
+  `_resolve_migration_profile`'s five explicit-overrides-saved ladders become
+  one table walked once (C/17 to C/12). Every `--help` page — the top level
+  and all seventeen subcommands — is byte-identical, `pack init` and
+  `source init` still work as typed, a declined confirmation still exits 0
+  and records `declined`, and every deliverable byte and the C-CDA corpus pin
+  are unmoved.
+
 - **Both Teach modes run on one scaffold in the browser.** `packgen.js` and
   `source.js` wrote the same two-step gate twice — hold the look button from
   the click to the run's terminal event, fetch the result the controller

@@ -131,10 +131,10 @@ def _render_preview(pack_dir: Path) -> Path | None:
     """
     from anastomosis import cli as _cli
     from anastomosis.reconstruct import discover_packs
-    from anastomosis.reconstruct.engine import ReconstructionEngine
+    from anastomosis.reconstruct.engine import build_render_engine
 
     try:
-        from anastomosis.reconstruct.chromium import ChromiumRenderer
+        from anastomosis.reconstruct.chromium import ChromiumRenderer  # noqa: F401 (probe)
     except ImportError:
         _cli.console.print(
             "[yellow]preview skipped[/yellow]: install anastomosis[render] for Chromium"
@@ -157,17 +157,7 @@ def _render_preview(pack_dir: Path) -> Path | None:
         diagnosis = status.diagnosis if status else "draft pack not discovered"
         _cli.console.print(f"[red]preview failed:[/red] {diagnosis}")
         raise typer.Exit(code=1)
-    manifest = status.pack.manifest
-    margins = {
-        "top": manifest.page.margin_top,
-        "right": manifest.page.margin_right,
-        "bottom": manifest.page.margin_bottom,
-        "left": manifest.page.margin_left,
-    }
-    engine = ReconstructionEngine(
-        status.pack,
-        lambda: ChromiumRenderer(page_size=manifest.page.size, margins=margins),
-    )
+    engine = build_render_engine(status.pack)
     preview_dir = pack_dir / "preview"
     result = engine.run([_synthetic_preview_record()], preview_dir)
     if result.failed or not result.documents:
